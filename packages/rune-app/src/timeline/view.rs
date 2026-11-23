@@ -167,23 +167,25 @@ pub(crate) fn view(s: &State, history: El, expanded: bool) -> El {
     }
     let scope = s.input_scope.clone();
     let locale = locale();
-    if let Some(rail) = timeline::view(
-        t.width,
-        locale,
-        t.markers.len(),
-        t.version,
-        |s: &State, i| s.transcript_display.timeline.markers[i].id.as_str().into(),
-        move |s: &State, i| crate::strings::with_locale(locale, || glyph(s, i)),
-        move |s, id, tx| {
-            if s.current_scope(&scope) {
-                super::dismiss_preview(s);
-                super::navigation::select(s, id, tx);
-            }
-        },
-        move |s, i, button| {
-            crate::strings::with_locale(locale, || super::preview::marker(s, i, button))
-        },
-    ) {
+    if (t.has_raw_markers || !t.markers.is_empty())
+        && let Some(rail) = timeline::view(
+            t.width,
+            locale,
+            t.markers.len(),
+            t.version,
+            |s: &State, i| s.transcript_display.timeline.markers[i].id.as_str().into(),
+            move |s: &State, i| crate::strings::with_locale(locale, || glyph(s, i)),
+            move |s, id, tx| {
+                if s.current_scope(&scope) {
+                    super::dismiss_preview(s);
+                    super::navigation::select(s, id, tx);
+                }
+            },
+            move |s, i, button| {
+                crate::strings::with_locale(locale, || super::preview::marker(s, i, button))
+            },
+        )
+    {
         area = area.child(scroll(s, rail, true));
     }
     let retry = if t.jump.retry.is_some() {

@@ -12,6 +12,7 @@ import {mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste} from './web-paste.mjs'
 import {missionsFixture} from './web-missions.mjs'
 import {historySearch} from './web-history-search.mjs'
+import {markerFilters} from './web-marker-filters.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
@@ -420,29 +421,13 @@ try {
             await page.getByRole('paragraph').filter({hasText:'Fixture passage 181'}).waitFor()
             await press(messages['rune.latest'])
             await reading()
-            await page.mouse.move(box.x+10,box.y+10)
-            await page.mouse.wheel(0,-100000)
-            await tool.waitFor()
-            const contextMarker=rail.getByRole('button',{name:messages['messageBlock.system.label'],exact:true})
-            await contextMarker.waitFor()
-            const count=pages()
-            const filters=async show=>{
-              const response=await page.request.patch(new URL('/api/storage/config/ui',url).href,{
-                data:{settings:{showThinkingBlocks:show,systemMessagesVisibility:show?'expanded':'hidden',
-                  toolCallExpansionDefaults:{tools:{read:show?'expanded':'hidden'}}}},
-              })
-              assert(response.ok(),'The private fixture can save transcript visibility')
-            }
-            await filters(false)
-            try{
-              await tool.waitFor({state:'detached'})
-              await contextMarker.waitFor({state:'detached'})
-              const compact=messages['messageTimeline.segment.compaction.label']
-              assert.equal(await rail.getByRole('button',{name:compact,exact:true}).count(),1)
-              assert.equal(pages(),count,'Confirmed filters refold the cached outline without paging')
-            }finally{await filters(true)}
+            await markerFilters(page,messages,url,values.project,{touch:false,pages})
             // The text mirror updates before the newly mounted glyphs finish fading in.
             await page.waitForTimeout(250)
+          }
+          if(values.timeline&&name==='tablet'){
+            const pages=()=>routes.filter(route=>route.path.endsWith('/session-history/window')).length
+            await markerFilters(page,messages,url,values.project,{touch:true,pages})
           }
           if(missions)await missions.check(press)
          }else{

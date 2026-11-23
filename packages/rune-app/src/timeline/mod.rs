@@ -69,6 +69,8 @@ pub(crate) struct Timeline {
     markers: Vec<Marker>,
     folded: HashMap<String, String>,
     filters_changed: bool,
+    filter_revision: u64,
+    has_raw_markers: bool,
     pending: BTreeSet<crate::agent_api::ToolSource>,
     version: u64,
     outline_error: bool,
@@ -92,9 +94,7 @@ pub(crate) fn structure_changed(s: &mut State) {
 }
 
 pub(crate) fn filters_changed(s: &mut State) {
-    let t = owner(s);
-    t.filters_changed = true;
-    t.changed = true;
+    s.rail_filter_revision = s.rail_filter_revision.wrapping_add(1);
     (s.wake)();
 }
 
@@ -115,6 +115,7 @@ pub(crate) fn suspend(s: &mut State) {
     if t.outline.as_ref().is_some_and(|index| !index.cacheable) {
         t.outline = None;
         t.markers.clear();
+        t.has_raw_markers = false;
         t.resident.clear();
         t.changed = true;
     }
@@ -140,6 +141,7 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
             t.previews = Default::default();
             t.outline = None;
             t.markers.clear();
+            t.has_raw_markers = false;
             t.version = t.version.wrapping_add(1);
             t.resident.clear();
             t.refresh = true;
@@ -231,8 +233,11 @@ fn reproject(s: &mut State) -> bool {
     } else {
         WindowPosition::Latest
     };
-    let projected =
-        timeline::project(index, &rows, position).map(|markers| filters::project(s, markers));
+    let projected = timeline::project(index, &rows, position).map(|markers| {
+        let has_raw = !markers.is_empty();
+        let (markers, folded) = filters::project(s, markers);
+        (has_raw, markers, folded)
+    });
     let detached = s.history_detached;
     let t = owner(s);
     let new_index = std::mem::take(&mut t.index_changed);
@@ -240,7 +245,10 @@ fn reproject(s: &mut State) -> bool {
     t.detached = detached;
     t.resident = owned;
     match projected {
-        Ok((markers, folded)) if markers != t.markers || folded != t.folded => {
+        Ok((has_raw, markers, folded))
+            if has_raw != t.has_raw_markers || markers != t.markers || folded != t.folded =>
+        {
+            t.has_raw_markers = has_raw;
             t.markers = markers;
             t.folded = folded;
             t.version = t.version.wrapping_add(1);
@@ -277,9 +285,11 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let reads = s.reads.clone();
     let wake = s.wake.clone();
     let pending = filters::pending(s);
+    let filter_revision = s.rail_filter_revision;
     let t = owner(s);
-    if t.pending != pending {
+    if t.pending != pending || t.filter_revision != filter_revision {
         t.pending = pending;
+        t.filter_revision = filter_revision;
         t.filters_changed = true;
         t.changed = true;
     }

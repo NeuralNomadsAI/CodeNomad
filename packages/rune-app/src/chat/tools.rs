@@ -162,19 +162,23 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
 
 pub(super) fn visible(s: &State, message: &str, tool: &Tool) -> bool {
     settings::transcript_mode(s, TranscriptRow::tool(&tool.name)) != "hidden"
-        || s.agent.as_ref().is_some_and(|agent| {
-            agent
-                .permissions
-                .iter()
-                .filter_map(|request| request.tool.as_ref())
-                .chain(
-                    agent
-                        .forms
-                        .iter()
-                        .filter_map(|request| request.tool.as_ref()),
-                )
-                .any(|source| source.message == message && source.call == tool.id)
-        })
+        || awaiting_input(s, message, tool)
+}
+
+pub(super) fn awaiting_input(s: &State, message: &str, tool: &Tool) -> bool {
+    s.agent.as_ref().is_some_and(|agent| {
+        agent
+            .permissions
+            .iter()
+            .filter_map(|request| request.tool.as_ref())
+            .chain(
+                agent
+                    .forms
+                    .iter()
+                    .filter_map(|request| request.tool.as_ref()),
+            )
+            .any(|source| source.message == message && source.call == tool.id)
+    })
 }
 
 pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {

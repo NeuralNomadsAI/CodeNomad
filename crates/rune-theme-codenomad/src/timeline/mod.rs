@@ -113,7 +113,7 @@ pub fn view<S: 'static>(
     activate: impl Fn(&mut S, &str, &mut Tx) + 'static,
     decorate: impl Fn(&S, usize, El) -> El + 'static,
 ) -> Option<El> {
-    if !fits(width) || count == 0 {
+    if !fits(width) {
         return None;
     }
     let dark = layout::dark();
@@ -121,6 +121,24 @@ pub fn view<S: 'static>(
     let t = tokens(dark);
     let (height, gap) = geometry();
     let pitch = height + gap;
+    let rail = rune::col()
+        .key(VIEWPORT)
+        .role("navigation")
+        .focusable(count != 0)
+        .label_static(catalogue::message(locale, "messageTimeline.ariaLabel").unwrap())
+        .w(t.metric("timelineRail", "width").px())
+        .h_full()
+        .fill(t.color("surface-secondary"))
+        .border_sides(
+            [0.0, 0.0, 0.0, t.metric("timelineRail", "edgeWidth").px()],
+            t.color("border-base"),
+        )
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        });
+    if count == 0 {
+        return Some(rail);
+    }
     let activate = Rc::new(activate);
     let build = Rc::new(move |s: &S, first: usize, len: usize| {
         let last = first + len;
@@ -175,25 +193,7 @@ pub fn view<S: 'static>(
             |_: &S, _| Cow::Borrowed("tail"),
             move |s, _| build(s, last, count - last),
         );
-    Some(
-        rune::col()
-            .key(VIEWPORT)
-            .role("navigation")
-            .focusable(true)
-            .label_static(catalogue::message(locale, "messageTimeline.ariaLabel").unwrap())
-            .w(t.metric("timelineRail", "width").px())
-            .h_full()
-            .fill(t.color("surface-secondary"))
-            .border_sides(
-                [0.0, 0.0, 0.0, t.metric("timelineRail", "edgeWidth").px()],
-                t.color("border-base"),
-            )
-            .scroll(ScrollSpec {
-                stick_bottom: false,
-            })
-            .child(bands)
-            .child(tail),
-    )
+    Some(rail.child(bands).child(tail))
 }
 
 fn button(dark: bool, marker: Marker<'_>) -> El {

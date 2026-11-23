@@ -174,16 +174,89 @@ mod tests {
         let (visible, _) = project(&s, vec![marker(Tool, 0), marker(Tool, 1)]);
         assert_eq!(visible.iter().map(|m| m.ordinal).collect::<Vec<_>>(), [1]);
     }
+
+    #[test]
+    fn hidden_selection_moves_to_the_first_visible_marker_of_the_same_message() {
+        use MarkerKind::{Assistant, Tool};
+        let mut s = crate::init();
+        let t = owner(&mut s);
+        t.markers = vec![
+            Marker::from(timeline::Marker {
+                message: "elsewhere",
+                ..marker(Assistant, 0)
+            }),
+            Marker::from(marker(Assistant, 0)),
+            Marker::from(marker(Assistant, 1)),
+        ];
+        t.jump.active = Some(Marker::from(marker(Tool, 0)).id);
+        reselect(&mut s);
+        assert_eq!(
+            owner(&mut s).jump.active.as_deref(),
+            Some("step:Assistant:0:false")
+        );
+    }
+
+    #[test]
+    fn restored_display_reprojects_and_keeps_an_empty_rail_after_a_global_filter_change() {
+        use rune::{Cx, El, Env, Runtime};
+        fn view(s: &State, cx: &mut Cx<State>) -> El {
+            rune_theme_codenomad::layout::render(cx, |cx| crate::chat::view::chat_view(s, cx))
+        }
+        let mut s = crate::init();
+        settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":true}));
+        let t = owner(&mut s);
+        t.width = 800.;
+        t.outline = Some(super::super::Outline {
+            entries: vec![
+                serde_json::from_value(json!({
+                    "id":"step","seq":1,"type":"assistant","tools":0,"reasoning":1,"text":0,
+                }))
+                .unwrap(),
+            ],
+            total: 1,
+            cacheable: true,
+        });
+        t.changed = true;
+        t.index_changed = true;
+        let mut rt = Runtime::new(s, view, (800., 600.), Env::new(false, 1.));
+        rt.update(|s, tx| {
+            super::super::poll(s, tx);
+        });
+        assert_eq!(owner(&mut rt.state).markers.len(), 1);
+        rt.update(|s, tx| {
+            let cached = std::mem::take(&mut s.transcript_display);
+            settings::fixture_transcript(s, json!({"showThinkingBlocks":false}));
+            super::super::filters_changed(s);
+            s.transcript_display = cached;
+            assert!(super::super::poll(s, tx));
+        });
+        rt.frame(0.016);
+        let t = owner(&mut rt.state);
+        assert!(t.markers.is_empty() && t.has_raw_markers);
+        assert!(rt.find("timeline").is_some());
+    }
 }
 
 pub(super) fn reselect(s: &mut State) {
     let t = owner(s);
-    if let Some(active) = &mut t.jump.active {
-        if let Some(first) = t.folded.get(active) {
-            active.clone_from(first);
-        } else if !t.markers.iter().any(|marker| &marker.id == active) {
-            t.jump.active = None;
+    if let Some(active) = t.jump.active.take() {
+        t.jump.active = visible_id(t, active);
+        if t.jump.active.is_none() {
             t.jump.unlock();
         }
     }
+}
+
+pub(super) fn visible_id(t: &super::Timeline, active: String) -> Option<String> {
+    if let Some(first) = t.folded.get(&active) {
+        return Some(first.clone());
+    }
+    if t.markers.iter().any(|marker| marker.id == active) {
+        return Some(active);
+    }
+    let (message, _) = active.split_once(':')?;
+    t.markers
+        .iter()
+        .find(|marker| marker.message == message)
+        .map(|marker| marker.id.clone())
 }

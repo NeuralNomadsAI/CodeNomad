@@ -124,7 +124,7 @@ fn members<'a>(
     let Part::Tool(first) = parts.first()? else {
         return None;
     };
-    if !tools::visible(s, message, first) {
+    if !tools::visible(s, message, first) || tools::awaiting_input(s, message, first) {
         return None;
     }
     let group = kind(first)?;
@@ -133,6 +133,7 @@ fn members<'a>(
     for (i, part) in parts.iter().enumerate() {
         match part {
             Part::Text(text) if text.text.trim().is_empty() => (),
+            Part::Tool(tool) if tools::awaiting_input(s, message, tool) => break,
             Part::Tool(tool) if !tools::visible(s, message, tool) => (),
             Part::Tool(tool) if kind(tool) == Some(group) => {
                 calls.push((i, tool));
@@ -162,4 +163,43 @@ pub(super) fn anchor(s: &State, message: &str, parts: &[Part], target: usize) ->
         }
     }
     None
+}
+
+#[cfg(test)]
+#[test]
+fn a_pending_tool_stays_out_of_both_collapsed_group_kinds() {
+    use serde_json::json;
+    crate::platform::block_on(async {
+        let mut s = crate::init();
+        crate::settings::fixture_transcript(&mut s, json!({"toolGroupVisibility":"collapsed"}));
+        let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        let mut agent = crate::agent::Ui::new(crate::agent::start(backend, s.wake.clone()));
+        agent.permissions = crate::agent_api::permissions(
+            &json!({"data":[{
+                "id":"permission","sessionID":"session","action":"read","resources":[],
+                "source":{"type":"tool","id":"pending","messageID":"step"}
+            }]}),
+            "session",
+        )
+        .unwrap();
+        s.agent = Some(agent);
+        for name in ["bash", "read"] {
+            let content = ["a", "b", "pending", "c", "d"].map(|id| {
+                json!({"type":"tool","id":id,"name":name,"state":{"status":"completed","input":{}}})
+            });
+            let message = crate::history::decode_message(
+                &json!({"id":"step","type":"assistant","content":content}),
+            )
+            .unwrap();
+            assert_eq!(
+                anchor(&s, "step", &message.parts, 0).as_deref(),
+                Some("group-tool-step:1:a")
+            );
+            assert!(anchor(&s, "step", &message.parts, 2).is_none());
+            assert_eq!(
+                anchor(&s, "step", &message.parts, 4).as_deref(),
+                Some("group-tool-step:1:c")
+            );
+        }
+    });
 }

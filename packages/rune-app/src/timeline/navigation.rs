@@ -302,7 +302,7 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let marker = t
         .reading_line
         .first(bounds)
-        .map(|id| t.folded.get(&id).cloned().unwrap_or(id));
+        .and_then(|id| super::filters::visible_id(t, id));
     if t.jump.active == marker {
         return moved || aligned;
     }
