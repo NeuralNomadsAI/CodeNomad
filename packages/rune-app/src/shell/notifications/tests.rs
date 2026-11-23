@@ -63,6 +63,7 @@ fn notification_observation_requires_a_root_and_a_new_confirmed_idle() {
         session_known: true,
         running: false,
         root_directory: None,
+        usage: None,
         permissions: None,
         forms: Some(vec![Form {
             id: "form-1".into(),

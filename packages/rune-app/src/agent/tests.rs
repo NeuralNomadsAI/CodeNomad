@@ -24,6 +24,7 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
         session_known: true,
         running: false,
         root_directory: Some("/project/worktree".into()),
+        usage: None,
         permissions: Some(vec![]),
         forms: Some(vec![Form {
             id: "question".into(),
