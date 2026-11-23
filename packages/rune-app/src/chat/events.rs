@@ -29,6 +29,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         let content = observation.is_none();
         let event = observation.or_else(|| s.reader.as_ref().and_then(chat::reader::Reader::next));
         let Some(event) = event else { break };
+        crate::timeline::observe(s, &event);
         let stale_activity = matches!(&event, Event::ReaderSync { version, .. }
             if s.reader.as_ref().is_some_and(|reader| reader.activity_after(*version)));
         match event {
@@ -176,6 +177,14 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
                 s.history_error = true;
             }
+            Event::Anchor {
+                ticket,
+                page,
+                admit,
+            } => {
+                crate::timeline::admit(s, ticket, page, admit);
+            }
+            Event::AnchorFailed(ticket) => crate::timeline::failed(s, ticket),
             Event::HistoryInvalidated => {
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
@@ -213,9 +222,21 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Text(id, event) => {
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
+                    let new_text = matches!(&event, content::TextEvent::Delta { text, .. } if !text.trim().is_empty())
+                        && m.parts
+                            .iter()
+                            .rev()
+                            .find_map(|part| match part {
+                                content::Part::Text(t) => Some(t.text.trim().is_empty()),
+                                _ => None,
+                            })
+                            .unwrap_or(true);
                     match content::apply_text(std::sync::Arc::make_mut(m), &event) {
                         Ok(content::TextFit::Repair) | Err(_) => s.history_error = true,
                         _ => {}
+                    }
+                    if new_text {
+                        crate::timeline::structure_changed(s);
                     }
                 }
             }

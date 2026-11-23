@@ -11,8 +11,10 @@ use std::{
 };
 
 mod anchor;
+mod jump;
 mod rail;
 pub use anchor::AnchorWindow;
+pub use jump::{Admission, Jump};
 pub use rail::{Marker, MarkerKind, Resident, UnplacedWindow, WindowPosition, project};
 
 const PAGE_ENTRIES: usize = 16_384;

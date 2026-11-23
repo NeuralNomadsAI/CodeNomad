@@ -212,6 +212,7 @@ pub(crate) fn reconcile_bookmark(s: &mut State, rows: &[crate::history::Row]) {
 }
 
 pub(crate) fn suspend(s: &mut State) {
+    crate::timeline::suspend(s);
     if let Some(reader) = &mut s.reader {
         reader.bookmark = reader.bookmark(s.transcript_display.reading_mut());
         reader.stop_content();
@@ -220,6 +221,40 @@ pub(crate) fn suspend(s: &mut State) {
         }
         s.paging = false;
         s.transcript_display.evict_rendered();
+    }
+}
+
+pub(crate) fn install_anchor(s: &mut State, page: crate::history::Page) {
+    s.attachments.cancel();
+    s.history_detached = page.newer.is_some();
+    s.can_older = page.older.is_some();
+    s.paging = false;
+    s.history_error = false;
+    if let Some(reader) = &mut s.reader {
+        reader.drain();
+        reader.resume_pending = false;
+        reader.pending_scroll = false;
+        reader.install(s.history_detached);
+    }
+    s.messages = page.rows;
+}
+
+pub(crate) fn set_timeline_position(s: &mut State, message: String) {
+    s.transcript_display.reading_mut().hold(message);
+}
+
+pub(crate) fn timeline_reading(s: &mut State) -> Option<(usize, bool)> {
+    if s.messages.is_empty() {
+        return None;
+    }
+    let reading = s.transcript_display.reading_mut();
+    match reading.bookmark(s.history_detached) {
+        Bookmark::Latest => Some((s.messages.len() - 1, true)),
+        Bookmark::Message { id, .. } => s
+            .messages
+            .iter()
+            .position(|row| row.id == id)
+            .map(|index| (index, false)),
     }
 }
 
@@ -234,6 +269,7 @@ pub(crate) fn resume(s: &mut State, tx: &mut Tx) {
 }
 
 pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
+    crate::timeline::cancel_jump(s);
     let covered = crate::files::has_preview(s) || crate::git::has_preview(s);
     if let Some(reader) = &mut s.reader
         && (reader.needs_latest() || s.history_error)

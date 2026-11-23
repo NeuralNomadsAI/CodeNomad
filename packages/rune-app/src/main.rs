@@ -25,6 +25,7 @@ mod settings;
 mod shell;
 use shell::render::view;
 mod strings;
+mod timeline;
 use screen::Screen;
 mod workspace;
 #[cfg(test)]

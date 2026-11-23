@@ -25,7 +25,7 @@ pub fn history(expanded: bool) -> El {
     area.min_h(history_minimum(expanded))
         .scroll(ScrollSpec { stick_bottom: true })
 }
-pub(crate) fn history_minimum(expanded: bool) -> f32 {
+pub fn history_minimum(expanded: bool) -> f32 {
     if expanded {
         tokens(layout::dark()).length(Length::TouchTarget).px()
     } else {

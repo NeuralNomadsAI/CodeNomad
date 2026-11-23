@@ -393,7 +393,7 @@ enum Section {
     Error,
 }
 
-fn tool_key(message: &str, call: &str) -> String {
+pub(super) fn tool_key(message: &str, call: &str) -> String {
     let escaped = call.replace('%', "%25").replace('/', "%2F");
     format!("tool-{message}:{}:{escaped}", escaped.len())
 }

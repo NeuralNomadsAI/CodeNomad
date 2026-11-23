@@ -1,4 +1,5 @@
 pub(crate) mod actions;
+pub(crate) mod anchors;
 pub(crate) mod attachments;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod authentication;

@@ -6,6 +6,40 @@ use std::{borrow::Cow, rc::Rc};
 
 pub const VIEWPORT: &str = "timeline";
 
+pub fn fits(width: f32) -> bool {
+    width >= TIMELINE_MIN_WIDTH
+}
+// Chromium's CSS layout quantum is 1/64 px. Whole bands are integral even
+// though their markers are not, so Rune's f32 prefix sum accumulates no drift.
+const BAND: usize = 64;
+
+fn geometry() -> (f32, f32) {
+    let t = tokens(layout::dark());
+    (
+        t.metric("timelineMarker", "minHeight").px(),
+        t.metric("timelineGap", "height").px(),
+    )
+}
+
+pub fn reveal(index: usize, tx: &mut Tx) {
+    tx.scroll_to_instant(VIEWPORT, 0.0, row_top(index));
+}
+
+pub fn reveal_when_outside(index: usize, at: rune::ScrollPos, tx: &mut Tx) {
+    let top = row_top(index);
+    let end = top + geometry().0;
+    if top < at.offset[1] {
+        tx.scroll_to_instant(VIEWPORT, 0.0, top);
+    } else if end > at.offset[1] + at.viewport[1] {
+        tx.scroll_to_instant(VIEWPORT, 0.0, end - at.viewport[1]);
+    }
+}
+
+fn row_top(index: usize) -> f32 {
+    let (height, gap) = geometry();
+    ((f64::from(height) + f64::from(gap)) * index as f64) as f32
+}
+
 pub struct Marker<'a> {
     pub label: &'a str,
     pub glyph: &'static Icon,
@@ -24,32 +58,30 @@ pub fn view<S: 'static>(
     marker: impl for<'a> Fn(&'a S, usize) -> Marker<'a> + 'static,
     activate: impl Fn(&mut S, &str, &mut Tx) + 'static,
 ) -> Option<El> {
-    if width < TIMELINE_MIN_WIDTH || count == 0 {
+    if !fits(width) || count == 0 {
         return None;
     }
     let dark = layout::dark();
     let palette = palettes::current();
     let t = tokens(dark);
-    let gap = t.metric("timelineGap", "height").px();
-    let height = t.metric("timelineMarker", "minHeight").px();
-    let key = Rc::new(key);
-    let row_key = key.clone();
+    let (height, gap) = geometry();
+    let pitch = height + gap;
     let activate = Rc::new(activate);
-    let rows = rune::col()
-        .w_full()
-        .gap(gap)
-        .growth(GrowthSpec::default())
-        .virtual_rows(
-            count,
-            height,
-            move |s, i| row_key(s, i),
-            move |s, i| {
+    let build = Rc::new(move |s: &S, first: usize, len: usize| {
+        let last = first + len;
+        let extent = len as f32 * pitch - if last == count { gap } else { 0.0 };
+        rune::col()
+            .w_full()
+            .h(extent)
+            .children((first..last).map(|i| {
                 let id = key(s, i).into_owned();
                 let enter = id.clone();
                 let on_enter = activate.clone();
                 let activate = activate.clone();
                 palettes::with_palette(palette, || {
                     button(dark, marker(s, i))
+                        .key(id.clone())
+                        .pin(Some(0.0), Some((i - first) as f32 * pitch), Some(0.0), None)
                         .on_press_tx(move |s, tx| activate(s, &id, tx))
                         // Match HTML button activation; Rune reserves Return for default actions.
                         .on_key(move |s, event, tx| {
@@ -60,9 +92,33 @@ pub fn view<S: 'static>(
                             true
                         })
                 })
-            },
+            }))
+    });
+    // Keep the last band separate so that even before it mounts its extent
+    // reflects the short final band and the absence of a trailing gap.
+    let last = (count - 1) / BAND * BAND;
+    let full = build.clone();
+    let bands = rune::col()
+        .key("timeline-bands")
+        .w_full()
+        .growth(GrowthSpec::default())
+        .virtual_rows(
+            last / BAND,
+            BAND as f32 * pitch,
+            |_: &S, i| Cow::Owned(i.to_string()),
+            move |s, i| full(s, i * BAND, BAND),
         )
         .virtual_rows_version(version);
+    let tail = rune::col()
+        .key("timeline-tail")
+        .w_full()
+        .growth(GrowthSpec::default())
+        .virtual_rows(
+            1,
+            (count - last) as f32 * pitch - gap,
+            |_: &S, _| Cow::Borrowed("tail"),
+            move |s, _| build(s, last, count - last),
+        );
     Some(
         rune::col()
             .key(VIEWPORT)
@@ -79,7 +135,8 @@ pub fn view<S: 'static>(
             .scroll(ScrollSpec {
                 stick_bottom: false,
             })
-            .child(rows),
+            .child(bands)
+            .child(tail),
     )
 }
 

@@ -37,6 +37,7 @@ pub struct State {
     pub alive: AtomicBool,
     pub running: AtomicBool,
     pub upstream: AtomicBool,
+    pub(crate) history_revision: AtomicU64,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     catalogue: Option<Arc<catalogue::Signals>>,
     placement: Option<(Sender<()>, crate::Receiver<()>)>,
@@ -159,6 +160,12 @@ impl State {
     }
     pub fn valid(&self, version: u64) -> bool {
         self.version.load(SeqCst) == version
+            && self.alive.load(SeqCst)
+            && self.upstream.load(SeqCst)
+            && !self.cancelled.load(SeqCst)
+    }
+    pub(crate) fn history_current(&self, revision: u64) -> bool {
+        self.history_revision.load(SeqCst) == revision
             && self.alive.load(SeqCst)
             && self.upstream.load(SeqCst)
             && !self.cancelled.load(SeqCst)
@@ -340,6 +347,9 @@ pub(super) async fn dispatch(
     } else if own && value["type"] == "instance.eventStatus" {
         let ready = value["status"] == "connected";
         let was_ready = state.upstream.swap(ready, SeqCst);
+        if ready != was_ready {
+            state.history_revision.fetch_add(1, SeqCst);
+        }
         if ready && !was_ready {
             out.send(Input::Workspace(
                 epoch,
@@ -375,6 +385,12 @@ pub(super) async fn dispatch(
             || native["type"] == "server.connected")
     {
         let version = state.version.fetch_add(1, SeqCst) + 1;
+        if matches!(
+            native["type"].as_str(),
+            Some("session.moved" | "session.deleted" | "session.revert.committed")
+        ) {
+            state.history_revision.fetch_add(1, SeqCst);
+        }
         if native["type"] == "session.moved"
             && native["data"]["sessionID"] == b.session
             && let Some((cancel, _)) = &state.placement

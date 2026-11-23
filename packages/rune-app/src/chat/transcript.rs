@@ -12,7 +12,18 @@ use rune_theme_codenomad::{
     markdown,
 };
 
-const PART_LIMIT: usize = 1000;
+pub(super) const PART_LIMIT: usize = 1000;
+pub(super) fn part_window(len: usize, steps: usize) -> (usize, usize) {
+    let initial = if len > PART_LIMIT {
+        PART_LIMIT / 2
+    } else {
+        len
+    };
+    (
+        initial.saturating_add(steps.saturating_mul(PART_LIMIT)),
+        len.saturating_sub(PART_LIMIT / 2),
+    )
+}
 
 pub fn rows(s: &State) -> El {
     let locale = locale();
@@ -84,12 +95,7 @@ pub fn message(s: &State, i: usize) -> El {
     } else {
         m.parts.len()
     };
-    let tail = m.parts.len().saturating_sub(PART_LIMIT / 2);
-    let head = initial.saturating_add(
-        s.transcript_display
-            .steps(&gap_key)
-            .saturating_mul(PART_LIMIT),
-    );
+    let (head, tail) = part_window(m.parts.len(), s.transcript_display.steps(&gap_key));
     let mut reveal_start = (head > initial).then(|| head.saturating_sub(PART_LIMIT));
     for (index, part) in m.parts.iter().enumerate() {
         if index == head && head < tail {

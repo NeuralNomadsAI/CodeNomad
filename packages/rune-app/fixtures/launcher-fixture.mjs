@@ -17,8 +17,9 @@ import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {webLiveFixture} from './web-live-fixture.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
 const sameOriginPairing=process.argv.includes('--same-origin-pairing')
+const webTimeline=process.argv.includes('--web-timeline')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
-const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile,root=path.resolve(import.meta.dirname,'../../..')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile||webTimeline,root=path.resolve(import.meta.dirname,'../../..')
 if(!web)requireTestSupport()
 const gitPanel=process.argv.includes('--git-panel'),gitOutput=gitPanel?process.env.RUNE_TEST_GIT_OUTPUT:undefined
 if(gitOutput)assert(path.isAbsolute(gitOutput),'Git fixture output must be absolute')
@@ -138,6 +139,15 @@ function add(id,title,directory=project) {
   records.set(id,row);stores.set(id,new FixtureStore(0));return row
 }
 add('ses_existing','Existing history')
+if(webTimeline){
+  const store=stores.get('ses_existing')
+  const anchor=store.append('assistant','Lead before the anchor')
+  anchor.content.push(
+    {type:'tool',id:'timeline-anchor',name:'read',state:{status:'completed',input:{file:'timeline.txt'},content:[{type:'text',text:'Tool output'}]}},
+    {type:'text',text:'Exact position in the old message'},
+  )
+  for(let i=0;i<220;i++)store.append('assistant',`Fixture passage ${i}`)
+}
 if(webMobile)for(let i=0;i<(webAndroid?70:210);i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
 stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
 add('ses_another','Another session',gitPanel?review:project)
@@ -160,7 +170,7 @@ const upstream=createServer(async(req,res)=>{
     if(web){
       assert(!['prompt','interrupt'].some(action=>url.pathname.endsWith(`/${action}`))&&!(url.pathname==='/api/session'&&req.method==='POST'),'Read-only web fixture')
       if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
-      if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[]})
+      if(['/api/model','/api/command'].includes(url.pathname))return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[]})
       if(/^\/api\/session\/[^/]+\/(permission|form)$/.test(url.pathname))return json({data:[]})
     }
     if(control&&await control.route(req,url,raw,json,res))return
@@ -224,6 +234,22 @@ const upstream=createServer(async(req,res)=>{
       return json({data:created})
     }
     if(url.pathname==='/api/plugin')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
+    if(url.pathname==='/api/rpc/codenomad.session-pruning/outlineLayout'){
+      const {input}=JSON.parse(raw),rows=stores.get(input.sessionID).rows
+      assert(!input.cursor)
+      const entries=rows.map((row,seq)=>({
+        id:row.id,seq,type:row.type,
+        tools:row.content?.filter(part=>part.type==='tool').length??0,reasoning:0,
+        ...(row.type==='assistant'?{
+          text:row.content.filter(part=>part.type==='text').length,
+          layout:row.content.map(part=>part.type==='tool'?'X':'T').join(''),
+          ...(row.content.some(part=>part.type==='tool')?{toolName:'read'}:{}),
+        }:{}),
+      }))
+      const through=Math.max(0,rows.length-1)
+      return json({output:{status:'outline',entries,total:rows.length,cursor:null,
+        checkpoints:rows.length?[{after:-1,through,digest:'a'.repeat(64),changed:true}]:[]}})
+    }
     if(['/api/rpc/codenomad.session-pruning/window','/api/rpc/codenomad.session-pruning/windowUserFilesV1'].includes(url.pathname)){
       const {input}=JSON.parse(raw),output=stores.get(input.sessionID).window(input.target)
       if(url.pathname.endsWith('windowUserFilesV1')&&output.status==='window')output.userFiles='reference-v1'
@@ -344,6 +370,7 @@ try{
     const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()]
     const androidEnv=webAndroid?Object.fromEntries(['RUNE_ANDROID_ADB','RUNE_ANDROID_SERIAL','RUNE_ANDROID_ADB_PORT'].map(key=>[key,process.env[key]])):{}
     if(webAndroid)androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
+    if(webTimeline)args.push('--timeline')
     client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
     if(mobile)client.on('message',async action=>{
       try{

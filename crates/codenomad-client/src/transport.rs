@@ -39,6 +39,7 @@ pub enum Command {
         text: String,
     },
     Older,
+    Anchor(crate::timeline::Jump),
     Latest,
     Retry,
     Close,
@@ -66,6 +67,12 @@ pub enum Event {
         version: u64,
     },
     Older(Page),
+    Anchor {
+        ticket: u64,
+        page: Page,
+        admit: crate::timeline::Admission,
+    },
+    AnchorFailed(u64),
     Message(Message),
     PromptAcknowledged {
         attempted: String,

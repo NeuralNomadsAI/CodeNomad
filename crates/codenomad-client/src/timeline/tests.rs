@@ -211,6 +211,54 @@ const OUTLINE: &str = "POST /api/workspaces/workspace/session-history/outline HT
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn a_proposed_anchor_commits_only_with_a_current_admission() {
+    use crate::{bounded, stream, transport::Event};
+    use std::sync::{Arc, atomic::Ordering::SeqCst};
+    for invalidate in [false, true] {
+        let target = json!({"kind":"around","messageID":"target"});
+        http_probe(
+            vec![(
+                "POST /api/workspaces/workspace/session-history/window HTTP/1.1",
+                Some(json!({"sessionID":"session","target":target})),
+                json!({"status":"window","messages":[{"id":"target","type":"user","text":"Here","time":{"created":1}}],
+                "older":null,"newer":null,"latest":true,"resume":target}),
+                false,
+            )],
+            async |backend, _| {
+                let wire = Arc::new(stream::State::default());
+                wire.alive.store(true, SeqCst);
+                wire.upstream.store(true, SeqCst);
+                let (out, events) = bounded(1);
+                let (_cancel, cancelled) = bounded(1);
+                let wake: crate::Wake = Arc::new(|| {});
+                let offer = Jump {
+                    ticket: 1,
+                    message: "target".into(),
+                    cancelled,
+                };
+                let (read, ()) = futures_lite::future::zip(
+                    offer.offer(&backend, &[], &wire, &out, &wake),
+                    async {
+                        let Event::Anchor { ticket, admit, .. } = events.recv().await.unwrap()
+                        else {
+                            panic!("expected an anchor proposal");
+                        };
+                        assert_eq!(ticket, 1);
+                        if invalidate {
+                            wire.history_revision.fetch_add(1, SeqCst);
+                        }
+                        assert_eq!(admit.accept(), !invalidate);
+                    },
+                )
+                .await;
+                assert_eq!(read.is_some(), !invalidate);
+            },
+        );
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn outline_http_uses_the_owned_scope_and_returned_cursor_only() {
     let record = json!({"data":{"id":"session"}});
     let result = http_scan(vec![

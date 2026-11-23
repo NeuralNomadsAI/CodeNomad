@@ -3,7 +3,7 @@ use rune::{Cx, El, ScrollPos};
 use rune_theme_codenomad::{layout, timeline};
 use std::{cell::Cell, rc::Rc};
 
-const COUNT: usize = 10_000;
+const COUNT: usize = 200_000;
 
 struct Scene {
     width: f32,
@@ -38,9 +38,7 @@ fn view(s: &Scene, cx: &mut Cx<Scene>) -> El {
                             .focusable(true)
                             .label_static("Reveal last marker")
                             .child(rune::text("Reveal last marker"))
-                            .on_press_tx(|s: &mut Scene, tx| {
-                                tx.scroll_into_view_in(timeline::VIEWPORT, s.ids.last().unwrap())
-                            }),
+                            .on_press_tx(|s: &mut Scene, tx| timeline::reveal(s.ids.len() - 1, tx)),
                     ),
             );
         if let Some(rail) = timeline::view(
@@ -98,11 +96,14 @@ fn fixed_geometry_virtualizes_and_activates_by_key() {
             })
             .count()
     };
-    assert!((10..80).contains(&mounted(&rt)));
+    assert!((10..256).contains(&mounted(&rt)));
     let scroll = rt.state.scroll.get();
     assert!(scroll.viewport[0] <= 40.0 && scroll.viewport[0] > 20.0);
     let expected = COUNT as f32 * 20.0 + (COUNT - 1) as f32 * 5.59375;
-    assert!((scroll.max[1] + scroll.viewport[1] - expected).abs() < 1.0);
+    assert!(
+        (scroll.max[1] + scroll.viewport[1] - expected).abs() < 1.0,
+        "{scroll:?}"
+    );
     let (x, y) = rt.find("Message 00002").unwrap();
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
@@ -125,6 +126,18 @@ fn fixed_geometry_virtualizes_and_activates_by_key() {
     });
     rt.frame(0.016);
     assert_eq!(rt.state.active, "Message 00003");
+    rt.update(|_, tx| timeline::reveal(COUNT - 1, tx));
+    for _ in 0..8 {
+        rt.frame(0.016);
+    }
+    let scroll = rt.state.scroll.get();
+    assert!(
+        (scroll.max[1] + scroll.viewport[1] - expected).abs() < 1.0,
+        "{scroll:?}"
+    );
+    assert_eq!(scroll.offset[1], scroll.max[1]);
+    assert!(rt.find("Message 199999").is_some());
+    assert!(rt.find("Message 00000").is_none());
     rt.set_viewport((419.0, 320.0), 1.0);
     for _ in 0..4 {
         rt.frame(0.016);

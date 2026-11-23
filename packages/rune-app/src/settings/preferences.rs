@@ -23,6 +23,13 @@ pub(super) struct Preferences {
 }
 
 impl Preferences {
+    pub(super) fn show_timeline(&self) -> bool {
+        self.config
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot["settings"]["showMessageTimeline"].as_bool())
+            .unwrap_or(true)
+    }
     pub(super) fn shortcut(&self, action: &str) -> Option<&[Value]> {
         self.config.snapshot.as_ref()?["settings"]["hotkeyOverrides"][action]
             .as_array()

@@ -22,6 +22,10 @@ impl Default for Reading {
 }
 
 impl Reading {
+    pub(super) fn hold(&mut self, message: String) {
+        self.following = false;
+        self.top = Some((message, 0.0));
+    }
     pub(super) fn settle(&mut self, attempted: &str, confirmed: Option<&str>) {
         if let Some((id, offset)) = &self.top
             && id == attempted
@@ -50,9 +54,13 @@ impl Reading {
         };
     }
 
-    fn record(&mut self, id: &str, top: f32, [_, y, _, height]: [f32; 4]) {
+    fn record(&mut self, id: &str, top: f32, [_, y, _, height]: [f32; 4]) -> bool {
         if height > 0.0 && y <= top && y + height > top {
+            let changed = self.top.as_ref().is_none_or(|(old, _)| old != id);
             self.top = Some((id.into(), y - top));
+            changed
+        } else {
+            false
         }
     }
 }
@@ -92,7 +100,9 @@ pub(super) fn row(s: &State, id: String, view: El) -> El {
     view.on_drawn_layout_tx(move |s: &mut State, rect, tx| {
         if s.current_scope(&scope) {
             let top = s.tool_diff_preferences.history_bounds.get()[1];
-            s.transcript_display.reading_mut().record(&id, top, rect);
+            if s.transcript_display.reading_mut().record(&id, top, rect) {
+                crate::timeline::reading_changed(s);
+            }
         }
         tx.live_only();
     })

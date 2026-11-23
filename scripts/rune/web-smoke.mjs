@@ -12,7 +12,7 @@ import {mobileLive, revokedLauncher} from './web-live.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'same-origin-pairing':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},timeline:{type:'boolean'},'same-origin-pairing':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
@@ -46,7 +46,7 @@ const connectedPalettes = values.connected
 try {
   const android=mobileContext(browser)
   const sizes=values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
-    [['desktop',960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
+    [['desktop',values.timeline?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
   for (const [name, width, height, touch] of sizes) {
     const control=name==='phone-dpr1-control'
     for (const colorScheme of control?['light']:['light','dark']) {
@@ -203,6 +203,34 @@ try {
           await select('Another session','ses_another')
           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
           await select('Existing history','ses_existing');await reading()
+          if(values.timeline&&name==='desktop'){
+            const rail=page.getByRole('navigation',{name:messages['messageTimeline.ariaLabel']})
+            const box=await rail.boundingBox()
+            assert(box,'The conversation must mount the timeline')
+            const outline=page.waitForResponse(res=>res.url().endsWith('/session-history/outline')&&res.ok())
+            const tool=rail.getByRole('button',{name:'read',exact:true})
+            await page.mouse.move(box.x+10,box.y+10)
+            await page.mouse.wheel(0,-100000)
+            // The index can arrive before or after the normal latest-window response.
+            await Promise.race([outline,tool.waitFor({state:'attached'})])
+            await page.mouse.wheel(0,-100000)
+            await tool.waitFor()
+            const run=tool.locator('xpath=following-sibling::button[1]')
+            await run.waitFor()
+            const before=history.filter(r=>r.input.target.kind==='around').length
+            const result=page.waitForResponse(res=>res.url().endsWith('/session-history/window')&&res.ok()
+              &&res.request().postDataJSON()?.target?.kind==='around')
+            await run.click({force:true})
+            assert.equal((await result).request().postDataJSON().target.messageID,'message-00000')
+            const exact=page.getByText('Exact position in the old message',{exact:true})
+            await exact.waitFor()
+            assert(Math.abs((await exact.boundingBox()).y-box.y)<8,'The text block, not its message header, must land at the reading line')
+            assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1)
+            await tool.click({force:true})
+            assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1,'A resident click uses no window')
+            await press(messages['rune.latest'])
+            await reading()
+          }
         }else{
         // Keyboard input is scoped to this headless page and goes through Rune's DOM bridge.
         let focused = false
@@ -277,9 +305,9 @@ try {
           const existing=history.filter(row=>row.input.sessionID==='ses_existing')
           assert(existing.length>=1)
           for(const row of existing){
-            if(values.mobile&&(row.body.status!=='window'||!row.body.latest))continue
+            if((values.mobile||values.timeline)&&(row.body.status!=='window'||!row.body.latest))continue
             const bodies=row.body.messages.map(message=>message.text??message.content?.[0]?.text)
-            if(values.mobile)assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
+            if(values.mobile||values.timeline)assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
             else assert.deepEqual(bodies,['Existing project history','Existing answer'])
           }
           assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===0))

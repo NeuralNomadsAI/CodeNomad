@@ -37,7 +37,7 @@ wasm-bindgen --target web --out-name probe --out-dir "$CARGO_TARGET_DIR/browser-
 node packages/rune-app/fixtures/browser-outline.mjs "$CARGO_TARGET_DIR/browser-outline"
 ```
 
-La galerie `history-rail` monte le composant Rune sur 10 000 repères sans serveur. Le test Windows vérifie l'étendue, le nombre de repères montés, le clavier et le seuil de largeur. Chromium vérifie le miroir accessible, le clic, le clavier, le saut à un repère hors écran et la disparition sous 420 px, en clair et en sombre.
+La galerie `history-rail` monte le composant Rune sur 200 000 repères sans serveur. Le test Windows vérifie l'étendue en haut et en bas, le nombre de repères montés, le clavier et le seuil de largeur. Chromium vérifie le miroir accessible, le clic, le clavier, le saut à un repère hors écran et la disparition sous 420 px, en clair et en sombre.
 
 ```sh
 cargo test --locked -p rune-theme-codenomad --example history-rail
@@ -45,6 +45,8 @@ cargo build --locked -p rune-theme-codenomad --example history-rail --target was
 wasm-bindgen --target web --out-name rail --out-dir "$CARGO_TARGET_DIR/browser-rail" "$CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/examples/history-rail.wasm"
 node packages/rune-app/fixtures/history-rail-web.mjs "$CARGO_TARGET_DIR/browser-rail"
 ```
+
+Le raccord conversation est testé par `cargo test --locked -p codenomad-rune-app timeline::tests` et, avec le bundle produit WASM et le serveur Rust de qualification, par `node packages/rune-app/fixtures/launcher-fixture.mjs --web-timeline`. Ce scénario demande une fenêtre `around` pour un bloc hors fenêtre, puis clique un repère de la fenêtre chargée sans requête.
 
 ## Parité par composant
 

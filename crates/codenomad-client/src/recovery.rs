@@ -337,6 +337,29 @@ pub(crate) async fn run_with_reading(
                     reader_event(reading, generation, &out, &wake, Event::PagingFailed).await;
                 }
             }
+            Some(Input::Command(Command::Anchor(jump))) => {
+                if jump.cancelled.is_closed() {
+                    continue;
+                }
+                if !active_reader || !opened || !wire.upstream.load(SeqCst) {
+                    publish(&out, &wake, Event::AnchorFailed(jump.ticket)).await;
+                    continue;
+                }
+                if let Some((page, stamp)) =
+                    jump.offer(&backend, &resident, &wire, &out, &wake).await
+                {
+                    historical = page.newer.is_some();
+                    fence = stamp;
+                    first = page.rows.first().map(|row| row.id.clone());
+                    older = page.older.clone();
+                    known = page.rows.iter().map(|row| row.id.clone()).collect();
+                    resident = page.rows;
+                    owed.retain(|(id, _)| known.contains(id));
+                    anchored = None;
+                    parked = false;
+                    dirty = false;
+                }
+            }
             Some(Input::Command(Command::Latest)) => {
                 historical = false;
                 anchored = None;

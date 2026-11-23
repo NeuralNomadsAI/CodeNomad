@@ -1,0 +1,207 @@
+use super::{Marker, owner};
+use crate::{
+    State,
+    chat::{anchors, reader},
+    history::Page,
+    transport::Command,
+};
+use codenomad_client::{
+    Sender, bounded,
+    timeline::{Admission, Jump},
+};
+use rune::Tx;
+
+#[derive(Default)]
+pub(super) struct Navigation {
+    serial: u64,
+    flight: Option<(Sender<()>, Marker)>,
+    align: Option<(String, String)>,
+    pub(super) retry: Option<Marker>,
+    pub(super) active: Option<String>,
+    locked: bool,
+    last: super::view::Scroll,
+    browse: bool,
+}
+
+pub(crate) fn cancel_jump(s: &mut State) {
+    let j = &mut owner(s).jump;
+    j.serial = j.serial.wrapping_add(1);
+    j.flight = None;
+    j.align = None;
+    j.retry = None;
+    j.locked = false;
+}
+
+pub(super) fn select(s: &mut State, id: &str, tx: &mut Tx) {
+    let target = owner(s).markers.iter().find(|m| m.id == id).cloned();
+    if let Some(target) = target {
+        start(s, target, tx);
+    }
+}
+
+pub(super) fn retry(s: &mut State, tx: &mut Tx) {
+    if let Some(target) = owner(s).jump.retry.take() {
+        start(s, target, tx);
+    }
+}
+
+fn start(s: &mut State, target: Marker, tx: &mut Tx) {
+    gesture(s);
+    cancel_jump(s);
+    let serial = owner(s).jump.serial;
+    if let Some(row) = s.messages.iter().find(|row| row.id == target.message) {
+        if let Some(block) = locate(s, row, &target) {
+            settle(s, &target, block);
+            apply_alignment(s, tx);
+        } else {
+            owner(s).jump.retry = Some(target);
+        }
+        return;
+    }
+    let (cancel, cancelled) = bounded(1);
+    let command = Command::Anchor(Jump {
+        ticket: serial,
+        message: target.message.clone(),
+        cancelled,
+    });
+    if owner(s).online
+        && s.commands
+            .as_ref()
+            .is_some_and(|commands| commands.try_send(command).is_ok())
+    {
+        let j = &mut owner(s).jump;
+        j.active = Some(target.id.clone());
+        j.flight = Some((cancel, target));
+    } else {
+        owner(s).jump.retry = Some(target);
+    }
+}
+
+fn locate(s: &State, row: &crate::history::Row, m: &Marker) -> Option<(String, usize)> {
+    anchors::blocks(row, anchors::steps(s, &row.id), true)
+        .into_iter()
+        .find(|b| {
+            b.marker.kind == m.kind
+                && b.marker.ordinal == m.ordinal
+                && b.marker.continued == m.continued
+        })
+        .map(|block| (block.key, block.reveal))
+}
+
+fn settle(s: &mut State, m: &Marker, (key, steps): (String, usize)) {
+    if steps > 0 {
+        anchors::reveal(s, &m.message, steps);
+    }
+    let t = owner(s);
+    t.changed = true;
+    t.jump.align = Some((m.message.clone(), key));
+    t.jump.active = Some(m.id.clone());
+    t.jump.locked = true;
+}
+
+pub(crate) fn admit(s: &mut State, serial: u64, page: Page, admit: Admission) {
+    if !super::demanded(s) || owner(s).jump.serial != serial || gesture(s) {
+        return;
+    }
+    let Some((_cancel, target)) = owner(s).jump.flight.take() else {
+        return;
+    };
+    let Some(block) = page
+        .rows
+        .iter()
+        .find(|row| row.id == target.message)
+        .and_then(|row| locate(s, row, &target))
+    else {
+        owner(s).jump.retry = Some(target);
+        return;
+    };
+    if admit.accept() {
+        reader::install_anchor(s, page);
+        settle(s, &target, block);
+    } else {
+        owner(s).jump.retry = Some(target);
+    }
+}
+
+pub(crate) fn failed(s: &mut State, serial: u64) {
+    let j = &mut owner(s).jump;
+    if j.serial == serial
+        && let Some((_, target)) = j.flight.take()
+    {
+        j.retry = Some(target);
+    }
+}
+
+fn gesture(s: &mut State) -> bool {
+    let t = owner(s);
+    let observed = t.scroll.get();
+    let previous = std::mem::replace(&mut t.jump.last, observed);
+    if previous.rail != observed.rail {
+        t.jump.browse = true;
+    }
+    if previous.transcript != observed.transcript {
+        cancel_jump(s);
+        owner(s).jump.browse = false;
+        true
+    } else {
+        false
+    }
+}
+
+pub(super) fn hand_scrolled(s: &mut State, rail: bool) {
+    if rail {
+        owner(s).jump.browse = true;
+    } else {
+        cancel_jump(s);
+        owner(s).jump.browse = false;
+    }
+}
+
+fn apply_alignment(s: &mut State, tx: &mut Tx) -> bool {
+    let Some((message, key)) = owner(s).jump.align.take() else {
+        return false;
+    };
+    tx.instant();
+    tx.scroll_key_to(
+        if key == message {
+            key
+        } else {
+            format!("{message}/{key}")
+        },
+        0.0,
+    );
+    reader::set_timeline_position(s, message);
+    true
+}
+
+pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
+    let moved = gesture(s);
+    let aligned = apply_alignment(s, tx);
+    if owner(s).jump.locked || owner(s).jump.flight.is_some() {
+        return moved || aligned;
+    }
+    let reading = reader::timeline_reading(s);
+    let t = owner(s);
+    let marker = reading
+        .and_then(|(message, following)| {
+            if following {
+                t.resident.last().and_then(|(_, markers)| markers.last())
+            } else {
+                t.resident
+                    .get(message)
+                    .and_then(|(_, markers)| markers.first())
+            }
+        })
+        .map(|m| m.id.clone());
+    if t.jump.active == marker {
+        return moved || aligned;
+    }
+    t.jump.active = marker;
+    if !t.jump.browse
+        && let Some(active) = &t.jump.active
+        && let Some(index) = t.markers.iter().position(|m| &m.id == active)
+    {
+        rune_theme_codenomad::timeline::reveal_when_outside(index, t.scroll.get().at, tx);
+    }
+    true
+}
