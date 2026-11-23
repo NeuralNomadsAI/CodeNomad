@@ -29,29 +29,41 @@ pub(super) struct Info {
     release_failed: bool,
     diagnostics: diagnostics::Diagnostics,
     #[cfg(target_arch = "wasm32")]
-    announced: Option<&'static str>,
+    announced: [Option<&'static str>; 4],
 }
 
 impl Info {
     #[cfg(target_arch = "wasm32")]
     pub fn announce(&mut self, prefs: &Preferences, tx: &mut rune::Tx) {
-        let notice = if self.release_failed {
-            Some("settings.info.actions.failed")
-        } else if prefs.update_feed_failed() {
-            Some("settings.info.updates.feed.saveFailed")
-        } else if self.failed {
-            Some("settings.info.connectivity.loadFailed")
-        } else {
-            self.diagnostics.feedback()
-        };
-        if let Some(key) = notice.filter(|key| Some(*key) != self.announced) {
-            if key.ends_with(".copied") {
-                layout::announce_selection(tx, t(key));
+        let notices = [
+            self.release_failed
+                .then_some("settings.info.actions.failed"),
+            prefs
+                .update_feed_failed()
+                .then_some("settings.info.updates.feed.saveFailed"),
+            self.failed
+                .then_some("settings.info.connectivity.loadFailed"),
+            self.diagnostics.feedback(),
+        ];
+        let changed: Vec<_> = notices
+            .into_iter()
+            .zip(self.announced)
+            .filter_map(|(next, old)| next.filter(|key| Some(*key) != old))
+            .collect();
+        if !changed.is_empty() {
+            // Rune keeps one announcement per frame. Say new notices together.
+            let message = changed
+                .iter()
+                .map(|key| t(key))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            if changed.iter().all(|key| key.ends_with(".copied")) {
+                layout::announce_selection(tx, &message);
             } else {
-                layout::announce_alert(tx, t(key));
+                layout::announce_alert(tx, &message);
             }
         }
-        self.announced = notice;
+        self.announced = notices;
     }
 
     pub fn close(&mut self) {

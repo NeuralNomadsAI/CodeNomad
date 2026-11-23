@@ -28,7 +28,7 @@ let account = 'First fixture account', detached = false
 let contrast = 'on', permissions = 'autonomous'
 let notificationRouting, notifyFocused
 let hotkeyOverrides = { 'new-instance': [{key:'n',mod:true}], 'file-save': [{key:'n',mod:true}] }
-let updateFeed = 'stable', infoReads = 0, invalidOffer = false
+let updateFeed = 'stable', infoReads = 0, invalidOffer = false, failFeed = false
 const feedWrites = []
 const writes = []
 const memoryRequests = []
@@ -216,9 +216,10 @@ const server = createServer(async (req,res) => {
           let body = ''
           for await (const chunk of req) body += chunk
           const patch = JSON.parse(body)
-          assert.deepEqual(patch,{updateFeed:'preview'})
-          updateFeed = patch.updateFeed
+          assert.deepEqual(patch,{updateFeed:failFeed?'stable':'preview'})
           feedWrites.push(patch)
+          if (failFeed) return res.writeHead(503).end()
+          updateFeed = patch.updateFeed
         }
         return json({updateFeed})
       }
@@ -367,6 +368,14 @@ try {
     await visible('9.1.0-dev')
     await downloadRelease.press('Enter')
     await page.waitForFunction(url=>window.openedInfoLinks.includes(url),releasePage)
+    failFeed = true
+    const reread = page.waitForResponse(response=>new URL(response.url()).pathname==='/api/meta')
+    await radio('Stable releases').press('Enter')
+    await reread
+    await page.locator('[aria-live="assertive"]').filter({hasText:'Could not save the update feed.'}).waitFor({state:'attached'})
+    assert.deepEqual(feedWrites,[{updateFeed:'preview'},{updateFeed:'stable'}])
+    assert.equal(infoReads,before+2)
+    assert.equal(await page.getByRole('radio',{name:'Previews and stable releases',exact:true,checked:true}).count(),1)
     const copy = page.getByRole('button',{name:'Copy to clipboard',exact:true})
     await copy.press('Enter')
     await page.locator('[aria-live="assertive"]').filter({hasText:'Could not copy diagnostics.'}).waitFor({state:'attached'})
