@@ -27,6 +27,7 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
             crate::strings::t("history.navigation.loading"),
         ));
     }
+    overlays.extend(crate::timeline::preview_overlay(s));
     rune_theme_codenomad::layout::with_overlays(body, overlays)
 }
 

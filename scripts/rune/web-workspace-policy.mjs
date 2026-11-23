@@ -56,6 +56,9 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt})
       if(!owned||!workspaces.has(owned[1]))return false
       if(method==='GET'&&owned[2]==='worktrees')return true
       if(method==='POST'&&['session-history/window','session-history/outline'].includes(owned[2]))return ['ses_existing','ses_another','ses_linked','ses_linked_next'].includes(body?.sessionID)
+      if(method==='POST'&&owned[2]==='session-history/outlinePreview')return body?.sessionID==='ses_existing'
+        &&Array.isArray(body.messageIDs)&&body.messageIDs.length>0&&body.messageIDs.length<=12
+        &&body.messageIDs.every(id=>typeof id==='string'&&/^(message-\d{5}|timeline-(compaction|system))$/.test(id))
       if(method==='POST'&&owned[2]==='session-history/query')return body?.sessionID==='ses_existing'&&body.purpose==='search'
       if(method==='POST'&&owned[2]==='session-history/ranked')return body?.version===1&&body.limit===40
       if(method==='POST'&&owned[2]==='creation/release')return claim(body)&&owners.get(owned[1])===body.requestId

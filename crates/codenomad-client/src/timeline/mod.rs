@@ -12,10 +12,12 @@ use std::{
 
 mod anchor;
 mod jump;
+mod previews;
 mod rail;
 pub use anchor::AnchorWindow;
 pub use jump::{Admission, Jump};
 pub(crate) use jump::{page_offer, until_cancelled};
+pub use previews::{Excerpt, PREVIEW_BATCH};
 pub use rail::{Marker, MarkerKind, Resident, UnplacedWindow, WindowPosition, project};
 
 const PAGE_ENTRIES: usize = 16_384;

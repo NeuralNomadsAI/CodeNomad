@@ -268,6 +268,18 @@ try {
             await Promise.race([outline,tool.waitFor({state:'attached'})])
             await page.mouse.wheel(0,-100000)
             await tool.waitFor()
+            const toolBox=await tool.boundingBox()
+            assert(toolBox)
+            const noPage=history.length
+            await page.mouse.move(toolBox.x+toolBox.width/2,toolBox.y+toolBox.height/2)
+            const tip=page.getByRole('tooltip')
+            await tip.getByText('Indexed tool excerpt message-00000',{exact:true}).waitFor()
+            assert.equal(history.length,noPage,'Preview must not page the transcript')
+            const tipBox=await tip.boundingBox()
+            assert(tipBox&&tipBox.x>=0&&tipBox.y>=0&&tipBox.x+tipBox.width<=width+1&&tipBox.y+tipBox.height<=height+1)
+            await page.keyboard.press('Escape')
+            await tip.waitFor({state:'detached'})
+            await page.mouse.move(box.x-40,box.y+25)
             const run=tool.locator('xpath=following-sibling::button[1]')
             await run.waitFor()
             const before=history.filter(r=>r.input.target.kind==='around').length

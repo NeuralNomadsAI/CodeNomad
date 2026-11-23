@@ -1,11 +1,13 @@
 //! The visible conversation owns structure and selection; the reader owns bodies.
 mod navigation;
+mod preview;
 mod reading_line;
 pub(crate) mod search;
 #[cfg(test)]
 mod tests;
 mod view;
 pub(crate) use navigation::{admit, cancel_jump, failed, input_precedes_admission, restore_search};
+pub(crate) use preview::{dismiss as dismiss_preview, overlay as preview_overlay};
 pub(crate) use reading_line::watch as watch_block;
 pub(crate) use view::poll_edge;
 pub(crate) use view::{view, watch};
@@ -65,6 +67,7 @@ pub(crate) struct Timeline {
     pub(crate) paging: Option<(Sender<()>, crate::transport::HistoryEdge)>,
     pub(crate) page_retry: Option<crate::transport::HistoryEdge>,
     reading_line: reading_line::Blocks,
+    previews: preview::Previews,
     search: search::Search,
 }
 
@@ -86,6 +89,7 @@ pub(crate) fn suspend(s: &mut State) {
     cancel_jump(s);
     let t = owner(s);
     t.visible = false;
+    t.previews.hide();
     cancel_scan(t);
     t.refresh = true;
     // A departed view can retain only a cache-sized completed index.
@@ -114,6 +118,7 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
         }
         Event::HistoryInvalidated => {
             cancel_scan(t);
+            t.previews = Default::default();
             t.outline = None;
             t.markers.clear();
             t.version = t.version.wrapping_add(1);
@@ -128,6 +133,7 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
         | Event::AuthenticationRequired(_)
         | Event::WorkspaceMissing => {
             cancel_scan(t);
+            t.previews = Default::default();
             t.online = false;
             t.refresh = true;
             cancel_jump(s);
@@ -227,6 +233,7 @@ fn reproject(s: &mut State) -> bool {
 
 pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     if !demanded(s) {
+        owner(s).previews.hide();
         if std::mem::take(&mut owner(s).visible) {
             if search::is_open(s) {
                 cancel_scan(owner(s));
@@ -279,5 +286,5 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     if std::mem::take(&mut t.changed) {
         changed |= reproject(s);
     }
-    changed | navigation::poll(s, tx)
+    changed | navigation::poll(s, tx) | preview::poll(s, tx)
 }

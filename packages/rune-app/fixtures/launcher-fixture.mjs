@@ -334,6 +334,13 @@ const upstream=createServer(async(req,res)=>{
       return json({output:{version:1,status:'ranked',scanned:2,candidates:2,judged:2,skipped:0,prefilterBypassed:0,
         matchedSessions:2,capped:false,examinedBefore:0,cursor:null,exclusions:[],caps:[],hits,sessions}})
     }
+    if(url.pathname==='/api/rpc/codenomad.session-pruning/outlinePreview'){
+      const {input}=JSON.parse(raw), rows=stores.get(input.sessionID).rows
+      assert(input.messageIDs.length>0&&input.messageIDs.length<=12)
+      assert.equal(new Set(input.messageIDs).size,input.messageIDs.length)
+      return json({output:{status:'previews',entries:input.messageIDs.filter(id=>rows.some(row=>row.id===id))
+        .map(id=>({id,text:`**Indexed excerpt ${id}**`,tools:`**Indexed tool excerpt ${id}**`}))}})
+    }
     if(url.pathname==='/api/rpc/codenomad.session-pruning/outlineLayout'){
       const {input}=JSON.parse(raw),rows=stores.get(input.sessionID).rows
       assert(!input.cursor)

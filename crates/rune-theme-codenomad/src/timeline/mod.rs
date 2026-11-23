@@ -1,5 +1,6 @@
 //! Fixed-geometry timeline rail. Its caller supplies identities and active state.
 pub mod icons;
+pub mod preview;
 pub mod search;
 use crate::{catalogue, generated_layout::TIMELINE_MIN_WIDTH, layout, palettes, tokens};
 use rune::{El, GrowthSpec, Icon, ScrollSpec, Tx};
@@ -75,6 +76,18 @@ pub fn reveal_when_outside(index: usize, at: rune::ScrollPos, tx: &mut Tx) {
     }
 }
 
+pub fn visible_markers(at: rune::ScrollPos, count: usize) -> std::ops::Range<usize> {
+    if at.viewport[1] <= 0.0 {
+        return 0..0;
+    }
+    let (height, gap) = geometry();
+    let pitch = height + gap;
+    let top = at.offset[1].max(0.0);
+    let first = ((top + gap) / pitch).floor() as usize;
+    let last = ((top + at.viewport[1]) / pitch).ceil() as usize;
+    first.min(count)..last.min(count)
+}
+
 fn row_top(index: usize) -> f32 {
     let (height, gap) = geometry();
     ((f64::from(height) + f64::from(gap)) * index as f64) as f32
@@ -98,6 +111,7 @@ pub fn view<S: 'static>(
     key: impl for<'a> Fn(&'a S, usize) -> Cow<'a, str> + 'static,
     marker: impl for<'a> Fn(&'a S, usize) -> Marker<'a> + 'static,
     activate: impl Fn(&mut S, &str, &mut Tx) + 'static,
+    decorate: impl Fn(&S, usize, El) -> El + 'static,
 ) -> Option<El> {
     if !fits(width) || count == 0 {
         return None;
@@ -120,7 +134,7 @@ pub fn view<S: 'static>(
                 let on_enter = activate.clone();
                 let activate = activate.clone();
                 palettes::with_palette(palette, || {
-                    button(dark, marker(s, i))
+                    let button = button(dark, marker(s, i))
                         .key(id.clone())
                         .pin(Some(0.0), Some((i - first) as f32 * pitch), Some(0.0), None)
                         .on_press_tx(move |s, tx| activate(s, &id, tx))
@@ -131,7 +145,8 @@ pub fn view<S: 'static>(
                             }
                             on_enter(s, &enter, tx);
                             true
-                        })
+                        });
+                    decorate(s, i, button)
                 })
             }))
     });

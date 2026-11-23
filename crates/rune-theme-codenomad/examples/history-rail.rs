@@ -65,6 +65,7 @@ fn view(s: &Scene, cx: &mut Cx<Scene>) -> El {
                 active: s.active == s.ids[i],
             },
             |s, key, _| s.active = key.into(),
+            |_, _, button| button,
         ) {
             let scroll = s.scroll.clone();
             conversation = conversation.child(rail.on_scroll_offset(move |pos| scroll.set(pos)));

@@ -122,6 +122,7 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
     .on_scroll_offset(move |at| {
         let mut gesture = scroll.get();
         let previous = gesture.viewport;
+        let moved = rail && gesture.at != at;
         if rail {
             gesture.at = at;
         } else {
@@ -141,6 +142,9 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
             wake();
         }
         scroll.set(gesture);
+        if moved {
+            wake();
+        }
     })
 }
 
@@ -172,9 +176,11 @@ pub(crate) fn view(s: &State, history: El, expanded: bool) -> El {
         move |s: &State, i| crate::strings::with_locale(locale, || glyph(s, i)),
         move |s, id, tx| {
             if s.current_scope(&scope) {
+                super::dismiss_preview(s);
                 super::navigation::select(s, id, tx);
             }
         },
+        super::preview::marker,
     ) {
         area = area.child(scroll(s, rail, true));
     }
@@ -250,20 +256,8 @@ fn glyph(s: &State, index: usize) -> timeline::Marker<'_> {
         System => ("messageBlock.system.label", &icons::INFO, "text-secondary"),
     };
     timeline::Marker {
-        label: s
-            .messages
-            .iter()
-            .find(|row| row.id == m.message)
-            .and_then(|row| {
-                crate::chat::anchors::blocks(row, crate::chat::anchors::steps(s, &row.id), false)
-                    .into_iter()
-                    .find(|block| {
-                        block.marker.kind == m.kind
-                            && block.marker.ordinal == m.ordinal
-                            && block.marker.continued == m.continued
-                    })
-            })
-            .map(|block| excerpt(block.text))
+        label: super::preview::resident(s, m)
+            .map(|(block, _)| excerpt(block.text))
             .filter(|text| !text.is_empty())
             .map(std::borrow::Cow::Owned)
             .unwrap_or_else(|| m.tool.as_deref().unwrap_or_else(|| t(label)).into()),

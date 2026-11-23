@@ -46,7 +46,7 @@ pub fn prose<S: 'static>(
 }
 
 // Normalize only parsed HTML and soft breaks so fences, inline code and link URLs stay intact.
-fn literal_breaks(source: &str) -> Cow<'_, str> {
+pub(crate) fn literal_breaks(source: &str) -> Cow<'_, str> {
     if !source.contains(['<', '\n']) {
         return Cow::Borrowed(source);
     }
