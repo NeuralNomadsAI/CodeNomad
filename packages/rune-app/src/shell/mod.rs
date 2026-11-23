@@ -72,6 +72,8 @@ fn body(
 pub fn reader(s: &State, history: impl FnOnce() -> El) -> El {
     if crate::git::has_preview(s) {
         crate::git::reader(s)
+    } else if crate::files::has_preview(s) {
+        crate::files::view::in_shell(s)
     } else {
         history()
     }

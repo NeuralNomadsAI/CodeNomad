@@ -31,6 +31,7 @@ pub struct Ui {
     pub rows: Vec<Row>,
     pub panel: bool,
     pub host_width: Option<f32>,
+    pub(super) reader_width: Option<f32>,
     backend: Backend,
     reads: Reads,
     collation: std::result::Result<Collation, String>,
@@ -64,6 +65,7 @@ impl Ui {
             rows: vec![],
             panel: false,
             host_width: None,
+            reader_width: None,
             backend,
             reads,
             collation: Collation::try_default(),
@@ -83,6 +85,7 @@ impl Ui {
         self.active = active;
         if !active {
             self.host_width = None;
+            self.reader_width = None;
             self.pictures.suspend();
         }
         self.document.activate(active);

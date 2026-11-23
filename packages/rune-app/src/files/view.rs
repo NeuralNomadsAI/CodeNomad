@@ -124,6 +124,23 @@ pub(crate) fn reader(s: &State) -> El {
     layout::with_source_palette(|| reader_content(s))
 }
 
+pub(crate) fn in_shell(s: &State) -> El {
+    let scope = s.input_scope.clone();
+    reader(s)
+        .remaining()
+        .on_layout_tx(move |s: &mut State, [_, _, width, _], tx| {
+            if s.current_scope(&scope)
+                && width.is_finite()
+                && width > 0.0
+                && let Some(files) = &mut s.files
+                && files.reader_width != Some(width)
+            {
+                files.reader_width = Some(width);
+                tx.instant();
+            }
+        })
+}
+
 fn reader_content(s: &State) -> El {
     let Some(ui) = &s.files else {
         return rune::el();
@@ -134,12 +151,14 @@ fn reader_content(s: &State) -> El {
     let dark = layout::dark();
     let scope = ui.document.scope();
     let drawer = ui.drawer();
-    let view_width = ui.host_width.map(|width| {
-        if drawer.pinned {
-            width - drawer.width
-        } else {
-            width
-        }
+    let view_width = ui.reader_width.or_else(|| {
+        ui.host_width.map(|width| {
+            if drawer.pinned {
+                width - drawer.width
+            } else {
+                width
+            }
+        })
     });
     let mut actions = vec![reader_action(
         s,

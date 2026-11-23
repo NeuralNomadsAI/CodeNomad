@@ -110,6 +110,66 @@ pub(crate) fn entry() -> El {
     rune::el()
 }
 
+pub(crate) fn matches_shortcut(
+    s: &State,
+    action: &str,
+    event: &rune::KeyEvent,
+    default: char,
+) -> bool {
+    let rune::Key::Command(key) = event.key else {
+        return false;
+    };
+    let mods = event.mods;
+    if !mods.ctrl && !mods.alt && !mods.cmd {
+        return false;
+    }
+    let settings = s.settings.shared.borrow();
+    let Some(overrides) = settings.shortcut(action) else {
+        return key.eq_ignore_ascii_case(&default) && mods.ctrl && !mods.shift && !mods.alt;
+    };
+    overrides.iter().any(|rule| {
+        let enabled = |name| rule[name].as_bool() == Some(true);
+        let command = enabled("mod");
+        let mac = cfg!(target_os = "macos");
+        (mac || !enabled("meta"))
+            && mods.ctrl == (enabled("ctrl") || command && !mac)
+            && (!mac || mods.cmd == (enabled("meta") || command))
+            && mods.shift == enabled("shift")
+            && mods.alt == enabled("alt")
+            && rule["key"].as_str().is_some_and(|value| {
+                let mut chars = value.chars();
+                chars
+                    .next()
+                    .is_some_and(|value| key.eq_ignore_ascii_case(&value))
+                    && chars.next().is_none()
+            })
+    })
+}
+
+#[cfg(all(test, target_os = "windows"))]
+#[test]
+fn shell_shortcuts_use_confirmed_overrides_without_changing_the_default() {
+    let s = crate::init();
+    let chord = |key| rune::KeyEvent {
+        key: rune::Key::Command(key),
+        mods: rune::Mods {
+            ctrl: true,
+            ..Default::default()
+        },
+    };
+    assert!(matches_shortcut(&s, "close-instance", &chord('w'), 'w'));
+    s.settings
+        .shared
+        .borrow_mut()
+        .fixture_shortcuts(serde_json::json!({
+            "close-instance": [],
+            "new-instance": [{"key": "t", "mod":true}]
+        }));
+    assert!(!matches_shortcut(&s, "close-instance", &chord('w'), 'w'));
+    assert!(!matches_shortcut(&s, "new-instance", &chord('n'), 'n'));
+    assert!(matches_shortcut(&s, "new-instance", &chord('t'), 'n'));
+}
+
 pub(crate) fn direct_entry(s: &State) -> El {
     if s.workspace.is_none() && s.settings.shared.borrow().backend.is_some() {
         entry()
