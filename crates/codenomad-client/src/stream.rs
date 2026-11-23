@@ -303,7 +303,8 @@ pub(super) async fn dispatch(
     if data.len() > NATIVE_EVENT_LIMIT {
         return Err("oversized SSE event".into());
     }
-    if let Some(id) = crate::settings::provider_change(&value)
+    if value["type"] == "instance.event"
+        && let Some(id) = crate::settings::provider_change(&value)
         && id == b.workspace
     {
         out.send(Input::Workspace(
@@ -355,6 +356,13 @@ pub(super) async fn dispatch(
             out.send(Input::Workspace(
                 epoch,
                 WorkspaceEvent::ComposerCataloguesChanged,
+            ))
+            .await?;
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::ProvidersChanged {
+                    workspace_id: b.workspace.clone(),
+                },
             ))
             .await?;
         }

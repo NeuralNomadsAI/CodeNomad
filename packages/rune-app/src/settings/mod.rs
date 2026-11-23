@@ -197,14 +197,7 @@ pub(crate) fn provider_connection_event(s: &State, event: &crate::transport::Eve
         Event::Workspace(WorkspaceEvent::Stopped { workspace_id }) => {
             provider_stopped(s, workspace_id)
         }
-        Event::AgentHint(true) => {
-            provider_transport(s, true);
-            if s.screen.launcher().is_none()
-                && let Some(backend) = bound_backend(s)
-            {
-                provider_changed(s, &backend.workspace);
-            }
-        }
+        Event::AgentHint(true) => provider_transport(s, true),
         Event::ConnectionLost => provider_transport(s, false),
         _ => {}
     }
