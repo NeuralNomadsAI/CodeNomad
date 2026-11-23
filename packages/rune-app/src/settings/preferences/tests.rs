@@ -2,6 +2,49 @@ use super::*;
 mod providers;
 
 #[test]
+fn save_shortcut_updates_only_its_host_config_entry() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let other = json!([{"key":"n","mod":true}]);
+        let binding = json!([{"key":"f8","mod":true}]);
+        let action = super::super::shortcuts::FILE_SAVE;
+        for (patch, confirmed) in [
+            (binding.clone(), binding),
+            (json!([]), json!([])),
+            (Value::Null, Value::Null),
+        ] {
+            let old = prefs.shortcut(action).map(<[_]>::to_vec);
+            prefs.stage_file_save(patch.clone());
+            assert_eq!(prefs.shortcut(action), old.as_deref());
+            prefs.poll();
+            let write = request(&listener).await;
+            assert_eq!(write.first, "PATCH /api/storage/config/ui HTTP/1.1");
+            assert_eq!(
+                write.body,
+                json!({"settings":{"hotkeyOverrides":{"file-save":patch}}})
+            );
+            let mut overrides = json!({"new-instance": other});
+            if !confirmed.is_null() {
+                overrides["file-save"] = confirmed.clone();
+            }
+            write
+                .reply(200, json!({"settings":{"hotkeyOverrides":overrides}}))
+                .await;
+            wait_until(|| prefs.poll()).await;
+            assert_eq!(
+                prefs.shortcut(action),
+                confirmed.as_array().map(Vec::as_slice)
+            );
+            assert_eq!(
+                prefs.shortcut("new-instance"),
+                other.as_array().map(Vec::as_slice)
+            );
+            assert!(!prefs.file_save_pending());
+        }
+    });
+}
+
+#[test]
 fn contrast_applies_immediately_and_reconciles_an_unconfirmed_write() {
     platform::block_on(async {
         let (listener, mut prefs) = fixture().await;

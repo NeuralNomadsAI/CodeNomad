@@ -3,6 +3,42 @@ use rune::{Env, Runtime};
 use serde_json::Value;
 
 #[test]
+fn keyboard_shortcuts_records_the_focused_save_binding() {
+    let state = Window {
+        section: Section::Shortcuts,
+        ..Window::default()
+    };
+    state.shared.borrow_mut().fixture();
+    state.shared.borrow_mut().backend =
+        Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.02);
+    let click_edit = |rt: &mut Runtime<Window>| {
+        let (x, y) = rt.find("settings-file-save-edit").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.02);
+        assert!(rt.state.recording_shortcut);
+    };
+    click_edit(&mut rt);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Escape,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    assert!(!rt.state.shared.borrow().file_save_pending());
+    click_edit(&mut rt);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Function(8),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    assert!(rt.state.shared.borrow().file_save_pending());
+}
+
+#[test]
 fn contrast_control_changes_only_the_contrast_choice() {
     let state = Window::default();
     state.shared.borrow_mut().fixture();

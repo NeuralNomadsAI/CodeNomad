@@ -1,6 +1,7 @@
 use super::{State, activate_enter, document_action_tx, layout, t, theme};
 use crate::files::{Ui, document::editor::Decision};
-use rune::{El, Key, TextEdit};
+use crate::settings::shortcuts;
+use rune::{El, TextEdit};
 
 pub(super) fn source(
     s: &State,
@@ -19,8 +20,14 @@ pub(super) fn source(
     let disabled = !ui.document.writable();
     let save = |ui: &mut Ui, _: &mut rune::Tx| ui.save_document(ui.document.scope());
     let label = t("instanceShell.rightPanel.actions.save");
-    let control =
-        theme::editor::save(dark, label, disabled, document_action_tx(s, save)).key("file-save");
+    let control = theme::editor::save(
+        dark,
+        label,
+        &shortcuts::save_label(s),
+        disabled,
+        document_action_tx(s, save),
+    )
+    .key("file-save");
     actions.push(if disabled {
         control
     } else {
@@ -48,11 +55,11 @@ pub(super) fn source(
         }))
         .on_key({
             let save = document_action_tx(s, save);
-            move |s, key, tx| {
-                if matches!(key.key, Key::Command('s' | 'S'))
-                    && key.mods.cmd
-                    && !key.mods.shift
-                    && !key.mods.alt
+            move |s: &mut State, key, tx| {
+                if s.files
+                    .as_ref()
+                    .is_some_and(|ui| !ui.document.edit().is_composing())
+                    && shortcuts::matches_save(s, key, tx)
                 {
                     if !tx.key_repeat() {
                         save(s, tx);

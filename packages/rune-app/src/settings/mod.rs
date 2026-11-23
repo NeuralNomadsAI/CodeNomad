@@ -3,6 +3,7 @@
 mod opencode;
 mod preferences;
 mod providers;
+pub(crate) mod shortcuts;
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -291,6 +292,11 @@ pub(crate) fn entry() -> El {
         .key("open-preferences");
     #[cfg(target_arch = "wasm32")]
     web_providers::entry()
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_shortcuts(s: &State, overrides: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_shortcuts(overrides);
 }
 
 pub(crate) fn matches_shortcut(

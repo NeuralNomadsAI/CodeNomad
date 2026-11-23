@@ -91,16 +91,21 @@ const SAVE: rune::Icon = rune::Icon {
 pub fn save<S: 'static>(
     dark: bool,
     label: &str,
+    shortcut: &str,
     disabled: bool,
     press: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
-    IconButton::new(&SAVE)
+    let button = IconButton::new(&SAVE)
         .variant(IconButtonVariant::Neutral)
         .label(label)
-        .shortcut("mod+s")
         .disabled(disabled)
-        .on_press_tx(press)
-        .build(kit(dark))
+        .on_press_tx(press);
+    let button = if shortcut.is_empty() {
+        button
+    } else {
+        button.shortcut(shortcut)
+    };
+    button.build(kit(dark))
 }
 
 pub fn confirmation<S: 'static>(

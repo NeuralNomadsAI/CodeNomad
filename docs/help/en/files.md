@@ -25,7 +25,7 @@ Workspace `.mmd` files open as diagrams. Use **Show source** to edit and **Show 
 
 1. Open a Workspace text file with its eye action.
 2. For Markdown, choose **Show source** to edit, or **Preview Markdown** to read the rendering.
-3. Edit and choose **Save**, or press **Ctrl/Cmd+S** while the editor has focus.
+3. Edit and choose **Save**, or press **Ctrl/Cmd+S** while the editor has focus. Change or clear **Save file** in [Keyboard shortcuts](shortcuts.md).
 
 If the desktop app opens a draft recovery window, use **Copy** to keep each listed edit before closing it.
 4. If the file changed externally, review the overwrite confirmation; choose **Cancel** to keep your draft without overwriting that change.

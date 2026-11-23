@@ -25,7 +25,7 @@ Los archivos `.mmd` del Workspace se abren como diagramas. Usa **Mostrar código
 
 1. Abre un archivo de texto de Espacio de trabajo con su acción del ojo.
 2. Para Markdown, elige **Mostrar fuente** para editar o **Vista previa Markdown** para leer su representación.
-3. Edita y elige **Guardar**, o pulsa **Ctrl/Cmd+S** mientras el editor tenga el foco.
+3. Edita y elige **Guardar**, o pulsa **Ctrl/Cmd+S** mientras el editor tenga el foco. Cambia o borra **Guardar archivo** en [Atajos de teclado](shortcuts.md).
 
 Si la aplicación de escritorio abre una ventana de recuperación de borradores, usa **Copiar** para conservar los cambios antes de cerrarla.
 4. Si el archivo cambió externamente, revisa la confirmación de sobrescritura; elige **Cancelar** para conservar tu borrador sin sobrescribir ese cambio.

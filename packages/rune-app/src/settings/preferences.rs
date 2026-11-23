@@ -30,6 +30,19 @@ impl Preferences {
             .map(Vec::as_slice)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn stage_file_save(&mut self, binding: Value) {
+        if self.can_retry() && self.saved(Owner::Config).is_some() {
+            self.config.stage_file_save(binding);
+            self.revision += 1;
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn file_save_pending(&self) -> bool {
+        self.config.file_save_pending()
+    }
+
     #[cfg(test)]
     pub(super) fn fixture_shortcuts(&mut self, overrides: Value) {
         self.config.snapshot = Some(json!({"settings": {"hotkeyOverrides": overrides}}));

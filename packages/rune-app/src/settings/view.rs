@@ -1,4 +1,5 @@
 mod general;
+mod shortcuts;
 #[cfg(test)]
 mod tests;
 
@@ -28,6 +29,7 @@ pub(super) struct Window {
     contrast_help: bool,
     seen_revision: u64,
     section: Section,
+    recording_shortcut: bool,
     pub(super) opencode: opencode::Status,
     pub(super) providers: providers::Catalog,
 }
@@ -37,6 +39,7 @@ enum Section {
     General,
     OpenCode,
     Providers,
+    Shortcuts,
 }
 
 impl Default for Section {
@@ -116,6 +119,10 @@ pub(super) fn spec() -> AppSpec<Window> {
             }
         }),
         poll: Some(|s, _, tx| {
+            let recording_ended = s.recording_shortcut && tx.focused() != Some(shortcuts::EDIT);
+            if recording_ended {
+                s.recording_shortcut = false;
+            }
             let mut prefs = s.shared.borrow_mut();
             let changed = prefs.poll();
             if changed && let Some(wake) = &prefs.main_wake {
@@ -140,7 +147,7 @@ pub(super) fn spec() -> AppSpec<Window> {
             } else {
                 false
             };
-            updated | status_changed | providers_changed
+            updated | status_changed | providers_changed | recording_ended
         }),
         on_key: Some(|_, event, tx| {
             if event.key != rune::Key::Escape {
@@ -183,10 +190,12 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
         let providers_label = t("settings.nav.providers");
+        let shortcuts_label = t("settings.nav.hotkeys");
         let section = match s.section {
             Section::General => general_label,
             Section::OpenCode => opencode_label,
             Section::Providers => providers_label,
+            Section::Shortcuts => shortcuts_label,
         };
         let nav = chrome::nav(
             t("settings.title"),
@@ -207,13 +216,20 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     providers_label,
                     s.section == Section::Providers,
                 ),
+                (
+                    "settings-hotkeys",
+                    shortcuts_label,
+                    s.section == Section::Shortcuts,
+                ),
             ],
             |s: &mut Window, key| {
                 s.picker.set(None);
                 s.contrast_help = false;
+                s.recording_shortcut = false;
                 s.section = match key {
                     "settings-opencode" => Section::OpenCode,
                     "settings-providers" => Section::Providers,
+                    "settings-hotkeys" => Section::Shortcuts,
                     _ => Section::General,
                 };
                 if s.section != Section::OpenCode {
@@ -244,6 +260,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             rune::el()
         };
         let (key, controls) = match s.section {
+            Section::Shortcuts => ("hotkeys", shortcuts::view(s, &prefs)),
             Section::OpenCode => ("opencode", opencode::view(s)),
             Section::General => (
                 "general",

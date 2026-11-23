@@ -7,16 +7,28 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) enum Choice {
     Locale,
     Contrast,
+    FileSave,
     Mode,
     Palette(bool),
 }
 
 impl Choice {
-    fn put(self, patch: &mut Value, value: &'static str) {
+    fn put(self, patch: &mut Value, value: &ChoiceValue) {
+        if self == Self::FileSave {
+            if let ChoiceValue::Shortcut(binding) = value {
+                patch["settings"]["hotkeyOverrides"][super::super::shortcuts::FILE_SAVE] =
+                    binding.clone();
+            }
+            return;
+        }
+        let ChoiceValue::Text(value) = *value else {
+            return;
+        };
         match self {
             Self::Locale => patch["settings"]["locale"] = json!(value),
             Self::Contrast => patch["settings"]["highContrast"] = json!(value),
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
+            Self::FileSave => (),
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 patch["appearancePreferences"][mode] = json!({
@@ -26,12 +38,20 @@ impl Choice {
         }
     }
 
-    fn confirmed(self, value: &'static str, snapshot: &Value) -> bool {
+    fn confirmed(self, value: &ChoiceValue, snapshot: &Value) -> bool {
+        if self == Self::FileSave {
+            return matches!(value, ChoiceValue::Shortcut(binding)
+                if &snapshot["settings"]["hotkeyOverrides"][super::super::shortcuts::FILE_SAVE] == binding);
+        }
+        let ChoiceValue::Text(value) = *value else {
+            return false;
+        };
         let appearance = &snapshot["appearancePreferences"];
         match self {
             Self::Locale => snapshot["settings"]["locale"] == value,
             Self::Contrast => snapshot["settings"]["highContrast"] == value,
             Self::Mode => appearance["mode"] == value,
+            Self::FileSave => false,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 let slot = &appearance[mode];
@@ -45,7 +65,13 @@ impl Choice {
     }
 }
 
-type Choices = BTreeMap<Choice, &'static str>;
+#[derive(Clone, PartialEq)]
+enum ChoiceValue {
+    Text(&'static str),
+    Shortcut(Value),
+}
+
+type Choices = BTreeMap<Choice, ChoiceValue>;
 
 #[derive(Default)]
 struct Write {
@@ -124,6 +150,15 @@ impl Document {
     }
 
     pub(super) fn stage(&mut self, choice: Choice, value: &'static str) {
+        self.stage_value(choice, ChoiceValue::Text(value));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn stage_file_save(&mut self, binding: Value) {
+        self.stage_value(Choice::FileSave, ChoiceValue::Shortcut(binding));
+    }
+
+    fn stage_value(&mut self, choice: Choice, value: ChoiceValue) {
         if choice == Choice::Contrast {
             self.write.failed.remove(&choice);
         }
@@ -132,7 +167,16 @@ impl Document {
     }
 
     pub(super) fn requested(&self, choice: Choice) -> Option<&'static str> {
-        self.write.requested.get(&choice).copied()
+        match self.write.requested.get(&choice)? {
+            ChoiceValue::Text(value) => Some(*value),
+            ChoiceValue::Shortcut(_) => None,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn file_save_pending(&self) -> bool {
+        self.write.requested.contains_key(&Choice::FileSave)
+            && !self.choice_failed(Choice::FileSave)
     }
 
     pub(super) fn choice_failed(&self, choice: Choice) -> bool {
@@ -162,7 +206,7 @@ impl Document {
 
     fn settle(&mut self, operation: Operation, snapshot: Option<Value>, current: bool) {
         if let Operation::Write(sent) = &operation {
-            for (&choice, &value) in sent {
+            for (&choice, value) in sent {
                 if !snapshot
                     .as_ref()
                     .is_some_and(|data| choice.confirmed(value, data))
@@ -237,7 +281,13 @@ impl Document {
             Operation::Write(
                 std::mem::take(&mut self.write.pending)
                     .into_iter()
-                    .filter_map(|choice| self.requested(choice).map(|value| (choice, value)))
+                    .filter_map(|choice| {
+                        self.write
+                            .requested
+                            .get(&choice)
+                            .cloned()
+                            .map(|value| (choice, value))
+                    })
                     .collect(),
             )
         } else if std::mem::take(&mut self.read.queued) {
@@ -247,7 +297,7 @@ impl Document {
         };
         let patch = if let Operation::Write(sent) = &operation {
             let mut patch = json!({});
-            for (&choice, &value) in sent {
+            for (&choice, value) in sent {
                 choice.put(&mut patch, value);
             }
             Some(patch)

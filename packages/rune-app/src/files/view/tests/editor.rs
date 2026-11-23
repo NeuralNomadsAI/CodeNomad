@@ -177,6 +177,60 @@ fn typing_and_control_save_use_the_versioned_workspace_file() {
 }
 
 #[test]
+fn source_save_uses_the_live_override_and_disable_preference() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "source-save-shortcut"));
+        open(&mut rt, &http, "main.rs", "YQ==").await;
+        let input = rt
+            .elements()
+            .into_iter()
+            .find(|node| editable_source(&node.path, &node.role))
+            .unwrap();
+        let [x, y, w, h] = input.visible;
+        rt.pointer_down(x + w / 2.0, y + h / 2.0);
+        rt.pointer_up(x + w / 2.0, y + h / 2.0);
+        rt.frame(0.02);
+        rt.key(KeyEvent {
+            key: Key::Text("b".to_owned()),
+            mods: Mods::default(),
+        });
+        rt.frame(0.02);
+        let chord = |key| KeyEvent {
+            key,
+            mods: Mods {
+                ctrl: true,
+                cmd: true,
+                ..Mods::default()
+            },
+        };
+        for overrides in [
+            serde_json::json!({"file-save": []}),
+            serde_json::json!({"file-save": [{"key": "f8", "mod": true}]}),
+        ] {
+            rt.update(|s, _| crate::settings::fixture_shortcuts(s, overrides));
+            rt.key(chord(Key::Command('s')));
+            rt.frame(0.02);
+            rt.update_if(|s, _| s.files.as_mut().unwrap().poll(20.0));
+            http.quiet().await;
+        }
+        rt.key(chord(Key::Function(8)));
+        rt.frame(0.02);
+        rt.update_if(|s, _| s.files.as_mut().unwrap().poll(20.0));
+        http.request("GET", "main.rs")
+            .await
+            .preview("main.rs", "YQ==", Some("v1"))
+            .await;
+        settle(&mut rt).await;
+        let request = http.request("PUT", "main.rs").await;
+        assert!(request.body["contents"].as_str().unwrap().contains('b'));
+        assert_eq!(request.body["expectedVersion"], "v1");
+        request.reply(204, serde_json::Value::Null).await;
+        http.quiet().await;
+    });
+}
+
+#[test]
 fn binary_replacement_keeps_the_draft_visible_and_version_refusal_shows_the_reason() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;
