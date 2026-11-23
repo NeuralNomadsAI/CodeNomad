@@ -50,6 +50,7 @@ pub fn local_routes() -> Router<Shared> {
         .route("/api/remote-control/devices/{id}", delete(devices::revoke))
         .route("/api/remote-control/previews", put(devices::set_previews).layer(DefaultBodyLimit::max(4096)))
         .route("/api/auth/token", post(token).layer(DefaultBodyLimit::max(4096)))
+        .route("/api/auth/logout", post(logout))
         .route("/api/auth/password", post(set_password).layer(DefaultBodyLimit::max(24 * 1024)))
         .route("/login", get(login_page))
         .route("/auth/token", get(token_page))
@@ -115,8 +116,15 @@ pub struct Auth {
     /// The single principal of `--dangerously-skip-auth`.
     open: Principal,
     sessions: Mutex<HashMap<String, Session>>,
+    managed: Mutex<Option<ManagedSession>>,
     login_budget: tokio::sync::Semaphore,
     password_change: tokio::sync::Mutex<()>,
+}
+
+struct ManagedSession {
+    current: String,
+    previous: Option<String>,
+    delivered: bool,
 }
 
 fn random_id() -> Option<String> {
@@ -163,6 +171,7 @@ impl Auth {
             token: Mutex::new(token),
             open: Principal(CancellationToken::new()),
             sessions: Mutex::default(),
+            managed: Mutex::default(),
             login_budget: tokio::sync::Semaphore::new(4),
             password_change: Default::default(),
         })
@@ -205,14 +214,20 @@ impl Auth {
         if self.settings.skip {
             return Some(self.open.clone());
         }
+        let key = key?;
+        // Keep first use ordered with rotation and logout.
+        let mut managed = self.managed.lock().unwrap();
         let mut sessions = self.sessions.lock().unwrap();
-        let s = sessions.get_mut(key?)?;
+        let s = sessions.get_mut(key)?;
         if self.expired(s) {
             s.principal.0.cancel();
-            sessions.remove(key?);
+            sessions.remove(key);
             return None;
         }
         s.seen = Instant::now();
+        if let Some(managed) = managed.as_mut().filter(|managed| managed.current == key) {
+            managed.delivered = true;
+        }
         Some(s.principal.clone())
     }
     /// `{username, passwordUserProvided}` of the reference's `getStatus`.
@@ -238,6 +253,58 @@ impl Auth {
             Session { born: now, seen: now, username, principal: Principal(CancellationToken::new()) },
         );
         Ok(id)
+    }
+
+    fn can_renew(&self) -> bool {
+        self.settings.token
+            && !self.settings.skip
+            && crate::host::native_parent::available()
+            && self.credentials.lock().unwrap().is_none()
+            && self.settings.file.as_ref().is_some_and(|path| matches!(path.try_exists(), Ok(false)))
+    }
+
+    fn open_bootstrap_session(&self) -> Result<String, Error> {
+        let mut slot = self.managed.lock().unwrap();
+        let id = self.open_session(self.identity().0)?;
+        if self.can_renew() {
+            *slot = Some(ManagedSession { current: id.clone(), previous: None, delivered: true });
+        }
+        Ok(id)
+    }
+
+    pub(crate) fn renew_managed_session(&self) -> Option<String> {
+        let mut slot = self.managed.lock().unwrap();
+        let managed = slot.as_mut()?;
+        if !self.can_renew() {
+            return None;
+        }
+        let live = self.sessions.lock().unwrap().get(&managed.current).is_some_and(|session| !self.expired(session));
+        if live {
+            return (!managed.delivered).then(|| managed.current.clone());
+        }
+        let current = self.open_session(self.settings.username.clone()).ok()?;
+        if managed.delivered {
+            managed.previous = Some(std::mem::take(&mut managed.current));
+        }
+        managed.current = current.clone();
+        managed.delivered = false;
+        Some(current)
+    }
+
+    fn revoke_cookie(&self, cookie: &str) {
+        let mut managed = self.managed.lock().unwrap();
+        let mut sessions = self.sessions.lock().unwrap();
+        let replacement = managed
+            .as_ref()
+            .is_some_and(|session| session.current == cookie || session.previous.as_deref() == Some(cookie));
+        if let Some(id) = replacement.then(|| managed.take()).flatten().map(|session| session.current)
+            && let Some(session) = sessions.remove(&id)
+        {
+            session.principal.0.cancel();
+        }
+        if let Some(session) = sessions.remove(cookie) {
+            session.principal.0.cancel();
+        }
     }
     /// Values are base64url session ids, which `encodeURIComponent` leaves unchanged.
     fn session_cookie(&self, value: &str, max_age: Option<u64>) -> String {
@@ -387,9 +454,10 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         // The reference's `preHandler`: public auth routes and pages, then the session; pages
         // without one go to `/login`, other non-API paths reach the UI only.
         let principal = app.auth.principal(key.as_deref());
-        let public = matches!(path.as_str(), "/api/auth/login" | "/api/auth/status" | "/api/auth/token")
-            || path == "/login"
-            || path == "/auth/token" && app.auth.settings.token;
+        let public =
+            matches!(path.as_str(), "/api/auth/login" | "/api/auth/status" | "/api/auth/token" | "/api/auth/logout")
+                || path == "/login"
+                || path == "/auth/token" && app.auth.settings.token;
         let api = ["/api/", "/workspaces/", "/sidecars/", "/previews/"].iter().any(|p| path.starts_with(p));
         let html = wants_html(req.headers());
         if public || principal.is_some() {
@@ -492,12 +560,19 @@ pub async fn token(
     if !accepted {
         return error(Status::UNAUTHORIZED, "Invalid token").into_response();
     }
-    match app.auth.open_session(app.auth.identity().0) {
+    match app.auth.open_bootstrap_session() {
         Ok(id) => {
             ([(header::SET_COOKIE, app.auth.issued_session_cookie(&id))], Json(json!({"ok":true}))).into_response()
         }
         Err(e) => e.into_response(),
     }
+}
+
+async fn logout(State(app): State<Shared>, headers: HeaderMap) -> Result<impl IntoResponse, Error> {
+    if let (Some(cookie), None) = cookies(&headers, app.auth.cookie_name())? {
+        app.auth.revoke_cookie(&cookie);
+    }
+    Ok(([(header::SET_COOKIE, app.auth.session_cookie("", Some(0)))], Json(json!({"ok":true}))))
 }
 
 #[derive(Deserialize)]
@@ -547,6 +622,8 @@ pub async fn set_password(
     if let Err(e) = password::save(file, &stored) {
         return conflict(&e.to_string());
     }
+    let mut managed = app.auth.managed.lock().unwrap();
+    *managed = None;
     *app.auth.credentials.lock().unwrap() =
         Some(Credentials { username: username.clone(), record, user_provided: true });
     app.auth.sessions.lock().unwrap().retain(|_, s| {

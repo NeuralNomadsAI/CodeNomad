@@ -1,10 +1,5 @@
 //! Native direct-launch login recovery. Browser pairing stays in the web platform.
-use crate::{
-    State,
-    backend::{Backend, read_json},
-    platform,
-    strings::t,
-};
+use crate::{State, backend::Backend, platform, strings::t};
 use codenomad_client::{Receiver, bounded};
 use rune::{El, edit::TextEdit, text};
 use rune_theme_codenomad::{
@@ -109,14 +104,7 @@ fn request(challenge: &mut Challenge, wake: &rune::Waker, credentials: Option<(S
 }
 
 async fn check(backend: Backend, expected: Option<&str>) -> Reply {
-    let response = backend
-        .client
-        .get(format!("{}api/auth/status", backend.base))
-        .send()
-        .await;
-    if let Ok(response) = response.and_then(|r| r.error_for_status())
-        && let Ok(status) = read_json(response).await
-    {
+    if let Ok(status) = backend.authentication_status().await {
         match status["authenticated"].as_bool() {
             Some(true) => return attest(backend, expected).await,
             Some(false) => return Reply::Required,

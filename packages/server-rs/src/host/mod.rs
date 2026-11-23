@@ -70,7 +70,7 @@ pub fn announce(local: &str, remote: Option<&str>) {
 
 /// `installShutdownStdinHandler`: whole lines only; `codenomad:shutdown` stops once, other lines
 /// may be native responses. End of input changes nothing.
-pub fn read_stdin(stop: CancellationToken) {
+pub fn read_stdin(stop: CancellationToken, app: std::sync::Weak<crate::App>) {
     std::thread::spawn(move || {
         let mut input = io::stdin().lock();
         let mut buffer = Vec::new();
@@ -84,8 +84,15 @@ pub fn read_stdin(stop: CancellationToken) {
             let text = text.trim_end_matches('\n').trim_end_matches('\r');
             if text.trim() == SHUTDOWN_COMMAND {
                 stop.cancel();
-            } else {
-                native_parent::handle_line(text);
+            } else if !native_parent::handle_line(text)
+                && !stop.is_cancelled()
+                && native_parent::available()
+                && let Some(id) = text.strip_prefix("codenomad:renew-session ")
+                && id.len() == 36
+                && uuid::Uuid::parse_str(id).is_ok()
+            {
+                let credential = app.upgrade().and_then(|app| app.auth.renew_managed_session());
+                line(&format!("CODENOMAD_MANAGED_SESSION:{id} {}", credential.as_deref().unwrap_or("-")));
             }
         }
     });

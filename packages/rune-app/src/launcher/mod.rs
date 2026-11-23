@@ -357,3 +357,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     tx.instant();
     true
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn renew_managed_session(s: &mut State, expired: &Backend) {
+    if let Some(launcher) = s.screen.launcher_mut() {
+        connection::renew_managed(launcher, expired);
+    }
+}

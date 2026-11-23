@@ -13,15 +13,38 @@ pub struct Http(Client, Arc<OnceLock<String>>);
 impl Http {
     pub fn new() -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
+        return Self::with_jar(reqwest::cookie::Jar::default());
+        #[cfg(target_arch = "wasm32")]
+        Ok(Self(Client::new(), Arc::new(OnceLock::new())))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    fn with_jar(jar: reqwest::cookie::Jar) -> Result<Self> {
         let client = Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
-            .cookie_store(true)
+            .cookie_provider(Arc::new(jar))
             .timeout(REQUEST_TIMEOUT)
             .build()?;
-        #[cfg(target_arch = "wasm32")]
-        let client = Client::new();
         Ok(Self(client, Arc::new(OnceLock::new())))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_managed_cookie(base: &str, name: &str, value: &str) -> Result<Self> {
+        let url = reqwest::Url::parse(&endpoint(base)?)?;
+        if !name.starts_with("codenomad_session_")
+            || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            || value.len() != 43
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        {
+            return Err("invalid managed session cookie".into());
+        }
+        let jar = reqwest::cookie::Jar::default();
+        jar.add_cookie_str(
+            &format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax"),
+            &url,
+        );
+        Self::with_jar(jar)
     }
     pub fn same_connection(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.1, &other.1)

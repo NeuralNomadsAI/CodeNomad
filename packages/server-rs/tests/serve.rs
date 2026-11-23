@@ -175,6 +175,56 @@ fn client() -> reqwest::Client {
 }
 
 #[tokio::test]
+async fn managed_session_recovers_only_over_the_parent_pipe_and_logout_cancels_the_replacement() {
+    let root = scratch("managed-session");
+    let mut server = Server::start_with(root, Path::new(env!("CARGO_BIN_EXE_codenomad-rs")), &PROD, |command| {
+        command.env("CODENOMAD_NATIVE_PARENT", "1").env("CODENOMAD_SESSION_ABSOLUTE_SECONDS", "2");
+    });
+    let (token, url, _) = server.ready().await;
+    let http = client();
+    let bootstrap = || http.post(format!("{url}/api/auth/token")).json(&serde_json::json!({ "token": token }));
+    let reply = bootstrap().send().await.unwrap();
+    assert_eq!(reply.status(), 200);
+    let old = reply.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_owned();
+    let request = |cookie: &str| http.get(format!("{url}/api/meta")).header("Cookie", cookie);
+    assert_eq!(request(&old).send().await.unwrap().status(), 200);
+    let id = uuid::Uuid::new_v4();
+    let expected = format!("CODENOMAD_MANAGED_SESSION:{id} ");
+    let mut renew = async || {
+        server
+            .child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(format!("codenomad:renew-session {id}\n").as_bytes())
+            .await
+            .unwrap();
+        loop {
+            if let Some(value) = server.line().await.strip_prefix(&expected) {
+                return value.to_owned();
+            }
+        }
+    };
+    assert_eq!(renew().await, "-");
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    assert_eq!(request(&old).send().await.unwrap().status(), 401);
+    let status = http.get(format!("{url}/api/auth/status")).header("Cookie", &old).send().await.unwrap();
+    assert_eq!(status.json::<serde_json::Value>().await.unwrap(), serde_json::json!({"authenticated":false}));
+    assert_eq!(bootstrap().send().await.unwrap().status(), 401);
+    assert_eq!(http.post(format!("{url}/api/auth/renew")).header("Cookie", &old).send().await.unwrap().status(), 401);
+    let renewed = renew().await;
+    assert_eq!(renewed.len(), 43);
+    assert_eq!(renew().await, renewed);
+    let cookie = format!("{COOKIE}={renewed}");
+    assert_eq!(request(&cookie).send().await.unwrap().status(), 200);
+    assert_eq!(request(&old).send().await.unwrap().status(), 401);
+    assert_eq!(http.post(format!("{url}/api/auth/logout")).header("Cookie", &old).send().await.unwrap().status(), 200);
+    assert_eq!(request(&cookie).send().await.unwrap().status(), 401);
+    assert_eq!(renew().await, "-");
+    server.stop(b"").await;
+}
+
+#[tokio::test]
 async fn serve_selects_opencode_from_cli_config_before_path() {
     for (selection, marker) in [(true, "selected-cli"), (false, "automatic-cli")] {
         let root = scratch("opencode-selection");

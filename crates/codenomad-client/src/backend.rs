@@ -68,6 +68,18 @@ impl Backend {
             .error_for_status()?;
         Ok(())
     }
+    pub async fn authentication_status(&self) -> Result<Value> {
+        read_json_limited(
+            self.client
+                .get(format!("{}api/auth/status", self.base))
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await?
+                .error_for_status()?,
+            4096,
+        )
+        .await
+    }
     pub async fn page(&self, target: Value) -> Result<Page> {
         // Match the broker's window envelope; other endpoints retain their own limits.
         history::decode(

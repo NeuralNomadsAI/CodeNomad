@@ -32,10 +32,15 @@ pub fn finish() {
 pub struct LocalHost {
     shutdown: mpsc::SyncSender<()>,
     state_directory: Option<PathBuf>,
+    renewal: Option<crate::host::SessionRenewal>,
 }
 impl LocalHost {
     pub fn state_directory(&self) -> Option<PathBuf> {
         self.state_directory.clone()
+    }
+
+    pub(crate) fn session_renewal(&self) -> Option<crate::host::SessionRenewal> {
+        self.renewal.clone()
     }
 }
 impl Drop for LocalHost {
@@ -108,6 +113,7 @@ pub fn start(wake: rune::Waker) -> Option<Receiver<Result<(Backend, LocalHost)>>
             let guard = LocalHost {
                 shutdown,
                 state_directory,
+                renewal: Some(child.session_renewal()),
             };
             if out.send_blocking(Ok((backend, guard))).is_ok() {
                 wake();
@@ -176,6 +182,7 @@ mod tests {
         drop(LocalHost {
             shutdown,
             state_directory: None,
+            renewal: None,
         });
         assert_eq!(owner.try_recv(), Ok(()));
     }

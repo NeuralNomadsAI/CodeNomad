@@ -250,7 +250,10 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     s.commands = None;
                     composer::settle_pending(s, transport::PromptOutcome::Rejected);
                     #[cfg(not(target_arch = "wasm32"))]
-                    chat::authentication::expired(s, expired);
+                    {
+                        crate::launcher::renew_managed_session(s, &expired);
+                        chat::authentication::expired(s, expired);
+                    }
                 }
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::suspend(s);

@@ -150,7 +150,10 @@ fn real_serve_bootstrap_stop_and_new_generation() {
     );
     assert!(executable.is_absolute() && executable.is_file());
     let root = fresh_root("real-serve");
-    let config = LaunchConfig::trial(executable, &root, "trial-rune-host").unwrap();
+    let mut config = LaunchConfig::trial(executable, &root, "trial-rune-host").unwrap();
+    config
+        .environment
+        .insert("CODENOMAD_SESSION_ABSOLUTE_SECONDS".into(), "2".into());
     let controller = Controller::default();
     let mut first = controller.launch(config.clone()).unwrap();
     let first_generation = first.generation();
@@ -171,6 +174,36 @@ fn real_serve_bootstrap_stop_and_new_generation() {
         first.connect().is_err(),
         "Bootstrap token consumed only once"
     );
+    let renewal = first.session_renewal();
+    crate::platform::block_on(async {
+        assert!(renewal.replace(backend.clone()).await.is_none());
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        assert_eq!(
+            backend.authentication_status().await.unwrap()["authenticated"],
+            false
+        );
+        let renewed = renewal
+            .replace(backend.clone())
+            .await
+            .expect("owned parent renewal");
+        assert!(!renewed.client.same_connection(&backend.client));
+        assert_eq!(
+            renewed.authentication_status().await.unwrap()["authenticated"],
+            true
+        );
+        assert_eq!(
+            backend.authentication_status().await.unwrap()["authenticated"],
+            false
+        );
+        let response = renewed
+            .client
+            .post(format!("{}api/auth/logout", backend.base))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert!(renewal.replace(renewed).await.is_none());
+    });
     let report = first.stop().unwrap();
     assert!(!report.forced);
     assert!(report.native_cleanup_confirmed);
@@ -181,6 +214,7 @@ fn real_serve_bootstrap_stop_and_new_generation() {
         first.connect().is_err(),
         "Previous generation cannot authenticate"
     );
+    assert!(crate::platform::block_on(renewal.replace(backend)).is_none());
     let _backend = second.connect().unwrap();
     let report = second.stop().unwrap();
     assert!(!report.forced && report.native_cleanup_confirmed);

@@ -12,6 +12,8 @@ Tauri (`cli_manager.rs`, `Runner::Rust`) runs the binary directly with the TypeS
 
 `serve` reads `server.opencodeBinary` from the selected profile at startup. A saved custom executable takes precedence over automatic discovery; an empty selection, `opencode` or `opencode2` uses discovery.
 
+An attached desktop host can renew an expired passwordless bootstrap session with `codenomad:renew-session <request-id>` on stdin. The private reply `CODENOMAD_MANAGED_SESSION:<request-id> <session-id-or->` is consumed by the issuing host. Direct sign-out (including an in-flight sign-out using the prior cookie) and password changes revoke that lineage.
+
 The positional launch `codenomad-rs <root> <identity.json> <port or 0> <native-binary-label-path>` (bench and user service, `src/bench.rs`) keeps its data beside the identity file, its settings there or at `CLI_CONFIG`, and reads `CLI_UNRESTRICTED_ROOT`, `CNRS_SERVER_PASSWORD`, `CNRS_HTTPS_*` and `CNRS_TLS_*`.
 
 ## Architecture

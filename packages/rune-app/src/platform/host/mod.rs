@@ -27,8 +27,11 @@ struct Output {
     url: Option<String>,
     cleanup: Option<bool>,
     failed: bool,
+    renewal: Option<(String, codenomad_client::Sender<Option<String>>)>,
+    renewed: Option<Backend>,
 }
 enum Control {
+    Renew(String),
     Native {
         response: String,
         expires: Instant,
@@ -43,8 +46,87 @@ pub struct ChildHost {
     shutdown: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
     url: String,
+    cookie: String,
+    writer: mpsc::SyncSender<Control>,
     stopped: bool,
     lease: Option<persistent::Lease>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionRenewal {
+    authority: Arc<AtomicU64>,
+    generation: u64,
+    shutdown: Arc<AtomicBool>,
+    output: Arc<Mutex<Output>>,
+    writer: mpsc::SyncSender<Control>,
+    url: String,
+    cookie: String,
+}
+
+impl std::fmt::Debug for SessionRenewal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SessionRenewal")
+    }
+}
+
+impl SessionRenewal {
+    pub(crate) fn current(&self) -> bool {
+        self.authority.load(Ordering::SeqCst) == self.generation
+            && !self.shutdown.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn candidate(&self, backend: &Backend) -> Option<Backend> {
+        if !self.current() || backend.base.trim_end_matches('/') != self.url.trim_end_matches('/') {
+            return None;
+        }
+        self.output.lock().ok()?.renewed.clone()
+    }
+
+    pub(crate) async fn replace(&self, mut backend: Backend) -> Option<Backend> {
+        if !self.current() || backend.base.trim_end_matches('/') != self.url.trim_end_matches('/') {
+            return None;
+        }
+        static REQUESTS: AtomicU64 = AtomicU64::new(0);
+        let id = format!(
+            "00000000-0000-4000-8000-{:012x}",
+            REQUESTS.fetch_add(1, Ordering::Relaxed) & 0xffffffffffff
+        );
+        let (reply, receive) = codenomad_client::bounded(1);
+        {
+            let mut output = self.output.lock().ok()?;
+            if output
+                .renewal
+                .as_ref()
+                .is_some_and(|(_, sender)| !sender.is_closed())
+            {
+                return None;
+            }
+            self.writer.try_send(Control::Renew(id.clone())).ok()?;
+            output.renewal = Some((id.clone(), reply));
+        }
+        let response = tokio::time::timeout(Duration::from_secs(3), receive.recv()).await;
+        if let Ok(mut output) = self.output.lock()
+            && output
+                .renewal
+                .as_ref()
+                .is_some_and(|(pending, _)| pending == &id)
+        {
+            output.renewal = None;
+        }
+        let session = response.ok()?.ok()??;
+        if !self.current() {
+            return None;
+        }
+        backend.client = codenomad_client::http::Http::with_managed_cookie(
+            &backend.base,
+            &self.cookie,
+            &session,
+        )
+        .ok()?;
+        backend.client_id = codenomad_client::http::client_id().ok()?;
+        self.output.lock().ok()?.renewed = Some(backend.clone());
+        Some(backend)
+    }
 }
 #[derive(Debug)]
 pub struct StopReport {
@@ -100,6 +182,16 @@ impl ChildHost {
                     Err(_) => break,
                 };
                 match control {
+                    Control::Renew(id) => {
+                        if writer_authority.load(Ordering::SeqCst) == generation
+                            && stdin
+                                .write_all(format!("codenomad:renew-session {id}\n").as_bytes())
+                                .and_then(|_| stdin.flush())
+                                .is_err()
+                        {
+                            break;
+                        }
+                    }
                     Control::Native {
                         response,
                         expires,
@@ -123,7 +215,7 @@ impl ChildHost {
         let reader_authority = authority.clone();
         let replies = writer.clone();
         let stdout_thread = thread::spawn(move || {
-            let result = protocol::pump(BufReader::new(stdout), |line| {
+            let _ = protocol::pump(BufReader::new(stdout), |line| {
                 if reader_authority.load(Ordering::SeqCst) != generation {
                     return;
                 }
@@ -131,6 +223,17 @@ impl ChildHost {
                     return;
                 };
                 match protocol::classify(line) {
+                    protocol::Line::ManagedSession(id, session) => {
+                        let mut output = reader_output.lock().unwrap();
+                        if output
+                            .renewal
+                            .as_ref()
+                            .is_some_and(|(pending, _)| pending == &id)
+                            && let Some((_, reply)) = output.renewal.take()
+                        {
+                            let _ = reply.try_send(session);
+                        }
+                    }
                     protocol::Line::Token(token) => {
                         if !token.is_empty() {
                             reader_output.lock().unwrap().token = Some(token);
@@ -154,9 +257,10 @@ impl ChildHost {
                     protocol::Line::Diagnostic => {}
                 }
             });
-            if result.is_err() {
-                reader_output.lock().unwrap().failed = true;
-            }
+            let mut output = reader_output.lock().unwrap();
+            output.failed = true;
+            output.renewal.take();
+            output.renewed.take();
         });
         // Drain diagnostics without retaining secrets or unbounded output.
         let stderr_output = output.clone();
@@ -173,6 +277,8 @@ impl ChildHost {
             shutdown,
             threads: vec![writer_thread, stdout_thread, stderr_thread],
             url: String::new(),
+            cookie,
+            writer,
             stopped: false,
             lease,
         };
@@ -234,6 +340,17 @@ impl ChildHost {
             ));
         }
         Ok(backend)
+    }
+    pub(crate) fn session_renewal(&self) -> SessionRenewal {
+        SessionRenewal {
+            authority: self.authority.clone(),
+            generation: self.generation,
+            shutdown: self.shutdown.clone(),
+            output: self.output.clone(),
+            writer: self.writer.clone(),
+            url: self.url.clone(),
+            cookie: self.cookie.clone(),
+        }
     }
     pub fn stop(&mut self) -> io::Result<StopReport> {
         if self.stopped {

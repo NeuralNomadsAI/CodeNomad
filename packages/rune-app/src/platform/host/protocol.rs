@@ -8,6 +8,7 @@ pub(super) const MAX_LINE: usize = 1024 * 1024;
 pub(super) const SHUTDOWN: &[u8] = b"codenomad:shutdown\n";
 pub(super) enum Line {
     Token(String),
+    ManagedSession(String, Option<String>),
     Ready(String),
     Native {
         response: String,
@@ -18,6 +19,12 @@ pub(super) enum Line {
     Diagnostic,
 }
 pub(super) fn classify(line: &str) -> Line {
+    if let Some(reply) = line.strip_prefix("CODENOMAD_MANAGED_SESSION:") {
+        let Some((id, cookie)) = reply.split_once(' ') else {
+            return Line::Diagnostic;
+        };
+        return Line::ManagedSession(id.into(), (cookie != "-").then(|| cookie.into()));
+    }
     if let Some(token) = line.strip_prefix("CODENOMAD_BOOTSTRAP_TOKEN:") {
         return Line::Token(token.trim().into());
     }

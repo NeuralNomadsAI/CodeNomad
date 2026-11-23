@@ -103,8 +103,35 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
             crate::launcher::restore(s, saved);
         }
     }
-    crate::chat::resume(s, tx);
+    if !reconnect_after_renewal(s, tx) {
+        crate::chat::resume(s, tx);
+    }
     tx.instant();
+}
+
+pub(super) fn reconnect_after_renewal(s: &mut State, tx: &mut Tx) -> bool {
+    let Some(ui) = s.workspace.as_ref() else {
+        return false;
+    };
+    if !ui.entries[ui.active].authentication_replaced
+        || !ui.ready
+        || s.composer.pending()
+        || !s.screen.launcher().is_some_and(|launcher| {
+            !launcher.pending && launcher.connection.is_some() && launcher.project.is_some()
+        })
+    {
+        return false;
+    }
+    let Some(session) = super::active_session(s).map(str::to_owned) else {
+        return false;
+    };
+    if let Some(ui) = s.workspace.as_mut() {
+        ui.entries[ui.active].authentication_replaced = false;
+    }
+    s.phase = crate::Phase::Failed;
+    s.show_chat();
+    crate::launcher::choose(s, session, tx);
+    true
 }
 pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
     let Some(index) = s

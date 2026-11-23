@@ -48,10 +48,23 @@ fn inactive_prompt_rejection_is_saved_before_closing_its_tab() {
         sent.try_recv(),
         Ok(crate::transport::Command::Prompt(_))
     ));
+    runtime.update(|s, tx| {
+        select(s, "tab-0", tx);
+        s.workspace.as_mut().unwrap().entries[0].authentication_replaced = true;
+        assert!(s.composer.pending());
+        assert!(!tabs::reconnect_after_renewal(s, tx));
+        assert!(s.workspace.as_ref().unwrap().entries[0].authentication_replaced);
+        select(s, "tab-1", tx);
+    });
     out.try_send(Event::AuthenticationRequired(backend))
         .unwrap();
     runtime.update(|s, tx| {
+        s.workspace.as_mut().unwrap().entries[0].authentication_replaced = true;
         poll(s, 0.0, tx);
+        assert!(
+            s.workspace.as_ref().unwrap().entries[0].authentication_replaced,
+            "polling a parked stream cannot consume its pending rebind"
+        );
         close(s, "tab-0", tx);
         let ui = s.workspace.as_ref().unwrap();
         assert_eq!(ui.active_key(), "tab-1");

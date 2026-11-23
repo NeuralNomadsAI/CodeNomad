@@ -40,6 +40,7 @@ pub(super) struct Entry {
     wanted_panels: [Option<[bool; 2]>; 2],
     sidebar_edits: Option<(TextEdit, bool, TextEdit, bool)>,
     binding: Option<Backend>,
+    authentication_replaced: bool,
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
@@ -217,6 +218,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         wanted_panels: [None; 2],
         sidebar_edits: None,
         binding: None,
+        authentication_replaced: false,
         cleared,
         pending_drafts: HashSet::new(),
         live_drafts: Default::default(),
@@ -320,6 +322,7 @@ pub(crate) fn renew_connection(s: &mut State) {
             {
                 backend.client = current.client.clone();
                 backend.client_id.clone_from(&current.client_id);
+                item.authentication_replaced |= item.cache.is_some();
             }
         }
     }
@@ -501,6 +504,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     ui.persistence.poll_save(&snapshot, now, tx, s.wake.clone());
     let error = ui.persistence.read_error || ui.persistence.write_error || ui.persistence.partial;
     s.workspace = Some(ui);
+    changed |= tabs::reconnect_after_renewal(s, tx);
     if became_ready {
         resume(s, tx);
     }

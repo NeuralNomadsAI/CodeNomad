@@ -56,6 +56,14 @@ pub(crate) fn poll(s: &mut State) -> bool {
         shared.palette(false).map_or("", |p| p.id),
         shared.palette(true).map_or("", |p| p.id),
     ]);
+    #[cfg(not(target_arch = "wasm32"))]
+    if expired {
+        let backend = shared.backend.clone();
+        drop(shared);
+        if let Some(backend) = backend {
+            crate::launcher::renew_managed_session(s, &backend);
+        }
+    }
     expired | (display != std::mem::replace(&mut s.settings.last_display, display))
 }
 
