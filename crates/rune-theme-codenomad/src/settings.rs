@@ -178,6 +178,48 @@ pub fn segments<S: 'static>(
     control.build(crate::kit(layout::dark()))
 }
 
+/// Segments whose selection commits a change. Navigation only moves focus.
+pub fn committing_segments<S: 'static>(
+    label: &str,
+    options: &[&str],
+    selected: Option<usize>,
+    locale: &str,
+    choose: impl Fn(&mut S, usize) + Clone + 'static,
+) -> El {
+    let count = options.len();
+    let rtl = crate::catalogue::direction(locale) == "rtl";
+    segments(label, options, selected, false, choose.clone()).on_key(move |s, event, tx| {
+        if event.mods != rune::Mods::default() {
+            return false;
+        }
+        let Some(index) = tx
+            .focused()
+            .and_then(|key| key.strip_prefix("segment"))
+            .and_then(|index| index.parse::<usize>().ok())
+            .filter(|index| *index < count)
+        else {
+            return false;
+        };
+        let next = match event.key {
+            rune::Key::Left if !rtl => (index + count - 1) % count,
+            rune::Key::Right if rtl => (index + count - 1) % count,
+            rune::Key::Right | rune::Key::Left | rune::Key::Down => (index + 1) % count,
+            rune::Key::Up => (index + count - 1) % count,
+            rune::Key::Home => 0,
+            rune::Key::End => count - 1,
+            rune::Key::Enter => {
+                if !tx.key_repeat() {
+                    choose(s, index);
+                }
+                return true;
+            }
+            _ => return false,
+        };
+        tx.focus(format!("segment{next}"), true);
+        true
+    })
+}
+
 pub fn picker(key: &str, label: &str, options: &[&str]) -> Select {
     Select::new(key, options)
         .label(label)

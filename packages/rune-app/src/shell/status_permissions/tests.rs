@@ -98,6 +98,66 @@ async fn request(http: &Http, method: &str) -> Request {
 }
 
 #[test]
+fn arrows_only_move_permission_focus_and_enter_or_space_writes() {
+    use rune::{Env, Key, KeyEvent, Mods, Runtime};
+    fn render(s: &State, cx: &mut rune::Cx<State>) -> El {
+        layout::render(cx, |_| {
+            crate::strings::with_locale("en", || view(s).unwrap())
+        })
+    }
+    platform::block_on(async {
+        for activation in [Key::Enter, Key::Text(" ".into())] {
+            let mut http = Http::new().await;
+            http.backend.session = "ses_child".into();
+            let mut s = crate::init();
+            s.show_chat();
+            s.status_permissions = Permissions {
+                backend: Some(http.backend.clone()),
+                visible: true,
+                online: true,
+                expanded: true,
+                confirmed: Some(Snapshot {
+                    mode: Mode::Supervised,
+                    root: None,
+                }),
+                ..Permissions::default()
+            };
+            let mut rt = Runtime::new(s, render, (440.0, 300.0), Env::new(false, 1.0));
+            rt.frame(0.0);
+            rt.update(|s, tx| crate::shell::toggle_panel(s, 1, tx));
+            rt.frame(0.01);
+            assert!(rt.state.shell.visible(1));
+            rt.update(|_, tx| tx.focus("segment1", true));
+            rt.frame(0.02);
+            let press = |rt: &mut Runtime<State>, at, key| {
+                let event = KeyEvent {
+                    key,
+                    mods: Mods::default(),
+                };
+                rt.key(event.clone());
+                rt.key_up(event);
+                rt.frame(at);
+            };
+            press(&mut rt, 0.03, Key::Left);
+            assert!(
+                rt.elements()
+                    .iter()
+                    .any(|element| element.focused && element.key.as_deref() == Some("segment0"))
+            );
+            press(&mut rt, 0.04, Key::Right);
+            press(&mut rt, 0.05, Key::Left);
+            assert!(!rt.state.status_permissions.writing());
+            http.quiet().await;
+            press(&mut rt, 0.06, activation);
+            let put = request(&http, "PUT").await;
+            assert_eq!(put.body, json!({"mode":"autonomous"}));
+            put.reply(200, json!({"mode":"autonomous"})).await;
+            http.quiet().await;
+        }
+    });
+}
+
+#[test]
 fn a_child_uses_the_confirmed_family_mode_and_reconciles_a_lost_write_without_replaying() {
     platform::block_on(async {
         let mut http = Http::new().await;

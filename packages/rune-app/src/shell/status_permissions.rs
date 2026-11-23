@@ -302,11 +302,11 @@ pub(super) fn view(s: &State) -> Option<El> {
     let mut body = col().separate(Space::Xs);
     if mode.is_some() {
         body = body.child(
-            settings::segments(
+            settings::committing_segments(
                 title,
                 &MODES.map(label),
                 MODES.iter().position(|candidate| Some(*candidate) == mode),
-                false,
+                crate::strings::locale(),
                 {
                     let scope = s.input_scope.clone();
                     move |s: &mut State, index| {
