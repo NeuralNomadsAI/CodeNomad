@@ -1,6 +1,6 @@
 // Actual shared Rune menu, through the offscreen application gallery and host poll.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../native-fixture-guards.mjs'
 import {createHash} from 'node:crypto'
 import {mkdir,readFile,writeFile} from 'node:fs/promises'
 import path from 'node:path'

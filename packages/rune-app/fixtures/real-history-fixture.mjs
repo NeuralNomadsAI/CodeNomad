@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import {readFile,writeFile} from 'node:fs/promises'
 import {createServer,request} from 'node:http'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import path from 'node:path'
 import {connectNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'

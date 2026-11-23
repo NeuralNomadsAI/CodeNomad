@@ -25,23 +25,9 @@ test("fixture cleanup accepts an owned child closing after forced termination", 
   assert.deepEqual(signals, ["SIGTERM", "SIGKILL"])
 })
 
-test("Windows fixture cleanup stops a descendant even after graceful parent exit", { skip: process.platform !== "win32", timeout: 75_000 }, async () => {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(path|systemroot|windir)$/i.test(key)))
-  const root = spawn(process.execPath, ["-e", `
-    const { spawn } = require("node:child_process")
-    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" })
-    child.once("spawn", () => console.log(child.pid))
-    process.stdin.resume()
-    process.stdin.once("end", () => process.exit(0))
-  `], { env, windowsHide: true, stdio: ["pipe", "pipe", "inherit"] })
-  const startedBy = new Date()
-  const stopped = once(root, "close")
-  const [message] = await once(root.stdout, "data")
-  const descendant = Number(message.toString().trim())
-  assert.ok(Number.isSafeInteger(descendant) && descendant > 0)
-  await stopFixtureChild(root, stopped, 3000, 2000, { close: () => root.stdin.end(), startedBy })
-  assert.equal(root.exitCode, 0)
-  assert.throws(() => process.kill(descendant, 0), { code: "ESRCH" })
+test("Windows fixture cleanup refuses an unowned process instead of enumerating descendants", { skip: process.platform !== "win32" }, async () => {
+  const child = { spawnfile: "not-owned", pid: 123, kill: () => assert.fail("unowned process") }
+  await assert.rejects(stopFixtureChild(child, Promise.resolve()), /owned Job Object/)
 })
 
 const windows = { skip: process.platform !== "win32", timeout: 30_000 }
@@ -109,6 +95,30 @@ test("Windows job permits immediate graceful shutdown over stdin", windows, asyn
   const stopped = once(root, "close")
   await stopFixtureChild(root, stopped, 5000, 2000, { close: () => root.stdin.end() })
   assert.equal(root.exitCode, 0)
+})
+
+test("Windows enclosing bench job keeps its daemon across backend exits but kills it on close", windows, async () => {
+  const root = own(`
+    const {spawn} = require("node:child_process")
+    const service = spawn(process.execPath, ["-e", "console.log('ready');setInterval(() => {}, 1000)"], {windowsHide:true,stdio:["ignore","pipe","ignore"]})
+    service.stdout.once("data", () => {
+      service.stdout.destroy()
+      const backend = spawn(process.execPath, ["-e", ""], {windowsHide:true,stdio:"ignore"})
+      backend.once("exit", code => {
+        console.log(JSON.stringify([code,service.pid]))
+        process.stdin.resume()
+      })
+    })
+  `)
+  const stopped = once(root, "close")
+  try {
+    const [data] = await once(root.stdout, "data")
+    const [backendExit, daemon] = JSON.parse(String(data))
+    assert.equal(backendExit, 0)
+    assert.equal(alive(daemon), true)
+    await stopFixtureChild(root, stopped)
+    assert.equal(alive(daemon), false)
+  } finally { await stopFixtureChild(root, stopped) }
 })
 
 test("Missions native fixtures stop their owned serve with bounded escalation", () => {

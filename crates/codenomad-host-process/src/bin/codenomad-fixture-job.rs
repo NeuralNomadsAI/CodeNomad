@@ -12,14 +12,14 @@ fn run() -> io::Result<i32> {
     let program = args
         .next()
         .ok_or_else(|| io::Error::other("Expected a fixture executable and its arguments"))?;
-    let mut child = OwnedProcess::spawn(
+    let mut child = OwnedProcess::spawn_inherited(
         Command::new(program)
             .args(args)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit()),
+        |pid| eprintln!("CODENOMAD_FIXTURE_PID={pid}"),
     )?;
-    eprintln!("CODENOMAD_FIXTURE_PID={}", child.id());
     let pause = Duration::from_millis(10);
     let status = loop {
         if let Some(status) = child.try_wait()? {

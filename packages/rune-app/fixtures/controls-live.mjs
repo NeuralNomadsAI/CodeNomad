@@ -1,6 +1,6 @@
 // Explicit real OpenCode test. Own empty project/session; deny all model tools.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import {mkdir,writeFile} from 'node:fs/promises'
 import {randomUUID} from 'node:crypto'
 import path from 'node:path'

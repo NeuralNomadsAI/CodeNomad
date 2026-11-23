@@ -71,7 +71,7 @@ Les runners contrôlent `--test-support-info` avant de lancer une fixture. Les i
 
 Construire `RUNE_CLIENT_EXE` avec `test-support` et `RUNE_SERVER_EXE` depuis le même checkout. Pour Chromium, installer Playwright Chromium et empaqueter le WASM produit avec `node scripts/rune/bundle-web.mjs --wasm <wasm> --out target/rune-web-journey` (`RUNE_WEB_DIR` permet de choisir le bundle). Le mode `--mode windows` ou `--mode web` exécute un seul client ; le navigateur émule un mobile sur l'origine locale authentifiée. Le runner ferme les processus et supprime le profil jetable avec son dépôt. Les PNG, arbres d'accessibilité et `journey-report.json` restent dans `.codenomad/cargo-targets/e2e-journey/journey-*`.
 
-Sous Windows, `cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job` prépare le lanceur de confinement utilisé par Journey, Launcher et le banc comparatif. Il est recherché dans `CARGO_TARGET_DIR/debug` ou `target/debug` ; `CODENOMAD_FIXTURE_JOB_EXE` accepte un chemin absolu.
+Sous Windows, `cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job` prépare le lanceur des bancs. `CreateProcessW` crée les processus directement dans un Job Object fermé avec le lanceur. Celui-ci est recherché dans `CARGO_TARGET_DIR/debug` ou `target/debug` ; `CODENOMAD_FIXTURE_JOB_EXE` accepte un chemin absolu.
 
 Sous `fixtures/`, `controls-live.mjs` et les scripts `real-history-*` sont des essais explicites avec un OpenCode réel déjà configuré, des sessions jetables et des outils interdits. `interactive-live.mjs` ouvre une fenêtre et demande un dossier et un titre exacts ; ses essais utilisent une copie de la conversation source. Leur lancement interactif appartient à une qualification dédiée.
 

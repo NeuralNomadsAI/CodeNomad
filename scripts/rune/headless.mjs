@@ -1,6 +1,6 @@
 // Runs only Rune's offscreen tooling; never launches its native event loop.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../native-fixture-guards.mjs'
 import {mkdir, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'

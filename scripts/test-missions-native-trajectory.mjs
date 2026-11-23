@@ -1,6 +1,7 @@
 // Private deterministic native trajectory only. No shared service discovery or paid models.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
+import { spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { randomUUID, createHash } from "node:crypto"
 import { createServer } from "node:http"
 import { mkdtemp, mkdir, readFile, realpath, writeFile } from "node:fs/promises"

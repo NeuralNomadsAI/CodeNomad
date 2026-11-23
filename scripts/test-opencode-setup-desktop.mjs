@@ -1,7 +1,7 @@
 // Windows release acceptance. All CLI commands and app launches use fresh synthetic
 // profiles. CDP is discovered from the host's native dynamic instrumentation.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { mkdtemp, mkdir, readFile, writeFile, readdir, copyFile, open, cp } from "node:fs/promises"
 import path from "node:path"
@@ -9,13 +9,11 @@ import os from "node:os"
 import { fileURLToPath } from "node:url"
 import { setTimeout as delay } from "node:timers/promises"
 import { chromium } from "playwright"
-import { tsImport } from "tsx/esm/api"
 import { createServer } from "node:net"
 import { boundedFixtureOperation } from "./fixtures/wsl-fixture-bounds.mjs"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 assert.equal(process.platform, "win32", "This fixture validates Windows desktop artifacts")
-const { stopWindowsProcessTree } = await tsImport("../packages/server/src/process-tree.ts", import.meta.url)
 const workspace = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const root = await mkdtemp(path.join(os.tmpdir(), "opencode", "codenomad-setup-desktop-"))
 console.log(`Evidence: ${root}`)
@@ -105,7 +103,7 @@ for (const [host, sourceExecutable] of Object.entries(artifacts)) {
   }
   record.sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspace, encoding: "utf8", timeout: 10_000 }).trim()
   results.push(record)
-  let output = "", browser, page, cli, child, spawnedBy, stopped, childError
+  let output = "", browser, page, cli, child, stopped, childError
   const runCli = (binary, args, timeout = 30_000) => execFileSync(binary, args, { env, cwd: profile, encoding: "utf8", timeout, maxBuffer: 1024 * 1024 }).trim()
   const daemonInfo = async () => {
     const password = runCli(bootstrapCli, ["service", "get", "password"])
@@ -135,7 +133,6 @@ for (const [host, sourceExecutable] of Object.entries(artifacts)) {
       if (compatibleDaemon) record.before = await daemonInfo()
     }
     child = spawn(executable, resumeFolder ? ["--folder", project] : [], { cwd: profile, env, stdio: ["ignore", "pipe", "pipe"] })
-    spawnedBy = new Date()
     // Native-parent-started services may inherit a pipe after the desktop exits.
     // Observe process exit separately; the isolated service is stopped below.
     stopped = new Promise(resolve => child.once("exit", resolve))
@@ -266,7 +263,6 @@ for (const [host, sourceExecutable] of Object.entries(artifacts)) {
     // Kill only the exact fixture PID and its descendants, never installed hosts.
     if (child?.pid && child.exitCode === null) {
       // The bounded exit check below determines whether our desktop actually exited.
-      await stopWindowsProcessTree(child.pid, spawnedBy)
       await stopFixtureChild(child, stopped).catch(error => cleanupErrors.push(error.message))
     }
     try { record.cleanup = runCli(cli ?? bootstrapCli, ["service", "stop"]) } catch (error) { cleanupErrors.push(error.message) }

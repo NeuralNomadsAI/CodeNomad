@@ -8,9 +8,6 @@ import { promisify } from "node:util"
 const jobs = new WeakMap()
 export function spawnFixtureChild(command, args, options) {
   if (process.platform !== "win32") return spawn(command, args, options)
-  if (options?.stdio && options.stdio !== "pipe" && options.stdio[2] !== "pipe") {
-    throw new Error("Windows fixture ownership requires piped stderr for the child identity")
-  }
   const root = fileURLToPath(new URL("../", import.meta.url))
   const exe = process.env.CODENOMAD_FIXTURE_JOB_EXE
     ?? path.resolve(root, process.env.CARGO_TARGET_DIR || "target", "debug", "codenomad-fixture-job.exe")
@@ -20,7 +17,14 @@ export function spawnFixtureChild(command, args, options) {
   } catch (cause) {
     throw new Error("Build `cargo build -p codenomad-host-process --bin codenomad-fixture-job` or set CODENOMAD_FIXTURE_JOB_EXE", { cause })
   }
-  const child = spawn(exe, [command, ...args], options)
+  if (options?.shell || options?.windowsVerbatimArguments || options?.stdio?.includes("ipc")) {
+    throw new Error("The Windows fixture launcher accepts executable arguments and standard streams only")
+  }
+  const child = spawn(exe, [command, ...args], { ...options, windowsHide: true })
+  if (!child.stderr) {
+    jobs.set(child, Promise.resolve(undefined))
+    return child
+  }
   jobs.set(child, new Promise(resolve => {
     let line = ""
     const finish = pid => {
@@ -63,19 +67,6 @@ async function stopOwnedTree(child, stopped, graceMs, { close, group, startedBy 
     else child.kill()
     await completesWithin(stopped, graceMs)
   }
-  const { captureWindowsProcessTree, stopCapturedWindowsProcesses, processTreeRows } =
-    await import("../packages/server/src/process-tree.ts")
-  if (process.platform === "win32") {
-    const targets = await captureWindowsProcessTree(child.pid, process.pid, observed)
-    const alive = child.exitCode === null && child.signalCode === null
-    if (!alive) return
-    if (!targets.length) {
-      throw new Error(`Could not attest fixture-owned Windows process ${child.pid}`)
-    }
-    await graceful()
-    await stopCapturedWindowsProcesses(targets)
-    return
-  }
   if (group) {
     await graceful()
     try { process.kill(-child.pid, "SIGKILL") } catch (error) { if (error.code !== "ESRCH") throw error }
@@ -89,6 +80,7 @@ async function stopOwnedTree(child, stopped, graceMs, { close, group, startedBy 
     return Number.isFinite(started) ? [{ pid: Number(match[1]), parentPid: Number(match[2]), startedAt: BigInt(started) }] : []
   })
   const rows = await list()
+  const { processTreeRows } = await import("../packages/server/src/process-tree.ts")
   const root = rows.find(row => row.pid === child.pid && row.parentPid === process.pid)
   const targets = root && root.startedAt <= BigInt(observed.getTime()) ? processTreeRows(child.pid, rows) : []
   if (!targets.length && child.exitCode === null && child.signalCode === null) {
@@ -111,18 +103,23 @@ export async function stopFixtureChild(child, stopped, graceMs = 1_000, forceMs 
       if (await completesWithin(stopped, graceMs)) return
     }
     // Node holds the wrapper handle; terminating it closes the kernel job.
+  } else if (process.platform === "win32" && child.spawnfile) {
+    throw new Error("Windows fixture children must be spawned in an owned Job Object")
   } else if (child.pid && child.spawnfile && (options.group || (child.exitCode === null && child.signalCode === null))) {
     try { await stopOwnedTree(child, stopped, graceMs, options) } catch (error) { treeError = error }
   }
+  await stopFixtureHandle(child, stopped, graceMs, forceMs)
+  if (treeError) throw treeError
+}
+
+// Stop a leaf IPC worker or one member of an already owned enclosing job.
+export async function stopFixtureHandle(child, stopped, graceMs = 1_000, forceMs = 2_000) {
   if (child.exitCode != null || child.signalCode != null) {
-    if (await completesWithin(stopped, forceMs) && !treeError) return
+    if (await completesWithin(stopped, forceMs)) return
   }
   child.kill()
   if (!(await completesWithin(stopped, graceMs))) child.kill("SIGKILL")
-  if (await completesWithin(stopped, forceMs)) {
-    if (treeError) throw treeError
-    return
-  }
+  if (await completesWithin(stopped, forceMs)) return
   // A failed OS kill must report failure rather than retaining test handles.
   child.stdout?.destroy()
   child.stderr?.destroy()

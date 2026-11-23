@@ -1,6 +1,7 @@
 // Explicit opt-in integration test. Never uses service discovery or a user DB.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
+import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { createHash } from "node:crypto"
 import { createServer } from "node:http"
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises"
@@ -413,7 +414,7 @@ try {
   ;({ child, stopped } = start())
   await until(() => /http:\/\/127\.0\.0\.1:\d+/.test(output))
   const restartedEndpoint = { ...connection.endpoint, url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0] }
-  rememberRuntime(restartedEndpoint, { version: runtimeVersion, pid: child.pid, discovery: "info" })
+  rememberRuntime(restartedEndpoint, { version: runtimeVersion, pid: await fixtureChildPid(child), discovery: "info" })
   const restarted = OpenCode.make({ baseUrl: restartedEndpoint.url, fetch: createRuntimeFetch(restartedEndpoint) })
   await ready({ client: restarted, location, locationOptions })
   if (mixed) {

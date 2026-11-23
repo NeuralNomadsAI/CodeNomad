@@ -1,6 +1,6 @@
 // Headless native Wayfinder proof; only the owned fixture's daemon, profile and plugin bridge.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { copyFile, cp, mkdir, mkdtemp, realpath, rm, rmdir, writeFile } from "node:fs/promises"
 import os from "node:os"
@@ -8,7 +8,7 @@ import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { setTimeout as delay } from "node:timers/promises"
 import { fixtureParent, withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
-import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
 import { assertPrivateHost, outsideUserHome } from "./private-profile.mjs"
 
 const [source, binary, plugins] = process.argv.slice(2)

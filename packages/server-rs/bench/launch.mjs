@@ -2,7 +2,7 @@
 // `CODENOMAD_NATIVE_PARENT=1`, `CLI_CONFIG`), one after the other in private homes; stdout contract
 // lines, token exchange, sign-in pages, UI bundle, `tls/` and the stdin stop compared. `node launch.mjs`
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { spawnFixtureChild as spawn } from "../../../scripts/native-fixture-guards.mjs"
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"

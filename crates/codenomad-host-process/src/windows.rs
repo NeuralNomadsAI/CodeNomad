@@ -1,13 +1,13 @@
+mod launch;
+pub(super) use launch::{Process, launch};
+
 use std::{
     io,
     mem::{size_of, zeroed},
-    os::windows::io::AsRawHandle,
-    os::windows::process::CommandExt,
-    process::{Child, Command},
 };
 use windows_sys::Win32::{
     Foundation::{CloseHandle, HANDLE},
-    System::{JobObjects::*, Threading::CREATE_SUSPENDED},
+    System::JobObjects::*,
 };
 
 pub(super) struct Family {
@@ -17,17 +17,9 @@ pub(super) struct Family {
 unsafe impl Send for Family {}
 // SAFETY: the APIs used here synchronize access to the referenced kernel object.
 unsafe impl Sync for Family {}
-#[link(name = "ntdll")]
-unsafe extern "system" {
-    fn NtResumeProcess(process: HANDLE) -> i32;
-}
 impl Family {
-    pub fn prepare(command: &mut Command) {
-        command.creation_flags(CREATE_SUSPENDED | 0x0800_0000);
-    }
-    pub fn adopt(child: &mut Child) -> io::Result<Self> {
-        // SAFETY: pointers name owned handles and correctly sized initialized
-        // Win32 structures. The child remains suspended through assignment.
+    fn new() -> io::Result<Self> {
+        // SAFETY: pointers name correctly sized Win32 structures; the job is not inheritable.
         unsafe {
             let handle = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
             if handle.is_null() {
@@ -44,13 +36,6 @@ impl Family {
             ) == 0
             {
                 return Err(io::Error::last_os_error());
-            }
-            let process = child.as_raw_handle() as HANDLE;
-            if AssignProcessToJobObject(handle, process) == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            if NtResumeProcess(process) < 0 {
-                return Err(io::Error::other("Cannot resume the contained backend"));
             }
             Ok(family)
         }
