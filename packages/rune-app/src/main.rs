@@ -371,11 +371,8 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                         Phase::Ready
                     };
                 }
-                if let Some(agent) = &mut s.agent
-                    && (!agent.known || agent.running != running)
-                {
-                    agent.running = running;
-                    agent.refresh(false);
+                if let Some(agent) = &mut s.agent {
+                    agent.observe_running(running);
                 }
             }
             Event::Workspace(event) => {
@@ -414,7 +411,14 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
                 s.history_error = false;
                 // A newer activity event can run ahead of a snapshot in the content lane.
-                s.phase = if stale_activity || page.running {
+                let running = if stale_activity {
+                    s.reader.as_ref().is_some_and(|reader| {
+                        !reader.independent_status() || reader.running() == Some(true)
+                    })
+                } else {
+                    page.running
+                };
+                s.phase = if running {
                     Phase::Streaming
                 } else {
                     Phase::Ready

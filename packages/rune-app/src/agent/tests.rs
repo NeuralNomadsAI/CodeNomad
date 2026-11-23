@@ -3,6 +3,53 @@ use crate::{
     agent_forms::{self, Draft},
 };
 use serde_json::json;
+
+#[test]
+fn terminal_event_fences_only_activity_in_a_pending_control_response() {
+    let (jobs, incoming) = super::bounded(1);
+    let (stop, _) = super::bounded(1);
+    let (out, results) = super::bounded(1);
+    let mut ui = super::Ui::new(super::Handle {
+        connection: None,
+        jobs,
+        stop,
+        results,
+    });
+    assert!(matches!(incoming.try_recv(), Ok(super::Job::Read(true))));
+    ui.known = true;
+    ui.observe_running(false);
+    let snapshot = |forms| agent_api::Snapshot {
+        models: Some(vec![]),
+        current: None,
+        session_known: true,
+        running: true,
+        permissions: Some(vec![]),
+        forms: Some(forms),
+    };
+    assert!(
+        out.try_send(super::Result::Read(
+            snapshot(vec![Form {
+                id: "form_pending".into(),
+                title: "Pending question".into(),
+                fields: vec![],
+            }]),
+            true
+        ))
+        .is_ok()
+    );
+    assert!(ui.poll());
+    assert!(!ui.running);
+    assert_eq!(ui.selected, "form_pending");
+    ui.refresh(false);
+    assert!(matches!(incoming.try_recv(), Ok(super::Job::Read(false))));
+    assert!(
+        out.try_send(super::Result::Read(snapshot(vec![]), false))
+            .is_ok()
+    );
+    assert!(ui.poll());
+    assert!(ui.running);
+}
+
 #[test]
 fn settled_requests_and_removed_models_reject_late_actions_before_dispatch() {
     let (jobs, incoming) = super::bounded(4);
