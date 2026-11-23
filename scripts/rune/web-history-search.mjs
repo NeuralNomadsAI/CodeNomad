@@ -137,15 +137,20 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
     await grep.waitFor()
     assert.equal(await toolBody.count(),0,'Showing the tool must leave its group collapsed')
     await installPngReader(page)
-    const activeInk=async box=>{
+    const matchInk=async (box, active)=>{
       await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
-      return page.evaluate(async png=>{
+      return page.evaluate(async ({png,active})=>{
         const [{pixels}]=await globalThis.__codenomadReadPngs([`data:image/png;base64,${png}`])
+        // Ranked prose uses translucent ink: sample its rendered blends in both fixture palettes.
+        const colors=active?[[250,204,21]]:[[235,213,163],[86,82,74]]
+        const tolerance=active?0:2
+        let matches=0
         for(let i=0;i<pixels.length;i+=4){
-          if(pixels[i]===250&&pixels[i+1]===204&&pixels[i+2]===21)return true
+          if(colors.some(([r,g,b])=>Math.abs(pixels[i]-r)<=tolerance&&Math.abs(pixels[i+1]-g)<=tolerance&&Math.abs(pixels[i+2]-b)<=tolerance)
+            && ++matches>=(active?1:32))return true
         }
         return false
-      },(await page.screenshot(box?{clip:box}:{})).toString('base64'))
+      },{png:(await page.screenshot(box?{clip:box}:{})).toString('base64'),active})
     }
     for(const [hit,body] of [
       ['Existing technical tool match','Found Existing technical tool match'],
@@ -155,7 +160,7 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
       await filtered.waitFor({state:'detached'})
       await page.getByText(body,{exact:true}).and(page.locator('p, pre, code')).first().waitFor()
       if(touch)continue
-      assert(await activeInk(),`The active occurrence is painted for ${hit}`)
+      assert(await matchInk(undefined,true),`The active occurrence is painted for ${hit}`)
     }
     assert.equal(windows,0,'Revealing technical matches must also stay local')
     await press(search,'Existing arguments only')
@@ -310,7 +315,7 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
     const arrival=page.getByRole('paragraph').filter({hasText:'Existing ranked destination'})
     await arrival.waitFor()
     const box=await arrival.boundingBox()
-    assert(box&&await activeInk(box),'The destination passage has the active search highlight')
+    assert(box&&await matchInk(box,false),'The destination passage paints the ranked search highlight')
   }finally{
     page.off('request',count)
     if(touch)await resize(viewport)
