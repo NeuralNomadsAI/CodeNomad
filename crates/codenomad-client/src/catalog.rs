@@ -386,7 +386,8 @@ impl Backend {
         id: &str,
         fresh: bool,
     ) -> Result<(Self, Session)> {
-        self.bind_at(project, id, Some(&project.path), fresh).await
+        let (backend, session, _) = self.bind_session_placed(project, id, fresh).await?;
+        Ok((backend, session))
     }
     pub async fn bind_at(
         &self,
@@ -395,7 +396,9 @@ impl Backend {
         expected: Option<&str>,
         fresh: bool,
     ) -> Result<(Self, Session)> {
-        let (backend, session, _) = self.bind_at_placed(project, id, expected, fresh).await?;
+        let (backend, session, _) = self
+            .bind_at_placed(project, id, expected, fresh, true)
+            .await?;
         Ok((backend, session))
     }
 
@@ -405,7 +408,7 @@ impl Backend {
         id: &str,
         fresh: bool,
     ) -> Result<(Self, Session, String)> {
-        self.bind_at_placed(project, id, None, fresh).await
+        self.bind_at_placed(project, id, None, fresh, false).await
     }
 
     async fn bind_at_placed(
@@ -414,6 +417,7 @@ impl Backend {
         id: &str,
         expected: Option<&str>,
         fresh: bool,
+        verify_directory: bool,
     ) -> Result<(Self, Session, String)> {
         if !valid_id(id) || id.starts_with("ses_cn_schedule_") {
             return Err("invalid session".into());
@@ -449,20 +453,26 @@ impl Backend {
         let directory = row["location"]["directory"]
             .as_str()
             .ok_or("missing session directory")?;
-        if expected.is_some_and(|d| !crate::server_path::same(d, directory))
-            || (!crate::server_path::same(&project.path, directory)
-                && (fresh
-                    || !self
-                        .session_directories(project)
-                        .await?
-                        .iter()
-                        .any(|d| crate::server_path::same(d, directory))))
-        {
-            return Err("foreign session location".into());
-        }
         let placement = row["listWorktreeSlug"]
             .as_str()
             .filter(|slug| valid_id(slug));
+        let linked = !crate::server_path::same(&project.path, directory);
+        if expected.is_some_and(|d| !crate::server_path::same(d, directory)) || linked && fresh {
+            return Err("foreign session location".into());
+        }
+        if linked {
+            let owned = if verify_directory {
+                self.session_directories(project)
+                    .await?
+                    .iter()
+                    .any(|d| crate::server_path::same(d, directory))
+            } else {
+                placement.is_some_and(|slug| slug != "root")
+            };
+            if !owned {
+                return Err("foreign session location".into());
+            }
+        }
         let info = session_at(row, directory)?;
         if info.id != id {
             return Err("session response identity mismatch".into());
