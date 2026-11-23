@@ -101,7 +101,7 @@ test("two local renderers claim and use independent window tokens", async () => 
   assert.equal(handlers.size, 9)
 })
 
-test("only a registered local window can reset its renderer authority", () => {
+test("destruction releases the originally attached renderer after its record is removed", () => {
   const h = harness()
   h.listeners.get("did-navigate")!({}, "http://127.0.0.1:3000/next")
   h.listeners.get("render-process-gone")!()
@@ -110,7 +110,8 @@ test("only a registered local window can reset its renderer authority", () => {
   assert.equal(h.calls[1], h.calls[0])
   h.setCurrent(null)
   h.listeners.get("did-navigate")!({}, "http://127.0.0.1:3000/late")
+  assert.equal(h.calls.length, 2)
   h.destroyWindow()
   h.listeners.get("destroyed")!()
-  assert.equal(h.calls.length, 2)
+  assert.deepEqual(h.calls, Array(3).fill(`reset:${h.windowId}`))
 })

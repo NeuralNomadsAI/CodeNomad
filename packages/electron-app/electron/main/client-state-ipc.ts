@@ -67,6 +67,7 @@ export function setupClientStateIPC(
 
   return (window: BrowserWindow): void => {
     const webContents = window.webContents
+    const attached = resolveWindow(webContents)
     webContents.on("did-navigate", (_event, url) => {
       const record = resolveWindow(webContents)
       if (record && record.persisted !== false && shouldResetRendererAccessTokenForNavigation(
@@ -79,8 +80,7 @@ export function setupClientStateIPC(
       }
     })
     const resetDestroyedRenderer = () => {
-      const record = resolveWindow(webContents)
-      if (record && record.persisted !== false) clientState.resetRendererAccessToken(record.id)
+      if (attached && attached.persisted !== false) clientState.resetRendererAccessToken(attached.id)
     }
     webContents.on("render-process-gone", resetDestroyedRenderer)
     webContents.on("destroyed", resetDestroyedRenderer)

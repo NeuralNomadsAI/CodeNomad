@@ -872,6 +872,9 @@ impl ClientState {
 
     pub(crate) fn unregister_window(&self, window_id: &str) {
         self.renderer_access.remove(window_id);
+        if let Ok(mut readers) = self.file_draft_readers.lock() {
+            readers.remove(window_id);
+        }
         if let Ok(mut windows) = self.ephemeral_windows.lock() {
             windows.remove(window_id);
         }
@@ -907,6 +910,12 @@ impl ClientState {
             self.finish_window_capture_policy(&state, window_id);
         }
         result?;
+        if let Ok(mut readers) = self.file_draft_readers.lock() {
+            if let Some((generation, _)) = readers.get_mut(window_id) {
+                // The renderer survives record removal while its workspace release runs.
+                *generation = None;
+            }
+        }
         self.renderer_access.remove(window_id);
         self.zoom_levels
             .lock()

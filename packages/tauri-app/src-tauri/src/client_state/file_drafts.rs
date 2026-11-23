@@ -10,7 +10,7 @@ use std::{
 
 const MAX_BYTES: usize = 256 * 1024;
 const MAX_DRAFTS: usize = 32;
-pub(super) type Readers = Mutex<HashMap<String, (u64, HashSet<String>)>>;
+pub(super) type Readers = Mutex<HashMap<String, (Option<u64>, HashSet<String>)>>;
 
 #[derive(Deserialize, Serialize)]
 pub struct Draft {
@@ -116,12 +116,14 @@ impl ClientState {
             .lock()
             .map_err(|error| error.to_string())?;
         readers.retain(|id, (generation, _)| {
-            self.renderer_access
-                .is_generation_current_for(id, *generation)
+            generation.is_none_or(|generation| {
+                self.renderer_access
+                    .is_generation_current_for(id, generation)
+            })
         });
         let (_, keys) = readers
             .entry(window_id.into())
-            .or_insert_with(|| (generation, HashSet::new()));
+            .or_insert_with(|| (Some(generation), HashSet::new()));
         keys.insert(key.into());
         Ok(())
     }
@@ -163,8 +165,10 @@ impl ClientState {
                 .lock()
                 .map_err(|error| error.to_string())?;
             readers.retain(|id, (generation, _)| {
-                self.renderer_access
-                    .is_generation_current_for(id, *generation)
+                generation.is_none_or(|generation| {
+                    self.renderer_access
+                        .is_generation_current_for(id, generation)
+                })
             });
             if let Some((_, keys)) = readers.get_mut(window_id) {
                 keys.remove(&change.key);
@@ -239,9 +243,10 @@ mod tests {
             serde_json::from_value(json!({"key": "file", "expected": draft, "draft": null}))
                 .unwrap()
         };
+        assert!(state.remove_window(&a).unwrap());
         assert!(state.save_file_draft(b, discard(), || true).unwrap());
         assert_eq!(state.load_file_drafts(b).unwrap().len(), 1);
-        state.renderer_access.remove(&a);
+        state.unregister_window(&a);
         assert!(state.save_file_draft(b, discard(), || true).unwrap());
         assert!(state.load_file_drafts(b).unwrap().is_empty());
     }

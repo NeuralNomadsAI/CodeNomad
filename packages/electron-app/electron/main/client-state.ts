@@ -530,7 +530,8 @@ export class ClientStateManager {
     () => this.partitions.sweep(retainedPartitionKeys(this.state), () => this.assertReplacementAllowed()))
       .then((removed) => {
         if (removed) {
-          this.resetRendererAccessToken(windowId)
+          // Workspace release can still delay destruction after the record is removed.
+          this.rendererAccessTokens.delete(windowId)
           this.persistenceSuppressed.delete(windowId)
         }
         return removed

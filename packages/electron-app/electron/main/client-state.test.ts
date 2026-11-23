@@ -530,6 +530,7 @@ test("a draft observed by one renderer survives another renderer's discard until
   const draft = { fingerprint: "0".repeat(64), text: "draft" }
   assert.equal(await manager.saveFileDraft({ key, expected: null, draft }, "b", secondary), true)
   assert.deepEqual(await manager.loadFileDrafts("a", primary, key), [{ key, ...draft }])
+  assert.equal(await manager.removeWindow(primary), true)
   assert.equal(await manager.saveFileDraft({ key, expected: draft, draft: null }, "b", secondary), true)
   assert.deepEqual(await manager.loadFileDrafts("b", secondary), [{ key, ...draft }])
   manager.resetRendererAccessToken(primary)
