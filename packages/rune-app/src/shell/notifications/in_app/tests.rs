@@ -203,6 +203,28 @@ fn screen_toasts_use_their_own_deadline_and_announce_once_in_order() {
 }
 
 #[test]
+fn a_zero_toast_duration_uses_the_toaster_default() {
+    let mut inbox = Inbox::default();
+    let start = Instant::now();
+    inbox.opened = Some(start);
+    inbox.push(
+        "Info",
+        "Zero duration",
+        None,
+        &Route {
+            screen: true,
+            history: false,
+            system: false,
+        },
+        BubbleOptions::Toast(0),
+    );
+    assert_eq!(
+        inbox.next_expiration(),
+        Some(start + Duration::from_secs(8))
+    );
+}
+
+#[test]
 fn a_compaction_replaces_only_the_bubble_for_the_same_backend_and_session() {
     let mut inbox = Inbox::default();
     let route = Route {
@@ -236,7 +258,7 @@ fn a_compaction_replaces_only_the_bubble_for_the_same_backend_and_session() {
             BubbleOptions::Compaction,
         )
     };
-    push("First", target);
+    push("First", target.clone());
     push("Other backend", other);
     push("Replacement", duplicate_tab);
     assert_eq!(
@@ -247,13 +269,25 @@ fn a_compaction_replaces_only_the_bubble_for_the_same_backend_and_session() {
             .collect::<Vec<_>>(),
         ["Replacement", "Other backend"]
     );
+    inbox.push(
+        "Project",
+        "History only",
+        Some(target),
+        &Route {
+            screen: false,
+            ..route
+        },
+        BubbleOptions::Compaction,
+    );
+    assert_eq!(inbox.bubbles.len(), 1);
+    assert_eq!(inbox.bubbles[0].0.body, "Other backend");
     assert_eq!(
         inbox
             .history
             .iter()
             .map(|(r, _)| r.body.as_str())
             .collect::<Vec<_>>(),
-        ["Replacement", "Other backend", "First"]
+        ["History only", "Replacement", "Other backend", "First"]
     );
 }
 

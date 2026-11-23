@@ -62,19 +62,21 @@ impl Inbox {
                 self.history.pop_back();
             }
         }
+        if record.replace
+            && let Some(target) = &record.target
+        {
+            self.bubbles.retain(|(current, _)| {
+                !current.replace
+                    || current
+                        .target
+                        .as_ref()
+                        .is_none_or(|old| !old.same_event_scope(target))
+            });
+        }
         if route.screen {
-            if record.replace
-                && let Some(target) = &record.target
-            {
-                self.bubbles.retain(|(current, _)| {
-                    !current.replace
-                        || current
-                            .target
-                            .as_ref()
-                            .is_none_or(|old| !old.same_event_scope(target))
-                });
-            }
             let duration = match options {
+                // A supplied zero falls back to the Solid Toaster's eight-second default.
+                BubbleOptions::Toast(0) => Duration::from_secs(8),
                 BubbleOptions::Toast(ms) => Duration::from_millis(u64::from(ms)),
                 _ => LIFETIME,
             };

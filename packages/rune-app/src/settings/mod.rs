@@ -24,18 +24,18 @@ mod window;
 use appearance::awaiting_appearance;
 #[cfg(test)]
 use appearance::effective_contrast;
-pub(crate) use appearance::{app_locale, render};
 #[cfg(not(target_arch = "wasm32"))]
 use appearance::render_with;
+pub(crate) use appearance::{app_locale, render};
 pub(crate) use connection::{
     bound_backend, connected, connection_event, conversation_authentication, invalidate,
     stop_before_conversation,
 };
 #[cfg(test)]
 use connection::{provider_changed, provider_stopped};
+pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_notification};
 #[cfg(test)]
 pub(crate) use delivery::{notification_fixture, notification_test_config};
-pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_notification};
 pub(crate) use shortcuts::matches_shortcut;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
