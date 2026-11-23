@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent_api::Snapshot;
 use serde_json::json;
 
 #[test]
