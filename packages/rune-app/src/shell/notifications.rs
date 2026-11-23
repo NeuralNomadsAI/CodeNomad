@@ -191,7 +191,9 @@ impl Host {
                 .flatten()
                 .map(|_presented| Presented::Native { _presented });
             #[cfg(target_arch = "wasm32")]
-            return crate::platform::notifications::show(title, body, action)
+            return (!cfg!(feature = "test-support"))
+                .then(|| crate::platform::notifications::show(title, body, action))
+                .flatten()
                 .map(|_presented| Presented::Native { _presented });
             #[cfg(not(any(target_os = "windows", target_arch = "wasm32")))]
             {

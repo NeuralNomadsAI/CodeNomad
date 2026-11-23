@@ -26,8 +26,12 @@ fn a_recorded_notification_click_returns_to_its_own_project_and_conversation_onc
         assert_eq!(other.notifications.recorded()[0].2, "Another window");
         select(s, "tab-1", tx);
         assert_eq!(active_session(s), Some("session-second"));
+        s.screen.launcher_mut().unwrap().pending = true;
         s.notifications.simulate_click(0);
         assert!(!crate::shell::notifications::poll(&mut other, tx));
+        assert!(!crate::shell::notifications::poll(s, tx));
+        assert_eq!(active_session(s), Some("session-second"));
+        s.screen.launcher_mut().unwrap().pending = false;
         assert!(crate::shell::notifications::poll(s, tx));
         assert_eq!(s.workspace.as_ref().unwrap().active_key(), "tab-0");
         assert_eq!(active_session(s), Some("session-first"));

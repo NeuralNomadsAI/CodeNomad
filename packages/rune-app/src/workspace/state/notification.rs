@@ -31,10 +31,15 @@ pub(super) fn entry_target(entry: &Entry, s: &State) -> Option<(Target, String)>
     let Tab::Workspace(saved) = &entry.saved else {
         return None;
     };
+    let backend = entry.binding.as_ref()?;
     let target = Target {
         tab: Some(entry.key.clone()),
-        backend_url: entry.binding.as_ref()?.base.clone(),
-        server: saved.server_id.clone(),
+        backend_url: backend.base.clone(),
+        server: backend
+            .client
+            .server_identity()
+            .map(str::to_owned)
+            .or_else(|| saved.server_id.clone()),
         occurrence: saved.occurrence,
         workspace: saved.workspace_id.clone()?,
         session: saved.active_session_id.clone()?,
@@ -64,8 +69,10 @@ pub(crate) fn owns_notification(s: &State, target: &Target) -> bool {
     matches!(&entry.saved, Tab::Workspace(saved)
         if saved.workspace_id.as_ref() == Some(&target.workspace)
         && saved.occurrence == target.occurrence
-        && saved.server_id == target.server
-        && entry.binding.as_ref().is_some_and(|backend| backend.base == target.backend_url)
+        && entry.binding.as_ref().is_some_and(|backend| {
+            backend.base == target.backend_url
+                && backend.client.server_identity().or(saved.server_id.as_deref()) == target.server.as_deref()
+        })
         && (saved.active_session_id.as_ref() == Some(&target.session)
             || entry.sessions.iter().any(|row| row.id == target.session)
             || (s.workspace.as_ref().is_some_and(|ui| ui.active_key() == tab)
