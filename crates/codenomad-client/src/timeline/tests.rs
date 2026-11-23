@@ -105,8 +105,7 @@ fn outline_requires_an_explicit_end_and_limits_resident_structure() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn outline_http_uses_the_owned_scope_and_returned_cursor_only() {
+fn http_scan(steps: Vec<(&'static str, Option<Value>, Value, bool)>) -> Result<Outline> {
     use std::{
         io::{BufRead, BufReader, Read, Write},
         net::TcpListener,
@@ -114,17 +113,10 @@ fn outline_http_uses_the_owned_scope_and_returned_cursor_only() {
     };
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = format!("http://{}/", listener.local_addr().unwrap());
+    let revision = std::sync::Arc::new(OutlineRevision::default());
+    let events = revision.clone();
     let server = std::thread::spawn(move || {
-        for (body, reply) in [
-            (
-                json!({"sessionID":"session"}),
-                page(-1, 40, Some(2000), vec![entry("z", 0)]),
-            ),
-            (
-                json!({"sessionID":"session","cursor":{"after":40,"through":2000}}),
-                page(40, 2000, None, vec![entry("a", 1801)]),
-            ),
-        ] {
+        for (route, body, reply, invalidate) in steps {
             let (mut socket, _) = listener.accept().unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(3)))
@@ -132,10 +124,7 @@ fn outline_http_uses_the_owned_scope_and_returned_cursor_only() {
             let mut reader = BufReader::new(&mut socket);
             let mut line = String::new();
             reader.read_line(&mut line).unwrap();
-            assert_eq!(
-                line.trim_end(),
-                "POST /api/workspaces/workspace/session-history/outline HTTP/1.1"
-            );
+            assert_eq!(line.trim_end(), route);
             let mut len = 0;
             loop {
                 line.clear();
@@ -151,7 +140,14 @@ fn outline_http_uses_the_owned_scope_and_returned_cursor_only() {
             }
             let mut bytes = vec![0; len];
             reader.read_exact(&mut bytes).unwrap();
-            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), body);
+            if let Some(body) = body {
+                assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), body);
+            } else {
+                assert!(bytes.is_empty());
+            }
+            if invalidate {
+                events.invalidate();
+            }
             let body = reply.to_string();
             write!(
                 socket,
@@ -161,7 +157,7 @@ fn outline_http_uses_the_owned_scope_and_returned_cursor_only() {
             .unwrap();
         }
     });
-    tokio::runtime::Builder::new_current_thread()
+    let result = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()
@@ -169,8 +165,96 @@ fn outline_http_uses_the_owned_scope_and_returned_cursor_only() {
             let mut backend = Backend::unauthenticated(&address).unwrap();
             backend.workspace = "workspace".into();
             backend.session = "session".into();
-            let result = backend.outline().await.unwrap();
-            assert_eq!(result.entries[1].seq, 1801);
+            backend.outline(&revision).await
         });
     server.join().unwrap();
+    result
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+const RECORD: &str = "GET /workspaces/workspace/instance/api/session/session HTTP/1.1";
+#[cfg(not(target_arch = "wasm32"))]
+const OUTLINE: &str = "POST /api/workspaces/workspace/session-history/outline HTTP/1.1";
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn outline_http_uses_the_owned_scope_and_returned_cursor_only() {
+    let record = json!({"data":{"id":"session"}});
+    let result = http_scan(vec![
+        (RECORD, None, record.clone(), false),
+        (
+            OUTLINE,
+            Some(json!({"sessionID":"session"})),
+            page(-1, 40, Some(2000), vec![entry("z", 0)]),
+            false,
+        ),
+        (RECORD, None, record.clone(), false),
+        (
+            OUTLINE,
+            Some(json!({"sessionID":"session","cursor":{"after":40,"through":2000}})),
+            page(40, 2000, None, vec![entry("a", 1801)]),
+            false,
+        ),
+        (RECORD, None, record, false),
+    ])
+    .unwrap();
+    assert_eq!(result.entries[1].seq, 1801);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn undo_between_pages_discards_the_entire_outline() {
+    let record = json!({"data":{"id":"session"}});
+    for (next_record, invalidate) in [
+        (
+            json!({"data":{"id":"session","revert":{"messageID":"z"}}}),
+            false,
+        ),
+        (record.clone(), true),
+    ] {
+        let error = http_scan(vec![
+            (RECORD, None, record.clone(), false),
+            (
+                OUTLINE,
+                Some(json!({"sessionID":"session"})),
+                page(-1, 40, Some(2000), vec![entry("z", 0)]),
+                false,
+            ),
+            (RECORD, None, next_record, invalidate),
+        ])
+        .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<Blocked>(),
+            Some(Blocked::Conflict)
+        ));
+    }
+}
+
+#[test]
+fn outline_total_keeps_large_active_indexes_out_of_cache_from_the_first_page() {
+    let mut scan = Scan::default();
+    let mut first = page(-1, 10, Some(250_000), vec![entry("first", 1)]);
+    first["total"] = 250_001.into();
+    assert_eq!(accept(&mut scan, first).unwrap(), None);
+    assert!(!scan.cacheable);
+    scan.entries.resize(CACHE_ENTRIES, scan.entries[0].clone());
+    assert_eq!(
+        accept(
+            &mut scan,
+            page(10, 250_000, None, vec![entry("last", 250_000)])
+        )
+        .unwrap(),
+        Some(2)
+    );
+    assert_eq!(scan.entries.len(), CACHE_ENTRIES + 1);
+    assert!(!scan.cacheable);
+}
+
+#[test]
+fn impossible_active_total_stops_on_the_first_page() {
+    let mut scan = Scan::default();
+    let mut first = page(-1, 10, Some(250_000), vec![entry("first", 1)]);
+    first["total"] = MAX_SEQ.into();
+    assert!(accept(&mut scan, first).is_err());
+    assert!(scan.entries.is_empty() && scan.cursor.is_none());
 }
