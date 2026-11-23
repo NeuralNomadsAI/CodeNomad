@@ -47,7 +47,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, canRelistReturnedSession, forgetSessionMovedAway, getAuthoritativelyDeletedSessionIdsForInstance, getMovedAwaySessions, getSessionRoot, invalidateSessionMessageLoad, markSessionMovedAway, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
+import { activeSessionId, canRelistReturnedSession, forgetSessionMovedAway, getAuthoritativelyDeletedSessionIdsForInstance, getMovedAwaySessions, getSessionListIds, getSessionRoot, invalidateSessionMessageLoad, markSessionMovedAway, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
@@ -517,7 +517,7 @@ function handleSessionMoved(instanceId: string, data: SessionMoved["data"]): voi
     pendingSessionMoves.delete(instanceId)
     if (!authority.current()) return
     const needsInventory = [...moves].some(([id, move]) => !move.data
-      || !sessions().get(instanceId)?.has(id) || !listsSessionDirectory(instanceId, move.data.location.directory))
+      || !getSessionRoot(instanceId, id) || !listsSessionDirectory(instanceId, move.data.location.directory))
     void Promise.all([...moves].map(([movedId, move]) => settleSessionMove(instanceId, movedId, move)))
       .then(() => {
         if (needsInventory && authority.current()) return movedSessionLists.request(instanceId, authority.signal)
@@ -623,15 +623,16 @@ function finishSessionMove(instanceId: string, sessionId: string, move: SessionM
   if (typeof placement !== "symbol") {
     if (verified) confirmSessionPlacement(instanceId, sessionId, placement)
     const listed = confirmedSessionListDirectory(instanceId, sessionId, placement)
-    const localDisplay = !!getDirectoryOnlyWorktree(instanceId) && (listed || listsSessionDirectory(instanceId, placement.location.directory))
+    const inScope = listed || listsSessionDirectory(instanceId, placement.location.directory)
+    const localDisplay = !!getDirectoryOnlyWorktree(instanceId) && inScope
     if (held) applySessionMovePlacement(instanceId, { ...placement, sessionID: sessionId })
     else if (verified && (localDisplay || listed
       || (!move.data && listsSessionDirectory(instanceId, placement.location.directory)))) {
       publishFetchedSessionInfo(instanceId, verified, undefined, move.authority.current)
     }
-    if (localDisplay) {
+    if (inScope) {
       const root = getSessionRoot(instanceId, sessionId)
-      if (root) prependSessionListId(instanceId, root.id)
+      if (root && !getSessionListIds(instanceId).includes(root.id)) prependSessionListId(instanceId, root.id)
     }
     if (!move.data && held) refreshSelectedMoveCatalog(instanceId, sessionId)
     return true

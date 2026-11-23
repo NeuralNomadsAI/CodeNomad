@@ -138,10 +138,13 @@ try {
   })
   emit(rename("ses_5998", 1, "Fixture ready"))
   await page.locator(".session-item-base").getByText("Fixture ready", { exact: true }).waitFor({ timeout: 12000 })
-  await page.evaluate(() => {
+  assert.equal(await editor.inputValue(), "", "the production composer starts empty")
+  await editor.evaluate(input => {
     window.perfKeys = []
+    window.perfInputs = []
+    input.addEventListener("input", event => window.perfInputs.push([event.inputType, input.value]))
     document.addEventListener("keydown", event => {
-      if (!(event.target instanceof HTMLTextAreaElement) || !["a", "Backspace"].includes(event.key)) return
+      if (event.target !== input || !["a", "Backspace"].includes(event.key)) return
       // Include input, synchronous reactive work and microtasks before the next
       // render opportunity; use every key, unlike Event Timing's 16 ms floor.
       requestAnimationFrame(() => window.perfKeys.push(performance.now() - event.timeStamp))
@@ -174,8 +177,13 @@ try {
   const counters = { eventTicks: seq, streams: streams.size,
     mockPartitionCommits: await page.evaluate(start => window.perfCommits - start, commitsBefore) }
   const keys = await page.evaluate(() => window.perfKeys.sort((a, b) => a - b))
+  const inputs = await page.evaluate(() => window.perfInputs)
   assert.ok(keys.length > 0, "the production composer received keyboard input")
   assert.equal(keys.length, Math.floor(seq / 3), "every scheduled press reached the production composer")
+  assert.deepEqual(inputs, Array.from({ length: keys.length }, (_, i) => i % 2
+    ? ["deleteContentBackward", ""] : ["insertText", "a"]), "every press changed the composer value as intended")
+  assert.equal(await editor.inputValue(), keys.length % 2 ? "a" : "")
+  counters.inputCount = inputs.length
   counters.keyToFrame = { count: keys.length, p50: keys[Math.ceil(keys.length * 0.5) - 1],
     p95: keys[Math.ceil(keys.length * 0.95) - 1], max: keys.at(-1) }
   await writeFile(join(output, "fixture.json"), JSON.stringify(counters, null, 2))

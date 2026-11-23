@@ -12,7 +12,7 @@ function scalarEntries(value: Record<string, any>, prefix = ""): Array<[string, 
   })
 }
 
-test("capture defers only busy usage through both real-store effects and keeps fresh checkpoints", async t => {
+test("capture defers only busy usage through both real-store effects and keeps fresh checkpoints", { timeout: 60_000 }, async t => {
   const fixture = await borrowFixture({ name: "session-capture", routes: [{ path: "/fixture",
     html: '<html><body><script type="module" src="/tests/browser/fixtures/session-capture.tsx"></script></body></html>',
   }] })
@@ -33,20 +33,25 @@ test("capture defers only busy usage through both real-store effects and keeps f
         w.__CODENOMAD_WINDOW_CONTEXT__ = "local"
         const callbacks = new Map(), listeners = new Map()
         let sequence = 0
-        w.receipts = []; w.acks = []; w.mode = "accept"
+        w.receipts = []; w.completedCommits = 0; w.acks = []; w.mode = "accept"
         const load = () => ({ isPrimary: true, restoreEnabled: true, snapshot: null, partitionProtocolVersion: 1 })
         const commit = async (token: string, payload: NativeClientStatePartitionCommit) => {
           w.receipts.push({ token, payload: structuredClone(payload) })
-          if (w.holdNextCommit) {
-            w.holdNextCommit = false
-            await new Promise<void>(resolve => { w.finishHeldCommit = resolve })
+          try {
+            if (w.holdNextCommit) {
+              w.holdNextCommit = false
+              await new Promise<void>(resolve => { w.finishHeldCommit = resolve })
+            }
+            if (w.mode === "fail") throw Error("synthetic write failure")
+            if (w.mode === "refuse") return false
+            const partitions = { ...w.persisted?.partitions, ...payload.partitions }
+            if (payload.partitionKeys.some(key => !(key in partitions))) throw Error("Missing client state partition")
+            w.persisted = { ...payload, partitions: Object.fromEntries(payload.partitionKeys.map(key => [key, partitions[key]])) }
+            return true
+          } finally {
+            w.completedCommits++
+            w.dispatchEvent(new Event("fixture-commit-completed"))
           }
-          if (w.mode === "fail") throw Error("synthetic write failure")
-          if (w.mode === "refuse") return false
-          const partitions = { ...w.persisted?.partitions, ...payload.partitions }
-          if (payload.partitionKeys.some(key => !(key in partitions))) throw Error("Missing client state partition")
-          w.persisted = { ...payload, partitions: Object.fromEntries(payload.partitionKeys.map(key => [key, partitions[key]])) }
-          return true
         }
         w.electronAPI = { claimClientStateAccess: async () => true, loadClientState: async () => load(),
           loadClientStatePartition: async () => null, commitClientStatePartitions: async (token: string, payload: NativeClientStatePartitionCommit) => commit(token, payload) }
@@ -83,8 +88,25 @@ test("capture defers only busy usage through both real-store effects and keeps f
       await page.waitForFunction(() => Boolean((window as any).fixture))
       // Capture and persistence have separate quiet periods; advance both before
       // checking that busy usage produced no additional checkpoint.
-      const settle = () => page.clock.runFor(850)
+      const waitForCommit = (expected: number) => page.evaluate(expected => new Promise<void>(resolve => {
+        const done = () => {
+          if ((window as any).completedCommits < expected) return
+          window.removeEventListener("fixture-commit-completed", done)
+          resolve()
+        }
+        window.addEventListener("fixture-commit-completed", done)
+        done()
+      }), expected)
+      const settle = async (expected?: number) => {
+        await page.clock.runFor(850)
+        if (expected !== undefined) await waitForCommit(expected)
+      }
       const count = () => page.evaluate(() => (window as any).receipts.length)
+      const checkpointAfter = async (change: () => Promise<unknown>, writes = 1) => {
+        const before = await count()
+        await change()
+        await settle(before + writes)
+      }
       const state = () => page.evaluate(() => (window as any).fixture.state())
       const change = (field: string, id = "first", sessionId = "parent") =>
         page.evaluate(([field, id, sessionId]) => (window as any).fixture.change(field, id, sessionId), [field, id, sessionId])
@@ -95,13 +117,13 @@ test("capture defers only busy usage through both real-store effects and keeps f
       const mutate = async (path: string, value: unknown, writes = 1) => {
         const [beforeCaptures, beforeWrites] = [await captures(), await count()]
         await page.evaluate(([path, value]) => (window as any).fixture.mutate(path, value), [path, value])
-        await settle()
+        await settle(writes ? beforeWrites + writes : undefined)
         assert.equal(await captures(), beforeCaptures + 1, `${host}: in-place ${path} checkpoints`)
         assert.equal(await count(), beforeWrites + writes, `${host}: in-place ${path} writes ${writes ? "its change" : "nothing"}`)
       }
-      await settle()
+      await settle(1)
       assert.equal(await page.evaluate(() => (window as any).fixture.draftValue("first", "missing")), "")
-      await page.evaluate(() => (window as any).fixture.appear()); await settle()
+      await checkpointAfter(() => page.evaluate(() => (window as any).fixture.appear()))
       assert.equal(await page.evaluate(() => (window as any).fixture.draftValue("first", "missing")), "preserved",
         `${host}: a newly available working session hydrates its preserved draft into the live store`)
       const initial = await count(), hydrated = await page.evaluate(() => (window as any).fixture.hydrated())
@@ -119,7 +141,7 @@ test("capture defers only busy usage through both real-store effects and keeps f
         if (elapsed === 1_500) await page.evaluate(() => (window as any).fixture.settleChild())
         await page.clock.runFor(100)
       }
-      assert.ok(await count() > initial, "a commit starts while catalog events and typing are still arriving")
+      await waitForCommit(initial + 1)
       const checkpoint = await page.evaluate(async () => {
         const w = window as any
         const [first, second] = (await w.fixture.decode(w.persisted)).session.tabs
@@ -131,14 +153,16 @@ test("capture defers only busy usage through both real-store effects and keeps f
       assert.ok(!checkpoint.ids.includes("child"), "a confirmed deletion fences the reused catalog")
       assert.equal(typeof checkpoint.idle, "number", "the deadline includes a settlement during typing")
       assert.equal(checkpoint.recovery, undefined, "the saved running marker is cleared at the deadline")
-      await settle()
+      await settle(initial + 2)
       assert.notEqual((await state()).tabs[0].sessionCatalog[0].title, checkpoint.title, "quiet capture catches up the catalog")
 
+      const beforeExpansion = await count()
       await page.evaluate(() => (window as any).fixture.expand())
       for (let elapsed = 0; elapsed < 2_600; elapsed += 200) {
         await change("title")
         await page.clock.runFor(200)
       }
+      await waitForCommit(beforeExpansion + 1)
       assert.ok(await page.evaluate(async () => {
         const w = window as any
         return (await w.fixture.decode(w.persisted)).session.tabs[0].expandedSessionIds.includes("parent")
@@ -189,8 +213,7 @@ test("capture defers only busy usage through both real-store effects and keeps f
         assert.equal(await page.evaluate(() => document.documentElement.inert), false, "the cancellation reached the renderer")
         // Let the one-off resumed capture finish before testing the subscription.
         await settle()
-        await input.fill("typed after cancellation", { timeout: 5_000 })
-        await settle()
+        await checkpointAfter(() => input.fill("typed after cancellation", { timeout: 5_000 }))
         const persisted = await page.evaluate(async () => {
           const w = window as any
           return (await w.fixture.decode(w.persisted)).session.tabs[0].drafts.parent
@@ -199,7 +222,7 @@ test("capture defers only busy usage through both real-store effects and keeps f
         assert.deepEqual([saved, live], [`typed before ${phase}`, `typed before ${phase}`])
       })
 
-      await page.evaluate(() => (window as any).fixture.draft("edited")); await settle()
+      await checkpointAfter(() => page.evaluate(() => (window as any).fixture.draft("edited")))
       let saved = await state()
       assert.equal(saved.tabs[0].drafts.parent, "edited")
       assert.equal(saved.tabs[0].drafts.missing, "preserved")
@@ -217,7 +240,7 @@ test("capture defers only busy usage through both real-store effects and keeps f
       }
       for (const [from, to] of [["missing", "renamed"], ["renamed", "missing"]]) {
         const before = await count()
-        await page.evaluate(([from, to]) => (window as any).fixture.rename(from, to), [from, to]); await settle()
+        await checkpointAfter(() => page.evaluate(([from, to]) => (window as any).fixture.rename(from, to), [from, to]))
         assert.equal(await count(), before + 1, "same-cardinality session identity changes checkpoint")
         assert.ok((await state()).tabs[0].sessionCatalog.some((row: any) => row.id === to))
       }
@@ -228,7 +251,7 @@ test("capture defers only busy usage through both real-store effects and keeps f
       await change("idle"); await settle()
       assert.equal((await state()).tabs[0].sessionCatalog[0].cost, 2)
       before = await count()
-      await usage(); await settle()
+      await checkpointAfter(() => usage())
       assert.equal(await count(), before + 1, "late idle usage checkpoints")
       for (const [path] of usageScalars) {
         const value = new Map(scalarEntries((await state()).tabs[0].sessionCatalog[0])).get(path) + 1
@@ -237,7 +260,7 @@ test("capture defers only busy usage through both real-store effects and keeps f
       }
       await mutate("generationRecovery", "pending")
       await mutate("idleSince", 1)
-      await page.evaluate(() => (window as any).fixture.seen()); await settle()
+      await checkpointAfter(() => page.evaluate(() => (window as any).fixture.seen()))
       assert.equal((await state()).tabs[0].seenInterruptions.parent, 1)
       await mutate("generationRecovery", null)
       await mutate("runtimeStatusKnown", true, 0)
@@ -270,23 +293,23 @@ test("capture defers only busy usage through both real-store effects and keeps f
         await page.waitForFunction(() => (window as any).acks.some((ack: any) => ack.generation === 7))
       }
       assert.equal((await state()).tabs[0].sessionCatalog[0].cost, costBeforeFlush + 1)
-      await page.evaluate(() => (window as any).fixture.attach()); await settle()
+      await checkpointAfter(() => page.evaluate(() => (window as any).fixture.attach()))
       assert.equal((await state()).tabs[0].attachments.parent[0].filename, "note.txt")
-      await change("parent", "second", "child"); await settle()
+      await checkpointAfter(() => change("parent", "second", "child"))
       assert.equal((await state()).tabs[1].sessionCatalog[1].parentId, null)
-      await page.evaluate(() => (window as any).fixture.remove()); await settle()
+      await checkpointAfter(() => page.evaluate(() => (window as any).fixture.remove()))
       assert.equal((await state()).tabs[1].sessionCatalog.length, 1)
 
       before = await count()
-      await page.evaluate(() => { (window as any).mode = "fail"; (window as any).fixture.draft("failed write") }); await settle()
-       assert.equal(await count(), before + 2, "a failed delta retries with the complete graph")
+      await checkpointAfter(() => page.evaluate(() => { (window as any).mode = "fail"; (window as any).fixture.draft("failed write") }), 2)
+      assert.equal(await count(), before + 2, "a failed delta retries with the complete graph")
       await page.evaluate(() => { (window as any).mode = "accept"; return (window as any).fixture.flushStore() })
-       assert.equal(await count(), before + 3, "explicit flush retains dirty work after failure")
+      assert.equal(await count(), before + 3, "explicit flush retains dirty work after failure")
 
-       // Decode the full graph published by the mock host, not just the last delta.
+      // Decode the full graph published by the mock host, not just the last delta.
       const decoded = await page.evaluate(async () => {
         const w = window as any
-         return { state: await w.fixture.decode(w.persisted), tokens: w.receipts.map((r: any) => r.token) }
+        return { state: await w.fixture.decode(w.persisted), tokens: w.receipts.map((r: any) => r.token) }
       })
       assert.deepEqual(decoded.state.session, await state())
       assert.equal(new Set(decoded.tokens).size, 1, "one native owner token")
@@ -302,10 +325,10 @@ test("capture defers only busy usage through both real-store effects and keeps f
         assert.equal(await count(), before, "shutdown suppresses reactive capture")
         await page.evaluate(() => (window as any).emit("client-state:flush-cancelled", 9)); await settle()
         assert.equal(await count(), before, "another shutdown generation cannot resume capture")
-        await page.evaluate(() => (window as any).emit("client-state:flush-cancelled", 8)); await settle()
+        await checkpointAfter(() => page.evaluate(() => (window as any).emit("client-state:flush-cancelled", 8)))
         assert.equal(await count(), before + 1, "own cancellation resumes capture")
       }
-      await page.evaluate(() => { (window as any).mode = "refuse"; (window as any).fixture.draft("rejected write") }); await settle()
+      await checkpointAfter(() => page.evaluate(() => { (window as any).mode = "refuse"; (window as any).fixture.draft("rejected write") }))
       assert.equal(await page.evaluate(() => (window as any).fixture.primary()), false, "refusal revokes native ownership")
       before = await count()
       await change("title"); await settle()

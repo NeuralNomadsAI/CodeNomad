@@ -44,6 +44,8 @@ let dirty = false
 let writeBlock: false | "snapshot" | "transaction" = false
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let saveDeadline: number | undefined
+let saveDue = false
+let snapshotWritePending = false
 let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
@@ -136,6 +138,7 @@ const cancelSaveTimer = () => {
   if (saveTimer !== null) clearTimeout(saveTimer)
   saveTimer = null
   saveDeadline = undefined
+  saveDue = false
 }
 
 // Explicit flushes (navigation, close, host requests) verify even unchanged
@@ -196,10 +199,17 @@ function enqueuePendingSave(republish = false): Promise<void> {
       dirty = true
       lastSaveError = error
       throw error
+    } finally {
+      snapshotWritePending = false
+      if (saveDue) {
+        saveDue = false
+        if (dirty) scheduleSave()
+      }
     }
   }
   // Web saves write sessionStorage before the first await, including during pagehide.
-  const saveAttempt = snapshotOwnsLayout ? writeQueue.then(save) : save()
+  if (snapshotOwnsLayout) snapshotWritePending = true
+  const saveAttempt = snapshotOwnsLayout ? Promise.resolve().then(save) : save()
   writeQueue = saveAttempt.catch(() => undefined)
   return saveAttempt
 }
@@ -214,13 +224,19 @@ function withoutPartitionCaches(state: RestorableSessionState | null): Restorabl
 
 function scheduleSave() {
   dirty = true
-  if (!canWriteSnapshot()) return
+  if (!canWriteSnapshot() || saveDue) return
   const now = performance.now()
   saveDeadline ??= now + SAVE_MAX_WAIT_MS
   if (saveTimer !== null) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => void enqueuePendingSave()
-    .catch((error) => console.warn("[client-state] failed to save client snapshot", error)),
-  Math.min(SAVE_DEBOUNCE_MS, saveDeadline - now))
+  saveTimer = setTimeout(() => {
+    saveTimer = null
+    // Keep the deadline, but capture only the latest state once the write settles.
+    if (snapshotWritePending) {
+      saveDue = true
+      return
+    }
+    void enqueuePendingSave().catch((error) => console.warn("[client-state] failed to save client snapshot", error))
+  }, Math.min(SAVE_DEBOUNCE_MS, saveDeadline - now))
 }
 function resetLoadedState(snapshot: ClientSnapshotV1 | null = null, resetRevision = false) {
   confirmedPartitionKeys = undefined

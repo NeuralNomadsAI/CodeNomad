@@ -38,12 +38,13 @@ of row metadata. Single-row publications retain unaffected descendant indexes an
 family trees; bulk inventory publication rebuilds the affected workspace's indexes
 on demand. Catalog-only changes may wait for 500 ms of quiet. Draft and
 attachment edits and other restore state (such as selection, expansion and
-scroll) trigger a capture within 2 s of the first dirty change. A deadline
-capture reads current runtime markers and membership/deletion authority and
-reuses only the encoded catalog. Persistence waits for 250 ms of quiet, with
-an additional 500 ms maximum to queue the commit; completion depends on the
-write queue and storage. Explicit flushes capture fresh data and start
-persistence immediately.
+scroll) arm a 2 s capture timer from the first dirty change; execution depends
+on browser scheduling. A deadline capture reads current runtime markers and
+membership/deletion authority, reusing the prior captured catalog when present
+or building it on the first capture. Persistence waits for 250 ms of quiet or
+the 500 ms save timer, whichever comes first. One native commit runs at a time;
+unsent autosaves coalesce into the latest state. Explicit flushes capture fresh
+data and bypass the autosave timers after any in-flight commit settles.
 Draft and attachment signals schedule capture without materializing their saved
 maps on each edit; serialization reads the current maps at the checkpoint.
 Session rename events publish their title directly in the catalog; unseen IDs

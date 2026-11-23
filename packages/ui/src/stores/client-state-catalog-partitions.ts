@@ -1,5 +1,5 @@
 import { normalizeSessionCatalog, type PersistedSessionCatalogEntry } from "./session-catalog-persistence"
-import { canonicalJson, sha256, type EncodedPartition } from "./client-state-partition-json"
+import { canonicalJson, encodeCanonicalPartition, sha256, type EncodedPartition } from "./client-state-partition-json"
 
 const encoder = new TextEncoder()
 const CHUNK_BYTES = 768 * 1024
@@ -38,12 +38,8 @@ export async function encodeCatalogPartitions(input: PersistedSessionCatalogEntr
       && rows.slice(start, end).every((row, offset) => row === previous!.rows[old.start + offset])) {
       chunks.push({ start, end, partition: old.partition })
     } else {
-      const prefix = '{"entries":['
-      const suffix = `],"format":1,"index":${index}}`
-      const text = prefix + texts.join(",") + suffix
-      chunks.push({ start, end, partition: {
-        text, key: await sha256(text), bytes: prefix.length + bytes - 1 + suffix.length,
-      } })
+      const text = `{"entries":[${texts.join(",")}],"format":1,"index":${index}}`
+      chunks.push({ start, end, partition: await encodeCanonicalPartition(text) })
     }
     start = end; bytes = 0; texts = []
   }

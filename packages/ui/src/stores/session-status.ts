@@ -143,14 +143,6 @@ export function getRetrySeconds(next: number, now = Date.now(), wakeAt?: (deadli
 
 export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
 
-export function getInstanceSessionIndicatorStatus(
-  instanceId: string,
-  now = Date.now(),
-  keepUnseenSubagentIdleStatus = false,
-): InstanceSessionIndicatorStatus | null {
-  return getInstanceStatusPresentation(instanceId, now, keepUnseenSubagentIdleStatus).status
-}
-
 export function getInstanceStatusPresentation(
   instanceId: string,
   now: number,

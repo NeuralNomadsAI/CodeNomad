@@ -173,16 +173,6 @@ export function getSessionAncestorIdsFromMap(instanceSessions: ReadonlyMap<strin
 
 export type DescendantActivity = { permission: number; working: number; compacting: number; idle: number }
 
-export function getDescendantActivity(
-  rows: ReadonlyMap<string, Session>,
-  parentId: string,
-  showIdleStatus: (session: Session) => boolean = () => false,
-): DescendantActivity | undefined {
-  const parent = rows.get(parentId)
-  if (!parent) return
-  return countDescendantActivity(rows, parentId, sessionDescendants(rows, parentId), showIdleStatus)
-}
-
 export function countDescendantActivity(
   rows: ReadonlyMap<string, Session>,
   parentId: string,

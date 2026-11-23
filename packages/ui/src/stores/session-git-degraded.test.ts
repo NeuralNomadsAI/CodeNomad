@@ -14,7 +14,10 @@ test("directory-only inventory loads and paginates UI sessions without claiming 
   const original = serverApi.fetchWorktrees
   let gitAvailable = false
   serverApi.fetchWorktrees = async () => gitAvailable
-    ? { isGitRepo: true, worktrees: [{ slug: "root", directory: folder, kind: "root" }] }
+    ? { isGitRepo: true, worktrees: [
+      { slug: "root", directory: folder, kind: "root" },
+      { slug: "checkout", directory: "/checkout", kind: "worktree" },
+    ] }
     : { gitAvailable: false, worktrees: [{ slug: "root", directory: folder, serviceDirectory: folder, kind: "root", directoryOnly: true }] }
   const requests: any[] = []
   let holdPage: Promise<void> | undefined
@@ -93,6 +96,25 @@ test("directory-only inventory loads and paginates UI sessions without claiming 
     assert.equal(getDirectoryOnlyWorktree(id), undefined)
     assert.equal(getGitRepoStatus(id), true)
     assert.ok(requests.some(input => input.project === "project"))
+
+    const root = { ...sample, id: "off-page-root", parentId: null }
+    // Search can publish a family into the session map without adding its root to the page.
+    setSessions(previous => new Map(previous).set(id, new Map(previous.get(id))
+      .set(root.id, root)
+      .set("off-page-child", { ...sample, id: "off-page-child", parentId: root.id })))
+    assert.ok(!getSessionListIds(id).includes(root.id))
+    const beforeMove = requests.length
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    handleNativeSessionEvent(id, {
+      type: "session.moved", id: "worktree-move", created: 3,
+      durable: { aggregateID: "off-page-child", seq: 1, version: 1 },
+      data: { sessionID: "off-page-child", projectID: "project", location: { directory: "/checkout" } },
+    })
+    t.mock.timers.tick(100)
+    assert.ok(getSessionListIds(id).includes(root.id), "a worktree move lists the held family")
+    assert.ok(getSessionThreads(id).some(thread => thread.session.id === root.id
+      && thread.children.some(child => child.session.id === "off-page-child")))
+    assert.equal(requests.length, beforeMove)
   } finally {
     serverApi.fetchWorktrees = original
     setSessions(previous => { const next = new Map(previous); next.delete(id); return next })

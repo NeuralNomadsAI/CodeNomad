@@ -457,6 +457,39 @@ describe("future envelopes and clear races", () => {
   })
 })
 describe("flush behavior", () => {
+  it("flushes the latest draft after a held autosave without replaying older deadlines", async t => {
+    const started = deferred<void>(), release = deferred<boolean>()
+    const writes: string[] = []
+    const state = await boot({
+      loadClientState: async () => loadResult(),
+      saveClientState: async (_token, snapshot) => {
+        writes.push(snapshot.session.tabs[0].drafts.conversation)
+        if (writes.length > 1) return true
+        started.resolve()
+        return release.promise
+      },
+    })
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const edit = (draft: string) => state.updateRestorableSession({
+      activeTabIndex: 0, tabs: [{
+        kind: "workspace", folder: "/repo", drafts: { conversation: draft },
+        attachments: {}, unseenIdleSince: {}, generationRecovery: {}, scrollSnapshots: {},
+      }],
+    })
+    edit("in flight")
+    t.mock.timers.tick(500)
+    await started.promise
+    for (const draft of ["obsolete one", "obsolete two", "latest"]) {
+      edit(draft)
+      t.mock.timers.tick(500)
+    }
+    const closing = state.flushClientState()
+    assert.deepEqual(writes, ["in flight"])
+    release.resolve(true)
+    await closing
+    assert.deepEqual(writes, ["in flight", "latest"])
+  })
+
   it("waits for replacement writes, retries once, and bounds persistent failures", async () => {
     let phase: "race" | "one-time" | "persistent" = "race", attempts = 0
     const starts = [deferred<void>(), deferred<void>()], saves = [deferred<void>(), deferred<void>()]
