@@ -5,6 +5,7 @@ import { getLogger } from "../logger"
 import { isStartupStateCommand, type StartupStateCommand, type StartupStateSnapshot } from "./startup-state-command"
 import { clearWebSessionClientState, loadWebSessionClientState, saveWebSessionClientState,
   setWebSessionRestoreEnabled } from "../web-session-client-state"
+import type { WorkspaceFileDraft } from "../../stores/workspace-file-drafts-codec"
 const LEGACY_WEB_KEYS = ["codenomad-client-snapshot-v1", "codenomad-client-restore-enabled-v1"]
 export type NativeClientStateLoadResult = {
   isPrimary: boolean
@@ -88,6 +89,19 @@ export const commitNativeClientStatePartitions = (payload: NativeClientStatePart
 export const loadNativeClientStatePartition = async (key: string): Promise<string | null> => {
   if (!nativeAccessClaimed) return null
   return await dispatchNative((api) => api?.loadClientStatePartition?.(accessToken, key), "client_state_load_partition", { key }) ?? null
+}
+export function loadNativeFileDrafts(): Promise<WorkspaceFileDraft[]> | undefined {
+  if (!nativeAccessClaimed) return
+  return dispatchNative(api => api?.loadFileDrafts?.(accessToken), "client_state_load_file_drafts")
+}
+export type FileDraftChange = {
+  key: string
+  draft: Omit<WorkspaceFileDraft, "key"> | null
+  expected: Omit<WorkspaceFileDraft, "key"> | null
+}
+export function saveNativeFileDraft(change: FileDraftChange): Promise<boolean> | undefined {
+  if (!nativeAccessClaimed) return
+  return dispatchNative(api => api?.saveFileDraft?.(accessToken, change), "client_state_save_file_draft", { change })
 }
 export const setNativeRestoreEnabled = (enabled: boolean): Promise<boolean> => persistClientState(
   () => setWebSessionRestoreEnabled(enabled),

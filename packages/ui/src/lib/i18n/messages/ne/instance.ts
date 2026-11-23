@@ -158,7 +158,7 @@ export const instanceMessages = {
   "filesPanel.readOnly": "पढ्न मात्र",
   "filesPanel.binary": "यो बाइनरी फाइलको पूर्वावलोकन उपलब्ध छैन।",
   "filesPanel.draftConflict": "डिस्कमा फाइल परिवर्तन भएको छ। तपाईंको मस्यौदा राखिएको छ।",
-  "filesPanel.draftLimit": "मस्यौदा भण्डारण भरिएको छ। बन्द गर्नुअघि पछिल्ला परिवर्तनहरू सुरक्षित गर्नुहोस् वा प्रतिलिपि गर्नुहोस्।",
+  "filesPanel.draftLimit": "मस्यौदा राख्न सकिएन। बन्द गर्नुअघि पछिल्ला परिवर्तनहरू सुरक्षित गर्नुहोस् वा प्रतिलिपि गर्नुहोस्।",
   "filesPanel.image.before": "अघि",
   "filesPanel.image.after": "पछि",
   "gitPanel.changes": "परिवर्तनहरू",

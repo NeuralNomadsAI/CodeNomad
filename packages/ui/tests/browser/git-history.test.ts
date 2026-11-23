@@ -142,10 +142,16 @@ test("Workspace editing saves the exact directory, retains drafts and checks ext
     await edit('{"keyboard": true}')
     await page.keyboard.press("Control+s")
     await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "save" && call.message.includes("keyboard")))
+    await page.evaluate(async () => {
+      const api = "/src/lib/api-client.ts"
+      await (await import(api)).serverApi.writeWorkspaceFile("git-prototype", "package.json", '{"diskAfterSave": true}', { directory: "/CodeNomad" })
+    })
+    await page.locator('.workspace-file-view').getByRole("button", { name: "Actualiser", exact: true }).click()
+    await page.locator('.workspace-file-view .view-line').filter({ hasText: 'diskAfterSave' }).waitFor()
     await edit('{"discard": true}')
     await page.locator('.workspace-file-view').getByRole("button", { name: "Actualiser", exact: true }).click()
     await page.getByRole("dialog").getByRole("button", { name: "Actualiser", exact: true }).click()
-    await page.locator('.workspace-file-view .view-line').filter({ hasText: 'keyboard' }).waitFor()
+    await page.locator('.workspace-file-view .view-line').filter({ hasText: 'diskAfterSave' }).waitFor()
     assert.equal(await save().isDisabled(), true)
   } finally { await page.close() }
 })

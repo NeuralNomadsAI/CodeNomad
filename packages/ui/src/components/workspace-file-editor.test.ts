@@ -41,6 +41,23 @@ function setup(path: string) {
   return { editor, close }
 }
 
+test("two open readers share edits and adopt a fresh disk baseline after save", async () => {
+  fixture.disk = "baseline"; fixture.gate = null; fixture.fail = false
+  const first = setup("two-readers.txt"), second = setup("two-readers.txt")
+  try {
+    first.editor.adopt("baseline"); second.editor.adopt("baseline")
+    first.editor.change("first edit")
+    assert.equal(second.editor.text(), "first edit")
+    second.editor.change("second edit")
+    assert.equal(first.editor.text(), "second edit")
+    await second.editor.save()
+    assert.equal(fixture.disk, "second edit")
+    first.editor.adopt("disk changed")
+    assert.equal(second.editor.text(), "disk changed")
+    assert.equal(second.editor.dirty(), false)
+  } finally { first.close(); second.close() }
+})
+
 for (const transition of ["mounted", "reopen-after", "reopen-before"] as const) {
   test(`undo to the clean baseline during a save retains the resulting draft (${transition})`, async () => {
     fixture.disk = "baseline"; fixture.writing = false; fixture.fail = false

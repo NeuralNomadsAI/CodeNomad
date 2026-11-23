@@ -82,8 +82,14 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
     onCleanup(() => views.set(target, { source: source(), scrollTop: views.get(target)?.scrollTop ?? 0 }))
     cancel(); setContent(null); setError(null); setSource(views.get(props.target)?.source ?? false)
     const draft = editor.reset()
-    if (draft !== undefined) setContent({ text: draft })
-    void load()
+    if (draft !== undefined) {
+      setContent({ text: draft })
+      void load()
+    } else void editor.recover().then(text => {
+      if (target !== props.target || disposed) return
+      if (text !== undefined) setContent({ text })
+      void load()
+    })
   }))
   createEffect(on(() => props.active, active => { if (!active) cancel(); else void load() }, { defer: true }))
   createEffect(on(() => backendEvents.signalForInstance(props.instanceId), signal => {
@@ -92,7 +98,8 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
   }, { defer: true }))
   const refresh = createDebouncedRefresh(() => void load())
   createEffect(on(() => filesystemInvalidationVersion(props.instanceId), () => { if (props.active) refresh.trigger() }, { defer: true }))
-  onCleanup(() => { cancel(); refresh.cancel() })
+  let disposed = false
+  onCleanup(() => { disposed = true; cancel(); refresh.cancel() })
   async function explicitRefresh() {
     const target = props.target
     const operation = captureBackendOperation(props.instanceId)

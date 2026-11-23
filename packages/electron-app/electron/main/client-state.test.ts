@@ -497,6 +497,26 @@ test("V3 window records isolate state, tokens, partitions, clear, and removal", 
   assert.equal(existsSync(join(h.directory, "partitions", keyB)), false)
 })
 
+test("file drafts survive secondary window removal and a corrupt draft store leaves window state readable", async t => {
+  const h = harness(t, { version: 1, restoreEnabled: true })
+  const manager = h.create()
+  const primary = manager.activeWindowId
+  const secondary = "11111111-1111-4111-8111-111111111111"
+  await manager.addWindow(secondary)
+  manager.claimClientStateAccess("primary", primary)
+  manager.claimClientStateAccess("secondary", secondary)
+  await manager.saveClientState({ tabs: ["project"] }, "primary", primary)
+  const change = { key: "test", expected: null, draft: { fingerprint: "0".repeat(64), text: "été" } }
+  assert.equal(await manager.saveFileDraft(change, "secondary", secondary), true)
+  assert.equal(await manager.removeWindow(secondary), true)
+  assert.deepEqual(await manager.loadFileDrafts("primary", primary), [{ key: change.key, ...change.draft }])
+  assert.equal(await manager.saveFileDraft({ ...change, key: "huge", draft: { ...change.draft, text: "\0".repeat(50_000) } }, "primary", primary), false)
+  assert.equal(await manager.saveFileDraft({ ...change, draft: null }, "primary", primary), false)
+  writeFileSync(join(h.directory, "workspace-file-drafts.json"), "{corrupt")
+  assert.deepEqual(await manager.loadFileDrafts("primary", primary), [])
+  assert.deepEqual(manager.loadClientState(primary).snapshot, { tabs: ["project"] })
+})
+
 test("concurrent window list mutations preserve the limit and a valid active cursor", async (t) => {
   const h = harness(t, { version: 1, restoreEnabled: true })
   const manager = h.create()

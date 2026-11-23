@@ -5,7 +5,7 @@ export interface WorkspaceFileDraft {
 }
 
 const MAX_DRAFTS = 32
-const MAX_BYTES = 256 * 1024
+export const MAX_FILE_DRAFT_BYTES = 256 * 1024
 const utf8 = new TextEncoder()
 
 export function normalizeWorkspaceFileDrafts(value: unknown): WorkspaceFileDraft[] {
@@ -17,12 +17,20 @@ export function normalizeWorkspaceFileDrafts(value: unknown): WorkspaceFileDraft
     const { key, fingerprint, text } = item
     if (typeof key !== "string" || !key.length || key.length > 16 * 1024 || drafts.has(key)
       || typeof fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(fingerprint)
-      || typeof text !== "string" || text.length > MAX_BYTES) continue
+      || typeof text !== "string" || text.length > MAX_FILE_DRAFT_BYTES) continue
     const entry = { key, fingerprint, text }
     const size = utf8.encode(JSON.stringify(entry)).length + 1
-    if (bytes + size > MAX_BYTES) continue
+    if (bytes + size > MAX_FILE_DRAFT_BYTES) continue
     bytes += size
     drafts.set(key, entry)
   }
   return [...drafts.values()]
+}
+
+export function changeWorkspaceFileDrafts(drafts: WorkspaceFileDraft[], key: string, value: Omit<WorkspaceFileDraft, "key"> | null) {
+  if (!key || key.length > 16 * 1024) return null
+  const remaining = drafts.filter(draft => draft.key !== key)
+  if (!value) return remaining
+  const next = normalizeWorkspaceFileDrafts([...remaining, { key, ...value }])
+  return next.some(draft => draft.key === key) ? next : null
 }

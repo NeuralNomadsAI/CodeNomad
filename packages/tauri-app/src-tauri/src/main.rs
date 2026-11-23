@@ -2186,6 +2186,8 @@ fn main() {
             open_external_url,
             client_state::client_state_claim_access,
             client_state::client_state_load,
+            client_state::client_state_load_file_drafts,
+            client_state::client_state_save_file_draft,
             client_state::client_state_save,
             client_state::client_state_commit_partitions,
             client_state::client_state_load_partition,

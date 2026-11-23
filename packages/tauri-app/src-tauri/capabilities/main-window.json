@@ -31,6 +31,8 @@
     "allow-open-remote-window",
     "allow-client-state-claim-access",
     "allow-client-state-load",
+    "allow-client-state-load-file-drafts",
+    "allow-client-state-save-file-draft",
     "allow-client-state-save",
     "allow-client-state-commit-partitions",
     "allow-client-state-load-partition",

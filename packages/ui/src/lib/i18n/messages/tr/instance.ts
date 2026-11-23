@@ -147,7 +147,7 @@ export const instanceMessages = {
   "filesPanel.readOnly": "Salt okunur",
   "filesPanel.binary": "Bu ikili dosya için önizleme kullanılamıyor.",
   "filesPanel.draftConflict": "Diskteki dosya değişti. Taslağınız korundu.",
-  "filesPanel.draftLimit": "Taslak depolama alanı dolu. Kapatmadan önce son düzenlemelerinizi kaydedin veya kopyalayın.",
+  "filesPanel.draftLimit": "Taslağınız korunamadı. Kapatmadan önce son düzenlemelerinizi kaydedin veya kopyalayın.",
   "filesPanel.image.before": "Önce",
   "filesPanel.image.after": "Sonra",
   "gitPanel.changes": "Değişiklikler",

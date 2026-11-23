@@ -158,7 +158,7 @@ export const instanceMessages = {
   "filesPanel.readOnly": "Solo lectura",
   "filesPanel.binary": "Vista previa no disponible para este archivo binario.",
   "filesPanel.draftConflict": "El archivo cambió en el disco. Se conservó tu borrador.",
-  "filesPanel.draftLimit": "El almacenamiento de borradores está lleno. Guarda o copia los cambios recientes antes de cerrar.",
+  "filesPanel.draftLimit": "No se pudo conservar el borrador. Guarda o copia los cambios recientes antes de cerrar.",
   "filesPanel.image.before": "Antes",
   "filesPanel.image.after": "Después",
   "gitPanel.changes": "Cambios",

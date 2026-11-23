@@ -74,6 +74,8 @@ declare global {
     claimClientStateAccess?: (accessToken: string) => Promise<boolean>
     loadClientState?: (accessToken: string) => Promise<ElectronClientStateLoadResult>
     saveClientState?: (accessToken: string, snapshot: unknown) => Promise<boolean>
+    loadFileDrafts?: (accessToken: string) => Promise<import("../stores/workspace-file-drafts-codec").WorkspaceFileDraft[]>
+    saveFileDraft?: (accessToken: string, change: import("../lib/native/client-state").FileDraftChange) => Promise<boolean>
     commitClientStatePartitions?: (accessToken: string, payload: ClientStatePartitionCommit) => Promise<boolean>
     loadClientStatePartition?: (accessToken: string, key: string) => Promise<string | null>
     setClientStateRestoreEnabled?: (accessToken: string, enabled: boolean) => Promise<boolean>

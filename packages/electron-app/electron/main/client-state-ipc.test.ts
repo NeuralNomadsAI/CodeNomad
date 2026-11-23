@@ -54,6 +54,7 @@ test("IPC channels enforce the current main sender, frame, origin, and token", a
   const h = harness()
   assert.deepEqual([...h.handlers.keys()], [
     "client-state:claimAccess", "client-state:load", "client-state:save",
+    "client-state:loadFileDrafts", "client-state:saveFileDraft",
     "client-state:commitPartitions", "client-state:loadPartition",
     "client-state:setRestoreEnabled", "client-state:clear",
   ])
@@ -97,7 +98,7 @@ test("two local renderers claim and use independent window tokens", async () => 
     `claim:${first.id}:one`, `assert:${first.id}:one`, `load:${first.id}`,
     `claim:${second.id}:two`, `assert:${second.id}:two`, `load:${second.id}`,
   ])
-  assert.equal(handlers.size, 7)
+  assert.equal(handlers.size, 9)
 })
 
 test("only a registered local window can reset its renderer authority", () => {
