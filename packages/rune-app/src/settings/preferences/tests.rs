@@ -32,7 +32,7 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
                 .is_ok()
         );
         assert!(crate::poll_chat(&mut root, 4));
-        super::super::poll(&mut root);
+        super::super::poll(&mut root, &mut rune::Tx::default());
         let (mut config, mut state) = (false, false);
         for _ in 0..5 {
             let read = request(&listener).await;
@@ -61,7 +61,7 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
         }
         assert!(config && state);
         wait_until(|| {
-            super::super::poll(&mut root);
+            super::super::poll(&mut root, &mut rune::Tx::default());
             let prefs = root.settings.shared.borrow();
             prefs.locale_ready() && prefs.palette_ready()
         })
@@ -87,13 +87,13 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
         };
         assert!(has_label(&runtime, "he"));
         runtime.update(|s, _| s.settings.shared.borrow_mut().set_locale("en"));
-        super::super::poll(&mut runtime.state);
+        super::super::poll(&mut runtime.state, &mut rune::Tx::default());
         let write = request(&listener).await;
         assert_eq!(write.first, "PATCH /api/storage/config/ui HTTP/1.1");
         assert_eq!(write.body, json!({"settings":{"locale":"en"}}));
         write.reply(200, json!({"settings":{"locale":"en"}})).await;
         wait_until(|| {
-            runtime.update_if(|s, _| super::super::poll(s));
+            runtime.update_if(super::super::poll);
             runtime.frame(0.02);
             has_label(&runtime, "en")
         })

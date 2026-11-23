@@ -52,7 +52,7 @@ impl Display {
         self.pictures.clear();
         self.receipts.suspend();
     }
-    pub(super) fn reading_mut(&mut self) -> &mut super::reading::Reading {
+    pub(crate) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
     }
 

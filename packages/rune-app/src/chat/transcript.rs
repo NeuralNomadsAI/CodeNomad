@@ -14,6 +14,7 @@ use rune_theme_codenomad::{
 
 const PART_LIMIT: usize = 1000;
 
+mod context;
 #[cfg(test)]
 mod tests;
 
@@ -46,6 +47,9 @@ pub fn rows(s: &State) -> El {
 
 pub fn message(s: &State, i: usize) -> El {
     let m = &s.messages[i];
+    if let Some(context) = context::view(s, m) {
+        return context;
+    }
     if matches!(m.parts.as_slice(), [Part::SubagentReport(_)]) {
         return col().key(m.id.clone());
     }
@@ -94,7 +98,14 @@ pub fn message(s: &State, i: usize) -> El {
         .child(header);
     let mut ordinal = 0;
     if (m.role == "user" || m.parts.is_empty()) && !m.body.is_empty() {
-        view = view.child(document::prose(s, format!("body-{}", m.id), &m.body, false));
+        let key = format!("body-{}", m.id);
+        view = view.child(super::reading::passage(
+            s,
+            document::prose(s, key.clone(), &m.body, false),
+            &m.id,
+            key,
+            None,
+        ));
     }
     let gap_key = format!("parts-gap-{}", m.id);
     let (initial, _) = part_window(m.parts.len(), 0);
@@ -151,11 +162,17 @@ pub fn message(s: &State, i: usize) -> El {
                     let key = format!("fragment-{}:{ordinal}", m.id);
                     ordinal += 1;
                     if visible && !body.text.trim().is_empty() {
-                        Some(document::prose(
+                        Some(super::reading::passage(
                             s,
+                            document::prose(
+                                s,
+                                key.clone(),
+                                &body.text,
+                                !m.completed && body.provenance != TextProvenance::Closed,
+                            ),
+                            &m.id,
                             key,
-                            &body.text,
-                            !m.completed && body.provenance != TextProvenance::Closed,
+                            None,
                         ))
                     } else {
                         None
@@ -172,7 +189,13 @@ pub fn message(s: &State, i: usize) -> El {
                             group_end = index + count;
                             Some(group)
                         }
-                        None => Some(tools::view(s, &m.id, tool)),
+                        None => Some(super::reading::passage(
+                            s,
+                            tools::view(s, &m.id, tool),
+                            &m.id,
+                            tools::tool_key(&m.id, &tool.id),
+                            Some(crate::settings::TranscriptRow::tool(&tool.name)),
+                        )),
                     }
                 }
                 Part::Tool(_) => None,

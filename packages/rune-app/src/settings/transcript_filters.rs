@@ -1,6 +1,6 @@
 use super::{
     TranscriptRow,
-    conversation::{preset_label, row_label},
+    conversation::{picker_name, preset_label, row_label},
     preferences::Owner,
     transcript_preset::PRESETS,
 };
@@ -51,29 +51,30 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>) -> El {
         let disabled = prefs.saved(Owner::Config).is_none() || !prefs.can_retry();
         let labels = PRESETS.map(preset_label);
         let preset_open = filters.preset_open;
-        let preset = chrome::transcript_preset_picker(
-            "filters-preset",
+        let current = preset_label(prefs.transcript_preset());
+        let name = picker_name(
             t("settings.behavior.expansionPresets.ariaLabel"),
-            &labels,
-        )
-        .current(Some(preset_label(prefs.transcript_preset())))
-        .disabled(disabled)
-        .open(preset_open)
-        .on_toggle(screen::action(&s.input_scope, move |s| {
-            s.settings.transcript_filters.preset_open = !preset_open
-        }))
-        .on_close(screen::action(&s.input_scope, |s| {
-            s.settings.transcript_filters.preset_open = false
-        }))
-        .on_choose(move |s: &mut State, label, _| {
-            s.settings.transcript_filters.preset_open = false;
-            if let Some(i) = labels.iter().position(|option| *option == label) {
-                s.settings
-                    .shared
-                    .borrow_mut()
-                    .set_transcript(None, PRESETS[i]);
-            }
-        });
+            Some(current),
+        );
+        let preset = chrome::transcript_preset_picker("filters-preset", &name, &labels)
+            .current(Some(current))
+            .disabled(disabled)
+            .open(preset_open)
+            .on_toggle(screen::action(&s.input_scope, move |s| {
+                s.settings.transcript_filters.preset_open = !preset_open
+            }))
+            .on_close(screen::action(&s.input_scope, |s| {
+                s.settings.transcript_filters.preset_open = false
+            }))
+            .on_choose(move |s: &mut State, label, _| {
+                s.settings.transcript_filters.preset_open = false;
+                if let Some(i) = labels.iter().position(|option| *option == label) {
+                    s.settings
+                        .shared
+                        .borrow_mut()
+                        .set_transcript(None, PRESETS[i]);
+                }
+            });
         let body = col()
             .full_width()
             .pad(Space::Sm)
@@ -196,6 +197,13 @@ fn the_popup_uses_the_active_occurrence_and_dismisses_on_escape() {
         rt.frame(0.02);
         assert!(rt.find("transcript-filters").is_some());
         assert!(rt.find("filters-preset-trigger").is_some());
+        let preset = rt
+            .elements()
+            .into_iter()
+            .find(|node| node.key.as_deref() == Some("filters-preset-trigger"))
+            .unwrap();
+        let expected = crate::strings::with_locale("en", || preset_label("balanced"));
+        assert!(preset.label.unwrap_or_default().contains(expected));
     }
     open(&mut rt);
     let escape = KeyEvent {

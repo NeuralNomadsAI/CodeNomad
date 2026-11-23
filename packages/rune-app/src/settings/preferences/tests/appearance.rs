@@ -147,9 +147,9 @@ fn first_paint_waits_for_both_appearance_owners() {
             rt.find("open-preferences").is_none(),
             "no themed shell before direct startup connects"
         );
-        rt.update(|s, _| {
+        rt.update(|s, tx| {
             super::super::super::connected(s, &fixture.backend.take().unwrap());
-            super::super::super::poll(s);
+            super::super::super::poll(s, tx);
         });
         let first = request(&listener).await;
         let second = request(&listener).await;
@@ -162,8 +162,8 @@ fn first_paint_waits_for_both_appearance_owners() {
             .reply(200, json!({"settings":{"locale":"en","highContrast":"on"}}))
             .await;
         wait_until(|| {
-            rt.update(|s, _| {
-                super::super::super::poll(s);
+            rt.update(|s, tx| {
+                super::super::super::poll(s, tx);
             });
             rt.state
                 .settings
@@ -185,8 +185,8 @@ fn first_paint_waits_for_both_appearance_owners() {
             )
             .await;
         wait_until(|| {
-            rt.update(|s, _| {
-                super::super::super::poll(s);
+            rt.update(|s, tx| {
+                super::super::super::poll(s, tx);
             });
             rt.frame(0.02);
             rt.find("open-preferences").is_some()

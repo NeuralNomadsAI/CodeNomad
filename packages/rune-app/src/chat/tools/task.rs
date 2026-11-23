@@ -139,13 +139,16 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
     let prompt = string(&tool.input, &["prompt"]);
     let child_id = watch.then(|| watched_child(tool)).flatten();
     let child_steps = child_id.map_or(&[][..], |id| s.transcript_display.children.steps(id));
+    let visible_steps = child_steps
+        .iter()
+        .filter(|(_, step)| super::visible(s, step));
     let legacy = tool.metadata["summary"]
         .as_array()
         .map_or(&[][..], Vec::as_slice);
     let step_count = if child_steps.is_empty() {
         legacy.len()
     } else {
-        child_steps.len()
+        visible_steps.clone().count()
     };
     if prompt.trim().is_empty() && step_count == 0 && output.trim().is_empty() && child_id.is_none()
     {
@@ -199,7 +202,7 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
             );
         }
         if let Some(child_id) = child_id.filter(|_| !child_steps.is_empty()) {
-            for (message, step) in &child_steps[start..] {
+            for (message, step) in visible_steps.skip(start) {
                 let owner = format!("child:{child_id}:{message}");
                 let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
                 list = list.child(
@@ -393,4 +396,15 @@ fn loaded_child_cards_replace_the_legacy_summary() {
     }
     let tree = rt.accessibility_json().to_string();
     assert!(tree.contains("actual.txt") && !tree.contains("Legacy summary only"));
+    rt.update(|s, _| {
+        crate::settings::fixture_transcript(
+            s,
+            json!({
+                "toolCallExpansionDefaults":{"tools":{"read":"hidden"}}
+            }),
+        )
+    });
+    rt.frame(0.02);
+    let tree = rt.accessibility_json().to_string();
+    assert!(!tree.contains("actual.txt") && !tree.contains("Legacy summary only"));
 }

@@ -40,7 +40,7 @@ pub(crate) struct Host {
     transcript_filters: transcript_filters::Filters,
 }
 
-pub(crate) fn poll(s: &mut State) -> bool {
+pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let mut shared = s.settings.shared.borrow_mut();
     if shared.main_wake.is_none() {
         shared.main_wake = Some(s.wake.clone());
@@ -123,6 +123,11 @@ pub(crate) fn poll(s: &mut State) -> bool {
     }));
     let transcript_changed = s.settings.last_transcript != transcript;
     if transcript_changed {
+        if s.settings.last_transcript.is_some() {
+            s.transcript_display
+                .reading_mut()
+                .keep_passage(tx, |row| shared.transcript_mode(row, false) != "hidden");
+        }
         s.settings.last_transcript = transcript;
         s.revision += 1;
     }

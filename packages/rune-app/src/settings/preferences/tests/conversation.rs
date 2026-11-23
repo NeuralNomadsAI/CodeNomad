@@ -273,7 +273,7 @@ fn settings_failed_prompt_keeps_one_sse_subscription_and_one_config_read() {
         *root.settings.shared.borrow_mut() = prefs;
         root.phase = crate::Phase::Failed;
         root.incoming = Some(events);
-        super::super::super::poll(&mut root);
+        super::super::super::poll(&mut root, &mut rune::Tx::default());
         assert!(
             timeout(Duration::from_millis(100), listener.accept())
                 .await
@@ -289,7 +289,7 @@ fn settings_failed_prompt_keeps_one_sse_subscription_and_one_config_read() {
             .unwrap();
         wait_until(|| {
             let changed = crate::poll_chat(&mut root, 8);
-            super::super::super::poll(&mut root);
+            super::super::super::poll(&mut root, &mut rune::Tx::default());
             changed
         })
         .await;
@@ -300,7 +300,7 @@ fn settings_failed_prompt_keeps_one_sse_subscription_and_one_config_read() {
         );
         read.reply(200, json!({"settings":{"locale":"fr"}})).await;
         wait_until(|| {
-            super::super::super::poll(&mut root);
+            super::super::super::poll(&mut root, &mut rune::Tx::default());
             root.settings.shared.borrow().locale() == Some("fr")
         })
         .await;

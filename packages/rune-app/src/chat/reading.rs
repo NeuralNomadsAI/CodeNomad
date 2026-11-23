@@ -10,6 +10,14 @@ pub(crate) enum Bookmark {
 pub(crate) struct Reading {
     following: bool,
     top: Option<(String, f32)>,
+    passage: Option<Passage>,
+}
+
+struct Passage {
+    message: String,
+    key: String,
+    offset: f32,
+    mode: Option<crate::settings::TranscriptRow>,
 }
 
 impl Default for Reading {
@@ -17,6 +25,7 @@ impl Default for Reading {
         Self {
             following: true,
             top: None,
+            passage: None,
         }
     }
 }
@@ -55,6 +64,53 @@ impl Reading {
             self.top = Some((id.into(), y - top));
         }
     }
+
+    pub(crate) fn keep_passage(
+        &self,
+        tx: &mut Tx,
+        visible: impl Fn(crate::settings::TranscriptRow) -> bool,
+    ) {
+        if !self.following
+            && let (Some((message, _)), Some(passage)) = (&self.top, &self.passage)
+            && *message == passage.message
+            && passage.mode.is_none_or(visible)
+        {
+            tx.scroll_key_to(format!("{message}/{}", passage.key), passage.offset);
+        }
+    }
+}
+
+pub(super) fn passage(
+    s: &State,
+    body: El,
+    message: &str,
+    key: String,
+    mode: Option<crate::settings::TranscriptRow>,
+) -> El {
+    let scope = s.input_scope.clone();
+    let message = message.to_owned();
+    body.key(key.clone())
+        .on_drawn_layout_tx(move |s: &mut State, [_, y, _, height], tx| {
+            if s.current_scope(&scope) {
+                let [_, top, _, viewport] = s.tool_diff_preferences.history_bounds.get();
+                let reading = s.transcript_display.reading_mut();
+                if viewport > 0.0 && y <= top && y + height > top {
+                    reading.passage = Some(Passage {
+                        message: message.clone(),
+                        key: key.clone(),
+                        offset: y - top,
+                        mode,
+                    });
+                } else if reading
+                    .passage
+                    .as_ref()
+                    .is_some_and(|old| old.message == message && old.key == key)
+                {
+                    reading.passage = None;
+                }
+            }
+            tx.live_only();
+        })
 }
 
 pub(crate) fn viewport(s: &State, history: El) -> El {

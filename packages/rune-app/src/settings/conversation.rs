@@ -55,8 +55,10 @@ pub(super) fn content<S: 'static>(
                 format!("transcript-{}", row.control_key())
             };
             let is_open = open == Some(row);
-            let control = chrome::picker(&key, &aria, &labels)
-                .current(current.map(|i| labels[i]))
+            let current = current.map(|i| labels[i]);
+            let name = picker_name(&aria, current);
+            let control = chrome::picker(&key, &name, &labels)
+                .current(current)
                 .disabled(disabled)
                 .open(is_open)
                 .on_toggle(move |s: &mut S| set_open(s, (!is_open).then_some(row)))
@@ -70,6 +72,15 @@ pub(super) fn content<S: 'static>(
             chrome::setting_row(title, chrome::build_picker(control, layers))
         }));
     chrome::card(controls)
+}
+
+pub(super) fn picker_name<'a>(label: &'a str, value: Option<&str>) -> std::borrow::Cow<'a, str> {
+    #[cfg(any(target_arch = "wasm32", test))]
+    if let Some(value) = value {
+        return format!("{label} — {value}").into();
+    }
+    let _ = value;
+    label.into()
 }
 
 pub(super) fn preset_label(preset: &str) -> &'static str {
