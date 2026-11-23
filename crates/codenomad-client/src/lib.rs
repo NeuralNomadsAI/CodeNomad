@@ -13,6 +13,7 @@ pub mod files;
 pub mod git;
 pub mod history;
 pub mod http;
+pub mod missions;
 pub mod prompt;
 pub mod prompt_catalogue;
 mod prompt_command;
