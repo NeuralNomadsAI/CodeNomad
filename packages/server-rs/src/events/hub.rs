@@ -159,10 +159,9 @@ impl Hub {
             return;
         }
         let frame = Arc::new(Frame::new(&value));
-        // Oversized native inbox frames are references on the TS bridge too: its
-        // shared client otherwise closes the native stream at 16 MiB.
-        let oversized = frame.text.len() > 16 * 1024 * 1024;
-        let projected = if oversized || subs.iter().any(|sub| sub.reference_files) {
+        let preprojected =
+            value["type"] == "instance.event" && crate::sessions::user_files::is_projected_inbox(&value["event"]);
+        let projected = if subs.iter().any(|sub| sub.reference_files) {
             crate::sessions::user_files::projected_event(&value).map(|value| Arc::new(Frame::new(&value)))
         } else {
             None
@@ -177,9 +176,14 @@ impl Hub {
             }
         }
         for sub in subs.iter() {
-            let frame = if oversized || sub.reference_files { projected.as_ref().unwrap_or(&frame) } else { &frame };
+            let frame = if sub.reference_files { projected.as_ref().unwrap_or(&frame) } else { &frame };
             let mut q = sub.queue.lock().unwrap();
             if q.closing {
+                continue;
+            }
+            if preprojected && !sub.reference_files {
+                q.closing = true;
+                sub.ready.notify_one();
                 continue;
             }
             if !q.fold(frame, &value, &self.retained) {

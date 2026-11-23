@@ -23,6 +23,12 @@ if (mode === "prompt-admission") {
 }
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
+if (mode === "attachment-history") {
+  const contract = await fromDist("opencode/session-pruning/navigation-contract.js")
+  assert(contract.sessionAttachmentInputSchema?.safeParse({
+    sessionID: "ses_fixture", messageID: "msg_fixture", fileIndex: 0, sha256: "a".repeat(64), confirm: true,
+  }).success, "The TS build and bundled pruning plugin must support attachment references and confirmation")
+}
 const bench = mode === "solid" ? undefined : await import(`./${mode === "http" ? "worktrees" : mode}.mjs`)
 const missionServe = process.env.CNRS_BENCH_MISSIONS_SERVE === "1" || mode === "missions-wayfinder" && process.platform === "win32"
 assert(!missionServe || process.platform === "win32" && ["missions", "missions-calendar", "missions-wayfinder"].includes(mode))

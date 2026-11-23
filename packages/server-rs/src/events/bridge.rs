@@ -261,7 +261,16 @@ pub async fn bridge(app: Shared) {
                 if matches!(kind.as_str(), "integration.updated" | "rpc") {
                     continue;
                 }
-                let job = Job { bytes: event.to_string().len(), event, received };
+                let mut bytes = event.to_string().len();
+                if bytes > 16 * 1024 * 1024 {
+                    let Some(files) = crate::sessions::user_files::projected_inbox_files(&event) else { break };
+                    event["data"]["item"]["payload"]["files"] = files;
+                    bytes = event.to_string().len();
+                    if bytes > 16 * 1024 * 1024 {
+                        break;
+                    }
+                }
+                let job = Job { bytes, event, received };
                 if !lanes.enqueue(&app, &routes, lane(&job.event), job) {
                     break;
                 }

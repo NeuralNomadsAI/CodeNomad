@@ -31,49 +31,66 @@ pub(super) fn validate_window(output: &mut Value) -> bool {
     let Some(messages) = root.get("messages").and_then(Value::as_array) else { return false };
     messages.iter().filter(|message| message["type"] == "user").all(|message| {
         message.get("files").is_none_or(|files| {
-            files.as_array().is_some_and(|files| {
-                files.len() <= FILE_COUNT
-                    && files.iter().all(|file| {
-                        file.as_object().is_some_and(|file| {
-                            file.keys().all(|key| matches!(key.as_str(), "name" | "mime" | "source"))
-                                && file.get("name").is_none_or(|name| name.as_str().is_some())
-                                && file.get("mime").and_then(Value::as_str).is_some_and(|mime| !mime.is_empty())
-                                && file.get("source").and_then(Value::as_object).is_some_and(|source| {
-                                    match source.get("type").and_then(Value::as_str) {
-                                        Some("unavailable") => source.len() == 1,
-                                        Some("deferred") => {
-                                            source.len() == 2
-                                                && source
-                                                    .get("sha256")
-                                                    .and_then(Value::as_str)
-                                                    .is_some_and(valid_digest)
-                                        }
-                                        _ => false,
-                                    }
-                                })
-                        })
-                    })
-            })
+            files.as_array().is_some_and(|files| files.len() <= FILE_COUNT && files.iter().all(reference))
         })
     })
 }
 
+fn reference(value: &Value) -> bool {
+    let Some(file) = value.as_object() else { return false };
+    file.keys().all(|key| matches!(key.as_str(), "name" | "mime" | "source"))
+        && file.get("name").is_none_or(|name| name.as_str().is_some())
+        && file.get("mime").and_then(Value::as_str).is_some_and(|mime| !mime.is_empty())
+        && file.get("source").and_then(Value::as_object).is_some_and(|source| {
+            match source.get("type").and_then(Value::as_str) {
+                Some("unavailable") => source.len() == 1,
+                Some("deferred") => {
+                    source.len() == 2 && source.get("sha256").and_then(Value::as_str).is_some_and(valid_digest)
+                }
+                _ => false,
+            }
+        })
+}
+
 pub(crate) fn projected_event(value: &Value) -> Option<Value> {
-    if value["type"] != "instance.event" || value["event"]["type"] != "session.inbox.enqueued" {
+    if value["type"] != "instance.event" {
         return None;
     }
-    let item = &value["event"]["data"]["item"];
+    let files = projected_inbox_files(&value["event"])?;
+    let mut projected = value.clone();
+    projected["event"]["data"]["item"]["payload"]["files"] = files;
+    Some(projected)
+}
+
+pub(crate) fn is_projected_inbox(event: &Value) -> bool {
+    let item = &event["data"]["item"];
+    event["type"] == "session.inbox.enqueued"
+        && item["type"] == "user"
+        && item["payload"]["files"]
+            .as_array()
+            .is_some_and(|files| !files.is_empty() && files.len() <= FILE_COUNT && files.iter().all(reference))
+}
+
+pub(crate) fn projected_inbox_files(event: &Value) -> Option<Value> {
+    if event["type"] != "session.inbox.enqueued" {
+        return None;
+    }
+    let item = &event["data"]["item"];
     if item["type"] != "user" {
         return None;
     }
     let files = item["payload"]["files"].as_array()?;
+    if files.len() <= FILE_COUNT && files.iter().all(reference) {
+        return None;
+    }
     let labels = files
         .iter()
         .take(FILE_COUNT)
         .map(|file| {
             let name = file["name"].as_str().and_then(|name| name.rsplit(['/', '\\']).next()).filter(|s| !s.is_empty());
             let mime = file["mime"].as_str().filter(|s| !s.is_empty()).unwrap_or("application/octet-stream");
-            let source = inline(&file["data"]).map_or_else(
+            let bytes = (file["source"]["type"] != "uri").then(|| inline(&file["data"])).flatten();
+            let source = bytes.map_or_else(
                 || json!({"type":"unavailable"}),
                 |bytes| json!({"type":"deferred","sha256":digest(&bytes)}),
             );
@@ -84,7 +101,5 @@ pub(crate) fn projected_event(value: &Value) -> Option<Value> {
             label
         })
         .collect();
-    let mut projected = value.clone();
-    projected["event"]["data"]["item"]["payload"]["files"] = Value::Array(labels);
-    Some(projected)
+    Some(Value::Array(labels))
 }

@@ -27,15 +27,27 @@ struct Placement {
 
 impl Placement {
     async fn admit(app: &App, id: &str, session: &str) -> Result<Self, Error> {
+        Self::capture(app, id, session, false).await
+    }
+
+    async fn capture(app: &App, id: &str, session: &str, attachment: bool) -> Result<Self, Error> {
         let workspace = app.workspace(id)?;
         let endpoint = app.native.endpoint().ok_or_else(crate::opencode::upstream_error)?;
         let source = crate::opencode::session_record_at(app, &endpoint, session).await?;
         // Reference: `ownsLocation(id, session.location)`, linked worktrees included.
         let unavailable = || error(Status::SERVICE_UNAVAILABLE, "History placement unavailable");
-        match crate::worktrees::placement(app, &workspace, &source["location"]).await {
-            Ok(_) => {}
-            Err(true) => return Err(error(Status::FORBIDDEN, "Session does not belong to workspace")),
-            Err(false) => return Err(unavailable()),
+        let location = &source["location"];
+        if attachment {
+            let directory = location["directory"].as_str().ok_or_else(unavailable)?;
+            if location.get("workspaceID").is_some() || !attachment_owned(app, &workspace, directory).await {
+                return Err(error(Status::FORBIDDEN, "Session does not belong to workspace"));
+            }
+        } else {
+            match crate::worktrees::placement(app, &workspace, location).await {
+                Ok(_) => {}
+                Err(true) => return Err(error(Status::FORBIDDEN, "Session does not belong to workspace")),
+                Err(false) => return Err(unavailable()),
+            }
         }
         let path = source["location"]["directory"]
             .as_str()
@@ -78,6 +90,17 @@ impl Placement {
         crate::extensions::lifecycle::ready(directory, deadline).await.ok()?;
         self.current(app, id, session).await.then_some(directory)
     }
+}
+
+async fn attachment_owned(app: &App, workspace: &crate::Workspace, directory: &str) -> bool {
+    if !crate::files::paths::local_absolute(directory) {
+        return false;
+    }
+    if crate::worktrees::ownership::resolve(app, workspace, directory).await.is_some() {
+        return true;
+    }
+    matches!(crate::worktrees::root_only(workspace).await, Ok(Some(true)))
+        && crate::files::paths::canonical(&app.scope, directory).is_some_and(|path| path.starts_with(&workspace.path))
 }
 
 async fn rpc(
@@ -220,10 +243,15 @@ pub async fn attachment(
         return Err(invalid());
     }
     let request = async {
-        let placement = Placement::admit(&app, &id, &session)
+        let placement = Placement::capture(&app, &id, &session, true)
             .await
             .map_err(|e| if e.0 == Status::FORBIDDEN { e } else { missing() })?;
+        use std::sync::atomic::Ordering::Relaxed;
+        let fence = crate::worktrees::fence::capture_display(&crate::worktrees::fence::identity(&placement.path));
         let directory = placement.ready(&app, &id, &session).await.ok_or_else(missing)?;
+        if !fence.load(Relaxed) {
+            return Err(error(Status::CONFLICT, "Session location changed"));
+        }
         let mut input = json!({"sessionID":session,"messageID":message,"fileIndex":index,"sha256":sha});
         let (status, body) =
             rpc(&app, &placement.endpoint, directory, "sessionAttachment", &input).await.map_err(|_| missing())?;
@@ -232,7 +260,9 @@ pub async fn attachment(
         }
         let output: Value = serde_json::from_slice(&body).map_err(|_| missing())?;
         let output = &output["output"];
-        if !placement.current(&app, &id, &session).await {
+        if !attachment_owned(&app, &placement.workspace, directory).await
+            || !placement.current(&app, &id, &session).await
+        {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
         if output["status"] == "too_large" {
@@ -251,7 +281,7 @@ pub async fn attachment(
             return Err(missing());
         }
         principal.live()?;
-        if !placement.live(&app, &id) {
+        if !placement.current(&app, &id, &session).await || !fence.load(Relaxed) {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
         Ok((
