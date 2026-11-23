@@ -3,20 +3,20 @@ export { setTimeout as sleep } from "node:timers/promises"
 export const now = () => performance.timeOrigin + performance.now()
 export const MARKER = /MK[A-Z]{2}\d{6}K/g
 
-export async function json(url, { method = "GET", headers, body } = {}) {
-  const response = await fetch(url, {
+export async function json(send, route, { method = "GET", headers, body } = {}) {
+  const response = await send(route, {
     method, headers: { ...headers, ...(body === undefined ? {} : { "content-type": "application/json" }) },
     body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(60_000),
   })
-  if (!response.ok) throw Error(`${method} ${url} returned ${response.status}: ${(await response.text()).slice(0, 400)}`)
+  if (!response.ok) throw Error(`${method} ${route} returned ${response.status}: ${(await response.text()).slice(0, 400)}`)
   const text = await response.text()
   return text ? JSON.parse(text) : undefined
 }
 
-export async function sseReader(url, authorization, onFrame) {
+export async function sseReader(send, onFrame) {
   const controller = new AbortController()
-  const response = await fetch(url, { headers: { authorization }, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(360_000)]) })
-  if (!response.ok || !response.headers.get("content-type")?.startsWith("text/event-stream")) throw Error(`Expected SSE from ${url}`)
+  const response = await send("/api/event", { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(360_000)]) })
+  if (!response.ok || !response.headers.get("content-type")?.startsWith("text/event-stream")) throw Error("Expected SSE from the attested daemon")
   let failure
   const reading = (async () => {
     const decoder = new TextDecoder()

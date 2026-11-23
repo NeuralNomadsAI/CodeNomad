@@ -4,6 +4,7 @@ import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
+import {fixtureFetch} from '../../../scripts/native-fixture-http.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
@@ -21,17 +22,17 @@ const server=launchFixture(serverBinary,[project,path.join(profile,'identity.jso
 let client,result=1,observer,watch,events=[],cleaned=false
 try{
   const origin=await server.ready(rustOrigin)
-  const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'fixture-controls-live'})});assert.equal(login.status,200)
+  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'fixture-controls-live'})});assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
-  const response=await fetch(`${origin}/api/workspaces`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({path:project})})
+  const response=await fixtureFetch(`${origin}/api/workspaces`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({path:project})})
   assert.equal(response.status,201)
   const workspace=await response.json();assert(workspace.id&&path.resolve(workspace.path)===project)
   observer=new AbortController()
-  const stream=await fetch(`${origin}/api/events?clientId=controls-live-observer&connectionId=owned`,{headers:{cookie},signal:observer.signal});assert.equal(stream.status,200)
+  const stream=await fixtureFetch(`${origin}/api/events?clientId=controls-live-observer&connectionId=owned`,{headers:{cookie},signal:observer.signal});assert.equal(stream.status,200)
   watch=(async()=>{let buffer='';const decoder=new TextDecoder();for await(const chunk of stream.body){
     buffer+=decoder.decode(chunk,{stream:true});assert(buffer.length<2*1024*1024);let index
     while((index=buffer.indexOf('\n\n'))>=0){const block=buffer.slice(0,index);buffer=buffer.slice(index+2)
-      if(block.includes('event: codenomad.client.ping')){await fetch(`${origin}/api/client-connections/pong`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({clientId:'controls-live-observer',connectionId:'owned'})});continue}
+      if(block.includes('event: codenomad.client.ping')){await fixtureFetch(`${origin}/api/client-connections/pong`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({clientId:'controls-live-observer',connectionId:'owned'})});continue}
       const raw=block.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5)).join('\n');if(!raw)continue
       const value=JSON.parse(raw);if(value.type==='instance.event'&&value.event?.data?.sessionID===session.id)events.push(value.event.type)
     }

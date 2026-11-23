@@ -1,6 +1,6 @@
 use super::window_restore::{finish, tap, type_text, wait};
 use crate::{
-    Phase, State, init, poll, request_older, view,
+    Phase, State, init, poll, view,
     workspace::{self, Tab},
 };
 use rune::{Env, Runtime, text::TextSystem};
@@ -131,18 +131,47 @@ fn paginate(rt: &mut Runtime<State>, rows: &[Value]) -> f32 {
     let mut jump = 0.0f32;
     for (first, end) in [(216, 416), (32, 232), (0, 48)] {
         assert!(rt.state.can_older, "older native page available");
-        rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
-        for _ in 0..12 {
+        let (x, y) = rt.find("history").expect("transcript viewport");
+        let id = rt.state.messages[0].id.clone();
+        let at_top = |rt: &Runtime<State>| {
+            let nodes = rt.elements();
+            let history = nodes
+                .iter()
+                .find(|node| node.key.as_deref() == Some("history"))
+                .unwrap();
+            nodes.iter().any(|node| {
+                node.key.as_deref() == Some(&id)
+                    && node.visible[3] > 2.0
+                    && (node.rect[1] - history.rect[1]).abs() < 1.0
+            })
+        };
+        for _ in 0..24 {
+            if at_top(rt) {
+                break;
+            }
+            rt.wheel(x, y, 1200.0);
             rt.frame(1.0 / 60.0);
         }
+        assert!(at_top(rt), "reach the top of the current history window");
         let anchor = super::recovery::anchor(rt);
-        rt.update(request_older);
+        let (x, y) = rt.find("older").expect("visible Previous messages control");
+        assert!(
+            rt.element_at(x, y)
+                .is_some_and(|hit| { hit.path().split('/').any(|key| key == "older") }),
+            "Previous messages must own the click"
+        );
+        let start = std::time::Instant::now();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        assert!(start.elapsed() < std::time::Duration::from_millis(500));
+        rt.frame(1.0 / 60.0);
+        assert!(rt.state.paging, "the click must request the older window");
         wait(rt, "older stored native page", |s| !s.paging);
         canonical(rt, &rows[first..end]);
         jump = jump.max(super::recovery::check_anchor(rt, &anchor));
     }
     assert!(!rt.state.can_older);
-    rt.update(crate::latest);
+    tap(rt, "latest");
     wait(rt, "latest stored native page", |s| {
         s.phase == Phase::Ready && !s.history_detached && s.messages.len() == 200
     });

@@ -5,6 +5,7 @@ import path from 'node:path'
 import {prepareLive} from './live-session.mjs'
 import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
+import {fixtureFetch} from '../../../scripts/native-fixture-http.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
@@ -24,15 +25,15 @@ let child
 let observed
 try {
   const origin=await server.ready(rustOrigin)
-  const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'rune-live-private-backend'})})
+  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'rune-live-private-backend'})})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
-  const call=(route,init={})=>fetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
+  const call=(route,init={})=>fixtureFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
   const opened=await call('/api/workspaces',{method:'POST',body:JSON.stringify({path:project})})
   const workspace=await opened.json();assert.equal(opened.status,201,'Disposable workspace admission')
   const abort=new AbortController()
   observed=abort
-  const stream=await fetch(`${origin}/api/events?clientId=rune-live-observer&connectionId=demo-observer`,{headers:{cookie},signal:abort.signal})
+  const stream=await fixtureFetch(`${origin}/api/events?clientId=rune-live-observer&connectionId=demo-observer`,{headers:{cookie},signal:abort.signal})
   assert.equal(stream.status,200)
   const stats={turn:0,chunks:0,body:'',ids:[],tools:0}
   const observe=async()=>{

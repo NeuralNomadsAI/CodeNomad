@@ -7,6 +7,8 @@ import {setTimeout as delay} from 'node:timers/promises'
 import {privatePath, runDirectory} from '../../../scripts/perf/isolation.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {launchFixture} from './fixture-host.mjs'
+import {fixtureFetch,fixtureTarget} from '../../../scripts/native-fixture-http.mjs'
+export {fixtureTarget}
 
 export const args=process.argv.slice(2).filter((arg,i,all)=>arg!=='--opencode'&&all[i-1]!=='--opencode')
 const marker='.rune-private-opencode'
@@ -19,15 +21,7 @@ export function requirePrivateCli(){
   return cli
 }
 
-export function fixtureTarget(raw,origin){
-  try{
-    const base=new URL(origin),target=new URL(raw,base)
-    if(target.origin===base.origin&&!target.username&&!target.password&&!target.hash)return target
-  }catch{}
-  return null
-}
-
-export async function attestNative(origin,child,authorization,request=fetch,pid=child.pid){
+export async function attestNative(origin,child,authorization,request=fixtureFetch,pid=child.pid){
   const endpoint=new URL(origin)
   assert(endpoint.protocol==='http:'&&endpoint.hostname==='127.0.0.1'&&endpoint.pathname==='/'&&
     !endpoint.search&&!endpoint.hash&&!endpoint.username&&!endpoint.password&&endpoint.port&&endpoint.port!=='0',
@@ -182,8 +176,8 @@ export async function withNative(run,{profile,pruning=true}={}){
     daemon=launchFixture(executable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env})
     const origin=await daemon.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1])
     const pid=await daemon.pid()
-    const {read,send}=await attestNative(origin,daemon.child,authorization,fetch,pid)
-    await plugin?.activate({project,url:origin,authorization},()=>assert.equal(daemon.child.exitCode,null))
+    const {read,send}=await attestNative(origin,daemon.child,authorization,fixtureFetch,pid)
+    await plugin?.activate({project,url:origin,authorization,send},()=>assert.equal(daemon.child.exitCode,null))
     return await run({profile,project,origin:`${origin}/`,password,read,send,env,pid})
   } finally {
     try{try{await plugin?.close()}finally{await daemon?.stop()}}finally{

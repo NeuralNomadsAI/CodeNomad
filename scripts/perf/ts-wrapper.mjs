@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { register } from "node:module"
 import { pathToFileURL, fileURLToPath } from "node:url"
 import { privatePath } from "./isolation.mjs"
+import { fixtureFetch } from "../native-fixture-http.mjs"
 
 const config = process.argv[process.argv.indexOf("--config") + 1]
 assert.equal(config, process.env.CLI_CONFIG)
@@ -16,7 +17,7 @@ const url = new URL(process.env.PERF_DAEMON_URL)
 assert.equal(url.hostname, "127.0.0.1")
 const password = process.env.OPENCODE_SERVER_PASSWORD
 const endpoint = { url: url.origin, auth: { type: "basic", username: "opencode", password } }
-const info = await (await fetch(new URL("/api/info", url), { headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` } })).json()
+const info = await (await fixtureFetch(new URL("/api/info", url), { headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` } })).json()
 assert.equal(String(info.pid), process.env.PERF_DAEMON_PID)
 rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
 OpenCodeCliService.prototype.discover = async () => endpoint

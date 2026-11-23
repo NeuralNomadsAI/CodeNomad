@@ -1,9 +1,9 @@
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { stopFixtureChild } from "../native-fixture-guards.mjs"
+import { spawnFixtureChild, stopFixtureChild } from "../native-fixture-guards.mjs"
+import { fixtureFetch, withoutFixtureProxy } from "../native-fixture-http.mjs"
 import { privatePath } from "./isolation.mjs"
 import { sleep } from "./lib.mjs"
 import assert from "node:assert/strict"
@@ -22,10 +22,10 @@ export async function withBackend(daemon, tree, root, followLongReplies, run, {r
     "--http", "true", "--http-port", "0", "--https", "false", "--host", "127.0.0.1", "--ui-no-update",
     "--ui-dir", path.dirname(assetsDirectory(tree)), "--config", config, "--workspace-root", daemon.project,
   ]]
-  const child = spawn(...command, { env: { ...daemon.env, CLI_CONFIG: config, PERF_SERVER_DIST: fileURLToPath(new URL("../../packages/server/dist", import.meta.url)),
+  const child = spawnFixtureChild(...command, { env: withoutFixtureProxy({ ...daemon.env, CLI_CONFIG: config, PERF_SERVER_DIST: fileURLToPath(new URL("../../packages/server/dist", import.meta.url)),
     PERF_DAEMON_URL: daemon.url, PERF_DAEMON_PID: String(daemon.pid), CODENOMAD_SERVER_PASSWORD: password,
     ...(rustBinary && {CNRS_FIXTURE_URL: daemon.url, CNRS_FIXTURE_PASSWORD: daemon.password, CNRS_SERVER_PASSWORD: password, CNRS_FIXTURE_STDIN_STOP: "1"}),
-    CODENOMAD_REMOTE_CONTROL: "disabled" }, cwd: root, windowsHide: true, stdio: [rustBinary ? "pipe" : "ignore", "pipe", "pipe"] })
+    CODENOMAD_REMOTE_CONTROL: "disabled" }), cwd: root, windowsHide: true, stdio: [rustBinary ? "pipe" : "ignore", "pipe", "pipe"] })
   const stopped = new Promise(resolve => child.once("close", resolve))
   let output = "", spawnError, completed = false
   child.on("error", error => { spawnError = error })
@@ -40,7 +40,7 @@ export async function withBackend(daemon, tree, root, followLongReplies, run, {r
       }
       await sleep(50)
     }
-    const request = (route, method, body, cookie) => fetch(`${origin}${route}`, {
+    const request = (route, method, body, cookie) => fixtureFetch(`${origin}${route}`, {
       method, headers: { origin, "content-type": "application/json", ...(cookie ? { cookie } : {}) },
       body: JSON.stringify(body), signal: AbortSignal.timeout(30_000),
     })

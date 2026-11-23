@@ -9,6 +9,7 @@ import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 import {fixtureTarget,requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
+import {fixtureFetch} from '../../../scripts/native-fixture-http.mjs'
 
 requirePrivateCli();requireTestSupport()
 await withNative(async native=>{
@@ -22,7 +23,7 @@ async function until(check,label){for(const end=Date.now()+30000;Date.now()<end;
 async function relay(route,init={}){
   const target=fixtureTarget(route,origin)
   assert(target,'Foreign fixture origin forbidden')
-  const response=await fetch(target,{...init,headers:{cookie,...init.headers},redirect:'error',signal:AbortSignal.timeout(15000)})
+  const response=await fixtureFetch(target,{...init,headers:{cookie,...init.headers},signal:AbortSignal.timeout(15000)})
   const text=await response.text(),body=text?JSON.parse(text):null;proof.requests.push({host:'rust',method:init.method??'GET',path:route,status:response.status});return{status:response.status,body}
 }
 async function stage(event){
@@ -52,7 +53,7 @@ try{
   session=await client.session.create({location:{directory:project},title:'Rune private native pending UI',permissions:[{action:'*',resource:'*',effect:'deny'},{action:'rune_fixture',resource:'*',effect:'ask'}]});assert.equal(path.resolve(session.location.directory),project);proof.session=session.id
   rust=launchFixture(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{cwd:root,shutdown:'shutdown\n',env:{...env,CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:password,CNRS_SERVER_PASSWORD:'fixture-rune-native-pending',CNRS_FIXTURE_STDIN_STOP:'1'}})
   origin=await rust.ready(rustOrigin)
-  const login=await fetch(`${origin}/api/auth/login`,post({username:'codenomad',password:'fixture-rune-native-pending'}));assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
+  const login=await fixtureFetch(`${origin}/api/auth/login`,post({username:'codenomad',password:'fixture-rune-native-pending'}));assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await relay('/api/workspaces',post({path:project,requestId:`rune-native-ui-${randomUUID()}`}));assert.equal(opened.status,201);assert.equal(path.resolve(opened.body.path),project);proof.workspace=opened.body.id
   ui=launchFixture(clientBinary,['--probe-real-pending'],{cwd:root,env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-rune-native-pending',RUNE_WORKSPACE:proof.workspace,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_PENDING_OUT:root,RUNE_PENDING_IDS:JSON.stringify(ids),RUNE_LOCALE:'fr'}})
   ui.child.stdout.on('data',b=>{

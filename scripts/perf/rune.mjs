@@ -1,9 +1,9 @@
 // CPU-buffer readiness through the real Rune runtime; no native window or virtual clock.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
 import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {stopFixtureChild} from '../native-fixture-guards.mjs'
+import {spawnFixtureChild,stopFixtureChild} from '../native-fixture-guards.mjs'
+import {fixtureFetch,withoutFixtureProxy} from '../native-fixture-http.mjs'
 import {MARKER, now, sleep} from './lib.mjs'
 import {withBackend} from './stacks.mjs'
 
@@ -33,19 +33,19 @@ export async function withRune(binary, rustBinary, daemon, session, root, run) {
   assert(daemon.pruning,'Rune benchmark requires explicitly provisioned pruning capability')
   await daemon.pruning.window(session)
   return withBackend(daemon, undefined, root, false, async (origin, cookie, {password}) => {
-    const opened = await fetch(`${origin}/api/workspaces`, {method: 'POST', headers: {'content-type': 'application/json', cookie: `codenomad_session=${cookie}`},
+    const opened = await fixtureFetch(`${origin}/api/workspaces`, {method: 'POST', headers: {'content-type': 'application/json', cookie: `codenomad_session=${cookie}`},
       body: JSON.stringify({path: daemon.project}), signal: AbortSignal.timeout(30_000)})
     assert(opened.ok, `Rune benchmark workspace failed (${opened.status})`)
     const workspace = await opened.json()
     assert(typeof workspace.id === 'string' && workspace.id.length > 0, 'Missing private workspace identity')
-    const history=await fetch(`${origin}/api/workspaces/${workspace.id}/session-history/window`,{method:'POST',
+    const history=await fixtureFetch(`${origin}/api/workspaces/${workspace.id}/session-history/window`,{method:'POST',
       headers:{'content-type':'application/json',cookie:`codenomad_session=${cookie}`},body:JSON.stringify({sessionID:session,target:{kind:'latest'}}),signal:AbortSignal.timeout(20_000)})
     const historyBody=await history.json()
     await writeFile(path.join(root,'history-capability.json'),JSON.stringify({nativeWindowProven:true,httpStatus:history.status,
       status:historyBody.status??'invalid',reason:historyBody.reason,messages:Array.isArray(historyBody.messages)?historyBody.messages.length:undefined},null,2))
     assert(history.ok&&historyBody.status==='window','Rust history capability unavailable; inspect history-capability.json and native pruning-proof.json')
-    const child = spawn(binary, ['--probe-latency','--tree',path.join(root,'unexpected-product-tree.json'),'--at','0'], {cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
-      env: {...daemon.env, RUNE_BACKEND: `${origin}/`, RUNE_WORKSPACE: workspace.id, RUNE_SESSION: session, RUNE_PASSWORD: password, RUNE_LOCALE: 'en'}})
+    const child = spawnFixtureChild(binary, ['--probe-latency','--tree',path.join(root,'unexpected-product-tree.json'),'--at','0'], {cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+      env: withoutFixtureProxy({...daemon.env, RUNE_BACKEND: `${origin}/`, RUNE_WORKSPACE: workspace.id, RUNE_SESSION: session, RUNE_PASSWORD: password, RUNE_LOCALE: 'en'})})
     const pending = new Map()
     let serial = 0, buffer = '', stderr = '', failure
     const rejectAll = error => {failure ??= error; for (const task of pending.values()) task.reject(error); pending.clear()}

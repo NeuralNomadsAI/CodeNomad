@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto'
 import path from 'node:path'
 import {args,requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
+import {fixtureFetch} from '../../../scripts/native-fixture-http.mjs'
 import {prepareRealHistory} from './real-history-prepare.mjs'
 import {seedRealHistory} from './real-history-seed.mjs'
 import {privateEnvironment} from './private-profile.mjs'
@@ -31,11 +32,11 @@ const stats={sourceID:source.id,longID:fork.id,longTitle,newTitle,sourceRowsInPa
 const save=()=>writeFile(path.join(profile,'proof.json'),JSON.stringify(stats,null,2))
 try{
   const origin=await server.ready(rustOrigin)
-  const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'interactive-rune-owned-backend'})});assert.equal(login.status,200)
+  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'interactive-rune-owned-backend'})});assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
-  const call=(route,init={})=>fetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
+  const call=(route,init={})=>fixtureFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
   observer=new AbortController()
-  const stream=await fetch(`${origin}/api/events?clientId=rune-interactive-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal});assert.equal(stream.status,200)
+  const stream=await fixtureFetch(`${origin}/api/events?clientId=rune-interactive-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal});assert.equal(stream.status,200)
   const fragments=new Map()
   async function watch(){
     let buffer='';const decoder=new TextDecoder()

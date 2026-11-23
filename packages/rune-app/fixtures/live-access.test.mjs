@@ -43,7 +43,7 @@ test('a fixture refuses a redirected target and an exited child before sending',
 
 test('fixture relays only resolve to their assigned listener',()=>{
   assert.equal(fixtureTarget('/api/events?clientId=fixture',origin)?.href,`${origin}/api/events?clientId=fixture`)
-  for(const url of ['http://foreign.invalid/api/events','http://127.0.0.1:42396/api/events','//foreign.invalid/api/events','http://user@127.0.0.1:42395/api/events']){
+  for(const url of ['http://foreign.invalid/api/events','http://127.0.0.1:42396/api/events','//foreign.invalid/api/events','http://user@127.0.0.1:42395/api/events',`blob:${origin}/same-origin`]){
     assert.equal(fixtureTarget(url,origin),null)
   }
 })

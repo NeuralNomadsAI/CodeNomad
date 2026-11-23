@@ -32,8 +32,7 @@ export async function preparePruning(root, config) {
   return {
     async activate(daemon,assertCurrent){
       current=assertCurrent;directory=privatePath(daemon.project)
-      client=OpenCode.make({baseUrl:daemon.url,headers:{authorization:daemon.authorization},fetch:(url,init)=>fetch(url,{...init,
-        signal:AbortSignal.any([...(init?.signal?[init.signal]:[]),AbortSignal.timeout(30_000)])})})
+      client=OpenCode.make({baseUrl:daemon.url,fetch:(url,init)=>daemon.send(new Request(url,init))})
       const location={directory},signal=AbortSignal.timeout(15_000)
       const entry=record=>record.data.map(item=>({id:item.id,status:item.state.status}))
       try{

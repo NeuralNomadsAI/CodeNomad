@@ -50,7 +50,7 @@ async function measure(daemon, ids, driver, countWork) {
   const markerFor = (key, code) => key.replace("MKAA", `MK${code}`)
   const daemonEvents = new Set()
   let failure
-  const stop = await sseReader(`${daemon.url}/api/event`, daemon.authorization, (frame, at) => {
+  const stop = await sseReader(daemon.send, (frame, at) => {
     const event = JSON.parse(frame)
     if (event.type === "server.connected" || event.type === "server.heartbeat") return
     if (typeof event.id === "string") daemonEvents.add(event.id)

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
 import {createServer,request} from 'node:http'
 import path from 'node:path'
-import {args,fixtureTarget,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
+import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
+import {fixtureFetch,fixtureHttpAgent,relayTarget} from '../../../scripts/native-fixture-http.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
@@ -25,15 +26,15 @@ let child,proxy,observer
 let result=1
 try{
   const origin=await server.ready(rustOrigin)
-  const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'real-history-private-backend'})})
+  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'real-history-private-backend'})})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
-  const call=(route,init={})=>fetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
+  const call=(route,init={})=>fixtureFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
   const opened=await call('/api/workspaces',{method:'POST',body:JSON.stringify({path:manifest.project})})
   const workspace=await opened.json();assert.equal(opened.status,201)
   const own=value=>value.type==='instance.event'&&value.instanceId===workspace.id&&value.event?.data?.sessionID===manifest.sessionID
   observer=new AbortController()
-  const stream=await fetch(`${origin}/api/events?clientId=real-history-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal})
+  const stream=await fixtureFetch(`${origin}/api/events?clientId=real-history-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal})
   assert.equal(stream.status,200)
   async function watch(){
     let buffer='';const decoder=new TextDecoder()
@@ -54,8 +55,8 @@ try{
   }
   watch().catch(error=>{if(error.name!=='AbortError')console.error(`observer: ${error.message}`)})
   proxy=createServer(async(req,res)=>{
-    const target=fixtureTarget(req.url,origin)
-    if(!target){res.writeHead(403);res.end('Foreign fixture origin forbidden');return}
+    const target=relayTarget(req,res,origin)
+    if(!target)return
     if(target.pathname.startsWith('/__real__/')){
       const action=target.pathname.slice('/__real__/'.length)
       let value=stats
@@ -67,7 +68,7 @@ try{
       res.setHeader('content-type','application/json');res.end(JSON.stringify(value));return
     }
     if(req.method==='POST'&&target.pathname===`/workspaces/${workspace.id}/instance/api/session/${manifest.sessionID}/prompt`)stats.prompts++
-    const up=request(target,{method:req.method,headers:{...req.headers,host:target.host}},async response=>{
+    const up=request(target,{agent:fixtureHttpAgent,method:req.method,headers:{...req.headers,host:target.host}},async response=>{
       res.writeHead(response.statusCode,response.headers)
       if(target.pathname!=='/api/events'){response.pipe(res);return}
       stats.sseConnections++;let buffer='',delivered=0;const decoder=new TextDecoder()

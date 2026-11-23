@@ -11,7 +11,8 @@ import {clientBinary,serverBinary,requireTestSupport} from './fixture-binaries.m
 import {preparePruning} from '../../../scripts/perf/pruning.mjs'
 import {privatePath} from '../../../scripts/perf/isolation.mjs'
 import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {attestNative,fixtureTarget} from './live-access.mjs'
+import {attestNative} from './live-access.mjs'
+import {fixtureFetch,fixtureHttpAgent,relayTarget,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {rustOrigin} from './fixture-host.mjs'
 
 const {values}=parseArgs({options:{opencode:{type:'string'}}})
@@ -39,7 +40,7 @@ const proof={root,project,opencode:values.opencode,ownedIDs,stages,requests,clea
 let pruning,native,server,client,failure,rustPassword
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))
 function launch(name,binary,args,childEnv){
-  const child=spawnFixtureChild(binary,args,{cwd:root,env:childEnv,windowsHide:true,stdio:['pipe','pipe','pipe']})
+  const child=spawnFixtureChild(binary,args,{cwd:root,env:withoutFixtureProxy(childEnv),windowsHide:true,stdio:['pipe','pipe','pipe']})
   const entry={name,child,error:null,stopped:null};logs[name]=''
   entry.stopped=new Promise(resolve=>{child.once('close',resolve);child.once('error',error=>{entry.error=error;resolve()})})
   for(const pipe of [child.stdout,child.stderr])pipe.on('data',data=>{logs[name]=(logs[name]+data).slice(-1048576)})
@@ -58,8 +59,8 @@ async function origin(entry){
 const forbidden=route=>/(?:^|\/)(?:prompt|command|generate|synthetic|shell)(?:\/|$)/.test(route)
 async function auditedProxy(base,lane){
   const proxy=createServer((req,res)=>{
-    const url=fixtureTarget(req.url,base)
-    if(!url){res.writeHead(403);res.end('Foreign fixture origin forbidden');return}
+    const url=relayTarget(req,res,base)
+    if(!url)return
     const row={lane,stage:proof.stage??'setup',method:req.method,path:url.pathname,query:url.search}
     requests.push(row)
     const createsNative=req.method==='POST'&&/^\/api\/session\/?$/.test(url.pathname)
@@ -67,7 +68,7 @@ async function auditedProxy(base,lane){
     if(req.method==='POST'&&(forbidden(url.pathname)||createsNative||createsViaApp)){
       row.blocked=true;res.writeHead(403);res.end('Fixture mutation denied');return
     }
-    const upstream=request(url,{method:req.method,headers:{...req.headers,host:url.host}},response=>{
+    const upstream=request(url,{agent:fixtureHttpAgent,method:req.method,headers:{...req.headers,host:url.host}},response=>{
       row.status=response.statusCode;res.writeHead(response.statusCode,response.headers);response.pipe(res)
     })
     upstream.on('error',()=>{row.failed=true;if(!res.headersSent)res.writeHead(502);res.end()})
@@ -88,11 +89,11 @@ try{
   const daemon=launch('opencode',values.opencode,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],env)
   const endpoint=await origin(daemon)
   const authorization=`Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`
-  const {send}=await attestNative(endpoint,daemon.child,authorization,fetch,await fixtureChildPid(daemon.child))
+  const {send}=await attestNative(endpoint,daemon.child,authorization,fixtureFetch,await fixtureChildPid(daemon.child))
   native=OpenCode.make({baseUrl:endpoint,fetch:(url,init)=>send(new Request(url,init))})
   const info=await native.server.info()
   proof.nativeVersion=info.version
-  await pruning.activate({project,url:endpoint,authorization},()=>assert.equal(daemon.child.exitCode,null))
+  await pruning.activate({project,url:endpoint,authorization,send},()=>assert.equal(daemon.child.exitCode,null))
   const create=async title=>{
     const session=await native.session.create({title,location:{directory:project},permissions})
     ownedIDs.push(session.id);assert.equal(session.location.directory,project);assert.deepEqual(session.permissions,permissions)
@@ -126,12 +127,12 @@ try{
   await mkdir(rustEnv.CLI_CONFIG)
   server=launch('rust',rust,[project,path.join(root,'identity.json'),'0',values.opencode],rustEnv)
   const backend=await origin(server),appProxy=await auditedProxy(backend,'rune-rust')
-  const login=await fetch(`${backend}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},
+  const login=await fixtureFetch(`${backend}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},
     body:JSON.stringify({username:'codenomad',password:rustEnv.CNRS_SERVER_PASSWORD}),signal:AbortSignal.timeout(15000)})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie')?.split(';')[0];assert(cookie)
   const inventory=async()=>{
-    const response=await fetch(`${backend}/api/workspaces`,{headers:{cookie},signal:AbortSignal.timeout(15000)})
+    const response=await fixtureFetch(`${backend}/api/workspaces`,{headers:{cookie},signal:AbortSignal.timeout(15000)})
     assert.equal(response.status,200);return response.json()
   }
   for(const stage of ['prepare','resume','verify']){
