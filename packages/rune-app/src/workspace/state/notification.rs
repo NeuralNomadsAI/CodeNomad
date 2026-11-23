@@ -232,6 +232,7 @@ pub(crate) fn can_switch_for_notification(s: &State, target: &Target) -> bool {
 pub(crate) fn open_notification(
     s: &mut State,
     target: &Target,
+    ticket: u64,
     started: &mut bool,
     tx: &mut Tx,
 ) -> Activation {
@@ -263,7 +264,7 @@ pub(crate) fn open_notification(
         if launcher.error.is_some() && (*started || s.screen.is_launcher()) {
             return Activation::Gone;
         }
-        crate::launcher::choose_destination(s, target.session.clone(), tx);
+        crate::launcher::choose_destination(s, target.session.clone(), Some(ticket), tx);
         *started = true;
         return Activation::Wait;
     }
@@ -279,7 +280,7 @@ pub(crate) fn open_notification(
     }
     crate::chat::reading::restore_position(s, tx);
     if target.tab.is_some() {
-        crate::launcher::choose_destination(s, target.session.clone(), tx);
+        crate::launcher::choose_destination(s, target.session.clone(), Some(ticket), tx);
     }
     tx.instant();
     Activation::Opened

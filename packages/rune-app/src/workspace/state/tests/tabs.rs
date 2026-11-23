@@ -140,6 +140,22 @@ fn a_recorded_notification_click_returns_to_its_own_project_and_conversation_onc
 }
 
 #[test]
+fn closing_the_active_tab_supersedes_a_pending_notification_click() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries.push(entry("tab-1".into(), Tab::Blank));
+    s.workspace = Some(ui);
+    let mut rt = runtime(s);
+    rt.update(|s, tx| {
+        let pending = s.notifications.navigation_ticket();
+        close(s, "tab-0", tx);
+        assert_ne!(s.notifications.navigation_ticket(), pending);
+        assert_eq!(s.workspace.as_ref().unwrap().active_key(), "tab-1");
+    });
+}
+
+#[test]
 fn panel_visibility_returns_only_with_its_own_project_tab() {
     let mut s = init();
     let mut ui = Ui::new();

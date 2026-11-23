@@ -175,6 +175,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     }
     let active = s.workspace.as_ref().is_some_and(|ui| ui.active == index);
     if active {
+        s.notifications.supersede_navigation();
         stash(s);
     } else {
         capture(s);

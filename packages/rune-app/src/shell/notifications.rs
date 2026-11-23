@@ -151,12 +151,13 @@ pub(crate) struct Host {
     delivered: VecDeque<(Target, Category, String)>,
     deferred: VecDeque<Notice>,
     background_attention: background::Background,
-    activation: Option<(Target, bool)>,
-    click_check: Option<(Target, codenomad_client::Receiver<bool>)>,
-    click_wait: Option<Target>,
+    activation: Option<(Click, bool)>,
+    click_check: Option<(Click, codenomad_client::Receiver<bool>)>,
+    click_wait: Option<Click>,
+    navigation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     next_id: u64,
-    clicks: codenomad_client::Receiver<u64>,
-    send_click: codenomad_client::Sender<u64>,
+    clicks: codenomad_client::Receiver<(u64, u64)>,
+    send_click: codenomad_client::Sender<(u64, u64)>,
     #[cfg(target_os = "windows")]
     pub(crate) window: Option<rune::WindowHandle>,
     #[cfg(target_os = "windows")]
@@ -165,6 +166,11 @@ pub(crate) struct Host {
     pub(crate) background: Option<rune_theme_codenomad::shell::WindowFeed<State>>,
     #[cfg(test)]
     recorded: Option<Vec<(u64, String, String)>>,
+}
+
+struct Click {
+    target: Target,
+    ticket: u64,
 }
 
 struct Notice {
@@ -196,6 +202,7 @@ impl Default for Host {
             activation: None,
             click_check: None,
             click_wait: None,
+            navigation: Default::default(),
             next_id: 0,
             clicks,
             send_click,
@@ -227,12 +234,15 @@ pub(crate) fn native_delivery() -> Option<crate::platform::notifications::Delive
 
 impl Host {
     pub(crate) fn supersede_navigation(&mut self) {
+        self.navigation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.activation = None;
         self.click_check = None;
         self.click_wait = None;
-        while let Ok(id) = self.clicks.try_recv() {
-            self.routes.retain(|(entry, _, _)| *entry != id);
-        }
+    }
+
+    pub(crate) fn navigation_ticket(&self) -> u64 {
+        self.navigation.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn already_delivered(&self, target: &Target, category: Category, id: &str) -> bool {
@@ -257,8 +267,12 @@ impl Host {
         let id = self.next_id;
         self.next_id += 1;
         let clicks = self.send_click.clone();
+        let navigation = self.navigation.clone();
         let action = move || {
-            if clicks.try_send(id).is_ok() {
+            let ticket = navigation
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .wrapping_add(1);
+            if clicks.try_send((id, ticket)).is_ok() {
                 wake();
             }
         };
@@ -443,7 +457,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     routes.retain(|(_, target, _)| crate::workspace::owns_notification(s, target));
     s.notifications.routes = routes;
     let mut target = s.notifications.activation.take();
-    while let Ok(id) = s.notifications.clicks.try_recv() {
+    while let Ok((id, ticket)) = s.notifications.clicks.try_recv() {
         let Some(index) = s
             .notifications
             .routes
@@ -454,26 +468,39 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         };
         let (_, clicked, presented) = s.notifications.routes.remove(index).unwrap();
         drop(presented);
+        if ticket != s.notifications.navigation_ticket() {
+            continue;
+        }
         target = None;
         s.notifications.click_wait = None;
         s.notifications.click_check =
-            crate::workspace::check_notification(s, &clicked).map(|check| (clicked, check));
+            crate::workspace::check_notification(s, &clicked).map(|check| {
+                (
+                    Click {
+                        target: clicked,
+                        ticket,
+                    },
+                    check,
+                )
+            });
     }
     if let Some(waiting) = s.notifications.click_wait.take()
-        && crate::workspace::owns_notification(s, &waiting)
+        && waiting.ticket == s.notifications.navigation_ticket()
+        && crate::workspace::owns_notification(s, &waiting.target)
     {
-        if crate::workspace::can_switch_for_notification(s, &waiting) {
-            s.notifications.click_check =
-                crate::workspace::check_notification(s, &waiting).map(|check| (waiting, check));
+        if crate::workspace::can_switch_for_notification(s, &waiting.target) {
+            s.notifications.click_check = crate::workspace::check_notification(s, &waiting.target)
+                .map(|check| (waiting, check));
         } else {
             s.notifications.click_wait = Some(waiting);
         }
     }
     if let Some((clicked, check)) = s.notifications.click_check.take()
-        && crate::workspace::owns_notification(s, &clicked)
+        && clicked.ticket == s.notifications.navigation_ticket()
+        && crate::workspace::owns_notification(s, &clicked.target)
     {
         match check.try_recv() {
-            Ok(true) if crate::workspace::can_switch_for_notification(s, &clicked) => {
+            Ok(true) if crate::workspace::can_switch_for_notification(s, &clicked.target) => {
                 s.notifications.focus();
                 target = Some((clicked, false));
             }
@@ -484,13 +511,15 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             _ => {}
         }
     }
-    let Some((target, mut started)) = target else {
+    let Some((click, mut started)) =
+        target.filter(|(click, _)| click.ticket == s.notifications.navigation_ticket())
+    else {
         return false;
     };
     let before = s.workspace.as_ref().map(|ui| ui.active_key().to_owned());
-    match crate::workspace::open_notification(s, &target, &mut started, tx) {
+    match crate::workspace::open_notification(s, &click.target, click.ticket, &mut started, tx) {
         Activation::Wait => {
-            s.notifications.activation = Some((target, started));
+            s.notifications.activation = Some((click, started));
             before.as_deref() != s.workspace.as_ref().map(|ui| ui.active_key())
         }
         Activation::Opened => true,

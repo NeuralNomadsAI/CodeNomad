@@ -63,6 +63,7 @@ pub struct Launcher {
     pub creation_uncertain: bool,
     pub openings: crate::workspace::opening::Openings,
     result: Option<Receiver<Result<Reply>>>,
+    selection_ticket: Option<u64>,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
     wake: rune::Waker,
@@ -158,6 +159,7 @@ impl Launcher {
             creation_uncertain: false,
             openings: Default::default(),
             result: None,
+            selection_ticket: None,
             boot,
             host: None,
             wake,
@@ -190,6 +192,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let browser_changed = cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s));
     let blocked = !can_change_session(s);
     let selected = crate::workspace::active_session(s).map(str::to_owned);
+    let latest = s.notifications.navigation_ticket();
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
@@ -204,6 +207,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.result = None;
     l.pending = false;
     l.listing = false;
+    if l.selection_ticket
+        .take()
+        .is_some_and(|ticket| ticket != latest)
+    {
+        tx.instant();
+        return true;
+    }
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
             let reauthenticated = std::mem::take(&mut l.authentication_required);
@@ -220,7 +230,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 crate::workspace::renew_connection(s);
                 if let Some(id) = selected {
                     s.show_chat();
-                    choose_destination(s, id, tx);
+                    choose_destination(s, id, None, tx);
                 } else {
                     crate::git::project_opened(s);
                     crate::workspace::restore_files_mode(s);
