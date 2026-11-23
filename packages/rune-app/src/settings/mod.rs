@@ -623,7 +623,7 @@ fn launch_preferences(
         .locale()
         .unwrap_or_else(strings::locale);
     let spec = strings::with_locale(locale, view::spec);
-    let window = crate::platform::preferences_window(s, spec, state, view::closed);
+    let window = crate::platform::preferences_window(s, spec, state, view::closed, view::focus);
     s.settings.window = Some((window, token, request));
 }
 

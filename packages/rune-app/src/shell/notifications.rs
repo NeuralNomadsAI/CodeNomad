@@ -18,10 +18,10 @@ pub(crate) use in_app::{
 };
 pub(crate) use messages::{emit, emit_from, emit_outcome};
 pub(crate) fn relay_notice(s: &mut State, event: codenomad_client::transport::WorkspaceEvent) {
-    if let Some((target, project)) = crate::workspace::notification_target(s)
+    if let Some((target, _)) = crate::workspace::notification_target(s)
         && let Some(source) = crate::settings::bound_backend(s)
     {
-        messages::native(s, source, target, project, event);
+        messages::native(s, source, target, event);
     }
 }
 #[cfg(target_arch = "wasm32")]

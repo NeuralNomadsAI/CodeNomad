@@ -3,6 +3,34 @@ use crate::agent_api::Snapshot;
 use serde_json::json;
 
 #[test]
+fn direct_compaction_waits_for_the_first_root_snapshot() {
+    for directory in [Some("/fixture".to_owned()), None] {
+        let mut attention = Attention::default();
+        attention.compacted("compacted".into());
+        assert!(attention.pending.is_empty());
+        attention.observe(
+            &Snapshot {
+                models: None,
+                current: None,
+                session_known: true,
+                running: false,
+                root_directory: directory.clone(),
+                permissions: None,
+                forms: None,
+            },
+            true,
+        );
+        assert_eq!(attention.pending.len(), usize::from(directory.is_some()));
+        if directory.is_some() {
+            assert_eq!(
+                attention.pending[0],
+                (Category::Sessions, "compacted".into())
+            );
+        }
+    }
+}
+
+#[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn preferences_focus_suppresses_the_main_windows_system_notices() {
     let mut s = crate::init();

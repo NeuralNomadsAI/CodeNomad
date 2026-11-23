@@ -229,10 +229,12 @@ pub fn preferences_window<S: 'static>(
     spec: rune::AppSpec<S>,
     state: S,
     close: fn(&mut S, &mut rune::Tx),
+    focus: fn(&mut S, bool, &mut rune::Tx),
 ) -> rune::WindowHandle {
     let spec = rune::WindowSpec::new("preferences", spec)
         .state(state)
-        .on_close(close);
+        .on_close(close)
+        .on_focus(focus);
     #[cfg(target_os = "windows")]
     return preferences_placement::open(spec, owner);
     #[cfg(not(target_os = "windows"))]

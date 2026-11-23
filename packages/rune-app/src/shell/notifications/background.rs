@@ -74,7 +74,7 @@ impl Background {
         let (category, id, request) = match hint.event {
             WorkspaceEvent::SessionCompacted { id } => (Category::Sessions, id, None),
             event @ WorkspaceEvent::OpenCodeNotice { .. } => {
-                super::messages::native(s, backend, target, project, event);
+                super::messages::native(s, backend, target, event);
                 return;
             }
             WorkspaceEvent::SessionRequest { form, id } => (

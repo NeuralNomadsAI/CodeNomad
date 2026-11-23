@@ -7,7 +7,8 @@ use std::collections::HashSet;
 pub(crate) struct Attention {
     requests: [HashSet<String>; 2],
     hinted: [HashSet<String>; 2],
-    pub(super) directory: Option<String>,
+    directory: Option<String>,
+    compaction: Option<String>,
     execution: Option<(String, bool)>,
     pub(super) pending: Vec<(Category, String)>,
     updated: [bool; 2],
@@ -18,7 +19,13 @@ impl Attention {
     pub(crate) fn observe(&mut self, snapshot: &Snapshot, current: bool) {
         self.directory.clone_from(&snapshot.root_directory);
         if self.directory.is_none() {
+            if snapshot.session_known {
+                self.compaction = None;
+            }
             return;
+        }
+        if let Some(id) = self.compaction.take() {
+            self.queue_compaction(id);
         }
         if let Some(permissions) = &snapshot.permissions {
             self.observe_requests(0, permissions.iter().map(|item| item.id.clone()), current);
@@ -53,8 +60,21 @@ impl Attention {
     pub(crate) fn disconnected(&mut self) {
         self.execution = None;
         self.directory = None;
+        self.compaction = None;
+        self.pending
+            .retain(|(category, _)| *category != Category::Sessions);
         self.hinted.iter_mut().for_each(HashSet::clear);
         self.invalidate_completion();
+    }
+
+    pub(crate) fn compacted(&mut self, id: String) {
+        self.compaction = Some(id);
+    }
+
+    fn queue_compaction(&mut self, id: String) {
+        if self.pending.len() < RETAINED {
+            self.pending.push((Category::Sessions, id));
+        }
     }
 
     fn invalidate_completion(&mut self) {
@@ -150,6 +170,21 @@ pub(crate) fn collect(s: &mut State, target: impl FnOnce(&State) -> Option<(Targ
         s.chat_title.clone()
     };
     for (category, id) in pending {
+        if category == Category::Sessions {
+            if let Some(source) = crate::settings::bound_backend(s) {
+                super::messages::enqueue(
+                    s,
+                    source,
+                    category,
+                    Some(project.clone()),
+                    super::messages::compaction(&label),
+                    Some(target.clone()),
+                    Some(id),
+                    false,
+                );
+            }
+            continue;
+        }
         if running && matches!(category, Category::SessionDone) {
             continue;
         }

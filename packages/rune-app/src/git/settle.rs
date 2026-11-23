@@ -29,8 +29,11 @@ impl Ui {
             match done {
                 Completed::Read(lane, Ok(value)) => self.accept(lane, value),
                 Completed::Read(lane, Err(error)) => self.read_failed(lane, error),
-                Completed::Mutation(epoch, tree, action, result) => {
-                    self.settle_mutation(epoch, &tree, action, result)
+                Completed::Mutation(epoch, tree, source, action, result) => {
+                    self.settle_mutation(epoch, &tree, action, result);
+                    if !self.backend.client.same_connection(&source.client) {
+                        self.mutation_notice = None;
+                    }
                 }
             }
         }

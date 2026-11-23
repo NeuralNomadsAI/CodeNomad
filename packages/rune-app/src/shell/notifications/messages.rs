@@ -86,13 +86,7 @@ pub(super) fn enqueue(
     });
 }
 
-pub(crate) fn native(
-    s: &mut State,
-    source: Backend,
-    target: Target,
-    project: String,
-    event: WorkspaceEvent,
-) {
+pub(crate) fn native(s: &mut State, source: Backend, target: Target, event: WorkspaceEvent) {
     match event {
         WorkspaceEvent::OpenCodeNotice {
             id,
@@ -113,32 +107,6 @@ pub(crate) fn native(
                 Some(target),
                 Some(id),
                 error,
-            );
-        }
-        WorkspaceEvent::SessionCompacted { id } => {
-            if !s
-                .agent
-                .as_ref()
-                .is_some_and(|agent| agent.attention.directory.is_some())
-            {
-                return;
-            }
-            let label = s.chat_title.trim();
-            let label = if label.is_empty() {
-                target.session.as_str()
-            } else {
-                label
-            };
-            let body = compaction(label);
-            enqueue(
-                s,
-                source,
-                Category::Sessions,
-                Some(project),
-                body,
-                Some(target),
-                Some(id),
-                false,
             );
         }
         _ => {}

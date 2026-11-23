@@ -150,6 +150,10 @@ impl Window {
     }
 }
 
+pub(super) fn focus(s: &mut Window, focused: bool, _: &mut rune::Tx) {
+    s.focused.set(focused);
+}
+
 pub(super) fn closed(s: &mut Window, _: &mut rune::Tx) {
     s.focused.set(false);
     #[cfg(target_os = "windows")]
@@ -460,7 +464,6 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         }
         chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers).on_window_focus(
             |s: &mut Window, focused, _| {
-                s.focused.set(focused);
                 if focused && s.section == Section::OpenCode {
                     s.check_opencode(Some(false));
                 } else if focused && s.section == Section::General {
