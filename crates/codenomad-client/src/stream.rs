@@ -10,14 +10,15 @@ use std::{
     time::Duration,
 };
 mod catalogue;
+mod children;
 pub use catalogue::{CatalogueChanges, CatalogueWatch};
+pub(crate) use children::Children;
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_browser.rs"]
 mod browser;
 
-const NATIVE_EVENT_LIMIT: usize = 256 * 1024;
-// A storage event includes the UI state owner, which can hold 1 MiB of Stats.
-const OWNER_EVENT_LIMIT: usize = 2 * 1024 * 1024;
+// Both relays admit 32 MiB of native routing payload, before the workspace envelope.
+const FRAME_LIMIT: usize = (32 << 20) + 4096;
 
 fn storage_owner(value: &Value) -> Option<crate::settings::Owner> {
     if !matches!(value["owner"].as_str(), Some("ui" | "*")) {
@@ -82,7 +83,7 @@ fn owner_changes_invalidate_the_intended_consumers_without_recovering_history() 
                 crate::transport::Event::Preferences(crate::settings::Owner::State)
             ));
             let data = json!({"owner":"ui","type":"storage.configChanged",
-                              "value":{"padding":"x".repeat(NATIVE_EVENT_LIMIT)}});
+                              "value":{"padding":"x".repeat(300 * 1024)}});
             dispatch(
                 &backend,
                 1,
@@ -265,6 +266,16 @@ pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Re
     }
     Ok(())
 }
+async fn reread(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {
+    if let Some(signals) = &state.catalogue {
+        signals.invalidate(None);
+    } else {
+        let version = state.version.fetch_add(1, SeqCst) + 1;
+        out.send(Input::Hint(epoch, version)).await?;
+    }
+    Ok(())
+}
+
 pub(super) async fn dispatch(
     b: &Backend,
     epoch: u64,
@@ -274,8 +285,8 @@ pub(super) async fn dispatch(
     kind: &str,
     data: &str,
 ) -> Result<()> {
-    if data.len() > OWNER_EVENT_LIMIT {
-        return Err("oversized SSE event".into());
+    if data.len() > FRAME_LIMIT {
+        return reread(epoch, out, state).await;
     }
     if kind == "codenomad.client.ping" {
         b.client
@@ -291,17 +302,11 @@ pub(super) async fn dispatch(
     }
     let value: Value = serde_json::from_str(data.trim())?;
     if let Some(signals) = &state.catalogue {
-        if data.len() > NATIVE_EVENT_LIMIT && storage_owner(&value).is_none() {
-            return Err("oversized SSE event".into());
-        }
         signals.observe(&value);
         return Ok(());
     }
     if let Some(owner) = storage_owner(&value) {
         return state.storage_changed(epoch, owner, out).await;
-    }
-    if data.len() > NATIVE_EVENT_LIMIT {
-        return Err("oversized SSE event".into());
     }
     if value["type"] == "memory.changed" {
         out.send(Input::Workspace(epoch, WorkspaceEvent::MemoryChanged))
@@ -326,6 +331,11 @@ pub(super) async fn dispatch(
     }
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
+    if own && value["type"] == "instance.event" {
+        children::observe(b, native);
+    } else if own && value["type"] == "instance.eventStatus" && value["status"] == "connected" {
+        b.client.children().invalidate(b, None);
+    }
     let catalogues = (own && value["type"] == "instance.event")
         .then(|| match native["type"].as_str() {
             Some("command.updated") => Some(WorkspaceEvent::CommandsChanged),
@@ -379,6 +389,13 @@ pub(super) async fn dispatch(
         })
         .await?;
     } else if own && value["type"] == "instance.dataChanged" {
+        let version = state.version.fetch_add(1, SeqCst) + 1;
+        out.send(Input::Hint(epoch, version)).await?;
+    } else if own
+        && value["type"] == "instance.event"
+        && native["type"] == "session.synthetic"
+        && native["data"]["sessionID"] == b.session
+    {
         let version = state.version.fetch_add(1, SeqCst) + 1;
         out.send(Input::Hint(epoch, version)).await?;
     } else if own
@@ -475,17 +492,32 @@ async fn read_native(b: &Backend, epoch: u64, out: &Sender<Input>, state: &State
     {
         return Err("expected event stream".into());
     }
+    b.client.children().invalidate(b, None);
     opened(epoch, out, state).await?;
     let mut chunks = response.bytes_stream();
     let mut parser = Parser::default();
     while let Some(chunk) = chunks.next().await {
         for byte in chunk? {
-            if let Some((kind, data)) = parser.byte(byte)? {
-                dispatch(b, epoch, out, state, &connection, &kind, &data).await?;
+            match parser.byte(byte)? {
+                Some(Parsed::Data(kind, data)) => {
+                    dispatch(b, epoch, out, state, &connection, &kind, &data).await?;
+                }
+                Some(Parsed::Skipped) => {
+                    b.client.children().invalidate(b, None);
+                    reread(epoch, out, state).await?;
+                }
+                None => {}
             }
         }
     }
     Err("event stream ended".into())
+}
+
+#[cfg(any(not(target_arch = "wasm32"), test))]
+#[derive(Debug, PartialEq)]
+enum Parsed {
+    Data(String, String),
+    Skipped,
 }
 
 #[cfg(any(not(target_arch = "wasm32"), test))]
@@ -494,21 +526,40 @@ struct Parser {
     line: Vec<u8>,
     data: String,
     kind: String,
+    skipping: bool,
+    nonempty: bool,
 }
 #[cfg(any(not(target_arch = "wasm32"), test))]
 impl Parser {
-    fn byte(&mut self, byte: u8) -> Result<Option<(String, String)>> {
-        if byte != b'\n' {
-            if self.line.len() >= OWNER_EVENT_LIMIT + b"data: ".len() {
-                return Err("oversized SSE line".into());
+    fn byte(&mut self, byte: u8) -> Result<Option<Parsed>> {
+        if self.skipping {
+            if byte == b'\n' {
+                if !std::mem::take(&mut self.nonempty) {
+                    self.skipping = false;
+                    return Ok(Some(Parsed::Skipped));
+                }
+            } else if byte != b'\r' {
+                self.nonempty = true;
             }
-            self.line.push(byte);
+            return Ok(None);
+        }
+        if byte != b'\n' {
+            if self.line.len() >= FRAME_LIMIT + b"data: \r".len() {
+                *self = Self {
+                    skipping: true,
+                    nonempty: true,
+                    ..Self::default()
+                };
+            } else {
+                self.line.push(byte);
+            }
             return Ok(None);
         }
         let bytes = std::mem::take(&mut self.line);
         let line = std::str::from_utf8(&bytes)?.trim_end_matches('\r');
         if line.is_empty() {
-            return Ok(Some((
+            self.data.pop();
+            return Ok(Some(Parsed::Data(
                 std::mem::take(&mut self.kind),
                 std::mem::take(&mut self.data),
             )));
@@ -517,8 +568,12 @@ impl Parser {
             self.kind = kind.trim().into();
         } else if let Some(data) = line.strip_prefix("data:") {
             let data = data.strip_prefix(' ').unwrap_or(data);
-            if self.data.len() + data.len() + 1 > OWNER_EVENT_LIMIT {
-                return Err("oversized SSE event".into());
+            if self.data.len() + data.len() > FRAME_LIMIT {
+                *self = Self {
+                    skipping: true,
+                    ..Self::default()
+                };
+                return Ok(None);
             }
             self.data.push_str(data);
             self.data.push('\n');
@@ -540,24 +595,35 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             frames,
-            [("codenomad.client.ping".into(), "été 🦀\nnext\n".into())]
+            [Parsed::Data(
+                "codenomad.client.ping".into(),
+                "été 🦀\nnext".into()
+            )]
         );
     }
     #[test]
-    fn oversized_line_and_event_fail_before_unbounded_growth() {
+    fn oversized_line_and_event_drain_to_the_next_blank_line() {
         let mut parser = Parser::default();
-        for _ in 0..OWNER_EVENT_LIMIT + b"data: ".len() {
-            parser.byte(b'x').unwrap();
+        for _ in 0..FRAME_LIMIT + b"data: \r".len() + 10 {
+            assert!(parser.byte(b'x').unwrap().is_none());
         }
-        assert!(parser.byte(b'x').is_err());
+        assert!(parser.line.is_empty());
+        let tail = "\r\ndata: ignored\r\n\r\ndata: ok\n\n";
+        assert_eq!(
+            tail.bytes()
+                .filter_map(|b| parser.byte(b).unwrap())
+                .collect::<Vec<_>>(),
+            [Parsed::Skipped, Parsed::Data(String::new(), "ok".into())],
+        );
         let mut parser = Parser {
-            data: "x".repeat(OWNER_EVENT_LIMIT),
+            data: "x".repeat(FRAME_LIMIT),
             ..Default::default()
         };
         for b in b"data: x" {
             parser.byte(*b).unwrap();
         }
-        assert!(parser.byte(b'\n').is_err());
+        assert_eq!(parser.byte(b'\n').unwrap(), None);
+        assert_eq!(parser.byte(b'\n').unwrap(), Some(Parsed::Skipped));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -570,13 +636,13 @@ mod tests {
             let body = json!({"owner":"ui","type":"storage.stateChanged","value":{"serviceUsage":"x".repeat(1024*1024)}}).to_string();
             let mut parser = Parser::default();
             let wire = format!("data: {body}\n\ndata: {{\"type\":\"ignored\"}}\n\n");
-            for (kind, data) in wire.bytes().filter_map(|byte| parser.byte(byte).unwrap()) {
-                dispatch(&backend, 1, &out, &state, "test", &kind, &data).await.unwrap();
+            for frame in wire.bytes().filter_map(|byte| parser.byte(byte).unwrap()) {
+                if let Parsed::Data(kind, data) = frame {
+                    dispatch(&backend, 1, &out, &state, "test", &kind, &data).await.unwrap();
+                }
             }
             assert!(matches!(recovery.try_recv(), Ok(Input::Preferences(crate::settings::Owner::State))));
             assert!(recovery.is_empty());
-            let foreign = json!({"type":"instance.event","value":"x".repeat(NATIVE_EVENT_LIMIT)}).to_string();
-            assert!(dispatch(&backend, 1, &out, &state, "test", "", &foreign).await.is_err());
         });
     }
 }
