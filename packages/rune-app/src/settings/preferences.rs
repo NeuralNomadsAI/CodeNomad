@@ -388,7 +388,12 @@ impl Preferences {
 
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn fixture(&mut self) {
-        self.config.snapshot = Some(json!({"settings":{"locale":"en"}}));
+        self.fixture_locale("en");
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn fixture_locale(&mut self, locale: &str) {
+        self.config.snapshot = Some(json!({"settings":{"locale":locale}}));
         self.state.snapshot = Some(
             json!({"appearancePreferences":{"mode":"system","light":{"scheme":{"id":"light"}},"dark":{"scheme":{"id":"classic"}}}}),
         );

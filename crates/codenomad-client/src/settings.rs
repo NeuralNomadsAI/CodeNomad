@@ -76,6 +76,11 @@ pub async fn opencode_status(backend: &Backend, recheck: bool) -> Result<OpenCod
     let mut request = backend
         .client
         .get(format!("{}api/opencode/update", backend.base));
+    // The host can spend 60 s on the release lookup before probing the daemon.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        request = request.timeout(Duration::from_secs(120));
+    }
     if recheck {
         request = request.query(&[("recheck", "1")]);
     }

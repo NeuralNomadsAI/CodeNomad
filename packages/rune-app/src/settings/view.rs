@@ -31,11 +31,11 @@ pub(super) struct Window {
 }
 
 impl Window {
-    pub(super) fn check_opencode(&mut self, recheck: bool) {
+    pub(super) fn check_opencode(&mut self, refresh: Option<bool>) {
         let prefs = self.shared.borrow();
         let backend = prefs.backend.as_ref().filter(|_| prefs.can_retry());
         self.opencode
-            .read(backend, prefs.window_wake.as_ref(), recheck);
+            .read(backend, prefs.window_wake.as_ref(), refresh);
     }
 
     pub(super) fn has_backend(&self) -> bool {
@@ -110,10 +110,11 @@ pub(super) fn spec() -> AppSpec<Window> {
                 ));
             }
             drop(prefs);
+            let status_changed = s.opencode.poll();
             if s.open_code_section {
-                s.check_opencode(false);
+                s.check_opencode(None);
             }
-            updated | s.opencode.poll()
+            updated | status_changed
         }),
         on_key: Some(|_, event, tx| {
             if event.key != rune::Key::Escape {
@@ -126,7 +127,9 @@ pub(super) fn spec() -> AppSpec<Window> {
         scenes: &[
             ("settings", |s| s.shared.borrow_mut().fixture()),
             ("opencode", |s| {
-                s.shared.borrow_mut().fixture();
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
                 s.open_code_section = true;
                 s.opencode.fixture();
             }),
@@ -199,6 +202,12 @@ fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 general::view(s, &prefs, system_dark, &mut layers),
             )
         };
-        chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers)
+        chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers).on_window_focus(
+            |s: &mut Window, focused, _| {
+                if focused && s.open_code_section {
+                    s.check_opencode(Some(false));
+                }
+            },
+        )
     })
 }

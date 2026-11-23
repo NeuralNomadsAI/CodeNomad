@@ -13,6 +13,87 @@ fn node<'a>(tree: &'a Value, key: &str) -> Option<&'a Value> {
 }
 
 #[test]
+fn settings_opencode_focus_refreshes_without_forcing_a_registry_recheck() {
+    crate::platform::block_on(async {
+        use std::time::Duration;
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            time::timeout,
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend = crate::backend::Backend::unauthenticated(&format!(
+            "http://{}/",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let state = Window {
+            open_code_section: true,
+            ..Window::default()
+        };
+        state.shared.borrow_mut().backend = Some(backend);
+        state.shared.borrow_mut().window_wake = Some(std::sync::Arc::new(|| {}));
+        let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+        rt.frame(0.0);
+        rt.window_focus(false);
+        rt.window_focus(true);
+        rt.frame(0.02);
+        let accept = || async {
+            let mut socket = timeout(Duration::from_secs(3), listener.accept())
+                .await
+                .unwrap()
+                .unwrap()
+                .0;
+            let mut request = Vec::new();
+            timeout(Duration::from_secs(3), async {
+                while !request.ends_with(b"\r\n\r\n") {
+                    request.push(socket.read_u8().await.unwrap());
+                }
+            })
+            .await
+            .unwrap();
+            assert!(request.starts_with(b"GET /api/opencode/update HTTP/1.1\r\n"));
+            socket
+        };
+        let mut first = accept().await;
+        for _ in 0..2 {
+            rt.window_focus(false);
+            rt.window_focus(true);
+            rt.frame(0.02);
+        }
+        assert!(
+            timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+        let body = r#"{"state":"ready","serviceState":"ready","currentVersion":"2.3.0"}"#;
+        first
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(3), async {
+            while !rt.state.opencode.poll() {
+                crate::platform::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        rt.state.check_opencode(None);
+        let _second = accept().await;
+        assert!(
+            timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+}
+
+#[test]
 fn settings_shutdown_failure_warning_requires_visible_acknowledgement() {
     let mut runtime = Runtime::new("en", save_warning, (460.0, 150.0), Env::new(false, 1.0));
     runtime.frame(0.0);
