@@ -184,13 +184,13 @@ const upstream=createServer(async(req,res)=>{
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
       streams.add(res);req.on('close',()=>streams.delete(res));return
     }
+    if((webMobile||compare)&&req.method==='GET'&&url.pathname==='/api/command')return json({data:[]})
     if(compare){
       if(url.pathname==='/api/session/active')return json({data:{}})
       if(url.pathname==='/api/project')return json([])
       if(url.pathname==='/api/provider')return json({data:[{id:'fixture',name:'Fixture'}]})
       if(url.pathname==='/api/model/default')return json({data:fixtureModel})
       if(url.pathname==='/api/agent')return json({data:[{id:'build',name:'Build',mode:'primary'},{id:'plan',name:'Plan',mode:'primary'}]})
-      if(url.pathname==='/api/command')return json({data:[]})
       if(url.pathname==='/api/mcp')return json({location:{directory:project},data:[]})
       if(/^\/api\/experimental\/session\/ses_existing\/instructions\/entries\/[a-z0-9._-]+$/i.test(url.pathname)&&
         ['PUT','DELETE'].includes(req.method)){res.statusCode=204;res.end();return}

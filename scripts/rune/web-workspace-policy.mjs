@@ -50,7 +50,7 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt})
       const scoped=p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(.*)$/)
       if(scoped&&workspaces.has(scoped[1])&&method==='POST'&&scoped[2]==='session/ses_existing/prompt')
         return typeof androidPrompt==='string'&&body?.text===androidPrompt&&Object.keys(body).length===1
-      if(scoped&&workspaces.has(scoped[1])&&method==='GET')return /^(model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another|ses_linked|ses_linked_next)(?:\/(permission|form))?$/.test(scoped[2])
+      if(scoped&&workspaces.has(scoped[1])&&method==='GET')return /^(command|model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another|ses_linked|ses_linked_next)(?:\/(permission|form))?$/.test(scoped[2])
       const owned=p.match(/^\/api\/workspaces\/([^/]+)(?:\/(.*))?$/)
       if(!owned||!workspaces.has(owned[1]))return false
       if(method==='GET'&&owned[2]==='worktrees')return true
