@@ -205,7 +205,6 @@ pub fn transcript_popup<S: 'static>(
         .key("transcript-filters")
         .role("dialog")
         .label(label)
-        .focus_group()
         .focus_return(trigger)
         .modal_tx(true, dismiss)
         // transcript-filters.css: width 18rem, an independently scrolling list.
