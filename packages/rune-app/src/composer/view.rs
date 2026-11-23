@@ -9,6 +9,8 @@ use rune_theme_codenomad::{
 pub fn view(s: &State, compact: bool) -> El {
     let scope = s.input_scope.clone();
     let edit_scope = scope.clone();
+    #[cfg(not(target_arch = "wasm32"))]
+    let paste_scope = scope.clone();
     let stop = s.phase == Phase::Streaming && s.agent.is_some();
     #[cfg(target_arch = "wasm32")]
     let editor = layout::composer_field(&s.draft, t("promptInput.placeholder.default"), compact)
@@ -21,7 +23,7 @@ pub fn view(s: &State, compact: bool) -> El {
         .key("composer");
     #[cfg(not(target_arch = "wasm32"))]
     let editor = {
-        let paste_scope = scope.clone();
+        let physical_scope = scope.clone();
         let menu_scope = scope.clone();
         let drop_scope = scope.clone();
         let input = layout::native_composer_input(&s.draft, t("promptInput.placeholder.default"))
@@ -34,11 +36,14 @@ pub fn view(s: &State, compact: bool) -> El {
                 s.current_scope(&edit_scope) && key(s, event, tx)
             })
             .on_physical_input(move |s: &mut State, event, tx| {
-                s.current_scope(&paste_scope) && super::clipboard::physical(s, event, tx)
+                s.current_scope(&physical_scope) && super::clipboard::physical(s, event, tx)
             })
-            .on_input_paste(|_: &mut State, content, _| {
+            .on_input_paste(move |s: &mut State, content, tx| {
                 // File/image reads must enter through the owned gesture, never by focus at delivery.
-                !content.files().is_empty() || content.image().is_some()
+                !content.files().is_empty()
+                    || content.image().is_some()
+                    || s.current_scope(&paste_scope)
+                        && super::long_paste::paste(s, content.text(), tx)
             })
             .on_secondary_press(move |s: &mut State, point, tx| {
                 if s.current_scope(&menu_scope) {
@@ -114,12 +119,36 @@ pub fn view(s: &State, compact: bool) -> El {
         .pad(Space::Md)
         .separate(Space::Sm)
         .child(col().content_direction().child(editor));
-    if !s.composer.draft.attachments.is_empty() {
+    let pasted = std::cell::OnceCell::new();
+    let mut attachments = s
+        .composer
+        .draft
+        .attachments
+        .iter()
+        .enumerate()
+        .filter(|(_, part)| {
+            let super::draft::Attachment::Pasted { id, .. } = part else {
+                return true;
+            };
+            pasted
+                .get_or_init(|| {
+                    super::long_paste::active_tokens(&s.draft)
+                        .map(|(_, id)| id)
+                        .collect::<std::collections::BTreeSet<_>>()
+                })
+                .contains(id)
+        })
+        .peekable();
+    if attachments.peek().is_some() {
         let mut chips = layout::action_row().key("composer-attachments");
-        for (index, item) in s.composer.draft.attachments.iter().enumerate() {
+        for (index, item) in attachments {
             use super::draft::Attachment;
             use rune_theme_codenomad::workspace_tree::icons;
             let (label, glyph) = match item {
+                Attachment::Pasted { id, .. } => (
+                    format!("{} #{id}", t("messagePart.pastedText.summary")),
+                    Some(&icons::FILE_TEXT),
+                ),
                 Attachment::Agent(name) => (format!("@{name}"), None),
                 Attachment::Skill { name, .. } => (name.clone(), None),
                 Attachment::Project {
@@ -145,6 +174,7 @@ pub fn view(s: &State, compact: bool) -> El {
                     if s.composer.draft.attachments.get(index) == Some(&captured) {
                         s.composer.draft.remove(&mut s.draft, index);
                         changed(s, tx);
+                        tx.focus("composer", false);
                     }
                 }),
             )
@@ -194,7 +224,10 @@ pub fn view(s: &State, compact: bool) -> El {
                 false,
                 screen::action_tx(&scope, |s, tx| {
                     s.composer.attachments_missing = false;
-                    s.composer.draft.attachments.clear();
+                    s.composer
+                        .draft
+                        .attachments
+                        .retain(|part| matches!(part, super::draft::Attachment::Pasted { .. }));
                     crate::workspace::draft_changed(s, tx);
                 }),
             )
@@ -292,7 +325,7 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
             Some(Item::Agent(_) | Item::Skill(_)) => true,
             _ => false,
         };
-    if adds_part && s.composer.draft.attachments.len() >= super::draft::MAX_PARTS {
+    if adds_part && s.composer.draft.active_count(&s.draft) >= super::draft::MAX_PARTS {
         layout::announce_selection(tx, t("promptInput.attachFiles.errorTitle"));
         return;
     }

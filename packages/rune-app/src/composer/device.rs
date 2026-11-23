@@ -106,12 +106,15 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         let error = match result {
             Ok(bytes) => {
                 let draft = &mut s.composer.draft;
-                if !draft.attach(Attachment::Device {
-                    name: offer.name.clone(),
-                    mime: offer.mime,
-                    bytes,
-                    token: None,
-                }) {
+                if !draft.attach_for(
+                    &s.draft,
+                    Attachment::Device {
+                        name: offer.name.clone(),
+                        mime: offer.mime,
+                        bytes,
+                        token: None,
+                    },
+                ) {
                     Some(Error::Limit)
                 } else if crate::workspace::attachment_draft_admissible(s) {
                     crate::workspace::draft_changed(s, tx);
@@ -131,7 +134,7 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     if let Some(offer) = s.composer.device.queued.pop_front() {
         let (count, total) = s.composer.draft.inline_usage();
         if count >= MAX_FILES
-            || s.composer.draft.attachments.len() >= MAX_PARTS
+            || s.composer.draft.active_count(&s.draft) >= MAX_PARTS
             || total >= MAX_TOTAL
         {
             s.composer.device.notice = Some(notice(&offer.name, Error::Limit));

@@ -10,9 +10,15 @@ pub const MAX_FILE: usize = 5 * 1024 * 1024;
 pub const MAX_FILES: usize = 10;
 pub const MAX_TOTAL: usize = 20 * 1024 * 1024;
 pub const MAX_PARTS: usize = 64;
+const MAX_PASTE_HISTORY_ENTRIES: usize = 2 * MAX_PARTS;
+const MAX_PASTE_HISTORY_BYTES: usize = 4 * super::long_paste::MAX_BYTES;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Attachment {
+    Pasted {
+        id: u64,
+        text: Arc<str>,
+    },
     Device {
         name: String,
         mime: String,
@@ -51,7 +57,7 @@ impl Attachment {
                 format!("@{}/", path.strip_prefix("./").unwrap_or(path)),
             ],
             Self::Device { token, .. } => token.iter().cloned().collect(),
-            Self::Skill { .. } => vec![],
+            Self::Skill { .. } | Self::Pasted { .. } => vec![],
         }
     }
 }
@@ -67,9 +73,23 @@ fn token_ranges<'a>(text: &'a str, token: &'a str) -> impl Iterator<Item = Range
 #[derive(Clone, Default)]
 pub struct Draft {
     pub attachments: Vec<Attachment>,
+    pub(crate) literal_spans: Vec<Range<usize>>,
 }
 impl Draft {
     pub fn remove(&mut self, edit: &mut TextEdit, index: usize) {
+        if let Attachment::Pasted { id, .. } = &self.attachments[index] {
+            let ranges: Vec<_> = super::long_paste::active_tokens(edit)
+                .filter_map(|(range, token)| (token == *id).then_some(range))
+                .collect();
+            // The (bounded) payload stays available to the field's undo history.
+            edit.undo_group(|edit| {
+                for range in ranges.into_iter().rev() {
+                    edit.set_selection(range.start, range.end);
+                    edit.insert("");
+                }
+            });
+            return;
+        }
         let item = self.attachments.remove(index);
         for token in item.tokens() {
             let ranges: Vec<_> = token_ranges(&edit.text, &token).collect();
@@ -110,7 +130,17 @@ impl Draft {
     }
 
     pub fn can_send(&self, edit: &TextEdit) -> bool {
-        !edit.text.trim_matches(whitespace).is_empty() || !self.attachments.is_empty()
+        let (count, bytes) = self.part_usage(Some(edit));
+        count <= MAX_PARTS
+            && bytes <= super::long_paste::MAX_BYTES
+            && (!edit.text.trim_matches(whitespace).is_empty()
+                || self.requires_attachment_support())
+    }
+
+    pub fn requires_attachment_support(&self) -> bool {
+        self.attachments
+            .iter()
+            .any(|part| !matches!(part, Attachment::Pasted { .. }))
     }
 
     pub fn inline_usage(&self) -> (usize, usize) {
@@ -123,8 +153,65 @@ impl Draft {
     }
 
     pub fn attach(&mut self, item: Attachment) -> bool {
-        if self.attachments.len() >= MAX_PARTS {
+        self.attach_bounded(None, item)
+    }
+
+    pub fn attach_for(&mut self, edit: &TextEdit, item: Attachment) -> bool {
+        self.attach_bounded(Some(edit), item)
+    }
+
+    pub fn active_count(&self, edit: &TextEdit) -> usize {
+        self.part_usage(Some(edit)).0
+    }
+
+    fn part_usage(&self, edit: Option<&TextEdit>) -> (usize, usize) {
+        let active = edit
+            .filter(|_| {
+                self.attachments
+                    .iter()
+                    .any(|part| matches!(part, Attachment::Pasted { .. }))
+            })
+            .map(|edit| {
+                super::long_paste::active_tokens(edit)
+                    .map(|(_, id)| id)
+                    .collect::<std::collections::BTreeSet<_>>()
+            });
+        self.attachments
+            .iter()
+            .fold((0, 0), |(count, bytes), part| match part {
+                Attachment::Pasted { id, text }
+                    if active.as_ref().is_none_or(|ids| ids.contains(id)) =>
+                {
+                    (count + 1, bytes + text.len())
+                }
+                Attachment::Pasted { .. } => (count, bytes),
+                _ => (count + 1, bytes),
+            })
+    }
+
+    fn attach_bounded(&mut self, edit: Option<&TextEdit>, item: Attachment) -> bool {
+        let (count, active_paste_bytes) = self.part_usage(edit);
+        if count >= MAX_PARTS {
             return false;
+        }
+        if let Attachment::Pasted { id, text } = &item {
+            let mut history_bytes = text.len();
+            let mut history_entries = 1;
+            for part in &self.attachments {
+                if let Attachment::Pasted { id: previous, text } = part {
+                    if id == previous {
+                        return false;
+                    }
+                    history_bytes += text.len();
+                    history_entries += 1;
+                }
+            }
+            if text.len() + active_paste_bytes > super::long_paste::MAX_BYTES
+                || history_bytes > MAX_PASTE_HISTORY_BYTES
+                || history_entries > MAX_PASTE_HISTORY_ENTRIES
+            {
+                return false;
+            }
         }
         if let Attachment::Device { bytes, .. } = &item {
             let (count, total) = self.inline_usage();
@@ -157,8 +244,71 @@ impl Draft {
         true
     }
 
-    pub fn resolve_text(&self, text: &str) -> String {
-        let mut text = resolve_relative_paths(text.trim_matches(whitespace));
+    #[cfg(test)]
+    pub fn resolve_text(&self, text: &str) -> Option<String> {
+        self.project(text, std::iter::empty()).map(|(text, _)| text)
+    }
+
+    pub fn resolve_args(&self, edit: &TextEdit, args: &str) -> Option<String> {
+        if args.is_empty() {
+            return Some(String::new());
+        }
+        // Args is a slice of the current editor, after the command name.
+        let offset = args
+            .as_ptr()
+            .addr()
+            .checked_sub(edit.text.as_ptr().addr())?;
+        let end = offset + args.len();
+        let literal = super::literal::ranges(edit).filter_map(|span| {
+            let start = span.start.max(offset);
+            let stop = span.end.min(end);
+            (start < stop).then(|| start - offset..stop - offset)
+        });
+        self.project(args, literal).map(|(text, _)| text)
+    }
+
+    fn project(
+        &self,
+        text: &str,
+        literal: impl Iterator<Item = Range<usize>>,
+    ) -> Option<(String, Vec<Range<usize>>)> {
+        let mut result = String::new();
+        let mut spans = Vec::new();
+        let mut cursor = 0;
+        for literal in literal.chain([text.len()..text.len()]) {
+            let inline = text.get(cursor..literal.start)?;
+            let inline = if cursor == 0 {
+                inline.trim_start_matches(whitespace)
+            } else {
+                inline
+            };
+            let inline = if literal.start == text.len() {
+                inline.trim_end_matches(whitespace)
+            } else {
+                inline
+            };
+            let (inline, expanded) =
+                super::long_paste::expand(self.resolve_paths(inline), &self.attachments)?;
+            spans.extend(
+                expanded
+                    .into_iter()
+                    .map(|span| result.len() + span.start..result.len() + span.end),
+            );
+            result.push_str(&inline);
+            if !literal.is_empty() {
+                spans.push(result.len()..result.len() + literal.len());
+                result.push_str(text.get(literal.clone())?);
+            }
+            cursor = literal.end;
+            if result.len() > prompt::MAX_BODY_BYTES {
+                return None;
+            }
+        }
+        Some((result, spans))
+    }
+
+    fn resolve_paths(&self, text: &str) -> String {
+        let mut text = resolve_relative_paths(text);
         for path in self.attachments.iter().filter_map(|item| match item {
             Attachment::Project { path, .. } | Attachment::Path(path) => Some(path),
             _ => None,
@@ -194,11 +344,17 @@ impl Draft {
         text
     }
 
-    pub fn prepare(&self, text: &str, id: &str, delivery: Delivery) -> (Prompt, Vec<Part>) {
+    pub fn prepare(
+        &self,
+        edit: &TextEdit,
+        id: &str,
+        delivery: Delivery,
+    ) -> Option<(Prompt, Vec<Part>)> {
+        let (text, pasted) = self.project(&edit.text, super::literal::ranges(edit))?;
         let mut parts = Vec::new();
         let mut prompt = Prompt {
             id: Some(id.into()),
-            text: self.resolve_text(text),
+            text,
             resume: (delivery == Delivery::Queue).then_some(false),
             delivery: Some(delivery),
             ..Prompt::default()
@@ -208,7 +364,7 @@ impl Draft {
                 Attachment::Agent(name) => {
                     prompt.agents.push(prompt::Agent {
                         name: name.clone(),
-                        mention: mention(&prompt.text, &format!("@{name}")),
+                        mention: mention(&prompt.text, &format!("@{name}"), &pasted),
                     });
                 }
                 Attachment::Skill { id: skill_id, name } => {
@@ -258,7 +414,7 @@ impl Draft {
                 ..prompt::File::default()
             });
         }
-        (prompt, parts)
+        Some((prompt, parts))
     }
 }
 
@@ -288,7 +444,10 @@ mod tests {
     fn normalizing_a_selected_path_keeps_an_internal_at_sign() {
         let mut draft = Draft::default();
         draft.attach(Attachment::Path("./rapport@.txt".into()));
-        assert_eq!(draft.resolve_text("@./rapport@.txt"), "./rapport@.txt");
+        assert_eq!(
+            draft.resolve_text("@./rapport@.txt").as_deref(),
+            Some("./rapport@.txt")
+        );
     }
 
     #[test]
@@ -322,11 +481,13 @@ mod tests {
         assert!(!draft.attach(project));
         assert!(!draft.attach(skill));
         assert!(draft.attach(device));
-        let (prompt, parts) = draft.prepare(
-            "  🦀 @reviewer @./a b#%.txt @./doc @..  ",
-            "msg_test",
-            Delivery::Queue,
-        );
+        let (prompt, parts) = draft
+            .prepare(
+                &TextEdit::new("  🦀 @reviewer @./a b#%.txt @./doc @..  "),
+                "msg_test",
+                Delivery::Queue,
+            )
+            .unwrap();
         assert_eq!(prompt.text, "🦀 @reviewer ./a b#%.txt ./doc @..");
         assert_eq!(prompt.resume, Some(false));
         assert_eq!(prompt.files.len(), 3);

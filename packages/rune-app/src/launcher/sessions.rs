@@ -329,6 +329,7 @@ pub(super) fn bind(
         }
     }
     s.draft = TextEdit::new(draft);
+    crate::composer::literal::restore(&mut s.draft, &s.composer.draft.literal_spans);
     s.phase = Phase::Loading;
     crate::git::online(s, false);
     crate::git::connected_placed(s, &b, slug);

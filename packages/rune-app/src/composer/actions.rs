@@ -45,7 +45,8 @@ fn repeats_uncertain_command(s: &State) -> bool {
         .as_ref()
         .is_some_and(|(name, text)| {
             super::picker::command_parts(&s.draft.text).is_some_and(|(candidate, args)| {
-                candidate == name && s.composer.draft.resolve_text(args) == *text
+                candidate == name
+                    && s.composer.draft.resolve_args(&s.draft, args).as_deref() == Some(text)
             })
         })
 }
@@ -63,7 +64,8 @@ pub fn can_send(s: &State) -> bool {
         && !s.composer.device.busy()
         && !s.composer.picker.command_pending(&s.draft.text)
         && !s.composer.attachments_missing
-        && (s.composer.picker.attachments_supported() || s.composer.draft.attachments.is_empty())
+        && (s.composer.picker.attachments_supported()
+            || !s.composer.draft.requires_attachment_support())
         && s.composer.unconfirmed.is_none()
         && !repeats_uncertain_command(s)
         && s.composer.draft.can_send(&s.draft)
@@ -80,7 +82,11 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         return;
     };
     if let Some((name, text)) = s.composer.picker.selected_command(&s.draft.text) {
-        let slash = (name.to_owned(), s.composer.draft.resolve_text(text));
+        let Some(text) = s.composer.draft.resolve_args(&s.draft, text) else {
+            s.composer.send_error = true;
+            return;
+        };
+        let slash = (name.to_owned(), text);
         let command = Command::Slash {
             attempt: id.clone(),
             name: slash.0.clone(),
@@ -112,7 +118,10 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         Delivery::Steer
     };
     let queued = delivery == Delivery::Queue;
-    let (prompt, parts) = s.composer.draft.prepare(&s.draft.text, &id, delivery);
+    let Some((prompt, parts)) = s.composer.draft.prepare(&s.draft, &id, delivery) else {
+        s.composer.send_error = true;
+        return;
+    };
     let body = prompt.text.clone();
     if !s
         .commands
