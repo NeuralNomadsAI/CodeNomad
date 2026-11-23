@@ -190,10 +190,8 @@ pub fn merge_page(live: &[crate::Message], page: &mut [crate::Message]) -> Resul
         let mut keys = part_keys(&row.parts);
         for (i, part) in prior.parts.iter().enumerate() {
             if let Some(target) = keys.iter().position(|key| key == &source_keys[i]) {
-                if let (Part::Tool(live), Part::Tool(fetched)) = (part, &mut row.parts[target])
-                    && tool_live::extends(live, fetched)
-                {
-                    *fetched = live.clone();
+                if let (Part::Tool(live), Part::Tool(fetched)) = (part, &mut row.parts[target]) {
+                    tool_live::merge(live, fetched);
                 }
                 continue;
             }

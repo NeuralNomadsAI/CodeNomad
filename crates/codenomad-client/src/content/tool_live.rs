@@ -6,16 +6,31 @@ use std::{mem::size_of, sync::Arc};
 
 const LIVE_BYTES: usize = 256 * 1024;
 
-pub(super) fn extends(live: &Tool, fetched: &Tool) -> bool {
-    match (live.status.as_str(), fetched.status.as_str()) {
+fn no_progress(metadata: &Value) -> bool {
+    metadata.is_null() || metadata.as_object().is_some_and(|fields| fields.is_empty())
+}
+
+pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
+    let replace = match (live.status.as_str(), fetched.status.as_str()) {
         ("streaming", "streaming") => live
             .input
             .as_str()
             .zip(fetched.input.as_str())
             .is_some_and(|(live, fetched)| live.len() > fetched.len() && live.starts_with(fetched)),
         ("running", "streaming") => true,
-        ("running", "running") => fetched.metadata.is_null() && !live.metadata.is_null(),
+        ("running", "running")
+            if no_progress(&fetched.metadata) && !no_progress(&live.metadata) =>
+        {
+            // Native history can retain the initial {} after SSE-only progress.
+            let snapshot = Arc::make_mut(fetched);
+            snapshot.metadata = live.metadata.clone();
+            measure(snapshot);
+            false
+        }
         _ => false,
+    };
+    if replace {
+        *fetched = live.clone();
     }
 }
 
