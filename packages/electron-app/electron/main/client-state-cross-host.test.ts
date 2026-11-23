@@ -213,13 +213,12 @@ test("graceful handoff retires the old cohort so a crashed successor can recover
     pidAlive: () => true,
     processStartIdentity: () => "primary-start",
     onGracefulOwnerChecked: () => {
-      writeFileSync(join(directory, "participant.423.successor.json"), JSON.stringify(successorOwner))
       writeFileSync(join(directory, "participant.425.late.json"), JSON.stringify(lateOwner))
       writeFileSync(malformed, "malformed")
     },
     onOwnerRetired: () => {
-      mkdirSync(join(directory, CROSS_HOST_OWNER_DIRECTORY))
-      writeFileSync(ownerFile(directory), JSON.stringify(successorOwner))
+      const successor = CrossHostRegistration.register(directory, successorOwner, true, dependencies(true, "successor-start"))!
+      assert.equal(successor.isPrimary, true)
     },
   })!
   CrossHostRegistration.register(directory, secondaryOwner, true, dependencies(true, "primary-start"))!
@@ -227,7 +226,8 @@ test("graceful handoff retires the old cohort so a crashed successor can recover
   await primary.release()
   assert.equal(readdirSync(directory).some((name) => name.startsWith("retired.")), false)
   assert.equal(JSON.parse(readFileSync(ownerFile(directory), "utf8")).runToken, "successor")
-  assert.equal(existsSync(join(directory, "participant.423.successor.json")), false)
+  assert.deepEqual(JSON.parse(readFileSync(join(directory, "participant.423.successor.json"), "utf8")), successorOwner)
+  assert.equal(existsSync(join(directory, "participant.422.secondary.json")), false)
   assert.equal(existsSync(join(directory, "participant.425.late.json")), false)
   assert.equal(existsSync(malformed), false)
 

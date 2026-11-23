@@ -503,7 +503,7 @@ pub fn capture_and_flush_window(app: &AppHandle, window_label: &str) {
     }
 }
 
-pub fn capture_and_flush_all_windows(app: &AppHandle) {
+pub fn capture_all_windows(app: &AppHandle) {
     capture_window_in_memory(
         app,
         crate::preferences_window::LABEL,
@@ -513,11 +513,6 @@ pub fn capture_and_flush_all_windows(app: &AppHandle) {
     if let Some(windows) = app.try_state::<crate::local_windows::LocalWindows>() {
         for record in windows.records() {
             capture_window_in_memory(app, &record.label, &record.id, record.persisted);
-        }
-    }
-    if let Some(state) = app.try_state::<ClientState>() {
-        if let Err(err) = state.flush() {
-            eprintln!("[client-state] failed to flush local window state: {err}");
         }
     }
 }

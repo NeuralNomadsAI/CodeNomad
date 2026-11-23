@@ -187,6 +187,14 @@ async function retireOwnerIfOwned(directory: string, owner: ProcessOwner, depend
   const current = parseOwner(observed ?? "")
   if (!current || !sameOwner(current, owner)) return
   dependencies.onGracefulOwnerChecked?.()
+  // Freeze the retiring cohort before the rename admits a new owner.
+  const participants = new Map<string, string>()
+  for (const name of await readdir(directory)) {
+    if (!name.startsWith(PARTICIPANT_PREFIX) || !name.endsWith(PARTICIPANT_SUFFIX)) continue
+    const path = join(directory, name)
+    const participant = await readIfExistsAsync(path)
+    if (participant !== undefined) participants.set(path, participant)
+  }
   if (await readIfExistsAsync(ownerPath(directory)) !== observed) return
   const retired = join(directory, `${RETIRED_PREFIX}${owner.pid}.${owner.runToken}`)
   try { await rename(join(directory, CROSS_HOST_OWNER_DIRECTORY), retired) } catch (error) {
@@ -195,12 +203,10 @@ async function retireOwnerIfOwned(directory: string, owner: ProcessOwner, depend
   }
   try {
     dependencies.onOwnerRetired?.()
-    for (const name of await readdir(directory)) {
-      if (!name.startsWith(PARTICIPANT_PREFIX) || !name.endsWith(PARTICIPANT_SUFFIX)) continue
-      const path = join(directory, name), observedParticipant = await readIfExistsAsync(path)
-      if (observedParticipant === undefined) continue
+    for (const [path, observedParticipant] of participants) {
+      if (await readIfExistsAsync(path) !== observedParticipant) continue
+      await unlinkIfExists(path)
       const participant = parseOwner(observedParticipant)
-      if (await readIfExistsAsync(path) === observedParticipant) await unlinkIfExists(path)
       if (participant) await unlink(recoveryPath(directory, participant)).catch(() => {})
     }
   } finally {

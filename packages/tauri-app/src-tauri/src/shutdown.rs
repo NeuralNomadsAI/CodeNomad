@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter, Manager};
 const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 const CLOSE_CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 const UPDATE_RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
+const IPC_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_STOP_ATTEMPTS: usize = 2;
 const FLUSH_CANCELLED_EVENT: &str = "client-state:flush-cancelled";
 #[cfg(windows)]
@@ -21,6 +22,22 @@ struct PendingClose {
     generation: u64,
     /// False for an unpersisted window and for the last user window, whose saved state stays.
     removes_state: bool,
+}
+
+struct LocalRemoval {
+    generation: u64,
+    deferred_prepare: Option<u64>,
+}
+
+enum LocalCloseCompletion {
+    Release {
+        request: client_state::RendererFlushRequest,
+        shutdown_ready: bool,
+    },
+    Refused {
+        error: String,
+        deferred_prepare: Option<u64>,
+    },
 }
 
 #[cfg(windows)]
@@ -40,7 +57,8 @@ enum PendingShutdownTimeoutAction {
 struct ShutdownState {
     next_generation: u64,
     local_closes: HashMap<String, PendingClose>,
-    committed_local_closes: HashMap<String, PendingClose>,
+    capturing_local_closes: HashMap<String, PendingClose>,
+    removing_local_closes: HashMap<String, LocalRemoval>,
     releasing_local_closes: HashMap<String, u64>,
     approved_local_closes: HashSet<String>,
     global_pending: HashMap<String, u64>,
@@ -58,10 +76,16 @@ struct ShutdownState {
     windows_session_end_deadline: Option<Instant>,
     #[cfg(windows)]
     windows_session_end_owns_shutdown: bool,
-    #[cfg(windows)]
-    windows_renderer_deadline: Option<Instant>,
-    #[cfg(windows)]
-    windows_native_flush_complete: bool,
+}
+
+impl ShutdownState {
+    fn local_close_in_flight(&self, label: &str) -> bool {
+        self.local_closes.contains_key(label)
+            || self.capturing_local_closes.contains_key(label)
+            || self.removing_local_closes.contains_key(label)
+            || self.releasing_local_closes.contains_key(label)
+            || self.approved_local_closes.contains(label)
+    }
 }
 
 #[derive(Default)]
@@ -75,17 +99,18 @@ impl ShutdownCoordinator {
         &self,
         label: String,
         window_id: String,
-        removes_state: bool,
+        persisted: bool,
+        user_windows: impl FnOnce() -> Vec<String>,
     ) -> Option<u64> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.shutdown_started
-            || state.local_closes.contains_key(&label)
-            || state.committed_local_closes.contains_key(&label)
-            || state.releasing_local_closes.contains_key(&label)
-            || state.approved_local_closes.contains(&label)
-        {
+        if state.shutdown_started || state.local_close_in_flight(&label) {
             return None;
         }
+        // Concurrent close admissions must agree which last local window retains its state.
+        let removes_state = persisted
+            && user_windows()
+                .iter()
+                .any(|other| other != &label && !state.local_close_in_flight(other));
         state.next_generation += 1;
         let generation = state.next_generation;
         state.local_closes.insert(
@@ -104,13 +129,15 @@ impl ShutdownCoordinator {
         label: &str,
         window_id: &str,
         generation: u64,
-    ) -> Option<PendingClose> {
+    ) -> Option<()> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let pending = state.local_closes.get(label)?;
         if pending.window_id != window_id || pending.generation != generation {
             return None;
         }
-        state.local_closes.remove(label)
+        let pending = state.local_closes.remove(label)?;
+        state.capturing_local_closes.insert(label.to_string(), pending);
+        Some(())
     }
 
     fn cancel_local_close(&self, label: &str, generation: u64) -> bool {
@@ -144,7 +171,7 @@ impl ShutdownCoordinator {
         }
         state.shutdown_started = true;
         state.local_closes.clear();
-        state.committed_local_closes.clear();
+        state.capturing_local_closes.clear();
         state.global_requests.clear();
         let mut requests = Vec::new();
         for label in labels {
@@ -177,9 +204,7 @@ impl ShutdownCoordinator {
         !state.shutdown_started
             && !state.exit_allowed
             && !state.restart_requested
-            && !state.local_closes.contains_key(label)
-            && !state.committed_local_closes.contains_key(label)
-            && !state.approved_local_closes.contains(label)
+            && !state.local_close_in_flight(label)
     }
 
     fn reserve_automation_restart(
@@ -248,7 +273,10 @@ impl ShutdownCoordinator {
         let labels: Vec<_> = state
             .global_requests
             .iter()
-            .filter(|(label, _)| label.as_str() != crate::preferences_window::LABEL)
+            .filter(|(label, _)| {
+                label.as_str() != crate::preferences_window::LABEL
+                    && !state.removing_local_closes.contains_key(*label)
+            })
             .map(|(label, &generation)| (label.clone(), generation))
             .collect();
         labels
@@ -267,10 +295,14 @@ impl ShutdownCoordinator {
         let (state, _) = self
             .release_acknowledged
             .wait_timeout_while(state, timeout, |state| {
-                !state.global_pending.is_empty() || !state.releasing_local_closes.is_empty()
+                !state.global_pending.is_empty()
+                    || !state.removing_local_closes.is_empty()
+                    || !state.releasing_local_closes.is_empty()
             })
             .unwrap_or_else(|error| error.into_inner());
-        state.global_pending.is_empty() && state.releasing_local_closes.is_empty()
+        state.global_pending.is_empty()
+            && state.removing_local_closes.is_empty()
+            && state.releasing_local_closes.is_empty()
     }
 
     fn begin_cleanup(&self, deadline_reached: bool) -> bool {
@@ -299,14 +331,12 @@ impl ShutdownCoordinator {
         state.restart_requested = false;
         state.automation_restart.take();
         state.global_pending.clear();
-        state.committed_local_closes.clear();
+        state.capturing_local_closes.clear();
         #[cfg(windows)]
         {
             state.windows_session_end_generation = None;
             state.windows_session_end_deadline = None;
             state.windows_session_end_owns_shutdown = false;
-            state.windows_renderer_deadline = None;
-            state.windows_native_flush_complete = false;
         }
         cancellations
     }
@@ -314,8 +344,10 @@ impl ShutdownCoordinator {
     fn expire_pending_shutdown(&self, requests: &[(String, u64)]) -> PendingShutdownTimeoutAction {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if !state.shutdown_started || state.cleanup_started
-            || requests.len() != state.global_requests.len()
-            || requests.iter().any(|(label, generation)| state.global_requests.get(label) != Some(generation))
+            || state.global_requests.is_empty()
+            || requests.iter().filter(|(label, generation)| {
+                state.global_requests.get(label) == Some(generation)
+            }).count() != state.global_requests.len()
         {
             return PendingShutdownTimeoutAction::Cancel(Vec::new());
         }
@@ -331,49 +363,77 @@ impl ShutdownCoordinator {
         PendingShutdownTimeoutAction::Cancel(state.global_requests.drain().collect())
     }
 
-    fn commit_local_close(&self, label: String, pending: PendingClose) -> bool {
+    fn admit_local_removal(&self, label: &str, generation: u64) -> Option<PendingClose> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.shutdown_started {
+        if state.capturing_local_closes.get(label)?.generation != generation {
+            return None;
+        }
+        let pending = state.capturing_local_closes.remove(label)?;
+        state.removing_local_closes.insert(label.to_string(), LocalRemoval {
+            generation,
+            deferred_prepare: None,
+        });
+        Some(pending)
+    }
+
+    /// A close already writing to disk decides whether this renderer still needs preparing.
+    fn admit_global_prepare(&self, label: &str, generation: u64) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.global_pending.get(label) != Some(&generation) {
             return false;
         }
-        state.committed_local_closes.insert(label, pending);
+        if let Some(removal) = state.removing_local_closes.get_mut(label) {
+            removal.deferred_prepare = Some(generation);
+            return false;
+        }
         true
     }
 
-    fn rollback_local_close(&self, label: &str) {
-        self.state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .committed_local_closes
-            .remove(label);
+    fn local_close_status(&self, label: &str) -> Option<bool> {
+        let Ok(state) = self.state.lock() else {
+            return Some(false);
+        };
+        if state.approved_local_closes.contains(label) {
+            Some(true)
+        } else if state.local_close_in_flight(label) {
+            Some(false)
+        } else {
+            None
+        }
     }
 
-    fn local_close_in_flight(&self, label: &str) -> bool {
-        self.state.lock().map_or(true, |state| {
-            state.local_closes.contains_key(label)
-                || state.committed_local_closes.contains_key(label)
-                || state.releasing_local_closes.contains_key(label)
-                || state.approved_local_closes.contains(label)
-        })
-    }
-
-    fn approve_local_close(
+    fn complete_local_removal(
         &self,
         label: &str,
-        remove_state: impl FnOnce(&PendingClose) -> Result<(), String>,
-    ) -> Option<Result<client_state::RendererFlushRequest, (u64, String)>> {
-        // Removal and release admission share the shutdown lock: Quit can only
-        // select this window after knowing whether its persisted state survived.
+        generation: u64,
+        result: Result<(), String>,
+    ) -> LocalCloseCompletion {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        let pending = state.committed_local_closes.remove(label)?;
-        if let Err(error) = remove_state(&pending) {
-            return Some(Err((pending.generation, error)));
+        let removal = state.removing_local_closes.remove(label).expect("admitted local removal");
+        debug_assert_eq!(removal.generation, generation);
+        self.release_acknowledged.notify_all();
+        if let Err(error) = result {
+            return LocalCloseCompletion::Refused {
+                error,
+                deferred_prepare: removal.deferred_prepare.filter(|generation| {
+                    state.global_pending.get(label) == Some(generation)
+                }),
+            };
         }
+        // Quit joins this release instead of flushing a removed record.
+        state.global_requests.remove(label);
+        let shutdown_ready = state.global_pending.remove(label).is_some() && state.global_pending.is_empty();
         // A late preflush acknowledgement cannot finish the release phase.
         state.next_generation += 1;
-        let generation = state.next_generation;
-        state.releasing_local_closes.insert(label.to_string(), generation);
-        Some(Ok(client_state::RendererFlushRequest { generation, prepare_generation: Some(pending.generation) }))
+        let release_generation = state.next_generation;
+        state.releasing_local_closes.insert(label.to_string(), release_generation);
+        LocalCloseCompletion::Release {
+            request: client_state::RendererFlushRequest {
+                generation: release_generation,
+                prepare_generation: Some(generation),
+            },
+            shutdown_ready,
+        }
     }
 
     fn finish_local_release(&self, label: &str, generation: u64) -> bool {
@@ -389,6 +449,8 @@ impl ShutdownCoordinator {
 
     fn local_window_destroyed(&self, label: &str) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.local_closes.remove(label);
+        state.capturing_local_closes.remove(label);
         state.approved_local_closes.remove(label);
         if state.releasing_local_closes.remove(label).is_some() {
             self.release_acknowledged.notify_all();
@@ -471,11 +533,9 @@ impl ShutdownCoordinator {
             };
         }
         state.windows_session_end_owns_shutdown = true;
-        state.windows_renderer_deadline = Some(Instant::now() + RENDERER_FLUSH_TIMEOUT);
-        state.windows_native_flush_complete = false;
         state.shutdown_started = true;
         state.local_closes.clear();
-        state.committed_local_closes.clear();
+        state.capturing_local_closes.clear();
         state.global_requests.clear();
         let mut requests = Vec::new();
         for label in labels {
@@ -507,20 +567,6 @@ impl ShutdownCoordinator {
     }
 
     #[cfg(windows)]
-    fn windows_renderer_wait(&self, generation: u64) -> Option<(bool, Instant)> {
-        self.state.lock().ok().and_then(|state| {
-            (state.windows_session_end_generation == Some(generation)
-                && state.windows_session_end_owns_shutdown)
-                .then(|| {
-                    state
-                        .windows_renderer_deadline
-                        .map(|deadline| (!state.global_pending.is_empty(), deadline))
-                })
-                .flatten()
-        })
-    }
-
-    #[cfg(windows)]
     fn begin_windows_cleanup(&self, generation: u64) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.windows_session_end_generation != Some(generation)
@@ -532,27 +578,6 @@ impl ShutdownCoordinator {
         state.cleanup_started = true;
         state.global_pending.clear();
         true
-    }
-
-    #[cfg(windows)]
-    fn complete_windows_native_flush(&self, generation: u64) {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.windows_session_end_generation == Some(generation)
-            && state.windows_session_end_owns_shutdown
-        {
-            state.windows_native_flush_complete = true;
-        }
-    }
-
-    #[cfg(windows)]
-    fn windows_native_flush_complete(&self, generation: u64) -> bool {
-        self.state
-            .lock()
-            .map(|state| {
-                state.windows_session_end_generation == Some(generation)
-                    && state.windows_native_flush_complete
-            })
-            .unwrap_or(false)
     }
 
     #[cfg(windows)]
@@ -576,8 +601,6 @@ impl ShutdownCoordinator {
         }
         state.windows_session_end_generation = None;
         state.windows_session_end_deadline = None;
-        state.windows_renderer_deadline = None;
-        state.windows_native_flush_complete = false;
         if !state.windows_session_end_owns_shutdown || state.cleanup_started {
             return Vec::new();
         }
@@ -636,20 +659,19 @@ fn emit_flush_cancellations(app: &AppHandle, cancellations: Vec<(String, u64)>) 
 }
 
 pub(crate) fn request_local_window_close(app: AppHandle, label: String) {
-    let record = app.state::<LocalWindows>().record(&label);
+    let windows = app.state::<LocalWindows>();
+    let record = windows.record(&label);
     let remote = label.starts_with("remote-");
     let window_id = match record.as_ref() {
         Some(record) => record.id.clone(),
         None if remote => label.clone(),
         None => return,
     };
-    let removes_state = app
-        .state::<LocalWindows>()
-        .has_other_user_window(&label, |other| local_window_close_in_flight(&app, other));
     let Some(generation) = app.state::<ShutdownCoordinator>().begin_local_close(
         label.clone(),
         window_id.clone(),
-        record.is_some_and(|record| record.persisted && removes_state),
+        record.is_some_and(|record| record.persisted),
+        || windows.user_window_labels(),
     ) else {
         return;
     };
@@ -671,39 +693,53 @@ pub(crate) fn request_local_window_close(app: AppHandle, label: String) {
 }
 
 fn finish_local_close(app: AppHandle, label: String, window_id: String, generation: u64) {
-    let Some(pending) = app
+    if app
         .state::<ShutdownCoordinator>()
         .acknowledge_local(&label, &window_id, generation)
-    else {
+        .is_none()
+    {
         return;
-    };
+    }
     std::thread::spawn(move || {
+        let coordinator = app.state::<ShutdownCoordinator>();
         client_state::capture_and_flush_window(&app, &label);
-        if !app
-            .state::<ShutdownCoordinator>()
-            .commit_local_close(label.clone(), pending)
-        {
+        let Some(pending) = coordinator.admit_local_removal(&label, generation) else {
             return;
-        }
-        let close_app = app.clone();
-        let close_label = label.clone();
-        if app
-            .run_on_main_thread(move || {
-                let dispatched = close_app
-                    .get_webview(&close_label)
-                    .is_some_and(|webview| webview.window().close().is_ok());
-                if !dispatched {
-                    close_app
-                        .state::<ShutdownCoordinator>()
-                        .rollback_local_close(&close_label);
-                    emit_flush_cancelled(&close_app, &close_label, generation);
+        };
+        let result = if pending.removes_state {
+            app.try_state::<client_state::ClientState>()
+                .ok_or_else(|| "client state is unavailable".to_string())
+                .and_then(|state| match state.remove_window(&pending.window_id) {
+                    Ok(true) => Ok(()),
+                    Ok(false) => Err("persistent window state was not removed".to_string()),
+                    Err(error) => Err(error),
+                })
+        } else {
+            Ok(())
+        };
+        match coordinator.complete_local_removal(&label, generation, result) {
+            LocalCloseCompletion::Release { request, shutdown_ready } => {
+                let emitted = emit_flush(&app, &label, request);
+                if shutdown_ready {
+                    start_cleanup(app.clone(), false);
                 }
-            })
-            .is_err()
-        {
-            app.state::<ShutdownCoordinator>()
-                .rollback_local_close(&label);
-            emit_flush_cancelled(&app, &label, generation);
+                if emitted {
+                    std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
+                }
+                finish_local_release(&app, &label, request.generation);
+            }
+            LocalCloseCompletion::Refused { error, deferred_prepare } => {
+                eprintln!("[client-state] failed to remove closed window: {error}");
+                emit_flush_cancelled(&app, &label, generation);
+                if let Some(generation) = deferred_prepare {
+                    if coordinator.admit_global_prepare(&label, generation)
+                        && !emit_prepare(&app, &label, generation)
+                        && coordinator.acknowledge_global(&label, generation)
+                    {
+                        start_cleanup(app.clone(), false);
+                    }
+                }
+            }
         }
     });
 }
@@ -746,6 +782,9 @@ pub(crate) fn request_update(
 fn flush_shutdown(app: AppHandle, requests: Vec<(String, u64)>, timeout: Duration) {
     crate::remote_dictation::revoke(&app, None);
     for (label, generation) in &requests {
+        if !app.state::<ShutdownCoordinator>().admit_global_prepare(label, *generation) {
+            continue;
+        }
         if !emit_prepare(&app, label, *generation) {
             app.state::<ShutdownCoordinator>()
                 .acknowledge_global(label, *generation);
@@ -817,8 +856,16 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
         if let Some(speech) = app.try_state::<crate::device_speech::DeviceSpeech>() {
             speech.stop_hex();
         }
-        client_state::capture_and_flush_all_windows(&app);
+        client_state::capture_all_windows(&app);
         release_workspaces(&app, RENDERER_FLUSH_TIMEOUT);
+        let queue = app.state::<client_state::IpcQueue>();
+        if !drain_client_state(&queue, Instant::now() + IPC_DRAIN_TIMEOUT) {
+            eprintln!("[tauri] shutdown canceled: client state IPC did not drain");
+            queue.reopen();
+            let cancellations = app.state::<ShutdownCoordinator>().cleanup_failed();
+            emit_flush_cancellations(&app, cancellations);
+            return;
+        }
         let result = if let Some(state) = app.try_state::<AppState>() {
             retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
                 state.manager.stop().map_err(|error| error.to_string())
@@ -828,6 +875,7 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
         };
         if let Err(error) = result {
             eprintln!("[tauri] shutdown cleanup remains unconfirmed: {error}");
+            queue.reopen();
             let cancellations = app.state::<ShutdownCoordinator>().cleanup_failed();
             emit_flush_cancellations(&app, cancellations);
             return;
@@ -839,6 +887,7 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
             // The failed installer must not be replayed. Restore the owned
             // backend after reopening navigation, so even immediate readiness
             // can restore the windows. A newer quit still wins recovery admission.
+            queue.reopen();
             let cancellations = app.state::<ShutdownCoordinator>().cleanup_failed();
             emit_flush_cancellations(&app, cancellations);
             let recovery = app.try_state::<AppState>().and_then(|state| {
@@ -866,6 +915,10 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
             app.exit(0);
         }
     });
+}
+
+pub(crate) fn drain_client_state(queue: &client_state::IpcQueue, deadline: Instant) -> bool {
+    queue.seal_and_drain_until(deadline)
 }
 
 pub(crate) fn request_restart(app: AppHandle) {
@@ -944,46 +997,8 @@ pub(crate) fn with_navigation_authority<T>(
         .with_navigation_authority(operation)
 }
 
-pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option<bool> {
-    let coordinator = app.state::<ShutdownCoordinator>();
-    if coordinator
-        .state
-        .lock()
-        .ok()
-        .is_some_and(|state| state.approved_local_closes.contains(label))
-    {
-        return Some(true);
-    }
-    let decision = coordinator.approve_local_close(label, |pending| {
-        if !pending.removes_state {
-            return Ok(());
-        }
-        app.try_state::<client_state::ClientState>()
-            .ok_or_else(|| "client state is unavailable".to_string())
-            .and_then(|state| match state.remove_window(&pending.window_id) {
-                Ok(true) => Ok(()),
-                Ok(false) => Err("persistent window state was not removed".to_string()),
-                Err(error) => Err(error),
-            })
-    })?;
-    match decision {
-        Ok(request) => {
-            let emitted = emit_flush(app, label, request);
-            let app = app.clone();
-            let label = label.to_string();
-            std::thread::spawn(move || {
-                if emitted {
-                    std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
-                }
-                finish_local_release(&app, &label, request.generation);
-            });
-        }
-        Err((generation, error)) => {
-            eprintln!("[client-state] failed to remove closed window: {error}");
-            emit_flush_cancelled(app, label, generation);
-        }
-    }
-    Some(false)
+pub(crate) fn local_window_close_status(app: &AppHandle, label: &str) -> Option<bool> {
+    app.state::<ShutdownCoordinator>().local_close_status(label)
 }
 
 fn release_workspaces(app: &AppHandle, timeout: Duration) {
@@ -1010,8 +1025,7 @@ pub(crate) fn finish_local_release(app: &AppHandle, label: &str, generation: u64
 }
 
 pub(crate) fn local_window_close_in_flight(app: &AppHandle, label: &str) -> bool {
-    app.state::<ShutdownCoordinator>()
-        .local_close_in_flight(label)
+    local_window_close_status(app, label).is_some()
 }
 
 pub(crate) fn local_window_destroyed(app: &AppHandle, label: &str) {
@@ -1036,37 +1050,14 @@ fn prepare_windows_session_end(app: &AppHandle) -> (u64, Instant) {
         return (generation, deadline);
     };
     for (label, flush_generation) in requests {
+        if !app.state::<ShutdownCoordinator>().admit_global_prepare(&label, flush_generation) {
+            continue;
+        }
         if label.starts_with("remote-") || !emit_prepare(app, &label, flush_generation) {
             app.state::<ShutdownCoordinator>()
                 .acknowledge_global(&label, flush_generation);
         }
     }
-    if !app
-        .state::<ShutdownCoordinator>()
-        .windows_session_end_owns_shutdown(generation)
-    {
-        return (generation, deadline);
-    }
-    let flush_app = app.clone();
-    std::thread::spawn(move || {
-        while flush_app
-            .state::<ShutdownCoordinator>()
-            .windows_renderer_wait(generation)
-            .is_some_and(|(pending, deadline)| pending && Instant::now() < deadline)
-        {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        if !flush_app
-            .state::<ShutdownCoordinator>()
-            .windows_session_end_owns_shutdown(generation)
-        {
-            return;
-        }
-        client_state::flush_without_window_capture(&flush_app);
-        flush_app
-            .state::<ShutdownCoordinator>()
-            .complete_windows_native_flush(generation);
-    });
     (generation, deadline)
 }
 
@@ -1094,23 +1085,6 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
         return;
     }
 
-    while !app
-        .state::<ShutdownCoordinator>()
-        .windows_native_flush_complete(generation)
-        && Instant::now() < session_deadline
-    {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    if !app
-        .state::<ShutdownCoordinator>()
-        .windows_native_flush_complete(generation)
-    {
-        eprintln!(
-            "[tauri] Windows session-end state flush exceeded {:?}",
-            WINDOWS_SESSION_END_TIMEOUT
-        );
-        return;
-    }
     if !app
         .state::<ShutdownCoordinator>()
         .begin_windows_cleanup(generation)
@@ -1121,10 +1095,15 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
     let (finished_tx, finished_rx) = std::sync::mpsc::sync_channel(1);
     let cleanup_app = app.clone();
     std::thread::spawn(move || {
-        release_workspaces(
-            &cleanup_app,
-            session_deadline.saturating_duration_since(Instant::now()).min(RENDERER_FLUSH_TIMEOUT),
-        );
+        // WM_ENDSESSION is already blocking native dispatch. The backend will
+        // release workspaces on stop; no renderer round trip is possible here.
+        if !drain_client_state(&cleanup_app.state::<client_state::IpcQueue>(), session_deadline)
+            || !client_state::flush_without_window_capture(&cleanup_app)
+            || Instant::now() >= session_deadline
+        {
+            let _ = finished_tx.send(Err("client state flush did not finish within the session end budget".into()));
+            return;
+        }
         if let Some(speech) = cleanup_app.try_state::<crate::device_speech::DeviceSpeech>() {
             speech.stop_hex();
         }
@@ -1149,11 +1128,10 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
         .state::<ShutdownCoordinator>()
         .windows_session_end_remaining(generation, Instant::now())
         .unwrap_or_default();
-    if finished_rx.recv_timeout(remaining).is_err() {
-        eprintln!(
-            "[tauri] Windows session-end cleanup exceeded {:?}",
-            WINDOWS_SESSION_END_TIMEOUT
-        );
+    match finished_rx.recv_timeout(remaining) {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => eprintln!("[tauri] Windows session-end cleanup: {error}"),
+        Err(_) => eprintln!("[tauri] Windows session-end cleanup exceeded {:?}", WINDOWS_SESSION_END_TIMEOUT),
     }
 }
 
@@ -1161,8 +1139,8 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
 fn windows_session_end_handler(app: AppHandle, forward_end: bool) -> crate::windows_session_end::SessionEndHandler {
     let query_app = app.clone();
     crate::windows_session_end::SessionEndHandler {
-        // Windows requires this message to return promptly. Start the bounded state-flush
-        // worker now, but leave CLI cleanup and lock release for WM_ENDSESSION.
+        // Give renderers a chance to send their final commits before Windows
+        // pauses native dispatch at WM_ENDSESSION.
         query: Box::new(move || {
             prepare_windows_session_end(&query_app);
         }),

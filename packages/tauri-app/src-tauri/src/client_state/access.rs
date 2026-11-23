@@ -1,18 +1,22 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use url::Url;
 
 #[derive(Default)]
 pub(super) struct RendererAccess {
     state: Mutex<HashMap<String, RendererAccessState>>,
+    sequence: AtomicU64,
 }
 
 #[derive(Default)]
 struct RendererAccessState {
     token: Option<String>,
+    retired_token: Option<String>,
     committed_origin: Option<String>,
     pending_origin: Option<String>,
     generation: u64,
+    document: u64,
 }
 
 pub(super) struct PendingNavigation {
@@ -30,6 +34,38 @@ fn origin_key(url: &Url) -> Result<String, String> {
 }
 
 impl RendererAccess {
+    fn next(&self) -> u64 {
+        self.sequence.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    pub(super) fn document_for(&self, window_id: &str) -> u64 {
+        let mut states = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        let state = states.entry(window_id.to_owned()).or_default();
+        if state.document == 0 {
+            state.document = self.next();
+        }
+        state.document
+    }
+
+    pub(super) fn document_is_current(&self, window_id: &str, document: u64) -> bool {
+        self.state.lock().is_ok_and(|states| {
+            states.get(window_id).is_some_and(|state| state.document == document)
+        })
+    }
+
+    pub(super) fn page_started(&self, window_id: &str, allowed_url: Option<&Url>) {
+        let mut states = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        let state = states.entry(window_id.to_owned()).or_default();
+        let document = self.next();
+        state.document = document;
+        state.generation = document;
+        if let Some(token) = state.token.take() {
+            state.retired_token = Some(token);
+        }
+        state.committed_origin = None;
+        state.pending_origin = allowed_url.and_then(|url| origin_key(url).ok());
+    }
+
     pub(super) fn claim(&self, access_token: &str, renderer_url: &Url) -> Result<(), String> {
         self.claim_for("test-window", access_token, renderer_url)
     }
@@ -40,20 +76,32 @@ impl RendererAccess {
         access_token: &str,
         renderer_url: &Url,
     ) -> Result<(), String> {
+        self.claim_in_document(window_id, self.document_for(window_id), access_token, renderer_url)
+    }
+
+    pub(super) fn claim_in_document(
+        &self,
+        window_id: &str,
+        document: u64,
+        access_token: &str,
+        renderer_url: &Url,
+    ) -> Result<(), String> {
         if access_token.is_empty() {
             return Err("Client state access token must not be empty".to_string());
         }
 
         let renderer_origin = origin_key(renderer_url)?;
         let mut states = self.state.lock().map_err(|err| err.to_string())?;
-        let state = states.entry(window_id.to_string()).or_default();
-        if state.token.is_none()
-            || state.pending_origin.as_deref() == Some(renderer_origin.as_str())
-        {
+        let state = states.get_mut(window_id).filter(|state| state.document == document)
+            .ok_or("Client state renderer document retired")?;
+        if state.retired_token.as_deref() == Some(access_token) {
+            return Err("Client state renderer document retired".into());
+        }
+        if state.token.is_none() {
             state.token = Some(access_token.to_string());
             state.committed_origin = Some(renderer_origin);
             state.pending_origin = None;
-            state.generation = state.generation.wrapping_add(1);
+            state.generation = self.next();
             return Ok(());
         }
         if state.token.as_deref() != Some(access_token) {
@@ -76,6 +124,16 @@ impl RendererAccess {
         access_token: &str,
         renderer_url: &Url,
     ) -> Result<u64, String> {
+        self.validate_in_document(window_id, self.document_for(window_id), access_token, renderer_url)
+    }
+
+    pub(super) fn validate_in_document(
+        &self,
+        window_id: &str,
+        document: u64,
+        access_token: &str,
+        renderer_url: &Url,
+    ) -> Result<u64, String> {
         if access_token.is_empty() {
             return Err("Client state access token must not be empty".to_string());
         }
@@ -85,6 +143,9 @@ impl RendererAccess {
         let Some(state) = states.get(window_id) else {
             return Err("Client state access has not been claimed by this renderer".to_string());
         };
+        if state.document != document {
+            return Err("Client state renderer document retired".into());
+        }
         if state.token.as_deref() == Some(access_token)
             && state.committed_origin.as_deref() == Some(renderer_origin.as_str())
         {
@@ -183,4 +244,5 @@ impl RendererAccess {
             states.remove(window_id);
         }
     }
+
 }

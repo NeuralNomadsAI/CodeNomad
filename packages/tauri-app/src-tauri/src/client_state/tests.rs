@@ -96,7 +96,7 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
         bounds, maximized: true, fullscreen: false, zoom_factor: 1.25,
     }));
 }
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use url::Url;
 
@@ -158,7 +158,7 @@ fn failing_state(initially_failing: bool) -> (TempDir, ClientState, Arc<AtomicBo
 }
 
 #[test]
-fn ordered_ipc_commits_leave_the_event_thread_free_and_drain_before_release() {
+fn shutdown_barrier_seals_admission_and_waits_for_publication_clear_and_ack() {
     let directory = tempfile::tempdir().unwrap();
     let event_thread = thread::current().id();
     let (entered, writing) = mpsc::channel();
@@ -177,37 +177,83 @@ fn ordered_ipc_commits_leave_the_event_thread_free_and_drain_before_release() {
     ).unwrap());
     enable_restore_in_memory(&state);
     let window_id = state.active_window_id().unwrap();
+    let url = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    state.renderer_access.claim_for(&window_id, "renderer", &url).unwrap();
+    let document = super::commands::LocalDocument {
+        document: state.renderer_access.document_for(&window_id),
+        window_id: window_id.clone(), url,
+    };
+    let queue = super::IpcQueue::new();
     let key = partition_key("test partition");
-    let (done, completed) = mpsc::channel();
-    let worker = super::commands::ordered_worker(move |task: Option<super::partitions::PartitionCommit>| {
-        if let Some(commit) = task {
-            assert!(state.commit_partitions_guarded(commit, || true).unwrap());
-        } else {
-            state.flush().unwrap();
-            state.release_locks();
-            done.send(()).unwrap();
-        }
-    });
-    for revision in 1..=2 {
-        worker.send(Some(partition_commit(json!({
-            "protocolVersion": 1,
-            "snapshot": partition_root(std::slice::from_ref(&key), json!({"revision": revision})),
-            "partitionKeys": [&key],
-            "partitions": if revision == 1 { json!({(&key): "test partition"}) } else { json!({}) },
-        })))).unwrap();
-    }
-    worker.send(None).unwrap();
+    let commit = partition_commit(json!({
+        "protocolVersion": 1,
+        "snapshot": partition_root(std::slice::from_ref(&key), json!({"revision": 1})),
+        "partitionKeys": [&key],
+        "partitions": {(&key): "test partition"},
+    }));
+    let writing_state = Arc::clone(&state);
+    let writing_document = document.clone();
+    queue.enqueue(Box::new(move || {
+        assert!(super::commands::commit_partitions(&writing_document, &writing_state, "renderer", commit).unwrap());
+    })).unwrap();
     writing.recv_timeout(Duration::from_secs(5)).unwrap();
-    // This is the dispatching thread; it can process another event while the
-    // worker is held in the real publication path and quit waits behind it.
-    assert_eq!(thread::current().id(), event_thread);
-    assert!(matches!(completed.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    let clearing_state = Arc::clone(&state);
+    queue.enqueue(Box::new(move || {
+        assert_eq!(clearing_state.load().unwrap().snapshot["revision"], 1);
+        let authority = document.validate(&clearing_state, "renderer").unwrap();
+        assert!(clearing_state.clear_guarded(&document.window_id, || {
+            clearing_state.renderer_access.is_generation_current_for(&document.window_id, authority)
+        }).unwrap());
+    })).unwrap();
+    state.renderer_flush.windows.lock().unwrap().insert(window_id.clone(), (1, 0));
+    let acknowledging_state = Arc::clone(&state);
+    let acknowledging_window = window_id.clone();
+    queue.enqueue(Box::new(move || {
+        assert_eq!(acknowledging_state.load().unwrap().snapshot, Value::Null);
+        acknowledging_state.acknowledge_renderer_flush(&acknowledging_window, 1);
+    })).unwrap();
+
+    assert!(!crate::shutdown::drain_client_state(&queue, Instant::now() + Duration::from_millis(30)));
+    assert!(queue.enqueue(Box::new(|| panic!("accepted after seal"))).is_err());
+    assert_eq!(acknowledged_generation(&state), 0);
+    assert!(state.is_primary());
     resume.send(()).unwrap();
-    completed.recv_timeout(Duration::from_secs(5)).unwrap();
-    drop(worker);
+    assert!(crate::shutdown::drain_client_state(&queue, Instant::now() + Duration::from_secs(5)));
+    assert_eq!(acknowledged_generation(&state), 1);
+    state.release_locks();
     let reopened = ClientState::initialize_at(directory.path()).unwrap();
-    assert_eq!(reopened.load_window(&window_id).unwrap().snapshot["revision"], 2);
-    assert_eq!(reopened.load_partition_guarded(&key, || true).unwrap().as_deref(), Some("test partition"));
+    assert_eq!(reopened.load_window(&window_id).unwrap().snapshot, Value::Null);
+}
+
+#[test]
+fn queued_same_origin_commit_is_rejected_when_the_next_document_starts() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = Arc::new(ClientState::initialize_at(directory.path()).unwrap());
+    let window_id = state.active_window_id().unwrap();
+    let url = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    state.renderer_access.claim_for(&window_id, "outgoing", &url).unwrap();
+    let document = super::commands::LocalDocument {
+        document: state.renderer_access.document_for(&window_id),
+        window_id: window_id.clone(), url: url.clone(),
+    };
+    let queue = super::IpcQueue::new();
+    let (resume, gate) = mpsc::channel();
+    queue.enqueue(Box::new(move || gate.recv_timeout(Duration::from_secs(5)).unwrap())).unwrap();
+    let writing = Arc::clone(&state);
+    queue.enqueue(Box::new(move || {
+        let key = partition_key("stale partition");
+        let result = super::commands::commit_partitions(&document, &writing, "outgoing", partition_commit(json!({
+            "protocolVersion": 1,
+            "snapshot": partition_root(std::slice::from_ref(&key), json!({"stale": true})),
+            "partitionKeys": [&key], "partitions": {(&key): "stale partition"},
+        })));
+        assert_eq!(result.unwrap_err(), "Client state renderer document retired");
+    })).unwrap();
+    state.renderer_page_started(&window_id, Some(&url));
+    resume.send(()).unwrap();
+    assert!(crate::shutdown::drain_client_state(&queue, Instant::now() + Duration::from_secs(5)));
+    assert!(state.renderer_access.claim_for(&window_id, "outgoing", &url).is_err());
+    state.renderer_access.claim_for(&window_id, "incoming", &url).unwrap();
 }
 
 fn window() -> NativeWindowState {
@@ -833,6 +879,7 @@ fn renderer_tokens_and_origins_are_isolated_across_navigation() {
         .renderer_access
         .validate("outgoing", &outgoing)
         .unwrap();
+    state.renderer_page_started("test-window", Some(&incoming));
     state.renderer_access.claim("incoming", &incoming).unwrap();
     assert_access_rejected(&state, "outgoing", &outgoing);
     state
@@ -878,7 +925,7 @@ fn accepted_page_load_stages_renderer_rotation_and_preserves_generation_fencing(
         .validate_for(&window_id, "outgoing", &url)
         .unwrap();
 
-    state.stage_renderer_page_load(&window_id, &url).unwrap();
+    state.renderer_page_started(&window_id, Some(&url));
     state
         .renderer_access
         .claim_for(&window_id, "incoming", &url)
@@ -911,6 +958,8 @@ fn reload_preserves_pending_cross_origin_authority_until_incoming_claim() {
         .unwrap();
     state.renderer_access.begin_navigation(None).unwrap();
 
+    assert!(state.renderer_access.allows_claim_origin_for("test-window", &incoming));
+    state.renderer_page_started("test-window", Some(&incoming));
     state.renderer_access.claim("incoming", &incoming).unwrap();
     state
         .renderer_access
@@ -937,6 +986,9 @@ fn failed_follow_up_navigation_restores_previous_pending_authority() {
         .unwrap();
     state.renderer_access.cancel_navigation(failed_navigation);
 
+    assert!(!state.renderer_access.allows_claim_origin_for("test-window", &failed));
+    assert!(state.renderer_access.allows_claim_origin_for("test-window", &incoming));
+    state.renderer_page_started("test-window", Some(&incoming));
     state.renderer_access.claim("incoming", &incoming).unwrap();
     state
         .renderer_access
@@ -1076,7 +1128,7 @@ fn renderer_rotation_blocks_an_in_flight_old_renderer_replacement() {
         .renderer_access
         .begin_navigation(Some(&incoming))
         .unwrap();
-    state.renderer_access.claim("new", &incoming).unwrap();
+    state.renderer_page_started("test-window", Some(&incoming));
     allow_tx.send(()).unwrap();
     assert!(writer.join().unwrap().is_err());
     assert_eq!(state.load().unwrap().snapshot, Value::Null);

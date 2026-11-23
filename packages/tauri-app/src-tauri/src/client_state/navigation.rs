@@ -377,6 +377,7 @@ mod tests {
         assert!(state
             .renderer_access
             .allows_claim_origin_for(&window_id, &outgoing_url));
+        state.renderer_page_started(&window_id, Some(&incoming_url));
         state
             .renderer_access
             .claim_for(&window_id, "incoming-renderer", &incoming_url)

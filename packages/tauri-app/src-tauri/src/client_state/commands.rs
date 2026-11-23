@@ -1,7 +1,8 @@
-use super::{partitions::PartitionCommit, ClientState, ClientStateLoadResult};
+use super::{partitions::PartitionCommit, ClientState, ClientStateLoadResult, IpcQueue};
 use crate::AppState;
 use serde_json::Value;
-use tauri::{AppHandle, State, Webview};
+use std::cell::RefCell;
+use tauri::{AppHandle, Manager, State};
 use url::Url;
 
 pub(crate) fn with_ordered_ipc(
@@ -21,24 +22,46 @@ pub(crate) fn with_ordered_ipc(
         client_state_navigation_flushed,
         client_state_startup_command_result,
     ];
-    let send = ordered_worker(move |invoke: Invoke| {
-        // The prefix is reserved for this handler; unknown names still
-        // get a response, including if Tauri prunes a command at build time.
-        if !dispatch(Invoke {
-            resolver: invoke.resolver.clone(),
-            ..invoke
-        }) {
-            invoke.resolver.reject("Unknown client state command");
-        }
-    });
     move |invoke| {
         if !invoke.message.command().starts_with("client_state_") {
             return fallback(invoke);
         }
-        // Enqueue in native delivery order before yielding to any executor.
-        // In particular, a flush acknowledgement cannot overtake a commit.
-        if let Err(error) = send.send(invoke) {
-            error.0.resolver.reject("Client state IPC worker stopped");
+        let webview = invoke.message.webview_ref();
+        let app = webview.app_handle().clone();
+        let resolver = invoke.resolver.clone();
+        let renderer = (|| {
+            let label = webview.label().to_owned();
+            if label.starts_with("remote-") && invoke.message.command() == "client_state_renderer_flushed" {
+                return Ok(Renderer { label, local: None });
+            }
+            let window_id = crate::identity::local_window_id(&label)?;
+            let state = app.try_state::<ClientState>().ok_or("Client state is unavailable")?;
+            let document = state.renderer_access.document_for(&window_id);
+            let url = webview.url().map_err(|err| format!("failed to inspect current renderer URL: {err}"))?;
+            Ok::<_, String>(Renderer { label, local: Some(LocalDocument { window_id, document, url }) })
+        })();
+        let renderer = match renderer {
+            Ok(renderer) => renderer,
+            Err(error) => {
+                resolver.reject(error);
+                return true;
+            }
+        };
+        let queue = app.state::<IpcQueue>();
+        // Capture native getters before admission; the worker can drain even
+        // while the event thread waits for WM_ENDSESSION.
+        let reply = resolver.clone();
+        if let Err(error) = queue.enqueue(Box::new(move || {
+            RENDERER.with(|slot| {
+                slot.replace(Some(renderer));
+                let handled = dispatch(invoke);
+                slot.replace(None);
+                if !handled {
+                    reply.reject("Unknown client state command");
+                }
+            });
+        })) {
+            resolver.reject(error);
         }
         true
     }
@@ -46,15 +69,35 @@ pub(crate) fn with_ordered_ipc(
 
 type Invoke = tauri::ipc::Invoke<tauri::Wry>;
 
-pub(super) fn ordered_worker<T: Send + 'static>(
-    dispatch: impl Fn(T) + Send + 'static,
-) -> std::sync::mpsc::Sender<T> {
-    let (send, receive) = std::sync::mpsc::channel();
-    std::thread::Builder::new()
-        .name("client-state-ipc".into())
-        .spawn(move || receive.into_iter().for_each(dispatch))
-        .expect("start client state IPC worker");
-    send
+#[derive(Clone)]
+pub(super) struct Renderer {
+    label: String,
+    local: Option<LocalDocument>,
+}
+
+#[derive(Clone)]
+pub(super) struct LocalDocument {
+    pub(super) window_id: String,
+    pub(super) document: u64,
+    pub(super) url: Url,
+}
+
+// Tauri's synchronous generated commands resolve arguments on the calling
+// thread. Supply native-only context without putting it in the renderer payload.
+thread_local! {
+    static RENDERER: RefCell<Option<Renderer>> = const { RefCell::new(None) };
+}
+
+impl<'a> tauri::ipc::CommandArg<'a, tauri::Wry> for Renderer {
+    fn from_command(_: tauri::ipc::CommandItem<'a, tauri::Wry>) -> Result<Self, tauri::ipc::InvokeError> {
+        RENDERER.with(|slot| slot.borrow().clone()).ok_or_else(|| "Missing client state IPC context".into())
+    }
+}
+
+impl Renderer {
+    fn local(&self) -> Result<&LocalDocument, String> {
+        self.local.as_ref().ok_or_else(|| "Client state requires a local renderer".into())
+    }
 }
 
 fn same_origin(url: &Url, expected: &str) -> bool {
@@ -86,17 +129,6 @@ pub(super) fn is_allowed_client_state_origin(url: &Url, managed_cli_url: Option<
         || is_dev_renderer_origin(url)
 }
 
-fn local_window_url(webview: &Webview) -> Result<Url, String> {
-    crate::identity::local_window_id(webview.label())?;
-    webview
-        .url()
-        .map_err(|err| format!("failed to inspect current renderer URL: {err}"))
-}
-
-fn trusted_window_id(webview: &Webview) -> Result<String, String> {
-    crate::identity::local_window_id(webview.label())
-}
-
 fn validate_claim_origin(
     current_url: &Url,
     window_id: &str,
@@ -116,40 +148,41 @@ fn validate_claim_origin(
 }
 
 fn validate_access(
-    webview: &Webview,
+    renderer: &Renderer,
     state: &ClientState,
     access_token: &str,
 ) -> Result<(String, u64), String> {
-    let current_url = local_window_url(webview)?;
-    let window_id = trusted_window_id(webview)?;
-    state
-        .renderer_access
-        .validate_for(&window_id, access_token, &current_url)
-        .map(|generation| (window_id, generation))
+    let local = renderer.local()?;
+    local.validate(state, access_token).map(|generation| (local.window_id.clone(), generation))
+}
+
+impl LocalDocument {
+    pub(super) fn validate(&self, state: &ClientState, token: &str) -> Result<u64, String> {
+        state.renderer_access.validate_in_document(&self.window_id, self.document, token, &self.url)
+    }
 }
 
 #[tauri::command]
 pub fn client_state_claim_access(
-    webview: Webview,
+    renderer: Renderer,
     app_state: State<'_, AppState>,
     state: State<'_, ClientState>,
     access_token: String,
 ) -> Result<(), String> {
-    let current_url = local_window_url(&webview)?;
-    let window_id = trusted_window_id(&webview)?;
-    validate_claim_origin(&current_url, &window_id, &app_state, &state)?;
-    state.claim_renderer_access(&window_id, &access_token, &current_url)
+    let local = renderer.local()?;
+    validate_claim_origin(&local.url, &local.window_id, &app_state, &state)?;
+    state.claim_renderer_access(&local.window_id, local.document, &access_token, &local.url)
 }
 
 #[tauri::command]
 pub fn client_state_load(
-    webview: Webview,
+    renderer: Renderer,
     state: State<'_, ClientState>,
     access_token: String,
 ) -> Result<ClientStateLoadResult, String> {
-    let (window_id, generation) = validate_access(&webview, &state, &access_token)?;
+    let (window_id, generation) = validate_access(&renderer, &state, &access_token)?;
     let result = state.load_window(&window_id)?;
-    if validate_access(&webview, &state, &access_token)?.1 != generation {
+    if validate_access(&renderer, &state, &access_token)?.1 != generation {
         return Err("Client state renderer authority changed during load".into());
     }
     Ok(result)
@@ -157,14 +190,14 @@ pub fn client_state_load(
 
 #[tauri::command]
 pub fn client_state_load_file_drafts(
-    webview: Webview,
+    renderer: Renderer,
     state: State<'_, ClientState>,
     access_token: String,
     key: Option<String>,
 ) -> Result<Vec<super::file_drafts::Draft>, String> {
-    let (window_id, generation) = validate_access(&webview, &state, &access_token)?;
+    let (window_id, generation) = validate_access(&renderer, &state, &access_token)?;
     let result = state.load_file_drafts_for(&window_id, key.as_deref(), generation)?;
-    if validate_access(&webview, &state, &access_token)?.1 != generation {
+    if validate_access(&renderer, &state, &access_token)?.1 != generation {
         return Err("Client state renderer authority changed during load".into());
     }
     Ok(result)
@@ -172,12 +205,12 @@ pub fn client_state_load_file_drafts(
 
 #[tauri::command]
 pub fn client_state_save_file_draft(
-    webview: Webview,
+    renderer: Renderer,
     state: State<'_, ClientState>,
     access_token: String,
     change: super::file_drafts::Change,
 ) -> Result<bool, String> {
-    let (window_id, generation) = validate_access(&webview, &state, &access_token)?;
+    let (window_id, generation) = validate_access(&renderer, &state, &access_token)?;
     state.save_file_draft_for(&window_id, change, Some(generation), || {
         state.renderer_access.is_generation_current_for(&window_id, generation)
     })
@@ -185,12 +218,12 @@ pub fn client_state_save_file_draft(
 
 #[tauri::command]
 pub fn client_state_load_partition(
-    webview: Webview,
+    renderer: Renderer,
     state: State<'_, ClientState>,
     access_token: String,
     key: String,
 ) -> Result<Option<String>, String> {
-    let (window_id, generation) = validate_access(&webview, &state, &access_token)?;
+    let (window_id, generation) = validate_access(&renderer, &state, &access_token)?;
     state.load_partition_guarded_for(&window_id, &key, || {
         state
             .renderer_access
@@ -200,12 +233,12 @@ pub fn client_state_load_partition(
 
 #[tauri::command]
 pub fn client_state_save(
-    webview: Webview,
+    renderer: Renderer,
     state: State<'_, ClientState>,
     access_token: String,
     snapshot: Value,
 ) -> Result<bool, String> {
-    let (window_id, generation) = validate_access(&webview, &state, &access_token)?;
+    let (window_id, generation) = validate_access(&renderer, &state, &access_token)?;
     state.save_snapshot_guarded_for(&window_id, snapshot, || {
         state
             .renderer_access
@@ -215,27 +248,37 @@ pub fn client_state_save(
 
 #[tauri::command]
 pub fn client_state_commit_partitions(
-    webview: Webview,
+    renderer: Renderer,
     state: State<'_, ClientState>,
     access_token: String,
     payload: PartitionCommit,
 ) -> Result<bool, String> {
-    let (window_id, generation) = validate_access(&webview, &state, &access_token)?;
-    state.commit_partitions_guarded_for(&window_id, payload, || {
+    let local = renderer.local()?;
+    commit_partitions(local, &state, &access_token, payload)
+}
+
+pub(super) fn commit_partitions(
+    local: &LocalDocument,
+    state: &ClientState,
+    access_token: &str,
+    payload: PartitionCommit,
+) -> Result<bool, String> {
+    let generation = local.validate(state, access_token)?;
+    state.commit_partitions_guarded_for(&local.window_id, payload, || {
         state
             .renderer_access
-            .is_generation_current_for(&window_id, generation)
+            .is_generation_current_for(&local.window_id, generation)
     })
 }
 
 #[tauri::command]
 pub fn client_state_set_restore_enabled(
-    webview: Webview,
+    renderer: Renderer,
     state: State<'_, ClientState>,
     access_token: String,
     enabled: bool,
 ) -> Result<bool, String> {
-    let (window_id, generation) = validate_access(&webview, &state, &access_token)?;
+    let (window_id, generation) = validate_access(&renderer, &state, &access_token)?;
     state.set_restore_enabled_guarded(&window_id, enabled, || {
         state
             .renderer_access
@@ -245,11 +288,11 @@ pub fn client_state_set_restore_enabled(
 
 #[tauri::command]
 pub fn client_state_clear(
-    webview: Webview,
+    renderer: Renderer,
     state: State<'_, ClientState>,
     access_token: String,
 ) -> Result<bool, String> {
-    let (window_id, generation) = validate_access(&webview, &state, &access_token)?;
+    let (window_id, generation) = validate_access(&renderer, &state, &access_token)?;
     state.clear_guarded(&window_id, || {
         state
             .renderer_access
@@ -260,27 +303,27 @@ pub fn client_state_clear(
 #[tauri::command]
 pub fn client_state_renderer_flushed(
     app: AppHandle,
-    webview: Webview,
+    renderer: Renderer,
     app_state: State<'_, AppState>,
     state: State<'_, ClientState>,
     access_token: String,
     generation: u64,
 ) -> Result<(), String> {
-    if webview.label().starts_with("remote-") {
-        let label = webview.label().to_string();
-        crate::shutdown::renderer_flushed(app, label.clone(), label, generation);
+    if renderer.local.is_none() {
+        crate::shutdown::renderer_flushed(app, renderer.label.clone(), renderer.label, generation);
         return Ok(());
     }
     // Forgetting a window revokes snapshot writes before the release ACK.
     // A trusted renderer can still finish its own approved release generation.
-    let window_id = trusted_window_id(&webview)?;
-    if validate_claim_origin(&local_window_url(&webview)?, &window_id, &app_state, &state).is_ok()
-        && crate::shutdown::finish_local_release(&app, webview.label(), generation)
+    let local = renderer.local()?;
+    if state.renderer_access.document_is_current(&local.window_id, local.document)
+        && validate_claim_origin(&local.url, &local.window_id, &app_state, &state).is_ok()
+        && crate::shutdown::finish_local_release(&app, &renderer.label, generation)
     {
         return Ok(());
     }
-    let (window_id, _) = validate_access(&webview, &state, &access_token)?;
-    crate::shutdown::renderer_flushed(app, webview.label().to_string(), window_id, generation);
+    let (window_id, _) = validate_access(&renderer, &state, &access_token)?;
+    crate::shutdown::renderer_flushed(app, renderer.label, window_id, generation);
     Ok(())
 }
 
@@ -288,13 +331,13 @@ pub fn client_state_renderer_flushed(
 /// Only the targeted window's claimed renderer can settle its own request.
 #[tauri::command]
 pub fn client_state_startup_command_result(
-    webview: Webview,
+    renderer: Renderer,
     state: State<'_, ClientState>,
     access_token: String,
     id: u64,
     state_result: Option<super::StartupStateSnapshot>,
 ) -> Result<(), String> {
-    let (window_id, _) = validate_access(&webview, &state, &access_token)?;
+    let (window_id, _) = validate_access(&renderer, &state, &access_token)?;
     state
         .startup_commands
         .complete(id, &window_id, state_result)
@@ -302,12 +345,12 @@ pub fn client_state_startup_command_result(
 
 #[tauri::command]
 pub fn client_state_navigation_flushed(
-    webview: Webview,
+    renderer: Renderer,
     state: State<'_, ClientState>,
     access_token: String,
     generation: u64,
 ) -> Result<(), String> {
-    let (window_id, _) = validate_access(&webview, &state, &access_token)?;
+    let (window_id, _) = validate_access(&renderer, &state, &access_token)?;
     state.acknowledge_renderer_flush(&window_id, generation);
     Ok(())
 }

@@ -436,7 +436,6 @@ fn window_control(
                 window.maximize()
             }
         }
-        "drag" => window.start_dragging(),
         "close" => {
             if webview.label() == preferences_window::LABEL {
                 preferences_window::approve_close(&app)?;
@@ -446,6 +445,16 @@ fn window_control(
         _ => return Err("Invalid window control action".to_string()),
     }
     .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn start_native_window_drag(
+    webview: tauri::Webview,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    require_preferences_or_local_app_webview(&webview, &state)?;
+    // AppKit needs the mouse event still being dispatched when the IPC arrives.
+    webview.window().start_dragging().map_err(|error| error.to_string())
 }
 
 fn titlebar_menu_id(menu: &str) -> Option<&'static str> {
@@ -1818,17 +1827,15 @@ enum LocalCloseEventAction {
 /// A hidden `--connect-server` launch window holds no user state: it closes at once, without the
 /// renderer flush whose acknowledgement a renderer that never started cannot send.
 fn local_close_event_action(
-    consumed: Option<bool>,
-    in_flight: bool,
+    approved: Option<bool>,
     launch_window: bool,
 ) -> LocalCloseEventAction {
     if launch_window {
         return LocalCloseEventAction::Allow;
     }
-    match consumed {
+    match approved {
         Some(true) => LocalCloseEventAction::Allow,
         Some(false) => LocalCloseEventAction::Prevent,
-        None if in_flight => LocalCloseEventAction::Prevent,
         None => LocalCloseEventAction::Continue,
     }
 }
@@ -2088,8 +2095,18 @@ fn main() {
             developer_browser_arguments,
             scoped_profile: setup_scope.scoped,
         })
+        .manage(client_state::IpcQueue::new())
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Started {
+                let app = webview.app_handle();
+                if let (Ok(window_id), Some(state)) = (
+                    identity::local_window_id(webview.label()),
+                    app.try_state::<client_state::ClientState>(),
+                ) {
+                    let managed_backend = app.state::<AppState>().manager.status().url;
+                    let allowed = is_allowed_local_origin(payload.url(), managed_backend.as_deref());
+                    state.renderer_page_started(&window_id, allowed.then_some(payload.url()));
+                }
                 webview.app_handle().state::<notification_click::NotificationClicks>()
                     .forget_window(webview.label());
                 if !webview.label().starts_with("remote-") {
@@ -2104,20 +2121,6 @@ fn main() {
             if identity::local_window_id(webview.label()).is_ok()
                 && payload.event() == PageLoadEvent::Started
             {
-                let app = webview.app_handle();
-                let managed_backend = app.state::<AppState>().manager.status().url;
-                if is_allowed_local_origin(payload.url(), managed_backend.as_deref()) {
-                    if let (Ok(window_id), Some(state)) = (
-                        identity::local_window_id(webview.label()),
-                        app.try_state::<client_state::ClientState>(),
-                    ) {
-                        if let Err(error) =
-                            state.stage_renderer_page_load(&window_id, payload.url())
-                        {
-                            eprintln!("[client-state] failed to stage renderer page load: {error}");
-                        }
-                    }
-                }
                 let _ = webview
                     .app_handle()
                     .state::<local_windows::LocalWindows>()
@@ -2207,6 +2210,7 @@ fn main() {
             preferences_window::memory_cleanup::memory_cleanup_result,
             preferences_window::memory_cleanup::memory_cleanup_claim,
             window_control,
+            start_native_window_drag,
             window_zoom::owned_webview_zoom,
             popup_titlebar_menu,
             open_remote_window,
@@ -2472,12 +2476,11 @@ fn main() {
                 }
                 let local_window = identity::local_window_id(&label).is_ok();
                 if local_window || label.starts_with("remote-") {
-                    let consumed = shutdown::consume_local_window_close(&app_handle, &label);
-                    let in_flight = shutdown::local_window_close_in_flight(&app_handle, &label);
+                    let approved = shutdown::local_window_close_status(&app_handle, &label);
                     let launch_window = local_window && app_handle
                         .state::<local_windows::LocalWindows>()
                         .is_connect_only(&label);
-                    match local_close_event_action(consumed, in_flight, launch_window) {
+                    match local_close_event_action(approved, launch_window) {
                         LocalCloseEventAction::Allow => return,
                         LocalCloseEventAction::Prevent => {
                             api.prevent_close();
@@ -2520,7 +2523,6 @@ fn main() {
                 if !label.starts_with("remote-") {
                     app_handle.state::<device_speech::DeviceSpeech>().revoke(Some(&label));
                 }
-                shutdown::local_window_destroyed(&app_handle, &label);
                 let _ = consume_approved_auxiliary_close(&app_handle, &label);
                 app_handle
                     .state::<AppState>()
@@ -2534,6 +2536,7 @@ fn main() {
                         state.unregister_window(&window_id);
                     }
                 }
+                shutdown::local_window_destroyed(&app_handle, &label);
                 if let Ok(mut wake) = app_handle.state::<AppState>().wake_lock.lock() {
                     wake.labels.remove(&label);
                     if wake.labels.is_empty() {
@@ -2980,17 +2983,17 @@ mod menu_tests {
     }
 
     #[test]
-    fn approved_local_close_wins_over_its_in_flight_marker() {
+    fn local_close_only_allows_an_approved_request() {
         assert_eq!(
-            local_close_event_action(Some(true), true, false),
+            local_close_event_action(Some(true), false),
             LocalCloseEventAction::Allow
         );
         assert_eq!(
-            local_close_event_action(None, true, false),
+            local_close_event_action(Some(false), false),
             LocalCloseEventAction::Prevent
         );
         assert_eq!(
-            local_close_event_action(None, false, false),
+            local_close_event_action(None, false),
             LocalCloseEventAction::Continue
         );
     }
@@ -2998,9 +3001,9 @@ mod menu_tests {
     #[test]
     fn hidden_launch_windows_close_without_a_renderer_flush() {
         // Continue would request the flush that a launch window still on loading.html never acknowledges.
-        for (consumed, in_flight) in [(None, false), (None, true), (Some(false), false)] {
+        for approved in [None, Some(false), Some(true)] {
             assert_eq!(
-                local_close_event_action(consumed, in_flight, true),
+                local_close_event_action(approved, true),
                 LocalCloseEventAction::Allow
             );
         }

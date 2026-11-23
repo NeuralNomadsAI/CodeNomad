@@ -6,6 +6,7 @@ mod file_drafts;
 mod initialization;
 mod legacy;
 mod navigation;
+mod ipc_queue;
 mod partitions;
 mod process;
 mod renderer_flush;
@@ -34,9 +35,10 @@ pub(crate) fn home_client_state_directory() -> Option<PathBuf> {
 pub(crate) use navigation::{
     before_window_navigation, before_window_navigation_if, NavigationKind,
 };
+pub(crate) use ipc_queue::IpcQueue;
 pub(crate) use renderer_flush::RendererFlushRequest;
 pub use window::{
-    capture_and_flush_all_windows, capture_and_flush_window, local_window_zoom,
+    capture_all_windows, capture_and_flush_window, local_window_zoom,
     set_local_window_zoom, setup_local_window, DEFAULT_ZOOM_LEVEL, MIN_WINDOW_WIDTH,
 };
 
@@ -84,14 +86,8 @@ type StateWriter =
     std::sync::Arc<dyn Fn(&Path, &[u8], &dyn Fn() -> bool) -> Result<(), String> + Send + Sync>;
 
 impl ClientState {
-    pub(crate) fn stage_renderer_page_load(
-        &self,
-        window_id: &str,
-        url: &Url,
-    ) -> Result<(), String> {
-        self.renderer_access
-            .begin_navigation_for(window_id, Some(url))
-            .map(|_| ())
+    pub(crate) fn renderer_page_started(&self, window_id: &str, allowed_url: Option<&Url>) {
+        self.renderer_access.page_started(window_id, allowed_url);
     }
 
     fn is_primary(&self) -> bool {
@@ -180,6 +176,7 @@ impl ClientState {
     fn claim_renderer_access(
         &self,
         window_id: &str,
+        document: u64,
         access_token: &str,
         renderer_url: &Url,
     ) -> Result<(), String> {
@@ -199,7 +196,7 @@ impl ClientState {
             return Err("Unknown client state window".to_string());
         }
         self.renderer_access
-            .claim_for(window_id, access_token, renderer_url)
+            .claim_in_document(window_id, document, access_token, renderer_url)
     }
 
     fn load(&self) -> Result<ClientStateLoadResult, String> {
@@ -749,12 +746,15 @@ pub fn release(app: &AppHandle) {
     }
 }
 
-pub fn flush_without_window_capture(app: &AppHandle) {
+#[cfg(windows)]
+pub fn flush_without_window_capture(app: &AppHandle) -> bool {
     if let Some(state) = app.try_state::<ClientState>() {
         if let Err(err) = state.flush() {
             eprintln!("[client-state] failed to flush state: {err}");
+            return false;
         }
     }
+    true
 }
 
 #[cfg(test)]

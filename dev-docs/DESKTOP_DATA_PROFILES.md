@@ -39,10 +39,14 @@ serialized across windows, retaining the union of their roots. A failed delta
 retries once with all partition bodies.
 
 Tauri admits client-state IPC to a FIFO worker before yielding the event loop,
-so writes and renderer flush acknowledgements keep delivery order. Electron
-serializes publication, including asynchronous ownership checks, on its write
-queue. Explicit quit waits for the renderer flush and native durable writes
-before releasing ownership.
+so writes and renderer flush acknowledgements keep delivery order. Admission
+captures the renderer URL and document epoch; page-load start retires the
+previous epoch after any pre-navigation flush. Quit seals the queue and waits
+for a bounded FIFO barrier before releasing ownership. Windows requests the
+renderer flush at session-end query and drains admitted work at confirmed
+session end. Electron serializes publication and asynchronous ownership checks
+on its write queue, and fences the retiring participant cohort before reopening
+ownership.
 
 Workspace file drafts use a separate `workspace-file-drafts.json` beside the
 profile's client-state envelope. Both hosts serialize atomic draft changes under
