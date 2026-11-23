@@ -151,8 +151,10 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
 
 export function assertPrivateChild(env,owned={}){
   for(const [key,value] of Object.entries(env)){
-    if(!/opencode|(?:^|_)(?:key|token|secret|password|credential|credentials)(?:_|$)/i.test(key))continue
+    if(!credentialVariable(key))continue
     assert(Object.hasOwn(owned,key)&&owned[key]===value,`Unexpected credential or OpenCode environment variable: ${key}`)
   }
   return env
 }
+
+export const credentialVariable=key=>/opencode|(?:^|_)(?:key|token|secret|password|credential|credentials)(?:_|$)/i.test(key)

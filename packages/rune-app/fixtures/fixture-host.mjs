@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
 import {setTimeout as delay} from 'node:timers/promises'
 import {request} from 'playwright'
-import {stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 
 export async function until(check,label,ms=20000){
   const end=Date.now()+ms
@@ -17,7 +16,7 @@ export async function until(check,label,ms=20000){
 export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000}){
   assert(env,'An explicit fixture environment is required')
   const group=process.platform!=='win32'
-  const child=spawn(binary,args,{cwd,env,detached:group,windowsHide:true,stdio:[shutdown?'pipe':'ignore','pipe','pipe']})
+  const child=spawnFixtureChild(binary,args,{cwd,env,detached:group,windowsHide:true,stdio:[shutdown?'pipe':'ignore','pipe','pipe']})
   const startedBy=new Date()
   let output='',stdout='',error
   const closed=new Promise(resolve=>{

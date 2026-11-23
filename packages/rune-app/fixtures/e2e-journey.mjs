@@ -6,7 +6,7 @@ import {parseArgs} from 'node:util'
 import {setTimeout as delay} from 'node:timers/promises'
 import {clientBinary, requireTestSupport, serverBinary} from './fixture-binaries.mjs'
 import {journeyBrowser} from './journey-browser.mjs'
-import {withJourneyHost,assertPrivateChild} from './journey-host.mjs'
+import {withJourneyHost,assertPrivateChild,credentialVariable} from './journey-host.mjs'
 import {fixtureSystemEnvironment} from './private-profile.mjs'
 import {launchFixture} from './fixture-host.mjs'
 
@@ -23,7 +23,10 @@ const codenomad=path.basename(path.dirname(root))==='worktrees'?path.resolve(roo
 const evidence=path.join(codenomad,'cargo-targets','e2e-journey')
 // esbuild's worker and any OS helper inherit only this allowlist.
 const system=assertPrivateChild(fixtureSystemEnvironment())
-for(const key of Object.keys(process.env))if(!Object.hasOwn(system,key))delete process.env[key]
+const stripped=Object.keys(process.env).filter(key=>!Object.hasOwn(system,key))
+for(const key of stripped)delete process.env[key]
+const filtered=stripped.filter(credentialVariable).sort()
+if(filtered.length)console.error(`Fixture filtered environment variables: ${JSON.stringify(filtered)}`)
 await mkdir(evidence,{recursive:true})
 
 async function journeyDesktop({origin,password,project,profile,env},report){

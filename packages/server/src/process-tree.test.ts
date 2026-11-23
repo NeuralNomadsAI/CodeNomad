@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { once } from "node:events"
 import { test } from "node:test"
-import { dotNetTicks, parseWindowsProcessRows, processTreeRows, stopWindowsProcessTree, windowsTreeStopTargets } from "./process-tree"
+import { dotNetTicks, fixtureWindowsTreeTargets, parseWindowsProcessRows, processTreeRows, stopWindowsProcessTree, windowsTreeStopTargets } from "./process-tree"
 
 // 300 (cmd) and its child 301 (houdini) were started by a launcher that exited; the root's
 // child 200 then received the launcher's ID. Both orphans still name 200 as their parent.
@@ -73,4 +73,16 @@ test("Windows tree stop ends a spawned wrapper and its descendant", { skip: proc
     try { process.kill(nested) } catch {}
     child.kill()
   }
+})
+test("orphan discovery excludes older children and descendants of a reused root PID", () => {
+  const owner = { beforeSpawn: 1000, afterSpawn: 1001, exitedBy: 1080 }
+  const rows = [
+    { pid: 10, parentPid: 5, startedAt: dotNetTicks(1085) },
+    { pid: 20, parentPid: 10, startedAt: dotNetTicks(900) },
+    { pid: 21, parentPid: 10, startedAt: dotNetTicks(1050) },
+    { pid: 22, parentPid: 21, startedAt: dotNetTicks(1095) },
+    { pid: 23, parentPid: 10, startedAt: dotNetTicks(1090) },
+  ]
+  assert.deepEqual(fixtureWindowsTreeTargets(10, 5, rows, owner).map(row => row.pid), [21, 22])
+  assert.deepEqual(fixtureWindowsTreeTargets(10, 5, rows.slice(1), owner).map(row => row.pid), [21, 22])
 })

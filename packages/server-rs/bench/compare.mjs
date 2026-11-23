@@ -2,14 +2,13 @@
 // Two isolated daemons, the TS server of this checkout on one and Rust on the other; each mode
 // runs the same sequence on both servers and requires identical observations.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { copyFile, cp, lstat, mkdir, writeFile } from "node:fs/promises"
 import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { chromium } from "playwright"
-import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
+import { spawnFixtureChild, stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
 import { dropRegistration, fromDist, installMissions, installPruning, measurePair, memory, out, privateGit, productRuntime, provisionEnv, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
@@ -160,10 +159,10 @@ async function start(label, fixture, folder, password, trustedCA) {
   const relay = await bench?.nativeRelay?.(fixture)
   if (relay) env.CNRS_FIXTURE_URL = relay.url
   const child = label === "ts"
-    ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
+    ? spawnFixtureChild(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-no-update", "--ui-dir", uiDir, "--config", env.CLI_CONFIG, "--workspace-root", folder],
       { env, cwd: root, windowsHide: true, stdio: [scripted ? "pipe" : "ignore", "pipe", "pipe"] })
-    : spawn(rust, rustArgs, { env, cwd: root, windowsHide: true, stdio: [scripted || serve ? "pipe" : "ignore", "pipe", "pipe"] })
+    : spawnFixtureChild(rust, rustArgs, { env, cwd: root, windowsHide: true, stdio: [scripted || serve ? "pipe" : "ignore", "pipe", "pipe"] })
   const stopped = new Promise(resolve => child.once("close", resolve))
   let output = "", spawnError
   child.on("error", error => { spawnError = error })
@@ -175,9 +174,11 @@ async function start(label, fixture, folder, password, trustedCA) {
       child.stdin.end("codenomad:shutdown\n", () => {})
       await Promise.race([stopped, delay(15_000, undefined, { ref: false })])
     }
-    if (!spawnError && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, stopped)
-    await relay?.close()
-    await dropRegistration(fixture.env, child.pid)
+    try {
+      if (!spawnError) await stopFixtureChild(child, stopped)
+    } finally {
+      try { await relay?.close() } finally { await dropRegistration(fixture.env, child.pid) }
+    }
     const leaked = (bench?.secrets?.() ?? []).filter(secret => output.includes(secret))
     const safe = leaked.reduce((text, secret) => text.replaceAll(secret, "<redacted>"), output)
     await writeFile(path.join(out, `${mode}-${label}.log`), safe.replaceAll(password, "<redacted>").replaceAll(env.CNRS_FIXTURE_PASSWORD, "<redacted>"))

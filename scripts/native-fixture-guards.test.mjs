@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { fixturePaginationGuard, stopFixtureChild, clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
+import { fixturePaginationGuard, spawnFixtureChild, stopFixtureChild, clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
 import { execFileSync, spawn } from "node:child_process"
 import { once } from "node:events"
 import fs from "node:fs"
@@ -42,6 +42,30 @@ test("Windows fixture cleanup stops a descendant even after graceful parent exit
   await stopFixtureChild(root, stopped, 3000, 2000, { close: () => root.stdin.end(), startedBy })
   assert.equal(root.exitCode, 0)
   assert.throws(() => process.kill(descendant, 0), { code: "ESRCH" })
+})
+
+test("Windows cleanup finds a grandchild after the root has already exited", { skip: process.platform !== "win32", timeout: 75_000 }, async () => {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(path|systemroot|windir)$/i.test(key)))
+  const middleScript = `
+    const {spawn} = require("node:child_process")
+    const leaf = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {detached:true,windowsHide:true,stdio:"ignore"})
+    leaf.once("spawn", () => console.log(JSON.stringify([process.pid,leaf.pid])))
+    setInterval(() => {}, 1000)
+  `
+  const root = spawnFixtureChild(process.execPath, ["-e", `
+    const {spawn} = require("node:child_process")
+    const middle = spawn(process.execPath, ["-e", ${JSON.stringify(middleScript)}], {detached:true,windowsHide:true,stdio:["ignore","pipe","ignore"]})
+    middle.stdout.once("data", data => process.stdout.write(data, () => process.exit(0)))
+  `], { env, windowsHide: true, stdio: ["ignore", "pipe", "inherit"] })
+  const stopped = once(root, "close")
+  const [data] = await once(root.stdout, "data")
+  const descendants = JSON.parse(data.toString())
+  await stopped
+  assert.equal(root.exitCode, 0)
+  try {
+    for (const pid of descendants) assert.doesNotThrow(() => process.kill(pid, 0), `orphan ${pid} must outlive root ${root.pid}`)
+  } finally { await stopFixtureChild(root, stopped) }
+  for (const pid of descendants) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" })
 })
 
 test("Missions native fixtures stop their owned serve with bounded escalation", () => {

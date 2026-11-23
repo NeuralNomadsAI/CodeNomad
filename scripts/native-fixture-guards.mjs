@@ -1,6 +1,17 @@
 // Guards for isolated fixture-owned children and native acceptance pagination.
-import { execFile } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { promisify } from "node:util"
+
+const lifetimes = new WeakMap()
+// Capture the spawn interval before the OS can lose the root's process row.
+export function spawnFixtureChild(command, args, options) {
+  const beforeSpawn = Date.now()
+  const child = spawn(command, args, options)
+  const lifetime = { beforeSpawn, afterSpawn: Date.now() }
+  lifetimes.set(child, lifetime)
+  child.once("exit", () => { lifetime.exitedBy = Date.now() })
+  return child
+}
 
 export function clearFixtureGitEnvironment(environment = process.env) {
   for (const key of Object.keys(environment)) if (/^GIT_/i.test(key)) delete environment[key]
@@ -25,12 +36,31 @@ async function stopOwnedTree(child, stopped, graceMs, { close, group, startedBy 
   const { captureWindowsProcessTree, stopCapturedWindowsProcesses, processTreeRows } =
     await import("../packages/server/src/process-tree.ts")
   if (process.platform === "win32") {
-    const targets = await captureWindowsProcessTree(child.pid, process.pid, observed)
-    if (!targets.length && child.exitCode === null && child.signalCode === null) {
+    const lifetime = lifetimes.get(child)
+    const wasAlive = child.exitCode === null && child.signalCode === null
+    if (!lifetime && !wasAlive) return
+    let targets = await captureWindowsProcessTree(child.pid, process.pid, observed, lifetime)
+    const alive = child.exitCode === null && child.signalCode === null
+    if (!lifetime && !alive) return
+    if (!targets.length && alive) {
       throw new Error(`Could not attest fixture-owned Windows process ${child.pid}`)
     }
-    if (!startedBy && (child.exitCode !== null || child.signalCode !== null)) return
-    await graceful()
+    if (alive) {
+      await graceful()
+      if (lifetime) {
+        const captured = new Map(targets.map(row => [`${row.pid}:${row.startedAt}`, row]))
+        let snapshotError
+        const latest = await captureWindowsProcessTree(child.pid, process.pid, observed, lifetime)
+          .catch(error => { snapshotError = error; return [] })
+        for (const row of latest) {
+          captured.set(`${row.pid}:${row.startedAt}`, row)
+        }
+        targets = [...captured.values()]
+        await stopCapturedWindowsProcesses(targets)
+        if (snapshotError) throw snapshotError
+        return
+      }
+    }
     await stopCapturedWindowsProcesses(targets)
     return
   }
@@ -63,7 +93,7 @@ async function stopOwnedTree(child, stopped, graceMs, { close, group, startedBy 
 
 export async function stopFixtureChild(child, stopped, graceMs = 1_000, forceMs = 2_000, options = {}) {
   let treeError
-  if (child.pid && child.spawnfile && (options.group || (child.exitCode === null && child.signalCode === null))) {
+  if (child.pid && child.spawnfile && (process.platform === "win32" || options.group || (child.exitCode === null && child.signalCode === null))) {
     try { await stopOwnedTree(child, stopped, graceMs, options) } catch (error) { treeError = error }
   }
   if (child.exitCode != null || child.signalCode != null) {
