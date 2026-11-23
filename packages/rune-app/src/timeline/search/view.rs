@@ -252,25 +252,21 @@ pub(crate) fn panel(s: &State) -> Option<El> {
                             let (title, slug) = match model.labels.get(&hit.session) {
                                 Some(Some((title, slug))) => (title.as_str(), Some(slug.as_str())),
                                 Some(None) => (t("history.sessionUnavailable"), None),
-                                None => launch
-                                    .and_then(|l| {
-                                        let row =
-                                            l.sessions.iter().find(|r| r.id == hit.session)?;
-                                        Some((
-                                            row.title.as_str(),
-                                            l.listed_sessions
-                                                .contains(&hit.session)
-                                                .then_some("root"),
-                                        ))
-                                    })
-                                    .unwrap_or((untitled, None)),
+                                None => (
+                                    launch
+                                        .and_then(|l| {
+                                            l.sessions.iter().find(|r| r.id == hit.session)
+                                        })
+                                        .map_or(untitled, |row| row.title.as_str()),
+                                    None,
+                                ),
                             };
                             let title = if title.is_empty() { untitled } else { title };
-                            let branch =
+                            let worktree =
                                 slug.and_then(|slug| crate::git::history_worktree(s, slug));
-                            rune::text(branch.map_or_else(
+                            rune::text(worktree.map_or_else(
                                 || title.to_owned(),
-                                |branch| format!("{title} · {branch}"),
+                                |label| format!("{title} · {label}"),
                             ))
                             .text_role(TextRole::Label)
                         })

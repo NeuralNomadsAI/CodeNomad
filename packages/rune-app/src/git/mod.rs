@@ -26,7 +26,12 @@ pub(crate) fn history_worktree<'a>(s: &'a crate::State, slug: &str) -> Option<&'
         .trees
         .iter()
         .find(|tree| tree.slug == slug && !tree.missing)?;
-    Some(tree.branch.as_deref().unwrap_or(&tree.slug))
+    Some(
+        tree.label
+            .as_deref()
+            .or(tree.branch.as_deref())
+            .unwrap_or(&tree.slug),
+    )
 }
 
 use crate::platform::{collation::Collation, reads::Reads};

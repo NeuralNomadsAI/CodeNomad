@@ -222,7 +222,10 @@ const upstream=createServer(async(req,res)=>{
     if(url.pathname==='/api/event') {
       if(mobile?.held){res.statusCode=503;return json({})}
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
-      streams.add(res);req.on('close',()=>streams.delete(res));return
+      streams.add(res)
+      const heartbeat=webSearch||webTimeline?setInterval(()=>res.write(': heartbeat\n\n'),15_000):undefined
+      req.on('close',()=>{clearInterval(heartbeat);streams.delete(res)})
+      return
     }
     if((webMobile||compare)&&req.method==='GET'&&url.pathname==='/api/command')return json({data:[]})
     if(compare){
@@ -522,7 +525,7 @@ try{
       deviceLease=androidLease(androidDevice(androidEnv),uiOrigin)
       await deviceLease.open()
     }
-    client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
+    client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
     if(webAndroid)clientClosed=new Promise(resolve=>client.once('close',resolve))
     const handleMobileAction=async action=>{
       try{

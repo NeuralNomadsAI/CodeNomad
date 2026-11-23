@@ -257,13 +257,11 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
     }
     if changed && model.ranked {
-        let launch = s.screen.launcher();
         let model = &mut s.transcript_display.timeline.search;
         let ids = model
             .page()
             .into_iter()
             .flat_map(|page| &page.hits)
-            .filter(|hit| !launch.is_some_and(|l| l.listed_sessions.contains(&hit.session)))
             .map(|hit| hit.session.clone())
             .collect();
         model.labels.update(ids);
