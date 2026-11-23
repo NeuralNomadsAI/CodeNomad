@@ -353,6 +353,24 @@ impl ShutdownCoordinator {
         true
     }
 
+    fn prepare_client_state_release(
+        &self,
+        queue: &client_state::IpcQueue,
+        client_state: &client_state::ClientState,
+    ) -> Result<(), Vec<(String, u64)>> {
+        if !queue.seal_and_drain_until(Instant::now() + IPC_DRAIN_TIMEOUT) {
+            eprintln!("[tauri] shutdown canceled: client state IPC did not drain");
+            return Err(self.cleanup_failed(|| queue.reopen()));
+        }
+        client_state.prepare_ownership_release().map_err(|error| {
+            eprintln!("[tauri] shutdown canceled: {error}");
+            self.cleanup_failed(|| {
+                client_state.resume_window_captures();
+                queue.reopen();
+            })
+        })
+    }
+
     fn cleanup_failed(&self, reopen: impl FnOnce()) -> Vec<(String, u64)> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         #[cfg(windows)]
@@ -870,23 +888,15 @@ fn start_cleanup(app: AppHandle) {
             return;
         }
         let queue = app.state::<client_state::IpcQueue>();
-        if !queue.seal_and_drain_until(Instant::now() + IPC_DRAIN_TIMEOUT) {
-            eprintln!("[tauri] shutdown canceled: client state IPC did not drain");
-            let cancellations = coordinator.cleanup_failed(|| queue.reopen());
+        let client_state = app.state::<client_state::ClientState>();
+        if let Err(cancellations) = coordinator.prepare_client_state_release(&queue, &client_state) {
             emit_flush_cancellations(&app, cancellations);
             return;
         }
-        let client_state = app.state::<client_state::ClientState>();
         let reopen = || {
             client_state.resume_window_captures();
             queue.reopen();
         };
-        if let Err(error) = client_state.prepare_ownership_release() {
-            eprintln!("[tauri] shutdown canceled: {error}");
-            let cancellations = coordinator.cleanup_failed(reopen);
-            emit_flush_cancellations(&app, cancellations);
-            return;
-        }
         let result = if let Some(state) = app.try_state::<AppState>() {
             retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
                 #[cfg(windows)]

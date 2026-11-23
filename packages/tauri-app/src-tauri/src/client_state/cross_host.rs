@@ -374,15 +374,23 @@ impl Registration {
     }
 
     pub(super) fn is_primary(&self) -> bool {
+        self.verify_primary().unwrap_or(false)
+    }
+
+    pub(super) fn verify_primary(&self) -> Result<bool, String> {
         if self.released || !self.primary {
-            return false;
+            return Ok(false);
         }
-        let shared = read_if_exists(&owner_path(&self.election_directory))
-            .ok()
-            .flatten()
-            .and_then(|value| parse_owner(&value))
-            .is_some_and(|owner| owner == self.owner);
-        let legacy_clear = self
+        let path = owner_path(&self.election_directory);
+        let Some(value) = read_if_exists(&path)? else {
+            return Ok(false);
+        };
+        let owner = parse_owner(&value)
+            .ok_or_else(|| format!("invalid cross-host owner record {}", path.display()))?;
+        if owner != self.owner {
+            return Ok(false);
+        }
+        let legacy_blocked = self
             .legacy_electron_data
             .as_deref()
             .map(|path| {
@@ -394,10 +402,12 @@ impl Registration {
                     expected_electron_process,
                 )
             })
-            .transpose()
-            .map(|blocked| !blocked.unwrap_or(false))
+            .transpose()?
             .unwrap_or(false);
-        shared && legacy_clear
+        if legacy_blocked {
+            return Err("legacy Electron markers prevent verifying client-state ownership".into());
+        }
+        Ok(true)
     }
 
     pub(super) fn release(&mut self) -> Result<bool, String> {

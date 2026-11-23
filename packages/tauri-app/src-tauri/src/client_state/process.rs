@@ -210,16 +210,18 @@ impl ProcessState {
     }
 
     pub(super) fn is_primary(&self) -> bool {
-        self.has_primary_lock()
-            && self
-                .cross_host_registration
-                .lock()
-                .map(|registration| {
-                    registration
-                        .as_ref()
-                        .is_some_and(cross_host::Registration::is_primary)
-                })
-                .unwrap_or(false)
+        self.verify_primary().unwrap_or(false)
+    }
+
+    pub(super) fn verify_primary(&self) -> Result<bool, String> {
+        if self.primary_lock.lock().map_err(|err| err.to_string())?.is_none() {
+            return Ok(false);
+        }
+        self.cross_host_registration
+            .lock()
+            .map_err(|err| err.to_string())?
+            .as_ref()
+            .map_or(Ok(false), cross_host::Registration::verify_primary)
     }
 
     pub(super) fn is_registered(&self) -> bool {

@@ -61,6 +61,63 @@ fn timeout_and_failed_cleanup_discard_installer_and_permit_a_fresh_check() {
 }
 
 #[test]
+fn unreadable_owner_with_unsynced_root_cancels_update_quit_and_reopens_admission() {
+    use std::fs;
+    use std::sync::atomic::AtomicBool;
+
+    let directory = tempfile::tempdir().unwrap();
+    let fail_sync = Arc::new(AtomicBool::new(false));
+    let check = fail_sync.clone();
+    let state = client_state::ClientState::initialize_at_with_publication_checks(
+        directory.path(),
+        || Ok(()),
+        move || {
+            if check.swap(false, Ordering::SeqCst) {
+                return Err("injected directory sync failure".into());
+            }
+            Ok(())
+        },
+    )
+    .unwrap();
+    fail_sync.store(true, Ordering::SeqCst);
+    let request = serde_json::from_value(serde_json::json!({ "section": "speech" })).unwrap();
+    let error = state.set_preferences(Some(request)).unwrap_err();
+    assert!(error.contains("durability unconfirmed"));
+    let root = fs::read_to_string(directory.path().join("client-state.json")).unwrap();
+    assert!(root.contains(r#""section":"speech""#));
+
+    let owner = directory.path().join(".cross-host-election/primary.owner.json/owner.json");
+    let backup = owner.with_extension("backup");
+    fs::rename(&owner, &backup).unwrap();
+    fs::create_dir(&owner).unwrap();
+    assert!(state.can_register_window()); // The local primary lock is still held.
+    assert!(!state.is_primary_process());
+
+    let queue = client_state::IpcQueue::new();
+    let coordinator = ShutdownCoordinator::default();
+    let (update, installed, cancelled) = prepared();
+    let requests = coordinator.begin_update(["one".into()], update).unwrap();
+    assert!(coordinator.acknowledge_global(&requests[0].0, requests[0].1));
+    assert!(coordinator.begin_cleanup());
+    assert_eq!(
+        coordinator.prepare_client_state_release(&queue, &state),
+        Err(requests)
+    );
+    assert!(coordinator.with_navigation_authority(|| ()).is_some());
+    queue.enqueue(Box::new(|| {})).unwrap();
+    assert_eq!(installed.load(Ordering::SeqCst), 0);
+    assert_eq!(cancelled.load(Ordering::SeqCst), 1);
+
+    fs::remove_dir(&owner).unwrap();
+    fs::rename(&backup, &owner).unwrap();
+    assert!(state.is_primary_process());
+    assert!(coordinator.begin_shutdown(Vec::<String>::new()).is_some());
+    assert!(coordinator.begin_cleanup());
+    coordinator.prepare_client_state_release(&queue, &state).unwrap();
+    assert!(coordinator.state.lock().unwrap().update.is_none());
+}
+
+#[test]
 fn an_existing_quit_cannot_be_converted_to_an_update() {
     let coordinator = ShutdownCoordinator::default();
     coordinator.begin_shutdown(["one".into()]).unwrap();
