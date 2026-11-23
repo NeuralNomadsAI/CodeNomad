@@ -5,7 +5,7 @@ use std::{mem::size_of, sync::Arc};
 mod reasoning;
 mod tool_live;
 mod user;
-pub use reasoning::{Reasoning, ReasoningEvent, apply as apply_reasoning};
+pub use reasoning::{Reasoning, ReasoningEvent, apply_window as apply_reasoning};
 pub use tool_live::install as install_tool;
 pub(crate) use tool_live::{Fit as ToolFit, apply as apply_tool};
 pub(crate) use user::digest as attachment_digest;
@@ -204,7 +204,8 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
                     (Part::Reasoning(live), Part::Reasoning(fetched))
                         if fetched.provenance != TextProvenance::Closed
                             && live.text.starts_with(&fetched.text)
-                            && live.text.len() > fetched.text.len() =>
+                            && (live.text.len() > fetched.text.len()
+                                || live.units > fetched.units) =>
                     {
                         *fetched = live.clone();
                     }
@@ -297,7 +298,6 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 }));
             }
         } else if part["type"] == "reasoning" {
-            charge(&mut resident, part["text"].as_str().map_or(0, str::len))?;
             result.push(Part::Reasoning(reasoning::decode(
                 part,
                 reasoning_ordinal,
@@ -400,6 +400,16 @@ pub fn bytes(parts: &[Part]) -> usize {
                 Part::File(f) => file_bytes(f),
             })
             .sum::<usize>()
+}
+
+pub(crate) fn reasoning_bytes(parts: &[Part]) -> usize {
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            Part::Reasoning(part) => Some(part.text.len()),
+            _ => None,
+        })
+        .sum()
 }
 
 pub(crate) fn tool_text_bytes(parts: &[Part]) -> usize {

@@ -7,6 +7,8 @@ use serde_json::Value;
 pub struct Reasoning {
     pub ordinal: usize,
     pub text: String,
+    pub units: usize,
+    pub retained_units: usize,
     pub provenance: TextProvenance,
     pub created: Option<u64>,
     pub completed: Option<u64>,
@@ -29,8 +31,30 @@ pub enum ReasoningEvent {
     },
 }
 
-pub fn apply(row: &mut Message, event: &ReasoningEvent) -> TextFit {
-    const LIVE_BYTES: usize = 256 * 1024;
+pub fn apply_window(rows: &mut [crate::history::Row], id: &str, event: &ReasoningEvent) -> TextFit {
+    let Some(index) = rows.iter().position(|row| row.id == id) else {
+        return TextFit::Repair;
+    };
+    let outside: usize = rows
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != index)
+        .map(|(_, row)| super::reasoning_bytes(&row.parts))
+        .sum();
+    let row_bytes = super::reasoning_bytes(&rows[index].parts);
+    let budget = crate::history::WINDOW_BYTES
+        .saturating_sub(outside)
+        .min(crate::history::MAX_BYTES.max(row_bytes));
+    apply(std::sync::Arc::make_mut(&mut rows[index]), event, budget)
+}
+
+impl Reasoning {
+    pub fn visible(&self) -> bool {
+        self.units > self.retained_units || !self.text.trim().is_empty()
+    }
+}
+
+fn apply(row: &mut Message, event: &ReasoningEvent, capacity: usize) -> TextFit {
     if row.role != "assistant" || row.completed {
         return TextFit::Drop;
     }
@@ -53,6 +77,8 @@ pub fn apply(row: &mut Message, event: &ReasoningEvent) -> TextFit {
             row.parts.push(Part::Reasoning(Reasoning {
                 ordinal,
                 text: String::new(),
+                units: 0,
+                retained_units: 0,
                 provenance: TextProvenance::Live,
                 created: Some(*at),
                 completed: None,
@@ -63,6 +89,15 @@ pub fn apply(row: &mut Message, event: &ReasoningEvent) -> TextFit {
     if ordinal.saturating_add(1) < count {
         return TextFit::Drop;
     }
+    let other_bytes: usize = row
+        .parts
+        .iter()
+        .filter_map(|part| match part {
+            Part::Reasoning(part) if part.ordinal != ordinal => Some(part.text.len()),
+            _ => None,
+        })
+        .sum();
+    let budget = capacity.saturating_sub(other_bytes);
     let Some(part) = row.parts.iter_mut().rev().find_map(|part| match part {
         Part::Reasoning(part) if part.ordinal == ordinal => Some(part),
         _ => None,
@@ -73,13 +108,21 @@ pub fn apply(row: &mut Message, event: &ReasoningEvent) -> TextFit {
         return TextFit::Drop;
     }
     match event {
-        ReasoningEvent::Delta { text, .. }
-            if part.text.len().saturating_add(text.len()) <= LIVE_BYTES =>
-        {
-            part.text.push_str(text)
+        ReasoningEvent::Delta { text, .. } => {
+            if part.retained_units == part.units {
+                let cut = text
+                    .floor_char_boundary(text.len().min(budget.saturating_sub(part.text.len())));
+                part.retained_units += text[..cut].encode_utf16().count();
+                part.text.push_str(&text[..cut]);
+            }
+            part.units = part.units.saturating_add(text.encode_utf16().count());
         }
-        ReasoningEvent::End { at, text, .. } if text.len() <= LIVE_BYTES => {
-            part.text.clone_from(text);
+        ReasoningEvent::End { at, text, .. } => {
+            let cut = text.floor_char_boundary(text.len().min(budget));
+            part.text.clear();
+            part.text.push_str(&text[..cut]);
+            part.retained_units = part.text.encode_utf16().count();
+            part.units = text.encode_utf16().count();
             part.completed = Some(*at);
             part.provenance = TextProvenance::Closed;
         }
@@ -95,6 +138,8 @@ pub(super) fn decode(part: &Value, ordinal: usize, row_completed: bool) -> Reaso
     Reasoning {
         ordinal,
         text: text.into(),
+        units: text.encode_utf16().count(),
+        retained_units: text.encode_utf16().count(),
         provenance: if row_completed || completed.is_some() {
             TextProvenance::Closed
         } else if text.is_empty() {
@@ -162,14 +207,47 @@ fn live_reasoning_keeps_the_same_ordinal_until_the_authoritative_end() {
         "session.reasoning.ended",
         json!({"ordinal":0,"text":"Final thought"}),
     );
-    assert_eq!(apply(&mut row, &delta), TextFit::Repair);
-    assert_eq!(apply(&mut row, &start), TextFit::Applied);
-    assert_eq!(apply(&mut row, &start), TextFit::Drop);
-    assert_eq!(apply(&mut row, &delta), TextFit::Applied);
-    assert_eq!(apply(&mut row, &end), TextFit::Applied);
-    assert_eq!(apply(&mut row, &delta), TextFit::Drop);
+    assert_eq!(apply(&mut row, &delta, 1024), TextFit::Repair);
+    assert_eq!(apply(&mut row, &start, 1024), TextFit::Applied);
+    assert_eq!(apply(&mut row, &start, 1024), TextFit::Drop);
+    assert_eq!(apply(&mut row, &delta, 1024), TextFit::Applied);
+    assert_eq!(apply(&mut row, &end, 1024), TextFit::Applied);
+    assert_eq!(apply(&mut row, &delta, 1024), TextFit::Drop);
     assert_eq!(row.body, "Reply");
     assert!(
         matches!(&row.parts[..], [Part::Reasoning(r)] if r.ordinal == 0 && r.text == "Final thought" && r.provenance == TextProvenance::Closed)
     );
+}
+
+#[cfg(test)]
+#[test]
+fn live_reasoning_grows_past_256_kib_and_counts_unretained_units() {
+    use serde_json::json;
+    let mut row = crate::history::decode_message(&json!({"id":"step","type":"assistant"})).unwrap();
+    let capacity = 320 * 1024 + 1;
+    assert_eq!(
+        apply(
+            &mut row,
+            &ReasoningEvent::Start { ordinal: 0, at: 1 },
+            capacity
+        ),
+        TextFit::Applied
+    );
+    for text in [
+        "a".repeat(256 * 1024),
+        "b".repeat(64 * 1024),
+        "🦀".into(),
+        "c".into(),
+    ] {
+        assert_eq!(
+            apply(
+                &mut row,
+                &ReasoningEvent::Delta { ordinal: 0, text },
+                capacity
+            ),
+            TextFit::Applied
+        );
+    }
+    assert!(matches!(&row.parts[..], [Part::Reasoning(part)]
+        if part.text.len() == 320 * 1024 && part.units == 320 * 1024 + 3));
 }

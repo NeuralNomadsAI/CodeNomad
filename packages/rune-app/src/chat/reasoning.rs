@@ -16,9 +16,45 @@ pub(crate) fn block_key(message: &str, ordinal: usize) -> String {
     format!("reasoning-{message}:{ordinal}")
 }
 
+/// Resolve a rail run to the first displayed fragment of its visible segment.
+pub(crate) fn run_anchor(
+    message: &crate::Message,
+    omitted: std::ops::Range<usize>,
+    run: usize,
+    continuation: bool,
+) -> Option<String> {
+    use crate::content::Part;
+    let mut next = 0;
+    let mut current = None;
+    let mut emitted = false;
+    for (index, part) in message.parts.iter().enumerate() {
+        match part {
+            Part::Reasoning(part) if part.visible() => {
+                let ordinal = *current.get_or_insert_with(|| {
+                    let ordinal = next;
+                    next += 1;
+                    emitted = false;
+                    ordinal
+                });
+                if ordinal == run && !omitted.contains(&index) {
+                    let resumed = emitted && index >= omitted.end && !omitted.is_empty();
+                    if (!emitted || resumed) && continuation == resumed {
+                        return Some(block_key(&message.id, part.ordinal));
+                    }
+                    emitted = true;
+                }
+            }
+            Part::Reasoning(_) => {}
+            Part::Text(text) if text.text.trim().is_empty() => {}
+            _ => current = None,
+        }
+    }
+    None
+}
+
 pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> Option<El> {
     let mut reasoning = parts.iter().filter_map(|part| match part {
-        crate::content::Part::Reasoning(part) if !part.text.trim().is_empty() => Some(part),
+        crate::content::Part::Reasoning(part) if part.visible() => Some(part),
         _ => None,
     });
     let first = reasoning.next()?;
@@ -93,17 +129,33 @@ pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> 
 
 fn body(s: &State, key: &str, part: &Reasoning) -> El {
     markdown::tool_pane(
-        document::window(
+        document::window_with_total(
             s,
             format!("{key}-body"),
-            &[part.text.trim()],
+            &[&part.text],
             document::TOOL_LIMIT,
-            |shown, _| {
-                text(shown)
-                    .full_width()
-                    .wrap()
-                    .content_direction()
-                    .selectable(true)
+            Some((part.retained_units, part.units)),
+            |shown, units| {
+                let build = || {
+                    text(shown)
+                        .full_width()
+                        .wrap()
+                        .content_direction()
+                        .selectable(true)
+                };
+                if part.provenance != TextProvenance::Closed && units > document::TOOL_LIMIT {
+                    markdown::hold_frame(
+                        format!("{key}-stream"),
+                        (
+                            s.transcript_display.stream_version(),
+                            s.transcript_display.steps(&format!("{key}-body")),
+                            std::rc::Rc::as_ptr(&s.input_scope) as usize,
+                        ),
+                        build,
+                    )
+                } else {
+                    build()
+                }
             },
         ),
         false,
@@ -151,4 +203,91 @@ fn reasoning_group_uses_native_block_keys_and_reveals_its_parts() {
     let tree = rt.accessibility_json().to_string();
     assert!(tree.contains("First private thought") && tree.contains("Second private thought"));
     assert!(tree.contains("Public reply"));
+}
+
+#[cfg(test)]
+#[test]
+fn rail_reasoning_ordinals_count_visible_runs_not_fragments() {
+    use serde_json::json;
+    let row = crate::history::decode_message(&json!({"id":"step","type":"assistant","content":[
+        {"type":"reasoning","text":""},
+        {"type":"reasoning","text":"A"},
+        {"type":"text","text":"Reply"},
+        {"type":"reasoning","text":"B"}
+    ]}))
+    .unwrap();
+    assert_eq!(run_anchor(&row, 0..0, 0, false), Some(block_key("step", 1)));
+    assert_eq!(run_anchor(&row, 0..0, 1, false), Some(block_key("step", 2)));
+    assert_eq!(run_anchor(&row, 0..2, 0, false), None);
+}
+
+#[cfg(test)]
+#[test]
+fn live_reasoning_updates_the_counter_and_coalesces_long_revealed_text() {
+    use crate::{content::ReasoningEvent, transport::Event};
+    use rune::{Env, Runtime};
+    use serde_json::json;
+    let long = "Sample reasoning line. ".repeat(550);
+    let row = crate::history::decode_message(&json!({
+        "id":"step","type":"assistant","content":[{"type":"reasoning","text":long}]
+    }))
+    .unwrap();
+    let (out, incoming) = crate::bounded(8);
+    let mut s = crate::init();
+    s.messages.push(row.into());
+    s.incoming = Some(incoming);
+    s.phase = crate::Phase::Streaming;
+    Display::toggle(&mut s, "reasoning-step:0");
+    let mut rt = Runtime::new(s, crate::view, (960.0, 800.0), Env::new(false, 1.0));
+    rt.poll = Some(crate::poll);
+    rt.frame(0.0);
+    let notice = |rt: &Runtime<State>| {
+        rt.elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("reasoning-step:0-body-notice"))
+            .unwrap()
+            .text
+    };
+    let before = notice(&rt);
+    let append = |text: &str| {
+        out.try_send(Event::Reasoning(
+            "step".into(),
+            ReasoningEvent::Delta {
+                ordinal: 0,
+                text: text.into(),
+            },
+        ))
+        .unwrap()
+    };
+    append(" FIRST");
+    rt.frame(0.01);
+    assert_ne!(notice(&rt), before);
+    rt.update(|s, _| Display::reveal_next(s, "reasoning-step:0-body"));
+    rt.frame(0.01);
+    let rendered = |rt: &Runtime<State>| {
+        rt.elements()
+            .into_iter()
+            .filter_map(|e| e.text)
+            .any(|text| text.contains("WAITING-TAIL"))
+    };
+    append(" WAITING-TAIL");
+    rt.frame(0.01);
+    assert!(!rendered(&rt));
+    rt.frame(0.21);
+    assert!(rendered(&rt));
+    out.try_send(Event::Reasoning(
+        "step".into(),
+        ReasoningEvent::End {
+            ordinal: 0,
+            at: 1000,
+            text: "Settled final reasoning".into(),
+        },
+    ))
+    .unwrap();
+    rt.frame(0.01);
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("Settled final reasoning")
+    );
 }

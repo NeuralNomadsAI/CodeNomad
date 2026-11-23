@@ -70,7 +70,7 @@ impl Backend {
     }
     pub async fn page(&self, target: Value) -> Result<Page> {
         // Match the broker's window envelope; other endpoints retain their own limits.
-        history::decode(
+        history::decode_target(
             read_json_limited(
                 self.client
                     .post(format!(
@@ -88,6 +88,7 @@ impl Backend {
                 history::WINDOW_BYTES,
             )
             .await?,
+            &target,
         )
     }
     pub async fn empty(&self) -> Result<Page> {
@@ -191,7 +192,14 @@ impl Backend {
                 return Err("history cursor did not advance".into());
             }
             let next = self.page(target).await?;
-            let joined = history::join(&result.rows, &next.rows)?;
+            let joined = match history::join(&result.rows, &next.rows) {
+                Err(error) if error.is::<history::ReasoningLimit>() => {
+                    let mut latest = self.page(json!({"kind":"latest"})).await?;
+                    self.read_running(&mut latest).await?;
+                    return Ok(latest);
+                }
+                result => result?,
+            };
             if joined.len() <= result.rows.len() {
                 return Err("history page did not advance".into());
             }

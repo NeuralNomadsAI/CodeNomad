@@ -615,12 +615,7 @@ pub(crate) async fn run_with_reading(
                         else {
                             continue;
                         };
-                        match resident
-                            .iter_mut()
-                            .find(|row| row.id == id)
-                            .map_or(TextFit::Repair, |row| {
-                                content::apply_reasoning(Arc::make_mut(row), &event)
-                            }) {
+                        match content::apply_reasoning(&mut resident, &id, &event) {
                             TextFit::Applied => {
                                 history::check(&resident)?;
                                 reader_event(

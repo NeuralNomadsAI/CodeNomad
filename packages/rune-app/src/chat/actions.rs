@@ -132,6 +132,9 @@ impl Display {
                         matches!(part, crate::content::Part::Text(t)
                     if t.provenance != crate::content::TextProvenance::Closed
                     && t.text.encode_utf16().nth(super::document::TOOL_LIMIT).is_some())
+                            || matches!(part, crate::content::Part::Reasoning(t)
+                            if t.provenance != crate::content::TextProvenance::Closed
+                                && t.units > super::document::TOOL_LIMIT)
                     })
             });
         }

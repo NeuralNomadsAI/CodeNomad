@@ -77,6 +77,10 @@ impl std::fmt::Display for AnchorMissing {
 impl std::error::Error for AnchorMissing {}
 
 pub fn decode(v: Value) -> Result<Page> {
+    decode_target(v, &Value::Null)
+}
+
+pub(crate) fn decode_target(v: Value, target: &Value) -> Result<Page> {
     if v["status"] == "blocked" && v["reason"] == "anchor_missing" {
         return Err(AnchorMissing.into());
     }
@@ -96,7 +100,7 @@ pub fn decode(v: Value) -> Result<Page> {
             return Err("native history window exceeds its bound".into());
         }
     }
-    let rows = native
+    let mut rows = native
         .iter()
         .map(|value| decode_message(value).map(Arc::new))
         .collect::<Result<Vec<_>>>()?;
@@ -110,17 +114,86 @@ pub fn decode(v: Value) -> Result<Page> {
             running = false;
         }
     }
-    let newer = cursor(&v["newer"], "after")?;
+    let mut newer = cursor(&v["newer"], "after")?;
     if v["latest"].as_bool() != Some(newer.is_none()) {
         return Err("inconsistent latest marker".into());
     }
+    let mut older = cursor(&v["older"], "before")?;
+    // The wire window has a fixed size. Keep a smaller contiguous reader window
+    // around the requested row; a single large native row must remain readable.
+    if !rows.is_empty() {
+        let anchor = target["messageID"]
+            .as_str()
+            .and_then(|id| rows.iter().position(|row| row.id == id))
+            .unwrap_or_else(|| match target["kind"].as_str() {
+                Some("oldest" | "after") => 0,
+                _ => rows.len() - 1,
+            });
+        let bias_older = !matches!(target["kind"].as_str(), Some("oldest" | "after"));
+        let (start, end) = reasoning_window(&rows, anchor, bias_older, &target["kind"]);
+        if end < rows.len() {
+            newer = Some(serde_json::json!({"kind":"after","messageID":rows[end - 1].id}));
+        }
+        if start > 0 {
+            older = Some(serde_json::json!({"kind":"before","messageID":rows[start].id}));
+        }
+        rows.truncate(end);
+        rows.drain(..start);
+    }
     Ok(Page {
         rows,
-        older: cursor(&v["older"], "before")?,
+        older,
         newer,
         running,
         user_file_references: v["userFiles"] == crate::attachments::USER_FILES_REFERENCE,
     })
+}
+
+fn reasoning_window(rows: &[Row], anchor: usize, bias_older: bool, kind: &Value) -> (usize, usize) {
+    let (mut start, mut end) = (anchor, anchor + 1);
+    // A continuation retains its overlap anchor and makes progress.
+    start -= usize::from(kind == "before" && start > 0);
+    end += usize::from(kind == "after" && end < rows.len());
+    let mut left = MAX_BYTES.saturating_sub(reasoning_bytes(&rows[start..end]));
+    loop {
+        let previous = (start, end);
+        for take_older in [bias_older, !bias_older] {
+            let index = if take_older {
+                start.checked_sub(1)
+            } else {
+                (end < rows.len()).then_some(end)
+            };
+            if let Some(index) = index {
+                let weight = crate::content::reasoning_bytes(&rows[index].parts);
+                if weight <= left {
+                    left -= weight;
+                    if take_older {
+                        start -= 1;
+                    } else {
+                        end += 1;
+                    }
+                }
+            }
+        }
+        if previous == (start, end) {
+            return previous;
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ReasoningLimit;
+impl std::fmt::Display for ReasoningLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("resident reasoning exceeds its bound")
+    }
+}
+impl std::error::Error for ReasoningLimit {}
+
+fn reasoning_bytes(rows: &[Row]) -> usize {
+    rows.iter()
+        .map(|row| crate::content::reasoning_bytes(&row.parts))
+        .sum()
 }
 fn stored_size(row: &mut Value) -> Result<usize> {
     struct Count(usize);
@@ -151,11 +224,15 @@ pub fn check(rows: &[Row]) -> Result<()> {
             .map(|r| {
                 r.body.len() + crate::content::bytes(&r.parts)
                     - crate::content::attachment_bytes(&r.parts)
+                    - crate::content::reasoning_bytes(&r.parts)
             })
             .sum::<usize>()
             > MAX_BYTES
     {
         return Err("resident history limit reached".into());
+    }
+    if reasoning_bytes(rows) > WINDOW_BYTES {
+        return Err(ReasoningLimit.into());
     }
     if rows
         .iter()
@@ -219,4 +296,33 @@ pub(crate) fn previous_page(page: &Page, shown: &[Row]) -> Result<()> {
         return Err("history windows lost their overlap".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn reasoning_heavy_windows_keep_the_tail_and_restore_the_requested_anchor() {
+    use serde_json::json;
+    let text = "R".repeat(90 * 1024);
+    let rows: Vec<_> = (0..100)
+        .map(|i| {
+            json!({
+                "id":format!("step-{i}"), "type":"assistant", "time":{"completed":i},
+                "content":[{"type":"reasoning","text":text},{"type":"text","text":"Reply"}]
+            })
+        })
+        .collect();
+    let payload = json!({"status":"window","latest":true,"messages":rows});
+    let latest = decode_target(payload.clone(), &json!({"kind":"latest"})).unwrap();
+    assert_eq!(latest.rows.last().unwrap().id, "step-99");
+    assert!(latest.older.is_some() && latest.newer.is_none());
+    assert!(reasoning_bytes(&latest.rows) <= MAX_BYTES && latest.rows.len() < 100);
+    let anchored = decode_target(payload, &json!({"kind":"around","messageID":"step-50"})).unwrap();
+    let saved = anchored
+        .rows
+        .iter()
+        .find(|row| row.id == "step-50")
+        .unwrap();
+    assert!(matches!(&saved.parts[0], crate::content::Part::Reasoning(part) if part.text == text));
+    assert!(anchored.older.is_some() && anchored.newer.is_some());
+    assert!(reasoning_bytes(&anchored.rows) <= MAX_BYTES);
 }
