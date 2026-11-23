@@ -100,25 +100,35 @@ impl Placement {
     async fn ready(&self, app: &App, id: &str, session: &str) -> Option<&str> {
         let directory = self.source["location"]["directory"].as_str()?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        crate::sessions::pending::await_plugin(
-            app,
-            crate::sessions::pending::SESSION_PRUNING_PLUGIN,
-            directory,
-            deadline,
-        )
-        .await
-        .ok()?;
-        crate::extensions::lifecycle::ready(directory, deadline).await.ok()?;
+        prepare(app, directory, deadline).await?;
         self.current(app, id, session).await.then_some(directory)
     }
 }
 
-async fn rpc(
+pub(super) async fn prepare(app: &App, directory: &str, deadline: tokio::time::Instant) -> Option<()> {
+    crate::sessions::pending::await_plugin(app, crate::sessions::pending::SESSION_PRUNING_PLUGIN, directory, deadline)
+        .await
+        .ok()?;
+    crate::extensions::lifecycle::ready(directory, deadline).await.ok()
+}
+
+pub(super) async fn rpc(
     app: &App,
     endpoint: &crate::opencode::Endpoint,
     directory: &str,
     method: &str,
     input: &Value,
+) -> Result<(Status, Bytes), ()> {
+    rpc_with_timeout(app, endpoint, directory, method, input, Duration::from_secs(10)).await
+}
+
+pub(super) async fn rpc_with_timeout(
+    app: &App,
+    endpoint: &crate::opencode::Endpoint,
+    directory: &str,
+    method: &str,
+    input: &Value,
+    timeout: Duration,
 ) -> Result<(Status, Bytes), ()> {
     let response = app
         .native
@@ -127,7 +137,7 @@ async fn rpc(
         .basic_auth("opencode", Some(&endpoint.password))
         .query(&[("location[directory]", directory)])
         .json(&json!({"input": input}))
-        .timeout(Duration::from_secs(10))
+        .timeout(timeout)
         .send()
         .await
         .map_err(|_| ())?;
@@ -155,6 +165,9 @@ pub async fn handle(
     Path((id, action)): Path<(String, String)>,
     req: Request,
 ) -> Result<Response, Error> {
+    if matches!(action.as_str(), "query" | "ranked") {
+        return super::history_search::handle(app, principal, id, &action, req).await;
+    }
     let reference =
         action == "window" && req.headers().get("x-codenomad-user-files").is_some_and(|v| v == user_files::REFERENCE);
     let (method, limit) = match action.as_str() {

@@ -15,7 +15,7 @@ import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "history-bytes", "attachment-history", "workspace-claims", "agent-controls", "remote-session-controls", "static-assets", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
+const MODES = ["http", "files", "contract", "history-bytes", "history-search", "attachment-history", "workspace-claims", "agent-controls", "remote-session-controls", "static-assets", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
 MODES.push("provider-logins")
 if (["prompt-admission", "command-admission"].includes(mode)) {
@@ -54,7 +54,9 @@ const { resolveConfigLocation } = await fromDist("config/location.js")
 const shots = path.join(out, "screenshots", mode)
 await mkdir(shots, { recursive: true })
 
-const { withProductRuntime, remove: removeRuntime } = await productRuntime({ holdProvider: bench?.holdProvider })
+const { withProductRuntime, remove: removeRuntime } = await productRuntime({
+  holdProvider: bench?.holdProvider, gitCeiling: mode !== "history-search",
+})
 
 const HTTP_TIMEOUT = 20000
 const STARTUP_TIMEOUT = Number(process.env.CNRS_BENCH_STARTUP_TIMEOUT_MS ?? 25000)
@@ -495,7 +497,7 @@ try {
       result.daemons = [ts.status, rs.status]
       // Attachment history opens and authenticates its own workspaces. Pending
       // question recovery belongs to the general qualification, not this mode.
-      if (mode !== "attachment-history") await qualify(ts, rs, password, rsRoot)
+      if (!["attachment-history", "history-search"].includes(mode)) await qualify(ts, rs, password, rsRoot)
       if (mode === "solid") return await solid({ ts, rs, local, remote, tsRoot, rsRoot, password })
       const hosts = []
       for (const host of [ts, rs]) {
