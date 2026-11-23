@@ -39,6 +39,8 @@ Le contrôle `--web-mobile --same-origin-pairing` ouvre les liens sans page réf
 
 `node packages/rune-app/fixtures/launcher-fixture.mjs --web-android` utilise Chrome et le clavier logiciel d'un émulateur Android jetable déjà démarré, avec `RUNE_ANDROID_ADB` (chemin absolu), `RUNE_ANDROID_ADB_PORT` (serveur ADB privé) et `RUNE_ANDROID_SERIAL` (unique `emulator-*`). Le parcours suit un lien d'appairage externe, ouvre la conversation, défile via un geste Android, injecte un texte par CDP puis l'envoie via l'interface. Le banc coupe l'amont SSE et redémarre le serveur Rust sans recharger le document. `android-proof.json` contient les temps au premier contenu, les intervalles rAF du geste et la PSS des processus Chrome. Le cache HTTP est désactivé et le certificat de fixture épinglé. La dictée, la composition propre à Gboard et TalkBack gardent leurs essais distincts.
 
+Pour une comparaison, régler `RUNE_ANDROID_COMPARE=1` dans les deux modes, et `RUNE_ANDROID_SOLID_DIR` sur le répertoire du build Solid uniquement pour Solid. Le serveur Rust de qualification sert les deux builds sur son listener HTTPS. `RUNE_ANDROID_TRACE=display` ajoute un deuxième geste pour mesurer les images présentées par Chrome ; `RUNE_ANDROID_TRACE=1` produit la trace détaillée et les compteurs Rune.
+
 Les libellés de démarrage et d'erreur proviennent des dix catalogues générés. `?locale=he` sélectionne par exemple l'hébreu et la direction RTL ; la valeur par défaut est `fr`. Les couleurs, dimensions et polices du démarrage consomment le thème généré et `crates/rune-theme-codenomad/assets/web-shell.css`. Le zoom du navigateur reste disponible.
 
 ### Créer un lien sur l'hôte Rust

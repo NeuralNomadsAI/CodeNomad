@@ -16,38 +16,53 @@ export async function chromeMemory(run,cdp) {
     jsHeapUsedBytes:metrics.find(row=>row.name==='JSHeapUsedSize')?.value}
 }
 
-export async function scrollMeasure(page,swipe) {
-  const sample=()=>page.evaluate(()=>{
+export async function scrollMeasure(page,swipe,selector='[data-rune-a11y] p') {
+  const sample=()=>page.evaluate(selector=>{
     const viewport=visualViewport.height
-    return [...document.querySelectorAll('[data-rune-a11y] p')]
+    return [...document.querySelectorAll(selector)]
       .filter(el=>el.textContent.startsWith('Mobile history row '))
       .map(el=>[el.textContent,Math.round(el.getBoundingClientRect().top)])
       .filter(([,y])=>y>=130&&y<viewport-180)
-  })
+  },selector)
   const before=await sample()
   assert(before.length,'The private transcript must be painted before measuring scroll')
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(now=>{
     const samples=[]
     let last=now
-    globalThis.__runeAndroidScroll={samples,stop:false}
+    const controller=new AbortController()
+    const state=globalThis.__runeAndroidScroll={samples,stop:false,controller}
+    document.addEventListener('touchstart',event=>{
+      state.start=event.timeStamp
+      const transcript=event.target.closest?.('.message-stream')
+      state.point={x:event.touches[0].clientX,y:event.touches[0].clientY,
+        transcript:Boolean(transcript),tag:event.target.tagName,
+        ...(transcript?{top:transcript.scrollTop,extent:transcript.scrollHeight-transcript.clientHeight}:{}),
+      }
+      if(globalThis.__runeAndroidTracing)performance.mark('android-touch-start')
+    },
+      {capture:true,passive:true,once:true,signal:controller.signal})
     const frame=at=>{
-      samples.push(at-last);last=at
-      if(!globalThis.__runeAndroidScroll.stop&&samples.length<240)requestAnimationFrame(frame)
+      samples.push([last,at]);last=at
+      if(!state.stop&&samples.length<240)requestAnimationFrame(frame)
     }
     requestAnimationFrame(frame)
     resolve()
   })))
   await swipe()
   const after=await sample()
-  const frames=await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>{
+  const timing=await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>{
     const state=globalThis.__runeAndroidScroll
     state.stop=true
-    resolve(state.samples.slice(1))
+    state.controller.abort()
+    resolve({started:Number.isFinite(state.start),point:state.point,
+      frames:state.samples.filter(([from,to])=>to>=state.start&&from<state.start+480).map(([from,to])=>to-from)})
   })))
-  assert.notDeepEqual(before,after,'The native Android swipe must move the visible transcript')
+  const {started,frames,point}=timing
+  assert(started,'The native Android touch must reach the page')
+  assert.notDeepEqual(before,after,`The native Android swipe must move the visible transcript: ${JSON.stringify(point)}`)
   assert(frames.length>=5,'The swipe must produce a usable frame sample')
   frames.sort((a,b)=>a-b)
-  return {before,after,frames:frames.length,p50Ms:frames[Math.floor(frames.length*0.5)],
+  return {before,after,point,frames:frames.length,p50Ms:frames[Math.floor(frames.length*0.5)],
     p95Ms:frames[Math.min(frames.length-1,Math.floor(frames.length*0.95))],maxMs:frames.at(-1),
     over25Ms:frames.filter(ms=>ms>25).length}
 }
