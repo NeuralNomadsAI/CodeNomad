@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { fileURLToPath } from "node:url"
 import { borrowFixture } from "./fixture-borrow"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, webkit, type Browser } from "playwright"
 
 let browser: Browser, url: string
@@ -16,6 +16,7 @@ before(async () => {
     url = fixture.url
     browser = await (process.env.CODENOMAD_TEST_BROWSER === "webkit" ? webkit : chromium)
       .launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+    armFixtureNavigationBudget(browser)
   } catch (error) { throw error }
 })
 after(async () => { try { await browser?.close() } finally { } })

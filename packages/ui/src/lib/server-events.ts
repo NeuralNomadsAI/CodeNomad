@@ -49,6 +49,9 @@ export class ServerEvents {
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private connectionValidator?: (signal: AbortSignal) => Promise<boolean>
   private validation?: AbortController
+  private queuedEvents: WorkspaceEventPayload[] = []
+  private frame: number | undefined
+  private frameFallback?: ReturnType<typeof setTimeout>
   private watchdog = createStreamStalenessWatchdog({
     onStale: () => this.restart("stream stale"),
   })
@@ -123,7 +126,7 @@ export class ServerEvents {
         onBatch: (events) => {
           if (generation !== this.connectGeneration) return
           this.watchdog.activity()
-          this.dispatchBatch(events)
+          this.enqueueBatch(events)
         },
         onError: () => {
           if (generation !== this.connectGeneration) {
@@ -135,6 +138,8 @@ export class ServerEvents {
           if (generation !== this.connectGeneration) {
             return
           }
+          this.flushBatch()
+          if (this.disposed || generation !== this.connectGeneration) return
           if (status === "connected") opening = [...this.openHandlers]
           this.emitTransportStatus(status)
         },
@@ -271,6 +276,35 @@ export class ServerEvents {
     })
   }
 
+  private enqueueBatch(events: WorkspaceEventPayload[]) {
+    if (typeof requestAnimationFrame !== "function") {
+      this.dispatchBatch(events)
+      return
+    }
+    this.queuedEvents.push(...events)
+    if (this.queuedEvents.length >= 64) {
+      this.flushBatch()
+      return
+    }
+    if (this.frame !== undefined) return
+    this.frame = requestAnimationFrame(() => this.flushBatch())
+    // Hidden renderers still need to apply native updates.
+    this.frameFallback = setTimeout(() => this.flushBatch(), 32)
+  }
+
+  private takeBatch() {
+    if (this.frame !== undefined) cancelAnimationFrame(this.frame)
+    if (this.frameFallback !== undefined) clearTimeout(this.frameFallback)
+    this.frame = this.frameFallback = undefined
+    const events = this.queuedEvents
+    this.queuedEvents = []
+    return events
+  }
+
+  private flushBatch() {
+    this.dispatchBatch(this.takeBatch())
+  }
+
   private emitTransportStatus(status: WorkspaceEventTransportStatus) {
     this.notify(this.statusHandlers, status, "transport-status")
   }
@@ -308,6 +342,9 @@ export class ServerEvents {
 
   restart(reason = "manual restart"): void {
     if (this.disposed) return
+    const previousGeneration = this.connectGeneration
+    this.flushBatch()
+    if (this.disposed || previousGeneration !== this.connectGeneration) return
     const generation = ++this.connectGeneration
     this.validation?.abort()
     this.retryDelay = RETRY_BASE_DELAY
@@ -329,6 +366,7 @@ export class ServerEvents {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.takeBatch()
     this.connectGeneration++
     this.validation?.abort()
     this.clearReconnectTimer()

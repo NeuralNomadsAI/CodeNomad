@@ -24,7 +24,7 @@ function harness(persisted = true) {
     activeWindowId: windowId,
     claimClientStateAccess: (token: unknown, id: string) => { calls.push(`claim:${token}:${id}`); return true },
     assertRendererAccessToken: (token: unknown, id: string) => calls.push(`assert:${token}:${id}`),
-    loadClientState: (id: string) => { calls.push(`load:${id}`); return { isPrimary: true } },
+    loadClientStateForRenderer: (id: string) => { calls.push(`load:${id}`); return { isPrimary: true } },
     saveClientState: () => true,
     commitClientStatePartitions: () => true,
     loadClientStatePartition: () => null,
@@ -87,7 +87,7 @@ test("two local renderers claim and use independent window tokens", async () => 
   } }, {
     claimClientStateAccess: (token: unknown, id: string) => { calls.push(`claim:${id}:${token}`); return true },
     assertRendererAccessToken: (token: unknown, id: string) => calls.push(`assert:${id}:${token}`),
-    loadClientState: (id: string) => { calls.push(`load:${id}`); return {} },
+    loadClientStateForRenderer: (id: string) => { calls.push(`load:${id}`); return {} },
   } as never, (sender) => records.find((record) => record.webContents === (sender as never)) as never, () => ["http://127.0.0.1:3000"])
   for (const [record, token] of [[first, "one"], [second, "two"]] as const) {
     const event = { sender: record.webContents, senderFrame: record.frame }

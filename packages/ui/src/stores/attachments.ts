@@ -8,6 +8,10 @@ interface SessionAttachmentState {
 
 const [attachments, setAttachments] = createSignal<Map<string, SessionAttachmentState>>(new Map())
 
+export function trackSessionAttachmentChanges(): void {
+  attachments()
+}
+
 const getSessionKey = (instanceId: string, sessionId: string) => `${instanceId}:${sessionId}`
 
 function setSession(instanceId: string, sessionId: string, state?: SessionAttachmentState) {

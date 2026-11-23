@@ -246,6 +246,8 @@ try {
     }
   })
   const click = name => activateControl(page,page.getByRole('button',{name,exact:true}),{timeout:15000})
+  const afterPaint = () => page.evaluate(() => new Promise(resolve =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve))))
   const radio = name => page.getByRole('radio',{name,exact:true})
   const visible = name => page.getByText(name,{exact:true}).waitFor({state:'attached',timeout:15000})
   await page.goto(`http://127.0.0.1:${server.address().port}/?locale=en`)
@@ -434,14 +436,22 @@ try {
     }
     assert.fail(`Missing editable field: ${label}`)
   }
-  await edit('Title','Edited project memory')
+  const editedTitle = 'Edited project memory'
+  await edit('Title',editedTitle)
+  // The DOM input updates before Rune draws the dirty form. The pinned mirror
+  // exposes Save even while disabled; the counter confirms the edited frame.
+  await visible(`${[...editedTitle].length}/60`)
   const save = page.getByRole('button',{name:'Save',exact:true}).and(page.locator(':not([disabled], [aria-disabled="true"])'))
   await save.click({force:true,timeout:15000})
   await page.getByRole('button',{name:'Edited project memory',exact:true}).waitFor({state:'attached'})
   await click('Edited project memory')
+  // The mirror publishes a new modal before Rune paints its pointer hit regions.
+  await visible('Excluded from agent context')
+  await afterPaint()
   await click('Forget')
   await visible('Forget “Edited project memory”?')
   assert(!reviews.some(({operation})=>operation.action==='delete'),'Forget needs confirmation')
+  await afterPaint()
   await page.getByRole('button',{name:'Forget',exact:true}).last().click({force:true})
   await visible('No memories yet')
   assert.equal(reviews.filter(({operation})=>operation.action==='save').length,1)
@@ -493,6 +503,7 @@ try {
   await click('Tidy up')
   await visible('Review and tidy “About you” in a new project session?')
   assert.equal(cleanupCreates,0,'No session before consent')
+  await afterPaint()
   await page.getByRole('button',{name:'Tidy up',exact:true}).last().click({force:true})
   await page.waitForFunction(()=>document.body.innerText.includes('Cleanup could not be confirmed.'))
   assert.equal(cleanupCreates,1)

@@ -15,6 +15,9 @@ test("native plugin builds never embed a second Effect runtime or OpenCode adapt
     const inputs = Object.keys(result.metafile.inputs).map(value => value.replaceAll("\\", "/"))
     assert.equal(inputs.some(value => /node_modules\/(?:effect|@opencode\/plugin)\//.test(value)), false, entry)
     assert(result.outputFiles[0].text.includes("desktopPlugin"), entry)
+    if (entry === "missions/managed-owner-plugin") {
+      assert(inputs.some(value => value.endsWith("/jsonc-parser/lib/esm/impl/parser.js")), "The Missions bundle includes the JSONC parser implementation")
+    }
     if (entry === "session-pruning/desktop-plugin") {
       assert(result.outputFiles[0].text.includes('name: "session_search"'))
       assert(result.outputFiles[0].text.includes("codemode: true"))

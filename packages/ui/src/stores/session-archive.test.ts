@@ -95,14 +95,17 @@ test("a late archive acknowledgement cannot refresh a replacement attachment on 
 
 test("native archive events fence metadata reads started before the event", async t => {
   const f = await fixture(t), stale = f.info()
+  let reads = 0
   let entered!: () => void, release!: (value: unknown) => void
   const ready = new Promise<void>(resolve => { entered = resolve })
-  f.client.session.get = () => { entered(); return new Promise(resolve => { release = resolve }) }
+  f.client.session.get = () => { reads++; entered(); return new Promise(resolve => { release = resolve }) }
   const event = (type: string, created: number) => ({ id: `evt_${crypto.randomUUID()}`, type, created,
     location: { directory: "/work" }, data: { sessionID: "session" }, durable: { aggregateID: "session", seq: created, version: 1 } })
   handleNativeSessionEvent(f.id, event("session.forked", 2) as any)
   await ready
+  handleNativeSessionEvent(f.id, event("session.forked", 2.5) as any)
   handleNativeSessionEvent(f.id, event("session.archived", 3) as any)
+  assert.equal(reads, 1, "equivalent native metadata demand shares the in-flight request")
   release(stale)
   await new Promise(resolve => setTimeout(resolve, 10))
   assert.equal(f.current()?.time.archived, 3)
