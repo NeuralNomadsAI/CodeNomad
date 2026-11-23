@@ -14,8 +14,20 @@ export type ProjectSessionListOptions = ProjectSessionListInput & {
   limit?: typeof PROJECT_SESSION_LIST_LIMIT
 }
 
+const directoryKeys = new Map<string, string>()
+
 export function normalizeSessionDirectory(directory: string | null | undefined): string {
-  const trimmed = directory?.trim()
+  if (!directory) return ""
+  const cached = directoryKeys.get(directory)
+  if (cached !== undefined) return cached
+  const key = computeDirectoryKey(directory)
+  if (directoryKeys.size === 2048) directoryKeys.delete(directoryKeys.keys().next().value!)
+  directoryKeys.set(directory, key)
+  return key
+}
+
+function computeDirectoryKey(directory: string): string {
+  const trimmed = directory.trim()
   if (!trimmed) return ""
 
   const slashNormalized = trimmed.replace(/\\/g, "/").replace(/\/+$/, "")

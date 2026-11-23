@@ -407,15 +407,18 @@ impl Ui {
     pub fn confirm_document(&mut self, id: u64, accepted: bool) {
         self.document.confirm(id, accepted, &mut self.reader);
     }
-    pub fn poll(&mut self, now: f64) -> bool {
-        self.clock = now;
-        let mut changed = false;
+    pub(crate) fn observe_document_write(&mut self) -> bool {
         if self.document.take_write() && !self.stopped {
             self.tree.invalidate_all();
             self.pending = None;
             self.due = Some(0.0);
-            changed = true;
+            return true;
         }
+        false
+    }
+    pub fn poll(&mut self, now: f64) -> bool {
+        self.clock = now;
+        let mut changed = self.observe_document_write();
         if self.pending.as_ref().is_some_and(|(due, _)| now >= *due) {
             if let Some((_, changes)) = self.pending.take() {
                 let mut reader_changed = changes.is_none();

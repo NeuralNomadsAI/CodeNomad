@@ -209,7 +209,11 @@ const upstream=createServer(async(req,res)=>{
     if(url.pathname==='/api/event') {
       if(mobile?.held){res.statusCode=503;return json({})}
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
-      streams.add(res);req.on('close',()=>streams.delete(res));return
+      // Match OpenCode's idle heartbeat; only the explicit outage stops this fixture's stream.
+      const heartbeat=setInterval(()=>res.write(': heartbeat\n\n'),15000)
+      streams.add(res)
+      res.on('close',()=>{clearInterval(heartbeat);streams.delete(res)})
+      return
     }
     if((webMobile||compare)&&req.method==='GET'&&url.pathname==='/api/command')return json({data:[]})
     if(compare){

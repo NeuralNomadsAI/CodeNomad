@@ -21,6 +21,7 @@ pub fn fixture(s: &mut State) {
     s.phase = Phase::Ready;
     s.messages = vec![
         Message {
+            usage: None,
             id: "hello".into(),
             role: "user".into(),
             body: "Fixture message".into(),

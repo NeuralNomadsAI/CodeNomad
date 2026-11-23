@@ -16,10 +16,12 @@ mod limits;
 mod mission_events;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+mod notifications;
 mod routing;
 mod sessions;
-pub use catalogue::{CatalogueChanges, CatalogueWatch};
+pub use catalogue::{AttentionHint, CatalogueChanges, CatalogueWatch};
 pub(crate) use children::Children;
+use notifications::session_attention;
 use routing::dispatch;
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_browser.rs"]

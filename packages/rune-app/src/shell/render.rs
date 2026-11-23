@@ -15,6 +15,7 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         if !s.screen.is_launcher() {
             composer::view::overlays(s, &mut layer);
         }
+        shell::notifications::app_layers(s, &mut layer);
         let body = layout::with_overlays(base, layer);
         #[cfg(target_arch = "wasm32")]
         if platform::pairing::required(s) {
@@ -34,5 +35,9 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         }
         body
     })
-    .on_layout_tx(chat::ToolDiffPreferences::layout)
+    .on_window_focus(shell::notifications::focus_changed)
+    .on_layout_tx(|s, bounds, tx| {
+        chat::ToolDiffPreferences::layout(s, bounds, tx);
+        shell::notifications::measure_notices(s, bounds, tx);
+    })
 }

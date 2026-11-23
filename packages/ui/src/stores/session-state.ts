@@ -1,4 +1,5 @@
 import { batch, createSignal } from "solid-js"
+import { carrySessionProjection, childSessionIds, sessionCheckpoint, sessionIndicatorRows, sessionTopology } from "./session-projection"
 import { beginGesture, type SurfaceGesture } from "./session-surface"
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 
@@ -67,6 +68,7 @@ export interface SessionInfo {
   contextAvailableTokens: number | null
 }
 
+// Published workspace maps are snapshots. Replace every changed map.
 const [sessions, setSessions] = createSignal<Map<string, Map<string, Session>>>(new Map())
 const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<string, string>>(new Map())
 const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
@@ -226,7 +228,7 @@ function isSessionSearchLoading(instanceId: string): boolean {
 // always in scope: a session opened explicitly is shown where it was opened.
 // A session a move located elsewhere (`markSessionMovedAway`) is never in scope.
 const NO_SESSIONS: ReadonlyMap<string, Session> = new Map()
-const workspaceScopes = new WeakMap<ReadonlyMap<string, Session>, {
+const workspaceScopes = new WeakMap<object, {
   worktrees: unknown; active?: string; away: unknown; scope: ReadonlySet<string>; unscoped: boolean; folder: string; client: unknown; evidence: unknown
 }>()
 
@@ -241,7 +243,8 @@ function getWorkspaceSessionScope(instanceId: string): ReadonlySet<string> | nul
   const folder = instance?.folder ?? ""
   const client = instance?.client
   const evidence = getSessionPlacementEvidence(instanceId)
-  const cached = workspaceScopes.get(held)
+  const topology = sessionTopology(held)
+  const cached = workspaceScopes.get(topology)
   if (cached && cached.worktrees === worktrees && cached.active === active && cached.away === away
     && cached.unscoped === unscoped && cached.folder === folder && cached.client === client && cached.evidence === evidence) return cached.scope
   const scope = unscoped ? new Set(held.keys())
@@ -249,7 +252,7 @@ function getWorkspaceSessionScope(instanceId: string): ReadonlySet<string> | nul
       id: session.id, parentId: session.parentId, directory: confirmedSessionListDirectory(instanceId, session.id, session) ?? session.location?.directory })),
     folder, worktrees!, active ? [active] : [])
   for (const id of away.keys()) scope.delete(id)
-  workspaceScopes.set(held, { worktrees, active, away, scope, unscoped, folder, client, evidence })
+  workspaceScopes.set(topology, { worktrees, active, away, scope, unscoped, folder, client, evidence })
   return scope
 }
 
@@ -288,8 +291,9 @@ function getListedSessionMap(instanceId: string): ReadonlyMap<string, Session> {
   if (cached && cached.scope === scope && cached.directory === directory) return cached.listed
   const scoped = new Map([...held].filter(([id]) => scope.has(id)))
   const listed = new Map([...scoped].filter(([id]) => getSessionRootFromMap(scoped, id, directory) !== null))
-  listedSessionMaps.set(held, { scope, directory, listed })
-  return listed
+  const result = listed.size === held.size ? held : listed
+  listedSessionMaps.set(held, { scope, directory, listed: result })
+  return result
 }
 
 const indicatorStatuses = new WeakMap<ReadonlyMap<string, Session>, InstanceSessionIndicatorStatus>()
@@ -299,7 +303,7 @@ export function getInstanceSessionIndicatorStatusCached(instanceId: string): Ins
   const cached = indicatorStatuses.get(listed)
   if (cached !== undefined) return cached
   let status: InstanceSessionIndicatorStatus = "idle"
-  for (const session of listed.values()) {
+  for (const session of sessionIndicatorRows(listed).values()) {
     if (session.pendingPermission || session.pendingForm) {
       status = "permission"
       break
@@ -425,6 +429,7 @@ function getSessionDraftPrompt(instanceId: string, sessionId: string): string {
 function writeSessionDraftPrompt(instanceId: string, sessionId: string, value: string) {
   const key = getDraftKey(instanceId, sessionId)
   setSessionDraftPrompts((prev) => {
+    if ((prev.get(key) ?? "") === value) return prev
     const next = new Map(prev)
     if (!value) {
       next.delete(key)
@@ -477,6 +482,11 @@ function getSessionDraftPromptsForInstance(instanceId: string): Record<string, s
     result[key.slice(prefix.length)] = value
   }
   return result
+}
+
+export function trackSessionDraftChanges(): void {
+  sessionDraftPrompts()
+  authoritativeDraftKeys()
 }
 
 function getAuthoritativeSessionIds(keys: ReadonlySet<string>, instanceId: string): ReadonlySet<string> {
@@ -623,7 +633,7 @@ function pruneDraftPrompts(instanceId: string, validSessionIds: Set<string>) {
   })
 }
 
-function withSession(instanceId: string, sessionId: string, updater: (session: Session) => void | boolean) {
+function withSession(instanceId: string, sessionId: string, updater: (session: Session, previous: Readonly<Session>) => void | boolean) {
   setSessions((prev) => {
     const instanceSessions = prev.get(instanceId)
     if (!instanceSessions) return prev
@@ -631,15 +641,68 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
     const current = instanceSessions.get(sessionId)
     if (!current) return prev
 
-    const updatedSession: Session = { ...current }
-    const result = updater(updatedSession)
+    const time = { ...current.time }
+    const location = current.location && { ...current.location }
+    const model = current.model && { ...current.model }
+    const tokens = current.tokens && { ...current.tokens, cache: { ...current.tokens.cache } }
+    const retry = current.retry && { ...current.retry }
+    const updatedSession: Session = { ...current, time, location, model, tokens, retry }
+    const result = updater(updatedSession, current)
     if (result === false) {
       return prev
     }
 
-    const updated = new Map(instanceSessions).set(sessionId, updatedSession)
-    return new Map(prev).set(instanceId, updated)
+    // Preserve unchanged nested identities, including a model object
+    // deliberately replaced by an authoritative selection.
+    if (updatedSession.time === time && shallowFieldsEqual(current.time, time)) updatedSession.time = current.time
+    if (updatedSession.location === location && shallowFieldsEqual(current.location, location)) updatedSession.location = current.location
+    if (updatedSession.model === model && shallowFieldsEqual(current.model, model)) updatedSession.model = current.model
+    if (updatedSession.retry === retry && current.retry && retry && shallowFieldsEqual(current.retry, retry)) updatedSession.retry = current.retry
+    if (updatedSession.tokens === tokens && tokens && current.tokens) {
+      if (shallowFieldsEqual(current.tokens.cache, tokens.cache)) tokens.cache = current.tokens.cache
+      if (shallowFieldsEqual(current.tokens, tokens)) updatedSession.tokens = current.tokens
+    }
+    return replaceSessionRow(prev, instanceId, updatedSession)
   })
+}
+
+function shallowFieldsEqual<T extends object>(a: T, b: T): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  const keys = Object.keys(a) as (keyof T)[]
+  return keys.length === Object.keys(b).length
+    && keys.every(key => Object.prototype.hasOwnProperty.call(b, key) && Object.is(a[key], b[key]))
+}
+
+/** Publish one row while retaining projections that it cannot affect. */
+export function replaceSessionRow(previous: Map<string, Map<string, Session>>, instanceId: string, session: Session) {
+  const instanceSessions = previous.get(instanceId)
+  const sessionId = session.id
+  const updated = new Map(instanceSessions).set(sessionId, session)
+  if (!instanceSessions) return new Map(previous).set(instanceId, updated)
+  const current = instanceSessions.get(sessionId)
+  carrySessionProjection(instanceSessions, updated, current, session)
+  const projection = listedSessionMaps.get(instanceSessions)
+  const previousTopology = sessionTopology(instanceSessions)
+  const nextTopology = sessionTopology(updated)
+  const parent = !current && session.parentId ? instanceSessions.get(session.parentId) : undefined
+  const scope = parent ? workspaceScopes.get(previousTopology) : undefined
+  const sameLocationLeaf = scope && parent && !childSessionIds(instanceSessions, sessionId).length
+    && !getMovedAwaySessions(instanceId).has(sessionId)
+    && (confirmedSessionListDirectory(instanceId, parent.id, parent) ?? parent.location.directory)
+      === (confirmedSessionListDirectory(instanceId, sessionId, session) ?? session.location.directory)
+    && parent.location.directory === session.location.directory
+    && scope.scope.has(parent.id)
+  const extendedScope = sameLocationLeaf && new Set(scope.scope).add(sessionId)
+  if (extendedScope && scope) workspaceScopes.set(nextTopology, { ...scope, scope: extendedScope })
+  if (projection && (previousTopology === nextTopology || (extendedScope && projection.scope === scope?.scope))) {
+    const before = projection.listed
+    const include = before.has(sessionId) || Boolean(extendedScope && parent && before.has(parent.id))
+    const listed = before === instanceSessions ? updated : include ? new Map(before).set(sessionId, session) : before
+    if (listed !== before && listed !== updated) carrySessionProjection(before, listed, current, session)
+    listedSessionMaps.set(updated, { ...projection, scope: extendedScope || projection.scope, listed })
+  }
+  return new Map(previous).set(instanceId, updated)
 }
 
 function setSessionPending(
@@ -965,14 +1028,22 @@ function getSessions(instanceId: string): Session[] {
   return instanceSessions ? Array.from(instanceSessions.values()) : []
 }
 
+export function getSessionCheckpoint(instanceId: string): object {
+  return sessionCheckpoint(sessions().get(instanceId) ?? NO_SESSIONS)
+}
+
+export function getSessionTopology(instanceId: string): object {
+  return sessionTopology(sessions().get(instanceId) ?? NO_SESSIONS)
+}
+
 function getParentSessions(instanceId: string): Session[] {
   const allSessions = getSessions(instanceId)
   return allSessions.filter((s) => getSessionRoot(instanceId, s.id)?.id === s.id)
 }
 
 function getChildSessions(instanceId: string, parentId: string): Session[] {
-  const allSessions = getSessions(instanceId)
-  return allSessions.filter((s) => s.parentId === parentId)
+  const rows = sessions().get(instanceId)
+  return rows ? childSessionIds(rows, parentId).map(id => rows.get(id)!) : []
 }
 
 function getDescendantSessions(instanceId: string, parentId: string): Session[] {
@@ -1004,6 +1075,9 @@ function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: S
 const sessionThreadProjections = new WeakMap<ReadonlyMap<string, Session>, {
   listed: ReadonlyMap<string, Session>; ids: string[]; directory?: string; threads: SessionThread[]
 }>()
+const sessionThreadRoots = new WeakMap<object, {
+  listedTopology: object; ids: string[]; directory?: string; roots: string[]
+}>()
 const EMPTY_SESSION_THREADS: SessionThread[] = []
 
 function getSessionThreads(instanceId: string): SessionThread[] {
@@ -1018,7 +1092,14 @@ function getSessionThreads(instanceId: string): SessionThread[] {
   const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
   const cached = sessionThreadProjections.get(held)
   if (cached && cached.listed === listed && cached.ids === ids && cached.directory === directory) return cached.threads
-  const threads = buildSessionThreadsFromMap(listed, projectSessionListIds(ids, held, directory).filter(id => listed.has(id)), undefined, directory)
+  const topology = sessionTopology(held)
+  const listedTopology = sessionTopology(listed)
+  let rootProjection = sessionThreadRoots.get(topology)
+  if (rootProjection?.listedTopology !== listedTopology || rootProjection.ids !== ids || rootProjection.directory !== directory) {
+    rootProjection = { listedTopology, ids, directory, roots: projectSessionListIds(ids, held, directory).filter(id => listed.has(id)) }
+    sessionThreadRoots.set(topology, rootProjection)
+  }
+  const threads = buildSessionThreadsFromMap(listed, rootProjection.roots, undefined, directory, true)
   sessionThreadProjections.set(held, { listed, ids, directory, threads })
   return threads
 }
@@ -1242,16 +1323,14 @@ function getThreadTotals(instanceId: string, parentSessionId: string): ThreadTot
   return threadTotalsByInstance().get(instanceId)?.get(parentSessionId)
 }
 
-function updateThreadTotalsForParent(instanceId: string, parentSessionId: string): void {
-  const family = getSessionFamily(instanceId, parentSessionId)
-  const totals = computeThreadTotals(family, sessionInfoByInstance().get(instanceId))
-
+function updateThreadTotalsForParents(instanceId: string, parentIds: Iterable<string>): void {
+  const info = sessionInfoByInstance().get(instanceId)
   setThreadTotalsByInstance((prev) => {
-    const next = new Map(prev)
-    const instanceTotals = new Map(next.get(instanceId))
-    instanceTotals.set(parentSessionId, totals)
-    next.set(instanceId, instanceTotals)
-    return next
+    const instanceTotals = new Map(prev.get(instanceId))
+    for (const parentId of parentIds) {
+      instanceTotals.set(parentId, computeThreadTotals(getSessionFamily(instanceId, parentId), info))
+    }
+    return new Map(prev).set(instanceId, instanceTotals)
   })
 }
 
@@ -1259,7 +1338,7 @@ function updateThreadTotalsForSession(instanceId: string, sessionId: string): vo
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions?.has(sessionId)) return
   const familyIds = [...getSessionAncestorIdsFromMap(instanceSessions, sessionId), sessionId]
-  for (const familyId of familyIds) updateThreadTotalsForParent(instanceId, familyId)
+  updateThreadTotalsForParents(instanceId, familyIds)
 }
 
 const automaticCleanupRequests = new Map<string, {
@@ -1363,7 +1442,7 @@ export {
   setSessionInfoByInstance,
   threadTotalsByInstance,
   getThreadTotals,
-  updateThreadTotalsForParent,
+  updateThreadTotalsForParents,
   updateThreadTotalsForSession,
   getSessionDraftPrompt,
   getSessionDraftPromptsForInstance,

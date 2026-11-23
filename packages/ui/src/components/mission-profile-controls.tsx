@@ -9,6 +9,7 @@ import { runtimeEnv } from "../lib/runtime-env"
 import { instances } from "../stores/instances"
 import { getRootClient } from "../stores/opencode-client"
 import { captureBackendOperation } from "../lib/backend-operation"
+import { isCatalogEvent } from "../lib/catalog-events"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { createRequestLocation, requestLocationOptions, toRequestLocation } from "../stores/request-locations"
 import { knownModelName, preferredModelList, rememberModelNames } from "../stores/model-picker"
@@ -45,7 +46,7 @@ export function MissionProfileControls(props: {
   const invalidate = () => { if (demanded()) setRefresh(value => value + 1) }
   const events = serverEvents.on("instance.event", event => {
     if (event.type === "instance.event" && event.instanceId === props.instanceId
-      && ["config.updated", "plugin.updated", "server.connected"].includes(event.event.type)) invalidate()
+      && (["config.updated", "server.connected", "agent.updated"].includes(event.event.type) || isCatalogEvent(event.event.type))) invalidate()
   })
   const reconnect = serverEvents.forInstance(() => props.instanceId).onOpen(invalidate)
   onCleanup(() => { events(); reconnect() })

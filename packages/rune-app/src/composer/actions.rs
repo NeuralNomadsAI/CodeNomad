@@ -153,6 +153,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
                 id,
                 role: "user".into(),
                 body,
+                usage: None,
                 parts,
             }
             .into(),
