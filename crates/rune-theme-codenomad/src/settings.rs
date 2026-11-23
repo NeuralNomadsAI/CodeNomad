@@ -197,6 +197,7 @@ pub fn transcript_popup<S: 'static>(
     trigger: &str,
     label: &str,
     content: El,
+    viewport: &layout::DrawnRect,
     dismiss: impl Fn(&mut S, &mut rune::Tx) + 'static,
 ) -> El {
     let dark = layout::dark();
@@ -216,6 +217,7 @@ pub fn transcript_popup<S: 'static>(
         .child(
             col()
                 .max_h(400.0)
+                .drawn_rect_into(viewport)
                 .scroll(ScrollSpec {
                     stick_bottom: false,
                 })
@@ -234,11 +236,38 @@ pub fn transcript_preset_picker(key: &str, label: &str, options: &[&str]) -> Sel
     picker(key, label, options).width(272.0)
 }
 
+pub enum FilterDrag {
+    Start([f32; 2]),
+    Move([f32; 2]),
+    Release([f32; 2]),
+    Cancel,
+}
+
+pub fn filter_drag<S: 'static>(
+    button: El,
+    change: impl Fn(&mut S, FilterDrag, &mut rune::Tx) + 'static,
+) -> El {
+    button.on_drag(move |s, drag, tx| {
+        let point = drag.window_point();
+        change(
+            s,
+            match drag.phase {
+                rune::Phase::Down => FilterDrag::Start(point),
+                rune::Phase::Move => FilterDrag::Move(point),
+                rune::Phase::Up if drag.cancelled() => FilterDrag::Cancel,
+                rune::Phase::Up => FilterDrag::Release(point),
+            },
+            tx,
+        );
+    })
+}
+
 pub fn transcript_filter_row<S: 'static>(
     label: &str,
     visibility: (&str, bool, impl Fn(&mut S, &mut rune::Tx) + 'static),
     expansion: (&str, bool, impl Fn(&mut S, &mut rune::Tx) + 'static),
     disabled: bool,
+    decorate: impl Fn(El, bool) -> El,
 ) -> El {
     use crate::git_panel::{CHEVRON_DOWN, CHEVRON_RIGHT, EYE, icon_button};
     let (visibility_name, visible, set_visibility) = visibility;
@@ -256,7 +285,7 @@ pub fn transcript_filter_row<S: 'static>(
                 .shrink()
                 .truncate(),
         )
-        .child(
+        .child(decorate(
             icon_button(
                 &EYE,
                 visibility_name,
@@ -265,8 +294,9 @@ pub fn transcript_filter_row<S: 'static>(
                 set_visibility,
             )
             .key("visibility"),
-        )
-        .child(
+            false,
+        ))
+        .child(decorate(
             icon_button(
                 if expanded {
                     &CHEVRON_DOWN
@@ -279,7 +309,8 @@ pub fn transcript_filter_row<S: 'static>(
                 set_expansion,
             )
             .key("expansion"),
-        )
+            true,
+        ))
 }
 
 pub fn render<S, T>(

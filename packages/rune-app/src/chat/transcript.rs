@@ -1,4 +1,4 @@
-use super::{actions::Display, document, tools};
+use super::{actions::Display, document, tool_groups::Groups, tools};
 use crate::{
     State,
     content::{Part, TextProvenance},
@@ -32,12 +32,17 @@ pub(super) fn part_window(len: usize, steps: usize) -> (usize, usize) {
 
 pub fn rows(s: &State) -> El {
     let locale = locale();
+    let groups = Groups::project(s);
     layout::transcript_rows(
         s.messages.len(),
         |s: &State, i| s.messages[i].id.clone().into(),
         move |s: &State, i| {
             crate::strings::with_locale(locale, || {
-                super::reading::row(s, s.messages[i].id.clone(), message(s, i))
+                super::reading::row(
+                    s,
+                    s.messages[i].id.clone(),
+                    message_with_groups(s, i, &groups),
+                )
             })
         },
     )
@@ -45,7 +50,12 @@ pub fn rows(s: &State) -> El {
     .virtual_rows_version(s.revision)
 }
 
+#[cfg(test)]
 pub fn message(s: &State, i: usize) -> El {
+    message_with_groups(s, i, &Groups::project(s))
+}
+
+fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
     let m = &s.messages[i];
     if let Some(context) = context::view(s, m) {
         return context;
@@ -114,8 +124,11 @@ pub fn message(s: &State, i: usize) -> El {
     let mut reveal_start = (head > initial).then(|| head.saturating_sub(PART_LIMIT));
     let mut reasoning_end = 0;
     let mut group_end = 0;
+    let mut hidden_continuation = false;
+    let mut shows_content = m.role == "user" || m.parts.is_empty();
     for (index, part) in m.parts.iter().enumerate() {
         if index == head && head < tail {
+            shows_content = true;
             let hidden = tail - head;
             let notice = catalogue::format(
                 locale(),
@@ -153,73 +166,70 @@ pub fn message(s: &State, i: usize) -> El {
             );
         }
         let visible = index < head || index >= tail;
-        if index < group_end {
+        if index < group_end && matches!(part, Part::Tool(_)) {
             continue;
         }
-        let body =
-            match part {
-                Part::Text(body) => {
-                    let key = format!("fragment-{}:{ordinal}", m.id);
-                    ordinal += 1;
-                    if visible && !body.text.trim().is_empty() {
-                        Some(super::reading::passage(
+        let body = match part {
+            Part::Text(body) => {
+                let key = format!("fragment-{}:{ordinal}", m.id);
+                ordinal += 1;
+                if visible && !body.text.trim().is_empty() {
+                    Some(super::reading::passage(
+                        s,
+                        document::prose(
                             s,
-                            document::prose(
-                                s,
-                                key.clone(),
-                                &body.text,
-                                !m.completed && body.provenance != TextProvenance::Closed,
-                            ),
-                            &m.id,
-                            key,
-                            None,
-                        ))
-                    } else {
-                        None
-                    }
+                            key.clone(),
+                            &body.text,
+                            !m.completed && body.provenance != TextProvenance::Closed,
+                        ),
+                        &m.id,
+                        key,
+                        None,
+                    ))
+                } else {
+                    None
                 }
-                Part::Tool(tool) if visible && tools::visible(s, tool) => {
-                    let limit = if index < head && head < tail {
-                        head
-                    } else {
-                        m.parts.len()
-                    };
-                    match super::tool_groups::view(s, &m.id, &m.parts[index..limit], m.completed) {
-                        Some((group, count)) => {
-                            group_end = index + count;
-                            Some(group)
-                        }
-                        None => Some(super::reading::passage(
-                            s,
-                            tools::view(s, &m.id, tool),
-                            &m.id,
-                            tools::tool_key(&m.id, &tool.id),
-                            Some(crate::settings::TranscriptRow::tool(&tool.name)),
-                        )),
-                    }
+            }
+            Part::Tool(tool) if visible && tools::visible(s, tool) => match groups.get(i, index) {
+                Some(chunk) => {
+                    group_end = chunk.end;
+                    let body = chunk.view(s, &m.id, &m.parts[index..group_end]);
+                    hidden_continuation |= body.is_none();
+                    body
                 }
-                Part::Tool(_) => None,
-                Part::Reasoning(_) if visible && index >= reasoning_end => {
-                    let limit = if index < head && head < tail {
-                        head
-                    } else {
-                        m.parts.len()
-                    };
-                    reasoning_end = index
+                None => Some(super::reading::passage(
+                    s,
+                    tools::view(s, &m.id, tool),
+                    &m.id,
+                    tools::tool_key(&m.id, &tool.id),
+                    Some(crate::settings::TranscriptRow::tool(&tool.name)),
+                )),
+            },
+            Part::Tool(_) => None,
+            Part::Reasoning(_) if visible && index >= reasoning_end => {
+                let limit = if index < head && head < tail {
+                    head
+                } else {
+                    m.parts.len()
+                };
+                reasoning_end = index
                     + m.parts[index..limit]
                         .iter()
-                        .take_while(|part| matches!(part, Part::Reasoning(_))
-                            || matches!(part, Part::Text(text) if text.text.trim().is_empty()))
+                        .take_while(|part| {
+                            matches!(part, Part::Reasoning(_))
+                                || matches!(part, Part::Text(text) if text.text.trim().is_empty())
+                        })
                         .count();
-                    super::reasoning::view(s, &m.id, &m.parts[index..reasoning_end])
-                }
-                Part::Reasoning(_) => None,
-                Part::SubagentReport(_) => None,
-                Part::Skill(skill) if visible => Some(super::attachments::skill_chip(skill)),
-                Part::File(file) if visible => Some(super::attachments::file_chip(s, file)),
-                Part::Skill(_) | Part::File(_) => None,
-            };
+                super::reasoning::view(s, &m.id, &m.parts[index..reasoning_end])
+            }
+            Part::Reasoning(_) => None,
+            Part::SubagentReport(_) => None,
+            Part::Skill(skill) if visible => Some(super::attachments::skill_chip(skill)),
+            Part::File(file) if visible => Some(super::attachments::file_chip(s, file)),
+            Part::Skill(_) | Part::File(_) => None,
+        };
         if let Some(body) = body {
+            shows_content = true;
             if reveal_start.is_some_and(|first| index >= first) {
                 view = view.child(
                     col()
@@ -238,5 +248,9 @@ pub fn message(s: &State, i: usize) -> El {
             }
         }
     }
-    view
+    if hidden_continuation && !shows_content {
+        col().key(m.id.clone())
+    } else {
+        view
+    }
 }

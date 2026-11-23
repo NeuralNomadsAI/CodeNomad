@@ -18,6 +18,7 @@ use rune_theme_codenomad::{
 };
 use serde_json::Value;
 use std::{io, sync::Arc};
+mod apply_patch;
 pub(super) mod children;
 mod clipboard;
 use clipboard::{Section, copy};
@@ -153,7 +154,7 @@ pub(super) fn visible(s: &State, tool: &Tool) -> bool {
 
 pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
     let key = tool_key(message, &tool.id);
-    if matches!(tool.name.as_str(), "execute" | "question")
+    if matches!(tool.name.as_str(), "apply_patch" | "execute" | "question")
         || task::is_task(tool)
         || !tool.pictures.is_empty()
     {
@@ -225,6 +226,8 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         todo::title(tool)
     } else if tool.name == "question" {
         question::title(tool).into()
+    } else if tool.name == "apply_patch" {
+        apply_patch::title(tool)
     } else {
         title(tool)
     };
@@ -253,6 +256,7 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         )
         .child(text(t(status)).text_role(TextRole::Label));
     if has_output
+        || !pending && tool.name == "apply_patch" && apply_patch::has_patch(tool)
         || tool.name == "todowrite"
             && tool.metadata["todos"]
                 .as_array()
@@ -353,7 +357,12 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     } else {
         lang
     };
-    if has_output && !specialized_task {
+    let patch = (!pending && tool.name == "apply_patch")
+        .then(|| apply_patch::view(s, message, key, tool))
+        .flatten();
+    if let Some(patch) = patch {
+        block = block.child(patch);
+    } else if has_output && !specialized_task {
         let formatted = (tool.name == "execute" && tool.status == "completed")
             .then(|| execute::formatted_output(parts[0]))
             .flatten();

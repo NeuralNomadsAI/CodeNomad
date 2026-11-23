@@ -21,11 +21,14 @@ use std::{
 
 const TRIGGER: &str = "transcript-filters-trigger";
 
+mod sweep;
+
 #[derive(Default)]
 pub(super) struct Filters {
     scope: Option<Weak<()>>,
     preset_open: bool,
     last_visible: BTreeMap<TranscriptRow, &'static str>,
+    sweep: sweep::Sweep,
 }
 
 impl Filters {
@@ -40,7 +43,7 @@ pub(crate) fn close(s: &mut State) {
     s.settings.transcript_filters = Filters::default();
 }
 
-pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>) -> El {
+pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>, touch: bool) -> El {
     let scope = Rc::downgrade(&s.input_scope);
     let filters = &s.settings.transcript_filters;
     let open = filters.is_open(&s.input_scope);
@@ -90,7 +93,10 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>) -> El {
             .child(chrome::build_picker(preset, &mut selects))
             .children(TranscriptRow::all().map(|row| {
                 let title = row_label(row);
-                let mode = prefs.transcript_mode(row, true);
+                let mode = filters
+                    .sweep
+                    .mode(row)
+                    .unwrap_or_else(|| prefs.transcript_mode(row, true));
                 let visible = mode != "hidden";
                 let expanded = mode == "expanded";
                 let visibility_name = if row == TranscriptRow::Groups {
@@ -124,30 +130,24 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>) -> El {
                         &visibility_name,
                         visible,
                         screen::action_tx(&s.input_scope, move |s, _| {
-                            let last = &mut s.settings.transcript_filters.last_visible;
-                            let next = if visible {
-                                last.insert(row, mode);
-                                "hidden"
-                            } else {
-                                last.get(&row).copied().unwrap_or("collapsed")
-                            };
-                            s.settings
-                                .shared
-                                .borrow_mut()
-                                .set_transcript(Some(row), next);
+                            sweep::click(s, row, false);
                         }),
                     ),
                     (
                         &expansion_name,
                         expanded,
                         screen::action_tx(&s.input_scope, move |s, _| {
-                            s.settings.shared.borrow_mut().set_transcript(
-                                Some(row),
-                                if expanded { "collapsed" } else { "expanded" },
-                            );
+                            sweep::click(s, row, true);
                         }),
                     ),
                     disabled,
+                    |button, expansion| {
+                        if touch || disabled || expansion && !visible {
+                            button
+                        } else {
+                            filters.sweep.control(s, row, expansion, button)
+                        }
+                    },
                 )
                 .key(format!("filters-{}", row.control_key()))
             }));
@@ -155,6 +155,7 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>) -> El {
             TRIGGER,
             label,
             body,
+            &filters.sweep.viewport,
             |s: &mut State, _| close(s),
         ));
         overlay.extend(selects);

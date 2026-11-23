@@ -11,6 +11,7 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         layout::action_row().child(crate::settings::transcript_filters::trigger(
             s,
             &mut overlays,
+            cx.touch_controls(),
         ))
     });
     let body = rune_theme_codenomad::interruption::session_surface(expanded)

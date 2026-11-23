@@ -1,4 +1,4 @@
-use super::{Tool, error, output, task, todo, tool_key};
+use super::{Tool, apply_patch, error, output, task, todo, tool_key};
 use crate::{State, content::Part, screen, strings::t};
 use rune::El;
 use rune_theme_codenomad::markdown;
@@ -44,6 +44,12 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
                     }
                     if tool.name == "todowrite"
                         && let Some(source) = todo::copy(tool)
+                    {
+                        tx.copy(source);
+                        return;
+                    }
+                    if tool.name == "apply_patch"
+                        && let Some(source) = apply_patch::copy_all(tool)
                     {
                         tx.copy(source);
                         return;

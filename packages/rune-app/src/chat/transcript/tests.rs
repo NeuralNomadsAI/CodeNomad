@@ -3,6 +3,59 @@ use rune::{Env, Runtime};
 use serde_json::json;
 
 #[test]
+fn a_group_spans_native_steps_without_renaming_its_tool_cards() {
+    let decode = |id, name, call| {
+        crate::history::decode_message(&json!({
+            "id":id, "type":"assistant", "time":{"completed":1},
+            "content":[{"type":"tool", "name":name, "id":call, "state":{"status":"completed"}}],
+        }))
+        .unwrap()
+    };
+    let mut s = crate::init();
+    s.messages = [
+        decode("read-turn", "read", "first"),
+        decode("grep-turn", "grep", "second"),
+        decode("shell-turn", "shell", "third"),
+    ]
+    .into_iter()
+    .map(Into::into)
+    .collect();
+    let mut rt = Runtime::new(
+        s,
+        |s, _| {
+            crate::strings::with_locale("en", || {
+                col().children((0..s.messages.len()).map(|i| message(s, i)))
+            })
+        },
+        (960.0, 800.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.02);
+    let group = "toggle-group-tool-read-turn:5:first";
+    assert!(rt.find(group).is_some());
+    assert!(rt.find("toggle-tool-read-turn:5:first").is_none());
+    assert!(rt.find("toggle-tool-grep-turn:6:second").is_none());
+    assert!(rt.find("toggle-tool-shell-turn:5:third").is_some());
+    let (x, y) = rt.find(group).unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(rt.find("toggle-tool-read-turn:5:first").is_some());
+    assert!(rt.find("toggle-tool-grep-turn:6:second").is_some());
+
+    rt.update(|s, _| {
+        let separator = crate::history::decode_message(&json!({
+            "id":"reply", "type":"assistant", "content":[{"type":"text", "text":"A reply."}],
+        }))
+        .unwrap();
+        s.messages.insert(1, separator.into());
+    });
+    rt.frame(0.02);
+    assert!(rt.find(group).is_none());
+    assert!(rt.find("toggle-tool-grep-turn:6:second").is_some());
+}
+
+#[test]
 fn system_context_uses_native_text_and_visibility_without_hiding_compaction() {
     let system = crate::history::decode_message(&json!({
         "type":"system", "id":"native", "text":"Context update *as written*"
