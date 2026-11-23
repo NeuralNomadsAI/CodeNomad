@@ -17,7 +17,16 @@ export type NativeAutomationsSetting = {
   hiddenOff: string[]
 }
 type Env = Readonly<Record<string, string | undefined>>
-export type NativeAutomationsSources = { env: Env; readText(file: string): Promise<string> }
+export type NativeAutomationsSources = { env: Env; readText(file: string): Promise<string>; budget?: Budget }
+/** One flag read inspects at most this much text, references included; beyond it the setting is unknown. */
+type Budget = { bytes: number; references: number }
+const BUDGET_BYTES = 8 * 1024 * 1024, BUDGET_REFERENCES = 64
+const spend = (sources: NativeAutomationsSources, bytes: number, references = 0) => {
+  const budget = sources.budget
+  if (!budget) return
+  budget.bytes += bytes; budget.references += references
+  if (budget.bytes > BUDGET_BYTES || budget.references > BUDGET_REFERENCES) throw unreadable()
+}
 const unreadable = () => new Error("Native automations setting unreadable")
 
 async function readBounded(file: string) {
@@ -54,8 +63,11 @@ async function substitute(text: string, directory: string, sources: NativeAutoma
       if (input.slice(input.lastIndexOf("\n", index - 1) + 1, index).trimStart().startsWith("//")) { out += token; continue }
       const name = token.slice("{file:".length, -1)
       const resolved = path.resolve(directory, name.startsWith("~/") ? path.join(os.homedir(), name.slice(2)) : name)
+      spend(sources, 0, 1)
       const content = await sources.readText(resolved).catch(() => "")
-      out += JSON.stringify(content.trim()).slice(1, -1)
+      const escaped = JSON.stringify(content.trim()).slice(1, -1)
+      spend(sources, escaped.length)
+      out += escaped
     }
     return out + input.slice(cursor)
   }
@@ -88,7 +100,8 @@ export async function legacyAutomationsOff(text: string, directory: string, sour
  * plists and remote (well-known) configuration are administered for the runtime that reads them
  * and are not inspected for the legacy block. Inline config is the highest-priority pathless document. */
 export async function nativeAutomationsSetting(entries: readonly ConfigEntry[], directory: string,
-  sources: NativeAutomationsSources = defaults): Promise<NativeAutomationsSetting> {
+  given: NativeAutomationsSources = defaults): Promise<NativeAutomationsSetting> {
+  const sources = { ...given, budget: { bytes: 0, references: 0 } }
   const flags = (sources.env.OPENCODE_FLAGS ?? "").split(",").map(item => item.trim())
   const inlineText = sources.env[INLINE_CONFIG_SOURCE]
   const documents = [...entries].reverse().flatMap(entry => entry.type === "document" ? [entry] : [])
@@ -102,6 +115,7 @@ export async function nativeAutomationsSetting(entries: readonly ConfigEntry[], 
     if (value !== undefined && typeof value !== "boolean") throw new Error("Native automations setting invalid")
     // Inline `{file:}` references resolve from the Location, as OpenCode resolves them.
     const text = entry.path ? await sources.readText(entry.path) : entry === inlineEntry ? inlineText! : undefined
+    if (text !== undefined) spend(sources, text.length)
     const legacy = text !== undefined && !managedPreferences(text)
       && await legacyAutomationsOff(text, entry.path ? path.dirname(entry.path) : directory, sources)
     const deciding = !decided && (value !== undefined || legacy)

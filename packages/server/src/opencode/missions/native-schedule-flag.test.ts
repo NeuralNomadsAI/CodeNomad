@@ -114,3 +114,11 @@ test("real reads are bounded to 1 MiB on one handle", async t => {
   await writeFile(file, '{"experimental":{"automations":false}}')
   assert.equal((await nativeAutomationsSetting([{ type: "document", path: file, info: {} } as any], directory)).enabled, false)
 })
+test("one flag read bounds its expanded text and references", async () => {
+  const big = "y".repeat(1024 * 1024), readText = async (file: string) => file.endsWith("big") ? big : "x"
+  const config = (count: number, name: string) => `{"experimental":{"automations":false},"a":[${Array.from({ length: count }, () => `"{file:${name}}"`).join(",")}]}`
+  const inline = (text: string) => nativeAutomationsSetting([{ type: "document", info: {} } as any], "/work", { env: { OPENCODE_CONFIG_CONTENT: text }, readText })
+  assert.equal((await inline(config(2, "big"))).enabled, false)
+  await assert.rejects(inline(config(9, "big")), /unreadable/, "a small config repeating a large reference")
+  await assert.rejects(inline(config(65, "small")), /unreadable/, "too many references")
+})
