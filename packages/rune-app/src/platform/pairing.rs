@@ -90,21 +90,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         s.pairing.focus = FocusCheck::new(s.wake.clone());
     } else {
         s.pairing.focus = None;
-        if matches!(
-            s.phase,
-            crate::Phase::WorkspaceMissing | crate::Phase::RestoreFailed
-        ) {
-            crate::launcher::reopen(s);
-        } else if s.commands.is_some() {
-            s.history_error = false;
-            crate::retry_connection(s, tx);
-        } else if let Some(l) = s.screen.launcher() {
-            if l.connection.is_none() {
-                crate::launcher::connect(s, tx);
-            } else {
-                crate::launcher::list(s, false);
-            }
-        }
+        s.history_error = false;
+        crate::retry_connection(s, tx);
     }
     true
 }
@@ -123,10 +110,10 @@ pub fn view(s: &State) -> El {
         .modal(false, |_: &mut State| {})
         .child(text(t("authRecovery.pairingTitle")).text_role(TextRole::Title))
         .child(text(t("rune.pairing_guide")).role("alert"))
-        .child(crate::components::button(
+        .child(crate::components::button_tx(
             "pairing-check",
             t("authRecovery.check"),
             s.pairing.result.is_some(),
-            observe,
+            crate::retry_connection,
         ))
 }

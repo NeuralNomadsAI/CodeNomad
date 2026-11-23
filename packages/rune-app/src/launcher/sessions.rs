@@ -1,6 +1,4 @@
-use super::{
-    Backend, Instant, Launcher, Reply, Session, Sessions, State, TextEdit, Tx, bounded, linked,
-};
+use super::{Backend, Instant, Launcher, Reply, Session, Sessions, State, TextEdit, Tx, bounded};
 use crate::{Phase, catalog::SessionMissing};
 use std::{
     collections::HashSet,
@@ -130,15 +128,10 @@ pub fn list(s: &mut State, more: bool) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
-    if l.show_search && !l.search.text.trim().is_empty() {
+    if !more && l.show_search && !l.search.text.trim().is_empty() {
         l.search_results = Default::default();
-        return;
     }
     if l.pending {
-        return;
-    }
-    if more && l.next.is_none() {
-        linked::load(s, true);
         return;
     }
     if more && !l.can_page() {
@@ -152,9 +145,6 @@ pub fn list(s: &mut State, more: bool) {
             cursor,
         ))
     });
-    if !more {
-        linked::load(s, false);
-    }
 }
 pub fn create(s: &mut State, _: &mut Tx) {
     if !can_change_session(s) {

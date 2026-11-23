@@ -45,10 +45,32 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
       return editor
     }
     await (await focus()).fill(draft)
+    const left=page.getByRole('button',{name:messages['window.menu.leftPanel'],exact:true})
+    const sidebar=page.getByRole('region',{name:messages['window.menu.leftPanel'],exact:true})
+    const search=sidebar.getByRole('button',{name:messages['sessionList.filter.ariaLabel'],exact:true})
+    const hit=async locator=>{
+      const box=await locator.boundingBox();assert(box)
+      await tap(box.x+box.width/2,box.y+box.height/2)
+    }
+    await hit(left)
+    await hit(search)
+    await page.locator('textarea:focus').fill('Another session')
+    await sidebar.getByRole('listitem',{name:'Another session',exact:true}).waitFor()
     const afterTransport=eventSources()
     const previous=[...workspaces]
+    const newHistory=page.waitForResponse(response=>{
+      const match=new URL(response.url()).pathname.match(/^\/api\/workspaces\/([^/]+)\/session-history\/window$/)
+      return match&&!previous.includes(match[1])&&response.ok()&&response.request().postDataJSON()?.sessionID==='ses_existing'
+    },{timeout:45000})
+    void newHistory.catch(()=>{})
     const {older,witness}=await command('restart')
     assert(previous.length&&previous.every(id=>older.includes(id)),'Fixture had the browser-owned workspaces before reboot')
+    assert.equal((await (await newHistory).json()).status,'window','Rebind the conversation while search is open')
+    assert.equal(await search.getAttribute('aria-expanded'),'true','Search must stay open through restart')
+    await hit(search)
+    await sidebar.getByRole('listitem',{name:'Existing history',exact:true}).waitFor({timeout:45000})
+    await sidebar.getByRole('listitem',{name:'Linked checkout next page',exact:true}).waitFor()
+    await hit(left)
     await text('Mobile Rust restart history').waitFor({timeout:45000})
     await connecting.waitFor({state:'hidden'})
     const inventory=await context.request.get(`${url.origin}/api/workspaces`)
@@ -63,11 +85,13 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     assert(eventSources()>afterTransport,'Rust restart must open a new EventSource')
     assert.equal(page.url(),url.href)
     evidence.recoveredAfterRustRestart=true
+    evidence.ordinaryCatalogueAfterClosingSearch=true
     const beforeRevoke=eventSources()
     await command('revoke')
     const dialog=page.getByRole('dialog',{name:messages['authRecovery.pairingTitle']})
     await dialog.waitFor()
     await text(messages['rune.pairing_guide']).waitFor()
+    assert.equal(await dialog.getByRole('textbox').count(),0,'Browser pairing never shows a password form')
     const check=dialog.getByRole('button',{name:messages['authRecovery.check'],exact:true})
     const denied=page.waitForResponse(response=>response.url()===`${url.origin}/api/auth/status`&&response.ok())
     await check.click({force:true})

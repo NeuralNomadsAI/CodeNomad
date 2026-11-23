@@ -242,7 +242,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     crate::workspace::restore_files_mode(s);
                 }
             }
-            linked::load(s, false);
+            linked::load(s);
         }
         Ok(Reply::Listed(rows, cursor)) => {
             if let Some(cursor) = cursor {
@@ -254,11 +254,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             } else if cfg!(target_os = "windows") {
                 l.apply_directory_refresh(rows, selected.as_deref());
                 crate::workspace::schedule_catalogue(s);
+                linked::load(s);
             } else {
                 l.apply_listing(rows, false, selected.as_deref());
                 if l.next.is_none() {
                     l.check_omitted_visits();
                 }
+                linked::load(s);
             }
         }
         Ok(Reply::Created(b, title, slug, submitted, dismiss)) => {
