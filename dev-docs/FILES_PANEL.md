@@ -25,6 +25,10 @@ switches and refreshes keep both disclosure states.
 A commit waits for the user's Git hooks and signing. If they fail, the staged
 changes remain available for another attempt.
 
+The Rust server stages a save beside the resolved target and replaces the name
+only after writing and flushing it. Symbolic links keep pointing to the target.
+Hard-linked targets are saved in place so every alias sees the new contents.
+
 ### Large inventories
 
 Large `filesystem.changed` inventories, including nested worktrees, use three rules:
