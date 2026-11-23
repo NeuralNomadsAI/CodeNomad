@@ -108,6 +108,10 @@ An inactive tab keeps its conversation observer for execution status, pending in
 
 Live tool input appends native deltas until its full input arrives. Progress replaces the running tool's metadata. Tool identity and phase fence late updates; bounded history reads repair missing transitions and supply terminal output. A running shell's ANSI preview retains parsed state while its visible prefix grows and starts from a clean state when the prefix changes.
 
+Reasoning fragments retain a separate native ordinal, including empty fragments, in history and on the scoped live stream. Completed fragments keep their authoritative text and timestamps. The transcript groups adjacent visible reasoning, with a disclosure, latest summary and completed duration. Group placement uses the first displayed fragment's native key; expanded fragments retain their own keys and text windows.
+
+Reasoning-heavy pages retain a smaller contiguous window around the requested anchor, with cursors at its retained edges. The client budgets reasoning separately from prose, counts UTF-16 units even after the live prefix reaches its byte ceiling, and coalesces rendering of revealed windows beyond 10,000 units at 200 ms. Reveal and completion update the rendered text immediately.
+
 The Rune transcript renders native prose with kit Markdown and uses kit syntax for read, edit, shell and search output. Shell output with ANSI sequences uses styled text from the bounded display window; per-line and window-wide work limits retain readable output on densely styled logs. Copy retains the native sequences. Display windows count UTF-16 units and preserve line cuts. Tool disclosures and reveal steps belong to each project tab's live transcript state.
 
 ANSI styling uses at most 4,096 ranges per block to bound [selection-to-HTML work](https://github.com/anomalyco/rune/issues/1418). Beyond that limit plain text stays visible, concealed cells become spaces, and the tool's Copy action retains the native output.

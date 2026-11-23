@@ -5,9 +5,26 @@ use rune::{El, GrowthSpec, Icon, ScrollSpec, Tx};
 use std::{borrow::Cow, rc::Rc};
 
 pub const VIEWPORT: &str = "timeline";
+pub use rune::ScrollPos as ScrollPosition;
+
+pub fn user_scrolled() -> bool {
+    let (hand, instant, _) = rune::scroll_watch_state();
+    hand && !instant
+}
 
 pub fn fits(width: f32) -> bool {
     width >= TIMELINE_MIN_WIDTH
+}
+
+pub fn transcript_lane(history: El) -> El {
+    rune::col().grow(1.0).min_w(0.0).min_h(0.0).child(history)
+}
+
+pub fn conversation(expanded: bool) -> El {
+    rune::row()
+        .w_full()
+        .grow(1.0)
+        .min_h(crate::interruption::history_minimum(expanded))
 }
 // Chromium's CSS layout quantum is 1/64 px. Whole bands are integral even
 // though their markers are not, so Rune's f32 prefix sum accumulates no drift.
@@ -21,7 +38,7 @@ fn geometry() -> (f32, f32) {
     )
 }
 
-pub fn reveal(index: usize, tx: &mut Tx) {
+pub fn show_marker(index: usize, tx: &mut Tx) {
     tx.scroll_to_instant(VIEWPORT, 0.0, row_top(index));
 }
 

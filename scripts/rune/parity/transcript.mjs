@@ -20,6 +20,7 @@ const script = path.join(out, 'rune-interaction.json')
 await writeFile(script, JSON.stringify({events: [
   {t: 0.1, type: 'tap', key: 'toggle-tool-transcript:4:read'},
   {t: 0.4, type: 'tap', key: 'tool-transcript:4:edit-mode'},
+  {t: 0.7, type: 'tap', key: 'toggle-reasoning-transcript:0'},
 ]}))
 const cache = await createFixtureCache()
 const shutdown = createFixtureShutdown(cache)
@@ -64,6 +65,9 @@ try {
     const ansi = tool('shell').locator('.tool-call-ansi span').filter({hasText: 'result'})
     await ansi.waitFor()
     assert.equal(await ansi.evaluate(span => getComputedStyle(span).color), 'rgb(187, 0, 0)')
+    const reasoning = page.locator('.message-reasoning-group')
+    await reasoning.getByText('Check the output', {exact: true}).waitFor()
+    assert.equal(await reasoning.getByText('Verify the sample trace.', {exact: true}).count(), 0)
     await page.evaluate(() => document.fonts.ready)
     await page.screenshot({path: path.join(out, `solid-${theme}.png`), animations: 'disabled'})
     await writeFile(path.join(out, `solid-${theme}.aria.yml`), await page.locator('.message-stream').ariaSnapshot())
@@ -71,6 +75,8 @@ try {
     await tool('read').getByText('return 7;', {exact: true}).waitFor()
     await tool('edit').getByRole('button', {name: 'Switch to unified view'}).click()
     await tool('edit').getByRole('button', {name: 'Switch to split view'}).waitFor()
+    await reasoning.locator('.message-technical-group-toggle').click()
+    await reasoning.getByText('Verify the sample trace.', {exact: true}).waitFor()
     assert.deepEqual(errors, [])
 
     const tree = path.join(out, `rune-${theme}.json`)
@@ -79,11 +85,13 @@ try {
     assert.equal(data.dark_system, theme === 'dark')
     const accessibility = JSON.stringify(data.accessibility)
     for (const label of ['Results', 'Grep return', 'demo.rs']) assert(accessibility.includes(label))
+    assert(accessibility.includes('Check the output') && !accessibility.includes('Verify the sample trace.'))
     const after = path.join(out, `rune-${theme}-read.json`)
     await capture(theme, ['--script', script, '--tree', after])
     const interacted = JSON.stringify(JSON.parse(await readFile(after, 'utf8')).accessibility)
     assert(interacted.includes('return 7;'))
     assert(interacted.includes('Switch to split view'), 'Rune toggles the shared diff to unified')
+    assert(interacted.includes('Verify the sample trace.'), 'Rune opens the same reasoning group')
     await installPngReader(page)
     const images = await Promise.all(['solid', 'rune'].map(async type =>
       `data:image/png;base64,${(await readFile(path.join(out, `${type}-${theme}.png`))).toString('base64')}`))

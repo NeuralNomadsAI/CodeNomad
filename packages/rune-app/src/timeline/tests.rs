@@ -37,7 +37,7 @@ fn resident_click_aligns_the_block_and_never_dispatches_a_window() {
     runtime.frame(0.0);
     runtime.update(|s, tx| {
         assert!(poll(s, tx));
-        rune_theme_codenomad::timeline::reveal(0, tx);
+        rune_theme_codenomad::timeline::show_marker(0, tx);
     });
     for _ in 0..6 {
         runtime.frame(0.016);
@@ -96,4 +96,48 @@ fn a_resident_click_revokes_the_distant_request_and_failed_reads_preserve_rows()
         assert!(jump.cancelled.is_closed());
         assert_eq!(s.messages[0].id, "anchored");
     });
+}
+
+#[test]
+fn reasoning_uses_the_rendered_run_not_the_native_fragment_ordinal() {
+    let row: crate::history::Row = crate::history::decode_message(&json!({
+        "id":"think","type":"assistant","time":{"completed":1},
+        "content":[{"type":"reasoning","text":""},
+            {"type":"reasoning","text":"First reasoning"},
+            {"type":"reasoning","text":"Still first"},
+            {"type":"text","text":"First response"},
+            {"type":"reasoning","text":"Second reasoning"}]
+    }))
+    .unwrap()
+    .into();
+    let blocks = crate::chat::anchors::blocks(&row, 0, false);
+    let reasoning = blocks
+        .iter()
+        .filter(|b| b.marker.kind == MarkerKind::Reasoning)
+        .map(|b| (b.marker.ordinal, b.key.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reasoning,
+        [(0, "reasoning-think:1"), (1, "reasoning-think:3")]
+    );
+    let mut state = crate::init();
+    state.messages = std::iter::once(row.clone())
+        .chain((0..35).map(|i| user(&format!("doc-{i}"))))
+        .collect();
+    let target = Marker::from(blocks.last().unwrap().marker);
+    owner(&mut state).width = 800.0;
+    owner(&mut state).changed = true;
+    let mut runtime = Runtime::new(state, view, (800.0, 600.0), Env::new(false, 1.0));
+    runtime.frame(0.0);
+    runtime.update(|s, tx| {
+        poll(s, tx);
+        navigation::select(s, &target.id, tx);
+    });
+    runtime.frame(0.016);
+    let top = runtime.presented("history").unwrap().0[1];
+    let group = runtime.presented("reasoning-think:3").unwrap().0[1];
+    assert!(
+        (top - group).abs() < 2.0,
+        "history top {top}, group top {group}"
+    );
 }

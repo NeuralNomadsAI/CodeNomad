@@ -38,7 +38,9 @@ fn view(s: &Scene, cx: &mut Cx<Scene>) -> El {
                             .focusable(true)
                             .label_static("Reveal last marker")
                             .child(rune::text("Reveal last marker"))
-                            .on_press_tx(|s: &mut Scene, tx| timeline::reveal(s.ids.len() - 1, tx)),
+                            .on_press_tx(|s: &mut Scene, tx| {
+                                timeline::show_marker(s.ids.len() - 1, tx)
+                            }),
                     ),
             );
         if let Some(rail) = timeline::view(
@@ -126,7 +128,7 @@ fn fixed_geometry_virtualizes_and_activates_by_key() {
     });
     rt.frame(0.016);
     assert_eq!(rt.state.active, "Message 00003");
-    rt.update(|_, tx| timeline::reveal(COUNT - 1, tx));
+    rt.update(|_, tx| timeline::show_marker(COUNT - 1, tx));
     for _ in 0..8 {
         rt.frame(0.016);
     }

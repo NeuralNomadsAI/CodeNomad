@@ -100,9 +100,25 @@ pub(super) fn window(
     limit: usize,
     render: impl FnOnce(&str, usize) -> El,
 ) -> El {
+    window_with_total(s, key, parts, limit, None, render)
+}
+
+pub(super) fn window_with_total(
+    s: &State,
+    key: String,
+    parts: &[&str],
+    limit: usize,
+    total: Option<(usize, usize)>,
+    render: impl FnOnce(&str, usize) -> El,
+) -> El {
     let steps = s.transcript_display.steps(&key);
     let budget = limit.saturating_add(steps.saturating_mul(STEP));
-    let (shown, units, hidden, more) = prefix(parts, budget);
+    let retained = total.map_or_else(
+        || parts.iter().map(|part| units(part)).sum(),
+        |(retained, _)| retained,
+    );
+    let (shown, units, hidden, more) = prefix_measured(parts, budget, retained);
+    let hidden = hidden.max(total.map_or(0, |(_, total)| total).saturating_sub(units));
     let content_key = format!("{key}-content");
     let mut body = col().full_width().separate(Space::Sm).child(
         render(&shown, units)
@@ -134,7 +150,7 @@ pub(super) fn window(
         body = body.child(
             layout::action_row()
                 .child(text(status).key(notice.clone()))
-                .child(
+                .children((more > 0).then(|| {
                     layout::button_tx(
                         &label,
                         false,
@@ -147,8 +163,8 @@ pub(super) fn window(
                         }),
                     )
                     .key(format!("reveal-{key}"))
-                    .described_by(notice),
-                ),
+                    .described_by(notice)
+                })),
         );
     }
     body.key(key)
@@ -182,8 +198,11 @@ fn end(parts: &[&str], budget: usize) -> (usize, usize) {
     line.unwrap_or((bytes, count))
 }
 
-fn prefix<'a>(parts: &[&'a str], budget: usize) -> (Cow<'a, str>, usize, usize, usize) {
-    let total = parts.iter().map(|s| units(s)).sum::<usize>();
+fn prefix_measured<'a>(
+    parts: &[&'a str],
+    budget: usize,
+    total: usize,
+) -> (Cow<'a, str>, usize, usize, usize) {
     let (bytes, count) = if total <= budget {
         (parts.iter().map(|s| s.len()).sum(), total)
     } else {
@@ -217,6 +236,9 @@ fn prefix<'a>(parts: &[&'a str], budget: usize) -> (Cow<'a, str>, usize, usize, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn prefix<'a>(parts: &[&'a str], budget: usize) -> (Cow<'a, str>, usize, usize, usize) {
+        prefix_measured(parts, budget, parts.iter().map(|part| units(part)).sum())
+    }
     #[test]
     fn utf16_windows_keep_line_cuts_and_count_the_next_step() {
         let (shown, width, hidden, more) = prefix(&["$ ", "🦀", "\n", "abc"], 3);

@@ -255,7 +255,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         platform::spawn(async move {
             if let Some(_permit) = reads.background(&cancelled).await
                 && let Some(result) =
-                    platform::reads::cancellable(&cancelled, backend.outline(&revision)).await
+                    platform::reads::cancellable(&cancelled, backend.read_outline(&revision)).await
                 && out.send(result).await.is_ok()
             {
                 wake();

@@ -12,7 +12,7 @@ use rune_theme_codenomad::{
 pub(super) struct Scroll {
     pub transcript: u64,
     pub rail: u64,
-    pub at: rune::ScrollPos,
+    pub at: timeline::ScrollPosition,
 }
 
 pub(crate) fn watch(s: &State, el: El) -> El {
@@ -30,12 +30,11 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
         false
     })
     .on_scroll_offset(move |at| {
-        let (hand, instant, _) = rune::scroll_watch_state();
         let mut gesture = scroll.get();
         if rail {
             gesture.at = at;
         }
-        if hand && !instant {
+        if timeline::user_scrolled() {
             let epoch = if rail {
                 &mut gesture.rail
             } else {
@@ -51,13 +50,8 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
 pub(crate) fn view(s: &State, history: El, expanded: bool) -> El {
     let t = &s.transcript_display.timeline;
     let scope = s.input_scope.clone();
-    let mut area = rune::row()
+    let mut area = timeline::conversation(expanded)
         .key("conversation-history")
-        .full_width()
-        .remaining()
-        .min_h(rune_theme_codenomad::interruption::history_minimum(
-            expanded,
-        ))
         .on_layout_tx(move |s: &mut State, [_, _, width, _], tx| {
             if s.current_scope(&scope) && super::owner(s).width != width {
                 super::owner(s).width = width;
@@ -66,7 +60,7 @@ pub(crate) fn view(s: &State, history: El, expanded: bool) -> El {
                 tx.live_only();
             }
         })
-        .child(rune::col().remaining().child(history));
+        .child(timeline::transcript_lane(history));
     if !super::demanded(s) {
         return area;
     }

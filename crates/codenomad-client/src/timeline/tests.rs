@@ -107,7 +107,7 @@ fn outline_requires_an_explicit_end_and_limits_resident_structure() {
 #[cfg(not(target_arch = "wasm32"))]
 fn http_scan(steps: Vec<(&'static str, Option<Value>, Value, bool)>) -> Result<Outline> {
     http_probe(steps, async |backend, revision| {
-        backend.outline(&revision).await
+        backend.read_outline(&revision).await
     })
 }
 

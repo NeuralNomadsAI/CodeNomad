@@ -145,6 +145,7 @@ pub fn contract() {
             | Event::ObservedRunning { .. }
             | Event::Workspace(_)
             | Event::Preferences(_)
+            | Event::Reasoning(..)
             | Event::PromptAcknowledged { .. }
             | Event::Tool(..)
             | Event::PagingFailed => {}

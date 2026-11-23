@@ -62,35 +62,49 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
     let command = Command::Anchor(Jump {
         ticket: serial,
         message: target.message.clone(),
-        cancelled,
+        cancelled: cancelled.clone(),
     });
-    if owner(s).online
-        && s.commands
-            .as_ref()
-            .is_some_and(|commands| commands.try_send(command).is_ok())
-    {
-        let j = &mut owner(s).jump;
-        j.active = Some(target.id.clone());
-        j.flight = Some((cancel, target));
-    } else {
+    let Some(commands) = s.commands.clone().filter(|_| owner(s).online) else {
         owner(s).jump.retry = Some(target);
+        return;
+    };
+    match commands.try_send(command) {
+        Ok(()) => {}
+        Err(error) if error.is_full() => {
+            let command = error.into_inner();
+            // A newer click owns the next write even while a superseded one drains.
+            crate::platform::spawn(async move {
+                crate::platform::reads::cancellable(&cancelled, commands.send(command)).await;
+            });
+        }
+        Err(_) => {
+            owner(s).jump.retry = Some(target);
+            return;
+        }
     }
+    let j = &mut owner(s).jump;
+    j.active = Some(target.id.clone());
+    j.flight = Some((cancel, target));
 }
 
 fn locate(s: &State, row: &crate::history::Row, m: &Marker) -> Option<(String, usize)> {
-    anchors::blocks(row, anchors::steps(s, &row.id), true)
-        .into_iter()
-        .find(|b| {
-            b.marker.kind == m.kind
-                && b.marker.ordinal == m.ordinal
-                && b.marker.continued == m.continued
-        })
-        .map(|block| (block.key, block.reveal))
+    let steps = anchors::steps(s, &row.id);
+    let block = anchors::blocks(row, steps, true).into_iter().find(|b| {
+        b.marker.kind == m.kind
+            && b.marker.ordinal == m.ordinal
+            && b.marker.continued == m.continued
+    })?;
+    let key = if m.kind == super::MarkerKind::Reasoning {
+        anchors::reasoning_key(row, steps.max(block.reveal), m.ordinal, m.continued)?
+    } else {
+        block.key
+    };
+    Some((key, block.reveal))
 }
 
 fn settle(s: &mut State, m: &Marker, (key, steps): (String, usize)) {
     if steps > 0 {
-        anchors::reveal(s, &m.message, steps);
+        anchors::reveal_parts(s, &m.message, steps);
     }
     let t = owner(s);
     t.changed = true;

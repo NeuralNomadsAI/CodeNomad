@@ -97,6 +97,7 @@ pub fn message(s: &State, i: usize) -> El {
     };
     let (head, tail) = part_window(m.parts.len(), s.transcript_display.steps(&gap_key));
     let mut reveal_start = (head > initial).then(|| head.saturating_sub(PART_LIMIT));
+    let mut reasoning_end = 0;
     for (index, part) in m.parts.iter().enumerate() {
         if index == head && head < tail {
             let hidden = tail - head;
@@ -136,27 +137,43 @@ pub fn message(s: &State, i: usize) -> El {
             );
         }
         let visible = index < head || index >= tail;
-        let body = match part {
-            Part::Text(body) => {
-                let key = format!("fragment-{}:{ordinal}", m.id);
-                ordinal += 1;
-                if visible && !body.text.trim().is_empty() {
-                    Some(document::prose(
-                        s,
-                        key,
-                        &body.text,
-                        !m.completed && body.provenance != TextProvenance::Closed,
-                    ))
-                } else {
-                    None
+        let body =
+            match part {
+                Part::Text(body) => {
+                    let key = format!("fragment-{}:{ordinal}", m.id);
+                    ordinal += 1;
+                    if visible && !body.text.trim().is_empty() {
+                        Some(document::prose(
+                            s,
+                            key,
+                            &body.text,
+                            !m.completed && body.provenance != TextProvenance::Closed,
+                        ))
+                    } else {
+                        None
+                    }
                 }
-            }
-            Part::Tool(tool) if visible => Some(tools::view(s, &m.id, tool)),
-            Part::Tool(_) => None,
-            Part::Skill(skill) if visible => Some(super::attachments::skill_chip(skill)),
-            Part::File(file) if visible => Some(super::attachments::file_chip(s, file)),
-            Part::Skill(_) | Part::File(_) => None,
-        };
+                Part::Tool(tool) if visible => Some(tools::view(s, &m.id, tool)),
+                Part::Tool(_) => None,
+                Part::Reasoning(_) if visible && index >= reasoning_end => {
+                    let limit = if index < head && head < tail {
+                        head
+                    } else {
+                        m.parts.len()
+                    };
+                    reasoning_end = index
+                    + m.parts[index..limit]
+                        .iter()
+                        .take_while(|part| matches!(part, Part::Reasoning(_))
+                            || matches!(part, Part::Text(text) if text.text.trim().is_empty()))
+                        .count();
+                    super::reasoning::view(s, &m.id, &m.parts[index..reasoning_end])
+                }
+                Part::Reasoning(_) => None,
+                Part::Skill(skill) if visible => Some(super::attachments::skill_chip(skill)),
+                Part::File(file) if visible => Some(super::attachments::file_chip(s, file)),
+                Part::Skill(_) | Part::File(_) => None,
+            };
         if let Some(body) = body {
             if reveal_start.is_some_and(|first| index >= first) {
                 view = view.child(

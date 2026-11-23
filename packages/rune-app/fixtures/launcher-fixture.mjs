@@ -143,8 +143,10 @@ if(webTimeline){
   const store=stores.get('ses_existing')
   const anchor=store.append('assistant','Lead before the anchor')
   anchor.content.push(
+    {type:'reasoning',text:'First fixture reasoning'},
     {type:'tool',id:'timeline-anchor',name:'read',state:{status:'completed',input:{file:'timeline.txt'},content:[{type:'text',text:'Tool output'}]}},
     {type:'text',text:'Exact position in the old message'},
+    {type:'reasoning',text:'**Second fixture reasoning**'},
   )
   for(let i=0;i<220;i++)store.append('assistant',`Fixture passage ${i}`)
 }
@@ -239,10 +241,11 @@ const upstream=createServer(async(req,res)=>{
       assert(!input.cursor)
       const entries=rows.map((row,seq)=>({
         id:row.id,seq,type:row.type,
-        tools:row.content?.filter(part=>part.type==='tool').length??0,reasoning:0,
+        tools:row.content?.filter(part=>part.type==='tool').length??0,
+        reasoning:row.content?.filter(part=>part.type==='reasoning').length??0,
         ...(row.type==='assistant'?{
           text:row.content.filter(part=>part.type==='text').length,
-          layout:row.content.map(part=>part.type==='tool'?'X':'T').join(''),
+          layout:row.content.map(part=>part.type==='tool'?'X':part.type==='reasoning'?'R':'T').join(''),
           ...(row.content.some(part=>part.type==='tool')?{toolName:'read'}:{}),
         }:{}),
       }))

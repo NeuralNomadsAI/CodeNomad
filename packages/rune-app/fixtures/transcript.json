@@ -5,6 +5,8 @@
   "model": {"providerID": "fixture", "id": "fixture"},
   "time": {"created": 1, "completed": 2},
   "content": [
+    {"type": "reasoning", "text": "Consider the result.", "time": {"created": 1000, "completed": 2000}},
+    {"type": "reasoning", "text": "**Check the output**\n\nVerify the sample trace.", "time": {"created": 2000, "completed": 4000}},
     {"type": "text", "text": "## Results\n\n- **First**\n\n```rust\nlet count = 12;\n```"},
     {"type": "tool", "id": "read", "name": "read", "state": {"status": "completed", "input": {"filePath": "src/demo.rs", "offset": 4}, "content": [{"type": "text", "text": "return 7;"}]}},
     {"type": "tool", "id": "edit", "name": "edit", "state": {"status": "completed", "input": {"filePath": "src/demo.rs"}, "metadata": {"files": [{"file": "src/demo.rs", "patch": "--- a/src/demo.rs\n+++ b/src/demo.rs\n@@ -1 +1 @@\n-return 7;\n+return 8;"}]}, "content": [{"type": "text", "text": "Edit applied."}]}},

@@ -48,56 +48,30 @@ pub(crate) fn blocks<'a>(row: &'a Row, steps: usize, hidden: bool) -> Vec<Block<
     }
     let (head, tail) = super::transcript::part_window(row.parts.len(), steps);
     let mut text = 0;
-    let mut run = 0;
+    let mut runs = [0, 0];
     let mut tool = 0;
-    let mut in_text = false;
-    let mut shown = false;
+    let mut current = None;
+    let mut segment = None;
     let mut first_at = 0;
     for (i, part) in row.parts.iter().enumerate() {
         let omitted = i >= head && i < tail;
-        match part {
+        let (kind, family, key) = match part {
             Part::Text(part) => {
                 let fragment = text;
                 text += 1;
                 if part.text.trim().is_empty() {
                     continue;
                 }
-                if !in_text {
-                    run += 1;
-                    first_at = i;
-                    shown = false;
-                }
-                in_text = true;
-                if !omitted && (!shown || i >= tail && first_at < head && head < tail) {
-                    push(
-                        Assistant,
-                        run - 1,
-                        shown,
-                        format!("fragment-{}:{fragment}", row.id),
-                        if !shown && first_at >= head && first_at < tail {
-                            extra_steps(first_at)
-                        } else {
-                            0
-                        },
-                        None,
-                    );
-                    shown = true;
-                    if i >= tail {
-                        first_at = i;
-                    }
-                } else if omitted && hidden && first_at == i {
-                    push(
-                        Assistant,
-                        run - 1,
-                        false,
-                        format!("fragment-{}:{fragment}", row.id),
-                        extra_steps(i),
-                        None,
-                    );
-                }
+                (Assistant, 0, format!("fragment-{}:{fragment}", row.id))
             }
+            Part::Reasoning(part) if part.visible() => (
+                Reasoning,
+                1,
+                super::reasoning::block_key(&row.id, part.ordinal),
+            ),
+            Part::Reasoning(_) => continue,
             Part::Tool(call) => {
-                in_text = false;
+                current = None;
                 if !omitted || hidden {
                     push(
                         Tool,
@@ -109,11 +83,67 @@ pub(crate) fn blocks<'a>(row: &'a Row, steps: usize, hidden: bool) -> Vec<Block<
                     );
                 }
                 tool += 1;
+                continue;
             }
-            _ => {}
+            _ => {
+                current = None;
+                continue;
+            }
+        };
+        if current != Some(kind) {
+            runs[family] += 1;
+            current = Some(kind);
+            segment = None;
+            first_at = i;
+        }
+        let back = head < tail && i >= tail;
+        let hidden_start = (head..tail).contains(&first_at);
+        if !omitted && segment != Some(back) {
+            push(
+                kind,
+                runs[family] - 1,
+                segment.is_some(),
+                key,
+                if hidden_start {
+                    extra_steps(first_at)
+                } else {
+                    0
+                },
+                None,
+            );
+            segment = Some(back);
+        } else if omitted && hidden && first_at == i {
+            push(kind, runs[family] - 1, false, key, extra_steps(i), None);
         }
     }
     out
+}
+
+pub(crate) fn reasoning_key(row: &Row, steps: usize, run: u64, continued: bool) -> Option<String> {
+    let (head, tail) = super::transcript::part_window(row.parts.len(), steps);
+    super::reasoning::run_anchor(row, head..tail, run.try_into().ok()?, continued)
+}
+
+pub(super) fn reasoning_changed(
+    rows: &[Row],
+    id: &str,
+    event: &crate::content::ReasoningEvent,
+) -> bool {
+    use crate::content::ReasoningEvent;
+    match event {
+        ReasoningEvent::End { .. } => true,
+        ReasoningEvent::Delta { ordinal, text } if !text.trim().is_empty() => rows
+            .iter()
+            .find(|row| row.id == id)
+            .and_then(|row| {
+                row.parts.iter().rev().find_map(|part| match part {
+                    Part::Reasoning(part) if part.ordinal == *ordinal => Some(!part.visible()),
+                    _ => None,
+                })
+            })
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 fn extra_steps(index: usize) -> usize {
@@ -121,7 +151,7 @@ fn extra_steps(index: usize) -> usize {
     (index - step / 2) / step + 1
 }
 
-pub(crate) fn reveal(s: &mut State, id: &str, steps: usize) {
+pub(crate) fn reveal_parts(s: &mut State, id: &str, steps: usize) {
     let gap = format!("parts-gap-{id}");
     while s.transcript_display.steps(&gap) < steps {
         super::actions::Display::reveal_next(s, &gap);

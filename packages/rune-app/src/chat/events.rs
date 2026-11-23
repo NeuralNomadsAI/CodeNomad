@@ -240,13 +240,24 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
             }
+            Event::Reasoning(id, event) => {
+                let changed = chat::anchors::reasoning_changed(&s.messages, &id, &event);
+                content::apply_reasoning(&mut s.messages, &id, &event);
+                if changed {
+                    crate::timeline::structure_changed(s);
+                }
+            }
             Event::Tool(id, tool) => {
                 if let Some(row) = s
                     .messages
                     .iter_mut()
                     .find(|row| row.id == id && !row.completed)
                 {
+                    let inserted = !row.parts.iter().any(|part| matches!(part, content::Part::Tool(existing) if existing.id == tool.id));
                     content::install_tool(std::sync::Arc::make_mut(row), tool);
+                    if inserted {
+                        crate::timeline::structure_changed(s);
+                    }
                 }
             }
             Event::Done => s.phase = Phase::Ready,
