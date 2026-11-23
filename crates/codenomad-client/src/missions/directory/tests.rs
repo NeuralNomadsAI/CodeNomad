@@ -37,7 +37,7 @@ fn envelope(first: bool) -> Value {
 fn publishes_a_verified_complete_row_with_utf16_offsets() {
     let mut read = reader();
     assert_eq!(
-        read.url.path(),
+        read.read.url.path(),
         "/api/workspaces/workspace/missions/panel-page"
     );
     assert!(read.accept(envelope(true)).unwrap().is_none());
@@ -56,6 +56,7 @@ fn reads_the_servers_nonempty_cleanup_projection() {
     // Output of projectMissionCleanups(events("pending", 1)) from cleanup-projection.test.ts.
     const ROW: &str = r#"{"missionID":"pending","deletionID":"pending-delete","requestID":"request-pending","expectedRevision":4,"deleteManagedSessions":true,"objective":"Latest objective","removed":0,"retained":0,"pending":1,"reasons":[],"createdAt":1.2}"#;
     let mut read = reader()
+        .read
         .backend
         .mission_cleanups(Some("project"), 0, None)
         .unwrap();
@@ -85,6 +86,45 @@ fn reads_the_servers_nonempty_cleanup_projection() {
         ("pending", "pending-delete", "request-pending")
     );
     assert_eq!(cleanup.pending, 1);
+}
+
+#[test]
+fn verifies_cleanup_at_the_utf16_emoji_boundary_without_repairing_the_page() {
+    let raw = format!("{}🦀", "a".repeat(239));
+    assert_eq!(raw.encode_utf16().count(), 241);
+    // #1700's producer emits the 239 complete units; the Node UTF-16LE digest covers that exact row.
+    let objective = raw.strip_suffix('🦀').unwrap();
+    let text = format!(
+        r#"{{"missionID":"pending","deletionID":"pending-delete","requestID":"request-pending","expectedRevision":4,"deleteManagedSessions":true,"objective":"{objective}","removed":0,"retained":0,"pending":0,"reasons":[],"createdAt":1.2,"documentPending":true}}"#
+    );
+    let mut read = reader()
+        .read
+        .backend
+        .mission_cleanups(Some("project"), 0, None)
+        .unwrap();
+    let mut page = json!({
+        "available":true,"version":1,"projectID":"project","source":"cleanups","discardedEvents":0,
+        "controlUnavailable":false,"notificationUnavailable":false,"cleanupUnavailable":false,
+        "window":{"order":ORDER,"offset":0,"end":1,"total":1},
+        "page":{"digest":"k-0u0efUCaLKM01wV1fBMALyDqueT-8buKHhbdllXj4","total":1,"pieces":[
+            {"index":0,"offset":0,"characters":text.encode_utf16().count(),"text":text}]}
+    });
+    let DirectoryRows::Cleanups(rows) = read.accept(page.clone()).unwrap().unwrap().rows else {
+        panic!("cleanup directory");
+    };
+    assert_eq!(rows[0].objective, objective);
+    assert_eq!(rows[0].document_pending, Some(true));
+    page["page"]["pieces"][0]["text"] = json!(text.replace(objective, &format!("{objective}x")));
+    page["page"]["pieces"][0]["characters"] = json!(text.encode_utf16().count() + 1);
+    assert!(
+        reader()
+            .read
+            .backend
+            .mission_cleanups(Some("project"), 0, None)
+            .unwrap()
+            .accept(page)
+            .is_err()
+    );
 }
 
 #[test]

@@ -95,7 +95,8 @@ test("warm directory traversal reads no mission ranges; a requested mission read
   }
   for (let index = 0; index < count; index++) {
     const missionID = `msn_panel_${index}`
-    seed({ id: "evt_created", missionID, type: "mission.created", projectCanonical: "/repo", objective: `Open mission ${index}`, template: "custom",
+    seed({ id: "evt_created", missionID, type: "mission.created", projectCanonical: "/repo",
+      objective: index === count - 1 ? "a".repeat(239) + "🦀" : `Open mission ${index}`, template: "custom",
       coordinator: { sessionID: `ses_coordinator_${index}`, title: "Coordinator", location: f.project.location }, createdAt: index + 1 })
     // Pending tombstones, each with its original explicit-retry identity, exceed a page.
     if (index >= count / 2) seed({ id: "evt_deleted", missionID, type: "mission.deleted", requestID: `delete_${index}`, expectedRevision: 1,
@@ -120,6 +121,7 @@ test("warm directory traversal reads no mission ranges; a requested mission read
   const cleanups = await traverse(cursor => control.panelPage({ source: "cleanups", ...(cursor ? { cursor } : {}) }))
   assert.deepEqual(summaries.values, json(full.missions.map(missionSummary)))
   assert.deepEqual(cleanups.values, json(full.cleanups))
+  assert.equal(cleanups.values.find(row => row.missionID === `msn_panel_${count - 1}`)?.objective, "a".repeat(239))
   assert.deepEqual([f.scannedEntries(), f.fullScans()], [scanned, scans], "no open-mission maps reread just to list rows")
   const target = full.missions.find(mission => mission.id === "msn_panel_0")!
   const before = f.scannedEntries()

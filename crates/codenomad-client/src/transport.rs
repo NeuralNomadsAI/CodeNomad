@@ -27,6 +27,17 @@ pub enum WorkspaceEvent {
         workspace_id: String,
     },
     UiPreferencesChanged,
+    MissionChanged {
+        workspace_id: String,
+        mission_id: String,
+        revision: u64,
+    },
+    MissionsReconnected {
+        workspace_id: String,
+    },
+    MissionActivityChanged {
+        workspace_id: String,
+    },
     NativeFilesystemChanged {
         workspace_id: String,
     },

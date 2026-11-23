@@ -57,11 +57,11 @@ fn body(
     cx: &mut Cx<State>,
     conversation: impl FnOnce(&State, &mut Cx<State>) -> El,
 ) -> El {
+    if launcher_replaces_project(s) {
+        return launcher_view::view(s);
+    }
     let has_project = s.screen.launcher().is_some_and(|l| l.project.is_some());
     let body = match &s.screen {
-        Screen::Launcher(l) if !has_project || l.authentication_required => {
-            return launcher_view::view(s);
-        }
         Screen::Launcher(_) if crate::git::has_preview(s) => crate::git::reader(s),
         Screen::Launcher(_) => {
             rune_theme_codenomad::shell::empty_conversation(t("instanceShell.empty.title"))
@@ -69,6 +69,23 @@ fn body(
         Screen::Chat { .. } => conversation(s, cx),
     };
     panels::view(s, cx.touch_controls(), has_project, body)
+}
+
+fn launcher_replaces_project(s: &State) -> bool {
+    s.screen
+        .launcher()
+        .is_some_and(|l| l.authentication_required)
+        || matches!(&s.screen, Screen::Launcher(l) if l.project.is_none())
+}
+
+pub(crate) fn right_panel_visible(s: &State) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    if crate::platform::pairing::required(s) {
+        return false;
+    }
+    !launcher_replaces_project(s)
+        && s.screen.launcher().is_some_and(|l| l.project.is_some())
+        && s.shell.visible(1)
 }
 
 pub fn reader(s: &State, history: impl FnOnce() -> El) -> El {

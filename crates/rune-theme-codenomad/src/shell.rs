@@ -197,15 +197,12 @@ pub fn titlebar_menu<S: 'static>(label: &str, activate: impl Fn(&mut S, &mut Tx)
 
 pub fn panel_tabs<S: 'static>(
     title: &str,
-    labels: [&str; 2],
+    labels: &[&str],
     chosen: usize,
     activate: impl Fn(&mut S, usize, &mut Tx) + Clone + 'static,
 ) -> El {
-    row()
-        .role("tablist")
-        .label(title)
-        .focus_group()
-        .children(labels.into_iter().enumerate().map(|(index, label)| {
+    row().role("tablist").label(title).focus_group().children(
+        labels.iter().copied().enumerate().map(|(index, label)| {
             let activate = activate.clone();
             let action = Rc::new(move |s: &mut S, tx: &mut Tx| activate(s, index, tx));
             let press = action.clone();
@@ -222,7 +219,8 @@ pub fn panel_tabs<S: 'static>(
                 .role("tab")
                 .focus_selected(index == chosen)
                 .on_key(enter_action(action))
-        }))
+        }),
+    )
 }
 
 pub fn open_titlebar_menu<S: 'static>(

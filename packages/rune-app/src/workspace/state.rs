@@ -12,9 +12,14 @@ pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
     observes_notification, open_notification, owns_notification, workspace_notification,
 };
+#[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
+pub(crate) use panel_state::set_files_tab;
 pub use panel_state::{
-    capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, set_files_tab,
-    toggle_file_wrap,
+    capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
+};
+pub(crate) use panel_state::{
+    mission_event, mission_panel, mission_supported, right_panel_tab, set_right_panel_tab,
+    suspend_missions,
 };
 pub use strip::strip;
 
@@ -46,6 +51,7 @@ pub(super) struct Entry {
     wanted_panels: [Option<[bool; 2]>; 2],
     sidebar_edits: Option<(TextEdit, bool, TextEdit, bool)>,
     binding: Option<Backend>,
+    missions: Option<crate::missions::Panel>,
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
     live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
@@ -238,6 +244,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         wanted_panels: [None; 2],
         sidebar_edits: None,
         binding: None,
+        missions: None,
         cleared,
         pending_drafts: HashSet::new(),
         live_drafts: Default::default(),
@@ -549,6 +556,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     let mut changed = ui.persistence.poll_file_draft_retry(&s.documents);
     changed |= poll_cached(s, &mut ui, Some(now), tx);
+    changed |= panel_state::poll_missions(&mut ui, s, tx);
     ui.stage();
     let previous_error = (
         ui.persistence.read_error,

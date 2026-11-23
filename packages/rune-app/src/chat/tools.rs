@@ -17,7 +17,12 @@ use rune_theme_codenomad::{
 };
 use serde_json::Value;
 use std::{io, sync::Arc};
+pub(super) mod children;
 mod execute;
+mod search;
+mod shell;
+mod task;
+mod todo;
 
 fn string<'a>(value: &'a Value, keys: &[&str]) -> &'a str {
     keys.iter()
@@ -79,7 +84,9 @@ fn bounded_json(value: &Value, limit: usize) -> Option<String> {
 fn title(tool: &Tool) -> String {
     let name = tool.name.strip_prefix("opencode_").unwrap_or(&tool.name);
     let mut chars = name.chars();
-    let mut title = if matches!(name, "bash" | "shell") {
+    let mut title = if name == "websearch" {
+        name.into()
+    } else if matches!(name, "bash" | "shell") {
         t("toolCall.renderer.toolName.shell").to_owned()
     } else {
         chars
@@ -90,7 +97,13 @@ fn title(tool: &Tool) -> String {
             .collect()
     };
     let summary = match name {
-        "read" | "edit" => path(tool).rsplit(['/', '\\']).next().unwrap_or_default(),
+        "read" | "edit" | "write" => {
+            let path = path(tool);
+            path.rsplit(['/', '\\'])
+                .next()
+                .filter(|name| !name.is_empty())
+                .unwrap_or(path)
+        }
         "bash" | "shell" => string(&tool.input, &["description"]),
         "glob" | "grep" => string(&tool.input, &["pattern"]).trim(),
         _ => "",
@@ -98,6 +111,26 @@ fn title(tool: &Tool) -> String {
     if !summary.is_empty() {
         title.push(' ');
         title.extend(summary.chars().take(250));
+    }
+    if name == "websearch" {
+        for value in [
+            string(&tool.input, &["query"]),
+            string(&tool.metadata, &["provider"]),
+        ] {
+            if !value.is_empty() {
+                title.push_str(" · ");
+                title.extend(value.chars().take(100));
+            }
+        }
+    }
+    if task::is_task(tool) {
+        let detail = task::detail(tool);
+        if !detail.is_empty() {
+            if !detail.starts_with('[') {
+                title.push(' ');
+            }
+            title.push_str(&detail);
+        }
     }
     let params: &[(&str, &str, &str)] = match name {
         "read" => &[
@@ -124,49 +157,14 @@ fn title(tool: &Tool) -> String {
     title
 }
 
-fn shell(tool: &Tool) -> bool {
-    matches!(tool.name.as_str(), "bash" | "shell")
-}
-
-fn interrupted(tool: &Tool) -> Option<(&str, &str)> {
-    if !shell(tool) || tool.status != "error" || tool.metadata["interrupted"] != true {
-        return None;
-    }
-    let notice = tool.metadata["notice"]
-        .as_str()
-        .filter(|notice| !notice.is_empty())?;
-    let output = tool.error.strip_suffix(notice)?;
-    Some((output.strip_suffix("\n\n").unwrap_or(output), notice))
-}
-
 fn error(tool: &Tool) -> &str {
-    interrupted(tool).map_or(tool.error.as_str(), |(_, notice)| notice)
+    shell::interrupted(tool).map_or(tool.error.as_str(), |(_, notice)| notice)
 }
 
-fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'static str {
+fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
     let live = string(&tool.metadata, &["output", "preview"]);
-    if shell(tool) {
-        let command = string(&tool.input, &["command"]);
-        let output = interrupted(tool).map_or_else(
-            || {
-                if tool.status == "completed" {
-                    tool.output.as_str()
-                } else {
-                    live
-                }
-            },
-            |(output, _)| output,
-        );
-        *parts = [
-            if command.is_empty() { "" } else { "$ " },
-            command,
-            if command.is_empty() || output.is_empty() {
-                ""
-            } else {
-                "\n"
-            },
-            output,
-        ];
+    if shell::matches(tool) {
+        *parts = shell::output(tool);
         "bash"
     } else if tool.name == "edit" {
         let diff = string(&tool.metadata, &["diff"]);
@@ -190,6 +188,12 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'static str {
                     .unwrap_or_default()
             });
         "diff"
+    } else if tool.name == "write" {
+        parts[0] = tool.input["content"]
+            .as_str()
+            .or_else(|| tool.metadata["content"].as_str())
+            .unwrap_or_default();
+        markdown::language_for_path(path(tool))
     } else {
         parts[0] = if tool.output.is_empty() && tool.status != "completed" {
             live
@@ -202,7 +206,7 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'static str {
 
 pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
     let key = tool_key(message, &tool.id);
-    if tool.name == "execute" {
+    if tool.name == "execute" || task::is_task(tool) {
         return render(s, message, tool, &key).key(key);
     }
     if tool.name == "edit" {
@@ -228,24 +232,36 @@ pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
 
 fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     let expanded = s.transcript_display.toggled(&key)
-        ^ matches!(tool.name.as_str(), "bash" | "shell" | "edit");
-    let status = match tool.status.as_str() {
-        "completed" => "toolCall.status.completed",
-        "error" => "toolCall.status.error",
-        "running" => "toolCall.status.running",
-        "pending" | "streaming" => "toolCall.status.pending",
-        _ => "toolCall.status.unknown",
-    };
+        ^ matches!(tool.name.as_str(), "bash" | "shell" | "edit" | "write");
+    let is_task = task::is_task(tool);
+    let nested = message.starts_with("child:");
+    let report = is_task.then(|| task::report(s, tool)).flatten();
+    let status = task::status(s, tool)
+        .filter(|_| is_task)
+        .unwrap_or(match tool.status.as_str() {
+            "completed" if tool.name == "execute" && tool.metadata["error"] == true => {
+                "toolCall.status.error"
+            }
+            "completed" => "toolCall.status.completed",
+            "error" => "toolCall.status.error",
+            "running" => "toolCall.status.running",
+            "pending" | "streaming" => "toolCall.status.pending",
+            _ => "toolCall.status.unknown",
+        });
     let title = if tool.name == "execute" {
         execute::title(tool)
+    } else if tool.name == "todowrite" {
+        todo::title(tool)
     } else {
         title(tool)
     };
-    let toggle = message.to_owned();
-    let owner = tool.clone();
+    let toggle = key.to_owned();
     let mut parts = [""; 4];
     let pending = matches!(tool.status.as_str(), "pending" | "streaming");
     let lang = output(tool, &mut parts);
+    if is_task {
+        parts[0] = task::output(tool, report);
+    }
     let has_output = !pending && parts.iter().any(|part| !part.trim().is_empty());
     let mut header = layout::action_row()
         .child(
@@ -253,16 +269,29 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                 &title,
                 false,
                 screen::action(&s.input_scope, move |s| {
-                    Display::toggle(s, &tool_key(&toggle, &owner.id))
+                    Display::toggle(s, &toggle);
+                    if is_task && !s.transcript_display.toggled(&toggle) {
+                        s.transcript_display.children.release(&toggle);
+                    }
                 }),
             )
             .key(format!("toggle-{key}"))
             .expanded(expanded),
         )
         .child(text(t(status)).text_role(TextRole::Label));
-    if has_output {
+    if has_output
+        || tool.name == "todowrite"
+            && tool.metadata["todos"]
+                .as_array()
+                .is_some_and(|todos| !todos.is_empty())
+    {
         header = header.child(copy(s, message, &tool.id, Section::Output));
     }
+    let header = if expanded && is_task && !nested {
+        task::observe(s, key, tool, header)
+    } else {
+        header
+    };
     let mut block = col()
         .full_width()
         .pad(Space::Sm)
@@ -272,13 +301,21 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     if !expanded {
         return block;
     }
-    if pending && tool.input.as_str().is_none_or(str::is_empty) {
+    let failure = render_error(s, message, key, tool);
+    if pending && tool.name != "todowrite" && tool.input.as_str().is_none_or(str::is_empty) {
         return block.child(text(t("toolCall.pending.waitingToRun")));
     }
+    if tool.name == "todowrite" {
+        return block.children(failure).child(todo::view(tool));
+    }
+    let task_body = is_task
+        .then(|| task::body(s, key, tool, parts[0], !nested))
+        .flatten();
+    let specialized_task = task_body.is_some();
     let execute_details = (tool.name == "execute")
         .then(|| execute::view(s, key, tool))
         .flatten();
-    if let Some(details) = execute_details {
+    if let Some(details) = task_body.or(execute_details) {
         block = block.child(details);
     } else if !tool.input.is_null() {
         let input_key = format!("{key}-tool_input");
@@ -321,7 +358,7 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     } else {
         lang
     };
-    if has_output {
+    if has_output && !specialized_task {
         let formatted = (tool.name == "execute" && tool.status == "completed")
             .then(|| execute::formatted_output(parts[0]))
             .flatten();
@@ -330,7 +367,7 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         } else {
             (parts, lang)
         };
-        let terminal = shell(tool) && parts.iter().any(|text| ansi::present(text));
+        let terminal = shell::matches(tool) && parts.iter().any(|text| ansi::present(text));
         let highlight = tool.status != "running"
             && (lang != "diff"
                 || parts
@@ -365,7 +402,7 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                 )
                 .child(markdown::tool_pane(
                     window(s, output_key, &parts, TOOL_LIMIT, |shown, units| {
-                        if tool.status == "running" && shell(tool) {
+                        if tool.status == "running" && shell::matches(tool) {
                             s.transcript_display.live_ansi(key, shown, wrap)
                         } else if terminal {
                             ansi::code(shown, wrap)
@@ -373,18 +410,35 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                             markdown::code(shown, lang, highlight && units <= HIGHLIGHT_LIMIT, wrap)
                         }
                     }),
-                    tool.name == "edit",
+                    matches!(tool.name.as_str(), "edit" | "write"),
                 ))
         };
-        block = block.child(if tool_diff::candidate(tool, parts[0]) {
-            tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
-        } else {
-            fallback()
-        });
+        block = block.child(
+            if tool.name == "websearch"
+                && tool.status == "completed"
+                && let Some(results) = search::view(s, parts[0])
+            {
+                results
+            } else if !nested && tool_diff::candidate(tool, parts[0]) {
+                tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
+            } else {
+                fallback()
+            },
+        );
     }
+    block = block.children(failure);
+    if tool.name == "execute" {
+        block = block.children(execute::notice(tool));
+    }
+    block
+}
+
+fn render_error(s: &State, message: &str, key: &str, tool: &Tool) -> Option<El> {
     let error = error(tool);
-    if !error.is_empty() {
-        block = block
+    (tool.status == "error" && !error.is_empty()).then(|| {
+        col()
+            .full_width()
+            .separate(Space::Sm)
             .child(
                 layout::action_row()
                     .child(text(t("toolCall.error.label")))
@@ -405,12 +459,8 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                     },
                 ),
                 false,
-            ));
-    }
-    if tool.name == "execute" {
-        block = block.children(execute::notice(tool));
-    }
-    block
+            ))
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -443,12 +493,7 @@ fn copy(s: &State, message: &str, call: &str, section: Section) -> El {
             "toolCall.io.copyOutputAriaLabel"
         }),
         screen::action_tx(&s.input_scope, move |s, tx| {
-            let Some(tool) = s.messages.iter().find(|m| m.id == message).and_then(|m| {
-                m.parts.iter().find_map(|part| match part {
-                    Part::Tool(tool) if tool.id == call => Some(tool),
-                    _ => None,
-                })
-            }) else {
+            let Some(tool) = lookup(s, &message, &call) else {
                 return;
             };
             match section {
@@ -458,6 +503,16 @@ fn copy(s: &State, message: &str, call: &str, section: Section) -> El {
                     }
                 }
                 Section::Output => {
+                    if task::is_task(tool) {
+                        tx.copy(task::output(tool, task::report(s, tool)));
+                        return;
+                    }
+                    if tool.name == "todowrite"
+                        && let Some(source) = todo::copy(tool)
+                    {
+                        tx.copy(source);
+                        return;
+                    }
                     let mut parts = [""; 4];
                     output(tool, &mut parts);
                     tx.copy(parts.concat());
@@ -467,6 +522,30 @@ fn copy(s: &State, message: &str, call: &str, section: Section) -> El {
         }),
     )
     .key(key)
+}
+
+fn lookup<'a>(s: &'a State, message: &str, call: &str) -> Option<&'a Tool> {
+    if let Some((child, id)) = message
+        .strip_prefix("child:")
+        .and_then(|v| v.split_once(':'))
+    {
+        return s
+            .transcript_display
+            .children
+            .steps(child)
+            .iter()
+            .find(|(row, tool)| row == id && tool.id == call)
+            .map(|(_, tool)| tool.as_ref());
+    }
+    s.messages
+        .iter()
+        .find(|m| m.id == message)?
+        .parts
+        .iter()
+        .find_map(|part| match part {
+            Part::Tool(tool) if tool.id == call => Some(tool.as_ref()),
+            _ => None,
+        })
 }
 
 #[cfg(test)]

@@ -30,6 +30,12 @@ pub(super) struct Signals {
 }
 
 impl Signals {
+    pub(super) fn invalidate_all(&self) {
+        if self.mark(&self.pending, None) | self.mark(&self.providers, None) {
+            (self.wake)();
+        }
+    }
+
     pub(super) fn reconnected(&self) {
         self.mark(&self.pending, None);
         self.mark(&self.providers, None);
@@ -275,6 +281,38 @@ mod tests {
             matches!(&pending[2].event, WorkspaceEvent::SessionExecution { notice: Some(id) } if id == "evt-1")
         );
         assert_eq!(pending[2].session, "ses_another");
+    }
+
+    #[test]
+    fn dropped_frame_invalidates_both_catalogues_without_changing_connection() {
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let wakes = count.clone();
+        let signals = Signals {
+            pending: Mutex::default(),
+            providers: Mutex::default(),
+            stopped: Mutex::default(),
+            attention: Mutex::default(),
+            generation: 3.into(),
+            wake: Arc::new(move || {
+                wakes.fetch_add(1, SeqCst);
+            }),
+        };
+        signals.invalidate_all();
+        signals.invalidate_all();
+        assert!(matches!(
+            *signals.pending.lock().unwrap(),
+            CatalogueChanges::All
+        ));
+        assert!(matches!(
+            *signals.providers.lock().unwrap(),
+            CatalogueChanges::All
+        ));
+        assert!(matches!(
+            *signals.stopped.lock().unwrap(),
+            CatalogueChanges::None
+        ));
+        assert_eq!(signals.generation.load(SeqCst), 3);
+        assert_eq!(count.load(SeqCst), 1);
     }
 
     #[test]
