@@ -46,8 +46,15 @@ challenge as history queries. Never expose generic RPC or SQL access through the
   isolated OpenCode fixture compares their complete payloads with native export
   and single-message reads, with media refs inlined as native reads return them
   (`session-pruning/media-blob.ts`). Budgets are 16 MiB per message and 24 MiB per
-  window of that native form; oversized windows fail explicitly instead of silently
-  omitting content.
+   window of that native form; oversized windows fail explicitly instead of silently
+   omitting content.
+- `X-CodeNomad-User-Files: reference-v1` requests user attachment labels and
+  content digests without inline bytes. The accepted window identifies the
+  projection with `userFiles: "reference-v1"` and applies the same response
+  budgets. `/api/events?userFiles=reference-v1` applies the projection to
+  queued user input. Clients fetch an attachment by session, message, ordinal
+  and digest from `session-attachment`, up to 8 MiB. The plugin reads only the
+  stored message and its owned blobs; external files remain unavailable.
 - Ownership includes directory, project and legacy workspace identity. Staged
   undo hides the same message-ID tail as the transcript. Missing/deleted targets
   return `anchor_missing` (distinct from ownership/revert conflicts); the broker rechecks location, project, revert and workspace
