@@ -45,6 +45,7 @@ pub enum Event {
     Older(Page),
     Message(Message),
     Text(String, crate::content::TextEvent),
+    Tool(String, std::sync::Arc<crate::content::Tool>),
     Done,
     AuthenticationRequired(crate::backend::Backend),
     PromptSettled { rejected: bool },

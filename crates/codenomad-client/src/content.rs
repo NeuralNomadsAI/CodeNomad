@@ -2,6 +2,9 @@
 use crate::history::Result;
 use serde_json::Value;
 use std::{mem::size_of, sync::Arc};
+mod tool_live;
+pub use tool_live::install as install_tool;
+pub(crate) use tool_live::{Fit as ToolFit, apply as apply_tool};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part {
     Text(Text),
@@ -186,7 +189,16 @@ pub fn merge_page(live: &[crate::Message], page: &mut [crate::Message]) -> Resul
         let source_keys = part_keys(&prior.parts);
         let mut keys = part_keys(&row.parts);
         for (i, part) in prior.parts.iter().enumerate() {
-            if !matches!(part, Part::Text(_)) || keys.contains(&source_keys[i]) {
+            if let Some(target) = keys.iter().position(|key| key == &source_keys[i]) {
+                if let (Part::Tool(live), Part::Tool(fetched)) = (part, &mut row.parts[target])
+                    && tool_live::extends(live, fetched)
+                {
+                    *fetched = live.clone();
+                }
+                continue;
+            }
+            if matches!(part, Part::Tool(tool) if !matches!(tool.status.as_str(), "streaming" | "running"))
+            {
                 continue;
             }
             let after = source_keys[..i]

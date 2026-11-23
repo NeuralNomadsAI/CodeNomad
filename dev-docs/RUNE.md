@@ -101,6 +101,8 @@ Git keeps checkout metadata, commit-list/detail offsets and navigation at the ta
 
 Text fragments retain native ordinals and live/partial/closed provenance. One shared helper updates both ordered parts and the display body. Open page prefixes preserve longer live text; full native endings and committed pages settle ambiguous fragments through bounded recovery reads.
 
+Live tool input appends native deltas until its full input arrives. Progress replaces the running tool's metadata. Tool identity and phase fence late updates; bounded history reads repair missing transitions and supply terminal output. A running shell's ANSI preview retains parsed state while its visible prefix grows and starts from a clean state when the prefix changes.
+
 The Rune transcript renders native prose with kit Markdown and uses kit syntax for read, edit, shell and search output. Shell output with ANSI sequences uses styled text from the bounded display window; per-line and window-wide work limits retain readable output on densely styled logs. Copy retains the native sequences. Display windows count UTF-16 units and preserve line cuts. Tool disclosures and reveal steps belong to each project tab's live transcript state.
 
 ANSI styling uses at most 4,096 ranges per block to bound [selection-to-HTML work](https://github.com/anomalyco/rune/issues/1418). Beyond that limit plain text stays visible, concealed cells become spaces, and the tool's Copy action retains the native output.

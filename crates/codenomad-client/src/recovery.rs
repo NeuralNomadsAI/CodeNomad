@@ -313,8 +313,23 @@ pub async fn run(
                         }
                     }
                     kind if kind.starts_with("session.tool.") => {
-                        dirty = true;
-                        quiet = Instant::now() + Duration::from_millis(100);
+                        let fit = resident
+                            .iter_mut()
+                            .find(|row| row.id == id)
+                            .map_or(content::ToolFit::Repair, |row| {
+                                content::apply_tool(row, kind, &native["data"])
+                            });
+                        match fit {
+                            content::ToolFit::Applied(tool) => {
+                                history::check(&resident)?;
+                                publish(&out, &wake, Event::Tool(id.into(), tool)).await;
+                            }
+                            content::ToolFit::Drop => {}
+                            content::ToolFit::Repair => {
+                                dirty = true;
+                                quiet = Instant::now() + Duration::from_millis(100);
+                            }
+                        }
                     }
                     "session.execution.succeeded"
                     | "session.execution.failed"

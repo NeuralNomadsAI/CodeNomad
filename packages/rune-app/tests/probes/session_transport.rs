@@ -136,6 +136,7 @@ pub fn contract() {
             | Event::AgentHint(_)
             | Event::Workspace(_)
             | Event::Preferences(_)
+            | Event::Tool(..)
             | Event::PagingFailed => {}
             Event::Message(message) => {
                 assert!(

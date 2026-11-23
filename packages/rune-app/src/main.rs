@@ -402,6 +402,15 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
             }
+            Event::Tool(id, tool) => {
+                if let Some(row) = s
+                    .messages
+                    .iter_mut()
+                    .find(|row| row.id == id && !row.completed)
+                {
+                    content::install_tool(row, tool);
+                }
+            }
             Event::Done => s.phase = Phase::Ready,
             Event::PromptSettled { rejected } => settle_prompt(s, rejected),
             Event::AuthenticationRequired(..) | Event::Failed => {
