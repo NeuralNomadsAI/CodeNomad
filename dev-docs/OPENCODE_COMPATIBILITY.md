@@ -27,9 +27,10 @@ explicit incompatible identity.
 
 Minimum and recommended runtime **2.3.2** (`runtime-support.ts`), with **2.3.2**
 client/schema/plugin pins and the matching `effect` **4.1.0**. CodeNomad
-qualifies only the 2.3 subagent contract: every subagent call returns at once
+qualifies background subagent delivery: every subagent call returns at once
 (`metadata.status: "running"`) and the child reports to its parent through
-synthetic `<subagent sessionID state …>` messages, one per idle period, tagged
+synthetic `<subagent sessionID state …>` or `<background-result kind="subagent" sessionID state …>`
+messages, one per idle period, tagged
 `running` while background work remains (the subagent card in `TRANSCRIPT.md`,
 `scripts/test-missions-native-trajectory.mjs`,
 `scripts/test-subagent-nesting-native.mjs`). The minimum also carries the image tool contract of

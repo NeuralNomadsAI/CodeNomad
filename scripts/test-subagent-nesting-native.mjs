@@ -30,7 +30,7 @@ const provider = createServer(async (request, response) => {
     // Launch one General subagent when offered the tool; conclude once its launch is acknowledged (a tool
     // message) or the child reports in a later `<subagent>` message.
     const last = body.messages?.at(-1)
-    const concluded = last?.role === "tool" || JSON.stringify(last?.content ?? "").includes("<subagent")
+    const concluded = last?.role === "tool" || /<subagent|<background-result/.test(JSON.stringify(last?.content ?? ""))
     const answer = !body.stream || concluded || !tools.includes("subagent") ? "DONE"
       : { name: "subagent", arguments: JSON.stringify({ agent: "general", description: "Nest", prompt: "Nest once more" }) }
     if (!body.stream) {
