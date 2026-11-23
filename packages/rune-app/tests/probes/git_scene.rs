@@ -50,6 +50,7 @@ fn setup(s: &mut crate::State, mode: Mode) {
         workspace: "git-prototype".into(),
         session: "session".into(),
         client_id: "git-fixture".into(),
+        session_directory: None,
         fresh_mode: false,
     };
     let mut ui = Ui::new(

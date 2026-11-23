@@ -16,6 +16,22 @@ pub(crate) fn has_preview(s: &crate::State) -> bool {
         .is_some_and(|ui| ui.reader.target().is_some())
 }
 
+pub(crate) fn open_session_path(
+    s: &mut crate::State,
+    backend: &crate::backend::Backend,
+    directory: String,
+    path: String,
+) -> bool {
+    let Some(ui) = s
+        .files
+        .as_mut()
+        .filter(|ui| ui.backend.workspace == backend.workspace && ui.uses_connection(backend))
+    else {
+        return false;
+    };
+    ui.open_session_path(directory, path)
+}
+
 pub(crate) fn poll(s: &mut crate::State, now: f64, tx: &mut rune::Tx) -> bool {
     let changed = s.files.as_mut().is_some_and(|ui| {
         let selected = ui.sync_tree_focus(tx);

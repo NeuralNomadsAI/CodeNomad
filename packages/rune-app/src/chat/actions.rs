@@ -36,6 +36,7 @@ struct SessionDisplay {
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
+    diagram_sources: HashMap<String, BTreeSet<usize>>,
     compact_diffs: (u64, HashSet<String>),
 }
 impl Display {
@@ -186,15 +187,20 @@ impl Display {
     }
 
     pub fn toggle_code(s: &mut State, key: &str, index: usize) {
-        let blocks = s
-            .transcript_display
-            .active
-            .unwrapped
-            .entry(key.into())
-            .or_default();
-        if !blocks.remove(&index) {
-            blocks.insert(index);
-        }
+        toggle_index(&mut s.transcript_display.active.unwrapped, key, index);
+        s.revision += 1;
+    }
+
+    pub(super) fn diagram_sources(&self, key: &str) -> BTreeSet<usize> {
+        self.active
+            .diagram_sources
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn toggle_diagram_source(s: &mut State, key: &str, index: usize) {
+        toggle_index(&mut s.transcript_display.active.diagram_sources, key, index);
         s.revision += 1;
     }
 
@@ -215,6 +221,13 @@ impl Display {
             .or_default();
         *steps = steps.saturating_add(1);
         s.revision += 1;
+    }
+}
+
+fn toggle_index(groups: &mut HashMap<String, BTreeSet<usize>>, key: &str, index: usize) {
+    let indices = groups.entry(key.into()).or_default();
+    if !indices.remove(&index) {
+        indices.insert(index);
     }
 }
 

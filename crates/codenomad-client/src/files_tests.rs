@@ -77,6 +77,7 @@ impl Server {
                 workspace: "workspace".into(),
                 session: String::new(),
                 client_id: "files-fixture".into(),
+                session_directory: None,
                 fresh_mode: false,
             },
             requests,
@@ -284,6 +285,7 @@ fn invalid_scopes_do_not_dispatch_any_http_request() {
             workspace: "workspace".into(),
             session: String::new(),
             client_id: "fixture".into(),
+            session_directory: None,
             fresh_mode: false,
         };
         for directory in ["", "relative", "C:relative", "/bad\0dir"] {

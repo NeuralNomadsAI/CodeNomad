@@ -11,6 +11,8 @@ use rune_theme_codenomad::{
 };
 use std::borrow::Cow;
 
+mod mermaid;
+
 pub(super) const PROSE_LIMIT: usize = 50_000;
 pub(super) const TOOL_LIMIT: usize = 10_000;
 pub(super) const HIGHLIGHT_LIMIT: usize = 100_000;
@@ -25,6 +27,7 @@ pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, li
     let scope = s.input_scope.clone();
     let link_scope = scope.clone();
     let unwrapped = s.transcript_display.unwrapped(&key);
+    let diagram_sources = s.transcript_display.diagram_sources(&key);
     let steps = s.transcript_display.steps(&key);
     let version = s.transcript_display.stream_version();
     let memo_key = format!("{group}-markdown");
@@ -35,8 +38,10 @@ pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, li
             std::rc::Rc::as_ptr(&scope) as usize,
             locale(),
             &unwrapped,
+            &diagram_sources,
         );
         let build = || {
+            let diagram_sources = diagram_sources.clone();
             markdown::prose(
                 shown,
                 streaming,
@@ -48,7 +53,7 @@ pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, li
                     },
                 move |s: &mut State, url, tx| {
                     if s.current_scope(&link_scope) {
-                        let _ = tx.open_url(&links::external(url));
+                        links::open(s, url, tx);
                     }
                 },
                 {
@@ -57,11 +62,16 @@ pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, li
                 },
                 move |card, frame| {
                     let index = frame.index;
-                    let source = frame.source.to_owned();
                     let group = group.clone();
+                    let diagram = frame
+                        .language
+                        .is_some_and(|language| language.eq_ignore_ascii_case("mmd"));
                     let copy = markdown::copy_button(
                         t("markdown.codeBlock.copy.label"),
-                        screen::action_tx(&scope, move |_, tx| tx.copy(source.as_str())),
+                        screen::action_tx(&scope, {
+                            let source = frame.source.to_owned();
+                            move |_, tx| tx.copy(source.as_str())
+                        }),
                     )
                     .key(format!("{group}-code-{index}-copy"));
                     let wrap = layout::button(
@@ -78,6 +88,20 @@ pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, li
                     )
                     .key(format!("{group}-code-{index}-wrap"))
                     .checked(frame.wrapped);
+                    if diagram {
+                        return mermaid::frame(
+                            frame.open || streaming,
+                            diagram_sources.contains(&index),
+                            frame.source,
+                            format!("{group}-code-{index}"),
+                            screen::action(&scope, move |s| {
+                                Display::toggle_diagram_source(s, &group, index)
+                            }),
+                            card,
+                            wrap,
+                            copy,
+                        );
+                    }
                     let mut header = layout::action_row();
                     if let Some(language) = frame.language {
                         header = header.child(text(language));

@@ -1,5 +1,5 @@
 use crate::{Space, TextRole, kit, layout::dark, tokens};
-use pulldown_cmark::{Event, Options, Parser};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 use rune::{El, ScrollSpec, rich};
 use rune_kit::{CodeFrame, Markdown, MarkdownStyle, syntax};
 use std::borrow::Cow;
@@ -29,7 +29,8 @@ pub fn prose<S: 'static>(
         .build(kit)
 }
 
-// Normalize only parsed HTML and soft breaks so fences, inline code and link URLs stay intact.
+// Normalize only parsed events. Diagram fences stay on Kit's source path so the
+// transcript can gate preview on completion and keep source actions on one frame.
 fn literal_breaks(source: &str) -> Cow<'_, str> {
     if !source.contains(['<', '\n']) {
         return Cow::Borrowed(source);
@@ -39,6 +40,20 @@ fn literal_breaks(source: &str) -> Cow<'_, str> {
     let mut last = 0;
     let mut result = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
+        if let Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) = &event
+            && let Some(language) = info.split_whitespace().next()
+            && language.eq_ignore_ascii_case("mermaid")
+            && let Some(offset) = source[range.clone()]
+                .lines()
+                .next()
+                .and_then(|line| line.find(language))
+        {
+            let start = range.start + offset;
+            result.push_str(&source[last..start]);
+            result.push_str("mmd");
+            last = start + language.len();
+            continue;
+        }
         match event {
             Event::SoftBreak => {
                 result.push_str(&source[last..range.start]);

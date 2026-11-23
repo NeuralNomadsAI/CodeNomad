@@ -47,6 +47,7 @@ pub struct Ui {
     clock: f64,
     last_passive: Option<f64>,
     pending: Option<(f64, Changes)>,
+    session_preview: bool,
     pub stopped: bool,
 }
 impl Ui {
@@ -88,6 +89,7 @@ impl Ui {
             clock: 0.0,
             last_passive: None,
             pending: None,
+            session_preview: false,
             stopped: false,
         }
     }
@@ -362,14 +364,24 @@ impl Ui {
         }
     }
     pub fn open(&mut self, path: String) {
+        self.open_at(self.tree.directory().into(), path, false);
+    }
+
+    pub(super) fn open_session_path(&mut self, directory: String, path: String) -> bool {
+        self.open_at(directory, path, true)
+    }
+
+    fn open_at(&mut self, directory: String, path: String, session_preview: bool) -> bool {
         if !self.stopped {
+            self.session_preview = session_preview;
             self.pictures.suspend();
             self.reader_close = Default::default();
             self.presentation.reset();
-            self.document
-                .open(self.tree.directory().into(), path.clone());
-            self.reader.open(self.tree.directory().into(), path);
+            self.document.open(directory.clone(), path.clone());
+            self.reader.open(directory, path);
+            return true;
         }
+        false
     }
     pub fn reader_link(&self, target: &str, tx: &mut rune::Tx) {
         if let Some(url) = self.backend.file_link(target) {
@@ -463,10 +475,11 @@ impl Ui {
             self.snapshot();
             self.due.get_or_insert(now + 0.1);
         }
-        if self
-            .reader
-            .target()
-            .is_some_and(|target| target.directory != self.tree.directory())
+        if !self.session_preview
+            && self
+                .reader
+                .target()
+                .is_some_and(|target| target.directory != self.tree.directory())
         {
             self.reader.close();
             self.document.close();
