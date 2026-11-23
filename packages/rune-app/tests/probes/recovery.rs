@@ -66,7 +66,14 @@ pub(crate) fn check_anchor(rt: &Runtime<State>, anchor: &(String, f32)) -> f32 {
     delta
 }
 pub fn suspend() {
-    let backend = crate::platform::block_on(crate::platform::configured_backend(true)).unwrap();
+    let backend = crate::platform::block_on(async {
+        let target = crate::platform::configured_target(true)?;
+        target
+            .authenticate(&std::env::var("RUNE_PASSWORD").unwrap_or_default(), None)
+            .await?;
+        crate::history::Result::Ok(target)
+    })
+    .unwrap();
     let mut state = init();
     crate::gallery::shell::fixture(&mut state);
     let mut project = state.screen.launcher().unwrap().project.clone().unwrap();

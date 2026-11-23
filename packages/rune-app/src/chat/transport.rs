@@ -46,7 +46,10 @@ fn launch(s: &mut crate::State, startup: Startup) {
     s.commands = Some(commands);
     let reading = match &startup {
         Startup::Bound(_) => {
-            let (reader, lane) = super::reader::Reader::open();
+            let (mut reader, lane) = super::reader::Reader::open();
+            if let Some(previous) = &s.reader {
+                reader.resume(previous.bookmark(s.transcript_display.reading_mut()));
+            }
             s.reader = Some(reader);
             Some(lane)
         }

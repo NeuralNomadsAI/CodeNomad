@@ -309,6 +309,7 @@ pub(super) fn bind(
     s.transcript_display.bind(&b.base, &b.workspace, &b.session);
     s.chat_title = title;
     if !same_session {
+        s.reader = None;
         crate::files::bind(s, &b);
         s.agent = None;
         s.messages.clear();
