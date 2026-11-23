@@ -137,14 +137,9 @@ fn drawer_compresses_redocks_and_keeps_hidden_intent_cancellable() {
         frame(&mut rt);
         rt.set_viewport((589.0, 700.0), 1.0);
         frame(&mut rt);
-        assert_eq!(
-            rt.elements()
-                .into_iter()
-                .find(|node| node.focused)
-                .and_then(|node| node.key)
-                .as_deref(),
-            Some("composer")
-        );
+        assert!(rt.elements().iter().any(|node| {
+            node.focused && node.key.as_deref() == Some("input") && node.path.contains("/composer/")
+        }));
         click(&mut rt, "right-panel-toggle");
         assert!(rt.state.shell.has_floating() && rt.state.shell.visible(1));
         click(&mut rt, "right-panel-toggle");

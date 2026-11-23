@@ -16,6 +16,7 @@ fn workspace(id: &str, draft: &str) -> Workspace {
         workspace_id: None,
         active_session_id: Some(id.into()),
         drafts: BTreeMap::from([(id.into(), draft.into())]),
+        attachment_drafts: Default::default(),
         view: Default::default(),
     }
 }

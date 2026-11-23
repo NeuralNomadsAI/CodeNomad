@@ -16,6 +16,7 @@ mod pending_open;
 mod real_history;
 mod recovery;
 mod session_transport;
+mod slash;
 #[cfg(all(test, target_os = "windows"))]
 mod titlebar_locale;
 pub mod transcript_scene;
@@ -54,6 +55,7 @@ pub fn dispatch() -> bool {
         ("--probe-fresh", session_transport::fresh),
         ("--probe-recovery", recovery::run),
         ("--probe-contract", session_transport::contract),
+        ("--probe-slash", slash::run),
     ] {
         if crate::platform::has_flag(flag) {
             run();

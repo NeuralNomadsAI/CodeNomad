@@ -5,6 +5,7 @@ pub(crate) use codenomad_client::{agent_api, backend, catalog, content, history}
 mod chat;
 pub(crate) use chat::{actions as transcript_state, transcript, transport};
 mod components;
+mod composer;
 mod files;
 mod git;
 pub(crate) use components::window_close_button as window_control;
@@ -28,11 +29,8 @@ mod workspace;
 use codenomad_client::bounded;
 use codenomad_client::{Receiver, Sender};
 use rune::edit::TextEdit;
-use rune::{AppSpec, Cx, El, Tx, col};
-use rune_theme_codenomad::{
-    Space,
-    layout::{self, Layout, input},
-};
+use rune::{AppSpec, Cx, El, Tx};
+use rune_theme_codenomad::layout::{self, Layout};
 use transport::{Command, Event};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -49,6 +47,7 @@ struct State {
     git: git::Binding,
     documents: files::document::store::Store,
     reads: platform::reads::Reads,
+    attachments: chat::attachments::Reader,
     #[cfg(target_arch = "wasm32")]
     pairing: platform::pairing::Recovery,
     transcript_display: transcript_state::Display,
@@ -62,9 +61,9 @@ struct State {
     workspace: Option<workspace::Ui>,
     shell: shell::Panels,
     chat_title: String,
-    messages: Vec<Message>,
+    messages: Vec<history::Row>,
     draft: TextEdit,
-    pending_prompt: Option<String>,
+    composer: composer::Owner,
     incoming: Option<Receiver<Event>>,
     commands: Option<Sender<Command>>,
     phase: Phase,
@@ -72,6 +71,7 @@ struct State {
     can_older: bool,
     paging: bool,
     history_error: bool,
+    history_detached: bool,
 }
 #[derive(PartialEq)]
 enum Phase {
@@ -97,6 +97,7 @@ fn init() -> State {
         git: Default::default(),
         documents: Default::default(),
         reads: Default::default(),
+        attachments: Default::default(),
         #[cfg(target_arch = "wasm32")]
         pairing: Default::default(),
         transcript_display: Default::default(),
@@ -112,7 +113,7 @@ fn init() -> State {
         chat_title: String::new(),
         messages: vec![],
         draft: TextEdit::new(""),
-        pending_prompt: None,
+        composer: Default::default(),
         incoming: None,
         commands: None,
         phase: Phase::Loading,
@@ -120,6 +121,7 @@ fn init() -> State {
         can_older: false,
         paging: false,
         history_error: false,
+        history_detached: false,
     }
 }
 fn setup(s: &mut State, wake: rune::Waker) {
@@ -156,43 +158,7 @@ fn local_stress() -> bool {
 }
 
 fn send(s: &mut State, tx: &mut Tx) {
-    if s.phase != Phase::Ready
-        || s.pending_prompt.is_some()
-        || s.screen
-            .launcher()
-            .is_some_and(launcher::Launcher::blocks_prompt)
-        || s.draft.text.trim().is_empty()
-        || s.agent.as_ref().is_some_and(|a| a.blocked())
-    {
-        return;
-    }
-    let body = s.draft.text.clone();
-    if s.commands
-        .as_ref()
-        .is_some_and(|c| c.try_send(Command::Send(body.clone())).is_ok())
-    {
-        s.pending_prompt = Some(body.clone());
-        s.messages.push(Message {
-            completed: true,
-            id: format!("rune-user-{}", s.revision),
-            role: "user".into(),
-            body,
-            parts: vec![],
-        });
-        s.revision += 1;
-        s.draft = TextEdit::new("");
-        s.phase = Phase::Streaming;
-        workspace::draft_changed(s, tx);
-    }
-}
-fn settle_prompt(s: &mut State, rejected: bool) {
-    if let Some(text) = s.pending_prompt.take()
-        && rejected
-        && s.draft.text.is_empty()
-    {
-        s.draft = TextEdit::new(text);
-        workspace::capture(s);
-    }
+    composer::send(s, tx, false);
 }
 fn request_older(s: &mut State, _: &mut Tx) {
     if s.can_older
@@ -224,10 +190,10 @@ fn retry_connection(s: &mut State, tx: &mut Tx) {
             return;
         }
     }
-    if s.pending_prompt.is_some() {
+    if s.composer.pending() {
         // A terminal failure can be delivered ahead of the last transport receipt.
         poll_chat(s, 64);
-        if s.pending_prompt.is_some() {
+        if s.composer.pending() {
             return;
         }
     }
@@ -263,7 +229,17 @@ fn retry_connection(s: &mut State, tx: &mut Tx) {
         s.phase = Phase::Reconnecting;
     }
 }
-fn latest(_: &mut State, tx: &mut Tx) {
+fn latest(s: &mut State, tx: &mut Tx) {
+    if s.history_detached {
+        if s.commands
+            .as_ref()
+            .is_some_and(|c| c.try_send(Command::Latest).is_ok())
+        {
+            s.phase = Phase::Reconnecting;
+            s.can_older = false;
+        }
+        return;
+    }
     tx.scroll_to_bottom_instant("history");
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
@@ -271,6 +247,8 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
     changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
+    changed |= s.composer.picker.poll(&s.reads, &s.wake);
+    changed |= chat::attachments::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
     {
         changed |= platform::pairing::poll(s, tx);
@@ -303,6 +281,8 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
+                s.attachments.bind(backend.clone());
+                s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
                 settings::connected(s, &backend);
                 workspace::restore_files_mode(s);
@@ -311,12 +291,31 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::AgentHint(catalog) => {
+                if catalog {
+                    s.composer.picker.reconnect_commands(&s.reads, &s.wake);
+                    s.composer.picker.mentions_changed(&s.reads, &s.wake);
+                }
+                if catalog && let Some(files) = &mut s.files {
+                    files.online(true);
+                }
                 if let Some(a) = s.agent.as_mut() {
                     if catalog {
                         a.online = true;
                     }
                     a.refresh(catalog)
                 }
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::CommandsChanged) => {
+                s.composer.picker.commands_changed(&s.reads, &s.wake);
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::MentionsChanged) => {
+                s.composer.picker.mentions_changed(&s.reads, &s.wake);
+            }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::ComposerCataloguesChanged,
+            ) => {
+                s.composer.picker.commands_changed(&s.reads, &s.wake);
+                s.composer.picker.mentions_changed(&s.reads, &s.wake);
             }
             Event::Workspace(event) => {
                 git::event(s, &event);
@@ -326,6 +325,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
             Event::Sync(page) => {
+                s.composer
+                    .picker
+                    .set_attachments_supported(page.user_file_references);
                 git::online(s, true);
                 if let Some(files) = &mut s.files {
                     files.online(true);
@@ -333,10 +335,13 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if let Some(a) = s.agent.as_mut() {
                     if !a.online {
                         a.online = true;
+                        s.composer.picker.refresh_commands(&s.reads, &s.wake);
                         a.refresh(false);
                     }
                 }
                 s.messages = page.rows;
+                s.history_detached = false;
+                composer::reconcile(s);
                 s.can_older = page.older.is_some();
                 s.paging = false;
                 s.history_error = false;
@@ -347,17 +352,17 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 };
             }
             Event::Older(page) => {
-                match history::join(&page.rows, &s.messages) {
-                    Ok(rows) => {
-                        s.messages = rows;
-                        s.can_older = page.older.is_some();
-                        s.history_error = false;
-                    }
-                    Err(_) => s.history_error = true,
+                if !page.rows.is_empty() {
+                    s.attachments.cancel();
+                    s.history_detached = page.newer.is_some();
+                    s.messages = page.rows;
                 }
+                s.can_older = page.older.is_some();
+                s.history_error = false;
                 s.paging = false;
             }
             Event::Reconnecting | Event::ConnectionLost => {
+                s.composer.picker.set_attachments_supported(false);
                 #[cfg(target_arch = "wasm32")]
                 if matches!(event, Event::ConnectionLost) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
@@ -366,7 +371,10 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if let Some(files) = &mut s.files {
                     files.online(false);
                 }
-                s.phase = Phase::Reconnecting;
+                if !s.history_detached {
+                    s.phase = Phase::Reconnecting;
+                }
+                s.attachments.cancel();
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
                 }
@@ -374,6 +382,15 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::PagingFailed => {
                 s.paging = false;
                 s.history_error = true;
+            }
+            Event::HistoryInvalidated => {
+                s.composer.picker.set_attachments_supported(false);
+                s.attachments.cancel();
+                s.messages.clear();
+                s.history_detached = false;
+                s.can_older = false;
+                s.paging = false;
+                s.phase = Phase::Reconnecting;
             }
             Event::WorkspaceMissing => {
                 #[cfg(target_arch = "wasm32")]
@@ -391,20 +408,25 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Message(m) => {
                 if !s.messages.iter().any(|existing| existing.id == m.id) {
-                    s.messages.push(m);
+                    s.messages.push(m.into());
+                }
+            }
+            Event::PromptAcknowledged { attempted, outcome } => {
+                composer::acknowledge(s, &attempted, outcome);
+                if s.workspace.is_some() && std::mem::take(&mut s.composer.restored) {
+                    workspace::capture(s);
                 }
             }
             Event::Text(id, event) => {
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
-                    match content::apply_text(m, &event) {
+                    match content::apply_text(std::sync::Arc::make_mut(m), &event) {
                         Ok(content::TextFit::Repair) | Err(_) => s.history_error = true,
                         _ => {}
                     }
                 }
             }
             Event::Done => s.phase = Phase::Ready,
-            Event::PromptSettled { rejected } => settle_prompt(s, rejected),
-            Event::AuthenticationRequired(..) | Event::Failed => {
+            Event::AuthenticationRequired(_) | Event::Failed => {
                 #[cfg(target_arch = "wasm32")]
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
@@ -416,10 +438,11 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                         continue;
                     }
                     s.commands = None;
-                    settle_prompt(s, true);
+                    composer::settle_pending(s, transport::PromptOutcome::Rejected);
                     #[cfg(not(target_arch = "wasm32"))]
                     chat::authentication::expired(s, expired);
                 }
+                s.composer.picker.set_attachments_supported(false);
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
@@ -433,12 +456,12 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
         s.revision += 1;
         changed = true;
     }
-    if (s.pending_prompt.is_some() || s.phase == Phase::Reconnecting)
+    if (s.composer.pending() || s.phase == Phase::Reconnecting)
         && s.incoming
             .as_ref()
             .is_some_and(|receiver| receiver.is_closed() && receiver.is_empty())
     {
-        settle_prompt(s, true);
+        composer::settle_pending(s, transport::PromptOutcome::Unconfirmed);
         s.phase = Phase::Failed;
         changed = true;
     }
@@ -450,10 +473,15 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         if s.git.scene {
             return probes::git_scene::view(s);
         }
-        let body = shell::view(s, cx, chat_view);
+        let base = shell::view(s, cx, chat_view);
+        let mut layer = Vec::new();
+        if !s.screen.is_launcher() {
+            composer::view::overlays(s, &mut layer);
+        }
+        let body = layout::with_overlays(base, layer);
         #[cfg(target_arch = "wasm32")]
         if platform::pairing::required(s) {
-            return col()
+            return rune::col()
                 .full_width()
                 .full_height()
                 .child(platform::pairing::view(s))
@@ -461,7 +489,11 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         }
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(dialog) = chat::authentication::dialog(s) {
-            return col().full_width().full_height().child(body).child(dialog);
+            return rune::col()
+                .full_width()
+                .full_height()
+                .child(body)
+                .child(dialog);
         }
         body
     })
@@ -480,74 +512,8 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
             )
         }))
         .child(agent_view::view(s, cx))
-        .child(composer(s, expanded.then_some(cx)))
-}
-
-fn composer(s: &State, scroll_stack: Option<&Cx<State>>) -> El {
-    let scope = s.input_scope.clone();
-    let field = if interruption_expanded(s) {
-        layout::compact_composer
-    } else {
-        layout::composer
-    };
-    col()
-        .key("session-composer")
-        .role("group")
-        .label(strings::t("rune.prompt"))
-        .full_width()
-        .pad(Space::Md)
-        .separate(Space::Sm)
-        .child(
-            field(
-                input(&s.draft)
-                    .key("composer")
-                    .label(strings::t("rune.prompt"))
-                    .disabled(s.pending_prompt.is_some())
-                    .full_width()
-                    .pad(Space::Sm)
-                    .field_surface()
-                    .hint(strings::t("rune.prompt"))
-                    .content_direction()
-                    .on_edit(screen::edit(&scope, screen::Editor::Composer))
-                    .on_input_change(crate::screen::action_tx(&scope, workspace::draft_changed))
-                    .on_submit(crate::screen::action_tx(&scope, send)),
-                scroll_stack,
-            )
-            .field_surface(),
-        )
-        .child(
-            layout::action_row()
-                .children(s.can_older.then(|| {
-                    rune_theme_codenomad::shell::older_button(
-                        strings::t(if s.paging {
-                            "rune.loading"
-                        } else if s.history_error {
-                            "sessionList.loadError.retry"
-                        } else {
-                            "rune.older"
-                        }),
-                        s.paging || !matches!(s.phase, Phase::Ready | Phase::Streaming),
-                        crate::screen::action_tx(&scope, request_older),
-                    )
-                }))
-                .child(components::button_tx(
-                    "latest",
-                    strings::t("rune.latest"),
-                    false,
-                    crate::screen::action_tx(&scope, latest),
-                ))
-                .child(components::button_tx(
-                    "send",
-                    strings::t("promptInput.overlay.send"),
-                    s.phase != Phase::Ready
-                        || s.pending_prompt.is_some()
-                        || s.screen
-                            .launcher()
-                            .is_some_and(launcher::Launcher::blocks_prompt)
-                        || s.agent.as_ref().is_some_and(|a| a.blocked()),
-                    crate::screen::action_tx(&scope, send),
-                )),
-        )
+        .children(chat::attachments::error(s))
+        .child(composer::view::view(s, expanded))
 }
 
 fn interruption_expanded(s: &State) -> bool {

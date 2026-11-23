@@ -43,13 +43,21 @@ fn text_after_a_native_tool_streams_into_the_parts_and_the_body() {
         matches!(&live.parts[..],[Part::Text(a),Part::Tool(_),Part::Text(b)]
         if a.text=="Before"&&b.text=="After MKAA000008K")
     );
-    let mut page = vec![row(
+    let page = vec![row(
         json!([{"type":"text","text":"Before","native":{}},tool(),{"type":"text","text":""}]),
     )];
-    content::merge_page(&[live], &mut page).unwrap();
+    let mut page = page
+        .into_iter()
+        .map(std::sync::Arc::new)
+        .collect::<Vec<_>>();
+    content::merge_page(&[live.into()], &mut page).unwrap();
     assert_eq!(page[0].body, "Before\nAfter MKAA000008K");
     assert_eq!(
-        content::apply_text(&mut page[0], &event("delta", 1, " continues")).unwrap(),
+        content::apply_text(
+            std::sync::Arc::make_mut(&mut page[0]),
+            &event("delta", 1, " continues")
+        )
+        .unwrap(),
         TextFit::Applied
     );
     assert_eq!(page[0].body, "Before\nAfter MKAA000008K continues");
@@ -59,17 +67,21 @@ fn an_open_shorter_page_preserves_the_live_fragment_and_its_native_neighbours() 
     let live = row(
         json!([{"type":"text","text":"Before MKAA000008K"},tool(),{"type":"text","text":"After"}]),
     );
-    let mut page = vec![row(json!([{"type":"text","text":"Before "},tool()]))];
-    content::merge_page(&[live], &mut page).unwrap();
+    let page = vec![row(json!([{"type":"text","text":"Before "},tool()]))];
+    let mut page = page
+        .into_iter()
+        .map(std::sync::Arc::new)
+        .collect::<Vec<_>>();
+    content::merge_page(&[live.into()], &mut page).unwrap();
     assert_eq!(page[0].body, "Before MKAA000008K\nAfter");
     assert!(
         matches!(&page[0].parts[..],[Part::Text(_),Part::Tool(_),Part::Text(t)] if t.text=="After")
     );
-    let mut unrelated = vec![row(
+    let mut unrelated = vec![std::sync::Arc::new(row(
         json!([{"type":"text","text":"Authoritative replacement"}]),
-    )];
+    ))];
     content::merge_page(
-        &[row(json!([{"type":"text","text":"Old text"}]))],
+        &[row(json!([{"type":"text","text":"Old text"}])).into()],
         &mut unrelated,
     )
     .unwrap();
@@ -122,12 +134,13 @@ fn committed_page_content_can_shorten_or_remove_live_text() {
     let live = row(
         json!([{"type":"text","text":"Long live text"},tool(),{"type":"text","text":"Other text"}]),
     );
-    let mut terminal = history::decode_message(
+    let terminal = history::decode_message(
         &json!({"id":"assistant","type":"assistant","time":{"created":1,"completed":2},
         "content":[{"type":"text","text":"Final"}]}),
     )
     .unwrap();
-    content::merge_page(&[live], std::slice::from_mut(&mut terminal)).unwrap();
+    let mut terminal = std::sync::Arc::new(terminal);
+    content::merge_page(&[live.into()], std::slice::from_mut(&mut terminal)).unwrap();
     assert_eq!(terminal.body, "Final");
     assert_eq!(terminal.parts.len(), 1);
     assert!(matches!(&terminal.parts[0],Part::Text(t) if t.provenance==TextProvenance::Closed));

@@ -1,4 +1,7 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "このサーバーは添付ファイルの履歴に対応していません。",
+  "rune.attachments_missing": "下書きの添付ファイルは復元されませんでした。",
+  "rune.attachments_keep_text": "テキストのみ保持",
   "rune.pairing_guide": "CodeNomad のホストで admin.sh または admin.ps1 を使い、ペアリングリンクを作成してください。この端末の別のタブでリンクを開いてください。",
   "rune.loading": "読み込み中",
   "rune.ready": "準備完了",

@@ -80,13 +80,17 @@ fn opens_ten_thousand_rows_with_bounded_mounts_and_scrolls() {
 #[test]
 fn long_realistic_paragraph_occupies_multiple_lines_in_the_transcript() {
     let mut state = init();
-    state.messages = vec![Message {
-        completed: true,
-        parts: vec![],
-        id: "long-paragraph".into(),
-        role: "assistant".into(),
-        body: "Un historique réel contient des paragraphes longs à lire intégralement. ".repeat(80),
-    }];
+    state.messages = vec![
+        Message {
+            completed: true,
+            parts: vec![],
+            id: "long-paragraph".into(),
+            role: "assistant".into(),
+            body: "Un historique réel contient des paragraphes longs à lire intégralement. "
+                .repeat(80),
+        }
+        .into(),
+    ];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 760.0), Env::new(true, 1.0));
     for _ in 0..12 {
@@ -114,7 +118,7 @@ fn multiline_input_submits_once_and_stream_preserves_unicode() {
     assert_eq!(rt.state.draft.text, "Bonjour 🦀\nDeuxième ligne");
     tap(&mut rt, "send");
     assert!(
-        matches!(commands.try_recv(), Ok(Command::Send(body)) if body == "Bonjour 🦀\nDeuxième ligne")
+        matches!(commands.try_recv(), Ok(Command::Prompt(body)) if body.text == "Bonjour 🦀\nDeuxième ligne")
     );
     tap(&mut rt, "send");
     assert!(commands.try_recv().is_err());
@@ -161,10 +165,16 @@ fn consecutive_sends_keep_distinct_responses_and_reenable_send() {
         rt.paste(prompt.clone());
         rt.frame(0.0);
         tap(&mut rt, "send");
-        assert!(matches!(commands.try_recv(), Ok(Command::Send(body)) if body == prompt));
+        let Ok(Command::Prompt(body)) = commands.try_recv() else {
+            panic!("missing prompt")
+        };
+        assert_eq!(body.text, prompt);
+        out.send_blocking(Event::PromptAcknowledged {
+            attempted: body.id.unwrap(),
+            outcome: crate::transport::PromptOutcome::Confirmed(format!("confirmed-{turn}")),
+        })
+        .unwrap();
         assert!(rt.state.phase == Phase::Streaming);
-        out.send_blocking(Event::PromptSettled { rejected: false })
-            .unwrap();
         for (kind, fields) in [
             (
                 "session.step.started",

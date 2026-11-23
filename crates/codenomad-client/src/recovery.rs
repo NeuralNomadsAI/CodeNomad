@@ -7,7 +7,7 @@ use crate::{
     backend::Backend,
     content::{self, Part, TextFit, TextProvenance},
     history, stream,
-    transport::{Command, Event, publish},
+    transport::{Command, Event, PromptOutcome, publish},
 };
 use serde_json::Value;
 use std::{
@@ -79,9 +79,11 @@ pub async fn run(
     let mut owed = HashSet::<(String, usize)>::new();
     let mut repairs = 0u8;
     let mut settlement_reads = 0u8;
-    let mut resident = Vec::<crate::Message>::new();
+    let mut resident = Vec::<history::Row>::new();
+    let mut historical = false;
     let mut parked = false;
     let mut connection_lost = false;
+    let mut connection_closed = false;
     let mut seen = Seen {
         entries: VecDeque::new(),
         bytes: 0,
@@ -94,7 +96,9 @@ pub async fn run(
     loop {
         if retry.is_some_and(|at| Instant::now() >= at) {
             retry = None;
+            connection_closed = false;
             epoch += 1;
+            fence = 0;
             repairs = 0;
             settlement_reads = 0;
             wire = make_wire();
@@ -120,6 +124,7 @@ pub async fn run(
             }
             Some(Input::Closed(e)) if e == epoch => {
                 opened = false;
+                connection_closed = true;
                 connection_lost = true;
                 dirty = true;
                 publish(&out, &wake, Event::ConnectionLost).await;
@@ -139,19 +144,23 @@ pub async fn run(
             }
             Some(Input::Unavailable(e)) if e == epoch => {
                 dirty = true;
-                publish(&out, &wake, Event::Reconnecting).await;
+                if !historical {
+                    publish(&out, &wake, Event::Reconnecting).await;
+                }
             }
             Some(Input::Hint(e, v)) if e == epoch && v > fence => {
                 dirty = true;
                 quiet = Instant::now() + Duration::from_millis(100);
-                publish(&out, &wake, Event::Reconnecting).await;
+                if !historical {
+                    publish(&out, &wake, Event::Reconnecting).await;
+                }
             }
             Some(Input::Command(Command::Retry)) => {
                 attempts = 0;
                 dirty = true;
                 parked = false;
                 quiet = Instant::now();
-                if !wire.alive.load(SeqCst) {
+                if connection_closed {
                     retry = Some(Instant::now());
                 }
                 publish(&out, &wake, Event::Reconnecting).await;
@@ -159,16 +168,20 @@ pub async fn run(
             Some(Input::Command(Command::Older)) => {
                 if let Some(target) = older
                     .clone()
-                    .filter(|_| opened && !dirty && wire.upstream.load(SeqCst))
+                    .filter(|_| opened && (!dirty || historical) && wire.upstream.load(SeqCst))
                 {
                     let stamp = wire.version.load(SeqCst);
                     match backend.page(target).await {
                         Ok(page) if wire.valid(stamp) && rx.is_empty() => {
-                            if let Ok(joined) = history::join(&page.rows, &resident) {
-                                resident = joined;
+                            if history::previous_page(&page, &resident).is_ok() {
+                                if !page.rows.is_empty() {
+                                    historical = page.newer.is_some();
+                                    resident = page.rows.clone();
+                                    first = resident.first().map(|r| r.id.clone());
+                                    known = resident.iter().map(|r| r.id.clone()).collect();
+                                    owed.retain(|(id, _)| known.contains(id));
+                                }
                                 older = page.older.clone();
-                                first = resident.first().map(|r| r.id.clone());
-                                known.extend(page.rows.iter().map(|r| r.id.clone()));
                                 publish(&out, &wake, Event::Older(page)).await;
                             } else {
                                 publish(&out, &wake, Event::PagingFailed).await;
@@ -187,33 +200,100 @@ pub async fn run(
                     publish(&out, &wake, Event::PagingFailed).await;
                 }
             }
-            Some(Input::Command(Command::Send(body))) => {
-                if opened && !dirty && !parked && wire.upstream.load(SeqCst) {
+            Some(Input::Command(Command::Latest)) => {
+                historical = false;
+                first = None;
+                resident.clear();
+                known.clear();
+                owed.clear();
+                dirty = true;
+                parked = false;
+                quiet = Instant::now();
+                if connection_closed {
+                    retry = Some(Instant::now());
+                }
+                publish(&out, &wake, Event::Reconnecting).await;
+            }
+            Some(Input::Command(Command::Slash {
+                attempt,
+                name,
+                text,
+            })) => {
+                use crate::prompt::PromptError;
+                let outcome = if opened && !parked && !historical && wire.upstream.load(SeqCst) {
+                    match backend.prompt_command(&name, &text).await {
+                        Ok(()) => PromptOutcome::Confirmed(attempt.clone()),
+                        Err(PromptError::Rejected) => PromptOutcome::Rejected,
+                        Err(PromptError::Unconfirmed) => PromptOutcome::Unconfirmed,
+                        Err(PromptError::AuthenticationRequired) => {
+                            if rejected_by_authentication(&backend, &attempt, &out, &wake, &wire)
+                                .await
+                            {
+                                return Ok(());
+                            }
+                            PromptOutcome::Rejected
+                        }
+                    }
+                } else {
+                    PromptOutcome::Rejected
+                };
+                publish(
+                    &out,
+                    &wake,
+                    Event::PromptAcknowledged {
+                        attempted: attempt,
+                        outcome,
+                    },
+                )
+                .await;
+            }
+            Some(Input::Command(Command::Prompt(prompt))) => {
+                let Some(id) = &prompt.id else { continue };
+                let admitted = opened && !parked && !historical && wire.upstream.load(SeqCst);
+                let outcome = if admitted {
+                    match backend.prompt(&prompt).await {
+                        Ok(ack) => PromptOutcome::Confirmed(ack.id),
+                        Err(error)
+                            if error.downcast_ref()
+                                == Some(&crate::prompt::PromptError::AuthenticationRequired) =>
+                        {
+                            if rejected_by_authentication(&backend, id, &out, &wake, &wire).await {
+                                return Ok(());
+                            }
+                            PromptOutcome::Rejected
+                        }
+                        Err(error)
+                            if error.downcast_ref()
+                                == Some(&crate::prompt::PromptError::Rejected) =>
+                        {
+                            PromptOutcome::Rejected
+                        }
+                        Err(_) => PromptOutcome::Unconfirmed,
+                    }
+                } else {
+                    PromptOutcome::Rejected
+                };
+                if !matches!(outcome, PromptOutcome::Rejected)
+                    && !busy
+                    && prompt.delivery != Some(crate::prompt::Delivery::Queue)
+                {
                     busy = true;
                     repairs = 0;
                     settlement_reads = 0;
-                    let result = backend.send(body).await;
-                    if let Err(error) = &result {
-                        if crate::http::authentication_expired(error) {
-                            wire.cancelled.store(true, SeqCst);
-                            while wire.alive.load(SeqCst) {
-                                runtime::sleep(Duration::from_millis(25)).await;
-                            }
-                            publish(&out, &wake, Event::AuthenticationRequired(backend.clone()))
-                                .await;
-                            return Ok(());
-                        }
-                        eprintln!("Rune prompt delivery failed");
-                    }
-                    let rejected = result.is_err();
-                    publish(&out, &wake, Event::PromptSettled { rejected }).await;
-                    if rejected {
-                        publish(&out, &wake, Event::Failed).await;
-                    }
-                } else {
-                    publish(&out, &wake, Event::PromptSettled { rejected: true }).await;
-                    publish(&out, &wake, Event::Failed).await;
                 }
+                if matches!(outcome, PromptOutcome::Unconfirmed) {
+                    dirty = true;
+                    quiet = Instant::now();
+                }
+                publish(
+                    &out,
+                    &wake,
+                    Event::PromptAcknowledged {
+                        attempted: id.clone(),
+                        outcome,
+                    },
+                )
+                .await;
             }
             Some(Input::Native(e, v, native)) if e == epoch => {
                 let kind = native["type"].as_str().unwrap_or_default();
@@ -228,7 +308,7 @@ pub async fn run(
                         }),
                     )
                     .await;
-                    publish(&out, &wake, Event::Failed).await;
+                    publish(&out, &wake, Event::HistoryInvalidated).await;
                     return Err("session scope changed".into());
                 }
                 if kind.starts_with("permission.")
@@ -239,6 +319,27 @@ pub async fn run(
                 }
                 if v <= fence || !seen.insert(&native) {
                     continue;
+                }
+                match kind {
+                    "session.deleted" => {
+                        publish(&out, &wake, Event::HistoryInvalidated).await;
+                        wire.cancelled.store(true, SeqCst);
+                        return Err("session scope changed".into());
+                    }
+                    "session.revert.committed" => {
+                        publish(&out, &wake, Event::HistoryInvalidated).await;
+                        historical = false;
+                        resident.clear();
+                        first = None;
+                        known.clear();
+                        owed.clear();
+                        parked = false;
+                        dirty = true;
+                        quiet = Instant::now();
+                        continue;
+                    }
+                    _ if historical => continue,
+                    _ => {}
                 }
                 let id = native["data"]["assistantMessageID"]
                     .as_str()
@@ -265,7 +366,7 @@ pub async fn run(
                                 if resident.len() >= history::MAX_ROWS {
                                     return Err("resident row budget reached".into());
                                 }
-                                resident.push(row.clone());
+                                resident.push(row.clone().into());
                                 publish(&out, &wake, Event::Message(row)).await;
                             }
                         }
@@ -286,7 +387,7 @@ pub async fn run(
                             })
                         });
                         let fit = match row {
-                            Some(row) => content::apply_text(row, &event)?,
+                            Some(row) => content::apply_text(Arc::make_mut(row), &event)?,
                             None => TextFit::Repair,
                         };
                         if event.is_end() && fit == TextFit::Applied {
@@ -323,10 +424,6 @@ pub async fn run(
                         dirty = true;
                         quiet = Instant::now() + Duration::from_millis(100);
                     }
-                    "session.deleted" | "session.revert.committed" => {
-                        publish(&out, &wake, Event::Failed).await;
-                        return Err("session scope or history changed".into());
-                    }
                     "server.connected" | "session.inbox.enqueued" | "session.inbox.delivered" => {
                         dirty = true;
                         quiet = Instant::now() + Duration::from_millis(100);
@@ -340,14 +437,13 @@ pub async fn run(
             && !parked
             && opened
             && wire.upstream.load(SeqCst)
+            && !historical
             && Instant::now() >= quiet
             && rx.is_empty()
         {
             let stamp = wire.version.load(SeqCst);
             let snapshot = if initial && backend.fresh_mode {
                 backend.empty().await
-            } else if backend.fresh_mode {
-                backend.fresh(first.as_deref()).await
             } else {
                 backend.restore(first.as_deref()).await
             };
@@ -421,6 +517,44 @@ pub async fn run(
             }
         }
     }
+}
+
+async fn rejected_by_authentication(
+    backend: &Backend,
+    attempted: &str,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+    wire: &stream::State,
+) -> bool {
+    let authenticated = async {
+        let response = backend
+            .client
+            .get(format!("{}api/auth/status", backend.base))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok::<_, history::Error>(crate::backend::read_json_limited(response, 4096).await?)
+    }
+    .await;
+    if authenticated.is_ok_and(|status| status["authenticated"] == true) {
+        return false;
+    }
+    wire.cancelled.store(true, SeqCst);
+    while wire.running.load(SeqCst) && !out.is_closed() {
+        runtime::sleep(Duration::from_millis(25)).await;
+    }
+    publish(
+        out,
+        wake,
+        Event::PromptAcknowledged {
+            attempted: attempted.into(),
+            outcome: PromptOutcome::Rejected,
+        },
+    )
+    .await;
+    publish(out, wake, Event::AuthenticationRequired(backend.clone())).await;
+    true
 }
 fn can_restart(row: &crate::Message) -> bool {
     !row.completed && row.body.is_empty() && row.parts.iter().all(|part|

@@ -1,5 +1,75 @@
 use super::*;
 
+#[test]
+fn reopening_a_saved_draft_without_its_files_blocks_every_send() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries[0] = entry("tab-0".into(), Tab::Workspace(workspace("alpha", "")));
+    ui.entries[0].binding = Some(backend("alpha"));
+    s.workspace = Some(ui);
+    s.draft = TextEdit::new("from the attached file");
+    s.composer
+        .draft
+        .attach(crate::composer::draft::Attachment::Project {
+            name: "report.txt".into(),
+            path: "./report.txt".into(),
+            uri: "file:///fixture/report.txt".into(),
+            directory: false,
+        });
+    capture(&mut s);
+    let bytes = crate::workspace::encode(&s.workspace.as_ref().unwrap().snapshot()).unwrap();
+
+    let mut restored = init();
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::decode(&bytes).unwrap());
+    ui.ready = true;
+    restored.workspace = Some(ui);
+    restored.draft = TextEdit::new(bound(&mut restored, &backend("alpha")));
+    restored.composer.picker.set_attachments_supported(true);
+    restored.phase = Phase::Ready;
+    let (out, commands) = bounded(1);
+    restored.commands = Some(out);
+    let mut rt = runtime(restored);
+    rt.update(crate::send);
+    rt.frame(0.0);
+    assert!(rt.state.composer.attachments_missing);
+    assert!(!crate::composer::can_send(&rt.state));
+    assert!(commands.try_recv().is_err());
+    assert_eq!(rt.state.draft.text, "from the attached file");
+    assert!(rt.find("keep-draft-text").is_some());
+    rt.update(|s, tx| {
+        s.composer
+            .draft
+            .attach(crate::composer::draft::Attachment::Path(
+                "./other.txt".into(),
+            ));
+        s.draft = TextEdit::new(bound(s, &backend("alpha")));
+        s.composer.picker.set_attachments_supported(true);
+        crate::send(s, tx);
+    });
+    assert!(rt.state.composer.attachments_missing);
+    assert!(commands.try_recv().is_err());
+}
+
+#[test]
+fn attachment_only_drafts_reserve_a_slot_before_the_picker_can_attach() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    let mut saved = workspace("next", "");
+    saved.attachment_drafts = (0..crate::workspace::MAX_DRAFTS)
+        .map(|i| format!("old-{i}"))
+        .collect();
+    ui.entries[0] = entry("tab-0".into(), Tab::Workspace(saved));
+    ui.entries[0].binding = Some(backend("next"));
+    s.workspace = Some(ui);
+    assert!(!attachment_draft_admissible(&s));
+    s.draft = TextEdit::new("a plain draft still saves");
+    capture(&mut s);
+    assert!(crate::workspace::encode(&s.workspace.as_ref().unwrap().snapshot()).is_ok());
+}
+
 fn closed(session: &str, text: &str) -> Workspace {
     let mut w = workspace(session, text);
     w.backend_id = Some("external".into());
@@ -67,7 +137,7 @@ fn clearing_or_sending_an_inherited_draft_retires_older_closed_text() {
             let mut rt = runtime(s);
             rt.update(crate::send);
             assert!(
-                matches!(input.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "Old Alpha")
+                matches!(input.try_recv(), Ok(crate::transport::Command::Prompt(body)) if body.text == "Old Alpha")
             );
             s = rt.state;
         }
@@ -136,7 +206,7 @@ fn snapshot_preserves_needed_clear_authority_and_untouched_sibling_absence() {
             let mut rt = runtime(s);
             rt.update(crate::send);
             assert!(
-                matches!(input.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "Old Alpha")
+                matches!(input.try_recv(), Ok(crate::transport::Command::Prompt(body)) if body.text == "Old Alpha")
             );
             s = rt.state;
         } else {
@@ -187,7 +257,7 @@ fn delivered_bundles_follow_live_edits_and_sends_without_retiring_other_sessions
                 rt.state.phase = Phase::Ready;
                 rt.update(crate::send);
                 assert!(
-                    matches!(input.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "Old Alpha")
+                    matches!(input.try_recv(), Ok(crate::transport::Command::Prompt(body)) if body.text == "Old Alpha")
                 );
             } else {
                 rt.state.draft = TextEdit::new(if mode == "edited" { "New Alpha" } else { "" });
@@ -451,10 +521,11 @@ fn delivery_inactive_close_preserves_the_active_reader_and_focus() {
             .elements()
             .into_iter()
             .find(|e| e.focused)
-            .map(|e| (e.key, e.edit_range));
-        assert_eq!(
-            focus.as_ref().and_then(|(key, _)| key.as_deref()),
-            Some("composer")
+            .map(|e| (e.path, e.edit_range));
+        assert!(
+            focus
+                .as_ref()
+                .is_some_and(|(path, range)| path.contains("/composer/") && range.is_some())
         );
         let anchor = rt
             .elements()
@@ -482,7 +553,7 @@ fn delivery_inactive_close_preserves_the_active_reader_and_focus() {
             rt.elements()
                 .into_iter()
                 .find(|e| e.focused)
-                .map(|e| (e.key, e.edit_range)),
+                .map(|e| (e.path, e.edit_range)),
             focus
         );
         assert_eq!(

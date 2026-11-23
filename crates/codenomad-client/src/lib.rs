@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod agent_api;
+pub mod attachments;
 pub mod backend;
 pub mod catalog;
 pub mod content;
@@ -12,12 +13,17 @@ pub mod files;
 pub mod git;
 pub mod history;
 pub mod http;
+pub mod prompt;
+pub mod prompt_catalogue;
+mod prompt_command;
+mod prompt_receipt;
 pub mod recovery;
 pub mod runtime;
 mod server_path;
 pub mod settings;
 pub use server_path::absolute as absolute_server_path;
 pub use server_path::basename as server_path_basename;
+pub use server_path::file_uri as server_file_uri;
 pub use server_path::same as same_server_path;
 pub mod stream;
 pub mod transport;
@@ -46,5 +52,7 @@ mod files_write_tests;
 mod fragment_tests;
 #[cfg(test)]
 mod history_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod prompt_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod transport_tests;

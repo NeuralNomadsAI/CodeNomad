@@ -21,13 +21,16 @@ fn inactive_prompt_rejection_is_saved_before_closing_its_tab() {
         workspace_id: None,
         active_session_id: Some("first".into()),
         drafts: Default::default(),
+        attachment_drafts: Default::default(),
         view: Default::default(),
     });
     ui.entries[0].binding = Some(backend.clone());
     ui.entries.push(entry("tab-1".into(), Tab::Blank));
     let (out, incoming) = codenomad_client::bounded(1);
     state.incoming = Some(incoming);
-    state.pending_prompt = Some("preserve this".into());
+    let (commands, sent) = codenomad_client::bounded(1);
+    state.commands = Some(commands);
+    state.draft = TextEdit::new("preserve this");
     state.phase = Phase::Streaming;
     state.workspace = Some(ui);
     let mut runtime = rune::Runtime::new(
@@ -36,7 +39,14 @@ fn inactive_prompt_rejection_is_saved_before_closing_its_tab() {
         (1000.0, 800.0),
         rune::Env::new(false, 1.0),
     );
-    runtime.update(|s, tx| select(s, "tab-1", tx));
+    runtime.update(|s, tx| {
+        crate::composer::send(s, tx, false);
+        select(s, "tab-1", tx);
+    });
+    assert!(matches!(
+        sent.try_recv(),
+        Ok(crate::transport::Command::Prompt(_))
+    ));
     out.try_send(Event::AuthenticationRequired(backend))
         .unwrap();
     runtime.update(|s, tx| {
