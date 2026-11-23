@@ -226,7 +226,7 @@ const upstream=createServer(async(req,res)=>{
     if(url.pathname==='/api/plugin')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
     if(['/api/rpc/codenomad.session-pruning/window','/api/rpc/codenomad.session-pruning/windowUserFilesV1'].includes(url.pathname)){
       const {input}=JSON.parse(raw),output=stores.get(input.sessionID).window(input.target)
-      if(url.pathname.endsWith('windowUserFilesV1'))output.userFiles='reference-v1'
+      if(url.pathname.endsWith('windowUserFilesV1')&&output.status==='window')output.userFiles='reference-v1'
       return json({output})
     }
     if(url.pathname==='/api/rpc/codenomad.missions/scheduleCarrierRead')return json({output:{owned:false}})

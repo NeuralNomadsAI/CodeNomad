@@ -59,7 +59,7 @@ const native=createServer(async(req,res)=>{
     if(suspend&&input.target.kind==='around'){stats.aroundReads++;stats.resumedAnchor=input.target.messageID}
     if(input.target.kind==='before'&&blockOlder){blockOlder=false;stats.blockedPages++;return json({output:{status:'blocked',reason:'anchor_missing'}})}
     const snapshot=store.window(input.target)
-    if(url.pathname.endsWith('windowUserFilesV1'))snapshot.userFiles='reference-v1'
+    if(url.pathname.endsWith('windowUserFilesV1')&&snapshot.status==='window')snapshot.userFiles='reference-v1'
     if(input.target.kind==='before'&&staleOlder){
       staleOlder=false;stats.stalePages++
       store.rows[250].content[0].text='edited during stale page\nété 🦀\nthird line'
