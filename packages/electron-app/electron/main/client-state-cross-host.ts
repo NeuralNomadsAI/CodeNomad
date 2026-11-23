@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
-import { readFile, readdir } from "node:fs/promises"
+import { lstat, readFile, readdir, rename, rm, unlink } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, dirname, join, posix, win32 } from "node:path"
 import { getProcessStartIdentity, type ProcessStartIdentityLookup } from "./client-state-process-identity"
@@ -176,35 +176,35 @@ function removeParticipantIfOwned(path: string, owner: ProcessOwner): void {
   }
 }
 
-function retireOwnerIfOwned(directory: string, owner: ProcessOwner, dependencies: CrossHostLeaseDependencies): void {
-  const observed = readIfExists(ownerPath(directory))
+async function unlinkIfExists(path: string): Promise<void> {
+  try { await unlink(path) } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) throw error
+  }
+}
+
+async function retireOwnerIfOwned(directory: string, owner: ProcessOwner, dependencies: CrossHostLeaseDependencies): Promise<void> {
+  const observed = await readIfExistsAsync(ownerPath(directory))
   const current = parseOwner(observed ?? "")
   if (!current || !sameOwner(current, owner)) return
   dependencies.onGracefulOwnerChecked?.()
-  if (readIfExists(ownerPath(directory)) !== observed) return
+  if (await readIfExistsAsync(ownerPath(directory)) !== observed) return
   const retired = join(directory, `${RETIRED_PREFIX}${owner.pid}.${owner.runToken}`)
-  try { renameSync(join(directory, CROSS_HOST_OWNER_DIRECTORY), retired) } catch (error) {
-    if (["ENOENT", "EEXIST", "ENOTEMPTY"].some((code) => hasErrorCode(error, code)) || existsSync(retired)) return
+  try { await rename(join(directory, CROSS_HOST_OWNER_DIRECTORY), retired) } catch (error) {
+    if (["ENOENT", "EEXIST", "ENOTEMPTY"].some((code) => hasErrorCode(error, code)) || await lstat(retired).catch(() => undefined)) return
     throw error
   }
   try {
     dependencies.onOwnerRetired?.()
-    for (const name of readdirSync(directory)) {
+    for (const name of await readdir(directory)) {
       if (!name.startsWith(PARTICIPANT_PREFIX) || !name.endsWith(PARTICIPANT_SUFFIX)) continue
-      const path = join(directory, name), observedParticipant = readIfExists(path)
+      const path = join(directory, name), observedParticipant = await readIfExistsAsync(path)
       if (observedParticipant === undefined) continue
       const participant = parseOwner(observedParticipant)
-      if (participant) {
-        removeParticipantIfOwned(path, participant)
-        try { unlinkSync(recoveryPath(directory, participant)) } catch {}
-      } else if (readIfExists(path) === observedParticipant) {
-        try { unlinkSync(path) } catch (error) {
-          if (!hasErrorCode(error, "ENOENT")) throw error
-        }
-      }
+      if (await readIfExistsAsync(path) === observedParticipant) await unlinkIfExists(path)
+      if (participant) await unlink(recoveryPath(directory, participant)).catch(() => {})
     }
   } finally {
-    try { rmSync(retired, { recursive: true, force: true }) } catch {}
+    await rm(retired, { recursive: true, force: true }).catch(() => {})
   }
 }
 
@@ -373,11 +373,12 @@ export class CrossHostRegistration {
     return Boolean(!this.released && current && sameOwner(current, this.owner))
   }
 
-  release(): boolean {
+  async release(): Promise<boolean> {
     if (this.released) return false
-    retireOwnerIfOwned(this.directory, this.owner, this.dependencies)
-    removeParticipantIfOwned(this.participant, this.owner)
-    if (this.recoveryClaim) try { unlinkSync(this.recoveryClaim) } catch {}
+    await retireOwnerIfOwned(this.directory, this.owner, this.dependencies)
+    const participant = parseOwner(await readIfExistsAsync(this.participant) ?? "")
+    if (participant && sameOwner(participant, this.owner)) await unlinkIfExists(this.participant)
+    if (this.recoveryClaim) await unlink(this.recoveryClaim).catch(() => {})
     this.primary = false
     this.released = true
     return true

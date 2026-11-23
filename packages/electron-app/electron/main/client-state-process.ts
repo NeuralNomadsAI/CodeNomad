@@ -1,5 +1,5 @@
 import { closeSync, fsyncSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs"
-import { readFile, readdir } from "node:fs/promises"
+import { readFile, readdir, unlink } from "node:fs/promises"
 import { basename, join } from "node:path"
 import {
   type ExpectedProcessLookup,
@@ -345,6 +345,18 @@ export async function isProcessOwnerLockOwnedAsync(path: string, owner: ProcessO
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) return false
     throw error
+  }
+}
+
+export async function releaseProcessOwnerFile(path: string, owner: ProcessOwner): Promise<void> {
+  try {
+    const observed = await readFile(path, "utf8")
+    const current = parseProcessOwner(observed)
+    if (current && isSameProcessOwner(current, owner) && await readFile(path, "utf8") === observed) {
+      await unlink(path)
+    }
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) throw error
   }
 }
 

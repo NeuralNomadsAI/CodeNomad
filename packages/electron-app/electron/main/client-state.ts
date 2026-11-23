@@ -12,8 +12,8 @@ import {
   isProcessOwnerLockOwned,
   isProcessOwnerLockOwnedAsync,
   removeProcessOwnerLockIfOwned,
+  releaseProcessOwnerFile,
   type ProcessOwner,
-  removeRunningMarkerIfOwned,
 } from "./client-state-process"
 import { getProcessStartIdentity } from "./client-state-process-identity"
 import {
@@ -535,9 +535,9 @@ export class ClientStateManager {
     this.frozen = true
     // The primary locks stay held until the queued root publication and GC have both drained.
     const drain = this.writeQueue.then(
-      () => {
+      async () => {
         this.primary = false
-        this.releaseOwnedProcessFiles()
+        await this.releaseOwnedProcessFiles()
       },
       (error) => {
         this.frozen = false
@@ -603,7 +603,7 @@ export class ClientStateManager {
       fsyncSync(descriptor)
       closeSync(descriptor)
       descriptor = undefined
-      this.assertReplacementAllowed()
+      this.assertStartupReplacementAllowed()
       renameSync(temporaryPath, this.statePath)
       this.syncStateDirectorySync()
     } finally {
@@ -644,7 +644,7 @@ export class ClientStateManager {
       fsyncSync(descriptor)
       closeSync(descriptor)
       descriptor = undefined
-      this.assertReplacementAllowed()
+      this.assertStartupReplacementAllowed()
       try {
         linkSync(temporaryPath, this.statePath)
         this.syncStateDirectorySync()
@@ -773,15 +773,22 @@ export class ClientStateManager {
     if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken, windowId)
   }
 
-  private releaseOwnedProcessFiles(): void {
-    const releases: Array<[string, () => void]> = [
-      ["remove running marker", () => { removeRunningMarkerIfOwned(getRunningMarkerPath(this.userDataPath, this.owner), this.owner) }],
-      ["release primary lock", () => { removeProcessOwnerLockIfOwned(this.lockPath, this.owner) }],
-      ["release cross-host registration", () => { this.crossHostRegistration?.release(); this.crossHostRegistration = undefined }],
+  // Migration runs before the first application window and before the async IPC queue exists.
+  private assertStartupReplacementAllowed(): void {
+    if (!this.isPrimary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
+      throw new Error("Client state ownership changed before atomic replacement")
+    }
+  }
+
+  private async releaseOwnedProcessFiles(): Promise<void> {
+    const releases: Array<[string, () => Promise<unknown>]> = [
+      ["remove running marker", () => releaseProcessOwnerFile(getRunningMarkerPath(this.userDataPath, this.owner), this.owner)],
+      ["release primary lock", () => releaseProcessOwnerFile(this.lockPath, this.owner)],
+      ["release cross-host registration", async () => { await this.crossHostRegistration?.release(); this.crossHostRegistration = undefined }],
     ]
     for (const [action, release] of releases) {
       try {
-        release()
+        await release()
       } catch (error) {
         console.warn(`[client-state] failed to ${action}`, error)
       }
