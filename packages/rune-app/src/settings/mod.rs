@@ -183,7 +183,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
 pub(crate) enum Delivery {
     Suppressed,
     WaitingForSettings,
-    Body(String),
+    Body(String, notification_routing::Route, bool),
 }
 
 pub(crate) enum ConfirmedRoute {
@@ -230,16 +230,23 @@ pub(crate) fn system_notification(
         return Delivery::WaitingForSettings;
     }
     let config = prefs.notification_config();
-    if crate::shell::notifications::system_allowed(config, category, focused) {
+    if let Some(route) = notification_routing::route(config, category)
+        && (route.screen
+            || route.history
+            || route.system && (!focused || notification_routing::allow_focused(config)))
+    {
         let key = match category {
             notification_routing::Category::NeedsInput => "sessionEvents.notify.needsInput",
             notification_routing::Category::SessionDone => "sessionEvents.notify.done",
             _ => return Delivery::Suppressed,
         };
-        Delivery::Body(strings::with_locale(
-            prefs.locale().unwrap_or_else(strings::locale),
-            || strings::t(key).replace("{label}", label),
-        ))
+        Delivery::Body(
+            strings::with_locale(prefs.locale().unwrap_or_else(strings::locale), || {
+                strings::t(key).replace("{label}", label)
+            }),
+            route,
+            notification_routing::allow_focused(config),
+        )
     } else {
         Delivery::Suppressed
     }
@@ -253,7 +260,7 @@ pub(crate) fn notification_fixture(s: &State) {
 }
 
 #[cfg(test)]
-pub(crate) fn notification_test_config(s: &State, snapshot: Value) {
+pub(crate) fn notification_test_config(s: &State, snapshot: serde_json::Value) {
     s.settings
         .shared
         .borrow_mut()

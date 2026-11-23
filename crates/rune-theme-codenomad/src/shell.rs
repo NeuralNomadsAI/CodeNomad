@@ -1,5 +1,6 @@
 //! Geometry shared by the application bar and conversation panels.
 pub mod icons;
+pub mod notices;
 use crate::{Length, Space, TextRole, kit, layout, tokens};
 use rune::{App, AppSpec, Cx, El, Icon, Tx, col, el, row, text};
 use rune_kit::{

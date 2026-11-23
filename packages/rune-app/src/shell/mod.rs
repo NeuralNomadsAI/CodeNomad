@@ -29,7 +29,9 @@ pub fn view(
     if let Some(ui) = &s.workspace {
         root = root.child(rune_theme_codenomad::settings::shell_entry(
             workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside),
-            crate::settings::entry(),
+            rune::row()
+                .child(crate::settings::entry())
+                .child(notifications::history_entry(s, cx.touch_controls())),
         ));
         if let Some(error) = workspace::status(s) {
             root = root.child(
@@ -47,8 +49,12 @@ pub fn view(
         let body = body(s, cx, conversation).key(format!("tab-body-{}", ui.active_key()));
         root.child(body.remaining())
     } else {
-        root.child(crate::settings::direct_entry(s))
-            .child(body(s, cx, conversation).remaining())
+        root.child(
+            rune::row()
+                .child(crate::settings::direct_entry(s))
+                .child(notifications::history_entry(s, cx.touch_controls())),
+        )
+        .child(body(s, cx, conversation).remaining())
     }
 }
 

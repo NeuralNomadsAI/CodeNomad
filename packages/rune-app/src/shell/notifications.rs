@@ -7,7 +7,12 @@ use std::collections::{HashSet, VecDeque};
 const RETAINED: usize = 128;
 
 mod background;
+mod in_app;
 mod messages;
+pub(crate) use in_app::{
+    entry as history_entry, layers as app_layers, measure as measure_notices,
+    tick as poll_app_notices,
+};
 pub(crate) use messages::emit;
 pub(crate) fn relay_notice(s: &mut State, event: codenomad_client::transport::WorkspaceEvent) {
     if let Some((target, project)) = crate::workspace::notification_target(s)
@@ -158,6 +163,7 @@ pub(crate) struct Host {
     deferred: VecDeque<Notice>,
     background_attention: background::Background,
     messages: VecDeque<messages::Message>,
+    in_app: in_app::Inbox,
     system_messages: VecDeque<Presented>,
     activation: Option<(Click, bool)>,
     click_check: Option<(Click, codenomad_client::Receiver<bool>)>,
@@ -208,6 +214,7 @@ impl Default for Host {
             deferred: VecDeque::new(),
             background_attention: Default::default(),
             messages: VecDeque::new(),
+            in_app: Default::default(),
             system_messages: VecDeque::new(),
             activation: None,
             click_check: None,
@@ -261,6 +268,7 @@ impl Host {
         })
     }
     pub(crate) fn forget_tab(&mut self, tab: &str) {
+        self.in_app.forget_tab(tab);
         let keeps = |target: &Target| target.tab.as_deref() != Some(tab);
         self.routes.retain(|(_, target, _)| keeps(target));
         self.deferred.retain(|notice| keeps(&notice.target));
@@ -357,6 +365,14 @@ impl Host {
     }
 }
 
+fn activate_notice(s: &mut State, target: Target) {
+    s.notifications.supersede_navigation();
+    let ticket = s.notifications.navigation_ticket();
+    s.notifications.click_check = crate::workspace::check_notification(s, &target)
+        .map(|check| (Click { target, ticket }, check));
+    (s.wake)();
+}
+
 pub(crate) fn focus_changed(s: &mut State, focused: bool, _: &mut Tx) {
     s.notifications.focused = focused;
 }
@@ -428,9 +444,9 @@ fn deliver(s: &mut State, notice: Notice) {
     if shelf.already_delivered(target, *category, id) {
         return;
     }
-    let body =
+    let (body, route, allow_focused) =
         match crate::settings::system_notification(s, target, *category, shelf.focused(), label) {
-            Delivery::Body(body) => body,
+            Delivery::Body(body, route, allow_focused) => (body, route, allow_focused),
             Delivery::Suppressed => return,
             Delivery::WaitingForSettings => {
                 let queue = &mut s.notifications.deferred;
@@ -450,8 +466,14 @@ fn deliver(s: &mut State, notice: Notice) {
         delivered.pop_front();
     }
     delivered.push_back((target.clone(), *category, id.clone()));
-    s.notifications
-        .present(project, &body, target.clone(), s.wake.clone());
+    messages::publish(
+        s,
+        project,
+        &body,
+        Some(target.clone()),
+        route,
+        allow_focused,
+    );
 }
 
 pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {

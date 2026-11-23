@@ -137,26 +137,44 @@ pub(super) fn poll(s: &mut State) {
         match settings::notification_route(s, &message.source, message.category) {
             ConfirmedRoute::Unavailable => {}
             ConfirmedRoute::Refreshing => s.notifications.messages.push_back(message),
-            ConfirmedRoute::Ready(route, allow_focused)
-                if route.system && (allow_focused || !s.notifications.focused()) =>
-            {
-                let host = &mut s.notifications;
-                if let Some(target) = message.target.filter(|target| !target.session.is_empty()) {
-                    host.present(&message.title, &message.body, target, s.wake.clone());
-                } else {
-                    let id = host.next_id;
-                    host.next_id += 1;
-                    if let Some(presented) =
-                        host.show_system(id, &message.title, &message.body, || {})
-                    {
-                        if host.system_messages.len() >= RETAINED {
-                            host.system_messages.pop_front();
-                        }
-                        host.system_messages.push_back(presented);
-                    }
-                }
+            ConfirmedRoute::Ready(route, allow_focused) => publish(
+                s,
+                &message.title,
+                &message.body,
+                message.target,
+                route,
+                allow_focused,
+            ),
+        }
+    }
+}
+
+pub(super) fn publish(
+    s: &mut State,
+    title: &str,
+    body: &str,
+    target: Option<Target>,
+    route: crate::settings::notification_routing::Route,
+    allow_focused: bool,
+) {
+    let host = &mut s.notifications;
+    if route.history || route.screen {
+        host.in_app.push(title, body, target.clone(), &route);
+        (s.wake)();
+    }
+    if !route.system || !allow_focused && host.focused() {
+        return;
+    }
+    if let Some(target) = target.filter(|target| !target.session.is_empty()) {
+        host.present(title, body, target, s.wake.clone());
+    } else {
+        let id = host.next_id;
+        host.next_id += 1;
+        if let Some(presented) = host.show_system(id, title, body, || {}) {
+            if host.system_messages.len() >= RETAINED {
+                host.system_messages.pop_front();
             }
-            _ => {}
+            host.system_messages.push_back(presented);
         }
     }
 }

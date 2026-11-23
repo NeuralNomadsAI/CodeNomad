@@ -151,9 +151,11 @@ pub(super) fn poll(s: &mut State) {
             return match crate::settings::notification_route(s, &cue.backend, cue.category) {
                 crate::settings::ConfirmedRoute::Refreshing => Delivery::WaitingForSettings,
                 crate::settings::ConfirmedRoute::Ready(route, allow_focused)
-                    if route.system && (allow_focused || !s.notifications.focused()) =>
+                    if route.screen
+                        || route.history
+                        || route.system && (allow_focused || !s.notifications.focused()) =>
                 {
-                    Delivery::Body(String::new())
+                    Delivery::Body(String::new(), route, allow_focused)
                 }
                 _ => Delivery::Suppressed,
             };
@@ -182,7 +184,7 @@ pub(super) fn poll(s: &mut State) {
                     pending.waiting.push_back(cue);
                 }
                 Delivery::Suppressed => {}
-                Delivery::Body(_) if cue.category == Category::Sessions => {
+                Delivery::Body(..) if cue.category == Category::Sessions => {
                     if super::messages::claim(s, &cue.target, cue.category, &cue.id) {
                         super::messages::enqueue(
                             s,
@@ -194,7 +196,7 @@ pub(super) fn poll(s: &mut State) {
                         );
                     }
                 }
-                Delivery::Body(_) => deliver(
+                Delivery::Body(..) => deliver(
                     s,
                     Notice {
                         target: cue.target,
@@ -225,7 +227,7 @@ pub(super) fn poll(s: &mut State) {
                 pending.waiting.push_front(cue);
                 break;
             }
-            Delivery::Body(_) => pending.reading.push(cue.verify(s)),
+            Delivery::Body(..) => pending.reading.push(cue.verify(s)),
         }
     }
     s.notifications.background_attention = pending;
