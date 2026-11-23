@@ -2778,7 +2778,7 @@
   "settings.opencode.update.action": "OpenCode {version} に更新",
   "settings.opencode.update.available": "OpenCode {version} が利用可能です。",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} を利用できます。OpenCode V2 は自動インストールに対応していません。",
-  "settings.opencode.update.checkFailed": "インストール済みの OpenCode バージョンを読み込めませんでした。",
+  "settings.opencode.update.checkFailed": "OpenCode の更新を確認できませんでした。",
   "settings.opencode.update.checking": "インストール済みバージョンを読み込んでいます...",
   "settings.opencode.update.failed": "OpenCode の更新に失敗しました。インストール済みバージョンは変更されていません。",
   "settings.opencode.update.installed": "インストール済みバージョン",

@@ -442,7 +442,7 @@ export const settingsMessages = {
   "settings.opencode.update.title": "OpenCode संस्करण",
   "settings.opencode.update.subtitle": "कन्फिगर गरिएको OpenCode बाइनरीको स्थापित संस्करण।",
   "settings.opencode.update.checking": "स्थापित संस्करण पढ्दै...",
-  "settings.opencode.update.checkFailed": "स्थापित OpenCode संस्करण पढ्न सकिएन।",
+  "settings.opencode.update.checkFailed": "OpenCode का अपडेटहरू जाँच गर्न सकिएन।",
   "settings.opencode.update.retry": "फेरि प्रयास गर्नुहोस्",
   "settings.opencode.update.installed": "स्थापित संस्करण",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} उपलब्ध छ। OpenCode V2 ले स्वचालित स्थापना समर्थन गर्दैन।",

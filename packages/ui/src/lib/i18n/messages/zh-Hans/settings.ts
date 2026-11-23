@@ -442,7 +442,7 @@ export const settingsMessages = {
   "settings.opencode.update.title": "OpenCode 版本",
   "settings.opencode.update.subtitle": "已配置 OpenCode 可执行文件的已安装版本。",
   "settings.opencode.update.checking": "正在读取已安装版本...",
-  "settings.opencode.update.checkFailed": "无法读取已安装的 OpenCode 版本。",
+  "settings.opencode.update.checkFailed": "无法检查 OpenCode 更新。",
   "settings.opencode.update.retry": "重试",
   "settings.opencode.update.installed": "已安装版本",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} 已可用。OpenCode V2 不支持自动安装。",

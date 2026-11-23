@@ -442,7 +442,7 @@ export const settingsMessages = {
   "settings.opencode.update.title": "גרסת OpenCode",
   "settings.opencode.update.subtitle": "הגרסה המותקנת של קובץ OpenCode שהוגדר.",
   "settings.opencode.update.checking": "קורא את הגרסה המותקנת...",
-  "settings.opencode.update.checkFailed": "לא ניתן לקרוא את גרסת OpenCode המותקנת.",
+  "settings.opencode.update.checkFailed": "לא ניתן לבדוק אם יש עדכונים ל-OpenCode.",
   "settings.opencode.update.retry": "נסה שוב",
   "settings.opencode.update.installed": "גרסה מותקנת",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} זמין. OpenCode V2 אינו תומך בהתקנה אוטומטית.",

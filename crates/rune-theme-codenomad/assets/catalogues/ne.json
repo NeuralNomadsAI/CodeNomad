@@ -2778,7 +2778,7 @@
   "settings.opencode.update.action": "OpenCode {version} मा अद्यावधिक गर्नुहोस्",
   "settings.opencode.update.available": "OpenCode {version} उपलब्ध छ।",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} उपलब्ध छ। OpenCode V2 ले स्वचालित स्थापना समर्थन गर्दैन।",
-  "settings.opencode.update.checkFailed": "स्थापित OpenCode संस्करण पढ्न सकिएन।",
+  "settings.opencode.update.checkFailed": "OpenCode का अपडेटहरू जाँच गर्न सकिएन।",
   "settings.opencode.update.checking": "स्थापित संस्करण पढ्दै...",
   "settings.opencode.update.failed": "OpenCode अद्यावधिक असफल भयो। स्थापित संस्करण परिवर्तन गरिएको छैन।",
   "settings.opencode.update.installed": "स्थापित संस्करण",

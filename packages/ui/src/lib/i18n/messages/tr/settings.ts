@@ -434,7 +434,7 @@ export const settingsMessages = {
   "settings.opencode.update.title": "OpenCode sürümü",
   "settings.opencode.update.subtitle": "Yapılandırılmış OpenCode binary'sinin kurulu sürümü.",
   "settings.opencode.update.checking": "Kurulu sürüm okunuyor...",
-  "settings.opencode.update.checkFailed": "OpenCode'un kurulu sürümü okunamadı.",
+  "settings.opencode.update.checkFailed": "OpenCode güncellemeleri denetlenemedi.",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} mevcut. Otomatik kurulum OpenCode V2 tarafından desteklenmiyor.",
   "settings.opencode.update.retry": "Yeniden dene",
   "settings.opencode.update.installed": "Kurulu sürüm",
