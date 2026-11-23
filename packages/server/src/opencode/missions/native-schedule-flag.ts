@@ -1,8 +1,10 @@
 import { Context, Effect, Option } from "effect"
 import type { Plugin } from "@opencode/plugin/effect"
 import type { ConfigEntry } from "@opencode/client"
+import { nativeAutomationsSetting } from "./native-automations-setting"
 
-export type NativeScheduleFlag = { enabled: boolean; provenance: "environment" | "experimental-block" | "all-flags" | "channel-default" }
+export type NativeScheduleFlag = { enabled: boolean
+  provenance: "environment" | "experimental-block" | "all-flags" | "channel-default" | "automations-setting"; path?: string }
 
 /** Read in the receiving Location graph, with the daemon's own overrides/channel.
  * The private Flag.resolve/Config.entries shapes are checked before use. */
@@ -31,7 +33,16 @@ export const readNativeScheduleFlag = Effect.fn("missions.readScheduleFlag")(fun
   if (!Array.isArray(entries) || entries.length > 256 || entries.some(entry => !entry
     || entry.type !== "directory" && (entry.type !== "document" || !entry.info || typeof entry.info !== "object")))
     throw new Error("Native schedule flag configuration incomplete")
-  const state = flags.resolve(entries)?.automations
+  const resolved = flags.resolve(entries)
+  // Runtimes with the top-level `automations` setting no longer resolve it as a flag.
+  if (resolved && typeof resolved === "object" && !("automations" in resolved)) {
+    const setting = nativeAutomationsSetting(entries)
+    current()
+    return { enabled: setting.enabled, provenance: setting.source === "setting" ? "automations-setting"
+      : setting.source === "legacy-off" ? "experimental-block" : "channel-default",
+      ...(setting.path ? { path: setting.path } : {}) } satisfies NativeScheduleFlag
+  }
+  const state = resolved?.automations
   if (!state || typeof state.enabled !== "boolean" || !["env", "config", "default"].includes(state.source))
     throw new Error("Native schedule flag resolution unavailable")
   const block = [...entries].reverse().find(entry => entry.type === "document" && entry.info.experimental !== undefined)

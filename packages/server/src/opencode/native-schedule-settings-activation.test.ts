@@ -267,3 +267,20 @@ test("watcher lag expires at ten seconds and can never publish readiness later",
   f.stale(false)
   assert.equal(f.ready(), false)
 }))
+
+test("top-level setting runtimes: on needs no write; a top-level or legacy OFF refuses without writing", async () => fixture(async f => {
+  const globalBefore = await readFile(f.globalFile, "utf8"), projectBefore = await readFile(f.projectFile, "utf8")
+  f.flag({ enabled: true, provenance: "channel-default" })
+  assert.deepEqual((await f.prepare()).targets, [], "OpenCode enables automations by default")
+  f.flag({ enabled: false, provenance: "experimental-block", path: f.globalFile })
+  await assert.rejects(f.prepare(), (error: any) => error.code === "schedule-activation-refused"
+    && error.refusal.provenance === "experimental-block" && error.refusal.path === f.globalFile && error.refusal.layer === "global")
+  f.flag({ enabled: false, provenance: "automations-setting", path: f.projectFile })
+  await assert.rejects(f.prepare(), (error: any) => error.refusal.provenance === "automations-setting" && error.refusal.layer === "project")
+  f.flag({ enabled: true, provenance: "automations-setting" })
+  await writeFile(f.globalFile, '{"automations":false}')
+  await assert.rejects(f.prepare(), (error: any) => error.refusal.provenance === "automations-setting" && error.refusal.layer === "global",
+    "an OFF hidden by a higher ON still refuses")
+  await writeFile(f.globalFile, globalBefore)
+  assert.equal(await readFile(f.projectFile, "utf8"), projectBefore)
+}))

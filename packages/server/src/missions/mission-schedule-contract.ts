@@ -138,7 +138,9 @@ export const missionScheduleRpcMethods = {
       required: [], additionalProperties: false } },
   scheduleFlag: { input: { type: "object", properties: {}, additionalProperties: false },
     output: { type: "object", properties: { enabled: { type: "boolean" },
-      provenance: { type: "string", enum: ["environment", "experimental-block", "all-flags", "channel-default"] } },
+      provenance: { type: "string", enum: ["environment", "experimental-block", "all-flags", "channel-default", "automations-setting"] },
+      // The deciding document, when the runtime reads the top-level setting.
+      path: { type: "string", minLength: 1, maxLength: 4096 } },
       required: ["enabled", "provenance"], additionalProperties: false } },
   scheduleList: { input: { type: "object", properties: { after: text, limit: { type: "integer", minimum: 1, maximum: MISSION_SCHEDULE_PAGE_MAX } }, additionalProperties: false },
     output: { type: "object", properties: { version: { const: 1 }, projectID: text, next: text,

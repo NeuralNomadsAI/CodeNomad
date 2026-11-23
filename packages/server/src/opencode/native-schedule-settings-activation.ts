@@ -8,6 +8,7 @@ import { configuredMissionAutomation, editMissionExperimental, inheritedMissionE
 import { readNativeScheduleFlag, nativeScheduleFlagOrigin, type NativeScheduleFlag } from "./native-schedule-flag"
 import { nativeScheduleCapability } from "./native-schedule-capability"
 import { PluginControlsError, type NativeConfigDocuments, type NativeConfigEdit, type PluginControls } from "./plugin-controls"
+import { readNativeSetting } from "./native-setting-document"
 
 export type NativeScheduleActivationTarget = { scope: PluginControlScope; path: string; expectation: string; resultDigest: string }
 export type NativeScheduleActivationPlan = { authority: string; targets: NativeScheduleActivationTarget[] }
@@ -34,20 +35,27 @@ export class NativeScheduleActivationRefused extends PluginControlsError {
 /** Plan only from acquired native discovery. Upper imposed blocks cannot be bypassed. */
 export function planNativeScheduleActivation(view: NativeConfigDocuments, flag: NativeScheduleFlag): NativeConfigEdit[] {
   const project = view.documents.find(item => item.scope === "project")
-  const refuse = (path: string | undefined, reason: NativeScheduleActivationRefusal["reason"] = "explicit-off"): never => {
+  const refuse = (path: string | undefined, reason: NativeScheduleActivationRefusal["reason"] = "explicit-off",
+    provenance: NativeScheduleFlag["provenance"] = "experimental-block"): never => {
     const scope = view.documents.find(item => item.path === path)?.scope
-    throw new NativeScheduleActivationRefused({ reason, provenance: "experimental-block",
+    throw new NativeScheduleActivationRefused({ reason, provenance,
       layer: reason === "masked" ? "imposed" : scope ?? (path ? "inherited" : "imposed"), ...(path ? { path } : {}) })
   }
   // Inspect every discovered layer, including OFF hidden by a higher ON; the
   // owned raw documents also fence native watcher lag before a write.
-  for (const entry of view.entries)
-    if (entry.type === "document" && configuredMissionAutomation(entry.info.experimental ?? {}) === false) refuse(entry.path)
-  for (const item of view.documents)
+  for (const entry of view.entries) if (entry.type === "document") {
+    if ((entry.info as { automations?: unknown }).automations === false) refuse(entry.path, "explicit-off", "automations-setting")
+    if (configuredMissionAutomation(entry.info.experimental ?? {}) === false) refuse(entry.path)
+  }
+  for (const item of view.documents) {
+    if (readNativeSetting(item.document, ["automations"]) === false) refuse(item.path, "explicit-off", "automations-setting")
     if (configuredMissionAutomation(readMissionExperimental(item.document)) === false) refuse(item.path)
+  }
   if (!flag.enabled && flag.provenance === "environment")
     throw new NativeScheduleActivationRefused({ reason: "explicit-off", provenance: "environment", layer: "environment" })
   if (flag.enabled) return []
+  // Runtimes with the top-level setting are on unless a document turns them off; never write the legacy block there.
+  if (flag.provenance === "automations-setting" || flag.path) refuse(flag.path, "explicit-off", flag.provenance)
   if (!project) throw new PluginControlsError("Project OpenCode configuration is unavailable", "unavailable")
   const position = nativeExperimentalTargetPosition(view.entries, project.path, view.location.directory)
   const imposed = view.entries.slice(position.after).find(entry => entry.type === "document" && entry.info.experimental !== undefined)
