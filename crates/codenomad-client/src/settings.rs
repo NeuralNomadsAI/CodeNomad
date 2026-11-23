@@ -2,6 +2,7 @@
 pub mod memory;
 mod opencode_actions;
 mod providers;
+pub mod remote;
 use crate::{
     Wake,
     backend::{Backend, read_json},
@@ -46,12 +47,14 @@ async fn session_directory(backend: &Backend, workspace: &str, session: &str) ->
 pub enum Owner {
     Config,
     State,
+    Server,
 }
 impl Owner {
     fn url(self, backend: &Backend) -> String {
         let path = match self {
             Self::Config => "api/storage/config/ui",
             Self::State => "api/storage/state/ui",
+            Self::Server => "api/storage/config/server",
         };
         format!("{}{path}", backend.base)
     }
@@ -240,6 +243,7 @@ impl PreferencesWatch {
                                         Input::Opened(e) => if e > 1 { 11 | 16 } else { 11 },
                                         Input::Preferences(Owner::Config) => 1,
                                         Input::Preferences(Owner::State) => 2,
+                                        Input::Preferences(Owner::Server) => 32,
                                         Input::Workspace(
                                             _,
                                             crate::transport::WorkspaceEvent::MemoryChanged,
@@ -312,6 +316,10 @@ impl PreferencesWatch {
             reconnect,
             std::mem::take(&mut *self.missions.lock().unwrap()),
         )
+    }
+
+    pub fn take_server_changed(&self) -> bool {
+        self.dirty.fetch_and(!32, SeqCst) & 32 != 0
     }
 
     pub fn stop(self) -> crate::Receiver<()> {

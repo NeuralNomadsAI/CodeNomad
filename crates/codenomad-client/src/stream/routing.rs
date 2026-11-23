@@ -8,6 +8,9 @@ use crate::transport::{DirectoryChange, WorkspaceEvent};
 use serde_json::{Value, json};
 
 fn storage_owner(value: &Value) -> Option<crate::settings::Owner> {
+    if value["type"] == "storage.configChanged" && value["owner"] == "server" {
+        return Some(crate::settings::Owner::Server);
+    }
     if !matches!(value["owner"].as_str(), Some("ui" | "*")) {
         return None;
     }

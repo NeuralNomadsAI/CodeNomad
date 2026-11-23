@@ -1,6 +1,7 @@
 use super::{
     Preferences, opencode,
     providers::{self, Catalog, Target},
+    remote,
 };
 use crate::{State, platform, screen, strings::t};
 use codenomad_client::{Receiver, Sender, bounded, settings::opencode_local};
@@ -16,6 +17,7 @@ enum Section {
     General,
     OpenCode,
     Providers,
+    Remote,
 }
 
 impl Section {
@@ -24,6 +26,7 @@ impl Section {
             Self::General => "settings.nav.general",
             Self::OpenCode => "settings.nav.opencode",
             Self::Providers => "settings.nav.providers",
+            Self::Remote => "settings.nav.remote",
         })
     }
 }
@@ -45,6 +48,8 @@ pub(super) struct Panel {
     catalog: Catalog,
     scope: Option<HostScope>,
     opencode: opencode::Status,
+    logging: opencode::logging::Logging,
+    remote: remote::Remote,
 }
 
 struct HostScope {
@@ -61,7 +66,7 @@ impl Panel {
     pub fn poll(&mut self, prefs: &mut Preferences, wake: &rune::Waker, paired: bool) -> bool {
         let scope_changed = self.poll_scope(prefs, wake, paired);
         let opencode = if self.section == Section::OpenCode && self.local(prefs) {
-            self.opencode.step(prefs, wake)
+            prefs.show_opencode() | self.opencode.step(prefs, wake)
         } else {
             false
         };
@@ -69,6 +74,9 @@ impl Panel {
         editor
             | scope_changed
             | opencode
+            | (self.section == Section::Remote
+                && self.local(prefs)
+                && self.remote.poll(prefs, wake))
             | (self.shown
                 && self.section == Section::Providers
                 && self.catalog.poll(
@@ -83,16 +91,19 @@ impl Panel {
             .as_ref()
             .filter(|_| self.shown && paired && prefs.can_retry());
         if backend.map(|b| b.client_id.as_str()) != self.scope.as_ref().map(|s| s.owner.as_str()) {
-            prefs.opencode_install.cancel_check();
+            let backend = backend.cloned();
+            prefs.hide_opencode();
+            self.logging.close();
+            self.remote.close();
             self.opencode = opencode::Status::default();
-            if self.section == Section::OpenCode {
+            if matches!(self.section, Section::OpenCode | Section::Remote) {
                 self.section = Section::General;
                 prefs.memory.show(true);
             }
             self.scope = backend.map(|backend| {
                 let (cancel, cancelled) = bounded(1);
                 let (out, reply) = bounded(1);
-                let (backend, wake) = (backend.clone(), wake.clone());
+                let wake = wake.clone();
                 let owner = backend.client_id.clone();
                 platform::spawn(async move {
                     if let Some(local) =
@@ -158,10 +169,12 @@ fn close(s: &mut State) {
     panel.permissions.close();
     panel.catalog.suspend();
     let mut prefs = s.settings.shared.borrow_mut();
-    prefs.opencode_install.cancel_check();
+    prefs.hide_opencode();
+    panel.logging.close();
+    panel.remote.close();
     panel.opencode = opencode::Status::default();
     panel.scope = None;
-    if panel.section == Section::OpenCode {
+    if matches!(panel.section, Section::OpenCode | Section::Remote) {
         panel.section = Section::General;
     }
     prefs.provider_target = None;
@@ -176,7 +189,12 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
     }
     let local = panel.local(prefs);
     let sections = if local {
-        &[Section::General, Section::OpenCode, Section::Providers][..]
+        &[
+            Section::General,
+            Section::OpenCode,
+            Section::Providers,
+            Section::Remote,
+        ][..]
     } else {
         &[Section::General, Section::Providers][..]
     };
@@ -192,16 +210,22 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             let panel = &mut s.settings.web;
             let mut prefs = s.settings.shared.borrow_mut();
             let section = sections[index];
-            if !panel.shown || (section == Section::OpenCode && !panel.local(&prefs)) {
+            if !panel.shown
+                || (matches!(section, Section::OpenCode | Section::Remote) && !panel.local(&prefs))
+            {
                 return;
             }
             panel.section = section;
             if section != Section::OpenCode {
-                prefs.opencode_install.cancel_check();
+                prefs.hide_opencode();
+                panel.logging.close();
                 panel.opencode = opencode::Status::default();
             }
             if panel.section != Section::Providers {
                 panel.catalog.suspend();
+            }
+            if panel.section != Section::Remote {
+                panel.remote.close();
             }
             panel.contrast_help = false;
             panel.permissions.close();
@@ -240,26 +264,42 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 s.settings.web.catalog.toggle()
             })
         }
-        Section::OpenCode if local => opencode::view(
-            &panel.opencode,
-            prefs,
-            |s: &mut State| {
-                let panel = &s.settings.web;
-                let mut prefs = s.settings.shared.borrow_mut();
-                if panel.shown && panel.section == Section::OpenCode && panel.local(&prefs) {
-                    panel.opencode.start(&mut prefs, Some(s.wake.clone()));
-                }
-            },
-            |s: &mut State| {
-                let panel = &mut s.settings.web;
-                let mut prefs = s.settings.shared.borrow_mut();
-                if panel.shown && panel.section == Section::OpenCode && panel.local(&prefs) {
-                    panel.opencode.read(&mut prefs, Some(&s.wake), Some(true));
-                }
-            },
-            |s| &mut s.settings.web.opencode,
-        ),
-        Section::OpenCode => rune::el(),
+        Section::OpenCode if local => col()
+            .full_width()
+            .child(opencode::view(
+                &panel.opencode,
+                prefs,
+                |s: &mut State| {
+                    let panel = &s.settings.web;
+                    let mut prefs = s.settings.shared.borrow_mut();
+                    if panel.shown && panel.section == Section::OpenCode && panel.local(&prefs) {
+                        panel.opencode.start(&mut prefs, Some(s.wake.clone()));
+                    }
+                },
+                |s: &mut State| {
+                    let panel = &mut s.settings.web;
+                    let mut prefs = s.settings.shared.borrow_mut();
+                    if panel.shown && panel.section == Section::OpenCode && panel.local(&prefs) {
+                        panel.opencode.read(&mut prefs, Some(&s.wake), Some(true));
+                    }
+                },
+                |s| &mut s.settings.web.opencode,
+            ))
+            .child(
+                panel
+                    .logging
+                    .view(&s.settings.shared, &mut layers, |s: &mut State| {
+                        &mut s.settings.web.logging
+                    }),
+            ),
+        Section::Remote if local => panel.remote.view(&s.settings.shared, |s: &mut State| {
+            let panel = &mut s.settings.web;
+            (panel.shown
+                && panel.section == Section::Remote
+                && panel.local(&s.settings.shared.borrow()))
+            .then_some(&mut panel.remote)
+        }),
+        Section::OpenCode | Section::Remote => rune::el(),
     };
     if let Some(editor) = prefs.memory.editor_view(
         &panel.memory_editor,

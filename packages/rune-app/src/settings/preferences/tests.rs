@@ -836,6 +836,7 @@ fn owner_path(owner: Owner) -> &'static str {
     match owner {
         Owner::Config => "config",
         Owner::State => "state",
+        Owner::Server => "config",
     }
 }
 
@@ -843,6 +844,7 @@ fn choice(owner: Owner) -> Choice {
     match owner {
         Owner::Config => Choice::Locale,
         Owner::State => Choice::Mode,
+        Owner::Server => Choice::LogLevel,
     }
 }
 
@@ -850,6 +852,7 @@ fn desired(owner: Owner) -> &'static str {
     match owner {
         Owner::Config => "he",
         Owner::State => "dark",
+        Owner::Server => "WARN",
     }
 }
 
@@ -857,6 +860,7 @@ fn desired_doc(owner: Owner) -> Value {
     match owner {
         Owner::Config => json!({"settings":{"locale":desired(owner)}}),
         Owner::State => json!({"appearancePreferences":{"mode":desired(owner)}}),
+        Owner::Server => json!({"logLevel":desired(owner)}),
     }
 }
 

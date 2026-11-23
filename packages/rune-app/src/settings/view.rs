@@ -5,7 +5,7 @@ mod tests;
 use super::{
     opencode,
     preferences::{Owner, Preferences},
-    providers, render_with,
+    providers, remote, render_with,
 };
 use crate::strings::t;
 use general::Picker;
@@ -35,7 +35,9 @@ pub(super) struct Window {
     seen_revision: u64,
     section: Section,
     pub(super) opencode: opencode::Status,
+    logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
+    remote: remote::Remote,
 }
 
 #[derive(Default)]
@@ -50,6 +52,7 @@ enum Section {
     Conversation,
     OpenCode,
     Providers,
+    Remote,
 }
 
 impl Default for Section {
@@ -95,7 +98,9 @@ impl Window {
     }
 
     fn request_close(&mut self, tx: &mut rune::Tx) {
-        self.shared.borrow_mut().opencode_install.cancel_check();
+        self.shared.borrow_mut().hide_opencode();
+        self.logging.close();
+        self.remote.close();
         if self.memory_editor.has_unsaved() {
             self.confirm_close = true;
         } else {
@@ -125,7 +130,7 @@ impl Window {
         {
             let mut prefs = self.shared.borrow_mut();
             prefs.window_wake = None;
-            prefs.opencode_install.cancel_check();
+            prefs.hide_opencode();
             prefs.memory.show(false);
             prefs.provider_target = None;
         }
@@ -138,7 +143,7 @@ impl Window {
 pub(super) fn closed(s: &mut Window, _: &mut rune::Tx) {
     #[cfg(target_os = "windows")]
     crate::platform::preferences_placement::closed();
-    s.shared.borrow_mut().opencode_install.cancel_check();
+    s.shared.borrow_mut().hide_opencode();
     if !s.retain_editor_on_native_close() {
         s.close(super::warn_save_failed);
     }
@@ -205,7 +210,14 @@ pub(super) fn spec() -> AppSpec<Window> {
                 && prefs
                     .window_wake
                     .clone()
-                    .is_some_and(|wake| s.opencode.step(&mut prefs, &wake));
+                    .is_some_and(|wake| prefs.show_opencode() | s.opencode.step(&mut prefs, &wake));
+            let remote_changed = s.section == Section::Remote
+                && !s.confirm_close
+                && !s.closing
+                && prefs
+                    .window_wake
+                    .as_ref()
+                    .is_some_and(|wake| s.remote.poll(&prefs, wake));
             drop(prefs);
             let providers_changed = if s.section == Section::Providers {
                 let prefs = s.shared.borrow();
@@ -214,7 +226,7 @@ pub(super) fn spec() -> AppSpec<Window> {
             } else {
                 false
             };
-            updated | status_changed | providers_changed | editor_changed
+            updated | status_changed | remote_changed | providers_changed | editor_changed
         }),
         on_key: Some(|s, event, tx| {
             if event.key != rune::Key::Escape {
@@ -270,11 +282,13 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let opencode_label = t("settings.nav.opencode");
         let providers_label = t("settings.nav.providers");
         let conversation_label = t("settings.nav.chat");
+        let remote_label = t("settings.nav.remote");
         let section = match s.section {
             Section::General => general_label,
             Section::Conversation => conversation_label,
             Section::OpenCode => opencode_label,
             Section::Providers => providers_label,
+            Section::Remote => remote_label,
         };
         let nav = chrome::nav(
             t("settings.title"),
@@ -300,6 +314,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     providers_label,
                     s.section == Section::Providers,
                 ),
+                (
+                    "settings-remote",
+                    remote_label,
+                    s.section == Section::Remote,
+                ),
             ],
             |s: &mut Window, key| {
                 s.picker.set(None);
@@ -309,11 +328,13 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-opencode" => Section::OpenCode,
                     "settings-conversation" => Section::Conversation,
                     "settings-providers" => Section::Providers,
+                    "settings-remote" => Section::Remote,
                     _ => Section::General,
                 };
                 if s.section != Section::OpenCode {
                     s.opencode = opencode::Status::default();
-                    s.shared.borrow_mut().opencode_install.cancel_check();
+                    s.logging.close();
+                    s.shared.borrow_mut().hide_opencode();
                 }
                 s.shared
                     .borrow_mut()
@@ -322,6 +343,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 s.memory_help_failed = false;
                 if s.section != Section::Providers {
                     s.providers.suspend();
+                }
+                if s.section != Section::Remote {
+                    s.remote.close();
                 }
             },
         );
@@ -347,13 +371,19 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let (key, controls) = match s.section {
             Section::OpenCode => (
                 "opencode",
-                opencode::view(
-                    &s.opencode,
-                    &prefs,
-                    Window::start_opencode_install,
-                    |s: &mut Window| s.check_opencode(Some(true)),
-                    |s| &mut s.opencode,
-                ),
+                col()
+                    .full_width()
+                    .child(opencode::view(
+                        &s.opencode,
+                        &prefs,
+                        Window::start_opencode_install,
+                        |s: &mut Window| s.check_opencode(Some(true)),
+                        |s| &mut s.opencode,
+                    ))
+                    .child(
+                        s.logging
+                            .view(&s.shared, &mut layers, |s: &mut Window| &mut s.logging),
+                    ),
             ),
             Section::Conversation => (
                 "conversation",
@@ -379,6 +409,13 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             .as_ref()
                             .is_some_and(providers::Target::online),
                 ),
+            ),
+            Section::Remote => (
+                "remote",
+                s.remote.view(&s.shared, |s: &mut Window| {
+                    (s.section == Section::Remote && !s.closing && !s.confirm_close)
+                        .then_some(&mut s.remote)
+                }),
             ),
         };
         if let Some(editor) = prefs.memory.editor_view(

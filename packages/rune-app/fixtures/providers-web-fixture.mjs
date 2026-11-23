@@ -8,7 +8,9 @@ import {bundleAssetPaths} from '../../../scripts/rune/web-workspace-policy.mjs'
 const bundle = path.resolve(process.argv[2] ?? 'target/rune-web-settings-providers')
 const loseHeaders = process.argv.includes('--lost-headers')
 const opencodeMode = process.argv.find(arg => arg === '--local-opencode' || arg === '--remote-opencode')
-const local = opencodeMode === '--local-opencode'
+const remoteAccess = process.argv.includes('--remote-access')
+const noDeviceRegistry = process.argv.includes('--no-device-registry')
+const local = opencodeMode === '--local-opencode' || remoteAccess
 const files = await bundleAssetPaths(bundle)
 const directory = '/fixture/project'
 const project = {id:'catalogue',path:directory,location:{directory}}
@@ -22,6 +24,12 @@ let contrast = 'on', permissions = 'autonomous'
 const writes = []
 const memoryRequests = []
 const opencodeRequests = []
+const logLevelWrites = []
+const remoteRequests = []
+const directOrigin = 'https://fixture.example:444'
+const deviceId = '004633fb-53c4-477c-8b01-4cc5c177724b'
+let deviceExists = true
+let logLevel = 'DEBUG'
 let releaseInstall, installed = false
 const installReady = new Promise(resolve => { releaseInstall = resolve })
 const reviews = []
@@ -56,6 +64,28 @@ const server = createServer(async (req,res) => {
         latestVersion:'2.3.2',updateAvailable:!installed,canUpgrade:!installed,binaryPath:'/fixture/opencode'})
     }
     if (p === '/api/auth/status') return json({authenticated:true})
+    if (p.startsWith('/api/remote-control/')) {
+      assert(remoteAccess && local)
+      remoteRequests.push(`${req.method} ${p.slice('/api/remote-control/'.length)}`)
+      if (p === '/api/remote-control/status') {
+        return json({manageable:true,enabled:false,state:'stopped',directOrigins:noDeviceRegistry?[]:[directOrigin]})
+      }
+      if (p === '/api/remote-control/devices') {
+        if (noDeviceRegistry) return res.writeHead(501).end()
+        return json({devices:deviceExists?[{id:deviceId,name:'Fixture Tablet',lastSeenAt:date}]:[]})
+      }
+      if (p === '/api/remote-control/pairings') {
+        assert.equal(req.method,'POST')
+        let body = ''
+        for await (const chunk of req) body += chunk
+        assert.deepEqual(JSON.parse(body),{origin:directOrigin})
+        return json({url:`${directOrigin}/remote-pair#abcdefghijklmnopqrstuv`,expiresAt:new Date(Date.now()+240000).toISOString()})
+      }
+      assert.equal(p,`/api/remote-control/devices/${deviceId}`)
+      assert.equal(req.method,'DELETE')
+      deviceExists = false
+      return res.writeHead(204).end()
+    }
     if (p === '/api/workspaces' && req.method === 'GET') return json([project])
     if (p === '/api/workspaces' && req.method === 'POST') {
       let body = ''
@@ -121,6 +151,18 @@ const server = createServer(async (req,res) => {
       assert.equal(operation.action,'delete')
       projectEntries = []
       return json({deleted:true})
+    }
+    if (p === '/api/storage/config/server') {
+      assert(local,'Only the local OpenCode pane reads server configuration')
+      if (req.method === 'PATCH') {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        const change = JSON.parse(body)
+        assert.deepEqual(change,{logLevel:'WARN'})
+        logLevelWrites.push(change)
+        logLevel = change.logLevel
+      }
+      return json({logLevel})
     }
     if (p.startsWith('/api/storage/')) return json({})
     if (p === '/api/workspaces/catalogue/worktrees') return json({repository:'uninitialized',worktrees:[]})
@@ -196,8 +238,38 @@ try {
   releaseState()
   await click(directory)
   await visible('No session selected')
-  if (opencodeMode) await checkOpenCode()
+  if (remoteAccess) await checkRemoteAccess()
+  else if (opencodeMode) await checkOpenCode()
   else await checkProviders()
+
+  async function checkRemoteAccess() {
+    await click('Settings')
+    await radio('Remote Access').click({force:true})
+    if (noDeviceRegistry) {
+      await visible('Remote Control is off')
+      assert.equal(await page.getByRole('heading',{name:'Paired devices',exact:true}).count(),0)
+      assert.equal(await page.getByRole('button',{name:'Create HTTPS pairing link',exact:true}).count(),0)
+      assert.deepEqual(remoteRequests,['GET status','GET devices'])
+      console.log(JSON.stringify({fixture:'remote-access-without-device-registry',remoteRequests}))
+      return
+    }
+    await visible('Fixture Tablet')
+    assert.deepEqual(remoteRequests,['GET status','GET devices'])
+    assert.equal(await page.getByRole('button',{name:'Start Remote Control',exact:true}).count(),0)
+    await click('Create HTTPS pairing link')
+    await page.getByRole('button',{name:'Copy link',exact:true}).waitFor({state:'attached'})
+    assert.equal(await page.getByText(/abcdefghijklmnopqrstuv/).count(),0)
+    assert.deepEqual(remoteRequests,['GET status','GET devices','POST pairings'])
+    await page.context().grantPermissions(['clipboard-read','clipboard-write'])
+    await click('Copy link')
+    await page.waitForFunction(async expected => await navigator.clipboard.readText() === expected,
+      `${directOrigin}/remote-pair#abcdefghijklmnopqrstuv`)
+    await click('Revoke · Fixture Tablet')
+    await visible('No devices are paired yet.')
+    assert.deepEqual(remoteRequests,['GET status','GET devices','POST pairings',`DELETE devices/${deviceId}`,'GET status','GET devices'])
+    assert.deepEqual(opencodeRequests,[])
+    console.log(JSON.stringify({fixture:'remote-access',remoteRequests}))
+  }
 
   async function checkOpenCode() {
     await Promise.all([
@@ -212,6 +284,12 @@ try {
       await openCode.click({force:true})
       await update.waitFor({state:'attached'})
       assert.deepEqual(opencodeRequests,['GET'])
+      const logging = page.getByRole('button',{name:'OpenCode Log Level',exact:true})
+      await page.locator('button[aria-description="Debug"]').waitFor({state:'attached'})
+      await logging.click({force:true})
+      await page.getByRole('option',{name:'Warn',exact:true}).click({force:true})
+      await page.locator('button[aria-description="Warn"]').waitFor({state:'attached'})
+      assert.deepEqual(logLevelWrites,[{logLevel:'WARN'}])
       await Promise.all([
         page.waitForRequest(request=>new URL(request.url()).pathname==='/api/opencode/update' && request.method()==='POST'),
         update.click({force:true}),
@@ -230,9 +308,12 @@ try {
       await radio('Providers').click({force:true})
       await visible(account)
       assert.equal(await openCode.count(),0)
+      assert.equal(await radio('Remote Access').count(),0)
+      assert.deepEqual(remoteRequests,[])
       assert.deepEqual(opencodeRequests,[])
+      assert.deepEqual(logLevelWrites,[])
     }
-    console.log(JSON.stringify({fixture:'opencode-web',channel:local?'local':'remote',opencodeRequests}))
+    console.log(JSON.stringify({fixture:'opencode-web',channel:local?'local':'remote',opencodeRequests,logLevelWrites}))
   }
 
   async function checkProviders() {
@@ -266,7 +347,8 @@ try {
     assert.fail(`Missing editable field: ${label}`)
   }
   await edit('Title','Edited project memory')
-  await click('Save')
+  const save = page.getByRole('button',{name:'Save',exact:true}).and(page.locator(':not([disabled], [aria-disabled="true"])'))
+  await save.click({force:true,timeout:15000})
   await page.getByRole('button',{name:'Edited project memory',exact:true}).waitFor({state:'attached'})
   await click('Edited project memory')
   await click('Forget')

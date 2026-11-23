@@ -7,6 +7,7 @@ pub(crate) mod notification_routing;
 mod opencode;
 mod preferences;
 mod providers;
+mod remote;
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -552,7 +553,7 @@ fn open(s: &mut State) {
         request.requested.set(true);
         window.focus();
         let mut prefs = host.shared.borrow_mut();
-        prefs.opencode_install.cancel_check();
+        prefs.hide_opencode();
         if let Some(wake) = &prefs.window_wake {
             wake();
         }
@@ -616,11 +617,7 @@ pub(crate) fn close(s: &mut State) {
     {
         #[cfg(target_os = "windows")]
         crate::platform::preferences_placement::closed();
-        s.settings
-            .shared
-            .borrow_mut()
-            .opencode_install
-            .cancel_check();
+        s.settings.shared.borrow_mut().hide_opencode();
         settle_close(&s.settings.shared, warn_save_failed);
         if let Some((window, token, _)) = s.settings.window.take() {
             token.set(true);
