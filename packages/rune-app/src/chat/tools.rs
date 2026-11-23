@@ -261,7 +261,7 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     if !expanded {
         return block;
     }
-    if pending {
+    if pending && tool.input.as_str().is_none_or(str::is_empty) {
         return block.child(text(t("toolCall.pending.waitingToRun")));
     }
     if !tool.input.is_null() {
@@ -341,7 +341,9 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                 )
                 .child(markdown::tool_pane(
                     window(s, output_key, &parts, TOOL_LIMIT, |shown, units| {
-                        if terminal {
+                        if tool.status == "running" && shell(tool) {
+                            s.transcript_display.live_ansi(key, shown, wrap)
+                        } else if terminal {
                             ansi::code(shown, wrap)
                         } else {
                             markdown::code(shown, lang, highlight && units <= HIGHLIGHT_LIMIT, wrap)

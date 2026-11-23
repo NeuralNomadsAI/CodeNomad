@@ -257,10 +257,18 @@ const upstream=createServer(async(req,res)=>{
         let tool
         if(withTools){
           const preface=textStream(reply,emit);preface.append(`Preparing turn ${turn}`);preface.close()
-          tool={type:'tool',id:`tool-${turn}`,name:'read',state:{status:'streaming'}};reply.content.push(tool)
-          emit('session.tool.input.started',{assistantMessageID:reply.id,id:tool.id,name:'read'});await new Promise(r=>setTimeout(r,350))
-          tool.state={status:'running',input:{file:'synthetic.rs'}}
-          emit('session.tool.called',{assistantMessageID:reply.id,id:tool.id,input:tool.state.input,executed:true});await new Promise(r=>setTimeout(r,350))
+          tool={type:'tool',id:`tool-${turn}`,name:'bash',state:{status:'streaming'}};reply.content.push(tool)
+          emit('session.tool.input.started',{assistantMessageID:reply.id,id:tool.id,name:tool.name})
+          emit('session.tool.input.delta',{assistantMessageID:reply.id,id:tool.id,delta:'{"command":'})
+          emit('session.tool.input.delta',{assistantMessageID:reply.id,id:tool.id,delta:'"fixture"}'})
+          await new Promise(r=>setTimeout(r,350))
+          tool.state={status:'running',input:{command:'fixture'}}
+          emit('session.tool.called',{assistantMessageID:reply.id,id:tool.id,input:tool.state.input,executed:true})
+          // These snapshots exist only in SSE, never in the HTTP history fixture.
+          for(const output of ['\x1b[31',`\x1b[31mLive output ${turn}`]){
+            emit('session.tool.progress',{assistantMessageID:reply.id,id:tool.id,metadata:{output}})
+            await new Promise(r=>setTimeout(r,350))
+          }
           tool.state={...tool.state,status:'completed',content:[{type:'text',text:`Synthetic output ${turn}`}]}
           emit('session.tool.success',{assistantMessageID:reply.id,id:tool.id,content:tool.state.content,executed:true})
         }
