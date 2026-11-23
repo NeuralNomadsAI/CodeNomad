@@ -36,6 +36,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::Connected(backend) => {
                 s.renew_scope();
                 s.transcript_display.children.bind(backend.clone());
+                s.transcript_display.usage_family.bind(backend.clone());
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -47,6 +48,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    s.transcript_display.usage_family.refresh();
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
                     git::online(s, true);
@@ -64,6 +66,11 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::SessionUsage(usage) => {
                 if let Some(agent) = &mut s.agent {
                     agent.observe_usage(usage);
+                }
+            }
+            Event::FamilyUsage(change) => {
+                if !s.transcript_display.usage_family.event(change) {
+                    continue;
                 }
             }
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::CommandsChanged) => {
@@ -207,6 +214,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::WorkspaceMissing => {
                 s.transcript_display.children.clear();
+                s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
                 {
                     s.phase = Phase::WorkspaceMissing;
@@ -270,6 +278,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
                 s.transcript_display.children.clear();
+                s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
@@ -307,5 +316,5 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         s.revision += 1;
         changed = true;
     }
-    changed
+    changed | super::usage::family::Totals::poll(s)
 }

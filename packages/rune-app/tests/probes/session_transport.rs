@@ -146,6 +146,7 @@ pub fn contract() {
             | Event::Reasoning(..)
             | Event::StepUsage(..)
             | Event::SessionUsage(_)
+            | Event::FamilyUsage(_)
             | Event::PromptAcknowledged { .. }
             | Event::Tool(..)
             | Event::PagingFailed => {}

@@ -64,6 +64,7 @@ pub enum Event {
     Preferences(crate::settings::Owner),
     AgentHint(bool),
     SessionUsage(crate::content::Usage),
+    FamilyUsage(crate::content::FamilyChange),
     ObservedRunning {
         running: bool,
         version: u64,

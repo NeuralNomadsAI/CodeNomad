@@ -11,7 +11,7 @@ pub use reasoning::{Reasoning, ReasoningEvent, apply_window as apply_reasoning};
 pub use subagent::SubagentReport;
 pub use tool_live::install as install_tool;
 pub(crate) use tool_live::{Fit as ToolFit, apply as apply_tool};
-pub use usage::Usage;
+pub use usage::{FAMILY_LIMIT, Family, FamilyChange, FamilyMember, Usage};
 pub(crate) use user::digest as attachment_digest;
 pub use user::{File, Reference, Skill};
 #[derive(Clone, Debug, PartialEq)]

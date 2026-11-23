@@ -69,6 +69,7 @@ fn settled_requests_and_removed_models_reject_late_actions_before_dispatch() {
     let model = super::Model {
         reference: json!({"id":"model","providerID":"fixture"}),
         label: "Model".into(),
+        included: false,
     };
     ui.models.push(model);
     let model = ui.models.pop().unwrap();

@@ -6,6 +6,8 @@ use crate::{
 };
 use rune::El;
 use rune_theme_codenomad::usage as theme;
+use rune_theme_codenomad::{Space, layout::Layout};
+pub(crate) mod family;
 
 fn text_part(part: &Part) -> bool {
     matches!(part, Part::Text(text) if !text.text.trim().is_empty())
@@ -66,15 +68,75 @@ pub(super) fn message(s: &State, index: usize, final_text: usize) -> Option<El> 
     }
     let usage = response_total(s, index, final_text)?;
     let key = format!("message-usage-{}", s.messages[index].id);
-    Some(disclosure(s, key, usage, false, visibility == "expanded"))
+    Some(disclosure(
+        s,
+        key,
+        usage,
+        false,
+        visibility == "expanded",
+        false,
+    ))
 }
 
 pub(crate) fn session(s: &State) -> Option<El> {
-    let usage = s.agent.as_ref()?.usage?;
-    Some(disclosure(s, "status-usage".into(), usage, true, false))
+    let agent = s.agent.as_ref()?;
+    let mut usage = agent.usage?;
+    let included = agent.current.as_ref().is_some_and(|model| {
+        model["providerID"]
+            .as_str()
+            .zip(model["id"].as_str())
+            .is_some_and(|(provider, id)| agent.includes_cost(provider, id))
+    });
+    if included {
+        usage.cost = 0.0;
+    }
+    let mut panel = rune::col()
+        .full_width()
+        .separate(Space::Sm)
+        .child(disclosure(
+            s,
+            family::KEY.into(),
+            usage,
+            true,
+            false,
+            included,
+        ));
+    if s.transcript_display.toggled(family::KEY)
+        && let Some(total) = s
+            .transcript_display
+            .usage_family
+            .including(usage, |provider, id| agent.includes_cost(provider, id))
+    {
+        let tokens = [
+            counter(t("contextUsagePanel.labels.totalInput"), total.input),
+            counter(t("contextUsagePanel.labels.totalOutput"), total.output),
+            money(t("contextUsagePanel.labels.totalCost"), total.cost, true),
+            counter(
+                t("contextUsagePanel.labels.totalReasoning"),
+                total.reasoning,
+            ),
+        ];
+        panel = panel.child(
+            rune_theme_codenomad::layout::action_row()
+                .key("status-thread-usage")
+                .children(
+                    tokens
+                        .into_iter()
+                        .map(|(name, value, full)| theme::metric(name, &value, &full)),
+                ),
+        );
+    }
+    Some(panel)
 }
 
-fn disclosure(s: &State, key: String, usage: Usage, session: bool, open: bool) -> El {
+fn disclosure(
+    s: &State,
+    key: String,
+    usage: Usage,
+    session: bool,
+    open: bool,
+    included: bool,
+) -> El {
     let expanded = open ^ s.transcript_display.toggled(&key);
     let toggle = key.clone();
     let mut entries = vec![
@@ -88,21 +150,17 @@ fn disclosure(s: &State, key: String, usage: Usage, session: bool, open: bool) -
             entries.push(token("cacheWrite", usage.cache_write, false));
         }
     }
-    let cost = if session || usage.cost == 0.0 || usage.cost >= 0.01 {
-        format!("${:.2}", usage.cost)
+    let cost_label = t(if session {
+        "contextUsagePanel.labels.cost"
     } else {
-        let decimals = (1.0 - usage.cost.log10().floor()).clamp(2.0, 12.0) as usize;
-        format!("${:.*}", decimals, usage.cost)
-    };
-    entries.push((
-        t(if session {
-            "contextUsagePanel.labels.cost"
-        } else {
-            "messageBlock.usage.cost"
-        }),
-        cost.clone(),
-        cost,
-    ));
+        "messageBlock.usage.cost"
+    });
+    entries.push(if included {
+        let value = t("contextUsagePanel.included");
+        (cost_label, value.into(), value.into())
+    } else {
+        money(cost_label, usage.cost, session)
+    });
     let label = t(if expanded {
         "messageBlock.usage.collapseAriaLabel"
     } else {
@@ -134,7 +192,20 @@ fn token(kind: &str, count: u64, session: bool) -> (&'static str, String, String
     } else {
         "messageBlock.usage"
     };
-    let label = t(&format!("{prefix}.{kind}"));
+    counter(t(&format!("{prefix}.{kind}")), count)
+}
+
+fn money(label: &'static str, cost: f64, session: bool) -> (&'static str, String, String) {
+    let value = if session || cost == 0.0 || cost >= 0.01 {
+        format!("${cost:.2}")
+    } else {
+        let decimals = (1.0 - cost.log10().floor()).clamp(2.0, 12.0) as usize;
+        format!("${cost:.*}", decimals)
+    };
+    (label, value.clone(), value)
+}
+
+fn counter(label: &'static str, count: u64) -> (&'static str, String, String) {
     let compact = match count {
         1_000_000_000.. => format!("{:.1}B", count as f64 / 1e9),
         1_000_000.. => format!("{:.1}M", count as f64 / 1e6),

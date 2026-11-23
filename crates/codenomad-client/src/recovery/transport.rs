@@ -211,6 +211,12 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Native(e, v, native)) if e == epoch => {
                 let kind = native["type"].as_str().unwrap_or_default();
+                if native["data"]["sessionID"] != backend.session
+                    && let Some(change) = content::FamilyChange::decode(&native)
+                {
+                    publish(&out, &wake, Event::FamilyUsage(change)).await;
+                    continue;
+                }
                 if kind == "session.moved" {
                     if native["data"]["sessionID"] != backend.session {
                         continue;

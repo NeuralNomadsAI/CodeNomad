@@ -102,6 +102,14 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     }
 }
 impl Ui {
+    pub(crate) fn includes_cost(&self, provider: &str, id: &str) -> bool {
+        self.models.iter().any(|model| {
+            model.included
+                && model.reference["providerID"] == provider
+                && model.reference["id"] == id
+        })
+    }
+
     pub fn rebind(&mut self, handle: Handle) {
         self.handle = handle;
         self.reading = false;

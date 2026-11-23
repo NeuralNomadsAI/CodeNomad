@@ -234,6 +234,7 @@ fn question_fields_model_list_and_composer_remain_scroll_reachable() {
                 .map(|i| Model {
                     reference: json!(format!("model{i}")),
                     label: format!("Synthetic model {i}"),
+                    included: false,
                 })
                 .collect();
             tx.instant();

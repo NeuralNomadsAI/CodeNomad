@@ -420,6 +420,12 @@ pub(super) async fn dispatch(
         }
         out.send(Input::Native(epoch, version, native.clone()))
             .await?;
+    } else if own
+        && value["type"] == "instance.event"
+        && native["data"]["sessionID"] != b.session
+        && crate::content::FamilyChange::tracks(native)
+    {
+        out.send(Input::Native(epoch, 0, native.clone())).await?;
     }
     Ok(())
 }

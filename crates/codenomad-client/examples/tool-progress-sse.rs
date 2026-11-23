@@ -63,6 +63,13 @@ async fn check(base: &str) -> Result<(), String> {
     if !initial.rows.is_empty() {
         return Err("child started before the live watch was verified".into());
     }
+    let family = observer.family_usage().await.map_err(|e| e.to_string())?;
+    if family.len() != 2
+        || family["child"].usage.input != 8
+        || family["grandchild"].usage.input != 13
+    {
+        return Err("expected only the child and grandchild's native usage".into());
+    }
     observer
         .client
         .post(format!("{}fixture/child", observer.base))
@@ -94,11 +101,15 @@ async fn check(base: &str) -> Result<(), String> {
     {
         return Err("expected the child's current history, not the foreign session".into());
     }
-    let (mut step, mut session) = (false, false);
-    while !step || !session {
+    let (mut step, mut session, mut child_usage) = (false, false, false);
+    while !step || !session || !child_usage {
         match runtime::recv_timeout(&events, Duration::from_secs(4)).await {
             Some(Event::StepUsage(id, usage)) if id == "msg" && usage.input == 15 => step = true,
             Some(Event::SessionUsage(usage)) if usage.input == 40 => session = true,
+            Some(Event::FamilyUsage(codenomad_client::content::FamilyChange::Usage {
+                id,
+                usage,
+            })) if id == "grandchild" && usage.input == 21 => child_usage = true,
             None => return Err("step or session usage update missing".into()),
             _ => {}
         }
