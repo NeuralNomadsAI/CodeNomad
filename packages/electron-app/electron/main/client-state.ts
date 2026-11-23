@@ -326,14 +326,16 @@ export class ClientStateManager {
   saveFileDraft(raw: unknown, rendererToken: unknown, windowId: string): Promise<boolean> {
     const operation = this.writeQueue.catch(() => {}).then(async () => {
       this.assertReplacementAllowed(rendererToken, windowId)
-      if (!this.windowRecord(windowId).restoreEnabled || !raw || typeof raw !== "object") return false
+      const record = this.windowRecord(windowId)
+      if (!raw || typeof raw !== "object") return false
       const { key, draft, expected } = raw as { key?: unknown; draft?: unknown; expected?: { fingerprint?: unknown; text?: unknown } | null }
       if (typeof key !== "string" || (draft !== null && (!draft || typeof draft !== "object"))
         || (expected !== null && (!expected || typeof expected !== "object"))) return false
       const value = draft === null ? null : draft as { fingerprint: string; text: string }
+      if (value !== null && !record.restoreEnabled) return false
       const drafts = await this.readFileDrafts()
       const previous = drafts.find(row => row.key === key)
-      if (previous?.fingerprint !== expected?.fingerprint || previous?.text !== expected?.text) return false
+      if (previous?.fingerprint !== expected?.fingerprint || previous?.text !== expected?.text) return value === null
       const next = changeWorkspaceFileDrafts(drafts, key, value)
       if (!next) return false
       await this.writeAtomically(JSON.stringify(next), rendererToken, windowId, this.fileDraftsPath)

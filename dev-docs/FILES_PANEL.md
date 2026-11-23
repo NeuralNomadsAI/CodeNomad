@@ -148,9 +148,12 @@ draft, and explicit refresh asks before discarding edits.
 With previous-state restoration enabled, the desktop profile retains up to 32
 file drafts within 256 KiB of encoded data, independently of window snapshots.
 Browser tabs retain drafts in a separate session-storage item. Their key includes the backend,
-installation, project folder, checkout and relative path. On reopening a file,
+installation, project folder and available native project ID, checkout path and
+relative file path. On reopening a file,
 the reader compares its SHA-256 fingerprint with the stored baseline and reports
 a mismatch alongside the retained draft. Only explicit Save admits a file write.
+Local desktop close and quit wait for draft persistence. A refused update leaves
+the window open so the user can save or discard their edits.
 
 Clicked readers have a reserved one-request lane beside the two background scan
 slots. Start the local Monaco load alongside the content read; preview Git work

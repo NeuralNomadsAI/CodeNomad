@@ -5,8 +5,11 @@ import { acknowledgeNativeClientStateNavigationFlush, acknowledgeNativeClientSta
 import { isElectronHost, isLocalWindow, isTauriHost, isWebHost } from "../runtime-env"
 import {
   clientStateIsPrimary, flushClientState, loadedRestorableSession, restorePreviousStateEnabled, updateRestorableSession,
+  flushWorkspaceFileDraftsForClose, WorkspaceDraftFlushError,
   type RestorableSessionState, type RestorableTabState, type RestorableWorkspaceTabState,
 } from "../../stores/client-state"
+import { tGlobal } from "../i18n"
+import { showToastNotification } from "../notifications"
 import { storage } from "../storage"
 import { completeWebSessionRestore, markWebSessionRecordsReleased } from "../web-session-client-state"
 import { matchesRestoredServer, workspaceInstallationKey } from "../../stores/app-session-reconciliation"
@@ -308,8 +311,14 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     if (nativeShutdown && !releasing) preparedRecords = captureWorkspaceRecords()
     await Promise.all([
       flushClientState(),
+      flushWorkspaceFileDraftsForClose(),
       ...(nativeShutdown ? [storage.flushWrites()] : []),
-    ])
+    ]).catch(error => {
+      if (error instanceof WorkspaceDraftFlushError) {
+        showToastNotification({ category: "files", message: tGlobal("filesPanel.draftLimit"), variant: "error" })
+      }
+      throw error
+    })
   }
   const release = (deleteTabs = true) => {
     if (releasing) return releasing

@@ -3,7 +3,9 @@ import { registerHooks } from "node:module"
 import { after, test } from "node:test"
 import type { FilePreviewTarget } from "../stores/files-preview"
 
-const fixture = { disk: "baseline", gate: null as Promise<void> | null, writing: false, fail: false }
+type StoredDraft = { fingerprint: string; text: string }
+const fixture = { disk: "baseline", gate: null as Promise<void> | null, writing: false, fail: false,
+  reads: [] as Array<(value: StoredDraft) => void>, durable: false }
 ;(globalThis as any).__workspaceEditorFixture = fixture
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -19,6 +21,14 @@ const hooks = registerHooks({
         } });`,
       "../lib/notifications": "export const showToastNotification = () => {}",
       "../stores/alerts": "export const showConfirmDialog = async () => true",
+      "../stores/instances": `const f = globalThis.__workspaceEditorFixture;
+        export const instances = () => f.durable ? new Map([["test", { folder: "/repo" }]]) : new Map();`,
+      "../lib/server-meta": `export const localServerMeta = { meta: () => ({ serverId: "fixture" }) };
+        export const getServerMeta = async () => localServerMeta.meta();`,
+      "../stores/client-state": `const f = globalThis.__workspaceEditorFixture;
+        export const restoredWorkspaceFileDraft = () => undefined;
+        export const refreshWorkspaceFileDraft = () => new Promise(resolve => f.reads.push(resolve));
+        export const updateWorkspaceFileDraft = () => true;`,
     }
     if (context.parentURL?.endsWith("/workspace-file-editor.ts") && sources[specifier]) {
       return { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(sources[specifier])}` }
@@ -56,6 +66,24 @@ test("two open readers share edits and adopt a fresh disk baseline after save", 
     assert.equal(second.editor.text(), "disk changed")
     assert.equal(second.editor.dirty(), false)
   } finally { first.close(); second.close() }
+})
+
+test("a late recovery joins the shared editor instead of replacing newer text", async () => {
+  fixture.durable = true
+  const first = setup("concurrent-recovery.txt"), second = setup("concurrent-recovery.txt")
+  try {
+    first.editor.reset(); second.editor.reset()
+    const a = first.editor.recover(), b = second.editor.recover()
+    const stored = { fingerprint: "0".repeat(64), text: "stored draft" }
+    fixture.reads.shift()!(stored)
+    assert.equal(await a, "stored draft")
+    first.editor.change("more recent edit")
+    fixture.reads.shift()!(stored)
+    assert.equal(await b, "more recent edit")
+    second.editor.change("edit from the second reader")
+    assert.equal(first.editor.text(), "edit from the second reader")
+    second.editor.discard()
+  } finally { first.close(); second.close(); fixture.durable = false }
 })
 
 for (const transition of ["mounted", "reopen-after", "reopen-before"] as const) {

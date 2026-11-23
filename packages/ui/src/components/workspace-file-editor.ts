@@ -9,6 +9,9 @@ import { sha256 } from "@noble/hashes/sha2.js"
 import { bytesToHex } from "@noble/hashes/utils.js"
 import { backendIdOf, LOCAL_BACKEND_ID } from "../lib/backend-identity"
 import { instances } from "../stores/instances"
+import { getInstanceMetadata } from "../stores/instance-metadata"
+import { getServerMeta, localServerMeta } from "../lib/server-meta"
+import { loadInstanceProjectMetadata } from "../lib/hooks/use-instance-metadata"
 import { refreshWorkspaceFileDraft, restoredWorkspaceFileDraft, updateWorkspaceFileDraft } from "../stores/client-state"
 
 // Retain unsaved text when the reader closes or another file/session is opened.
@@ -35,12 +38,15 @@ export function workspaceFileFingerprint(result: FileContents) {
 export const decodeWorkspaceText = (result: FileContents) => result.encoding === "base64"
   ? new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(result.contents), char => char.charCodeAt(0))) : result.contents
 
-function fileIdentity(instanceId: string, target: FilePreviewTarget) {
+function fileIdentity(instanceId: string, target: FilePreviewTarget, installation: string | undefined) {
   const instance = instances().get(instanceId)
   const backend = instance && backendIdOf(instance)
-  // A remote backend must identify its installation before it can adopt text.
-  if (!instance || (backend !== LOCAL_BACKEND_ID && !instance.serverId)) return
-  return JSON.stringify([backend, instance.serverId ?? null, instance.folder, target.directory, target.path])
+  if (!instance) return
+  const server = backend === LOCAL_BACKEND_ID ? installation : instance.serverId
+  if (!server) return
+  const metadata = getInstanceMetadata(instanceId) ?? instance.metadata
+  if (instance.client && (!metadata || !("project" in metadata))) return
+  return JSON.stringify([backend, server, instance.folder, metadata?.project?.id ?? null, target.directory, target.path])
 }
 
 export function useWorkspaceFileEditor(options: {
@@ -60,8 +66,8 @@ export function useWorkspaceFileEditor(options: {
   const original = () => draft()?.value().original ?? localOriginal()
   const saving = () => localSaving() || (draft()?.value().pending ?? false)
   const dirty = () => draft() !== undefined && text() !== original()
-  const durableKey = () => fileIdentity(options.instanceId, options.target())
-  const key = () => durableKey() ?? JSON.stringify([options.instanceId, options.target().directory, options.target().path])
+  let persistenceKey: string | undefined
+  let identity = ""
   function attach(identity: string | undefined, next?: Draft) {
     const previous = draft()
     if (previous === next) return
@@ -79,12 +85,16 @@ export function useWorkspaceFileEditor(options: {
     generation += 1
     setSaving(false)
     setConflict(false)
-    const identity = durableKey()
-    const saved = identity ? restoredWorkspaceFileDraft(identity) : undefined
-    const existing = drafts.get(key())
+    const target = options.target()
+    persistenceKey = fileIdentity(options.instanceId, target, localServerMeta.meta()?.serverId)
+    const fallback = JSON.stringify([options.instanceId, target.directory, target.path])
+    if (drafts.has(fallback)) persistenceKey = undefined
+    identity = persistenceKey ?? fallback
+    const saved = persistenceKey ? restoredWorkspaceFileDraft(persistenceKey) : undefined
+    const existing = drafts.get(identity)
     const retained = existing ?? (saved && createDraft(saved.fingerprint, saved.text))
-    if (retained && !existing) drafts.set(key(), retained)
-    attach(key(), retained)
+    if (retained && !existing) drafts.set(identity, retained)
+    attach(identity, retained)
     setNeedsVerification(!!retained && retained.value().original !== retained.value().text)
     setOriginal(retained?.value().original)
     setText(retained?.value().text ?? "")
@@ -92,16 +102,32 @@ export function useWorkspaceFileEditor(options: {
     return value && (value.pending || value.text !== value.original) ? value.text : undefined
   }
   async function recover() {
-    const identity = durableKey()
-    if (!identity || dirty()) return
     const ticket = generation
-    const entry = await refreshWorkspaceFileDraft(identity)
-    if (!entry || disposed || ticket !== generation || identity !== durableKey() || dirty()) return
-    const retained = createDraft(entry.fingerprint, entry.text)
-    drafts.set(identity, retained)
-    attach(identity, retained)
-    setNeedsVerification(true)
-    return entry.text
+    const target = options.target()
+    const instance = instances().get(options.instanceId)
+    if (!instance || dirty()) return
+    if (!persistenceKey) {
+      const [meta] = await Promise.all([
+        backendIdOf(instance) === LOCAL_BACKEND_ID ? getServerMeta().catch(() => undefined) : undefined,
+        loadInstanceProjectMetadata(instance),
+      ])
+      if (disposed || ticket !== generation || target !== options.target() || dirty()) return
+      persistenceKey = fileIdentity(options.instanceId, target, meta?.serverId)
+    }
+    const durable = persistenceKey
+    if (!durable) return
+    if (draft() && attachedKey === durable) return
+    const entry = await refreshWorkspaceFileDraft(durable)
+    if (disposed || ticket !== generation || target !== options.target() || dirty()) return
+    identity = durable
+    const existing = drafts.get(durable)
+    const retained = existing ?? (entry && createDraft(entry.fingerprint, entry.text))
+    if (!retained) return
+    if (!existing) drafts.set(durable, retained)
+    attach(durable, retained)
+    if (!dirty() && !retained.value().pending) return
+    setNeedsVerification(dirty())
+    return retained.value().text
   }
   function verify(value: string | undefined, hash: string) {
     const retained = draft()
@@ -112,7 +138,10 @@ export function useWorkspaceFileEditor(options: {
     setNeedsVerification(false)
   }
   function adopt(value: string, hash = fingerprint(utf8.encode(value))) {
-    const identity = key()
+    if (!identity) {
+      const target = options.target()
+      identity = JSON.stringify([options.instanceId, target.directory, target.path])
+    }
     const existing = drafts.get(identity)
     const shared = existing ?? createDraft(hash, value, value)
     if (!existing) drafts.set(identity, shared)
@@ -122,33 +151,32 @@ export function useWorkspaceFileEditor(options: {
     attach(identity, shared)
     setOriginal(value); setText(value)
   }
-  function checkpoint(identity: string | undefined, retained: Draft) {
-    if (!identity) return
+  function checkpoint(persisted: string | undefined, retained: Draft) {
     const { fingerprint, text, original, pending } = retained.value()
     const mark = (ok: boolean) => {
       if (retained.value().text === text && retained.value().limited !== !ok) {
         retained.update(previous => ({ ...previous, limited: !ok }))
       }
     }
-    mark(updateWorkspaceFileDraft(identity, text === original && !pending ? null : { fingerprint, text }, mark))
+    if (persisted) mark(updateWorkspaceFileDraft(persisted, text === original && !pending ? null : { fingerprint, text }, mark))
+    else if (instances().has(options.instanceId)) mark(text === original)
   }
   function change(value: string) {
     setText(value)
     const retained = draft()
     if (!retained) return
     retained.update(previous => ({ ...previous, text: value }))
-    checkpoint(durableKey(), retained)
+    checkpoint(persistenceKey, retained)
   }
   function discard() {
     const shared = draft()
     if (shared) shared.update(previous => ({ ...previous, original: previous.original ?? "", text: previous.original ?? "", limited: false }))
-    const identity = durableKey()
-    if (identity) updateWorkspaceFileDraft(identity, null, () => {})
+    if (persistenceKey) updateWorkspaceFileDraft(persistenceKey, null, () => {})
     attach(undefined); setOriginal(undefined); setConflict(false); setNeedsVerification(false)
   }
   async function save(value = text()) {
     if (saving() || !options.active() || !dirty()) return
-    const target = options.target(), identity = key(), persisted = durableKey(), version = generation
+    const target = options.target(), owned = identity, persisted = persistenceKey, version = generation
     const operation = options.captureOperation?.(options.instanceId)
     const current = () => !disposed && version === generation && target === options.target() && options.active() && (operation?.current() ?? true)
     if (!current()) return
@@ -170,7 +198,7 @@ export function useWorkspaceFileEditor(options: {
       }
       if (disk !== value) await api.writeWorkspaceFile(options.instanceId, target.path, value, { directory: target.directory, signal: operation?.signal })
       if (operation && !operation.current()) return
-      const latest = drafts.get(identity)
+      const latest = drafts.get(owned)
       if (latest) {
         const hash = disk === value ? workspaceFileFingerprint(snapshot) : fingerprint(utf8.encode(value))
         latest.update(previous => ({ ...previous, original: value, fingerprint: hash }))
@@ -185,10 +213,10 @@ export function useWorkspaceFileEditor(options: {
       if (current()) options.onError(error instanceof Error ? error.message : options.t("instanceShell.rightPanel.toast.saveError"))
     } finally {
       writing.update(previous => ({ ...previous, pending: false }))
-      const latest = drafts.get(identity)
+      const latest = drafts.get(owned)
       if (latest) {
         checkpoint(persisted, latest)
-        release(identity, latest)
+        release(owned, latest)
       }
       if (!disposed && generation === version) setSaving(false)
     }

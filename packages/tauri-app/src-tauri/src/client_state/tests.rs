@@ -1105,7 +1105,8 @@ fn file_drafts_survive_secondary_window_removal_without_affecting_window_state()
     assert_eq!(serde_json::to_value(state.load_file_drafts(&primary).unwrap()).unwrap(),
         json!([{"key":"test","fingerprint":"0".repeat(64),"text":"été"}]));
     let stale = serde_json::from_value(json!({"key":"test","expected":null,"draft":null})).unwrap();
-    assert!(!state.save_file_draft(&primary, stale, || true).unwrap());
+    assert!(state.save_file_draft(&primary, stale, || true).unwrap());
+    assert_eq!(state.load_file_drafts(&primary).unwrap().len(), 1);
     fs::write(directory.path().join("workspace-file-drafts.json"), b"{corrupt").unwrap();
     assert!(state.load_file_drafts(&primary).unwrap().is_empty());
     assert_eq!(state.load_window(&primary).unwrap().snapshot, json!({"tabs":["project"]}));

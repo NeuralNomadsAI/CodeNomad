@@ -190,6 +190,15 @@ test("Workspace restores a file draft into a fresh renderer without writing the 
       else assert.equal(await conflict.count(), 0)
       assert.equal(await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "save").length), 0)
     }
+    await page.evaluate(() => sessionStorage.setItem("fixture-server-id", "replacement-installation"))
+    await page.reload()
+    await page.evaluate(async () => {
+      const state = "/src/stores/client-state.ts"
+      await (await import(state)).initializeClientState()
+    })
+    await eye().click()
+    await page.locator(".workspace-file-view .view-line").first().waitFor()
+    assert.equal(await page.locator(".workspace-file-view .view-line").filter({ hasText: "restored" }).count(), 0)
   } finally { await page.close() }
 })
 test("a reader reopened before save completion retains its undo through filesystem invalidation", async () => {

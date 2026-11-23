@@ -90,7 +90,12 @@ impl ClientState {
         current: impl Fn() -> bool,
     ) -> Result<bool, String> {
         let _write = self.write_lock.lock().map_err(|error| error.to_string())?;
-        if !current() || !self.file_drafts_enabled(window_id)? || !valid_key(&change.key) {
+        let enabled = self.file_drafts_enabled(window_id)?;
+        if !current()
+            || !self.is_primary()
+            || (!enabled && change.draft.is_some())
+            || !valid_key(&change.key)
+        {
             return Ok(false);
         }
         let path = self.file_drafts_path();
@@ -101,7 +106,7 @@ impl ClientState {
             .map(|draft| &draft.value)
             != change.expected.as_ref()
         {
-            return Ok(false);
+            return Ok(change.draft.is_none());
         }
         drafts.retain(|draft| draft.key != change.key);
         if let Some(value) = change.draft {

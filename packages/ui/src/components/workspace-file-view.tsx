@@ -27,6 +27,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
   const [content, setContent] = createSignal<{ text?: string; image?: string; binary?: boolean } | null>(null)
   const [error, setError] = createSignal<string | null>(null)
   const [loading, setLoading] = createSignal(false)
+  const [recovering, setRecovering] = createSignal(false)
   const [source, setSource] = createSignal(false)
   const [wrap, setWrap] = createSignal(readStoredEnum(RIGHT_PANEL_FILES_WORD_WRAP_KEY, ["on", "off"] as const) === "on")
   const editor = useWorkspaceFileEditor({ instanceId: props.instanceId, target: () => props.target, active: () => props.active, t, onError: setError, captureOperation: captureBackendOperation })
@@ -37,7 +38,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
   const mermaid = () => /\.mmd$/i.test(props.target.path)
   const previewable = () => markdown() || mermaid()
   async function load() {
-    if (!props.active || (editor.dirty() && !editor.needsVerification()) || editor.saving()) return
+    if (!props.active || recovering() || (editor.dirty() && !editor.needsVerification()) || editor.saving()) return
     if (loading()) { pending = true; return }
     const request = controller = new AbortController(), target = props.target
     const operation = captureBackendOperation(props.instanceId, request.signal)
@@ -82,12 +83,14 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
     onCleanup(() => views.set(target, { source: source(), scrollTop: views.get(target)?.scrollTop ?? 0 }))
     cancel(); setContent(null); setError(null); setSource(views.get(props.target)?.source ?? false)
     const draft = editor.reset()
+    setRecovering(draft === undefined)
     if (draft !== undefined) {
       setContent({ text: draft })
       void load()
     } else void editor.recover().then(text => {
       if (target !== props.target || disposed) return
       if (text !== undefined) setContent({ text })
+      setRecovering(false)
       void load()
     })
   }))
@@ -110,6 +113,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
       })
       if (!confirmed || !operation.current() || target !== props.target || !props.active) return
       editor.discard()
+      setContent(null)
     }
     await load()
   }
@@ -117,7 +121,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
     <header class="window-header git-diff-header">
       <div class="git-diff-heading"><strong title={props.target.path}>{props.target.path}</strong>
         <span title={props.target.directory}>{props.target.directory}<Show when={editor.dirty()}> · ●</Show><Show when={content()?.text === undefined}> · {t("filesPanel.readOnly")}</Show></span></div>
-      <button class="file-viewer-toolbar-button" disabled={loading() || editor.saving()} onClick={() => void explicitRefresh()}>{t("instanceShell.rightPanel.actions.refresh")}</button>
+      <button class="file-viewer-toolbar-button" disabled={recovering() || loading() || editor.saving()} onClick={() => void explicitRefresh()}>{t("instanceShell.rightPanel.actions.refresh")}</button>
       <Show when={previewable() && content()?.text !== undefined}>
         <button class="file-viewer-toolbar-button" onClick={() => setSource(!source())}>{t(source() ? mermaid() ? "markdown.mermaid.preview" : "instanceShell.filesShell.previewMarkdown" : "instanceShell.filesShell.showSource")}</button>
       </Show>
@@ -130,7 +134,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
     <Show when={error()}><div class="p-3 text-error" role="alert">{error()} <button onClick={() => void explicitRefresh()}>{t("instanceShell.rightPanel.actions.refresh")}</button></div></Show>
     <Show when={editor.conflict()}><div class="p-3 text-error" role="alert">{t("filesPanel.draftConflict")}</div></Show>
     <Show when={editor.limited()}><div class="p-3 text-error" role="alert">{t("filesPanel.draftLimit")}</div></Show>
-    <Show when={loading() && !content()}><p class="p-3 text-secondary">{t("instanceInfo.loading")}</p></Show>
+    <Show when={(recovering() || loading()) && !content()}><p class="p-3 text-secondary">{t("instanceInfo.loading")}</p></Show>
     <Show when={content()}>{value => <>
       <Show when={value().image}>{url => <div class="workspace-image"><img src={url()} alt={props.target.path} /></div>}</Show>
       <Show when={value().binary}><div class="p-3 text-secondary">{t("filesPanel.binary")}</div></Show>

@@ -39,6 +39,60 @@ const boot = async (api?: NativeApi, storage?: MemoryStorage) => {
 const transact = (state: ClientState, kind: TransactionKind) => kind === "clear"
   ? state.clearRestoredClientState() : state.setRestorePreviousStateEnabled(false)
 describe("client state ownership and persistence", () => {
+  it("keeps the draft's observed version across restore toggles and rejects close without blocking an unrelated snapshot", async () => {
+    const key = "checkout/file", fingerprint = "0".repeat(64)
+    const first = { fingerprint, text: "version observed by this renderer" }
+    const newer = { fingerprint, text: "version kept by another window" }
+    let stored: typeof first | null = first
+    let lastSnapshot: any
+    const results: boolean[] = []
+    const state = await boot({
+      loadClientState: async () => loadResult(),
+      setClientStateRestoreEnabled: async () => true,
+      saveClientState: async (_token, value) => { lastSnapshot = value; return true },
+      loadFileDrafts: async () => stored ? [{ key, ...stored }] : [],
+      saveFileDraft: async (_token, change) => {
+        assert.equal(change.key, key)
+        if (change.expected?.text !== stored?.text) return change.draft === null
+        stored = change.draft
+        return true
+      },
+    })
+
+    assert.deepEqual(await state.refreshWorkspaceFileDraft(key), { key, ...first })
+    await state.setRestorePreviousStateEnabled(false)
+    assert.equal(state.updateWorkspaceFileDraft(key, { ...first, text: "my latest edit" }, ok => results.push(ok)), true)
+    stored = newer
+    await state.setRestorePreviousStateEnabled(true)
+    assert.deepEqual(results, [false])
+    state.updateRestorableSession(session("snapshot survives"))
+    await state.flushClientState()
+    assert.deepEqual(lastSnapshot.session, session("snapshot survives"))
+    await assert.rejects(state.flushWorkspaceFileDraftsForClose(), state.WorkspaceDraftFlushError)
+    assert.deepEqual(stored, newer)
+
+    // Saving/discarding this reader releases the close hold without removing the other draft.
+    assert.equal(state.updateWorkspaceFileDraft(key, null, ok => results.push(ok)), true)
+    await state.flushWorkspaceFileDraftsForClose()
+    assert.deepEqual(results, [false, true])
+    assert.deepEqual(stored, newer)
+    assert.deepEqual(await state.refreshWorkspaceFileDraft(key), { key, ...newer })
+  })
+  it("an older write acknowledgment cannot clear the close hold for a larger new edit", async () => {
+    const key = "checkout/file", fingerprint = "0".repeat(64)
+    const started = deferred<void>()
+    const release = deferred<boolean>()
+    const state = await boot({
+      loadClientState: async () => loadResult(),
+      saveFileDraft: async () => { started.resolve(); return release.promise },
+    })
+    assert.equal(state.updateWorkspaceFileDraft(key, { fingerprint, text: "small" }, () => {}), true)
+    const closing = state.flushWorkspaceFileDraftsForClose()
+    await started.promise
+    assert.equal(state.updateWorkspaceFileDraft(key, { fingerprint, text: "x".repeat(256 * 1024) }, () => {}), false)
+    release.resolve(true)
+    await assert.rejects(closing, state.WorkspaceDraftFlushError)
+  })
   for (const localCopy of [false, true]) it(`retains occurrence browser resources when the shared layout is full (${localCopy ? "matching local copy" : "new key"}) and retries on reload`, async () => {
     const browser = { mode: "preview", targetUrl: "https://example.com/saved", viewport: "mobile",
       history: { urls: ["https://example.com/start", "https://example.com/saved"], index: 1 } }
