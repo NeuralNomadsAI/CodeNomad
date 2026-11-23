@@ -58,11 +58,11 @@ impl Source {
         if !dir.join("index.html").is_file() {
             return None;
         }
-        Some(if ["boot.js", "app_bg.wasm"].iter().all(|file| dir.join(file).is_file()) {
-            RemoteBundle::Rune(dir.clone())
-        } else {
-            RemoteBundle::Solid(dir.clone())
-        })
+        match (dir.join("boot.js").is_file(), dir.join("app_bg.wasm").is_file()) {
+            (true, true) => Some(RemoteBundle::Rune(dir.clone())),
+            (false, false) => Some(RemoteBundle::Solid(dir.clone())),
+            _ => None,
+        }
     }
 }
 
@@ -82,24 +82,37 @@ impl RemoteBundle {
         if matches!(root, "api" | "workspaces" | "auth" | "sidecars" | "previews" | "login" | "remote-pair") {
             return None;
         }
-        Path::new(decoded.as_ref())
-            .extension()?
-            .to_str()
-            .filter(|ext| ext.bytes().all(|byte| byte.is_ascii_alphanumeric()))?;
-        Some(path)
+        (!root.starts_with('.')).then_some(path)
     }
 
     pub fn public(&self, path: &str) -> bool {
         matches!(self, Self::Solid(_))
-            && percent_encoding::percent_decode_str(path).decode_utf8().is_ok_and(|path| !is_html_path(&path))
+            && percent_encoding::percent_decode_str(path).decode_utf8().is_ok_and(|path| {
+                !is_html_path(&path)
+                    && Path::new(path.as_ref())
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .is_some_and(|ext| ext.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+            })
     }
 
     pub async fn serve(&self, req: Request, path: &str) -> Response {
         let dir = match self {
             Self::Rune(dir) | Self::Solid(dir) => dir,
         };
-        let mut response =
-            asset(dir, req.method(), path, req.headers()).await.unwrap_or_else(|| Status::NOT_FOUND.into_response());
+        let response = asset(dir, req.method(), path, req.headers()).await;
+        let mut response = match response {
+            Some(response) => response,
+            None if matches!(self, Self::Solid(_))
+                && path != "/index.html"
+                && req.extensions().get::<crate::auth::Principal>().is_some() =>
+            {
+                asset(dir, req.method(), "/index.html", req.headers())
+                    .await
+                    .unwrap_or_else(|| Status::NOT_FOUND.into_response())
+            }
+            None => Status::NOT_FOUND.into_response(),
+        };
         if matches!(self, Self::Rune(_)) {
             response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-cache"));
         }

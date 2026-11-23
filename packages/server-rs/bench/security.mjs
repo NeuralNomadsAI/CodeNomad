@@ -61,7 +61,9 @@ const scriptPath="/assets/solid-fixture.js"
 const script="export const solid = true;\n".repeat(64)
 async function solidAssets(dir) {
   await mkdir(path.join(dir,"assets"),{recursive:true})
-  await writeFile(path.join(dir,"index.html"),`<!doctype html><title>Solid fixture</title><script type="module" src="${scriptPath}"></script>`)
+  const index=`<!doctype html><title>Solid fixture</title><script type="module" src="${scriptPath}"></script>`
+  await writeFile(path.join(dir,"index.html"),index)
+  await writeFile(path.join(dir,"index.html.br"),brotliCompressSync(index))
   await writeFile(path.join(dir,"manifest.webmanifest"),JSON.stringify({name:"CodeNomad"}))
   await writeFile(path.join(dir,scriptPath),script)
   await writeFile(path.join(dir,`${scriptPath}.br`),brotliCompressSync(script))
@@ -72,7 +74,13 @@ async function checkSolid(title, targets, origins, issue) {
     const publicAsset=await target({url:"/manifest.webmanifest"})
     assert.equal(publicAsset.status,200,title)
     assert.equal(publicAsset.body.name,"CodeNomad")
-    assert.equal((await target({url:"/index.html"})).status,index===0&&title==="direct"?302:401)
+    for(const url of ["/index.html","/index.html.br"])
+      assert.equal((await target({url})).status,index===0&&title==="direct"?302:401)
+    if(title==="ingress"){
+      const unpairedPage=await target({url:"/index.html",headers:{accept:"text/html"}})
+      assert.equal(unpairedPage.status,302)
+      assert.equal(unpairedPage.headers.location,"/remote-pair")
+    }
     const pairing=await target({url:"/api/remote-control/pair",method:"POST",...json({code:await issue[index]()}),
       headers:{"content-type":"application/json",origin}})
     assert.equal(pairing.status,200,`${title}: ${JSON.stringify(pairing.body)}`)
@@ -83,6 +91,10 @@ async function checkSolid(title, targets, origins, issue) {
     assert.equal(page.headers["cache-control"],"no-store")
     assert.match(page.body,/Solid fixture/)
     assert.equal((await target({url:"/",method:"HEAD",headers})).body,"")
+    const deepPage=await target({url:"/settings",method:"HEAD",headers:{...headers,"accept-encoding":"br"}})
+    assert.equal(deepPage.status,200)
+    assert.equal(deepPage.headers["cache-control"],"no-store")
+    assert.equal(deepPage.headers["content-encoding"],"br")
     const resource=await target({url:scriptPath,headers:{cookie}})
     assert.equal(resource.status,200)
     assert.match(resource.headers["content-type"],/javascript/)
@@ -177,6 +189,8 @@ await withProductRuntime(exe,async()=>({}),async ({root:home,env,connection})=>{
   }
   const solidDir=path.join(home,"solid")
   await solidAssets(solidDir)
+  await mkdir(path.join(solidDir,"api"))
+  await writeFile(path.join(solidDir,"api","solid-fixture-missing.js"),script)
   const server=start("risk",{CNRS_FIXTURE_UI_DIR:solidDir}),{child,stopped}=server
   const cleanup=[]
   try {

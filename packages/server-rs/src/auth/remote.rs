@@ -272,8 +272,12 @@ pub async fn admit(
         return cors(response, supplied);
     }
     if owner.is_none()
-        && entry
-        && path == "/"
+        && (entry && path == "/"
+            || channel.ingress
+                && method == Method::GET
+                && ui.is_some_and(|(bundle, asset)| {
+                    matches!(bundle, crate::host::ui::RemoteBundle::Solid(_)) && !bundle.public(asset)
+                }))
         && h.get(header::ACCEPT).and_then(|v| v.to_str().ok()).is_some_and(|v| {
             let accept = v.to_ascii_lowercase();
             accept.contains("text/html") || accept.contains("application/xhtml")
