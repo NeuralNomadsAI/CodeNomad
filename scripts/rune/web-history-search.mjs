@@ -134,9 +134,25 @@ export async function historySearch(page, messages, touch) {
       }
       assert(!await inside(more),'The continuation starts below the short window')
       await cdp.send('Input.synthesizeScrollGesture',{
-        x:short.x+short.width/2,y:bottom-18,yDistance:-350,gestureSourceType:'touch',speed:800,
+        x:short.x+short.width/2,y:bottom-18,yDistance:-350,gestureSourceType:'touch',speed:800,preventFling:true,
       })
       await more.waitFor()
+      // Rune may still be returning from elastic overscroll after CDP ends the gesture.
+      // Tap only once the painted button is stable, rather than chasing it with a second tap.
+      await more.evaluate(element=>new Promise((resolve,reject)=>{
+        let previous, stable=0
+        const deadline=performance.now()+3000
+        const sample=now=>{
+          const {x,y,width,height}=element.getBoundingClientRect()
+          const rect=[x,y,width,height].join()
+          stable=width>0&&height>0&&rect===previous?stable+1:0
+          previous=rect
+          if(stable>=4)resolve()
+          else if(now>=deadline)reject(Error('Continuation never settled after the swipe'))
+          else requestAnimationFrame(sample)
+        }
+        requestAnimationFrame(sample)
+      }))
       assert(await inside(more),'Scrolling the window body reveals the continuation')
       assert.deepEqual(await close.boundingBox(),toolbar,'The toolbar stays fixed while the body scrolls')
       const [older]=await Promise.all([read('ranked'),activate(more)])
