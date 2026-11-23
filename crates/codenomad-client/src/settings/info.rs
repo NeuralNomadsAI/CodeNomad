@@ -2,22 +2,27 @@ use crate::{
     backend::{Backend, read_json_limited},
     history::Result,
 };
-use serde_json::Value;
 use reqwest::Url;
+use serde_json::Value;
 use std::time::Duration;
 
-pub const BUG_FIELDS: [&str; 4] = ["codenomad-version", "opencode-version", "os-version", "extra"];
+pub const BUG_FIELDS: [&str; 4] = [
+    "codenomad-version",
+    "opencode-version",
+    "os-version",
+    "extra",
+];
 const BUG_TEMPLATE: &str = "bug_report.yml";
 const BUG_PAGE: &str = "https://github.com/NeuralNomadsAI/CodeNomad/issues/new";
-const BUG_SOURCE: &str =
-    "https://raw.githubusercontent.com/NeuralNomadsAI/CodeNomad/dev/.github/ISSUE_TEMPLATE/bug_report.yml";
+const BUG_SOURCE: &str = "https://raw.githubusercontent.com/NeuralNomadsAI/CodeNomad/dev/.github/ISSUE_TEMPLATE/bug_report.yml";
 
 pub async fn metadata(backend: &Backend) -> Result<Value> {
     let request = backend.client.get(format!("{}api/meta", backend.base));
     #[cfg(target_arch = "wasm32")]
     let request = request.fetch_cache_no_store();
     let response = request.send().await?.error_for_status()?;
-    let meta = read_json_limited(response, 65536).await?;
+    // Release offers may include GitHub release notes alongside the metadata.
+    let meta = read_json_limited(response, 256 * 1024).await?;
     if !meta.is_object()
         || backend
             .client
@@ -53,20 +58,34 @@ pub fn listener_origin(text: &str) -> Option<String> {
     (matches!(url.scheme(), "http" | "https")
         && url.host_str().is_some()
         && url.username().is_empty()
-        && url.password().is_none()).then(|| url.origin().ascii_serialization())
+        && url.password().is_none())
+    .then(|| url.origin().ascii_serialization())
 }
 
 fn public_https(text: &str) -> Option<Url> {
     let url = Url::parse(text).ok()?;
-    (url.scheme() == "https" && url.port().is_none()
-        && url.username().is_empty() && url.password().is_none()).then_some(url)
+    (url.scheme() == "https"
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none())
+    .then_some(url)
 }
 
 pub fn utc_stamp() -> Option<String> {
-    let seconds = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).ok()?.as_secs();
+    let seconds = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
     let time = time::OffsetDateTime::from_unix_timestamp(i64::try_from(seconds).ok()?).ok()?;
-    Some(format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", time.year(), u8::from(time.month()),
-        time.day(), time.hour(), time.minute(), time.second()))
+    Some(format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        time.year(),
+        u8::from(time.month()),
+        time.day(),
+        time.hour(),
+        time.minute(),
+        time.second()
+    ))
 }
 
 pub async fn published_bug_form() -> Option<bool> {
@@ -75,8 +94,13 @@ pub async fn published_bug_form() -> Option<bool> {
     if let Some(known) = KNOWN.get() {
         return Some(*known);
     }
-    let response = crate::http::Http::new().ok()?.get(BUG_SOURCE)
-        .timeout(Duration::from_secs(3)).send().await.ok()?;
+    let response = crate::http::Http::new()
+        .ok()?
+        .get(BUG_SOURCE)
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+        .ok()?;
     let compatible = if response.status() == reqwest::StatusCode::NOT_FOUND {
         false
     } else {
@@ -106,7 +130,10 @@ fn inspect_form(text: &str) -> Option<bool> {
         if let Some(value) = line.strip_prefix("  - type: ") {
             kind = value.trim();
         } else if let Some(id) = line.strip_prefix("    id: ") {
-            if let Some(index) = BUG_FIELDS.iter().position(|expected| id.trim() == *expected) {
+            if let Some(index) = BUG_FIELDS
+                .iter()
+                .position(|expected| id.trim() == *expected)
+            {
                 found[index] = matches!(kind, "input" | "textarea");
             }
         } else if !line.is_empty() && !line.starts_with(' ') {
@@ -121,8 +148,12 @@ pub fn bug_report_link(environment: [&str; 4], compatible: Option<bool>) -> Stri
     let mut query = url.query_pairs_mut();
     if compatible == Some(false) {
         let [codenomad, opencode, os, context] = environment;
-        let body = format!("### Issue Summary\n\n\n### Steps to Reproduce\n\n1. \n\n### Expected Behavior\n\n\n### Environment\n\n- CodeNomad Version: {codenomad}\n- OpenCode Version: {opencode}\n- Operating System: {os}\n{context}\n");
-        query.append_pair("title", "[Bug]: ").append_pair("body", &body);
+        let body = format!(
+            "### Issue Summary\n\n\n### Steps to Reproduce\n\n1. \n\n### Expected Behavior\n\n\n### Environment\n\n- CodeNomad Version: {codenomad}\n- OpenCode Version: {opencode}\n- Operating System: {os}\n{context}\n"
+        );
+        query
+            .append_pair("title", "[Bug]: ")
+            .append_pair("body", &body);
     } else {
         query.append_pair("template", BUG_TEMPLATE);
         for (field, value) in BUG_FIELDS.into_iter().zip(environment) {
@@ -144,7 +175,10 @@ fn release_and_bug_form_follow_the_server_and_published_contracts() {
     assert!(release_link("https://me@github.com/a/b/releases/tag/v1").is_none());
     let form = include_str!("../../../../.github/ISSUE_TEMPLATE/bug_report.yml");
     assert_eq!(inspect_form(form), Some(true));
-    assert_eq!(inspect_form(&form.replace("id: extra", "id: extra-removed")), Some(false));
+    assert_eq!(
+        inspect_form(&form.replace("id: extra", "id: extra-removed")),
+        Some(false)
+    );
     let bug = bug_report_link(["1.2", "2.3", "Windows", "Rune"], None);
     assert!(bug.contains("template=bug_report.yml&codenomad-version=1.2"));
     assert!(bug_report_link(["1.2", "2.3", "Windows", "Rune"], Some(false)).contains("&body="));

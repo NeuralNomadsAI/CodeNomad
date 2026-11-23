@@ -319,6 +319,11 @@ impl Document {
         }
         if current {
             self.read.failed = snapshot.is_none();
+            // Info has an independent authoritative metadata read after every feed gesture.
+            // Settle a refused preflight so that read can proceed; retry needs a new gesture.
+            if self.read.failed && self.write.pending.remove(&Choice::UpdateFeed) {
+                self.write.failed.insert(Choice::UpdateFeed);
+            }
         }
         if let Some(snapshot) = snapshot {
             self.write.requested.retain(|&choice, value| {

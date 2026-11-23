@@ -2575,6 +2575,7 @@
   "settings.images.storage.title": "Store images once",
   "settings.images.title": "Images",
   "settings.images.unsupported": "The connected OpenCode version has no image settings.",
+  "settings.info.actions.failed": "Could not complete the action. Try again.",
   "settings.info.connectivity.disclaimer": "Firewall, router or certificate settings may prevent connections.",
   "settings.info.connectivity.host": "Bind host",
   "settings.info.connectivity.loadFailed": "Could not load connectivity details. Refresh to retry.",

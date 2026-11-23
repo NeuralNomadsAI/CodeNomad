@@ -71,7 +71,7 @@ pub(crate) fn poll_window_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
     return changed
         | s.settings
             .web
-            .poll_shortcuts(&s.settings.shared.borrow(), tx);
+            .poll_window_actions(&s.settings.shared.borrow(), tx);
     #[cfg(not(target_arch = "wasm32"))]
     changed
 }

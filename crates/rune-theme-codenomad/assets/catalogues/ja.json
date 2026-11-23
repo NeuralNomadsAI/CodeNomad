@@ -2575,6 +2575,7 @@
   "settings.images.storage.title": "画像を一度だけ保存",
   "settings.images.title": "画像",
   "settings.images.unsupported": "接続中の OpenCode には画像設定がありません。",
+  "settings.info.actions.failed": "操作を完了できませんでした。もう一度お試しください。",
   "settings.info.connectivity.disclaimer": "ファイアウォール、ルーター、証明書の設定によって接続できない場合があります。",
   "settings.info.connectivity.host": "バインドホスト",
   "settings.info.connectivity.loadFailed": "接続情報を読み込めませんでした。更新して再試行してください。",

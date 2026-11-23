@@ -749,5 +749,6 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "הורד .txt",
   "settings.info.diagnostics.reportBug": "דווח על באג",
   "settings.info.diagnostics.copied": "נתוני האבחון הועתקו.",
+  "settings.info.actions.failed": "לא ניתן להשלים את הפעולה. נסו שוב.",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI לא מספקת נתוני שימוש בשיטת ההתחברות הזו של ChatGPT. אפשר להמשיך לשוחח.",
 } as const

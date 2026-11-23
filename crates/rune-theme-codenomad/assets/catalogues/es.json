@@ -2575,6 +2575,7 @@
   "settings.images.storage.title": "Guardar las imágenes una sola vez",
   "settings.images.title": "Imágenes",
   "settings.images.unsupported": "La versión de OpenCode conectada no tiene ajustes de imágenes.",
+  "settings.info.actions.failed": "No se pudo completar la acción. Inténtalo de nuevo.",
   "settings.info.connectivity.disclaimer": "La configuración del firewall, del router o del certificado puede impedir las conexiones.",
   "settings.info.connectivity.host": "Host de escucha",
   "settings.info.connectivity.loadFailed": "No se pudieron cargar los detalles de conexión. Actualiza para reintentar.",

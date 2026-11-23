@@ -480,10 +480,19 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             ),
             Section::Info => (
                 "info",
-                s.info.view(&s.shared, |s: &mut Window| {
-                    (s.section == Section::Info && !s.confirm_close && !s.closing)
-                        .then_some(&mut s.info)
-                }),
+                s.info.view(
+                    &s.shared,
+                    |s: &mut Window| {
+                        (s.section == Section::Info && !s.confirm_close && !s.closing)
+                            .then_some(&mut s.info)
+                    },
+                    Some(|s| {
+                        if s.section == Section::Info && !s.confirm_close && !s.closing {
+                            s.info.close();
+                            s.section = Section::Remote;
+                        }
+                    }),
+                ),
             ),
         };
         if let Some(editor) = prefs.memory.editor_view(

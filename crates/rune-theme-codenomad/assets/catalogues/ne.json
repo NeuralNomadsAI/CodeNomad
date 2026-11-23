@@ -2575,6 +2575,7 @@
   "settings.images.storage.title": "छविहरू एक पटक मात्र भण्डारण गर्नुहोस्",
   "settings.images.title": "छविहरू",
   "settings.images.unsupported": "जडान भएको OpenCode संस्करणमा छवि सेटिङहरू छैनन्।",
+  "settings.info.actions.failed": "कार्य पूरा हुन सकेन। फेरि प्रयास गर्नुहोस्।",
   "settings.info.connectivity.disclaimer": "फायरवाल, राउटर वा प्रमाणपत्र सेटिङहरूले जडान रोक्न सक्छन्।",
   "settings.info.connectivity.host": "बाइन्ड होस्ट",
   "settings.info.connectivity.loadFailed": "जडान विवरण लोड गर्न सकिएन। फेरि प्रयास गर्न रिफ्रेस गर्नुहोस्।",

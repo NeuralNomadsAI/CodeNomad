@@ -4,6 +4,7 @@ mod connection;
 #[cfg(not(target_arch = "wasm32"))]
 mod device_file;
 pub(crate) mod device_picker;
+pub(crate) mod diagnostics;
 #[cfg(target_os = "windows")]
 pub(crate) use codenomad_windows_notifications as notifications;
 #[cfg(target_arch = "wasm32")]

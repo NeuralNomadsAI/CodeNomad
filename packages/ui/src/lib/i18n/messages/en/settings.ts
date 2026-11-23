@@ -751,4 +751,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "Download .txt",
   "settings.info.diagnostics.reportBug": "Report a bug",
   "settings.info.diagnostics.copied": "Diagnostics copied.",
+  "settings.info.actions.failed": "Could not complete the action. Try again.",
 } as const

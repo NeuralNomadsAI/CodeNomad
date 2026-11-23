@@ -2575,6 +2575,7 @@
   "settings.images.storage.title": "שמירת תמונות פעם אחת",
   "settings.images.title": "תמונות",
   "settings.images.unsupported": "לגרסת OpenCode המחוברת אין הגדרות תמונות.",
+  "settings.info.actions.failed": "לא ניתן להשלים את הפעולה. נסו שוב.",
   "settings.info.connectivity.disclaimer": "הגדרות חומת האש, הנתב או התעודה הדיגיטלית עשויות למנוע חיבורים.",
   "settings.info.connectivity.host": "כתובת האזנה",
   "settings.info.connectivity.loadFailed": "לא ניתן לטעון את פרטי החיבור. רעננו כדי לנסות שוב.",

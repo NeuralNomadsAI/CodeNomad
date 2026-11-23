@@ -2575,6 +2575,7 @@
   "settings.images.storage.title": "图像只存储一次",
   "settings.images.title": "图像",
   "settings.images.unsupported": "已连接的 OpenCode 版本没有图像设置。",
+  "settings.info.actions.failed": "无法完成操作。请重试。",
   "settings.info.connectivity.disclaimer": "防火墙、路由器或证书设置可能阻止连接。",
   "settings.info.connectivity.host": "绑定主机",
   "settings.info.connectivity.loadFailed": "无法加载连接信息。请刷新重试。",

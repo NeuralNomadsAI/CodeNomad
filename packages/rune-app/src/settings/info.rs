@@ -28,9 +28,32 @@ pub(super) struct Info {
     support_failed: bool,
     release_failed: bool,
     diagnostics: diagnostics::Diagnostics,
+    #[cfg(target_arch = "wasm32")]
+    announced: Option<&'static str>,
 }
 
 impl Info {
+    #[cfg(target_arch = "wasm32")]
+    pub fn announce(&mut self, prefs: &Preferences, tx: &mut rune::Tx) {
+        let notice = if self.release_failed {
+            Some("settings.info.actions.failed")
+        } else if prefs.update_feed_failed() {
+            Some("settings.info.updates.feed.saveFailed")
+        } else if self.failed {
+            Some("settings.info.connectivity.loadFailed")
+        } else {
+            self.diagnostics.feedback()
+        };
+        if let Some(key) = notice.filter(|key| Some(*key) != self.announced) {
+            if key.ends_with(".copied") {
+                layout::announce_selection(tx, t(key));
+            } else {
+                layout::announce_alert(tx, t(key));
+            }
+        }
+        self.announced = notice;
+    }
+
     pub fn close(&mut self) {
         *self = Self::default();
     }
@@ -82,7 +105,7 @@ impl Info {
         changed
     }
 
-    fn current<'a>(&'a self, prefs: &Preferences) -> Option<&'a Value> {
+    pub(super) fn current<'a>(&'a self, prefs: &Preferences) -> Option<&'a Value> {
         let owner = prefs.backend.as_ref().filter(|_| prefs.can_retry())?;
         if self.owner.as_deref() != Some(&owner.client_id) {
             return None;
@@ -90,10 +113,24 @@ impl Info {
         self.value.as_ref()
     }
 
+    pub(super) fn change_feed(&mut self, prefs: &mut Preferences, feed: &'static str) {
+        if !self.failed
+            && self.flight.is_none()
+            && !prefs.update_feed_pending()
+            && self
+                .current(prefs)
+                .is_some_and(|value| value["updateFeed"] != feed)
+        {
+            prefs.stage_update_feed(feed);
+            self.reread_feed = true;
+        }
+    }
+
     pub fn view<S: 'static>(
         &self,
         shared: &Rc<RefCell<Preferences>>,
         access: fn(&mut S) -> Option<&mut Info>,
+        remote: Option<fn(&mut S)>,
     ) -> El {
         let prefs = shared.borrow();
         let value = self.current(&prefs).unwrap_or(&Value::Null);
@@ -101,9 +138,13 @@ impl Info {
         let busy = self.flight.is_some() || prefs.update_feed_pending();
         let offer = value.get("update").filter(|offer| offer.is_object());
         let latest = offer.and_then(|offer| value_text(&offer["version"]));
-        let release = (!busy && !self.failed && latest.is_some()).then(|| {
-            offer.and_then(|offer| value_text(&offer["url"])).and_then(codenomad_client::settings::info::release_link)
-        }).flatten();
+        let release = (!busy && !self.failed && latest.is_some())
+            .then(|| {
+                offer
+                    .and_then(|offer| value_text(&offer["url"]))
+                    .and_then(codenomad_client::settings::info::release_link)
+            })
+            .flatten();
         let version =
             value_text(&value["serverVersion"]).or_else(|| value_text(&value["ui"]["version"]));
         let ui = value_text(&value["ui"]["version"]).filter(|ui| Some(*ui) != version);
@@ -116,11 +157,15 @@ impl Info {
             ))
             .child(row(
                 "settings.info.runtime.type",
-                Some(if cfg!(target_arch = "wasm32") {
-                    "Web"
-                } else {
-                    "Rune"
-                }),
+                Some(platform::diagnostics::RUNTIME),
+            ))
+            .child(row(
+                "settings.info.runtime.platform",
+                Some(platform::diagnostics::PLATFORM),
+            ))
+            .child(row(
+                "settings.info.runtime.os",
+                Some(platform::diagnostics::os()),
             ));
 
         let update = shared.clone();
@@ -150,7 +195,15 @@ impl Info {
                 },
             ))
             .children(feed.map(|feed| {
-                chrome::segments(
+                col().full_width().role("group").label(t("settings.info.updates.feed"))
+                    .child(chrome::info_link(t("settings.info.updates.feed.help"), |s: &mut S, tx| {
+                        if let Some(info) = access(s) {
+                            info.release_failed = tx.open_url(&format!(
+                                "https://neuralnomadsai.github.io/CodeNomad/{}/updates.html#feed", locale()
+                            )).is_err();
+                        }
+                    }))
+                    .child(chrome::segments(
                     t("settings.info.updates.feed"),
                     &[
                         t("settings.info.updates.feed.stable"),
@@ -163,18 +216,11 @@ impl Info {
                             return;
                         };
                         let mut prefs = update.borrow_mut();
-                        if !info.failed
-                            && info.flight.is_none()
-                            && let Some(&feed) = FEEDS.get(index)
-                            && info
-                                .current(&prefs)
-                                .is_some_and(|value| value["updateFeed"] != feed)
-                        {
-                            prefs.stage_update_feed(feed);
-                            info.reread_feed = true;
+                        if let Some(&feed) = FEEDS.get(index) {
+                            info.change_feed(&mut prefs, feed);
                         }
                     },
-                )
+                ))
             }))
             .children(prefs.update_feed_failed().then(|| {
                 text(t("settings.info.updates.feed.saveFailed"))
@@ -213,11 +259,15 @@ impl Info {
                     .is_some()
                     .then(|| text(t("remoteAccess.addresses.loading")).role("status")),
             )
-            .children(value.as_object().map(|_| connectivity(value)));
+            .children(value.as_object().map(|_| connectivity(value)))
+            .children(remote.map(|open| layout::button(t("settings.nav.remote"), false, open)));
         col()
             .full_width()
-            .children([about, updates, support, connectivity].map(chrome::card).into_iter().take(3))
-            .child(self.diagnostics.view(shared, access, value.as_object().is_some()))
+            .children([about, updates, support].map(chrome::card))
+            .child(
+                self.diagnostics
+                    .view(shared, access, value.as_object().is_some()),
+            )
             .child(chrome::card(connectivity))
     }
 }
@@ -244,30 +294,18 @@ fn value_text(value: &Value) -> Option<&str> {
 
 fn connectivity(value: &Value) -> El {
     let host = value_text(&value["host"]);
-    let os = value_text(&value["system"]["name"]).or_else(|| {
-        match value["system"]["platform"].as_str() {
-            Some("win32") => Some("Windows"),
-            Some("darwin") => Some("macOS"),
-            Some("linux") => Some("Linux"),
-            _ => value_text(&value["system"]["platform"]),
-        }
-    });
-    let mode = match (host, value["listeningMode"].as_str()) {
-        (Some("0.0.0.0" | "::" | "[::]"), _) => "settings.info.connectivity.mode.all",
-        (_, Some("all" | "specific")) => "settings.info.connectivity.mode.specific",
-        _ => "settings.info.connectivity.mode.local",
-    };
+    let addresses = addresses(value);
     col()
         .full_width()
         .separate(Space::Sm)
-        .child(row("settings.info.server.os", os))
+        .child(row("settings.info.server.os", server_os(value)))
         .child(row(
             "settings.info.server.arch",
             value_text(&value["system"]["arch"]),
         ))
         .child(row(
             "remoteAccess.sections.listeningMode.label",
-            Some(t(mode)),
+            Some(t(listening_mode(value))),
         ))
         .child(row("settings.info.connectivity.host", host))
         .child(row(
@@ -282,4 +320,73 @@ fn connectivity(value: &Value) -> El {
             "settings.info.server.root",
             value_text(&value["workspaceRoot"]),
         ))
+        .child(text(t("remoteAccess.sections.addresses.label")).role("heading"))
+        .children(
+            addresses
+                .is_empty()
+                .then(|| text(t("remoteAccess.addresses.none")).wrap()),
+        )
+        .children(
+            addresses.into_iter().map(|(label, url)| {
+                chrome::setting_row(&label, text(url).wrap().literal_direction())
+            }),
+        )
+        .child(text(t("settings.info.connectivity.disclaimer")).wrap())
+}
+
+fn server_os(value: &Value) -> Option<&str> {
+    value_text(&value["system"]["name"]).or_else(|| match value["system"]["platform"].as_str() {
+        Some("win32") => Some("Windows"),
+        Some("darwin") => Some("macOS"),
+        Some("linux") => Some("Linux"),
+        _ => value_text(&value["system"]["platform"]),
+    })
+}
+
+fn normalize_host(host: &str) -> &str {
+    host.trim().trim_matches(['[', ']'])
+}
+
+fn wildcard(host: &str) -> bool {
+    normalize_host(host)
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_unspecified())
+}
+
+fn listening_mode(value: &Value) -> &'static str {
+    if value["host"].as_str().is_some_and(wildcard) {
+        return "settings.info.connectivity.mode.all";
+    }
+    match value["listeningMode"].as_str() {
+        Some("all" | "specific") => "settings.info.connectivity.mode.specific",
+        _ => "settings.info.connectivity.mode.local",
+    }
+}
+
+fn addresses(value: &Value) -> Vec<(String, String)> {
+    let Some(host) = value_text(&value["host"]) else {
+        return Vec::new();
+    };
+    value["addresses"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(128)
+        .filter_map(|address| {
+            let ip = value_text(&address["ip"])?;
+            if !wildcard(host) && !normalize_host(host).eq_ignore_ascii_case(normalize_host(ip)) {
+                return None;
+            }
+            let family = value_text(&address["family"])?;
+            let scope = match address["scope"].as_str() {
+                Some("external") => "remoteAccess.address.scope.network",
+                Some("internal") => "remoteAccess.address.scope.internal",
+                _ => "remoteAccess.address.scope.loopback",
+            };
+            let url = codenomad_client::settings::info::listener_origin(value_text(
+                &address["remoteUrl"],
+            )?)?;
+            Some((format!("{} · {}", family.to_uppercase(), t(scope)), url))
+        })
+        .collect()
 }
