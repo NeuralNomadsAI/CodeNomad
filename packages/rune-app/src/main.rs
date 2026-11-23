@@ -348,7 +348,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::ObservedRunning { running, version } => {
                 if let Some(reader) = &mut s.reader {
-                    reader.observed_running(running, version);
+                    reader.observed_running(running, version, s.phase == Phase::Streaming);
                 }
                 if s.phase != Phase::Reconnecting
                     && s.phase != Phase::Failed

@@ -119,10 +119,10 @@ impl Reader {
         self.parked = true;
     }
 
-    pub(crate) fn observed_running(&mut self, running: bool, version: u64) {
+    pub(crate) fn observed_running(&mut self, running: bool, version: u64, was_streaming: bool) {
         self.settling = !running
             && !self.independent_status()
-            && (self.settling || self.running() == Some(true));
+            && (was_streaming || self.settling || self.running() == Some(true));
         self.activity = Some((running, version));
     }
 
@@ -434,6 +434,7 @@ mod tests {
             state.phase == Phase::Streaming,
             "visible tail still needs the content read"
         );
+        assert!(state.reader.as_ref().unwrap().blocks_send());
         suspend(&mut state);
         assert!(
             state.phase == Phase::Ready,
