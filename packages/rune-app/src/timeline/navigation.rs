@@ -32,12 +32,26 @@ pub(crate) fn cancel_jump(s: &mut State) {
     j.locked = false;
 }
 
+pub(crate) fn input_precedes_admission(s: &State, tx: &mut Tx) -> bool {
+    let pending = s.paging || s.transcript_display.timeline.jump.flight.is_some();
+    if pending && tx.input_waiting() {
+        // Rune polls before dispatching queued input. Let that gesture own the next window.
+        tx.wake_after(std::time::Duration::ZERO);
+        return true;
+    }
+    false
+}
+
 pub(super) fn cancel_search(s: &mut State) {
-    if owner(s)
-        .jump
+    let jump = &owner(s).jump;
+    if jump
         .flight
         .as_ref()
         .is_some_and(|(_, target)| target.id.is_empty())
+        || jump
+            .retry
+            .as_ref()
+            .is_some_and(|target| target.id.is_empty())
     {
         cancel_jump(s);
     }
@@ -52,7 +66,11 @@ pub(super) fn select(s: &mut State, id: &str, tx: &mut Tx) {
 
 pub(super) fn retry(s: &mut State, tx: &mut Tx) {
     if let Some(target) = owner(s).jump.retry.take() {
-        start(s, target, tx);
+        if target.id.is_empty() {
+            super::search::retry_selected(s, tx);
+        } else {
+            start(s, target, tx);
+        }
     }
 }
 

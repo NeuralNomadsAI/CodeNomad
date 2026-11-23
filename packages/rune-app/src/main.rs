@@ -182,7 +182,7 @@ fn latest(s: &mut State, tx: &mut Tx) {
     chat::reader::latest(s, tx);
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    let chat = poll_chat(s, 64);
+    let chat = !timeline::input_precedes_admission(s, tx) && poll_chat(s, 64);
     if !s.screen.is_launcher()
         && !git::has_preview(s)
         && !files::has_preview(s)

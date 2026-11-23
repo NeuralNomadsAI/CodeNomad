@@ -79,6 +79,27 @@ fn clear_selection(s: &mut State) {
     s.transcript_display.search_highlight = None;
 }
 
+fn query_changed(s: &mut State, tx: &mut Tx) {
+    let model = state(s);
+    if model.query.text.trim() != model.text {
+        model.text = model.query.text.trim().to_owned();
+        model.reset();
+        let due = tx.clock() + DEBOUNCE;
+        model.due = Some(due);
+        tx.wake_at(due);
+        clear_selection(s);
+    }
+}
+
+pub(super) fn retry_selected(s: &mut State, tx: &mut Tx) {
+    let model = state(s);
+    if model.query.text.trim() == model.text
+        && let Some(index) = model.selected
+    {
+        select(s, index, tx);
+    }
+}
+
 pub(crate) fn keys(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if event.key == Key::Escape && state(s).open {
         close(s);
@@ -133,11 +154,11 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         return true;
     }
     let model = state(s);
-    if model.query.text.trim() != model.text {
-        clear_selection(s);
-        state(s).destination = None;
+    if tx.input_waiting() && model.destination.is_some() {
+        tx.wake_after(std::time::Duration::ZERO);
+        return false;
     }
-    let destination = state(s)
+    let destination = model
         .destination
         .as_ref()
         .and_then(|(_, inbox)| inbox.try_recv().ok());
@@ -161,13 +182,6 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let wake = s.wake.clone();
     let model = state(s);
     let mut changed = false;
-    let query = model.query.text.trim();
-    if query != model.text {
-        model.text = query.to_owned();
-        model.reset();
-        model.due = Some(now + DEBOUNCE);
-        changed = true;
-    }
     if let Some(due) = model.due {
         if model.text.encode_utf16().count() < MIN_QUERY_UNITS {
             model.due = None;
@@ -243,15 +257,13 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
     }
     if changed && model.ranked {
-        let loaded = s.screen.launcher().map(|l| &l.sessions);
+        let launch = s.screen.launcher();
         let model = &mut s.transcript_display.timeline.search;
         let ids = model
             .page()
             .into_iter()
             .flat_map(|page| &page.hits)
-            .filter(|hit| {
-                !loaded.is_some_and(|sessions| sessions.iter().any(|row| row.id == hit.session))
-            })
+            .filter(|hit| !launch.is_some_and(|l| l.listed_sessions.contains(&hit.session)))
             .map(|hit| hit.session.clone())
             .collect();
         model.labels.update(ids);
@@ -276,6 +288,9 @@ fn move_match(s: &mut State, tx: &mut Tx, next: bool) {
 
 fn select(s: &mut State, index: usize, tx: &mut Tx) {
     let model = state(s);
+    if model.query.text.trim() != model.text {
+        return;
+    }
     let hit = model.page().and_then(|page| page.hits.get(index)).cloned();
     if let Some(hit) = hit {
         clear_selection(s);

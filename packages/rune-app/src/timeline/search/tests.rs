@@ -14,6 +14,77 @@ fn hit(session: &str, message: &str, kind: Kind, part: u64) -> Hit {
 }
 
 #[test]
+fn typing_revokes_an_anchor_before_the_reader_drains_and_retry_uses_current_selection() {
+    let mut s = crate::init();
+    let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    backend.session = "here".into();
+    super::super::observe(&mut s, &crate::transport::Event::Connected(backend));
+    s.transcript_display.timeline.online = true;
+    let (out, commands) = bounded(1);
+    let (send, incoming) = bounded(1);
+    s.commands = Some(out);
+    s.incoming = Some(incoming);
+    let mut rt = Runtime::new(s, view, (900.0, 600.0), Env::new(false, 1.0));
+    rt.frame(0.016);
+    rt.update(|s, tx| {
+        let m = state(s);
+        m.open = true;
+        m.query = TextEdit::new("Old phrase");
+        m.query.focused = true;
+        m.text = "Old phrase".into();
+        m.results = Some(Ranked::Ranked {
+            version: 1,
+            capped: false,
+            examined_before: 0,
+            exclusions: vec![],
+            page: Page {
+                hits: vec![hit("here", "old", Kind::Tool, 1)],
+                ..Page::default()
+            },
+        });
+        select(s, 0, tx);
+        tx.focus_when_shown(FOCUS, true);
+    });
+    rt.frame(0.016);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|el| el.path.contains(FIELD) && el.focused)
+    );
+    let crate::transport::Command::Anchor(jump) = commands.try_recv().unwrap() else {
+        panic!("expected jump")
+    };
+    send.try_send(crate::transport::Event::AnchorFailed(jump.ticket))
+        .unwrap();
+    rt.key(KeyEvent {
+        key: Key::Text(" changed".into()),
+        mods: Mods::default(),
+    });
+    rt.frame(0.016);
+    assert!(
+        jump.cancelled.is_closed(),
+        "the committed edit revokes the ticket before its queued completion"
+    );
+    rt.update(|s, tx| {
+        assert!(crate::poll(s, 1.0, tx));
+        super::super::navigation::retry(s, tx);
+        assert!(commands.try_recv().is_err());
+        assert!(state(s).selected.is_none());
+    });
+}
+
+#[test]
+fn ranked_groups_keep_consecutive_runs_without_reordering() {
+    let hits = [
+        hit("a", "one", Kind::Text, 0),
+        hit("a", "two", Kind::Text, 0),
+        hit("b", "three", Kind::Text, 0),
+        hit("a", "four", Kind::Text, 0),
+    ];
+    assert_eq!(super::view::group_starts(&hits), [0, 0, 2, 3]);
+}
+
+#[test]
 fn preview_selection_revokes_a_previous_distant_jump_and_keeps_the_broker_excerpt() {
     let mut s = crate::init();
     let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
@@ -94,7 +165,8 @@ fn keyboard_opens_the_search_and_query_edits_revoke_obsolete_results() {
     rt.update(|s, tx| {
         let model = state(s);
         model.query = TextEdit::new("ab");
-        assert!(poll(s, 1.0, tx));
+        query_changed(s, tx);
+        poll(s, tx.clock(), tx);
         assert!(state(s).due.is_none());
         let model = state(s);
         model.text = "obsolete".into();
@@ -105,9 +177,10 @@ fn keyboard_opens_the_search_and_query_edits_revoke_obsolete_results() {
         out.try_send(Message::Complete(Ok(Ranked::Unsupported)))
             .ok()
             .unwrap();
-        assert!(poll(s, 2.0, tx));
+        query_changed(s, tx);
+        poll(s, tx.clock(), tx);
         assert!(cancelled.is_closed() && state(s).results.is_none());
-        assert_eq!(state(s).due, Some(2.25));
+        assert_eq!(state(s).due, Some(tx.clock() + DEBOUNCE));
         assert!(keys(
             s,
             &KeyEvent {

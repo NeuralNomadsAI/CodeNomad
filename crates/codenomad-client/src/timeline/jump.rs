@@ -1,12 +1,5 @@
 use super::AnchorWindow;
-use crate::{
-    Receiver, Sender, Wake,
-    backend::Backend,
-    bounded,
-    history::Row,
-    stream,
-    transport::{Event, publish},
-};
+use crate::{Receiver, Sender, backend::Backend, bounded, history::Row, stream, transport::Event};
 use std::sync::{Arc, atomic::Ordering::SeqCst};
 
 pub(crate) async fn until_cancelled<T>(
@@ -96,8 +89,7 @@ impl Jump {
         backend: &Backend,
         resident: &[Row],
         wire: &Arc<stream::State>,
-        out: &Sender<Event>,
-        wake: &Wake,
+        send: impl AsyncFnOnce(Event) -> bool,
     ) -> Option<(crate::history::Page, u64)> {
         let ticket = self.ticket;
         let revision = wire.history_revision.load(SeqCst);
@@ -126,25 +118,21 @@ impl Jump {
         .await
         else {
             if !self.cancelled.is_closed() {
-                publish(out, wake, Event::AnchorFailed(ticket)).await;
+                send(Event::AnchorFailed(ticket)).await;
             }
             return None;
         };
         let (admit, verdict) = bounded(1);
-        if !publish(
-            out,
-            wake,
-            Event::Anchor {
-                ticket,
-                page: page.clone(),
-                admit: Admission {
-                    wire: wire.clone(),
-                    revision,
-                    live_version: page.newer.is_none().then_some(stamp),
-                    admit,
-                },
+        if !send(Event::Anchor {
+            ticket,
+            page: page.clone(),
+            admit: Admission {
+                wire: wire.clone(),
+                revision,
+                live_version: page.newer.is_none().then_some(stamp),
+                admit,
             },
-        )
+        })
         .await
         {
             return None;

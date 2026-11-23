@@ -92,6 +92,7 @@ pub(crate) fn panel(s: &State) -> Option<El> {
             )
             .checked(model.technical),
         );
+    let change = screen::action_tx(&scope, super::query_changed);
     let input = layout::hinted_field(&model.query, t("messageSection.search.placeholder"))
         .label(t("messageSection.search.ariaLabel"))
         .on_edit(move |s: &mut State| {
@@ -101,6 +102,7 @@ pub(crate) fn panel(s: &State) -> Option<El> {
                 &mut s.rejected_edit
             }
         })
+        .on_change(change)
         .on_key(|s: &mut State, event, tx| {
             if event.key == rune::Key::Enter
                 && !event.mods.alt
@@ -240,35 +242,39 @@ pub(crate) fn panel(s: &State) -> Option<El> {
                 Vec::new()
             };
             let launch = s.screen.launcher();
+            let groups = group_starts(&page.hits);
             frame = frame.child(
                 search::results().children(page.hits.iter().enumerate().flat_map(|(i, hit)| {
-                    let header = (model.ranked
-                        && i.checked_sub(1)
-                            .is_none_or(|before| page.hits[before].session != hit.session))
-                    .then(|| {
-                        if let Some((title, slug)) =
-                            model.labels.get(&hit.session).and_then(Option::as_ref)
-                        {
-                            rune::text(if slug == "root" {
-                                title.clone()
-                            } else {
-                                format!("{title} · {slug}")
-                            })
+                    let group = format!("history-result-group-{}", groups[i]);
+                    let header = (model.ranked && groups[i] == i)
+                        .then(|| {
+                            let untitled = t("sessionList.session.untitled");
+                            let (title, slug) = match model.labels.get(&hit.session) {
+                                Some(Some((title, slug))) => (title.as_str(), Some(slug.as_str())),
+                                Some(None) => (t("history.sessionUnavailable"), None),
+                                None => launch
+                                    .and_then(|l| {
+                                        let row =
+                                            l.sessions.iter().find(|r| r.id == hit.session)?;
+                                        Some((
+                                            row.title.as_str(),
+                                            l.listed_sessions
+                                                .contains(&hit.session)
+                                                .then_some("root"),
+                                        ))
+                                    })
+                                    .unwrap_or((untitled, None)),
+                            };
+                            let title = if title.is_empty() { untitled } else { title };
+                            let branch =
+                                slug.and_then(|slug| crate::git::history_worktree(s, slug));
+                            rune::text(branch.map_or_else(
+                                || title.to_owned(),
+                                |branch| format!("{title} · {branch}"),
+                            ))
                             .text_role(TextRole::Label)
-                        } else {
-                            let title = launch
-                                .and_then(|l| l.sessions.iter().find(|r| r.id == hit.session))
-                                .map(|r| r.title.as_str())
-                                .unwrap_or_else(|| {
-                                    if model.labels.get(&hit.session) == Some(&None) {
-                                        t("history.sessionUnavailable")
-                                    } else {
-                                        t("sessionList.session.untitled")
-                                    }
-                                });
-                            rune::text(title).text_role(TextRole::Label)
-                        }
-                    });
+                        })
+                        .map(|header| header.key(group.clone()));
                     let kind = t(match hit.kind {
                         Kind::Text => "history.text",
                         Kind::Tool => "history.tool",
@@ -283,7 +289,7 @@ pub(crate) fn panel(s: &State) -> Option<El> {
                     };
                     let click = screen::action_tx(&s.input_scope, activate.clone());
                     let keyboard = screen::action_tx(&s.input_scope, activate);
-                    header.into_iter().chain(std::iter::once(
+                    let result =
                         search::result_button(&hit.excerpt, &terms, model.selected == Some(i))
                             .on_press_tx(click)
                             .on_key(move |s, event, tx| {
@@ -293,9 +299,12 @@ pub(crate) fn panel(s: &State) -> Option<El> {
                                 keyboard(s, tx);
                                 true
                             })
-                            .key(key)
-                            .description_static(kind),
-                    ))
+                            .key(key);
+                    header.into_iter().chain(std::iter::once(if model.ranked {
+                        result.described_by(group)
+                    } else {
+                        result.description_static(kind)
+                    }))
                 })),
             );
             if let Some(hit) = model.selected.and_then(|index| page.hits.get(index))
@@ -348,4 +357,17 @@ pub(crate) fn panel(s: &State) -> Option<El> {
         _ => {}
     }
     Some(frame)
+}
+
+pub(super) fn group_starts(hits: &[codenomad_client::search::Hit]) -> Vec<usize> {
+    let mut start = 0;
+    hits.iter()
+        .enumerate()
+        .map(|(i, hit)| {
+            if i == 0 || hits[i - 1].session != hit.session {
+                start = i;
+            }
+            start
+        })
+        .collect()
 }

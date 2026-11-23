@@ -455,8 +455,11 @@ const env=await privateEnvironment(profile)
 if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
 if(webSearch){
-  delete env.GIT_CEILING_DIRECTORIES
-  await promisify(execFile)('git',['init','-q',project],{windowsHide:true,env})
+  const git=(...args)=>promisify(execFile)('git',['-C',project,...args],{
+    windowsHide:true,env:{...env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig')},
+  })
+  await git('init','-q','-b','history-fixture')
+  await git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','-q','--allow-empty','-m','History fixture')
 }
 if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})

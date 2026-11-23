@@ -10,6 +10,8 @@ fn technical_search_uses_native_part_indexes_and_reveals_the_match() {
         (2, Kind::Reasoning),
         (3, Kind::Tool),
         (4, Kind::Tool),
+        (5, Kind::Tool),
+        (6, Kind::Tool),
     ] {
         let tail = format!("{}Technical néedle", "x".repeat(11_000));
         let ansi = "\u{1b}[31mTechnical néedle\u{1b}[0m";
@@ -20,7 +22,11 @@ fn technical_search_uses_native_part_indexes_and_reveals_the_match() {
                 {"type":"reasoning","text":tail},
                     {"type":"tool","id":"shell","name":"bash","state":{"status":"completed","content":[{"type":"text","text":ansi}]}},
                     {"type":"tool","id":"edit","name":"edit","state":{"status":"completed","input":{"filePath":"notes.txt"},
-                        "metadata":{"diff":"--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-old\n+Technical néedle"}}}
+                        "metadata":{"diff":"--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-old\n+Technical néedle"}}},
+                {"type":"tool","id":"args","name":"read","state":{"status":"completed","input":{"payload":tail}}},
+                {"type":"tool","id":"patch","name":"apply_patch","state":{"status":"completed","metadata":{"files":[
+                    {"file":"first.txt","diff":"@@ -1 +1 @@\n-old\n+new"},{"relativePath":"second.txt","patch":"@@ -1 +1 @@\n-old\n+Technical néedle"}
+                ]}}}
             ]
         })).unwrap();
         let mut s = crate::init();
@@ -44,7 +50,9 @@ fn technical_search_uses_native_part_indexes_and_reveals_the_match() {
                 1 => "tool-tech:4:grep",
                 2 => "reasoning-tech:0",
                 3 => "tool-tech:5:shell",
-                _ => "tool-tech:4:edit",
+                4 => "tool-tech:4:edit",
+                5 => "tool-tech:4:args",
+                _ => "tool-tech:5:patch",
             }
         );
         s.transcript_display.search_highlight = Some(highlight);
@@ -71,6 +79,31 @@ fn assistant(id: &str) -> crate::history::Row {
             {"type":"tool","id":"inspect","name":"read","state":{"status":"completed","output":"OK"}},
             {"type":"text","text":"Exact destination"}]
     })).unwrap().into()
+}
+
+#[test]
+fn older_gesture_revokes_the_distant_jump_and_keeps_the_visible_window() {
+    let mut s = crate::init();
+    s.messages = vec![assistant("visible")];
+    s.can_older = true;
+    owner(&mut s).online = true;
+    let (out, commands) = bounded(1);
+    s.commands = Some(out);
+    let mut rt = Runtime::new(s, view, (800., 600.), Env::new(false, 1.0));
+    rt.update(|s, tx| {
+        navigation::seek_message(s, "distant", tx);
+        let crate::transport::Command::Anchor(jump) = commands.try_recv().unwrap() else {
+            panic!("expected jump")
+        };
+        crate::chat::reader::older(s);
+        assert!(jump.cancelled.is_closed());
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            crate::transport::Command::OlderCancellable(_)
+        ));
+        assert_eq!(s.messages[0].id, "visible");
+        assert!(s.paging);
+    });
 }
 
 fn user(id: &str) -> crate::history::Row {

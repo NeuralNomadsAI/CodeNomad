@@ -219,16 +219,29 @@ impl Reader {
         }
         let Lane {
             backend,
+            reading,
             wire,
             out,
             wake,
             ..
         } = *lane;
         if !self.active_reader || !opened || !wire.upstream.load(SeqCst) {
-            publish(out, wake, Event::AnchorFailed(jump.ticket)).await;
+            reader_event(
+                reading,
+                self.generation,
+                out,
+                wake,
+                Event::AnchorFailed(jump.ticket),
+            )
+            .await;
             return;
         }
-        if let Some((page, stamp)) = jump.offer(backend, &self.resident, wire, out, wake).await {
+        if let Some((page, stamp)) = jump
+            .offer(backend, &self.resident, wire, async |event| {
+                reader_event(reading, self.generation, out, wake, event).await
+            })
+            .await
+        {
             self.historical = page.newer.is_some();
             self.fence = stamp;
             self.first = page.rows.first().map(|row| row.id.clone());

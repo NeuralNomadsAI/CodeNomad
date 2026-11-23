@@ -58,6 +58,7 @@ try {
       page.setDefaultTimeout(15000)
       const errors = [], forbiddenRequests = [], routes=[], history=[]
       let holdOlder
+      let holdAnchor
       let measured
       const policy=workspacePolicy({origin:url.origin,project:values.project,assets})
       let eventSource=0
@@ -100,10 +101,18 @@ try {
           markLinked()
           await beforeLinked
         }
-        if(holdOlder&&p.endsWith('/session-history/window')&&req.postDataJSON()?.target?.kind==='before'){
-          const release=holdOlder;holdOlder=undefined
-          await release
-          return route.continue().catch(()=>{})
+        if(p.endsWith('/session-history/window')){
+          const kind=req.postDataJSON()?.target?.kind
+          if(holdOlder&&kind==='before'){
+            const release=holdOlder;holdOlder=undefined
+            await release
+            return route.continue().catch(()=>{})
+          }
+          if(holdAnchor&&kind==='around'){
+            const held=holdAnchor;holdAnchor=undefined
+            await held.release.promise
+            return route.continue().catch(()=>{})
+          }
         }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/instance/api/session')&&
           requested.searchParams.get('directory')===path.join(path.dirname(values.project),'linked')){
@@ -266,6 +275,25 @@ try {
               await resident.click({force:true})
               await resident.and(rail.locator(`[aria-description="${messages['messageTimeline.current']}"]`)).waitFor()
             }finally{release.resolve()}
+            await reading()
+            const visible=history.findLast(r=>r.input.target.kind==='latest')
+            assert(visible?.body?.older?.messageID,'Latest window must expose an older cursor')
+            await page.mouse.wheel(0,-100000)
+            await run.waitFor()
+            const held={release:Promise.withResolvers()}
+            holdAnchor=held
+            try{
+              const anchor=page.waitForRequest(req=>req.url().endsWith('/session-history/window')&&req.postDataJSON()?.target?.kind==='around')
+              await run.click({force:true})
+              await anchor
+              const started=page.waitForRequest(req=>req.url().endsWith('/session-history/window')&&req.postDataJSON()?.target?.kind==='before')
+              const olderWindow=page.waitForResponse(res=>res.url().endsWith('/session-history/window')&&res.ok()
+                &&res.request().postDataJSON()?.target?.kind==='before')
+              await older.click({force:true})
+              assert.deepEqual((await started).postDataJSON().target,visible.body.older)
+              await olderWindow
+            }finally{held.release.resolve();holdAnchor=undefined}
+            await press(messages['rune.latest'])
             await reading()
             // The text mirror updates before the newly mounted glyphs finish fading in.
             await page.waitForTimeout(250)

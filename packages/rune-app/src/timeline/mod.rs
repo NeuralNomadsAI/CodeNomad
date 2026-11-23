@@ -5,7 +5,7 @@ pub(crate) mod search;
 #[cfg(test)]
 mod tests;
 mod view;
-pub(crate) use navigation::{admit, cancel_jump, failed, restore_search};
+pub(crate) use navigation::{admit, cancel_jump, failed, input_precedes_admission, restore_search};
 pub(crate) use reading_line::watch as watch_block;
 pub(crate) use view::{view, watch};
 

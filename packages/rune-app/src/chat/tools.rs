@@ -52,23 +52,35 @@ fn single_diff(tool: &Tool) -> Option<&Value> {
     Some(file)
 }
 
-fn input_json(value: &Value) -> Option<String> {
-    #[derive(Default)]
-    struct Limited(Vec<u8>);
+fn input_json(value: &Value, limit: usize, partial: bool) -> Option<String> {
+    struct Limited(Vec<u8>, usize);
     impl io::Write for Limited {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            if bytes.len() > TOOL_LIMIT.saturating_sub(self.0.len()) {
+            let count = bytes.len().min(self.1.saturating_sub(self.0.len()));
+            if count == 0 && !bytes.is_empty() {
                 return Err(io::ErrorKind::FileTooLarge.into());
             }
-            self.0.extend_from_slice(bytes);
-            Ok(bytes.len())
+            self.0.extend_from_slice(&bytes[..count]);
+            Ok(count)
         }
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
     }
-    let mut out = Limited::default();
-    serde_json::to_writer_pretty(&mut out, value).ok()?;
+    let mut out = Limited(Vec::new(), limit);
+    let serialized = serde_json::to_writer_pretty(&mut out, value);
+    if serialized
+        .as_ref()
+        .is_err_and(|error| error.io_error_kind() != Some(io::ErrorKind::FileTooLarge) || !partial)
+    {
+        return None;
+    }
+    if serialized.is_err() {
+        if let Err(error) = std::str::from_utf8(&out.0) {
+            out.0.drain(error.valid_up_to()..);
+        }
+        out.0.extend_from_slice("…".as_bytes());
+    }
     String::from_utf8(out.0).ok()
 }
 
@@ -207,6 +219,11 @@ pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
         }
     }
     let display = &s.transcript_display;
+    let patch_steps = is_patch(tool).then(|| {
+        std::array::from_fn::<_, { super::tool_patch::FILE_LIMIT }, _>(|index| {
+            display.steps(&format!("{key}-patch-{index}"))
+        })
+    });
     let stamp = (
         Arc::as_ptr(tool) as usize,
         std::rc::Rc::as_ptr(&s.input_scope) as usize,
@@ -215,12 +232,17 @@ pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
             .search_highlight
             .as_ref()
             .filter(|hit| hit.message == message),
+        patch_steps,
         ["", "-tool_input", "-tool_output", "-wrap", "-error"].map(|suffix| {
             let section = format!("{key}{suffix}");
             (display.toggled(&section), display.steps(&section))
         }),
     );
     markdown::hold_frame(key.clone(), stamp, || render(s, message, tool, &key)).key(key)
+}
+
+fn is_patch(tool: &Tool) -> bool {
+    matches!(tool.name.as_str(), "apply_patch" | "patch")
 }
 
 fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
@@ -289,7 +311,10 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                 tool.input
                     .as_str()
                     .map(std::borrow::Cow::Borrowed)
-                    .or_else(|| input_json(&tool.input).map(std::borrow::Cow::Owned))
+                    .or_else(|| {
+                        input_json(&tool.input, super::document::search_limit(query), active)
+                            .map(std::borrow::Cow::Owned)
+                    })
             })
             .flatten();
         let show = show
@@ -342,6 +367,12 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     } else {
         lang
     };
+    if !pending
+        && is_patch(tool)
+        && let Some(patch) = super::tool_patch::view(s, tool, key, query)
+    {
+        block = block.child(patch);
+    }
     if has_output {
         let terminal = shell(tool) && parts.iter().any(|text| ansi::present(text));
         let highlight = tool.status != "running"
@@ -502,5 +533,5 @@ fn nested_tool_arguments_stop_at_the_actual_pretty_json_budget() {
     }
     assert!(value.to_string().len() < TOOL_LIMIT);
     assert!(serde_json::to_string_pretty(&value).unwrap().len() > 400_000);
-    assert!(input_json(&value).is_none());
+    assert!(input_json(&value, TOOL_LIMIT, false).is_none());
 }

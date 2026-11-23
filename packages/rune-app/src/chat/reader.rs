@@ -229,12 +229,24 @@ pub(crate) fn older(s: &mut State) {
     if !s.can_older || s.paging {
         return;
     }
+    crate::timeline::cancel_jump(s);
     let (signal, cancelled) = bounded(1);
-    if s.commands.as_ref().is_some_and(|commands| {
-        commands
-            .try_send(crate::transport::Command::OlderCancellable(cancelled))
-            .is_ok()
-    }) {
+    let Some(commands) = s.commands.clone() else {
+        return;
+    };
+    let command = crate::transport::Command::OlderCancellable(cancelled.clone());
+    let queued = match commands.try_send(command) {
+        Ok(()) => true,
+        Err(error) if error.is_full() => {
+            let command = error.into_inner();
+            crate::platform::spawn(async move {
+                crate::platform::reads::cancellable(&cancelled, commands.send(command)).await;
+            });
+            true
+        }
+        Err(_) => false,
+    };
+    if queued {
         s.transcript_display.timeline.older = Some(signal);
         s.paging = true;
     }

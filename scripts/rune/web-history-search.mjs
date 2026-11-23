@@ -40,6 +40,8 @@ export async function historySearch(page, messages) {
     const [ranked]=await Promise.all([read('ranked'),press(search,'history.workspace')])
     assert(ranked.ok(),`Ranked broker status ${ranked.status()}`)
     await search.getByRole('button',{name:'Existing ranked destination',exact:true}).waitFor()
+    const first=search.getByRole('button',{name:'Existing ranked destination',exact:true})
+    await search.locator('[aria-description="Another session · history-fixture"]').and(first).waitFor()
     assert.deepEqual(await search.getByRole('button').filter({hasText:/^Existing /}).allTextContents(),
       ['Existing ranked destination','Existing answer'])
     const preview=page.waitForResponse(response=>response.url().endsWith('/session/ses_another/message/message-00000'))

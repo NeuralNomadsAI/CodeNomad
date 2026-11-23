@@ -214,7 +214,7 @@ const OUTLINE: &str = "POST /api/workspaces/workspace/session-history/outline HT
 fn a_proposed_anchor_commits_only_with_a_current_admission() {
     use crate::{bounded, stream, transport::Event};
     use std::sync::{Arc, atomic::Ordering::SeqCst};
-    for invalidate in [false, true] {
+    for (invalidate, superseded) in [(false, false), (true, false), (false, true)] {
         let target = json!({"kind":"around","messageID":"target"});
         http_probe(
             vec![(
@@ -229,15 +229,16 @@ fn a_proposed_anchor_commits_only_with_a_current_admission() {
                 wire.alive.store(true, SeqCst);
                 wire.upstream.store(true, SeqCst);
                 let (out, events) = bounded(1);
-                let (_cancel, cancelled) = bounded(1);
-                let wake: crate::Wake = Arc::new(|| {});
+                let (cancel, cancelled) = bounded(1);
                 let offer = Jump {
                     ticket: 1,
                     message: "target".into(),
                     cancelled,
                 };
                 let (read, ()) = futures_lite::future::zip(
-                    offer.offer(&backend, &[], &wire, &out, &wake),
+                    offer.offer(&backend, &[], &wire, async |event| {
+                        out.send(event).await.is_ok()
+                    }),
                     async {
                         let Event::Anchor { ticket, admit, .. } = events.recv().await.unwrap()
                         else {
@@ -247,11 +248,16 @@ fn a_proposed_anchor_commits_only_with_a_current_admission() {
                         if invalidate {
                             wire.history_revision.fetch_add(1, SeqCst);
                         }
-                        assert_eq!(admit.accept(), !invalidate);
+                        if superseded {
+                            drop(cancel);
+                            drop(admit);
+                        } else {
+                            assert_eq!(admit.accept(), !invalidate);
+                        }
                     },
                 )
                 .await;
-                assert_eq!(read.is_some(), !invalidate);
+                assert_eq!(read.is_some(), !invalidate && !superseded);
             },
         );
     }

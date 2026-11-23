@@ -19,6 +19,7 @@ mod rtl_tests;
 #[cfg(test)]
 mod tests;
 mod tool_diff;
+mod tool_patch;
 pub(crate) use tool_diff::Preferences as ToolDiffPreferences;
 mod tools;
 pub(crate) mod transcript;

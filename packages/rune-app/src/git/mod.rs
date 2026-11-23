@@ -17,6 +17,18 @@ pub(crate) use binding::{
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader, session_worktree};
 
+pub(crate) fn history_worktree<'a>(s: &'a crate::State, slug: &str) -> Option<&'a str> {
+    let inventory = s.git.owner.as_ref()?.inventory.as_ref()?;
+    if inventory.repository != Repository::Git {
+        return None;
+    }
+    let tree = inventory
+        .trees
+        .iter()
+        .find(|tree| tree.slug == slug && !tree.missing)?;
+    Some(tree.branch.as_deref().unwrap_or(&tree.slug))
+}
+
 use crate::platform::{collation::Collation, reads::Reads};
 use changes::{Changes, Id};
 use codenomad_client::{
