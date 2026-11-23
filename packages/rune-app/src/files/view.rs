@@ -55,12 +55,24 @@ fn document_action_tx(
     s: &State,
     run: impl Fn(&mut super::Ui, &mut rune::Tx) + 'static,
 ) -> impl Fn(&mut State, &mut rune::Tx) + 'static {
+    document_state_action_tx(s, move |s, tx| {
+        if let Some(ui) = &mut s.files {
+            run(ui, tx);
+        }
+    })
+}
+
+fn document_state_action_tx(
+    s: &State,
+    run: impl Fn(&mut State, &mut rune::Tx) + 'static,
+) -> impl Fn(&mut State, &mut rune::Tx) + 'static {
     let scope = s.files.as_ref().map(|ui| ui.document.scope());
     screen::action_tx(&s.input_scope, move |s, tx| {
-        if let Some(ui) = &mut s.files {
-            if scope == Some(ui.document.scope()) {
-                run(ui, tx);
-            }
+        if s.files
+            .as_ref()
+            .is_some_and(|ui| scope == Some(ui.document.scope()))
+        {
+            run(s, tx);
         }
     })
 }
@@ -195,18 +207,19 @@ fn reader_content(s: &State) -> El {
                 }
                 let source = ui.presentation.source || format == Format::Source;
                 if source {
+                    let wrap = crate::workspace::file_wrap(s);
                     let field = editor::source(s, ui, &target.path, view_width, &mut actions);
                     actions.push(
                         theme::wrap_button(
                             dark,
-                            t(if ui.presentation.wrap {
+                            t(if wrap {
                                 "instanceShell.filesShell.disableWordWrap"
                             } else {
                                 "instanceShell.filesShell.enableWordWrap"
                             }),
-                            ui.presentation.wrap,
-                            document_action_tx(s, |ui, _| {
-                                ui.presentation.wrap = !ui.presentation.wrap
+                            wrap,
+                            document_state_action_tx(s, |s, _| {
+                                crate::workspace::toggle_file_wrap(s)
                             }),
                         )
                         .key("file-wrap"),
@@ -218,10 +231,10 @@ fn reader_content(s: &State) -> El {
                                 dark,
                                 &target.path,
                                 text,
-                                ui.presentation.wrap,
+                                wrap,
                                 view_width.map(|width| theme::source_width(dark, width)),
                             ),
-                            ui.presentation.wrap,
+                            wrap,
                         )
                     })
                 } else {

@@ -1,5 +1,17 @@
 use super::{State, Tab, Ui};
 
+pub fn file_wrap(s: &State) -> bool {
+    s.shell.file_wrap
+}
+
+pub fn toggle_file_wrap(s: &mut State) {
+    s.shell.file_wrap = !s.shell.file_wrap;
+    if let Some(ui) = &mut s.workspace {
+        ui.file_wrap = Some(s.shell.file_wrap);
+        ui.changed();
+    }
+}
+
 pub fn panel_width(s: &mut State, index: usize, width: u16) {
     if let Some(ui) = &mut s.workspace
         && ui.panel_widths[index] != Some(width)

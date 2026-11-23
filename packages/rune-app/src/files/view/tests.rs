@@ -164,7 +164,7 @@ fn eye_opens_real_reader_and_return_preserves_chat_draft_without_prompt() {
         assert!(incoming.try_recv().is_err());
         click(&mut rt, "file-wrap");
         assert!(
-            rt.state.files.as_ref().unwrap().presentation.wrap,
+            crate::workspace::file_wrap(&rt.state),
             "target={:?}, wrapnode={:?}, close={:?}",
             rt.state.files.as_ref().unwrap().reader.target(),
             rt.presented("file-wrap"),
@@ -173,6 +173,22 @@ fn eye_opens_real_reader_and_return_preserves_chat_draft_without_prompt() {
         assert!(rt.find("composer").is_some());
         click(&mut rt, "file-close");
         assert!(rt.state.files.as_ref().unwrap().reader.target().is_none());
+        let saved = rt.state.workspace.as_ref().unwrap().snapshot();
+        assert_eq!(saved.file_wrap, Some(true));
+        click(&mut rt, "workspace-actions:other.rs:pinned:preview");
+        rt.state.files.as_mut().unwrap().poll(20.0);
+        http.request("GET", "other.rs")
+            .await
+            .preview("other.rs", "YQ==", Some("v1"))
+            .await;
+        settle(&mut rt).await;
+        assert!(crate::workspace::file_wrap(&rt.state));
+        click(&mut rt, "file-wrap");
+        assert_eq!(
+            rt.state.workspace.as_ref().unwrap().snapshot().file_wrap,
+            Some(false)
+        );
+        click(&mut rt, "file-close");
         assert_eq!(rt.state.draft.text, "unfinished prompt");
         assert!(rt.find("rows").is_some());
         assert!(incoming.try_recv().is_err());

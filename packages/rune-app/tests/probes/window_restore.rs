@@ -332,8 +332,14 @@ pub fn run() {
         });
         const TEXT: &str = "retained · été 日本語 🦀";
         if stage == "prepare" {
+            assert!(!workspace::file_wrap(&rt.state));
+            tap(&mut rt, "file-wrap");
             super::files_document::edit(&mut rt, TEXT);
         }
+        assert!(
+            workspace::file_wrap(&rt.state),
+            "source wrap survives relaunch"
+        );
         let doc = &rt.state.files.as_ref().unwrap().document;
         assert!(doc.dirty());
         assert!(!doc.not_retained());

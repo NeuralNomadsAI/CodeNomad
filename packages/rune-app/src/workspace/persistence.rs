@@ -351,6 +351,7 @@ mod tests {
             revision: 1,
             saved_at: 1,
             panel_widths: [None; 2],
+            file_wrap: None,
             tabs: vec![super::super::Tab::Blank],
             active: Some(0),
         };

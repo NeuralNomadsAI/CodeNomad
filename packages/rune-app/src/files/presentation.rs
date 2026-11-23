@@ -13,7 +13,6 @@ pub enum Kind {
 
 pub struct Presentation {
     pub source: bool,
-    pub wrap: bool,
     pub rendered_scroll: Rc<Cell<f32>>,
     pub unwrapped_blocks: BTreeSet<usize>,
     code_revision: u64,
@@ -27,7 +26,6 @@ impl Presentation {
     pub fn new(wake: rune::Waker) -> Self {
         Self {
             source: false,
-            wrap: false,
             rendered_scroll: Rc::default(),
             unwrapped_blocks: BTreeSet::new(),
             code_revision: 0,

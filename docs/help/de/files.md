@@ -38,6 +38,8 @@ Das Schließen der Leseansicht über die abschließende Schließen-Schaltfläche
 
 Das Ersetzen und Schließen der Leseansicht betrifft nur den aktuellen Projekt-Tab. Mehrere Tabs desselben Projekts können unterschiedliche Dateien lesen oder eine Datei neben Chat-, Web- oder Missionsinhalten bereithalten. Die Auswahl zwischen Quelltext und Darstellung, die Editorauswahl und die Scrollposition bleiben bei Tab-Wechseln erhalten, solange Ziel und Modell im Speicher bleiben. Der Dateien-Modus wird pro Tab wiederhergestellt; Diff- und Zeilenumbruch-Einstellungen bleiben gemeinsam.
 
+Die Quelltextansicht merkt sich den Zeilenumbruch über Dateien und Projekt-Tabs hinweg und stellt ihn mit dem Fensterzustand wieder her.
+
 ## Schreibgeschützte und begrenzte Vorschauen {#preview-limits}
 
 1. Öffnen Sie ein Bild, eine Binärdatei oder historische Änderung mit der Augenaktion.

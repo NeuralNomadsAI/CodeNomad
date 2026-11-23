@@ -38,6 +38,8 @@ Closing the reader with its trailing close button returns to the conversation; t
 
 Reader replacement and closure affect only the current project tab. Duplicate tabs can read different files or keep a file beside chat/web/Mission content. Source/rendered choice, editor selection and scroll survive tab switches while their in-memory target/model is retained. Files mode is restored per tab; diff and wrap preferences remain shared.
 
+The source reader remembers word wrap across files and project tabs, and restores it with the saved window state.
+
 ## Read-only and bounded previews {#preview-limits}
 
 1. Open an image, binary file or historical change with the eye action.

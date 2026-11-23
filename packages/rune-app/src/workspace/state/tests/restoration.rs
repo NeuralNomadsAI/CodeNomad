@@ -183,6 +183,7 @@ fn valid_v1_with_twenty_four_empty_drafts_can_accept_new_text() {
         revision: 1,
         saved_at: 1,
         panel_widths: [None; 2],
+        file_wrap: None,
         tabs: vec![Tab::Workspace(old)],
         active: Some(0),
     };
