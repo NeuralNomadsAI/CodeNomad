@@ -57,31 +57,37 @@ test("runtimes with the top-level setting keep a document's legacy OFF and defau
   entries = [{ type: "document", path: project, info: { automations: true } }, { type: "document", path: legacy, info: { experimental: { todo: true } } }]
   assert.deepEqual(await read(), { enabled: false, provenance: "experimental-block", path: legacy, hiddenOff: [] }, "a higher legacy OFF wins")
   entries = [{ type: "document", info: { automations: false } }]
-  assert.deepEqual(await read(), { enabled: false, provenance: "automations-setting", path: "OPENCODE_CONFIG_CONTENT", hiddenOff: [] })
+  assert.deepEqual(await read(), { enabled: false, provenance: "automations-setting", path: "well-known", hiddenOff: [] })
 })
-test("the top-level setting reader keeps inline, environment and unreadable legacy OFF closed", () => {
+test("the top-level setting reader keeps inline, environment, inherited and unreadable legacy OFF closed", async () => {
   const legacyOff = '{"experimental":{"automations":false}}'
-  const files: Record<string, string> = { "/g.json": legacyOff, "/p.json": "{}", "/broken.json": '{"experimental":{"automations": {env:OFF}}}' }
-  const read = (path: string) => { if (!(path in files)) throw new Error("Native automations setting unreadable"); return { off: legacyAutomationsOff(files[path], {}) } }
+  const files: Record<string, string> = { "/g.json": legacyOff, "/p.json": "{}", "/both.json": '{"automations":true,"experimental":{"automations":false}}',
+    "/broken.json": '{"experimental":', "/win.json": '{"experimental":{"automations":false},"shell":"{env:HOMEDIR}"}' }
+  const readText = async (file: string) => { if (!(file in files)) throw new Error("Native automations setting unreadable"); return files[file] }
   const doc = (path?: string, info: any = {}) => ({ type: "document", ...(path ? { path } : {}), info }) as any
-  const setting = (entries: any[], env: Record<string, string> = {}) => nativeAutomationsSetting(entries, { env, read })
-  assert.deepEqual(setting([doc("/p.json"), doc()], { OPENCODE_CONFIG_CONTENT: legacyOff }),
+  const setting = (entries: any[], env: Record<string, string> = {}) => nativeAutomationsSetting(entries, { env, readText })
+  assert.deepEqual(await setting([doc("/p.json"), doc()], { OPENCODE_CONFIG_CONTENT: legacyOff }),
     { enabled: false, source: "legacy-off", path: "OPENCODE_CONFIG_CONTENT", hiddenOff: [] }, "inline config saved for 2.3.2")
-  assert.deepEqual(setting([doc(), doc("/p.json")], { OPENCODE_CONFIG_CONTENT: "{}" }), { enabled: true, source: "default", hiddenOff: [] },
-    "other pathless documents are remote configuration")
+  assert.deepEqual(await setting([doc(undefined, { automations: true }), doc("/p.json")]),
+    { enabled: true, source: "setting", path: "well-known", hiddenOff: [] }, "remote configuration is never labelled inline")
   for (const flags of ["-automations", "x,-schedules"])
-    assert.deepEqual(setting([doc("/p.json", { automations: true })], { OPENCODE_FLAGS: flags }),
+    assert.deepEqual(await setting([doc("/p.json", { automations: true })], { OPENCODE_FLAGS: flags }),
       { enabled: false, source: "environment", hiddenOff: [] }, "a 2.3.2 environment override")
-  assert.deepEqual(setting([doc("/g.json"), doc("/p.json", { automations: true })]),
+  assert.deepEqual(await setting([doc("/g.json"), doc("/p.json", { automations: true })]),
     { enabled: true, source: "setting", path: "/p.json", hiddenOff: ["/g.json"] })
-  assert.deepEqual(setting([doc("/g.json"), doc("/p.json", { automations: false })]),
-    { enabled: false, source: "setting", path: "/p.json", hiddenOff: ["/g.json"] })
-  assert.throws(() => setting([doc("/missing.json")]), /unreadable/, "a source that cannot be read is unknown, never absent")
-  assert.throws(() => setting([doc("/broken.json")]), /unreadable/, "text OpenCode would substitute first stays unknown when it does not parse")
-  assert.equal(legacyAutomationsOff('{"experimental":{"automations":{env:OFF}}}', { OFF: "false" }), true, "{env:} substitution as OpenCode applies it")
-  assert.equal(legacyAutomationsOff('\uFEFF{ // c\n"experimental":{"schedules":false,},}', {}), true)
+  assert.deepEqual(await setting([doc("/both.json", { automations: true })]),
+    { enabled: true, source: "setting", path: "/both.json", hiddenOff: ["/both.json"] }, "a staged migration keeps its legacy OFF visible")
+  assert.deepEqual(await setting([doc("/managed.plist")]), { enabled: true, source: "default", hiddenOff: [] }, "managed preferences are not read as JSONC")
+  assert.deepEqual(await setting([doc("/win.json")], { HOMEDIR: "C:\\Users\\me" }),
+    { enabled: false, source: "legacy-off", path: "/win.json", hiddenOff: [] }, "the JSON-escaped {env:} fallback OpenCode applies")
+  await assert.rejects(setting([doc("/missing.json")]), /unreadable/, "a source that cannot be read is unknown, never absent")
+  await assert.rejects(setting([doc("/broken.json")]), /unreadable/)
+  const legacy = (text: string, env: Record<string, string> = {}) => legacyAutomationsOff(text, "/", { env, readText })
+  assert.equal(await legacy('{"experimental":{"automations":{env:OFF}}}', { OFF: "false" }), true, "{env:} substitution")
+  assert.equal(await legacy('\uFEFF{ // c\n"experimental":{"schedules":false,},}'), true)
+  assert.equal(await legacy('{"experimental":{"automations":"false","schedules":false}}'), true, "only booleans count, then the alias")
+  assert.equal(await legacy('{"experimental":{"automations":true,"schedules":false}}'), false, "the canonical key before the alias")
 })
-
 test("a resolver result with no well-formed flag proves no top-level setting runtime", async () => {
   const location = { directory: "/fixture", project: { id: "project", canonical: "/fixture" } }
   for (const resolved of [{}, [], { todo: { enabled: "yes", source: "config" } }, null]) await assert.rejects(Effect.runPromise(readNativeScheduleFlag({ location } as any).pipe(

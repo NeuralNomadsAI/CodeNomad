@@ -9,7 +9,7 @@ import { readNativeScheduleFlag, nativeScheduleFlagOrigin, type NativeScheduleFl
 import { nativeScheduleCapability } from "./native-schedule-capability"
 import { PluginControlsError, type NativeConfigDocuments, type NativeConfigEdit, type PluginControls } from "./plugin-controls"
 import { readNativeSetting } from "./native-setting-document"
-import { INLINE_CONFIG_SOURCE } from "./missions/native-automations-setting"
+import { INLINE_CONFIG_SOURCE, REMOTE_CONFIG_SOURCE } from "./missions/native-automations-setting"
 
 export type NativeScheduleActivationTarget = { scope: PluginControlScope; path: string; expectation: string; resultDigest: string }
 export type NativeScheduleActivationPlan = { authority: string; targets: NativeScheduleActivationTarget[] }
@@ -54,8 +54,8 @@ export function planNativeScheduleActivation(view: NativeConfigDocuments, flag: 
   }
   if (!flag.enabled && flag.provenance === "environment")
     throw new NativeScheduleActivationRefused({ reason: "explicit-off", provenance: "environment", layer: "environment" })
-  // Inline daemon configuration is no openable document.
-  const source = (path: string) => path === INLINE_CONFIG_SOURCE ? undefined : path
+  // Inline and remote daemon configuration are no openable document.
+  const source = (path: string) => path === INLINE_CONFIG_SOURCE || path === REMOTE_CONFIG_SOURCE ? undefined : path
   // OFF layers the daemon reads but no entry exposes, such as a legacy block below a newer ON.
   for (const path of flag.hiddenOff ?? []) refuse(source(path))
   if (flag.enabled) return []

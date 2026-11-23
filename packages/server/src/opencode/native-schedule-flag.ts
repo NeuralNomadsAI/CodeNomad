@@ -4,6 +4,7 @@ import type { ServiceConnection } from "../workspaces/opencode-service"
 import type { PluginControlLocation } from "../api-types"
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 import { effectiveMissionExperimental } from "./native-experimental-settings"
+import { INLINE_CONFIG_SOURCE, REMOTE_CONFIG_SOURCE } from "./missions/native-automations-setting"
 
 const provenance = z.enum(["environment", "experimental-block", "all-flags", "channel-default", "automations-setting"])
 export const nativeScheduleFlagSchema = z.object({ enabled: z.boolean(), provenance,
@@ -17,16 +18,20 @@ export async function readNativeScheduleFlag(connection: ServiceConnection, loca
   connection.assertCurrent()
   const rpc = connection.client.rpc(CODENOMAD_MISSIONS_RPC), options = () => ({ location, signal: AbortSignal.timeout(5_000) })
   let raw: unknown
-  try { raw = await rpc.scheduleSetting({}, options()) }
-  catch { connection.assertCurrent(); raw = await rpc.scheduleFlag({}, options()) }
+  try { raw = typeof rpc.scheduleSetting === "function" ? await rpc.scheduleSetting({}, options()) : await Promise.reject({ type: "rpc.method_not_found" }) }
+  catch (error) {
+    // Only a bundle without the method answers the original reply; any other failure stays one.
+    if ((error as { type?: unknown } | null)?.type !== "rpc.method_not_found") throw error
+    connection.assertCurrent(); raw = await rpc.scheduleFlag({}, options())
+  }
   const result = nativeScheduleFlagSchema.parse(raw)
   connection.assertCurrent()
   return result
 }
 
 export function nativeScheduleFlagOrigin(entries: readonly ConfigEntry[], flag: NativeScheduleFlag): string | null {
-  // Runtimes with the top-level setting name the deciding source themselves.
-  if (flag.path) return flag.path
+  // Runtimes with the top-level setting name the deciding source themselves; pathless config has no file.
+  if (flag.path) return flag.path === INLINE_CONFIG_SOURCE || flag.path === REMOTE_CONFIG_SOURCE ? null : flag.path
   if (flag.provenance === "automations-setting") return null
   if (flag.provenance === "experimental-block") return effectiveMissionExperimental(entries).origin
   if (flag.provenance !== "all-flags") return null

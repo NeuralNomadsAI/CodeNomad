@@ -1,88 +1,100 @@
-import { closeSync, fstatSync, openSync, readSync } from "node:fs"
+import { readFile, stat } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 import { parse, type ParseError } from "jsonc-parser"
 import type { ConfigEntry } from "@opencode/client"
 
 const MAX_DOCUMENT_BYTES = 1024 * 1024
 export const INLINE_CONFIG_SOURCE = "OPENCODE_CONFIG_CONTENT"
+/** Pathless configuration other than inline config: served remotely by a provider or organization. */
+export const REMOTE_CONFIG_SOURCE = "well-known"
 export type NativeAutomationsSetting = {
   enabled: boolean
   source: "setting" | "legacy-off" | "environment" | "default"
-  /** The deciding document, or `OPENCODE_CONFIG_CONTENT` for inline config. */
+  /** The deciding document's path, or `OPENCODE_CONFIG_CONTENT`/`well-known` for pathless config. */
   path?: string
-  /** Every OFF in a layer below the deciding one, as activation refuses any explicit OFF. */
+  /** Every other legacy or top-level OFF, as activation refuses any explicit OFF. */
   hiddenOff: string[]
 }
-type Raw = { off: boolean }
-export type NativeAutomationsSources = {
-  /** The daemon's environment, which owns `OPENCODE_FLAGS` and inline config. */
-  env: Readonly<Record<string, string | undefined>>
-  read(path: string): Raw
+type Env = Readonly<Record<string, string | undefined>>
+export type NativeAutomationsSources = { env: Env; readText(file: string): Promise<string> }
+const unreadable = () => new Error("Native automations setting unreadable")
+
+async function readBounded(file: string) {
+  const info = await stat(file).catch(() => { throw unreadable() })
+  if (!info.isFile() || info.size > MAX_DOCUMENT_BYTES) throw unreadable()
+  const bytes = await readFile(file).catch(() => { throw unreadable() })
+  if (bytes.length > MAX_DOCUMENT_BYTES) throw unreadable()
+  return bytes.toString("utf8")
+}
+const defaults: NativeAutomationsSources = { env: process.env, readText: readBounded }
+
+/** OpenCode's `{env:}` and `{file:}` substitution (core/src/config/variable.ts): raw environment
+ * values first, JSON-escaped ones only when the raw text does not parse; file contents are
+ * JSON-escaped, and a missing or unreadable file substitutes empty, as OpenCode does. */
+async function substitute(text: string, directory: string, sources: NativeAutomationsSources) {
+  const env = (escape: boolean) => text.replace(/\{env:([^}]+)\}/g, (_, name: string) => {
+    const value = sources.env[name] || ""
+    return escape ? JSON.stringify(value).slice(1, -1) : value
+  })
+  const files = async (input: string) => {
+    let out = "", cursor = 0
+    for (const match of input.matchAll(/\{file:[^}]+\}/g)) {
+      const index = match.index!, token = match[0]
+      out += input.slice(cursor, index); cursor = index + token.length
+      if (input.slice(input.lastIndexOf("\n", index - 1) + 1, index).trimStart().startsWith("//")) { out += token; continue }
+      const name = token.slice("{file:".length, -1)
+      const resolved = path.resolve(directory, name.startsWith("~/") ? path.join(os.homedir(), name.slice(2)) : name)
+      const content = await sources.readText(resolved).catch(() => "")
+      out += JSON.stringify(content.trim()).slice(1, -1)
+    }
+    return out + input.slice(cursor)
+  }
+  const raw = await files(env(false)), errors: ParseError[] = []
+  if (text.includes("{env:")) parse(raw, errors, { allowTrailingComma: true })
+  return errors.length ? files(env(true)) : raw
 }
 
-/** `experimental.automations`/`schedules: false`, as saved for runtimes that read that block.
- * Runtimes with the top-level setting drop the block from their entries, so it is read from
- * the source itself, after the same `{env:}` substitution OpenCode applies. Text that does
- * not parse is unknown, never absent. */
-export function legacyAutomationsOff(text: string, env: NativeAutomationsSources["env"]): boolean {
-  const substituted = text.replace(/^﻿/, "").replace(/\{env:([^}]+)\}/g, (_, name: string) => env[name] ?? "")
+/** The legacy `experimental.automations` (or its `schedules` alias) is OFF, decoded as 2.3.2 did:
+ * only booleans count, the canonical key before the alias. Text OpenCode would not parse is unknown. */
+export async function legacyAutomationsOff(text: string, directory: string, sources: NativeAutomationsSources = defaults): Promise<boolean> {
   const errors: ParseError[] = []
-  const raw = parse(substituted, errors, { allowTrailingComma: true })
-  if (errors.length) throw new Error("Native automations setting unreadable")
+  const raw = parse(await substitute(text.replace(/^﻿/, ""), directory, sources), errors, { allowTrailingComma: true })
+  if (errors.length) throw unreadable()
   const experimental = raw && typeof raw === "object" ? (raw as { experimental?: unknown }).experimental : undefined
   if (!experimental || typeof experimental !== "object") return false
   const block = experimental as { automations?: unknown; schedules?: unknown }
-  return (block.automations ?? block.schedules) === false
-}
-
-// One read per file revision, shared by every flag read in this process.
-const cache = new Map<string, { mtimeMs: number; size: number; raw: Raw }>()
-export function readAutomationsSource(path: string, env: NativeAutomationsSources["env"] = process.env): Raw {
-  let fd: number
-  try { fd = openSync(path, "r") } catch { throw new Error("Native automations setting unreadable") }
-  try {
-    const { mtimeMs, size } = fstatSync(fd), cached = cache.get(path)
-    if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.raw
-    if (size > MAX_DOCUMENT_BYTES) throw new Error("Native automations setting unreadable")
-    const bytes = Buffer.alloc(size)
-    let read = 0
-    while (read < size) { const count = readSync(fd, bytes, read, size - read, null); if (!count) break; read += count }
-    if (read !== size) throw new Error("Native automations setting unreadable")
-    const raw = { off: legacyAutomationsOff(bytes.toString("utf8"), env) }
-    if (cache.size >= 256) cache.delete(cache.keys().next().value!)
-    cache.set(path, { mtimeMs, size, raw })
-    return raw
-  } finally { closeSync(fd) }
+  const value = typeof block.automations === "boolean" ? block.automations : block.schedules
+  return value === false
 }
 
 /** OpenCode's top-level `automations`: the highest-priority document that sets it, on by default.
- * An explicit legacy OFF (in a document, in inline config, or `-automations`/`-schedules` in
- * `OPENCODE_FLAGS`) keeps Missions schedules off unless a newer top-level choice above it decides,
- * so an upgrade never turns them back on. Inline config is the highest-priority pathless document;
- * other pathless documents are remote configuration and carry no locally saved setting. */
-export function nativeAutomationsSetting(entries: readonly ConfigEntry[],
-  sources: NativeAutomationsSources = { env: process.env, read: path => readAutomationsSource(path) }): NativeAutomationsSetting {
+ * An explicit legacy OFF (in a local JSON/JSONC document, in inline config, or
+ * `-automations`/`-schedules` in `OPENCODE_FLAGS`) keeps Missions schedules off unless a newer
+ * top-level choice above it decides, so an upgrade never turns them back on. Managed preference
+ * plists and remote (well-known) configuration are administered for the runtime that reads them
+ * and are not inspected for the legacy block. Inline config is the highest-priority pathless document. */
+export async function nativeAutomationsSetting(entries: readonly ConfigEntry[],
+  sources: NativeAutomationsSources = defaults): Promise<NativeAutomationsSetting> {
   const flags = (sources.env.OPENCODE_FLAGS ?? "").split(",").map(item => item.trim())
   const inlineText = sources.env[INLINE_CONFIG_SOURCE]
-  const inline = inlineText ? legacyAutomationsOff(inlineText, sources.env) : false
   const documents = [...entries].reverse().flatMap(entry => entry.type === "document" ? [entry] : [])
-  const inlineEntry = documents.find(entry => !entry.path)
+  const inlineEntry = inlineText ? documents.find(entry => !entry.path) : undefined
   let decided: Omit<NativeAutomationsSetting, "hiddenOff"> | undefined
-  const hiddenOff: string[] = []
-  const off = (path: string, source: "setting" | "legacy-off") => {
-    if (!decided) decided = { enabled: false, source, path }
-    else hiddenOff.push(path)
-  }
+  const off: string[] = []
   if (flags.includes("-automations") || flags.includes("-schedules")) decided = { enabled: false, source: "environment" }
   for (const entry of documents) {
-    const label = entry.path ?? INLINE_CONFIG_SOURCE
+    const label = entry.path ?? (entry === inlineEntry ? INLINE_CONFIG_SOURCE : REMOTE_CONFIG_SOURCE)
     const value = (entry.info as { automations?: unknown }).automations
-    if (value !== undefined) {
-      if (typeof value !== "boolean") throw new Error("Native automations setting invalid")
-      if (value === false) off(label, "setting")
-      else decided ??= { enabled: true, source: "setting", path: label }
-      continue
-    }
-    if (entry.path ? sources.read(entry.path).off : entry === inlineEntry && inline) off(label, "legacy-off")
+    if (value !== undefined && typeof value !== "boolean") throw new Error("Native automations setting invalid")
+    const legacy = entry.path && !entry.path.toLowerCase().endsWith(".plist")
+      ? await legacyAutomationsOff(await sources.readText(entry.path), path.dirname(entry.path), sources)
+      : entry === inlineEntry ? await legacyAutomationsOff(inlineText!, process.cwd(), sources) : false
+    const deciding = !decided && (value !== undefined || legacy)
+    if (deciding) decided = value !== undefined ? { enabled: value, source: "setting", path: label } : { enabled: false, source: "legacy-off", path: label }
+    // The deciding OFF is reported as the decision; any other OFF, including a legacy OFF beside
+    // a deciding top-level ON in the same document, is hidden.
+    if (value === false && !deciding || legacy && !(deciding && value === undefined)) off.push(label)
   }
-  return { ...(decided ?? { enabled: true, source: "default" }), hiddenOff }
+  return { ...(decided ?? { enabled: true, source: "default" }), hiddenOff: off }
 }
