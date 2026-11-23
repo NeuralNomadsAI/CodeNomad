@@ -6,7 +6,9 @@ use serde_json::json;
 fn direct_compaction_waits_for_the_first_root_snapshot() {
     for directory in [Some("/fixture".to_owned()), None] {
         let mut attention = Attention::default();
-        attention.compacted("compacted".into());
+        attention.compacted("first".into());
+        attention.compacted("first".into());
+        attention.compacted("second".into());
         assert!(attention.pending.is_empty());
         attention.observe(
             &Snapshot {
@@ -20,13 +22,16 @@ fn direct_compaction_waits_for_the_first_root_snapshot() {
             },
             true,
         );
-        assert_eq!(attention.pending.len(), usize::from(directory.is_some()));
-        if directory.is_some() {
-            assert_eq!(
-                attention.pending[0],
-                (Category::Sessions, "compacted".into())
-            );
-        }
+        let expected = directory
+            .is_some()
+            .then(|| {
+                vec![
+                    (Category::Sessions, "first".into()),
+                    (Category::Sessions, "second".into()),
+                ]
+            })
+            .unwrap_or_default();
+        assert_eq!(attention.pending, expected);
     }
 }
 

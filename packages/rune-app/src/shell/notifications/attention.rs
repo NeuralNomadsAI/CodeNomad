@@ -8,7 +8,7 @@ pub(crate) struct Attention {
     requests: [HashSet<String>; 2],
     hinted: [HashSet<String>; 2],
     directory: Option<String>,
-    compaction: Option<String>,
+    compactions: Vec<String>,
     execution: Option<(String, bool)>,
     pub(super) pending: Vec<(Category, String)>,
     updated: [bool; 2],
@@ -20,13 +20,17 @@ impl Attention {
         self.directory.clone_from(&snapshot.root_directory);
         if self.directory.is_none() {
             if snapshot.session_known {
-                self.compaction = None;
+                self.compactions.clear();
             }
             return;
         }
-        if let Some(id) = self.compaction.take() {
-            self.queue_compaction(id);
-        }
+        let capacity = RETAINED.saturating_sub(self.pending.len());
+        self.pending.extend(
+            self.compactions
+                .drain(..)
+                .take(capacity)
+                .map(|id| (Category::Sessions, id)),
+        );
         if let Some(permissions) = &snapshot.permissions {
             self.observe_requests(0, permissions.iter().map(|item| item.id.clone()), current);
         }
@@ -60,7 +64,7 @@ impl Attention {
     pub(crate) fn disconnected(&mut self) {
         self.execution = None;
         self.directory = None;
-        self.compaction = None;
+        self.compactions.clear();
         self.pending
             .retain(|(category, _)| *category != Category::Sessions);
         self.hinted.iter_mut().for_each(HashSet::clear);
@@ -68,12 +72,8 @@ impl Attention {
     }
 
     pub(crate) fn compacted(&mut self, id: String) {
-        self.compaction = Some(id);
-    }
-
-    fn queue_compaction(&mut self, id: String) {
-        if self.pending.len() < RETAINED {
-            self.pending.push((Category::Sessions, id));
+        if self.compactions.len() < RETAINED && !self.compactions.contains(&id) {
+            self.compactions.push(id);
         }
     }
 
