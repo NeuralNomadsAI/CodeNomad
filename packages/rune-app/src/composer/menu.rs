@@ -251,12 +251,12 @@ mod tests {
         click(&mut rt, "composer-more:item:previous");
         assert_eq!(rt.state.draft.text, "A");
         assert_eq!(rt.state.draft.range(), (1, 1));
-        assert_eq!(focused(&rt).as_deref(), Some("composer"));
+        assert!(rt.state.draft.focused);
         click(&mut rt, "composer-more:trigger");
         click(&mut rt, "composer-more:item:clear");
         assert!(rt.state.draft.text.is_empty());
         assert!(rt.state.composer.recall.is_none());
-        assert_eq!(focused(&rt).as_deref(), Some("composer"));
+        assert!(rt.state.draft.focused);
         rt.update(|s, _| {
             s.draft.undo();
         });
