@@ -3,6 +3,10 @@ use serde_json::json;
 
 #[test]
 fn received_credentials_revoke_quota_authority_before_a_full_recovery_queue() {
+    use futures_lite::{
+        StreamExt,
+        future::{poll_once, zip},
+    };
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -11,56 +15,63 @@ fn received_credentials_revoke_quota_authority_before_a_full_recovery_queue() {
             let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
             backend.workspace = "project".into();
             let (out, recovery) = crate::bounded(1);
-            let (events, _display) = crate::bounded(1);
+            let (events, _display) = crate::bounded(4);
             let watch = crate::provider_usage::Watch::default();
-            watch.transport(true);
             let state = State::observing_preferences(events, Arc::new(|| {}))
                 .with_provider_usage(Some(watch.clone()));
-            assert!(out.try_send(Input::Opened(1)).is_ok());
-            let before = watch.current();
             let payload = |kind| {
                 json!({
                     "type":"instance.event", "instanceId":"project", "event":{"type":kind}
                 })
             };
             let chunk = |kind| format!("data: {}\n\n", payload(kind));
-            let mut parser = frames::Parser::default();
-            let (bytes, parsed) = crate::bounded(1);
-            let quota = state.quota_ingress(&backend).unwrap();
-            native::receive_chunk(
-                &mut parser,
-                chunk("provider.updated").as_bytes(),
-                Some(&quota),
-                &bytes,
-            )
-            .await
-            .unwrap();
-            let frames::Parsed::Data(kind, payload) = parsed.try_recv().unwrap() else {
-                panic!("provider event missing")
-            };
-            let mut routed = std::pin::pin!(dispatch(
-                &backend, 1, &out, &state, "stream", &kind, &payload
+            let (bytes, chunks) = crate::bounded(1);
+            let mut routed = std::pin::pin!(native::read_frames(
+                &backend,
+                1,
+                &out,
+                &state,
+                "stream",
+                chunks.map(Ok),
             ));
-            assert!(futures_lite::future::poll_once(&mut routed).await.is_none());
-            assert_eq!(watch.current(), before);
-            native::receive_chunk(
-                &mut parser,
-                chunk("credential.switched").as_bytes(),
-                Some(&quota),
-                &bytes,
-            )
-            .await
-            .unwrap();
+            bytes
+                .send(chunk("provider.updated").into_bytes())
+                .await
+                .unwrap();
+            assert!(poll_once(&mut routed).await.is_none());
+            assert!(out.is_full());
+            let before = watch.current();
+            assert!(before.1);
+            bytes
+                .send(chunk("credential.switched").into_bytes())
+                .await
+                .unwrap();
+            assert!(poll_once(&mut routed).await.is_none());
             assert_eq!(watch.current(), (before.0 + 1, true, before.2));
-            quota.transport(false);
-            assert!(!watch.current().1);
+            let switched = watch.current();
+            bytes.send(chunk("irrelevant").into_bytes()).await.unwrap();
+            assert!(poll_once(&mut routed).await.is_none());
+            assert!(watch.backpressured());
+            assert_eq!(watch.current(), switched);
+            drop(bytes);
             assert!(matches!(recovery.try_recv().unwrap(), Input::Opened(1)));
-            assert!(futures_lite::future::poll_once(&mut routed).await.is_none());
-            assert!(matches!(
-                recovery.try_recv().unwrap(),
-                Input::Workspace(_, WorkspaceEvent::ProviderUsageRefresh(_))
-            ));
-            routed.await.unwrap();
+            let drain = async {
+                assert!(matches!(
+                    recovery.recv().await.unwrap(),
+                    Input::Workspace(_, WorkspaceEvent::ProviderUsageRefresh(_))
+                ));
+                for _ in 0..2 {
+                    assert!(matches!(
+                        recovery.recv().await.unwrap(),
+                        Input::Workspace(_, WorkspaceEvent::ProvidersChanged { .. })
+                    ));
+                }
+            };
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(2), zip(routed, drain))
+                .await
+                .unwrap();
+            assert_eq!(result.unwrap_err().to_string(), "event stream ended");
+            assert!(!watch.backpressured() && !watch.current().1);
         });
 }
 

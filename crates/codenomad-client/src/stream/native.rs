@@ -14,7 +14,6 @@ pub(super) async fn read_native(
     out: &Sender<Input>,
     state: &State,
 ) -> Result<()> {
-    use futures_lite::StreamExt;
     let connection = format!("stream-{epoch}");
     let response = b
         .client
@@ -37,6 +36,18 @@ pub(super) async fn read_native(
         return Err("expected event stream".into());
     }
     b.client.children().invalidate(b, None);
+    read_frames(b, epoch, out, state, &connection, response.bytes_stream()).await
+}
+
+pub(super) async fn read_frames<B: AsRef<[u8]>>(
+    b: &Backend,
+    epoch: u64,
+    out: &Sender<Input>,
+    state: &State,
+    connection: &str,
+    chunks: impl futures_lite::Stream<Item = std::result::Result<B, reqwest::Error>>,
+) -> Result<()> {
+    use futures_lite::StreamExt;
     let quota = state.quota_ingress(b);
     if let Some(quota) = &quota {
         quota.transport(true);
@@ -45,10 +56,10 @@ pub(super) async fn read_native(
     let (send, receive) = crate::bounded(1);
     let read = async move {
         let result: Result<()> = async {
-            let mut chunks = response.bytes_stream();
+            let mut chunks = std::pin::pin!(chunks);
             let mut parser = Parser::default();
             while let Some(chunk) = chunks.next().await {
-                receive_chunk(&mut parser, &chunk?, quota.as_ref(), &send).await?;
+                receive_chunk(&mut parser, chunk?.as_ref(), quota.as_ref(), &send).await?;
             }
             Err("event stream ended".into())
         }
@@ -63,7 +74,7 @@ pub(super) async fn read_native(
         while let Ok(frame) = receive.recv().await {
             match frame {
                 Parsed::Data(kind, data) => {
-                    dispatch(b, epoch, out, state, &connection, &kind, &data).await?;
+                    dispatch(b, epoch, out, state, connection, &kind, &data).await?;
                 }
                 Parsed::Skipped => {
                     b.client.children().invalidate(b, None);
@@ -77,7 +88,7 @@ pub(super) async fn read_native(
     read
 }
 
-pub(super) async fn receive_chunk(
+async fn receive_chunk(
     parser: &mut Parser,
     chunk: &[u8],
     quota: Option<&crate::provider_usage::Ingress>,
