@@ -3,6 +3,7 @@ mod appearance;
 mod behavior;
 mod events;
 mod memory;
+mod notifications;
 mod opencode;
 mod providers;
 use codenomad_client::bounded;

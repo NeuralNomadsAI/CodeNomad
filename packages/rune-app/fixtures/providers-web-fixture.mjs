@@ -9,6 +9,7 @@ const bundle = path.resolve(process.argv[2] ?? 'target/rune-web-settings-provide
 const loseHeaders = process.argv.includes('--lost-headers')
 const opencodeMode = process.argv.find(arg => arg === '--local-opencode' || arg === '--remote-opencode')
 const remoteAccess = process.argv.includes('--remote-access')
+const notifications = process.argv.includes('--notifications')
 const noDeviceRegistry = process.argv.includes('--no-device-registry')
 const local = opencodeMode === '--local-opencode' || remoteAccess
 const files = await bundleAssetPaths(bundle)
@@ -21,6 +22,7 @@ const reads = []
 const mime = {'.html':'text/html','.js':'text/javascript','.wasm':'application/wasm','.css':'text/css','.json':'application/json','.woff2':'font/woff2'}
 let account = 'First fixture account', detached = false
 let contrast = 'on', permissions = 'autonomous'
+let notificationRouting, notifyFocused
 const writes = []
 const memoryRequests = []
 const opencodeRequests = []
@@ -112,8 +114,16 @@ const server = createServer(async (req,res) => {
         writes.push(patch)
         contrast = patch.settings.highContrast ?? contrast
         permissions = patch.settings.newConversationPermissions ?? permissions
+        if (patch.settings.notificationRouting) {
+          notificationRouting ??= {}
+          for (const [category, row] of Object.entries(patch.settings.notificationRouting)) {
+            notificationRouting[category] = {...notificationRouting[category],...row}
+          }
+        }
+        notifyFocused = patch.settings.osNotificationsAllowWhenVisible ?? notifyFocused
       }
-      return json({settings:{locale:'en',highContrast:contrast,newConversationPermissions:permissions}})
+      return json({settings:{locale:'en',highContrast:contrast,newConversationPermissions:permissions,
+        notificationRouting,osNotificationsAllowWhenVisible:notifyFocused}})
     }
     if (p === '/api/storage/state/ui') {
       await stateReady
@@ -224,6 +234,17 @@ let browser, page
 try {
   browser = await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
   page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true})
+  if (notifications) await page.addInitScript(() => {
+    window.permissionGestures = []
+    window.Notification = class {
+      static permission = 'default'
+      static requestPermission() {
+        window.permissionGestures.push(navigator.userActivation.isActive)
+        this.permission = 'granted'
+        return Promise.resolve(this.permission)
+      }
+    }
+  })
   const click = name => page.getByRole('button',{name,exact:true}).click({force:true,timeout:15000})
   const radio = name => page.getByRole('radio',{name,exact:true})
   const visible = name => page.getByText(name,{exact:true}).waitFor({state:'attached',timeout:15000})
@@ -238,9 +259,38 @@ try {
   releaseState()
   await click(directory)
   await visible('No session selected')
-  if (remoteAccess) await checkRemoteAccess()
+  if (notifications) await checkNotifications()
+  else if (remoteAccess) await checkRemoteAccess()
   else if (opencodeMode) await checkOpenCode()
   else await checkProviders()
+
+  async function checkNotifications() {
+    await click('Settings')
+    await radio('Notifications').press('Enter')
+    const switcher = page.getByRole('switch',{name:'Notify when the app is focused',exact:true})
+    const checks = page.getByRole('checkbox')
+    await page.getByRole('table',{name:'Where each notification appears',exact:true}).waitFor({state:'attached'})
+    assert.equal(await checks.count(),27)
+    assert.deepEqual(await page.evaluate(()=>window.permissionGestures),[])
+    const history = page.getByRole('checkbox',{name:'Copy confirmations · History',exact:true})
+    const historySaved = page.waitForResponse(response=>response.request().method()==='PATCH'
+      && response.request().postDataJSON()?.settings?.notificationRouting?.copy?.history===true)
+    await history.press('Enter')
+    await historySaved
+    await page.getByRole('checkbox',{name:'Copy confirmations · History',exact:true,checked:true}).waitFor({state:'attached'})
+    assert.deepEqual(await page.evaluate(()=>window.permissionGestures),[])
+    await page.getByRole('checkbox',{name:'Copy confirmations · System',exact:true}).press('Enter')
+    await page.getByRole('button',{name:'Request permission',exact:true}).waitFor({state:'detached'})
+    assert.deepEqual(await page.evaluate(()=>window.permissionGestures),[true])
+    const patch = page.waitForResponse(response=>response.request().method()==='PATCH'
+      && response.request().postDataJSON()?.settings?.osNotificationsAllowWhenVisible===true)
+    await switcher.press('Enter')
+    await patch
+    assert.equal(notificationRouting.copy.history,true)
+    assert.equal(notificationRouting.copy.system,true)
+    assert.equal(notifyFocused,true)
+    console.log(JSON.stringify({fixture:'notifications-preferences',cells:27,permissionGesture:true,foregroundSaved:true}))
+  }
 
   async function checkRemoteAccess() {
     await click('Settings')

@@ -4,6 +4,7 @@ mod contrast;
 mod conversation;
 mod memory;
 pub(crate) mod notification_routing;
+mod notification_settings;
 mod opencode;
 mod preferences;
 mod providers;
@@ -28,8 +29,6 @@ pub(crate) struct Host {
     window: Option<(rune::WindowHandle, Rc<Cell<bool>>, Rc<view::CloseRequest>)>,
     #[cfg(target_arch = "wasm32")]
     web: web::Panel,
-    #[cfg(target_arch = "wasm32")]
-    notification_permission_changed: Rc<Cell<bool>>,
     #[cfg(target_arch = "wasm32")]
     web_usage: Option<bool>,
     #[cfg(target_arch = "wasm32")]
@@ -147,7 +146,6 @@ pub(crate) fn poll(s: &mut State) -> bool {
         contrast_changed
             | s.settings.web.poll(&mut shared, &s.wake, paired)
             | (s.settings.web.shown() && preferences_changed)
-            | s.settings.notification_permission_changed.replace(false)
     };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
@@ -195,6 +193,7 @@ pub(crate) fn system_notification(
         let key = match category {
             notification_routing::Category::NeedsInput => "sessionEvents.notify.needsInput",
             notification_routing::Category::SessionDone => "sessionEvents.notify.done",
+            _ => return Delivery::Suppressed,
         };
         Delivery::Body(strings::with_locale(
             prefs.locale().unwrap_or_else(strings::locale),
@@ -420,36 +419,9 @@ pub(crate) fn entry() -> El {
     return rune_theme_codenomad::layout::button(strings::t("settings.title"), false, open)
         .key("open-preferences");
     #[cfg(target_arch = "wasm32")]
-    return rune_theme_codenomad::layout::action_row()
+    rune::row()
         .child(web::entry())
         .child(conversation::web_entry())
-        .child(notification_permission_entry());
-}
-
-#[cfg(target_arch = "wasm32")]
-fn notification_permission_entry() -> El {
-    {
-        use web_sys::NotificationPermission;
-        if crate::platform::notifications::permission() != Some(NotificationPermission::Default) {
-            return rune::el();
-        }
-        rune_theme_codenomad::layout::button(
-            strings::t("settings.notifications.requestPermission.action"),
-            false,
-            |s: &mut State| {
-                if let Some(permission) = crate::platform::notifications::request_permission() {
-                    let changed = s.settings.notification_permission_changed.clone();
-                    let wake = s.wake.clone();
-                    wasm_bindgen_futures::spawn_local(async move {
-                        let _ = wasm_bindgen_futures::JsFuture::from(permission).await;
-                        changed.set(true);
-                        wake();
-                    });
-                }
-            },
-        )
-        .key("notification-permission")
-    }
 }
 
 pub(crate) fn matches_shortcut(
@@ -586,7 +558,8 @@ fn launch_preferences(
     let host = &s.settings;
     let token = Rc::new(Cell::new(false));
     let state = view::Window::new(host.shared.clone(), token.clone())
-        .with_close_request(request.clone(), editor);
+        .with_close_request(request.clone(), editor)
+        .with_notification_permission(notification_settings::native_permission(s));
     let locale = host
         .shared
         .borrow()

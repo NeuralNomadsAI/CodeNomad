@@ -1,5 +1,6 @@
 pub(super) mod behavior;
 mod document;
+mod notifications;
 pub(super) mod server;
 
 use crate::{backend::Backend, platform};

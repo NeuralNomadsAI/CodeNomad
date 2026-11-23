@@ -3,7 +3,7 @@ mod general;
 mod tests;
 
 use super::{
-    opencode,
+    notification_settings, opencode,
     preferences::{Owner, Preferences},
     providers, remote, render_with,
 };
@@ -38,6 +38,7 @@ pub(super) struct Window {
     logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
     remote: remote::Remote,
+    notification_permission: notification_settings::Permission,
 }
 
 #[derive(Default)]
@@ -51,6 +52,7 @@ enum Section {
     General,
     Conversation,
     OpenCode,
+    Notifications,
     Providers,
     Remote,
 }
@@ -62,6 +64,14 @@ impl Default for Section {
 }
 
 impl Window {
+    pub(super) fn with_notification_permission(
+        mut self,
+        permission: notification_settings::Permission,
+    ) -> Self {
+        self.notification_permission = permission;
+        self
+    }
+
     pub(super) fn check_opencode(&mut self, refresh: Option<bool>) {
         let mut prefs = self.shared.borrow_mut();
         let wake = prefs.window_wake.clone();
@@ -280,6 +290,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     render_with(cx, &prefs, system_more, |_| {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
+        let notifications_label = t("settings.nav.notifications");
         let providers_label = t("settings.nav.providers");
         let conversation_label = t("settings.nav.chat");
         let remote_label = t("settings.nav.remote");
@@ -287,6 +298,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::General => general_label,
             Section::Conversation => conversation_label,
             Section::OpenCode => opencode_label,
+            Section::Notifications => notifications_label,
             Section::Providers => providers_label,
             Section::Remote => remote_label,
         };
@@ -310,6 +322,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     s.section == Section::OpenCode,
                 ),
                 (
+                    "settings-notifications",
+                    notifications_label,
+                    s.section == Section::Notifications,
+                ),
+                (
                     "settings-providers",
                     providers_label,
                     s.section == Section::Providers,
@@ -327,6 +344,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 s.section = match key {
                     "settings-opencode" => Section::OpenCode,
                     "settings-conversation" => Section::Conversation,
+                    "settings-notifications" => Section::Notifications,
                     "settings-providers" => Section::Providers,
                     "settings-remote" => Section::Remote,
                     _ => Section::General,
@@ -398,6 +416,14 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::General => (
                 "general",
                 general::view(s, &prefs, system_dark, system_more, &mut layers),
+            ),
+            Section::Notifications => (
+                "notifications",
+                notification_settings::view(
+                    &s.shared,
+                    s.notification_permission,
+                    |_: &mut Window| {},
+                ),
             ),
             Section::Providers => (
                 "providers",
