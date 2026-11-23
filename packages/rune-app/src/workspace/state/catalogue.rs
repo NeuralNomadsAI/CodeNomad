@@ -151,7 +151,7 @@ mod tests {
     use crate::{catalog::Project, workspace};
 
     #[test]
-    fn opening_a_second_project_schedules_a_read_without_an_sse_hint() {
+    fn opening_a_second_project_adopts_it_without_an_sse_hint() {
         let mut state = crate::init();
         crate::gallery::shell::fixture(&mut state);
         state.workspace = Some(workspace::Ui::new());
@@ -179,7 +179,13 @@ mod tests {
                 },
             );
             let ui = s.workspace.as_ref().unwrap();
-            assert!(ui.entries[ui.active].catalogue.due.is_some());
+            let entry = &ui.entries[ui.active];
+            assert_eq!(
+                entry.project.as_ref().map(|project| project.id.as_str()),
+                Some("second")
+            );
+            // Opening already loads the directory page. Only Windows follows it with full inventory.
+            assert_eq!(entry.catalogue.due.is_some(), cfg!(target_os = "windows"));
             assert!(s.screen.launcher().unwrap().catalogue_watch.is_none());
         });
     }
