@@ -14,6 +14,10 @@ import {out, repo, rustBinary} from './fixtures.mjs'
 const post = body => ({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
 const canonical = value => Array.isArray(value)?value.map(canonical):value&&typeof value==='object'
   ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value
+// GIT_CEILING_DIRECTORIES makes strict TS discovery inconclusive in this fixture.
+const assertIndependentRefusal = (label, body) => assert.deepEqual(body, {
+  error:'Session does not belong to workspace', ...(label==='rs'?{reason:'session_located_elsewhere'}:{}),
+})
 const digest = body => createHash('sha256').update(JSON.stringify(canonical(body))).digest('hex')
 const listen = server => new Promise(resolve => server.listen(0,'127.0.0.1',()=>resolve(`http://127.0.0.1:${server.address().port}`)))
 const close = server => new Promise(resolve => {server.closeAllConnections();server.close(resolve)})
@@ -46,10 +50,25 @@ async function upstream(profile) {
   await git('-C',directory,'-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','--quiet','--allow-empty','-m','synthetic')
   await git('-C',directory,'worktree','add','--quiet','--detach',tree,'HEAD')
   await writeFile(path.join(tree,'tree.txt'),'synthetic tree\n')
+  const treeNested=path.join(tree,'sub'), independent=path.join(tree,'independent')
+  const treeHeadDir=path.join(tree,'head-directory')
+  const localTree=path.join(directory,'.codenomad','worktrees','nested')
+  const localIndependent=path.join(localTree,'independent')
+  await mkdir(path.dirname(localTree),{recursive:true})
+  await git('-C',directory,'worktree','add','--quiet','--detach',localTree,'HEAD')
+  await mkdir(treeNested)
+  await mkdir(path.join(treeNested,'.git','objects'),{recursive:true})
+  await mkdir(path.join(treeNested,'.git','refs'))
+  await writeFile(path.join(treeNested,'.git','HEAD'),'ref: invalid\n')
+  for(const entry of ['objects','refs','HEAD']) await mkdir(path.join(treeHeadDir,'.git',entry),{recursive:true})
+  await git('init','--quiet',independent)
+  await git('init','--quiet',localIndependent)
   const calls = [], sessions = new Map(), password = randomUUID(),state={carrier:'absent'}
   for (const [id,dir,metadata] of [['ses_owned',directory,{}],['ses_nested',path.join(directory,'sub'),{}],['ses_tree',tree,{}],['ses_foreign',foreign,{}],['ses_cn_schedule_reserved',directory,{}],['ses_carrier',directory,{'codenomad.schedule-carrier':true}]])
     sessions.set(id,{id,title:'Synthetic',projectID:'project_fixture',location:{directory:dir},metadata,time:{created:1,updated:1}})
   sessions.set('ses_plain',{id:'ses_plain',title:'Synthetic without Git',projectID:'global',location:{directory:plainNested},time:{created:1,updated:1}})
+  for(const [id,dir] of [['ses_tree_nested',treeNested],['ses_tree_head_dir',treeHeadDir],['ses_independent',independent],['ses_local_independent',localIndependent]])
+    sessions.set(id,{id,title:'Synthetic checkout',projectID:'project_fixture',location:{directory:dir},time:{created:1,updated:1}})
   const server = createServer(async(req,res)=>{
     try {
       assert.equal(req.headers.authorization,`Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`)
@@ -65,7 +84,7 @@ async function upstream(profile) {
         const noGit=local===plain||local===plainNested
         return send({directory:local,project:{id:noGit?'global':'project_fixture',canonical:noGit?plain:directory,directory:local}})
       }
-      if(url.pathname==='/api/worktree')return send([{directory},{directory:tree}])
+      if(url.pathname==='/api/worktree')return send([{directory},{directory:tree},{directory:localTree}])
       if(url.pathname==='/api/worktree/refresh'){res.writeHead(204);return res.end()}
       if(url.pathname==='/api/project')return send([{id:'project_fixture',canonical:directory,sandboxes:[],time:{created:1,updated:1}}])
       if(url.pathname==='/api/session/active')return send({data:{}})
@@ -201,12 +220,25 @@ export async function run(commandOnly=false){
         const before=native.calls.length,response=await host.call(`${host.base}/session/${session}/prompt`,post({text:'refuse'}));errors[session]=JSON.parse(Buffer.from(await response.arrayBuffer()).toString())
         rows.push({name:session,status:response.status,forwarded:native.calls.slice(before).filter(r=>r.path.endsWith('/prompt')||r.path.endsWith('/environment')).length})
       }
-      {
-        const before=native.calls.length,response=await host.call(`${host.base}/session/ses_tree/prompt`,post({text:'owned tree',id:'inbox_tree'}))
+      for (const [name,session,expected] of [
+        ['worktree-session','ses_tree',200],
+        ['session-subfolder','ses_nested',200],
+        ['worktree-subfolder','ses_tree_nested',200],
+        ['worktree-subfolder-head-directory','ses_tree_head_dir',200],
+        ['independent-inside-opened-folder','ses_local_independent',200],
+        ['nested-independent-repo','ses_independent',403],
+      ]) {
+        const before=native.calls.length,response=await host.call(`${host.base}/session/${session}/prompt`,post({text:'owned folder',id:'inbox_tree'}))
         const received=await response.arrayBuffer(),calls=native.calls.slice(before)
-        assert.equal(response.status,200,`${label} owned worktree: ${Buffer.from(received)}`)
-        assert.equal(JSON.parse(Buffer.from(received).toString()).data.id,'inbox_tree')
-        rows.push({name:'worktree-session',status:response.status,forwarded:calls.filter(r=>r.path.endsWith('/prompt')).length,environment:calls.filter(r=>r.path.endsWith('/environment')).length})
+        const body=JSON.parse(Buffer.from(received).toString())
+        assert.equal(response.status,expected,`${label}/${name}: ${Buffer.from(received)}`)
+        const forwarded=calls.filter(r=>r.path.endsWith('/prompt')), environment=calls.filter(r=>r.path.endsWith('/environment'))
+        const dispatch=expected===200
+        assert.deepEqual(forwarded.map(call=>call.path),dispatch?[`/api/session/${session}/prompt`]:[])
+        assert.deepEqual(environment.map(call=>call.path),dispatch?[`/api/session/${session}/environment`]:[])
+        if(dispatch) assert.equal(body.data.id,'inbox_tree')
+        else assertIndependentRefusal(label,body)
+        rows.push({name,status:response.status,forwarded:forwarded.length,environment:environment.length})
       }
       for(const [carrier,expected] of [['owned',403],['unavailable',503],['move',403]]){
         native.state.carrier=carrier
@@ -243,9 +275,20 @@ export async function run(commandOnly=false){
         if(response.status===200)assert.deepEqual(calls.find(r=>r.path.endsWith('/prompt'))?.body,forwardedBody,`${label}/${name} normalized directory payload`)
         rows.push({name,status:response.status,forwarded:calls.filter(r=>r.path.endsWith('/prompt')||r.path.endsWith('/environment')).length})
       }
-      for(const [name,route,body] of [['interrupt-valid','interrupt',{}],['interrupt-invalid','interrupt',{resume:'bad'}],['model-large','model',{model:'x'.repeat(1024*1024)}]]){
-        const response=await host.call(`${host.base}/session/ses_owned/${route}`,post(body));const received=await response.arrayBuffer()
-        if(typeof response.status==='number'&&response.status>=400)errors[name]=JSON.parse(Buffer.from(received).toString())
+       for(const [name,route,body] of [['interrupt-valid','interrupt',{}],['interrupt-invalid','interrupt',{resume:'bad'}],['model-large','model',{model:'x'.repeat(1024*1024)}]]){
+         const before=native.calls.length
+         const response=await host.call(`${host.base}/session/ses_owned/${route}`,post(body))
+         const received=await response.text()
+         if(name==='model-large'){
+           assert.equal(native.calls.slice(before).filter(call=>call.path.endsWith('/model')).length,0)
+           // Fastify may reject Content-Length before the upload finishes, resetting
+           // the socket. The chunked case below compares the exact HTTP refusal.
+           assert(response.status===413 || label==='ts' && response.status==='ECONNRESET',`${label}/${name}: ${response.status}`)
+           ;(result.declaredOverrun??={})[label]={status:response.status,body:received?JSON.parse(received):null}
+           if(response.status===413) assert.equal(result.declaredOverrun[label].body.code,'FST_ERR_CTP_BODY_TOO_LARGE')
+           continue
+         }
+         if(typeof response.status==='number'&&response.status>=400)errors[name]=JSON.parse(received)
         rows.push({name,status:response.status})
       }
       for(const [name,route,body,chunked,type,expected] of process.argv.includes('--admission-order-only')?[]:[
@@ -285,6 +328,10 @@ async function commandCases(label, host, native, rows, errors) {
   for(const [name,session,body,expected,dispatch] of [
     ['ordinary','ses_owned',command,204,true],
     ['nested-session','ses_nested',command,204,true],
+    ['linked-subfolder-incomplete-git','ses_tree_nested',command,204,true],
+    ['linked-subfolder-head-directory','ses_tree_head_dir',command,204,true],
+    ['nested-repo-inside-opened-folder','ses_local_independent',command,204,true],
+    ['nested-independent-repo','ses_independent',command,403,false],
     ['nested-no-repo','ses_plain',command,204,true],
     ['files','ses_owned',{...command,files:[{uri:pathToFileURL(path.join(native.directory,'a b#%.txt')).href}]},204,true],
     ['foreign-file','ses_owned',{...command,files:[{uri:path.join(native.foreign,'private.txt')}]},403,false],
@@ -296,9 +343,13 @@ async function commandCases(label, host, native, rows, errors) {
     ['native-validation','ses_owned',{...command,name:42},400,true],
   ]){
     const route=`/session/${session}/command`,before=native.calls.length
-    const response=await host.call((name==='nested-no-repo'?plainBase:host.base)+route,post(body))
-    const responseBody=Buffer.from(await response.arrayBuffer()).toString()
-    assert.equal(response.status,expected,`${label}/${name}: ${responseBody}`)
+    // Chunked framing gives both servers the whole near-limit body before Fastify
+    // closes a refusal; a declared overrun can reset the socket while uploading.
+    const response=await host.call((name==='nested-no-repo'?plainBase:host.base)+route,{
+      ...post(body),chunked:name==='body-limit',
+    })
+    const responseBody=await response.text()
+    assert.equal(response.status,expected,`${label}/${name}: ${responseBody || "no HTTP body"}`)
     const calls=native.calls.slice(before)
     const forwarded=calls.filter(r=>r.path===`/api${route}`)
     const environment=calls.filter(r=>r.path.endsWith('/environment'))
@@ -309,7 +360,8 @@ async function commandCases(label, host, native, rows, errors) {
       assert(calls.indexOf(environment[0])<calls.indexOf(forwarded[0]))
       assert.equal(environment[0].body.variables.FIXTURE_SETTING,'profile')
     }
-    if(response.status>=400)errors[name]=JSON.parse(responseBody)
+    if(name==='nested-independent-repo') assertIndependentRefusal(label,JSON.parse(responseBody))
+    else if(response.status>=400)errors[name]=JSON.parse(responseBody)
     rows.push({name,status:response.status,forwarded:forwarded.length,environment:environment.length})
   }
   const beforePrompt=native.calls.length

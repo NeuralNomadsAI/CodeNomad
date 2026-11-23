@@ -138,17 +138,6 @@ async fn verify_mutation_at(
     Ok(())
 }
 
-async fn command_owns(app: &App, workspace: &crate::Workspace, directory: &str) -> bool {
-    if crate::worktrees::ownership::resolve(app, workspace, directory).await.is_some() {
-        return true;
-    }
-    // With Git present, a folder without a checkout still owns ordinary subfolders.
-    matches!(crate::worktrees::root_only(workspace).await, Ok(Some(true)))
-        && crate::files::paths::canonical(&app.scope, directory).is_some_and(|path| {
-            path.starts_with(&workspace.path) && crate::worktrees::ownership::within(&workspace.path, &path)
-        })
-}
-
 /// The native status and the cache headers a relayed body keeps.
 fn relayed(response: &reqwest::Response) -> axum::http::response::Builder {
     ["content-type", "cache-control", "etag", "last-modified"].into_iter().fold(
@@ -250,29 +239,27 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     } else {
         None
     };
-    let directory = requested
-        .as_deref()
-        .or_else(|| actual.as_ref().and_then(|r| r["location"]["directory"].as_str()))
-        .unwrap_or(opened);
+    let native_directory = actual.as_ref().and_then(|r| r["location"]["directory"].as_str());
+    let directory = requested.as_deref().or(native_directory).unwrap_or(opened);
     let identity_now = || {
-        let path = crate::files::paths::canonical(&app.scope, directory)?;
+        let path = crate::files::paths::canonical(&app.scope, native_directory?)?;
         let identity = crate::files::host_identity(&path).ok()?;
         Some((path, identity))
     };
     let initial_identity = send_input.then(&identity_now).flatten();
+    let input_checkout = match &initial_identity {
+        Some((physical, _)) => {
+            crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, physical, true).await
+        }
+        None => None,
+    };
     // TS checks the session's own location first and names a proven
     // departure, so the UI can drop a conversation moved out of the project.
-    let mut command_owned = false;
     let list_slug = match &actual {
         Some(record) => match crate::worktrees::placement(&app, &workspace, &record["location"]).await {
             Ok(slug) => Some(slug),
             Err(elsewhere) => {
-                if command
-                    && record["location"].get("workspaceID").is_none()
-                    && let Some(directory) = record["location"]["directory"].as_str()
-                    && command_owns(&app, &workspace, directory).await
-                {
-                    command_owned = true;
+                if input_checkout.is_some() && record["location"].get("workspaceID").is_none() {
                     None
                 } else {
                     let mut body = json!({"error":"Session does not belong to workspace"});
@@ -285,8 +272,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         },
         None => None,
     };
-    if !(command_owned && actual.as_ref().is_some_and(|record| record["location"]["directory"] == directory))
-        && !crate::worktrees::owns(&app, &workspace, directory).await
+    if (send_input && input_checkout.is_none())
+        || (!send_input && !crate::worktrees::owns(&app, &workspace, directory).await)
     {
         return Err(foreign());
     }
@@ -498,20 +485,21 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     } else {
         None
     };
-    let input_owned = || async {
-        if command_owned {
-            command_owns(&app, &workspace, directory).await
-        } else {
-            crate::worktrees::owns(&app, &workspace, directory).await
-        }
-    };
     let input_location_live = || {
-        initial_identity.is_some()
-            && initial_identity == identity_now()
+        initial_identity == identity_now()
+            && initial_identity
+                .as_ref()
+                .zip(input_checkout.as_ref())
+                .is_some_and(|((path, _), checkout)| checkout.live(path))
             && crate::sessions::permission_mode::workspace_current(&app, &workspace)
     };
     let recheck_input = || async {
-        if !input_owned().await {
+        let (physical, _) = initial_identity.as_ref().ok_or_else(foreign)?;
+        let admitted = input_checkout.as_ref().ok_or_else(foreign)?;
+        if !crate::worktrees::ownership::capture_directory(&app, &workspace, physical)
+            .await
+            .is_some_and(|current| admitted.same_checkout(&current))
+        {
             return Err(foreign());
         }
         let fresh = super::session_record_at(&app, &endpoint, session.ok_or_else(upstream_error)?).await?;
