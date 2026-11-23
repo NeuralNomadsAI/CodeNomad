@@ -35,6 +35,8 @@
     "env-vars-bg": "#0082ff33",
     "env-vars-border": "#0081ff4d",
     "env-vars-text": "#0080ffff",
+    "file-row-active-bg": "#498be670",
+    "file-row-active-hover-bg": "#478de68f",
     "focus-ring-color": "#0080ffff",
     "focus-ring-offset": "#1e1e1eff",
     "folder-overlay-bg": "#00000073",
@@ -180,6 +182,8 @@
     "env-vars-bg": "#0062ff1a",
     "env-vars-border": "#0064ff33",
     "env-vars-text": "#0066ffff",
+    "file-row-active-bg": "#5996ff70",
+    "file-row-active-hover-bg": "#5996ff8f",
     "focus-ring-color": "#0066ffff",
     "focus-ring-offset": "#fcfcfcff",
     "folder-overlay-bg": "#00000059",
@@ -330,9 +334,19 @@
         "opacity": 0.7,
         "paddingLeft": 0
       },
+      "fileRowActionFocus": {
+        "outlineOffset": -1,
+        "outlineWidth": 1
+      },
       "fileRowActionGlyph": {
         "height": 14,
         "width": 14
+      },
+      "fileRowActions": {
+        "gap": 2,
+        "inlineGap": 2,
+        "overflowSlop": 0.5,
+        "pinnedGap": 2
       },
       "input": {
         "fontSize": 12,
@@ -525,9 +539,19 @@
         "opacity": 0.7,
         "paddingLeft": 0
       },
+      "fileRowActionFocus": {
+        "outlineOffset": -1,
+        "outlineWidth": 1
+      },
       "fileRowActionGlyph": {
         "height": 14,
         "width": 14
+      },
+      "fileRowActions": {
+        "gap": 2,
+        "inlineGap": 2,
+        "overflowSlop": 0.5,
+        "pinnedGap": 2
       },
       "input": {
         "fontSize": 12,
@@ -816,6 +840,8 @@
         "env-vars-bg": "#d2eb9b33",
         "env-vars-border": "#d1ee9c4d",
         "env-vars-text": "#d0ed9cff",
+        "file-row-active-bg": "#8da26b70",
+        "file-row-active-hover-bg": "#8da26d8f",
         "focus-ring-color": "#d0ed9cff",
         "focus-ring-offset": "#2b2f37ff",
         "folder-overlay-bg": "#00000073",
@@ -961,6 +987,8 @@
         "env-vars-bg": "#6258a71a",
         "env-vars-border": "#645aa533",
         "env-vars-text": "#665ba3ff",
+        "file-row-active-bg": "#8b84bb70",
+        "file-row-active-hover-bg": "#8b86bb8f",
         "focus-ring-color": "#665ba3ff",
         "focus-ring-offset": "#dcdee1ff",
         "folder-overlay-bg": "#00000059",
@@ -1094,6 +1122,7 @@
     "packages/ui/postcss.config.js": "aca4c5d8a44abcaa54e72615c5d31f28b24d2e1f5651e22be318eadaf1d57144",
     "packages/ui/src/components/instance/instance-shell2.tsx": "9ed475d0a59935991feda3f0e47c87117649a9d0a5c30d9f506348073b138a62",
     "packages/ui/src/components/instance/shell/right-panel/components/WorkspaceTree.tsx": "d7a5fece63b366f70f2cd8b6826700c1a052812eda50dd518dcae07721d2d568",
+    "packages/ui/src/components/instance/shell/right-panel/row-compact-actions.ts": "805d85e79b9279be23495643d69e5efcafef3b946819a1b488e2fb7b9abf7bad",
     "packages/ui/src/components/instance/shell/storage.ts": "b16b0b05343896ec3b7f069431942064aa8912bd85e528ce534d5649e6c55740",
     "packages/ui/src/index.css": "c1f241cec89239ab2bb645d8c4bcb8981f5a630dd8e3492fe03a8854a47e725d",
     "packages/ui/src/lib/appearance-preferences.ts": "38845fb143946c497fe04e9114e5b2b05df69971687cd46a5da8e8f6a285f1f2",
@@ -1142,6 +1171,7 @@
     "packages/ui/src/styles/components/plugin-package-action.css": "fde5fd20fd4b155eaf9ca1f385153926596a6f7e1296d4a6870d45f586daaa27",
     "packages/ui/src/styles/components/plugin-source-add.css": "0c2d73801860f2b16343a4a0a8510b4a6b1542f8dcfdef9d62eefe2c3eb18c54",
     "packages/ui/src/styles/components/plugin-system-attention.css": "ba9d6f61f54a1a026a931e015eedf8656313fec7776521d451ad995990256d49",
+    "packages/ui/src/styles/components/positioner.css": "cf0adb9204d4849d7d4d77c023672a0d4568ec436bdd19a5b69f9581a0bd75c0",
     "packages/ui/src/styles/components/profile-manager.css": "f96d5abcb15cfa6611c9944ed98435c38382445a1bd285b54760c1e3e68ec503",
     "packages/ui/src/styles/components/prompt-context-controls.css": "f60caa15d742f5dfeb37765599c1d4297a8e844d4512e1114c4c7421e257d4b3",
     "packages/ui/src/styles/components/prompt-help.css": "2c81d4521ee1d568bf98c9262d9bbaa5bb555032372385c526fe2eb0a4f333d2",
@@ -1171,7 +1201,7 @@
     "packages/ui/src/styles/components/usage-metrics.css": "df551e69ed9dddd46fd61f0237b70dff10be0361d63aa60fbaf89768f87bf734",
     "packages/ui/src/styles/components/websearch-settings.css": "e90b18ca3cb0bd6a30a27ff3f331a936808b86b9596370906a682423d84c26d1",
     "packages/ui/src/styles/components/window.css": "8822d4ca58809457be862473895d96f41fb5ff66509eee8e613785e950999026",
-    "packages/ui/src/styles/controls.css": "ad19642fce1d39b56e0c2cc1608c0e43880bd18bd129fca37802819dec605982",
+    "packages/ui/src/styles/controls.css": "dec22749dcd99face0a0f540946006dec6ff0556d0185d7472fc8815e3f14008",
     "packages/ui/src/styles/markdown.css": "2b5c5a6b33ec437951d8acf7c1da1f231287905cc60022851c0557fbadc554f2",
     "packages/ui/src/styles/messaging.css": "827ce7714f2c374baf200445406488c3aba5488810de61a30ea8ef08c87245d8",
     "packages/ui/src/styles/messaging/delete-overlays.css": "ec2f533cff61dd85f871884e5ff4195b6e1be87337cc2aa44557602a5a8600bb",
@@ -1183,8 +1213,8 @@
     "packages/ui/src/styles/messaging/message-usage.css": "273a1e53f86e2e8f739e1c95412dacbb9b7e6f51f8e9dff2be2d7980d8e4bb2d",
     "packages/ui/src/styles/messaging/part-duration.css": "ce1bf207754c9068be6f0299d503fd234a2e7776fbd25a8bfc499a3680bede5f",
     "packages/ui/src/styles/messaging/permission-receipts.css": "22d70fc29394a88dce362776fbeafbc1a179eab0fc902f7240eb9c27a6a128df",
-    "packages/ui/src/styles/messaging/prompt-input-footer.css": "f882eb9c073a381b1fc3ba59417cfe44283736e0fac51cff9d637fca8f99b9af",
-    "packages/ui/src/styles/messaging/prompt-input.css": "69b50fc8132ec5955d2edb641aa9fe31d5e7f9aa8e3d8772dbd8b565a4c4d016",
+    "packages/ui/src/styles/messaging/prompt-input-footer.css": "a9fd22bca2e4c1f5b113bc1e7ad7856ae7c969039d7af3005885e90afafbd196",
+    "packages/ui/src/styles/messaging/prompt-input.css": "f3f5e061ae48d1771ff68b10e0c84f311c96ffccdeaeb0249d2bc802c452a1a5",
     "packages/ui/src/styles/messaging/search-highlights.css": "f22dd26ecef73b9c8461ffbeebe324fe37e89fa5f0289743753d9637a0b30491",
     "packages/ui/src/styles/messaging/session-timeline-rail.css": "170460acccd968d00c6cd5a2a75e9c52fec6556394a77a5952c279e9d4f967ec",
     "packages/ui/src/styles/messaging/technical-groups.css": "38713e17e4207f29b9a45160839cf9ad3c74157530b794efe8b132b2337d171f",

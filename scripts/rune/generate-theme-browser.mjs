@@ -126,6 +126,13 @@ export async function collectTheme(names){
     colors[`${name}-offset`]=focusHex(layers[0].color)
   }
   }finally{focused?.focus()}
+  const actions=document.getElementById('file-actions-contract'),button=actions.querySelector('.file-row-inline-actions button')
+  const metric=(el,key)=>{const n=parseFloat(getComputedStyle(el)[key]);if(!Number.isFinite(n))throw Error(`Non-numeric file actions ${key}`);return n}
+  metrics.fileRowActions={gap:metric(actions,'columnGap'),pinnedGap:metric(actions.firstElementChild,'columnGap'),inlineGap:metric(actions.lastElementChild,'columnGap'),overflowSlop:Number(actions.dataset.slop)}
+  button.focus()
+  if(!button.matches(':focus-visible'))throw Error('File action requires actual keyboard focus')
+  metrics.fileRowActionFocus={outlineWidth:metric(button,'outlineWidth'),outlineOffset:metric(button,'outlineOffset')}
+  focused?.focus()
   probe.remove()
   return {colors,numbers,strings,shadows,metrics,unresolved}
 }
@@ -136,4 +143,23 @@ export async function applyDefaultPalette(appearance){
   const {scheme}=normalizeAppearancePreferences(undefined,normalizeColorScheme('system'))[appearance]
   applyColorScheme(scheme)
   return scheme.id
+}
+
+export async function collectFileActionColors(page){
+  const toggle=page.locator('#file-actions-contract .icon-toggle')
+  const previous=await page.evaluateHandle(()=>document.activeElement)
+  const outside=async()=>{const v=page.viewportSize();await page.mouse.move(v.width-1,v.height-1)}
+  const color=()=>toggle.evaluate(element=>{
+    const canvas=document.createElement('canvas');canvas.width=canvas.height=1
+    const ctx=canvas.getContext('2d',{willReadFrequently:true})
+    ctx.fillStyle=getComputedStyle(element).backgroundColor;ctx.fillRect(0,0,1,1)
+    return '#'+[...ctx.getImageData(0,0,1,1).data].map(v=>v.toString(16).padStart(2,'0')).join('')
+  })
+  try{
+    await toggle.scrollIntoViewIfNeeded();await outside()
+    if(await toggle.evaluate(el=>el.matches(':hover')))throw Error('File action rest requires a real non-hover state')
+    const rest=await color();await toggle.hover()
+    if(!await toggle.evaluate(el=>el.matches(':hover')))throw Error('File action requires real Chromium hover')
+    return {'file-row-active-bg':rest,'file-row-active-hover-bg':await color()}
+  }finally{await outside();await previous.evaluate(el=>el?.focus());await previous.dispose()}
 }
