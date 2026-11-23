@@ -242,7 +242,7 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
                 .then(|| text(t("promptInput.send.errorTitle")).role("alert")),
         )
         .children(
-            (s.composer.unconfirmed_id().is_some() || s.composer.command_unconfirmed.is_some())
+            (s.composer.unconfirmed_id().is_some() || super::actions::command_held(s))
                 .then(|| text(t("missionsPanel.action.requestUpdateUncertain")).role("alert")),
         )
 }

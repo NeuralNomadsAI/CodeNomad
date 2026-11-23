@@ -7,7 +7,7 @@ const MAX_ENTRIES: usize = 100;
 const MAX_BYTES: usize = 80 * 1024 * 1024;
 
 #[derive(PartialEq, Eq)]
-enum Project {
+pub(super) enum Project {
     Workspace(Option<String>, Option<String>, String),
     Direct(String, String),
     Unbound,
@@ -37,6 +37,10 @@ fn scope(s: &State) -> Option<(Project, String, String)> {
             )
         }),
     )
+}
+
+pub(super) fn command_target(s: &State) -> Option<super::command_receipts::Target> {
+    scope(s).map(|(project, _, session)| (project, session))
 }
 
 struct Entry {
@@ -167,7 +171,7 @@ pub(super) fn available(s: &State) -> bool {
     })
 }
 
-pub(super) fn step(s: &mut State, older: bool, forced: bool, tx: &mut Tx) -> bool {
+pub(crate) fn step(s: &mut State, older: bool, forced: bool, tx: &mut Tx) -> bool {
     if s.composer.editing_locked()
         || s.composer.device.busy()
         || !forced && s.composer.picker.open()

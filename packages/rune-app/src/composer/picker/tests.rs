@@ -590,7 +590,6 @@ fn pasted_known_command_uses_current_catalogue_without_requiring_picker_selectio
         &attempt,
         crate::transport::PromptOutcome::Unconfirmed,
     );
-    assert!(rt.state.composer.command_unconfirmed.is_some());
     assert_eq!(rt.state.draft.text, "/review @docs 🦀");
     press(&mut rt, Key::Enter, Mods::default());
     assert!(receiver.try_recv().is_err());
@@ -601,6 +600,47 @@ fn pasted_known_command_uses_current_catalogue_without_requiring_picker_selectio
     rt.update(|s, tx| assert!(crate::composer::recall::step(s, true, true, tx)));
     assert_eq!(rt.state.draft.text, "/review ./docs 🦀");
     assert!(!crate::composer::can_send(&rt.state));
+}
+
+#[test]
+fn rejected_b_does_not_release_recalled_a_with_a_lost_receipt() {
+    use crate::transport::{Command, PromptOutcome};
+    let mut rt = runtime();
+    let (sender, receiver) = bounded(1);
+    rt.state.commands = Some(sender);
+    for name in ["a", "b"] {
+        rt.state
+            .composer
+            .picker
+            .commands
+            .items
+            .push(Item::Command(named(name)));
+    }
+    let submit = |rt: &mut Runtime<State>, text: &str| {
+        rt.state.draft.replace_text(text);
+        press(rt, Key::Enter, Mods::default());
+        let Command::Slash { attempt, .. } = receiver.try_recv().unwrap() else {
+            panic!("expected slash")
+        };
+        attempt
+    };
+    let a = submit(&mut rt, "/a one");
+    crate::composer::acknowledge(&mut rt.state, &a, PromptOutcome::Unconfirmed);
+    let b = submit(&mut rt, "/b two");
+    crate::composer::acknowledge(&mut rt.state, &b, PromptOutcome::Rejected);
+    rt.update(|s, tx| {
+        assert!(crate::composer::recall::step(s, true, true, tx));
+        assert_eq!(s.draft.text.trim(), "/b two");
+        assert!(crate::composer::recall::step(s, true, true, tx));
+    });
+    assert_eq!(rt.state.draft.text.trim(), "/a one");
+    assert!(crate::composer::actions::command_held(&rt.state));
+    press(&mut rt, Key::Enter, Mods::default());
+    assert!(receiver.try_recv().is_err());
+    crate::composer::acknowledge(&mut rt.state, &b, PromptOutcome::Confirmed(b.clone()));
+    assert!(crate::composer::actions::command_held(&rt.state));
+    crate::composer::acknowledge(&mut rt.state, &a, PromptOutcome::Confirmed(a.clone()));
+    assert!(!crate::composer::actions::command_held(&rt.state));
 }
 
 #[test]
