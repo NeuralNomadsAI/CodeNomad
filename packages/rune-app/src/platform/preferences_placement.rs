@@ -47,7 +47,20 @@ impl Frame {
     }
 }
 
-pub(super) fn open<S: 'static>(spec: WindowSpec<S>, store: Option<Store>) -> WindowHandle {
+fn placement_store(
+    s: &crate::State,
+    direct_directory: impl FnOnce() -> Option<std::path::PathBuf>,
+) -> Option<Store> {
+    if s.workspace.is_some() {
+        return crate::workspace::native_window_store(s);
+    }
+    let directory = direct_directory()?;
+    let store = super::block_on(Store::open(directory)).ok()?;
+    Some(store)
+}
+
+pub(super) fn open<S: 'static>(spec: WindowSpec<S>, s: &crate::State) -> WindowHandle {
+    let store = placement_store(s, super::storage::configured_directory);
     let frame = store
         .as_ref()
         .and_then(Store::preferences_frame)
@@ -95,7 +108,7 @@ pub(crate) fn closed() {
 
 #[cfg(test)]
 mod tests {
-    use super::Frame;
+    use super::*;
 
     #[test]
     fn validates_dimensions_and_keeps_negative_monitor_offsets() {
@@ -112,5 +125,35 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn direct_conversation_uses_the_explicit_profile_without_a_workspace() {
+        let dir = std::env::temp_dir().join(format!(
+            "rune-preferences-{}",
+            codenomad_client::http::client_id().unwrap()
+        ));
+        let mut s = crate::init();
+        let frame = Frame {
+            position: (-800, 25),
+            dimensions: (850, 700),
+            maximized: false,
+        };
+        {
+            let store = placement_store(&s, || Some(dir.clone())).unwrap();
+            store.save_preferences_frame(&frame.encode()).unwrap();
+            assert!(super::super::block_on(store.load()).unwrap().is_none());
+        }
+        let store = placement_store(&s, || Some(dir.clone())).unwrap();
+        assert_eq!(
+            Frame::decode(&store.preferences_frame().unwrap()),
+            Some(frame)
+        );
+        drop(store);
+        s.workspace = Some(crate::workspace::Ui::new());
+        assert!(placement_store(&s, || panic!("workspace owns the directory")).is_none());
+        std::fs::remove_file(dir.join("preferences.json")).unwrap();
+        std::fs::remove_file(dir.join("state.lock")).unwrap();
+        std::fs::remove_dir(dir).unwrap();
     }
 }
