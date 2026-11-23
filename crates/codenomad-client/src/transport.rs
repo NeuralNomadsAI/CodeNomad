@@ -8,6 +8,10 @@ pub struct DirectoryChange {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceEvent {
+    StatsChanged {
+        workspace_id: String,
+        urgent: bool,
+    },
     SessionCompacted {
         id: String,
     },

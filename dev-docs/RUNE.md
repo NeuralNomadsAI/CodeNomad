@@ -32,6 +32,8 @@ Controls shared by screens live in `components/` or the theme. Application butto
 - Desktop-only features (server launch, local files, system notifications, clipboard, windows, updates) sit behind a platform interface with a web implementation.
 - Layouts adapt to phone, tablet and desktop, with touch input.
 
+Preferences → Stats uses the captured project's backend for the service-wide aggregate, owner, and display cache. The section owns its reads and restores the period through the backend; terminal events on the existing stream invalidate the display without loading transcripts. See [Settings](SETTINGS.md) and [Stats restoration](CACHE_REFRESH_CONVENTIONS.md#stats-restoration-and-native-cost).
+
 ## Conversion
 
 Each Solid component or module is converted as is, then simplified:

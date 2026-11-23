@@ -24,9 +24,16 @@ pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
     providers: Mutex<CatalogueChanges>,
     stopped: Mutex<CatalogueChanges>,
+    stats: Mutex<StatsChanges>,
     attention: Mutex<VecDeque<AttentionHint>>,
     wake: Wake,
     generation: std::sync::atomic::AtomicU64,
+}
+
+#[derive(Default)]
+struct StatsChanges {
+    hints: [CatalogueChanges; 2],
+    status: std::collections::HashMap<String, (bool, Option<u64>)>,
 }
 
 impl Signals {
@@ -45,6 +52,7 @@ impl Signals {
 
     fn disconnected(&self) {
         self.attention.lock().unwrap().clear();
+        *self.stats.lock().unwrap() = StatsChanges::default();
         if self.generation.load(SeqCst) % 2 == 1 {
             self.generation.fetch_add(1, SeqCst);
             (self.wake)();
@@ -52,29 +60,32 @@ impl Signals {
     }
 
     fn mark(&self, lane: &Mutex<CatalogueChanges>, workspace: Option<&str>) -> bool {
-        {
-            let mut pending = lane.lock().unwrap();
-            match (&mut *pending, workspace) {
-                (CatalogueChanges::All, _) => false,
-                (_, None) => {
-                    *pending = CatalogueChanges::All;
-                    true
-                }
-                (CatalogueChanges::None, Some(id)) => {
-                    *pending = CatalogueChanges::Workspaces(HashSet::from([id.to_owned()]));
-                    true
-                }
-                (CatalogueChanges::Workspaces(ids), Some(id)) if ids.len() < 128 => {
-                    ids.insert(id.to_owned())
-                }
-                (CatalogueChanges::Workspaces(_), Some(_)) => {
-                    *pending = CatalogueChanges::All;
-                    true
-                }
-            }
+        mark_changes(&mut lane.lock().unwrap(), workspace)
+    }
+}
+
+fn mark_changes(pending: &mut CatalogueChanges, workspace: Option<&str>) -> bool {
+    match (&mut *pending, workspace) {
+        (CatalogueChanges::All, _) => false,
+        (_, None) => {
+            *pending = CatalogueChanges::All;
+            true
+        }
+        (CatalogueChanges::None, Some(id)) => {
+            *pending = CatalogueChanges::Workspaces(HashSet::from([id.to_owned()]));
+            true
+        }
+        (CatalogueChanges::Workspaces(ids), Some(id)) if ids.len() < 128 => {
+            ids.insert(id.to_owned())
+        }
+        (CatalogueChanges::Workspaces(_), Some(_)) => {
+            *pending = CatalogueChanges::All;
+            true
         }
     }
+}
 
+impl Signals {
     pub(super) fn observe(&self, frame: &Value) {
         let provider_changed = crate::settings::provider_change(frame)
             .is_some_and(|id| self.mark(&self.providers, Some(id)));
@@ -87,6 +98,27 @@ impl Signals {
             return;
         };
         let stopped = kind == Some("workspace.stopped") && self.mark(&self.stopped, Some(id));
+        let stats = match kind {
+            Some("instance.event") => frame["event"]["type"]
+                .as_str()
+                .and_then(crate::settings::stats::event)
+                .is_some_and(|urgent| {
+                    mark_changes(
+                        &mut self.stats.lock().unwrap().hints[usize::from(!urgent)],
+                        Some(id),
+                    )
+                }),
+            Some("instance.eventStatus") => {
+                let mut stats = self.stats.lock().unwrap();
+                let state = (frame["status"] == "connected", frame["generation"].as_u64());
+                if !stats.status.contains_key(id) && stats.status.len() >= 128 {
+                    stats.status.clear();
+                }
+                stats.status.insert(id.to_owned(), state) != Some(state)
+            }
+            Some("workspace.stopped") => self.stats.lock().unwrap().status.remove(id).is_some(),
+            _ => false,
+        };
         let attention =
             kind == Some("instance.event") && self.observe_attention(id, &frame["event"]);
         let invalidates = match kind {
@@ -112,6 +144,7 @@ impl Signals {
             | provider_changed
             | stopped
             | attention
+            | stats
         {
             (self.wake)();
         }
@@ -176,6 +209,7 @@ impl CatalogueWatch {
             pending: Mutex::default(),
             providers: Mutex::default(),
             stopped: Mutex::default(),
+            stats: Mutex::default(),
             attention: Mutex::default(),
             generation: Default::default(),
             wake,
@@ -250,6 +284,16 @@ impl CatalogueWatch {
             self.signals.generation.load(SeqCst),
         )
     }
+    pub fn take_stats_changes(
+        &self,
+        workspace: Option<&str>,
+    ) -> ([CatalogueChanges; 2], Option<(bool, Option<u64>)>) {
+        let mut stats = self.signals.stats.lock().unwrap();
+        (
+            std::mem::take(&mut stats.hints),
+            workspace.and_then(|id| stats.status.get(id).copied()),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -296,6 +340,7 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             stopped: Mutex::default(),
+            stats: Mutex::default(),
             attention: Mutex::default(),
             generation: 3.into(),
             wake: Arc::new(move || {
@@ -326,6 +371,7 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             stopped: Mutex::default(),
+            stats: Mutex::default(),
             attention: Mutex::default(),
             generation: Default::default(),
             wake: Arc::new(|| {}),
@@ -351,6 +397,7 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             stopped: Mutex::default(),
+            stats: Mutex::default(),
             attention: Mutex::default(),
             generation: Default::default(),
             wake: Arc::new(|| {}),

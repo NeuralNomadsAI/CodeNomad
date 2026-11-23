@@ -18,6 +18,8 @@ pub(super) struct Target {
     observed: Option<u64>,
     authority: u64,
     online: bool,
+    stats: [u64; 2],
+    stats_status: Option<(bool, Option<u64>)>,
 }
 
 impl Target {
@@ -46,6 +48,8 @@ impl Target {
             observed: None,
             authority: 0,
             online: true,
+            stats: [0; 2],
+            stats_status: None,
         })
     }
 
@@ -96,6 +100,36 @@ impl Target {
 
     pub fn online(&self) -> bool {
         self.online
+    }
+
+    pub(super) fn stats_source(&self) -> (&Backend, &str, u64, [u64; 2]) {
+        (&self.backend, &self.workspace, self.authority, self.stats)
+    }
+
+    pub(super) fn stats_status(&self) -> Option<(bool, Option<u64>)> {
+        self.stats_status
+    }
+
+    pub(super) fn stats_catalogue(
+        &mut self,
+        changes: &[CatalogueChanges; 2],
+        status: Option<(bool, Option<u64>)>,
+    ) -> bool {
+        let mut changed = std::mem::replace(&mut self.stats_status, status) != status;
+        for (index, lane) in changes.iter().enumerate() {
+            if self.matches(lane) {
+                self.stats[index] = self.stats[index].wrapping_add(1);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    pub(super) fn stats_hint(&mut self, workspace: &str, urgent: bool) {
+        if self.is_workspace(workspace) {
+            let counter = &mut self.stats[usize::from(!urgent)];
+            *counter = counter.wrapping_add(1);
+        }
     }
 
     pub(super) fn location(&self) -> (&str, Option<&str>) {

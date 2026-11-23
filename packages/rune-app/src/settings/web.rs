@@ -19,6 +19,7 @@ enum Section {
     OpenCode,
     Notifications,
     Providers,
+    Stats,
     Remote,
 }
 
@@ -29,6 +30,7 @@ impl Section {
             Self::OpenCode => "settings.nav.opencode",
             Self::Notifications => "settings.nav.notifications",
             Self::Providers => "settings.nav.providers",
+            Self::Stats => "settings.usage.title",
             Self::Remote => "settings.nav.remote",
         })
     }
@@ -49,6 +51,7 @@ pub(super) struct Panel {
     memory_help_failed: bool,
     memory_editor: super::memory::editor::Editor,
     catalog: Catalog,
+    stats: super::stats::Dashboard,
     scope: Option<HostScope>,
     opencode: opencode::Status,
     logging: opencode::logging::Logging,
@@ -77,6 +80,28 @@ struct HostScope {
 }
 
 impl Panel {
+    pub fn poll_stats(
+        &mut self,
+        prefs: &mut Preferences,
+        wake: &rune::Waker,
+        paired: bool,
+        now: f64,
+        tx: &mut rune::Tx,
+    ) -> bool {
+        let leave = self.section == Section::Stats && !super::stats::supported(prefs);
+        if leave {
+            self.section = Section::General;
+            prefs.memory.show(self.shown && paired);
+        }
+        self.stats.poll(
+            prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
+            self.shown && paired && self.section == Section::Stats,
+            wake,
+            now,
+            tx,
+        ) | leave
+    }
+
     pub fn shown(&self) -> bool {
         self.shown
     }
@@ -200,6 +225,7 @@ fn close(s: &mut State) {
     panel.contrast_help = false;
     panel.permissions.close();
     panel.catalog.suspend();
+    panel.stats.suspend();
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.hide_opencode();
     panel.logging.close();
@@ -253,11 +279,22 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             Section::OpenCode,
             Section::Notifications,
             Section::Providers,
+            Section::Stats,
             Section::Remote,
         ][..]
     } else {
-        &[Section::General, Section::Notifications, Section::Providers][..]
+        &[
+            Section::General,
+            Section::Notifications,
+            Section::Providers,
+            Section::Stats,
+        ][..]
     };
+    let sections: Vec<_> = sections
+        .iter()
+        .copied()
+        .filter(|section| *section != Section::Stats || super::stats::supported(prefs))
+        .collect();
     let labels: Vec<_> = sections.iter().map(|section| section.label()).collect();
     let navigation = chrome::segments(
         t("settings.navigationAriaLabel"),
@@ -271,6 +308,7 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             let mut prefs = s.settings.shared.borrow_mut();
             let section = sections[index];
             if !panel.shown
+                || (section == Section::Stats && !super::stats::supported(&prefs))
                 || (matches!(section, Section::OpenCode | Section::Remote) && !panel.local(&prefs))
             {
                 return;
@@ -324,6 +362,10 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 s.settings.web.catalog.toggle()
             })
         }
+        Section::Stats => super::stats::view(&panel.stats, &mut layers, |s: &mut State| {
+            let panel = &mut s.settings.web;
+            (panel.shown && panel.section == Section::Stats).then_some(&mut panel.stats)
+        }),
         Section::Notifications => col()
             .full_width()
             .child(notification_settings::view(

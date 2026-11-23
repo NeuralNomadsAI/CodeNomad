@@ -134,6 +134,79 @@ fn project(id: &str, claim: &str) -> Value {
 }
 
 #[test]
+fn stats_reads_the_service_contract_on_the_captured_backend() {
+    use crate::settings::stats::{self, DAY};
+    run(async {
+        let to = 1_800_000_000_000;
+        let mut snapshot = json!({
+            "scope": "service", "owner":"channel", "connection":"live", "identity":"root",
+            "stats": {
+                "range": {"from":to - 7*DAY, "to":to},
+                "sessions":2, "subagents":1, "prompts":3, "steps":4, "cost":0.0025,
+                "tokens":{"input":12345,"output":9,"reasoning":1,"cache":{"read":5,"write":2}},
+                "activeDays":1, "streak":1, "activity":[], "models":[]
+            }
+        });
+        let url = "/api/workspaces/project/service-usage";
+        let fresh = format!(
+            "GET {url}?timezone=Europe%2FParis&from={}&to={to}&restorePeriod=true",
+            to - 30 * DAY
+        );
+        let server = Server::start(vec![
+            reply(
+                "GET /api/meta",
+                None,
+                200,
+                json!({"apiContract":1,"serverId":"fixture","capabilities":["service-usage"]}),
+            ),
+            reply(
+                &format!("GET {url}/owner"),
+                None,
+                200,
+                json!({"owner":"channel","connection":"live"}),
+            ),
+            reply(
+                &format!("GET {url}/cache?timezone=Europe%2FParis&days=7"),
+                None,
+                200,
+                json!({"days":7,"owner":"channel","connection":"live","identity":"root","snapshot":snapshot}),
+            ),
+            reply(&fresh, None, 200, snapshot.clone()),
+            {
+                snapshot["stats"]["range"]["to"] = json!(to + 1);
+                reply(&fresh, None, 200, snapshot)
+            },
+            reply(
+                "GET /api/meta",
+                None,
+                200,
+                json!({"apiContract":1,"serverId":"fixture","capabilities":[]}),
+            ),
+        ]);
+        let backend = Backend::unauthenticated(&server.address).unwrap();
+        backend.attest_server().await.unwrap();
+        assert!(backend.client.supports_service_usage());
+        assert_eq!(
+            stats::owner(&backend, "project")
+                .await
+                .unwrap()
+                .connection
+                .as_deref(),
+            Some("live")
+        );
+        let cached = stats::cached(&backend, "project", "Europe/Paris", Some(7))
+            .await
+            .unwrap();
+        assert_eq!(cached.snapshot.unwrap().stats.tokens.input, 12345);
+        let read = || stats::fresh(&backend, "project", "Europe/Paris", 30, to, true);
+        assert_eq!(read().await.unwrap().days(), 7);
+        assert!(read().await.is_err());
+        backend.attest_server().await.unwrap();
+        assert!(!backend.client.supports_service_usage());
+    });
+}
+
+#[test]
 fn creation_is_an_independent_claimed_occurrence_and_cleanup_targets_its_owner() {
     run(async {
         let one = "11223344-5566-7788-99aa-bbccddeeff00";

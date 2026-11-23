@@ -37,6 +37,7 @@ pub(super) struct Window {
     pub(super) opencode: opencode::Status,
     logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
+    stats: super::stats::Dashboard,
     remote: remote::Remote,
     notification_permission: notification_settings::Permission,
     pub(super) focused: Rc<Cell<bool>>,
@@ -55,6 +56,7 @@ enum Section {
     OpenCode,
     Notifications,
     Providers,
+    Stats,
     Remote,
 }
 
@@ -198,7 +200,7 @@ pub(super) fn spec() -> AppSpec<Window> {
                 prefs.refresh();
             }
         }),
-        poll: Some(|s, _, tx| {
+        poll: Some(|s, now, tx| {
             let locale = s
                 .shared
                 .borrow()
@@ -240,6 +242,21 @@ pub(super) fn spec() -> AppSpec<Window> {
                         .window_wake
                         .as_ref()
                         .is_some_and(|wake| s.remote.poll(&prefs, wake));
+                let stats_changed = prefs.window_wake.clone().is_some_and(|wake| {
+                    let supported = super::stats::supported(&prefs);
+                    let leave = !supported && s.section == Section::Stats;
+                    if leave {
+                        s.section = Section::General;
+                        prefs.memory.show(true);
+                    }
+                    s.stats.poll(
+                        prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
+                        s.section == Section::Stats && !s.confirm_close && !s.closing,
+                        &wake,
+                        now,
+                        tx,
+                    ) | leave
+                });
                 drop(prefs);
                 let providers_changed = if s.section == Section::Providers {
                     let prefs = s.shared.borrow();
@@ -248,7 +265,12 @@ pub(super) fn spec() -> AppSpec<Window> {
                 } else {
                     false
                 };
-                updated | status_changed | remote_changed | providers_changed | editor_changed
+                updated
+                    | status_changed
+                    | remote_changed
+                    | providers_changed
+                    | editor_changed
+                    | stats_changed
             })
         }),
         on_key: Some(|s, event, tx| {
@@ -305,6 +327,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let opencode_label = t("settings.nav.opencode");
         let notifications_label = t("settings.nav.notifications");
         let providers_label = t("settings.nav.providers");
+        let stats_label = t("settings.usage.title");
         let conversation_label = t("settings.nav.chat");
         let remote_label = t("settings.nav.remote");
         let section = match s.section {
@@ -313,6 +336,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::OpenCode => opencode_label,
             Section::Notifications => notifications_label,
             Section::Providers => providers_label,
+            Section::Stats => stats_label,
             Section::Remote => remote_label,
         };
         let nav = chrome::nav(
@@ -344,12 +368,15 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     providers_label,
                     s.section == Section::Providers,
                 ),
+                ("settings-stats", stats_label, s.section == Section::Stats),
                 (
                     "settings-remote",
                     remote_label,
                     s.section == Section::Remote,
                 ),
-            ],
+            ]
+            .into_iter()
+            .filter(|(key, _, _)| *key != "settings-stats" || super::stats::supported(&prefs)),
             |s: &mut Window, key| {
                 s.picker.set(None);
                 s.contrast_help = false;
@@ -359,6 +386,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-conversation" => Section::Conversation,
                     "settings-notifications" => Section::Notifications,
                     "settings-providers" => Section::Providers,
+                    "settings-stats" if super::stats::supported(&s.shared.borrow()) => {
+                        Section::Stats
+                    }
                     "settings-remote" => Section::Remote,
                     _ => Section::General,
                 };
@@ -448,6 +478,13 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             .as_ref()
                             .is_some_and(providers::Target::online),
                 ),
+            ),
+            Section::Stats => (
+                "stats",
+                super::stats::view(&s.stats, &mut layers, |s: &mut Window| {
+                    (s.section == Section::Stats && !s.closing && !s.confirm_close)
+                        .then_some(&mut s.stats)
+                }),
             ),
             Section::Remote => (
                 "remote",

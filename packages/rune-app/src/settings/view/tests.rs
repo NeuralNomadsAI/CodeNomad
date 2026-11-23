@@ -3,6 +3,31 @@ use rune::{Env, Runtime};
 use serde_json::Value;
 
 #[test]
+fn stats_tab_mounts_without_opening_a_project() {
+    let state = Window::default();
+    state.shared.borrow_mut().fixture();
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let (x, y) = rt.find("settings-stats").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(rt.state.section == Section::Stats);
+    let tree = rt.accessibility_json().to_string();
+    let expected = crate::strings::with_locale(
+        rt.state
+            .shared
+            .borrow()
+            .locale()
+            .unwrap_or_else(crate::strings::locale),
+        || t("settings.usage.noProject"),
+    );
+    assert!(tree.contains(expected), "{tree}");
+    assert!(rt.find("stats-refresh").is_none());
+    assert!(rt.find("stats-period").is_none());
+}
+
+#[test]
 fn notifications_tab_mounts_the_routing_table_and_the_focused_switch() {
     let state =
         Window::default().with_notification_permission(notification_settings::Permission::Granted);

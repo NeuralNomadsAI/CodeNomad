@@ -9,6 +9,7 @@ mod opencode;
 mod preferences;
 mod providers;
 mod remote;
+mod stats;
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -81,6 +82,18 @@ pub(crate) fn poll_memory_cleanup(s: &mut State, tx: &mut rune::Tx) -> bool {
     memory::cleanup::poll(s, tx)
 }
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn poll_stats(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
+    let paired = !crate::platform::pairing::required(s);
+    let mut shared = s.settings.shared.borrow_mut();
+    let language = shared.locale().unwrap_or_else(strings::locale);
+    strings::with_locale(language, || {
+        s.settings
+            .web
+            .poll_stats(&mut shared, &s.wake, paired, now, tx)
+    })
+}
+
 pub(crate) fn poll(s: &mut State) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some((request, editor)) = s.settings.window.as_ref().and_then(|(_, _, request)| {
@@ -112,11 +125,16 @@ pub(crate) fn poll(s: &mut State) -> bool {
         s.phase = crate::Phase::Failed;
     }
     {
-        let observation = s
-            .screen
-            .launcher()
-            .and_then(|l| l.catalogue_watch.as_ref())
-            .map(|watch| watch.take_provider_changes());
+        let watch = s.screen.launcher().and_then(|l| l.catalogue_watch.as_ref());
+        let observation = watch.map(|watch| watch.take_provider_changes());
+        let stats_changes = watch.map(|watch| {
+            watch.take_stats_changes(
+                shared
+                    .provider_target
+                    .as_ref()
+                    .map(|target| target.location().0),
+            )
+        });
         let (changes, stopped, generation) = observation.map_or_else(
             || (Default::default(), Default::default(), None),
             |(changes, stopped, generation)| (changes, stopped, Some(generation)),
@@ -132,13 +150,21 @@ pub(crate) fn poll(s: &mut State) -> bool {
             {
                 shared.provider_target = None;
             }
+            let stats_changed = shared
+                .provider_target
+                .as_mut()
+                .zip(stats_changes.as_ref())
+                .is_some_and(|(target, (changes, status))| {
+                    target.stats_catalogue(changes, *status)
+                });
             if (old
                 != shared
                     .provider_target
                     .as_ref()
                     .map(|target| target.revision())
                 || !matches!(changes, codenomad_client::stream::CatalogueChanges::None)
-                || bound)
+                || bound
+                || stats_changed)
                 && let Some(wake) = &shared.window_wake
             {
                 wake();

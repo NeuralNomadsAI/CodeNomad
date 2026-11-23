@@ -24,7 +24,19 @@ pub fn usd(locale: &str, cost: f64, small_cost_precision: bool) -> String {
     } else {
         format!("{cost:.2}")
     };
-    let amount = localized(locale, &raw);
+    currency(locale, &raw)
+}
+
+pub fn dashboard_usd(locale: &str, cost: f64) -> String {
+    let mut raw = format!("{cost:.4}");
+    while raw.ends_with('0') && raw.split_once('.').is_some_and(|(_, frac)| frac.len() > 2) {
+        raw.pop();
+    }
+    currency(locale, &raw)
+}
+
+fn currency(locale: &str, raw: &str) -> String {
+    let amount = localized(locale, raw);
     match locale {
         "es" => format!("{amount}\u{a0}US$"),
         "fr" => format!("{amount}\u{a0}$US"),
