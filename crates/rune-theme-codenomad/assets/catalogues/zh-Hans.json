@@ -262,6 +262,8 @@
   "expandButton.toggleAriaLabel": "切换聊天输入框高度",
   "filesPanel.binary": "无法预览此二进制文件。",
   "filesPanel.commits": "提交",
+  "filesPanel.draftConflict": "磁盘上的文件已更改。你的草稿已保留。",
+  "filesPanel.draftLimit": "无法保留草稿。请在关闭前保存或复制最新的修改。",
   "filesPanel.gitInit.action": "初始化 Git",
   "filesPanel.gitInit.deleting": "此文件夹正在被删除。",
   "filesPanel.gitInit.error": "无法初始化 Git：{message}",
