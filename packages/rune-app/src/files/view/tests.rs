@@ -11,6 +11,7 @@ mod resize;
 mod server;
 mod tree;
 mod visual;
+mod workspace_actions;
 
 fn english(s: &State, cx: &mut rune::Cx<State>) -> El {
     crate::strings::with_locale("en", || crate::view(s, cx))

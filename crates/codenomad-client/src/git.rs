@@ -168,6 +168,27 @@ impl Backend {
         Ok(url)
     }
 
+    /// Resolve the checkout for a local host action; displayed inventory is not authority.
+    pub async fn workspace_checkout(&self, slug: &str) -> Result<String> {
+        if slug == "root" {
+            let data = read(self.client.get(self.git_route(&[])?), 64 * 1024).await?;
+            let path = field(&data, "path")?;
+            if crate::absolute_server_path(&path) {
+                return Ok(path);
+            }
+        } else if valid_slug(slug)
+            && let Some(tree) = self
+                .git_worktrees(true)
+                .await?
+                .trees
+                .into_iter()
+                .find(|tree| tree.slug == slug && !tree.missing)
+        {
+            return Ok(tree.directory);
+        }
+        Err("Selected checkout is unavailable".into())
+    }
+
     pub async fn git_worktrees(&self, fresh: bool) -> Result<Worktrees> {
         let data = read(
             self.client

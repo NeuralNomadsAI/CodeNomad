@@ -78,7 +78,7 @@ try{
   out.sources=await sources(files)
   await generated('assets/theme.json',out)
   await generateWorkspaceIcons()
-  await generateIcons(['external-link','trash'],'src/file_row_actions/icons.rs')
+  await generateIcons(['copy','external-link','eye','terminal-square','trash'],'src/file_row_actions/icons.rs')
 }finally{
   await browser?.close()
   await server.close()

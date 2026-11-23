@@ -172,12 +172,11 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
             )
             .child(group);
         let control = |key: &'static str, label: &'static str, width| {
-            layout::button(label, false)
-                .key(key)
-                .on_press_tx(move |s: &mut Gallery, tx| {
-                    s.width = width;
-                    trace(key, tx);
-                })
+            layout::button_tx(label, false, move |s: &mut Gallery, tx| {
+                s.width = width;
+                trace(key, tx);
+            })
+            .key(key)
         };
         let scene = rune::col()
             .key("scene")
@@ -196,7 +195,7 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
                     .child(control("narrow", "Narrow", 110.0))
                     .child(control("wide", "Wide", 400.0)),
             )
-            .child(layout::button("Outside", false).key("outside"));
+            .child(layout::button("Outside", false, |_: &mut Gallery| {}).key("outside"));
         let _ = cx.layout_size("scene");
         rune_kit::root(scene, popup)
     })

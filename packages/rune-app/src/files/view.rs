@@ -8,13 +8,19 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
 };
 
+mod actions;
 mod tree;
+pub(super) use actions::Actions;
+pub(super) use actions::poll as poll_actions;
 pub(crate) use tree::tree;
 
 pub fn toggle(s: &State) -> El {
     let Some(ui) = &s.files else {
         return rune::el();
     };
+    if ui.shell_managed {
+        return rune::el();
+    }
     let drawer = ui.drawer();
     let disabled = ui.stopped || (!drawer.room && !ui.panel);
     let toggle = std::rc::Rc::new(screen::action_tx(&s.input_scope, |s, _| {
@@ -106,18 +112,23 @@ pub fn body(s: &State, history: El, expanded: bool) -> El {
     };
     let main = theme::pages(history, super::has_preview(s).then(|| reader(s)));
     let drawer = ui.drawer();
-    theme::split(main, drawer.pinned.then(|| tree(s)), drawer.width, expanded)
-        .key("files-host")
-        .on_layout_tx({
-            let scope = s.input_scope.clone();
-            move |s: &mut State, rect, tx| {
-                if s.current_scope(&scope) {
-                    if let Some(ui) = &mut s.files {
-                        ui.resize(rect[2], tx);
-                    }
+    theme::split(
+        main,
+        (!ui.shell_managed && drawer.pinned).then(|| tree(s, drawer.width, false)),
+        drawer.width,
+        expanded,
+    )
+    .key("files-host")
+    .on_layout_tx({
+        let scope = s.input_scope.clone();
+        move |s: &mut State, rect, tx| {
+            if s.current_scope(&scope) {
+                if let Some(ui) = &mut s.files {
+                    ui.resize(rect[2], tx);
                 }
             }
-        })
+        }
+    })
 }
 pub(crate) fn reader(s: &State) -> El {
     layout::with_source_palette(|| reader_content(s))
@@ -134,7 +145,7 @@ fn reader_content(s: &State) -> El {
     let scope = ui.document.scope();
     let drawer = ui.drawer();
     let view_width = ui.host_width.map(|width| {
-        if drawer.pinned {
+        if !ui.shell_managed && drawer.pinned {
             width - drawer.width
         } else {
             width

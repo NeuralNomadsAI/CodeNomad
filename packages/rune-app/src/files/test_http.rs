@@ -43,6 +43,25 @@ impl Http {
         ui
     }
     pub async fn request(&self, method: &str, path: &str) -> Request {
+        let request = self.accept().await;
+        assert!(
+            ['/', '?'].into_iter().any(|suffix| {
+                request
+                    .header
+                    .starts_with(&format!("{method} /api/workspaces/owned/files{suffix}"))
+            }),
+            "{}",
+            request.header
+        );
+        assert!(
+            request.header.contains(&format!("path={path}"))
+                && request.header.contains("directory=%2Fprivate"),
+            "{}",
+            request.header
+        );
+        request
+    }
+    pub async fn accept(&self) -> Request {
         let (mut socket, _) = wait(self.listener.accept()).await.unwrap();
         let mut bytes = Vec::new();
         while !bytes.ends_with(b"\r\n\r\n") {
@@ -50,16 +69,6 @@ impl Http {
             assert!(bytes.len() <= 32768);
         }
         let header = String::from_utf8(bytes).unwrap();
-        assert!(
-            ['/', '?'].into_iter().any(|suffix| {
-                header.starts_with(&format!("{method} /api/workspaces/owned/files{suffix}"))
-            }),
-            "{header}"
-        );
-        assert!(
-            header.contains(&format!("path={path}")) && header.contains("directory=%2Fprivate"),
-            "{header}"
-        );
         let length = header
             .lines()
             .find_map(|line| {

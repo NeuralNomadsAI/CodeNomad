@@ -5,8 +5,8 @@ mod menu;
 mod request;
 mod view;
 pub(crate) use binding::{
-    Binding, close_preview, connected, connected_placed, diff_preferences, event, has_preview,
-    mode, online, poll, project_opened, set_diff_preferences, set_mode, show,
+    Binding, close_preview, connected, connected_placed, diff_preferences, event, files_checkout,
+    has_preview, mode, online, poll, project_opened, set_diff_preferences, set_mode, show,
 };
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader};
