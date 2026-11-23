@@ -11,6 +11,9 @@ pub enum WorkspaceEvent {
     CommandsChanged,
     MentionsChanged,
     ComposerCataloguesChanged,
+    ProvidersChanged {
+        workspace_id: String,
+    },
     UiPreferencesChanged,
     NativeFilesystemChanged {
         workspace_id: String,

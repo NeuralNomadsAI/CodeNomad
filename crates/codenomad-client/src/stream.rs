@@ -250,7 +250,7 @@ pub(crate) async fn read(
 
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {
     if let Some(signals) = &state.catalogue {
-        signals.invalidate(None);
+        signals.reconnected();
     }
     state.alive.store(true, SeqCst);
     state.upstream.store(true, SeqCst);
@@ -302,6 +302,17 @@ pub(super) async fn dispatch(
     }
     if data.len() > NATIVE_EVENT_LIMIT {
         return Err("oversized SSE event".into());
+    }
+    if let Some(id) = crate::settings::provider_change(&value)
+        && id == b.workspace
+    {
+        out.send(Input::Workspace(
+            epoch,
+            WorkspaceEvent::ProvidersChanged {
+                workspace_id: id.into(),
+            },
+        ))
+        .await?;
     }
     if let Some(event) = workspace_event(b, &value) {
         out.send(Input::Workspace(epoch, event)).await?;

@@ -12,6 +12,8 @@ use serde_json::json;
 #[derive(Default)]
 pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) provider_target: Option<super::providers::Target>,
     config: Document,
     state: Document,
     pub(super) window_wake: Option<rune::Waker>,

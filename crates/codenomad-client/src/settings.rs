@@ -1,4 +1,5 @@
 //! Host-owned configuration and appearance, independent of any project location.
+mod providers;
 use crate::{
     Wake,
     backend::{Backend, read_json},
@@ -6,6 +7,8 @@ use crate::{
     recovery::Input,
     runtime, stream,
 };
+pub(crate) use providers::provider_change;
+pub use providers::{Provider, providers};
 use serde_json::Value;
 use std::{
     sync::{
