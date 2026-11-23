@@ -195,6 +195,13 @@ fn request_older(s: &mut State, _: &mut Tx) {
     }
 }
 fn retry_connection(s: &mut State, tx: &mut Tx) {
+    if s.pending_prompt.is_some() {
+        // A terminal failure can be delivered ahead of the last transport receipt.
+        poll_chat(s, 64);
+        if s.pending_prompt.is_some() {
+            return;
+        }
+    }
     #[cfg(not(target_arch = "wasm32"))]
     if chat::authentication::retry(s) {
         return;
@@ -369,6 +376,15 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
         }
         s.revision += 1;
+        changed = true;
+    }
+    if s.pending_prompt.is_some()
+        && s.incoming
+            .as_ref()
+            .is_some_and(|receiver| receiver.is_closed() && receiver.is_empty())
+    {
+        settle_prompt(s, true);
+        s.phase = Phase::Failed;
         changed = true;
     }
     changed

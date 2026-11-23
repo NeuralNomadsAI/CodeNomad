@@ -265,6 +265,38 @@ fn settings_sse_401_releases_the_transport_for_explicit_authentication() {
 }
 
 #[test]
+fn settings_terminal_transport_close_restores_an_unsettled_prompt_before_retry() {
+    let mut root = crate::init();
+    root.draft = rune::edit::TextEdit::new("keep queued text");
+    root.phase = crate::Phase::Ready;
+    let (commands, input) = bounded(1);
+    let (events, incoming) = bounded(1);
+    root.commands = Some(commands);
+    root.incoming = Some(incoming);
+    let mut runtime = rune::Runtime::new(
+        root,
+        crate::view,
+        (1100.0, 760.0),
+        rune::Env::new(false, 1.0),
+    );
+    runtime.update(crate::send);
+    assert!(runtime.state.draft.text.is_empty());
+    events.try_send(Event::Failed).unwrap();
+    runtime.update(crate::retry_connection);
+    assert_eq!(
+        runtime.state.pending_prompt.as_deref(),
+        Some("keep queued text")
+    );
+    drop(input);
+    drop(events);
+    runtime.update(|s, _| {
+        assert!(crate::poll_chat(s, 8));
+    });
+    assert_eq!(runtime.state.draft.text, "keep queued text");
+    assert!(runtime.state.pending_prompt.is_none());
+}
+
+#[test]
 fn settings_direct_authentication_accepts_a_rotated_password_and_keeps_the_draft() {
     assert_direct_recovery(Some(401));
 }
