@@ -15,7 +15,7 @@ mod jump;
 mod rail;
 pub use anchor::AnchorWindow;
 pub use jump::{Admission, Jump};
-pub(crate) use jump::{older_offer, until_cancelled};
+pub(crate) use jump::{page_offer, until_cancelled};
 pub use rail::{Marker, MarkerKind, Resident, UnplacedWindow, WindowPosition, project};
 
 const PAGE_ENTRIES: usize = 16_384;

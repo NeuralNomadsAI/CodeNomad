@@ -1,3 +1,7 @@
+use crate::transport::{
+    HistoryEdge,
+    HistoryEdge::{After, Before},
+};
 use crate::{
     State, screen,
     strings::{locale, t},
@@ -13,6 +17,65 @@ pub(super) struct Scroll {
     pub transcript: u64,
     pub rail: u64,
     pub at: timeline::ScrollPosition,
+    viewport: timeline::ScrollPosition,
+    edge: Option<HistoryEdge>,
+    direction: Option<HistoryEdge>,
+}
+
+pub(super) fn poll_edge(s: &mut State) -> bool {
+    let scroll = s.transcript_display.timeline.scroll.clone();
+    let mut position = scroll.get();
+    let edge = position.edge.take();
+    let direction = position.direction.take();
+    scroll.set(position);
+    let was_paging = s.paging;
+    if let Some(direction) = direction {
+        turn_page_gesture(s, direction);
+    }
+    if !s.history_error
+        && let Some(edge) = edge
+    {
+        crate::chat::reader::request_page(s, edge);
+    }
+    s.paging != was_paging
+}
+
+fn turn_page_gesture(s: &mut State, direction: HistoryEdge) {
+    if s.transcript_display
+        .timeline
+        .paging
+        .as_ref()
+        .is_some_and(|(_, pending)| *pending != direction && *pending != HistoryEdge::Oldest)
+    {
+        crate::chat::reader::cancel_page(s);
+    }
+}
+fn boundary(pos: timeline::ScrollPosition, direction: f32) -> Option<HistoryEdge> {
+    if pos.viewport[1] <= 0.0 {
+        return None;
+    }
+    if direction < 0.0 && pos.offset[1] <= 0.5 {
+        Some(Before)
+    } else if direction > 0.0 && pos.offset[1] >= pos.max[1] - 0.5 {
+        Some(After)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn only_outward_motion_on_a_measured_edge_requests_a_page() {
+    let mut pos = timeline::ScrollPosition::default();
+    assert_eq!(boundary(pos, -1.0), None);
+    pos.viewport[1] = 480.0;
+    pos.max[1] = 1200.0;
+    assert_eq!(boundary(pos, 0.0), None);
+    assert_eq!(boundary(pos, 1.0), None);
+    assert_eq!(boundary(pos, -1.0), Some(Before));
+    pos.offset[1] = 1200.0;
+    assert_eq!(boundary(pos, -1.0), None);
+    assert_eq!(boundary(pos, 1.0), Some(After));
 }
 
 pub(crate) fn watch(s: &State, el: El) -> El {
@@ -21,18 +84,32 @@ pub(crate) fn watch(s: &State, el: El) -> El {
 
 fn scroll(s: &State, el: El, rail: bool) -> El {
     let scroll = s.transcript_display.timeline.scroll.clone();
+    let wheel_scroll = scroll.clone();
     let wake = s.wake.clone();
     let scope = s.input_scope.clone();
-    el.on_wheel(move |s: &mut State, _, _| {
+    el.on_wheel(move |s: &mut State, event, _| {
         if s.current_scope(&scope) {
             super::navigation::hand_scrolled(s, rail);
+            if !rail && event.dy != 0.0 && event.dy.abs() > event.dx.abs() {
+                let direction = if event.dy > 0.0 { Before } else { After };
+                turn_page_gesture(s, direction);
+                if !s.history_error
+                    && !event.momentum
+                    && let Some(edge) = boundary(wheel_scroll.get().viewport, -event.dy)
+                {
+                    crate::chat::reader::request_page(s, edge);
+                }
+            }
         }
         false
     })
     .on_scroll_offset(move |at| {
         let mut gesture = scroll.get();
+        let previous = gesture.viewport.offset[1];
         if rail {
             gesture.at = at;
+        } else {
+            gesture.viewport = at;
         }
         if timeline::user_scrolled() {
             let epoch = if rail {
@@ -41,6 +118,11 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
                 &mut gesture.transcript
             };
             *epoch = epoch.wrapping_add(1);
+            if !rail && previous != at.offset[1] {
+                let delta = at.offset[1] - previous;
+                gesture.direction = Some(if delta < 0.0 { Before } else { After });
+                gesture.edge = boundary(at, delta);
+            }
             wake();
         }
         scroll.set(gesture);

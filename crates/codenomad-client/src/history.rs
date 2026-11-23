@@ -289,14 +289,31 @@ fn overlap(left: &[Row], right: &[Row]) -> Result<usize> {
         .ok_or_else(|| "history windows lost their overlap".into())
 }
 
-pub(crate) fn previous_page(page: &Page, shown: &[Row]) -> Result<()> {
+pub(crate) fn edge_page(
+    page: &Page,
+    shown: &[Row],
+    edge: crate::transport::HistoryEdge,
+) -> Result<()> {
+    use crate::transport::HistoryEdge;
     check(&page.rows)?;
+    if edge == HistoryEdge::Oldest {
+        return if page.older.is_none() {
+            Ok(())
+        } else {
+            Err("oldest history has an older cursor".into())
+        };
+    }
+    let anchor = if edge == HistoryEdge::Before {
+        shown.first()
+    } else {
+        shown.last()
+    };
     if !shown.is_empty()
         && !page.rows.is_empty()
         && !page
             .rows
             .iter()
-            .any(|row| shown.first().is_some_and(|first| first.id == row.id))
+            .any(|row| anchor.is_some_and(|anchor| anchor.id == row.id))
     {
         return Err("history windows lost their overlap".into());
     }

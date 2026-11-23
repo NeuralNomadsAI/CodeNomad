@@ -153,14 +153,14 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     Phase::Ready
                 };
             }
-            Event::Older(page) => chat::reader::install_older(s, page),
-            Event::OlderOffered {
+            Event::Older(page) => chat::reader::install_page(s, page, None),
+            Event::PageOffered {
                 page,
                 admit,
                 cancelled,
             } => {
-                if chat::reader::admit_older(s, &cancelled, || admit.accept()) {
-                    chat::reader::install_older(s, page);
+                if let Some(edge) = chat::reader::admit_page(s, &cancelled, || admit.accept()) {
+                    chat::reader::install_page(s, page, Some(edge));
                 }
             }
             Event::Reconnecting | Event::ConnectionLost => {
@@ -183,12 +183,12 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::PagingFailed => {
-                chat::reader::cancel_older(s);
+                chat::reader::cancel_page(s);
                 s.paging = false;
                 s.history_error = true;
             }
-            Event::OlderFailed(cancelled) => {
-                chat::reader::admit_older(s, &cancelled, || false);
+            Event::PageFailed(cancelled) => {
+                chat::reader::admit_page(s, &cancelled, || false);
             }
             Event::Anchor {
                 ticket,
@@ -199,7 +199,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AnchorFailed(ticket) => crate::timeline::failed(s, ticket),
             Event::HistoryInvalidated => {
-                chat::reader::cancel_older(s);
+                chat::reader::cancel_page(s);
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();

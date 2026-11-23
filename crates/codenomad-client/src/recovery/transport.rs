@@ -140,7 +140,7 @@ pub(crate) async fn run_with_reading(
                 publish(&out, &wake, Event::Reconnecting).await;
             }
             Some(Input::Command(
-                command @ (Command::Older | Command::OlderCancellable(_) | Command::Anchor(_)),
+                command @ (Command::Older | Command::Page(..) | Command::Anchor(_)),
             )) => {
                 let lane = Lane {
                     backend: &backend,
@@ -150,15 +150,18 @@ pub(crate) async fn run_with_reading(
                     out: &out,
                     wake: &wake,
                 };
-                let cancellation = match command {
+                let (edge, cancellation) = match command {
                     Command::Anchor(jump) => {
                         reader.anchor(&lane, opened, jump).await;
                         continue;
                     }
-                    Command::OlderCancellable(signal) => Some(signal),
-                    _ => None,
+                    Command::Page(edge, signal) => (edge, Some(signal)),
+                    _ => (crate::transport::HistoryEdge::Before, None),
                 };
-                match reader.older(&lane, opened, cancellation.as_ref()).await? {
+                match reader
+                    .page(&lane, opened, edge, cancellation.as_ref())
+                    .await?
+                {
                     Turn::Process => {}
                     Turn::Next => continue,
                     Turn::Stop => return Ok(()),

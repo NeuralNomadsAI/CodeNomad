@@ -7,7 +7,7 @@ use crate::{
     history,
     runtime::Instant,
     stream,
-    transport::{Event, publish},
+    transport::{Event, HistoryEdge, publish},
 };
 use serde_json::Value;
 use std::{
@@ -35,6 +35,7 @@ pub(super) struct Reader {
     pub(super) seen: Seen,
     first: Option<String>,
     older: Option<Value>,
+    newer: Option<Value>,
     pub(super) repairs: u8,
     pub(super) settlement_reads: u8,
     pub(super) dirty: bool,
@@ -62,6 +63,7 @@ impl Reader {
             },
             first: None,
             older: None,
+            newer: None,
             repairs: 0,
             settlement_reads: 0,
             dirty: true,
@@ -90,6 +92,7 @@ impl Reader {
                 self.seen.bytes = 0;
                 self.first = None;
                 self.older = None;
+                self.newer = None;
                 self.repairs = 0;
                 self.settlement_reads = 0;
                 self.dirty = self.active_reader;
@@ -103,6 +106,8 @@ impl Reader {
         self.historical = false;
         self.anchored = None;
         self.first = None;
+        self.older = None;
+        self.newer = None;
         self.resident.clear();
         self.known.clear();
         self.owed.clear();
@@ -113,14 +118,17 @@ impl Reader {
         self.anchored = None;
         self.resident.clear();
         self.first = None;
+        self.older = None;
+        self.newer = None;
         self.known.clear();
         self.owed.clear();
     }
 
-    pub(super) async fn older(
+    pub(super) async fn page(
         &mut self,
         lane: &Lane<'_>,
         opened: bool,
+        edge: HistoryEdge,
         cancel: Option<&Receiver<()>>,
     ) -> history::Result<Turn> {
         let Lane {
@@ -134,9 +142,14 @@ impl Reader {
         let failed = || {
             cancel
                 .cloned()
-                .map_or(Event::PagingFailed, Event::OlderFailed)
+                .map_or(Event::PagingFailed, Event::PageFailed)
         };
-        if let Some(target) = self.older.clone().filter(|_| {
+        let target = match edge {
+            HistoryEdge::Before => self.older.clone(),
+            HistoryEdge::After => self.newer.clone(),
+            HistoryEdge::Oldest => Some(serde_json::json!({"kind":"oldest"})),
+        };
+        if let Some(target) = target.filter(|_| {
             self.active_reader
                 && opened
                 && (!self.dirty || self.historical)
@@ -159,16 +172,10 @@ impl Reader {
             };
             match page {
                 Ok(page) if wire.valid(stamp) && rx.is_empty() => {
-                    if history::previous_page(&page, &self.resident).is_ok() {
-                        if !crate::timeline::older_offer(
-                            cancel,
-                            &page,
-                            wire,
-                            stamp,
-                            async |event| {
-                                reader_event(reading, self.generation, out, wake, event).await
-                            },
-                        )
+                    if history::edge_page(&page, &self.resident, edge).is_ok() {
+                        if !crate::timeline::page_offer(cancel, &page, wire, stamp, async |event| {
+                            reader_event(reading, self.generation, out, wake, event).await
+                        })
                         .await
                         {
                             return Ok(Turn::Next);
@@ -181,6 +188,7 @@ impl Reader {
                             self.owed.retain(|(id, _)| self.known.contains(id));
                         }
                         self.older = page.older.clone();
+                        self.newer = page.newer.clone();
                         if cancel.is_none() {
                             reader_event(reading, self.generation, out, wake, Event::Older(page))
                                 .await;
@@ -246,6 +254,7 @@ impl Reader {
             self.fence = stamp;
             self.first = page.rows.first().map(|row| row.id.clone());
             self.older = page.older.clone();
+            self.newer = page.newer.clone();
             self.known = page.rows.iter().map(|row| row.id.clone()).collect();
             self.resident = page.rows;
             self.owed.retain(|(id, _)| self.known.contains(id));
@@ -319,6 +328,7 @@ impl Reader {
                     self.anchored = None;
                     self.first = page.rows.first().map(|r| r.id.clone());
                     self.older = page.older.clone();
+                    self.newer = page.newer.clone();
                     self.known = page.rows.iter().map(|r| r.id.clone()).collect();
                     self.resident = page.rows.clone();
                     let done = (self.terminal || self.busy) && !page.running;

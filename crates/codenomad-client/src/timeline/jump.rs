@@ -19,7 +19,7 @@ pub(crate) async fn until_cancelled<T>(
     .await
 }
 
-pub(crate) async fn older_offer(
+pub(crate) async fn page_offer(
     cancelled: Option<&Receiver<()>>,
     page: &crate::history::Page,
     wire: &Arc<stream::State>,
@@ -31,7 +31,7 @@ pub(crate) async fn older_offer(
     };
     let (admit, verdict) = bounded(1);
     if cancelled.is_closed()
-        || !send(Event::OlderOffered {
+        || !send(Event::PageOffered {
             page: page.clone(),
             admit: Admission {
                 wire: wire.clone(),
@@ -170,7 +170,7 @@ fn an_accepted_older_window_follows_a_queued_reader_sync() {
         })
         .unwrap();
         let (accepted, ()) = futures_lite::future::zip(
-            older_offer(Some(&cancel), &page, &wire, 0, async |event| {
+            page_offer(Some(&cancel), &page, &wire, 0, async |event| {
                 out.send(event).await.is_ok()
             }),
             async {
@@ -178,7 +178,7 @@ fn an_accepted_older_window_follows_a_queued_reader_sync() {
                     events.recv().await.unwrap(),
                     Event::ReaderSync { .. }
                 ));
-                let Event::OlderOffered { admit, .. } = events.recv().await.unwrap() else {
+                let Event::PageOffered { admit, .. } = events.recv().await.unwrap() else {
                     panic!("expected older offer")
                 };
                 assert!(admit.accept());

@@ -42,11 +42,18 @@ pub enum Command {
         text: String,
     },
     Older,
-    OlderCancellable(Receiver<()>),
+    Page(HistoryEdge, Receiver<()>),
     Anchor(crate::timeline::Jump),
     Latest,
     Retry,
     Close,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HistoryEdge {
+    Before,
+    After,
+    Oldest,
 }
 #[derive(Debug)]
 pub enum PromptOutcome {
@@ -76,12 +83,12 @@ pub enum Event {
         version: u64,
     },
     Older(Page),
-    OlderOffered {
+    PageOffered {
         page: Page,
         admit: crate::timeline::Admission,
         cancelled: Receiver<()>,
     },
-    OlderFailed(Receiver<()>),
+    PageFailed(Receiver<()>),
     Anchor {
         ticket: u64,
         page: Page,

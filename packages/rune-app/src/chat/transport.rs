@@ -1,7 +1,9 @@
 //! Commands and display events for the native prototype.
 #[cfg(any(test, feature = "test-support"))]
 use crate::{CODE, Message};
-pub use codenomad_client::transport::{Command, Event, PromptOutcome, publish, run_backend};
+pub use codenomad_client::transport::{
+    Command, Event, HistoryEdge, PromptOutcome, publish, run_backend,
+};
 #[cfg(test)]
 pub use codenomad_client::wire::decode_event;
 use codenomad_client::{Receiver, Sender, bounded};

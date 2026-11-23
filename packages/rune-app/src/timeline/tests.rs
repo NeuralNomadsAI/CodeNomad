@@ -99,10 +99,39 @@ fn older_gesture_revokes_the_distant_jump_and_keeps_the_visible_window() {
         assert!(jump.cancelled.is_closed());
         assert!(matches!(
             commands.try_recv().unwrap(),
-            crate::transport::Command::OlderCancellable(_)
+            crate::transport::Command::Page(crate::transport::HistoryEdge::Before, _)
         ));
         assert_eq!(s.messages[0].id, "visible");
         assert!(s.paging);
+    });
+}
+
+#[test]
+fn oldest_supersedes_a_pending_page_and_absent_newer_cursor_is_local() {
+    use crate::transport::{
+        Command,
+        HistoryEdge::{After, Before, Oldest},
+    };
+    let mut s = crate::init();
+    s.can_older = true;
+    s.messages.push(assistant("reading"));
+    let (out, commands) = bounded(1);
+    s.commands = Some(out);
+    let mut rt = Runtime::new(s, view, (800., 600.), Env::new(false, 1.0));
+    rt.update(|s, tx| {
+        crate::chat::reader::request_page(s, After);
+        assert!(commands.try_recv().is_err());
+        crate::chat::reader::request_page(s, Before);
+        let Command::Page(Before, cancelled) = commands.try_recv().unwrap() else {
+            panic!("older page")
+        };
+        crate::chat::reader::oldest(s, tx);
+        assert!(cancelled.is_closed());
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::Page(Oldest, _)
+        ));
+        assert_eq!(s.messages[0].id, "reading");
     });
 }
 
@@ -250,16 +279,18 @@ fn a_new_resident_jump_rejects_an_older_page_already_in_the_mailbox() {
     rt.update(|s, tx| {
         poll(s, tx);
         crate::chat::reader::older(s);
-        let crate::transport::Command::OlderCancellable(cancelled) = commands.try_recv().unwrap()
+        let crate::transport::Command::Page(crate::transport::HistoryEdge::Before, cancelled) =
+            commands.try_recv().unwrap()
         else {
             panic!("older page must be cancellable");
         };
         navigation::select(s, "anchored:Assistant:1:false", tx);
         assert!(cancelled.is_closed());
         crate::chat::reader::older(s);
-        assert!(!crate::chat::reader::admit_older(s, &cancelled, || panic!(
-            "obsolete page admitted"
-        )));
+        assert!(
+            crate::chat::reader::admit_page(s, &cancelled, || panic!("obsolete page admitted"))
+                .is_none()
+        );
         assert_eq!(s.messages[0].id, "anchored");
         assert!(
             s.paging,

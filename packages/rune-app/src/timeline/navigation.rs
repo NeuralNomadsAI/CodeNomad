@@ -100,7 +100,7 @@ pub(super) fn pending_search(s: &mut State) -> bool {
 
 fn start(s: &mut State, target: Marker, tx: &mut Tx) {
     gesture(s);
-    reader::cancel_older(s);
+    reader::cancel_page(s);
     cancel_jump(s);
     let serial = owner(s).jump.serial;
     if let Some(row) = s.messages.iter().find(|row| row.id == target.message) {

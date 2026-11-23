@@ -61,7 +61,8 @@ pub(crate) struct Timeline {
     scroll: Rc<Cell<view::Scroll>>,
     resident: Vec<(String, Vec<Marker>)>,
     detached: bool,
-    pub(crate) older: Option<Sender<()>>,
+    pub(crate) paging: Option<(Sender<()>, crate::transport::HistoryEdge)>,
+    pub(crate) page_retry: Option<crate::transport::HistoryEdge>,
     reading_line: reading_line::Blocks,
     search: search::Search,
 }
@@ -224,6 +225,7 @@ fn reproject(s: &mut State) -> bool {
 }
 
 pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
+    let paged = view::poll_edge(s);
     if !demanded(s) {
         if std::mem::take(&mut owner(s).visible) {
             if search::is_open(s) {
@@ -233,11 +235,12 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 suspend(s);
             }
         }
-        return if search::is_open(s) {
-            navigation::poll(s, tx)
-        } else {
-            navigation::apply_alignment(s, tx)
-        };
+        return paged
+            | if search::is_open(s) {
+                navigation::poll(s, tx)
+            } else {
+                navigation::apply_alignment(s, tx)
+            };
     }
     let reads = s.reads.clone();
     let wake = s.wake.clone();
@@ -277,5 +280,5 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     if std::mem::take(&mut t.changed) {
         changed |= reproject(s);
     }
-    changed | navigation::poll(s, tx)
+    changed | navigation::poll(s, tx) | paged
 }

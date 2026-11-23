@@ -1,5 +1,8 @@
 use super::reading::{Bookmark, Reading};
-use crate::{State, transport::Event};
+use crate::{
+    State,
+    transport::{Event, HistoryEdge},
+};
 use codenomad_client::{
     Receiver, bounded,
     recovery::{
@@ -166,6 +169,7 @@ pub(crate) fn reconnecting(s: &mut State) {
         reader.reconnecting(s.transcript_display.reading_mut(), s.paging);
     }
 
+    cancel_page(s);
     s.paging = false;
 }
 
@@ -212,7 +216,7 @@ pub(crate) fn reconcile_bookmark(s: &mut State, rows: &[crate::history::Row]) {
 }
 
 pub(crate) fn suspend(s: &mut State) {
-    cancel_older(s);
+    cancel_page(s);
     crate::timeline::suspend(s);
     if let Some(reader) = &mut s.reader {
         reader.bookmark = reader.bookmark(s.transcript_display.reading_mut());
@@ -226,7 +230,33 @@ pub(crate) fn suspend(s: &mut State) {
 }
 
 pub(crate) fn older(s: &mut State) {
-    if !s.can_older || s.paging {
+    let edge = s
+        .transcript_display
+        .timeline
+        .page_retry
+        .unwrap_or(HistoryEdge::Before);
+    request_page(s, edge);
+}
+
+pub(crate) fn oldest(s: &mut State, tx: &mut Tx) {
+    if s.can_older {
+        cancel_page(s);
+        request_page(s, HistoryEdge::Oldest);
+    } else if !s.messages.is_empty() {
+        cancel_page(s);
+        crate::timeline::cancel_jump(s);
+        tx.scroll_to_instant("history", 0.0, 0.0);
+    }
+}
+
+pub(crate) fn request_page(s: &mut State, edge: HistoryEdge) {
+    if s.paging
+        || !matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming) && s.reader.is_some()
+        || !match edge {
+            HistoryEdge::Before | HistoryEdge::Oldest => s.can_older,
+            HistoryEdge::After => s.history_detached && s.reader.is_some(),
+        }
+    {
         return;
     }
     crate::timeline::cancel_jump(s);
@@ -234,7 +264,7 @@ pub(crate) fn older(s: &mut State) {
     let Some(commands) = s.commands.clone() else {
         return;
     };
-    let command = crate::transport::Command::OlderCancellable(cancelled.clone());
+    let command = crate::transport::Command::Page(edge, cancelled.clone());
     let queued = match commands.try_send(command) {
         Ok(()) => true,
         Err(error) if error.is_full() => {
@@ -247,40 +277,59 @@ pub(crate) fn older(s: &mut State) {
         Err(_) => false,
     };
     if queued {
-        s.transcript_display.timeline.older = Some(signal);
+        let timeline = &mut s.transcript_display.timeline;
+        timeline.page_retry = None;
+        timeline.paging = Some((signal, edge));
         s.paging = true;
+        s.history_error = false;
     }
 }
 
-pub(crate) fn cancel_older(s: &mut State) {
-    if s.transcript_display.timeline.older.take().is_some() {
+pub(crate) fn cancel_page(s: &mut State) {
+    let timeline = &mut s.transcript_display.timeline;
+    timeline.page_retry = None;
+    if timeline.paging.take().is_some() {
         s.paging = false;
     }
 }
 
-pub(crate) fn admit_older(
+pub(crate) fn admit_page(
     s: &mut State,
     cancelled: &Receiver<()>,
     admit: impl FnOnce() -> bool,
-) -> bool {
+) -> Option<HistoryEdge> {
     if cancelled.is_closed() {
-        return false;
+        return None;
     }
-    let Some(_ticket) = s.transcript_display.timeline.older.take() else {
-        return false;
-    };
+    let (_ticket, edge) = s.transcript_display.timeline.paging.take()?;
     s.paging = false;
     let accepted = admit();
     s.history_error = !accepted;
-    accepted
+    s.transcript_display.timeline.page_retry = (!accepted).then_some(edge);
+    accepted.then_some(edge)
 }
 
-pub(super) fn install_older(s: &mut State, page: crate::history::Page) {
+pub(super) fn install_page(s: &mut State, page: crate::history::Page, edge: Option<HistoryEdge>) {
     if !page.rows.is_empty() {
+        let bookmark = match edge {
+            Some(HistoryEdge::Oldest) => page.rows.first(),
+            Some(HistoryEdge::After) => s.messages.last(),
+            Some(HistoryEdge::Before) => s.messages.first(),
+            None => None,
+        }
+        .filter(|anchor| page.rows.iter().any(|row| row.id == anchor.id))
+        .map(|anchor| Bookmark::Message {
+            id: anchor.id.clone(),
+            offset: 0.0,
+        });
         s.attachments.cancel();
         s.history_detached = page.newer.is_some();
         if let Some(reader) = &mut s.reader {
             reader.install(s.history_detached);
+            if let Some(bookmark) = bookmark {
+                reader.bookmark = bookmark;
+                reader.pending_scroll = true;
+            }
         }
         s.messages = page.rows;
         crate::composer::reconcile(s);
@@ -288,7 +337,7 @@ pub(super) fn install_older(s: &mut State, page: crate::history::Page) {
     s.can_older = page.older.is_some();
     s.history_error = false;
     s.paging = false;
-    cancel_older(s);
+    cancel_page(s);
     crate::timeline::structure_changed(s);
 }
 
@@ -322,7 +371,7 @@ pub(crate) fn resume(s: &mut State, tx: &mut Tx) {
 }
 
 pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
-    cancel_older(s);
+    cancel_page(s);
     crate::timeline::cancel_jump(s);
     let covered = crate::files::has_preview(s) || crate::git::has_preview(s);
     if let Some(reader) = &mut s.reader
