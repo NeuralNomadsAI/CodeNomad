@@ -327,12 +327,12 @@ pub async fn put(
             if links::write_target(links::target(&w.path, &p))? != target {
                 return Err(error(Status::CONFLICT, "File changed on disk"));
             }
+            if save::file_identity(&target, expected.is_some())? != identity {
+                return Err(error(Status::CONFLICT, "File changed on disk"));
+            }
             Ok(())
         };
         current()?;
-        if save::file_identity(&target, expected.is_some())? != identity {
-            return Err(error(Status::CONFLICT, "File changed on disk"));
-        }
         save::replace(&target, expected.as_deref(), current, |file| file.write_all(body.contents.as_bytes()))
     })
     .await

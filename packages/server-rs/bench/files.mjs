@@ -217,7 +217,13 @@ export async function pair(...hosts){
 }
 
 async function qualifySaves(hosts, check) {
+  await check("save creates a missing file", "/files/content?path=new-save.txt", {
+    init: json({ contents: "new file\n" }, "PUT"), codes: [204, 204],
+  })
   for (const host of hosts) {
+    const created = path.join(host.root, "new-save.txt")
+    assert.equal(await readFile(created, "utf8"), "new file\n")
+    await rm(created)
     const target = path.join(host.root, "saved-target")
     await mkdir(target)
     const file = path.join(target, "note.txt")

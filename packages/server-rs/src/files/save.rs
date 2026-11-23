@@ -9,106 +9,193 @@ use std::{
 };
 
 use axum::http::StatusCode as Status;
+use cap_std::{ambient_authority, fs::Dir};
 use same_file::Handle;
 use uuid::Uuid;
 
-use super::{MAX, bounded, io_error, version};
+use super::{MAX, bounded, version};
 use crate::{Error, error};
 
 fn changed() -> Error {
     error(Status::CONFLICT, "File changed on disk")
 }
 
+fn save_error(err: io::Error) -> Error {
+    error(Status::BAD_REQUEST, &err.to_string())
+}
+
 pub(super) fn file_identity(path: &Path, conditional: bool) -> Result<Option<u64>, Error> {
     target(path, conditional)?
         .map(|file| Handle::from_file(file).map(|identity| fingerprint(&identity)))
         .transpose()
-        .map_err(io_error)
+        .map_err(save_error)
 }
 
 fn target(path: &Path, conditional: bool) -> Result<Option<File>, Error> {
-    open_original(path)
-        .map_err(|err| if conditional && err.kind() == io::ErrorKind::InvalidInput { changed() } else { io_error(err) })
+    open_original(path, conditional).map_err(|err| {
+        if conditional && err.kind() == io::ErrorKind::InvalidInput { changed() } else { save_error(err) }
+    })
 }
 
 pub(super) fn replace(
     path: &Path,
     expected: Option<&str>,
-    current: impl FnOnce() -> Result<(), Error>,
-    write: impl FnOnce(&mut File) -> io::Result<()>,
+    current: impl Fn() -> Result<(), Error>,
+    write: impl Fn(&mut File) -> io::Result<()>,
 ) -> Result<(), Error> {
-    let mut original = target(path, expected.is_some())?;
-    let identity =
-        original.as_ref().map(|file| file.try_clone().and_then(Handle::from_file)).transpose().map_err(io_error)?;
-    if let Some(expected) = expected {
-        let file = original.as_ref().ok_or_else(changed)?;
-        if expected != version(&bounded(file, MAX)?) {
-            return Err(changed());
-        }
-    }
-    if let Some(file) = original.as_mut()
-        && link_count(file).map_err(io_error)? > 1
-    {
-        // A rename would split the aliases. Keep the original inode, like the TS save.
-        current()?;
-        if file_identity(path, expected.is_some())? != identity.as_ref().map(fingerprint) {
-            return Err(changed());
-        }
-        file.rewind().map_err(io_error)?;
-        file.set_len(0).map_err(io_error)?;
-        write(file).map_err(io_error)?;
-        return file.sync_all().map_err(io_error);
-    }
+    replace_with(path, expected, current, write, publish)
+}
+
+fn replace_with(
+    path: &Path,
+    expected: Option<&str>,
+    current: impl Fn() -> Result<(), Error>,
+    write: impl Fn(&mut File) -> io::Result<()>,
+    publish: impl FnOnce(&PrivateStage<'_>, &Path, bool) -> Result<Publication, PublishError>,
+) -> Result<(), Error> {
     let parent = path.parent().ok_or_else(super::unavailable)?;
-    let directory = directory_identity(parent).map_err(io_error)?;
-    let staging = original.is_some().then(|| PrivateStage::new(parent)).transpose().map_err(io_error)?;
-    let temp = staging.as_ref().map_or_else(
-        || parent.join(format!(".codenomad-save-{}.tmp", Uuid::new_v4())),
-        |stage| stage.0.join("write.tmp"),
-    );
-    let mut options = OpenOptions::new();
+    let leaf = Path::new(path.file_name().ok_or_else(super::unavailable)?);
+    let directory = Directory::open(parent);
+    let original = target(path, expected.is_some())?;
+    let identity =
+        original.as_ref().map(|file| file.try_clone().and_then(Handle::from_file)).transpose().map_err(save_error)?;
+    check_version(original.as_ref(), expected)?;
+    let verify = || {
+        current()?;
+        let actual = target(path, expected.is_some())?;
+        let handle =
+            actual.as_ref().map(|file| file.try_clone().and_then(Handle::from_file)).transpose().map_err(save_error)?;
+        if handle != identity {
+            return Err(changed());
+        }
+        check_version(actual.as_ref(), expected)?;
+        if let Ok(directory) = &directory
+            && !directory.current(parent)
+        {
+            return Err(changed());
+        }
+        Ok(actual)
+    };
+    let in_place = || {
+        let mut file = verify()?.ok_or_else(changed)?;
+        file.rewind().map_err(save_error)?;
+        write(&mut file).map_err(save_error)?;
+        let len = file.stream_position().map_err(save_error)?;
+        file.set_len(len).map_err(save_error)?;
+        file.sync_all().map_err(save_error)
+    };
+    if let Some(file) = &original
+        && link_count(file).map_err(save_error)? > 1
+    {
+        return in_place();
+    }
+    let mut options = cap_std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
     if original.is_some() {
-        use std::os::unix::fs::OpenOptionsExt;
+        use cap_std::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut staged = options.open(&temp).map_err(io_error)?;
-    let staged_id = fingerprint(&Handle::from_file(staged.try_clone().map_err(io_error)?).map_err(io_error)?);
-    let cleanup = Temporary(temp, staged_id);
-    write(&mut staged).map_err(io_error)?;
+    let exclusive = |directory: &Directory| {
+        verify()?;
+        let mut file = directory.dir.open_with(leaf, &options).map_err(publication_error)?.into_std();
+        write(&mut file).map_err(save_error)?;
+        file.sync_all().map_err(save_error)?;
+        #[cfg(unix)]
+        if let Ok(parent) = directory.dir.open(".") {
+            parent.sync_all().map_err(save_error)?;
+        }
+        Ok(())
+    };
+    let limitation = |err: io::Error| -> Result<(), Error> {
+        if can_fallback(&err) {
+            if original.is_some() {
+                return in_place();
+            }
+            if let Ok(directory) = &directory {
+                return exclusive(directory);
+            }
+        }
+        Err(save_error(err))
+    };
+    let directory = match &directory {
+        Ok(directory) => directory,
+        Err(err) => {
+            return limitation(err.raw_os_error().map_or_else(|| err.kind().into(), io::Error::from_raw_os_error));
+        }
+    };
+    let stage = match PrivateStage::new(parent, directory) {
+        Ok(stage) => stage,
+        Err(err) => return limitation(err),
+    };
+    let mut staged = match stage.dir().open_with(STAGED, &options) {
+        Ok(file) => file.into_std(),
+        Err(err) => return limitation(err),
+    };
+    let staged_id = fingerprint(&Handle::from_file(staged.try_clone().map_err(save_error)?).map_err(save_error)?);
     #[cfg(unix)]
-    if let Some(file) = &original {
-        metadata::copy(file, &staged).map_err(io_error)?;
+    if let Some(file) = &original
+        && let Err(err) = metadata::copy(file, &staged)
+    {
+        return limitation(err);
     }
-    staged.sync_all().map_err(io_error)?;
+    write(&mut staged).map_err(save_error)?;
+    staged.sync_all().map_err(save_error)?;
     drop(staged);
-    current()?;
-    if directory_identity(parent).ok().as_ref() != Some(&directory)
-        || staging.as_ref().is_some_and(|stage| !stage.current())
-        || file_identity(&cleanup.0, false)? != Some(cleanup.1)
+    if !stage.current() || stage.file_identity()? != staged_id {
+        return Err(changed());
+    }
+    #[cfg(windows)]
+    if original.is_none()
+        && let Err(err) = inherit_new_file_acl(&stage)
+    {
+        return limitation(err);
+    }
+    #[cfg(unix)]
+    let sync_parent = match directory.dir.open(".") {
+        Ok(file) => file,
+        Err(err) => return limitation(err),
+    };
+    let actual = verify()?;
+    if let Some(actual) = &actual
+        && link_count(actual).map_err(save_error)? != 1
     {
         return Err(changed());
     }
-    match target(path, expected.is_some())? {
-        Some(actual) if identity.is_some() && link_count(&actual).map_err(io_error)? == 1 => {
-            let same = actual.try_clone().and_then(Handle::from_file).map_err(io_error)?;
-            if Some(&same) != identity.as_ref() {
-                return Err(changed());
-            }
-            if let Some(expected) = expected
-                && expected != version(&bounded(&actual, MAX)?)
-            {
-                return Err(changed());
-            }
-            // ReplaceFileW opens the staged file without sharing. Leave no
-            // outstanding write handles on either file at publication.
-            drop((actual, same, identity, original));
-            publish(&cleanup.0, path, true).map_err(io_error)
+    drop(actual);
+    match publish(&stage, leaf, original.is_some()) {
+        Ok(Publication::Published) => {
+            drop(stage);
+            #[cfg(unix)]
+            sync_parent.sync_all().map_err(save_error)?;
+            Ok(())
         }
-        None if identity.is_none() => publish(&cleanup.0, path, false).map_err(io_error),
-        _ => Err(changed()),
+        #[cfg(unix)]
+        Ok(Publication::Exclusive) => exclusive(directory),
+        Err(PublishError::Unchanged(err)) if err.kind() == io::ErrorKind::AlreadyExists => Err(changed()),
+        Err(PublishError::Unchanged(err)) => limitation(err),
+        #[cfg(windows)]
+        Err(PublishError::Interrupted(err)) => Err(save_error(err)),
     }
+}
+
+fn can_fallback(err: &io::Error) -> bool {
+    matches!(err.kind(), io::ErrorKind::PermissionDenied | io::ErrorKind::Unsupported)
+        // ERROR_INVALID_FUNCTION (e.g. no ACL support) or ERROR_SHARING_VIOLATION.
+        || (cfg!(windows) && matches!(err.raw_os_error(), Some(1 | 32)))
+}
+
+fn check_version(file: Option<&File>, expected: Option<&str>) -> Result<(), Error> {
+    if let Some(expected) = expected
+        && expected != version(&bounded(file.ok_or_else(changed)?, MAX)?)
+    {
+        return Err(changed());
+    }
+    Ok(())
+}
+
+fn publication_error(err: io::Error) -> Error {
+    if err.kind() == io::ErrorKind::AlreadyExists { changed() } else { save_error(err) }
 }
 
 fn fingerprint(handle: &Handle) -> u64 {
@@ -117,51 +204,83 @@ fn fingerprint(handle: &Handle) -> u64 {
     hash.finish()
 }
 
-struct Temporary(PathBuf, u64);
-impl Drop for Temporary {
-    fn drop(&mut self) {
-        if file_identity(&self.0, false).ok().flatten() == Some(self.1) {
-            let _ = fs::remove_file(&self.0);
-        }
-    }
+const STAGED: &str = "write.tmp";
+
+struct PrivateStage<'a> {
+    root: &'a Directory,
+    path: PathBuf,
+    name: PathBuf,
+    opened: Option<Directory>,
 }
 
-struct PrivateStage(PathBuf, u64);
-impl PrivateStage {
-    fn new(parent: &Path) -> io::Result<Self> {
-        let dir = parent.join(format!(".codenomad-save-{}", Uuid::new_v4()));
+impl<'a> PrivateStage<'a> {
+    fn new(parent: &Path, root: &'a Directory) -> io::Result<Self> {
+        let name = PathBuf::from(format!(".codenomad-save-{}", Uuid::new_v4()));
+        let path = parent.join(&name);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::DirBuilderExt;
-            fs::DirBuilder::new().mode(0o700).create(&dir)?;
+            use cap_std::fs::{DirBuilder, DirBuilderExt};
+            let mut builder = DirBuilder::new();
+            builder.mode(0o700);
+            root.dir.create_dir_with(&name, &builder)?;
         }
         #[cfg(windows)]
-        create_private_stage(&dir)?;
-        let identity = directory_identity(&dir).map(|identity| fingerprint(&identity.0)).inspect_err(|_| {
-            let _ = fs::remove_dir(&dir);
+        create_private_stage(&path)?;
+        let opened = root.dir.open_dir(&name).and_then(Directory::from_dir).inspect_err(|_| {
+            let _ = root.dir.remove_dir(&name);
         })?;
-        Ok(Self(dir, identity))
+        Ok(Self { root, path, name, opened: Some(opened) })
+    }
+
+    fn dir(&self) -> &Dir {
+        &self.opened.as_ref().unwrap().dir
     }
 
     fn current(&self) -> bool {
-        directory_identity(&self.0).ok().map(|identity| fingerprint(&identity.0)) == Some(self.1)
+        self.opened.as_ref().unwrap().current(&self.path)
+    }
+
+    fn file_identity(&self) -> Result<u64, Error> {
+        let file =
+            self.dir().open_with(STAGED, cap_std::fs::OpenOptions::new().write(true)).map_err(save_error)?.into_std();
+        Handle::from_file(file).map(|id| fingerprint(&id)).map_err(save_error)
     }
 }
 
-impl Drop for PrivateStage {
+impl Drop for PrivateStage<'_> {
     fn drop(&mut self) {
-        if self.current() {
-            // A backup left after a failed restore is never removed here.
-            let _ = fs::remove_dir(&self.0);
+        let same = self
+            .root
+            .dir
+            .open_dir(&self.name)
+            .and_then(Directory::from_dir)
+            .is_ok_and(|dir| dir.identity == self.opened.as_ref().unwrap().identity);
+        let _ = self.dir().remove_file(STAGED);
+        drop(self.opened.take());
+        if same {
+            // Leave a backup from an interrupted publication intact.
+            let _ = self.root.dir.remove_dir(&self.name);
         }
     }
 }
 
-#[derive(PartialEq)]
-struct DirectoryIdentity(Handle);
-fn directory_identity(path: &Path) -> io::Result<DirectoryIdentity> {
-    let directory = cap_std::fs::Dir::open_ambient_dir(path, cap_std::ambient_authority())?;
-    Handle::from_file(directory.into_std_file()).map(DirectoryIdentity)
+struct Directory {
+    dir: Dir,
+    identity: Handle,
+}
+impl Directory {
+    fn open(path: &Path) -> io::Result<Self> {
+        Self::from_dir(Dir::open_ambient_dir(path, ambient_authority())?)
+    }
+
+    fn from_dir(dir: Dir) -> io::Result<Self> {
+        let identity = Handle::from_file(dir.try_clone()?.into_std_file())?;
+        Ok(Self { dir, identity })
+    }
+
+    fn current(&self, path: &Path) -> bool {
+        Self::open(path).is_ok_and(|dir| dir.identity == self.identity)
+    }
 }
 
 #[cfg(windows)]
@@ -194,7 +313,7 @@ fn create_private_stage(path: &Path) -> io::Result<()> {
     }
 }
 
-fn open_original(path: &Path) -> io::Result<Option<File>> {
+fn open_original(path: &Path, read: bool) -> io::Result<Option<File>> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if !metadata.is_file() => return Err(io::ErrorKind::InvalidInput.into()),
         Ok(_) => {}
@@ -202,7 +321,7 @@ fn open_original(path: &Path) -> io::Result<Option<File>> {
         Err(e) => return Err(e),
     }
     let mut options = OpenOptions::new();
-    options.read(true).write(true);
+    options.read(read).write(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -248,9 +367,30 @@ fn link_count(file: &File) -> io::Result<u64> {
     Ok(info.nNumberOfLinks.into())
 }
 
+enum Publication {
+    Published,
+    #[cfg(unix)]
+    Exclusive,
+}
+
+enum PublishError {
+    Unchanged(io::Error),
+    #[cfg(windows)]
+    Interrupted(io::Error),
+}
+
 #[cfg(unix)]
-fn publish(temp: &Path, path: &Path, exists: bool) -> io::Result<()> {
-    if exists { fs::rename(temp, path) } else { fs::hard_link(temp, path) }
+fn publish(stage: &PrivateStage<'_>, leaf: &Path, exists: bool) -> Result<Publication, PublishError> {
+    let parent = &stage.root.dir;
+    if exists {
+        stage.dir().rename(STAGED, parent, leaf).map_err(PublishError::Unchanged)?;
+    } else if let Err(err) = stage.dir().hard_link(STAGED, parent, leaf) {
+        if err.kind() == io::ErrorKind::Unsupported || matches!(err.raw_os_error(), Some(libc::EPERM | libc::ENOSYS)) {
+            return Ok(Publication::Exclusive);
+        }
+        return Err(PublishError::Unchanged(err));
+    }
+    Ok(Publication::Published)
 }
 
 #[cfg(test)]
@@ -301,6 +441,126 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn a_moved_parent_cannot_redirect_the_save() {
+        let dir = crate::shared::test_dir("atomic-save-moved");
+        let parent = dir.join("parent");
+        let moved = dir.join("moved");
+        let path = parent.join("note.txt");
+        fs::create_dir(&parent).unwrap();
+        fs::write(&path, b"old").unwrap();
+        let result = replace(
+            &path,
+            None,
+            || Ok(()),
+            |file| {
+                file.write_all(b"new")?;
+                match fs::rename(&parent, &moved) {
+                    Ok(()) => {
+                        fs::create_dir(&parent)?;
+                        fs::write(&path, b"replacement")
+                    }
+                    // The Windows directory handle can block the move itself.
+                    #[cfg(windows)]
+                    Err(err) if err.kind() == io::ErrorKind::PermissionDenied || err.raw_os_error() == Some(32) => {
+                        Ok(())
+                    }
+                    Err(err) => Err(err),
+                }
+            },
+        );
+        if moved.exists() {
+            assert_eq!(result.unwrap_err().0, Status::CONFLICT);
+            assert_eq!(fs::read(&path).unwrap(), b"replacement");
+            assert_eq!(fs::read(moved.join("note.txt")).unwrap(), b"old");
+            assert_eq!(fs::read_dir(&moved).unwrap().count(), 1);
+        } else {
+            assert!(cfg!(windows));
+            result.unwrap();
+            assert_eq!(fs::read(&path).unwrap(), b"new");
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn publication_failure_does_not_overwrite_the_original() {
+        let dir = crate::shared::test_dir("atomic-save-publish-failure");
+        let path = dir.join("note.txt");
+        fs::write(&path, b"old").unwrap();
+        let result = replace_with(
+            &path,
+            None,
+            || Ok(()),
+            |file| file.write_all(b"new"),
+            |_stage, _leaf, _exists| Err(PublishError::Unchanged(io::Error::other("injected publication failure"))),
+        );
+        assert_eq!(result.unwrap_err().0, Status::BAD_REQUEST);
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn permission_failure_at_publication_uses_the_verified_original() {
+        let dir = crate::shared::test_dir("atomic-save-permission");
+        let path = dir.join("note.txt");
+        fs::write(&path, b"old contents").unwrap();
+        let identity = file_identity(&path, false).unwrap();
+        replace_with(
+            &path,
+            Some(&version(b"old contents")),
+            || Ok(()),
+            |file| file.write_all(b"new"),
+            |_stage, _leaf, _exists| Err(PublishError::Unchanged(io::ErrorKind::PermissionDenied.into())),
+        )
+        .unwrap();
+        assert_eq!(file_identity(&path, false).unwrap(), identity);
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exclusive_creation_never_overwrites_a_concurrent_file() {
+        let dir = crate::shared::test_dir("atomic-save-exclusive");
+        let path = dir.join("note.txt");
+        replace_with(&path, None, || Ok(()), |f| f.write_all(b"new"), |_, _, _| Ok(Publication::Exclusive)).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        fs::remove_file(&path).unwrap();
+        let result = replace_with(
+            &path,
+            None,
+            || Ok(()),
+            |f| f.write_all(b"new"),
+            |_, _, _| {
+                fs::write(&path, b"external").unwrap();
+                Ok(Publication::Exclusive)
+            },
+        );
+        assert_eq!(result.unwrap_err().0, Status::CONFLICT);
+        assert_eq!(fs::read(&path).unwrap(), b"external");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn interrupted_replacement_restores_its_backup_without_overwriting() {
+        use windows_sys::Win32::Foundation::ERROR_UNABLE_TO_MOVE_REPLACEMENT_2;
+        let dir = crate::shared::test_dir("atomic-save-restore");
+        let path = dir.join("note.txt");
+        let backup = dir.join("backup");
+        let failure = || io::Error::from_raw_os_error(ERROR_UNABLE_TO_MOVE_REPLACEMENT_2 as i32);
+        fs::write(&backup, b"old").unwrap();
+        assert!(matches!(recover_replacement(&path, &backup, failure()), PublishError::Interrupted(_)));
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+        assert!(!backup.exists());
+        fs::write(&backup, b"backup").unwrap();
+        assert!(matches!(recover_replacement(&path, &backup, failure()), PublishError::Interrupted(_)));
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+        assert_eq!(fs::read(&backup).unwrap(), b"backup");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[cfg(windows)]
     #[test]
     fn replacing_a_windows_file_keeps_its_named_stream() {
@@ -309,9 +569,29 @@ mod tests {
         let stream = dir.join("note.txt:fixture");
         fs::write(&path, b"old").unwrap();
         fs::write(&stream, b"metadata").unwrap();
+        let before = Handle::from_path(&path).unwrap();
         replace(&path, None, || Ok(()), |file| file.write_all(b"new")).unwrap();
+        assert_ne!(before, Handle::from_path(&path).unwrap());
         assert_eq!(fs::read(&path).unwrap(), b"new");
         assert_eq!(fs::read(&stream).unwrap(), b"metadata");
+        drop(before);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_handle_that_blocks_replacement_but_allows_writes_keeps_the_file_writable() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+        let dir = crate::shared::test_dir("atomic-save-sharing");
+        let path = dir.join("note.txt");
+        fs::write(&path, b"old contents").unwrap();
+        let opened = OpenOptions::new().read(true).share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE).open(&path).unwrap();
+        let before = file_identity(&path, false).unwrap();
+        replace(&path, None, || Ok(()), |file| file.write_all(b"new")).unwrap();
+        assert_eq!(file_identity(&path, false).unwrap(), before);
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        drop(opened);
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -327,6 +607,27 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"new");
         assert_eq!(fs::read(&alias).unwrap(), b"new");
         assert!(!replace(&alias, Some(&etag), || Ok(()), |_| panic!("must refuse before writing")).is_ok());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_in_place_write_does_not_truncate_the_original_tail() {
+        let dir = crate::shared::test_dir("atomic-save-in-place");
+        let path = dir.join("note.txt");
+        let alias = dir.join("alias.txt");
+        fs::write(&path, b"old contents").unwrap();
+        fs::hard_link(&path, &alias).unwrap();
+        let result = replace(
+            &path,
+            None,
+            || Ok(()),
+            |file| {
+                file.write_all(b"new")?;
+                Err(io::Error::other("injected write failure"))
+            },
+        );
+        assert_eq!(result.unwrap_err().0, Status::BAD_REQUEST);
+        assert_eq!(fs::read(alias).unwrap(), b"new contents");
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -363,34 +664,112 @@ mod tests {
 }
 
 #[cfg(windows)]
-fn publish(temp: &Path, path: &Path, exists: bool) -> io::Result<()> {
+fn publish(stage: &PrivateStage<'_>, leaf: &Path, exists: bool) -> Result<Publication, PublishError> {
     use std::ptr::null_mut;
-    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, ReplaceFileW};
-    let (from, to) = (wide_path(temp), wide_path(path));
+    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+    let temp = stage.path.join(STAGED);
+    let path = stage.path.with_file_name(leaf);
     if !exists {
-        // SAFETY: both inputs are live, NUL-terminated Windows paths.
-        return if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) } != 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        };
+        return move_new(&temp, &path).map(|()| Publication::Published).map_err(PublishError::Unchanged);
     }
+    let (from, to) = (wide_path(&temp), wide_path(&path));
     let backup = temp.with_extension("backup");
     let original = wide_path(&backup);
     // SAFETY: all inputs are live, NUL-terminated paths; reserved pointers are null.
     if unsafe { ReplaceFileW(to.as_ptr(), from.as_ptr(), original.as_ptr(), 0, null_mut(), null_mut()) } != 0 {
         let _ = fs::remove_file(backup);
-        return Ok(());
+        return Ok(Publication::Published);
     }
-    let failure = io::Error::last_os_error();
-    // Windows can leave the old file under the backup name on a failed rename.
-    // Restore only into an empty slot, and keep the backup if restoration fails.
-    if backup.is_file() && fs::symlink_metadata(path).is_err_and(|e| e.kind() == io::ErrorKind::NotFound) {
-        if let Err(restore) = publish(&backup, path, false) {
-            eprintln!("Could not restore the original save target; backup at {}: {restore}", backup.display());
+    Err(recover_replacement(&path, &backup, io::Error::last_os_error()))
+}
+
+#[cfg(windows)]
+fn inherit_new_file_acl(stage: &PrivateStage<'_>) -> io::Result<()> {
+    use std::{
+        os::windows::{fs::OpenOptionsExt, io::AsRawHandle},
+        ptr::null_mut,
+    };
+    use windows_sys::Win32::{
+        Foundation::{ERROR_SUCCESS, LocalFree},
+        Security::{
+            Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
+            DACL_SECURITY_INFORMATION, SetFileSecurityW,
+        },
+        Storage::FileSystem::FILE_FLAG_DELETE_ON_CLOSE,
+    };
+    // A same-volume move keeps the staged file's DACL. An empty delete-on-close
+    // sibling supplies the normal DACL for a new file in the destination.
+    let probe = stage.path.with_extension("acl");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .custom_flags(FILE_FLAG_DELETE_ON_CLOSE)
+        .open(probe)?;
+    let mut descriptor = null_mut();
+    let temp = wide_path(&stage.path.join(STAGED));
+    // SAFETY: file and the NUL-terminated temp path remain live; GetSecurityInfo
+    // allocates the descriptor on success and LocalFree releases it.
+    unsafe {
+        let result = GetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut descriptor,
+        );
+        if result != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(result as i32));
+        }
+        let result = if SetFileSecurityW(temp.as_ptr(), DACL_SECURITY_INFORMATION, descriptor) == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        };
+        LocalFree(descriptor);
+        result
+    }
+}
+
+#[cfg(windows)]
+fn recover_replacement(path: &Path, backup: &Path, failure: io::Error) -> PublishError {
+    use windows_sys::Win32::Foundation::{ERROR_UNABLE_TO_MOVE_REPLACEMENT_2, ERROR_UNABLE_TO_REMOVE_REPLACED};
+    // Only failures known to leave the original in place may fall back.
+    match fs::symlink_metadata(backup) {
+        Ok(_) => match move_new(backup, path) {
+            Ok(()) => PublishError::Interrupted(failure),
+            Err(restore) => PublishError::Interrupted(io::Error::other(format!(
+                "{failure}; could not restore the original: {restore}; backup: {}",
+                backup.display()
+            ))),
+        },
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            if can_fallback(&failure) || failure.raw_os_error() == Some(ERROR_UNABLE_TO_REMOVE_REPLACED as i32) {
+                PublishError::Unchanged(io::Error::new(io::ErrorKind::PermissionDenied, failure))
+            } else if failure.raw_os_error() == Some(ERROR_UNABLE_TO_MOVE_REPLACEMENT_2 as i32) {
+                PublishError::Interrupted(io::Error::other(format!(
+                    "{failure}; original backup unavailable: {}",
+                    backup.display()
+                )))
+            } else {
+                PublishError::Interrupted(failure)
+            }
+        }
+        Err(err) => {
+            PublishError::Interrupted(io::Error::other(format!("{failure}; could not check the backup: {err}")))
         }
     }
-    Err(failure)
+}
+
+#[cfg(windows)]
+fn move_new(from: &Path, to: &Path) -> io::Result<()> {
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+    let (from, to) = (wide_path(from), wide_path(to));
+    // SAFETY: both inputs are live, NUL-terminated Windows paths.
+    if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) } != 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
 }
 
 #[cfg(windows)]

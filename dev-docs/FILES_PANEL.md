@@ -27,7 +27,8 @@ changes remain available for another attempt.
 
 The Rust server stages a save beside the resolved target and replaces the name
 only after writing and flushing it. Symbolic links keep pointing to the target.
-Hard-linked targets are saved in place so every alias sees the new contents.
+Targets are saved in place when the volume or permissions prevent replacement,
+or when hard links require every alias to keep pointing to the same file.
 
 ### Large inventories
 
