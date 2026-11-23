@@ -51,7 +51,17 @@ const tag = (id: string) => Context.Service<never, unknown>(id)
 const locationTag = tag("@opencode/Location")
 const sessionTag = tag("@opencode/Session"), databaseTag = tag("@opencode/storage/Database"), lifecycleTag = tag("@opencode/LocationLifecycle")
 const method = Schema.declare<(...args: any[]) => NativeEffect>((value): value is (...args: any[]) => NativeEffect => Predicate.isFunction(value))
-const schedulesShape = Schema.Struct({ create: method, list: method, get: method, pause: method, resume: method, remove: method, enabled: method })
+const schedulesShape = Schema.Struct({ get: method, pause: method, resume: method, enabled: method })
+const coreCalendarShape = Schema.Struct({ create: method, list: method, remove: method })
+const pluginCalendarShape = Schema.Struct({ create: method, list: method, delete: method })
+function calendarOperations(ctx: Plugin.Context, core: unknown) {
+  const experimental: (Plugin.Context["experimental"] & { automation?: unknown }) | undefined = ctx.experimental
+  if (experimental?.automation === undefined) return Schema.decodeUnknownSync(coreCalendarShape)(core)
+  const api = Schema.decodeUnknownSync(pluginCalendarShape)(experimental.automation)
+  return { create: (input: Automation.CreateInput) => api.create(input),
+    list: (input: { sessionID: Session.ID }) => api.list(input),
+    remove: (id: string) => api.delete({ automationID: Automation.ID.make(id) }) }
+}
 const rows = Schema.Array(Schema.Record(Schema.String, Schema.Unknown))
 const marker = (target: Target) => ({ missionID: target.missionID, timeGeneration: target.descriptor.timeGeneration,
   role: target.descriptor.role, slot: target.descriptor.slot })
@@ -70,7 +80,9 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
     if (Option.isNone(found)) throw new Error("Native calendar contract unavailable")
     return found.value
   }
-  const schedules = Schema.decodeUnknownSync(schedulesShape)(required(missionAutomationService))
+  const automation = required(missionAutomationService)
+  const schedules = Schema.decodeUnknownSync(schedulesShape)(automation)
+  const operations = calendarOperations(ctx, automation)
   const location = Schema.decodeUnknownSync(Schema.toType(Schema.Struct(Location.Info.fields)))(required(locationTag))
   const sessions = required(sessionTag) as { remove(id: string): NativeEffect; active: NativeEffect }
   const database = required(databaseTag) as { db: { $client: SqlClient.SqlClient } }
@@ -200,7 +212,7 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
     list: (input, guard) => protect(input, target => Effect.gen(function* () {
       yield* carrier(target)
       yield* available()
-      const values = yield* schedules.list({ sessionID: target.descriptor.sessionID }).pipe(Effect.flatMap(
+      const values = yield* operations.list({ sessionID: Session.ID.make(target.descriptor.sessionID) }).pipe(Effect.flatMap(
         Schema.decodeUnknownEffect(Schema.Array(Schema.toType(Automation.Info)).check(Schema.isMaxLength(16)))))
       const result = values.map(info => project(info, target))
       if (result.some(info => info.sessionID !== target.descriptor.sessionID)) throw new Error("Native calendar list is foreign")
@@ -222,7 +234,7 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
         trigger: missionAutomationTrigger(target.descriptor), action: { type: "code", code: MISSION_WAKE_CODE },
         ...(target.descriptor.endsAt === null ? {} : { expires: new Date(target.descriptor.endsAt).toISOString() }) })
       const value = yield* Effect.suspend(() => { assertCurrent(); assertSynchronousAuthorityGuard(guard, "policy-unqualified");
-        return schedules.create(input).pipe(Effect.provideService(Clock.Clock, creationClock)) })
+        return operations.create(input).pipe(Effect.provideService(Clock.Clock, creationClock)) })
         .pipe(Effect.flatMap(readMissionAutomation), Effect.map(info => project(info, target)))
       if (!same(value, target)) throw new Error("Native created calendar differs")
       return value
@@ -231,7 +243,7 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
     remove: (input, id, guard) => protect(input, target => Effect.gen(function* () {
       if (!(yield* get(target, id))) return
       yield* carrier(target)
-      yield* Effect.suspend(() => { assertCurrent(); assertSynchronousAuthorityGuard(guard, "policy-unqualified"); return schedules.remove(missionAutomationID(id)) }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Void)))
+      yield* Effect.suspend(() => { assertCurrent(); assertSynchronousAuthorityGuard(guard, "policy-unqualified"); return operations.remove(missionAutomationID(id)) }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Void)))
       if (yield* get(target, id)) throw new Error("Native calendar removal unconfirmed")
     }), guard),
     removeCarrier: (input, guard) => protect(input, target => Effect.gen(function* () {

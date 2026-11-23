@@ -12,6 +12,7 @@ import type { NativeScheduleCalendarTarget } from "./native-schedule-calendar-se
 import { registerNativeScheduleProvider, assertNativeScheduleProviderAvailable } from "./native-schedule-provider-registration"
 import type { NativeScheduleArtifacts } from "./native-schedule-installation"
 import { nativeScheduleCarrierHooks } from "./native-schedule-carrier"
+import { MISSION_WAKE_TOOL } from "./native-mission-automation"
 
 const method = { input: { type: "object" }, output: { type: "object" } } as const
 const definition = Rpc.define({ id: "codenomad.calendar-owner-qualification", methods: { methods: method, dst: method, off: method }, events: {} })
@@ -20,28 +21,56 @@ export default Plugin.define({ id: "codenomad.calendar-owner-qualification", eff
   const trace = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.tapCause(cause => Effect.sync(() => appendFileSync(artifacts.logFile, Cause.pretty(cause) + "\n"))))
   yield* registerNativeScheduleProvider(ctx, artifacts)
   yield* ctx.aisdk.hook("language", event => Effect.sync(() => hooks.language(event)))
+  yield* ctx.tool.transform(editor => editor.add({
+    name: MISSION_WAKE_TOOL.name, description: "Calendar qualification wake",
+    input: { type: "object", properties: {}, additionalProperties: false },
+    options: { namespace: MISSION_WAKE_TOOL.namespace, permission: MISSION_WAKE_TOOL.permission, codemode: true },
+    execute: () => Effect.die("Calendar qualification must not launch work"),
+  }))
   const current = () => true as const
-  const acquire = () => acquireNativeScheduleCalendarService(ctx, "build", current, effect => invocation.check(run => run(effect)),
+  const acquire = (context = ctx) => acquireNativeScheduleCalendarService(context, "build", current, effect => invocation.check(run => run(effect)),
     () => assertNativeScheduleProviderAvailable(ctx, artifacts))
   const target = (name: string, when: NativeScheduleCalendarTarget["descriptor"]["when"], slot = 0): NativeScheduleCalendarTarget => ({ missionID: "native_calendar",
     descriptor: { role: "principal", slot, timeGeneration: 1, sessionID: `${MISSION_SCHEDULE_CARRIER_SESSION_PREFIX}${stableToken(`${ctx.location.directory}\0${name}`, 40)}`,
       name: `cm_${name}`, when, endsAt: null, anchorAt: Date.now(), creation: "attempted", scheduleID: null, ambiguous: [] } })
   yield* ctx.rpc.register(definition, {
     methods: () => trace(Effect.scoped(invocation.capture(Effect.gen(function* () {
-      const native = yield* acquire(), selected = target("methods", { type: "every", every: "900000 millis", tz: "UTC" })
+      // Drop one reply after the real plugin API has inserted the row, not before it runs.
+      const experimental = ctx.experimental as typeof ctx.experimental & { automation?: {
+        create(input: unknown): Effect.Effect<unknown, unknown>
+        list(input: unknown): Effect.Effect<unknown, unknown>
+        delete(input: unknown): Effect.Effect<unknown, unknown>
+      } }
+      const api = experimental.automation, calls = { create: 0, list: 0, delete: 0 }
+      let lostReply = false
+      const observed = api ? { ...ctx, experimental: { ...experimental, automation: {
+        create: (input: unknown) => api.create(input).pipe(Effect.flatMap(info => {
+          if (++calls.create !== 1) return Effect.succeed(info)
+          lostReply = true
+          return Effect.fail(new Error("fixture create reply lost"))
+        })),
+        list: (input: unknown) => api.list(input).pipe(Effect.tap(() => Effect.sync(() => { calls.list++ }))),
+        delete: (input: unknown) => api.delete(input).pipe(Effect.tap(() => Effect.sync(() => { calls.delete++ }))),
+      } } } : ctx
+      const native = yield* acquire(observed), selected = target("methods", { type: "every", every: "900000 millis", tz: "UTC" })
       const found = yield* Effect.serviceOption(Context.Service<never, unknown>("@opencode/Session"))
       if (Option.isNone(found)) throw new Error("native Session qualification unavailable")
       const sessions = found.value as { create(input: unknown): Effect.Effect<Session.Info, unknown>; remove(id: string): Effect.Effect<void, unknown> }
       return yield* Effect.promise(async () => {
         await native.ensureCarrier(selected, current)
-        const created = await native.create(selected, current)
+        const created = await native.create(selected, current).catch(error => {
+          if (!lostReply || !String(error).includes("fixture create reply lost")) throw error
+          return undefined
+        })
         const list = await native.list(selected, current)
-        if (list.length !== 1 || list[0].id !== created.id) throw new Error("native session-filtered list differs")
-        if ((await native.get(selected, created.id, current))?.id !== created.id) throw new Error("native get differs")
-        if ((await native.pause(selected, created.id, current)).status !== "paused") throw new Error("native pause differs")
-        if ((await native.resume(selected, created.id, current)).status !== "active") throw new Error("native resume differs")
-        await native.remove(selected, created.id, current)
-        if (await native.get(selected, created.id, current)) throw new Error("native remove differs")
+        const [row] = list
+        if (list.length !== 1 || (created && row.id !== created.id) || (api && (!lostReply || created || calls.create !== 1 || calls.list !== 1)))
+          throw new Error("native session-filtered list or lost reply differs")
+        if ((await native.get(selected, row.id, current))?.id !== row.id) throw new Error("native get differs")
+        if ((await native.pause(selected, row.id, current)).status !== "paused") throw new Error("native pause differs")
+        if ((await native.resume(selected, row.id, current)).status !== "active") throw new Error("native resume differs")
+        await native.remove(selected, row.id, current)
+        if (await native.get(selected, row.id, current) || (api && calls.delete !== 1)) throw new Error("native remove differs")
         if (!await native.carrierQuiet(selected, current)) throw new Error("unused native carrier is not quiet")
         await native.removeCarrier(selected, current)
         const anchored = []
@@ -87,7 +116,7 @@ export default Plugin.define({ id: "codenomad.calendar-owner-qualification", eff
         await invocation.check(run => run(sessions.remove(child.id)))
         await native.removeCarrier(parent, current)
         return { qualified: ["create", "list(sessionID)", "get", "pause", "resume", "remove", "enabled", "Session.remove", "quiet SQL"],
-          protectedActualChild: true, anchored, sessionID: selected.descriptor.sessionID, scheduleID: created.id }
+          publicCalls: calls, lostReply, protectedActualChild: true, anchored, sessionID: selected.descriptor.sessionID, scheduleID: row.id }
       })
     })))),
     off: () => trace(Effect.scoped(invocation.capture(Effect.gen(function* () {

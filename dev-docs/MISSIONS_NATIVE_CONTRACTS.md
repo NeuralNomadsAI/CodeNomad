@@ -148,6 +148,7 @@ Exact request receipts remain point reads through `scheduleRead`.
 | `@opencode/client/service` | `discover({file})` returns Endpoint/undefined; `headers(endpoint)` builds authentication; public `Info` describes registration fields | Exact absolute registration, bounded non-secret id/pid/url/version projection, current PID/incarnation before dispatch and inside receiving RPC. Keep credentials in operation memory. For wake transport, forbid ensure/start/stop/terminate, CLI children, standalone and alternate namespaces. |
 | Client HTTP/RPC | `OpenCode.make(...).rpc(definition).method(input,{location,signal})` | Acquired authenticated connection, exact native directory and cancellation; preserve uncertainty after dispatch. |
 | Automation HTTP contract | `experimental.automation.create/list/get/pause/resume/delete`, `{data:Info}`, session-filtered list, delete 204 | `opencode/native-schedule-capability.ts` recognizes the consumed request/response shapes read-only. The Location's `scheduleFlag` RPC reads native flag resolution independently. Never create probe schedules. |
+| Plugin Automation facade | `ctx.experimental.automation` `create`/`list`/`delete` when advertised | `native-schedule-calendar-service.ts` validates the advertised shape and uses it for creation (under the slot anchor's Effect Clock), carrier-scoped list and deletion, never falling back on failure. |
 | Plugin Session facade | get/create/prompt/synthetic/interrupt/context | Prefer facade methods when they expose the required operation. Preserve exact session/message IDs and fixed profiles at admission. Use bounded point/page reads for source coverage. |
 | Session/AISDK hooks | prompt/context/title/compaction/language | Context admission requires the exact durable user message and schedule correlation. Title/compaction/language carry only local technical work. Treat metadata as correlation within service privileges. |
 | Native context message classification | Context message IDs select native carrier records | [Read bounds and authority](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds). |
@@ -191,11 +192,13 @@ checks the consumed part columns before passage admission.
 
 ## Schedule integration qualification
 
-Before consuming private `@opencode/Automation`, qualify each actual method in its
-current RPC graph: create/list/get/pause/resume/remove/enabled. Core and HTTP create
-take a tagged timer trigger and a prompt action targeting the owned session.
-Core list/get/pause/remove require explicit
-flag/session/mapping checks at the caller. Bound adoption to the exact carrier.
+Before consuming `ctx.experimental.automation` or private `@opencode/Automation`,
+qualify each actual method in its current RPC graph: create/list/delete on the
+plugin facade when advertised, and get/pause/resume/enabled (plus
+create/list/remove when the plugin facade is absent) on `@opencode/Automation`.
+Create takes a tagged timer trigger and a code or prompt action targeting the
+owned session. List/get/pause/remove require explicit flag/session/mapping checks
+at the caller. Bound adoption to the exact carrier.
 
 Semantic qualification covers deterministic `msg_<automationID>_<run>`, context ID
 preservation and prompt/stored-message automation metadata, native missed-slot/phase rules, durable turn ordering, local cached

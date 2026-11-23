@@ -9,10 +9,17 @@ exclusion. The daily document runtime keeps its own admission and control path.
 transport/local-language primitives. `registerNativeScheduleCarrierFoundation`
 provides a separate no-business-effect qualification composition.
 
-The adapter owns the fixed carrier prompt, private calendar facade and own-process
+The adapter owns the fixed carrier prompt, calendar facade and own-process
 HTTP hop; the launch policy, document CAS and passage engine own business scheduling.
 UI configuration projects Missions policy. The observation port requires
 original-input/terminal correlation and whole-family quiescence.
+
+The calendar facade uses `ctx.experimental.automation` for create, carrier-scoped
+list and delete when advertised. The private Automation service supplies point
+reads, Pause/Resume and the enabled check, plus create/list/remove when the plugin
+API is absent. Both creation paths run under the persisted slot anchor's Effect
+Clock. A failed API call never switches transports; recovery reads the exact
+carrier and checks the row against the saved intent before adoption or cleanup.
 
 ## Transport contract
 
@@ -187,6 +194,11 @@ fixture, same-URL incarnation replacement, an eight-second discovery overrun,
 response bounds, cancellation, shared lanes and durable-claim replay refusal.
 Carrier tests exercise cached local language, local auxiliary hooks, exact wake
 keys, replay high-water and incomplete-context refusal.
+
+`node scripts/test-native-mission-calendar-api.mjs <absolute-isolated-cli> plugin`
+qualifies the three plugin calls, including an intentionally lost creation reply
+after insertion and delayed creation of recurring and relative slots. Use `core`
+instead on a runtime without the plugin API to qualify the compatibility path.
 
 Native shipment qualification requires registered handlers with actual durable
 CAS, cold restart/backend absence, private Core graph/shape/lifetime checks,

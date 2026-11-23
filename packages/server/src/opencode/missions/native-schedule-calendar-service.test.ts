@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import path from "node:path"
 import test from "node:test"
-import { Context, Effect, Exit, Schema, Scope } from "effect"
+import { Clock, Context, Effect, Exit, Schema, Scope } from "effect"
 import { Location } from "@opencode/schema/location"
 import { Automation } from "@opencode/schema/automation"
 import { SessionMessage } from "@opencode/schema/session-message"
@@ -12,9 +12,9 @@ import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
 import { matchMissionAutomation, MISSION_WAKE_CODE, MISSION_WAKE_PERMISSIONS, runningMissionCodeWake } from "./native-mission-automation"
 
-async function facade(t: test.TestContext, availability: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void>) {
+async function facade(t: test.TestContext, availability: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void>, publicAPI = false) {
   const state: { enabled: boolean; closed: boolean; row?: string; duplicate?: boolean; runCount?: number; action?: Automation.Info["action"]
-    status?: Automation.Info["status"]; permissions?: unknown[] } = { enabled: true, closed: false }, created: any[] = []
+    status?: Automation.Info["status"]; permissions?: unknown[]; lostCreate?: boolean } = { enabled: true, closed: false }, created: any[] = []
   const directory = path.resolve("native-calendar-scope-unit-only")
   const location = Schema.decodeUnknownSync(Location.Info)({ directory, project: { id: "project", directory, canonical: directory } })
   const selected: NativeScheduleCalendarTarget = { missionID: "calendar_scope", descriptor: { role: "principal", slot: 0, timeGeneration: 1,
@@ -24,22 +24,38 @@ async function facade(t: test.TestContext, availability: (state: { enabled: bool
     directory, projectID: "project", trigger: input.trigger ?? input.when, tz: "UTC",
     action: state.action ?? { ...input.action, to: { session: input.sessionID } },
     status: state.status ?? "active", runCount: input.runCount ?? 0, time: { created: 1, updated: 1 } })
-  const schedules = { create: (input: unknown) => Effect.sync(() => { created.push(structuredClone(input)); return info(input) }),
+  let publicRow: Automation.Info | undefined
+  const listed: unknown[] = [], deleted: unknown[] = []
+  const unexpected = () => Effect.die("unexpected private calendar call")
+  const schedules = { create: publicAPI ? unexpected : (input: unknown) => Effect.sync(() => { created.push(structuredClone(input)); return info(input) }),
     list: () => Effect.succeed(state.runCount === undefined ? [] : [info({ sessionID: selected.descriptor.sessionID, name: selected.descriptor.name,
       when: selected.descriptor.when, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount })]),
     get: () => state.runCount === undefined ? Effect.fail({ _tag: "Automation.NotFoundError" }) : Effect.succeed(info({
       sessionID: selected.descriptor.sessionID, name: selected.descriptor.name, when: selected.descriptor.when,
       action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount })), pause: () => Effect.die("unexpected pause"),
     resume: () => Effect.die("unexpected resume"), remove: () => Effect.void, enabled: () => Effect.succeed(state.enabled) }
+  const experimental = publicAPI ? { automation: {
+    create: (input: unknown) => Effect.gen(function* () {
+      created.push(structuredClone(input))
+      assert.equal(yield* Clock.currentTimeMillis, selected.descriptor.anchorAt)
+      publicRow = info(input)
+      if (state.lostCreate) return yield* Effect.fail(new Error("lost create reply"))
+      return publicRow
+    }),
+    list: (input: unknown) => Effect.sync(() => { listed.push(input); return publicRow ? [publicRow] : [] }),
+    delete: (input: unknown) => Effect.sync(() => { deleted.push(input); publicRow = undefined }),
+  } } : undefined
+  const get = () => publicRow ? Effect.succeed(publicRow) : Effect.fail({ _tag: "Automation.NotFoundError" })
   const carrierID = selected.descriptor.sessionID
-  const ctx = { location, session: { get: () => Effect.succeed({ id: carrierID, projectID: "project", location: { directory },
+  const ctx = { location, experimental, session: { get: () => Effect.succeed({ id: carrierID, projectID: "project", location: { directory },
     model: { ...NATIVE_SCHEDULE_CARRIER_MODEL }, permissions: structuredClone(state.permissions), metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: {
       missionID: "calendar_scope", timeGeneration: 1, role: "principal", slot: 0 } } }),
     update: (input: { permissions: unknown[] }) => Effect.sync(() => { state.permissions = structuredClone(input.permissions) }) } } as unknown as Plugin.Context
   const scope = await Effect.runPromise(Scope.make())
   t.after(() => Effect.runPromise(Scope.close(scope, Exit.void)))
   const native = await Effect.runPromise(acquireNativeScheduleCalendarService(ctx, "build", () => true, undefined, () => availability(state)).pipe(
-    Effect.provideService(Context.Service<never, unknown>("@opencode/Automation"), schedules),
+    Effect.provideService(Context.Service<never, unknown>("@opencode/Automation"),
+      publicAPI ? { ...schedules, list: unexpected, remove: unexpected, get } : schedules),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Location"), location),
     Effect.provideService(Context.Service<never, unknown>("@opencode/LocationLifecycle"), { isClosed: () => state.closed }),
     Effect.provideService(Context.Service<never, unknown>("@opencode/Config"), { entries: () => Effect.succeed([{ type: "document", info: { experimental: { schedules: state.enabled } } }]) }),
@@ -50,8 +66,22 @@ async function facade(t: test.TestContext, availability: (state: { enabled: bool
         ...(state.duplicate ? [{ id: "msg_sch_scope_1", type: "user", data: null }] : [])]),
     }) } } }),
     Effect.provideService(Scope.Scope, scope)))
-  return { native, selected, state, created, scope }
+  return { native, selected, state, created, scope, listed, deleted }
 }
+
+test("plugin API keeps the creation clock, recovers a lost reply by carrier, and deletes the verified row", async t => {
+  const f = await facade(t, () => Effect.void, true), current = () => true as const
+  f.state.lostCreate = true
+  await assert.rejects(f.native.create(f.selected, current), /lost create reply/)
+  const [recovered] = await f.native.list(f.selected, current)
+  assert.deepEqual(f.listed, [{ sessionID: f.selected.descriptor.sessionID }])
+  assert.equal(recovered.createdAt, f.selected.descriptor.anchorAt)
+  assert.equal(f.created.length, 1, "a failed public call never falls back to another write")
+  await f.native.remove(f.selected, "sch_scope", current)
+  await f.native.remove(f.selected, "sch_scope", current)
+  assert.deepEqual(f.deleted, [{ automationID: recovered.id }])
+  assert.deepEqual(await f.native.list(f.selected, current), [])
+})
 
 test("native facade pins caller descriptors across asynchronous provider checks and retires with its Scope", async t => {
   let enter!: () => void, release!: () => void
