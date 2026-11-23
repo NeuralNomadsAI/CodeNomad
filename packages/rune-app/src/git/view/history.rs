@@ -13,27 +13,25 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
         ),
     );
     let filter = ui.filter.text.to_lowercase();
+    let dates = ui.history.dates(locale());
     let matches = ui
         .history
         .page
         .iter()
         .flat_map(|page| &page.commits)
-        .filter(|commit| {
+        .zip(dates.iter())
+        .filter(|(commit, _)| {
             format!("{} {} {}", commit.subject, commit.author, commit.id)
                 .to_lowercase()
                 .contains(&filter)
         });
     let mut empty = true;
-    for commit in matches {
+    for (commit, date) in matches {
         empty = false;
         let id = commit.id.clone();
         let subject = commit.subject.clone();
         let refs = commit.refs.clone();
-        let author = format!(
-            "{} · {}",
-            commit.author,
-            commit.date.get(..10).unwrap_or(&commit.date)
-        );
+        let author = format!("{} · {date}", commit.author);
         let short = id.chars().take(7).collect::<String>();
         let key = format!("git-commit-{id}");
         let name = format!("{subject} · {author} · {short}");
