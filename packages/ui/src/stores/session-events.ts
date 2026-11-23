@@ -89,6 +89,7 @@ const pendingSessionFetches = new Map<string, {
 const sessionInfoReads = new Map<string, {
   signal: AbortSignal
   current: () => boolean
+  title?: string
   result: Promise<Session | null>
 }>()
 const nativeLifecycleGenerations = new Map<string, number>()
@@ -294,8 +295,14 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       })
       return
     case "session.renamed":
-      if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
-      withSession(instanceId, event.data.sessionID, (session) => { session.title = event.data.title })
+      if (!sessions().get(instanceId)?.has(event.data.sessionID)) {
+        void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory, event.data.title)
+      } else {
+        withSession(instanceId, event.data.sessionID, session => {
+          if (session.title === event.data.title) return false
+          session.title = event.data.title
+        })
+      }
       return
     case "session.agent.selected":
       if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
@@ -790,23 +797,29 @@ function isInstanceGenerationCurrent(instanceId: string, generation: number): bo
   return instances().has(instanceId) && getOpenCodeInstanceGeneration(instanceId) === generation
 }
 
-function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string): Promise<Session | null> {
+function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string, title?: string): Promise<Session | null> {
   const authority = captureEventAuthority(instanceId)
   const instance = instances().get(instanceId)
-  if (!instance?.client || !authority.current()) return Promise.resolve(null)
+  if (!instance?.client || !authority.current()
+    || getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)) return Promise.resolve(null)
   const key = `${instanceId}\0${sessionId}`
   const held = sessionInfoReads.get(key)
-  if (held?.signal === authority.signal && held.current()) return held.result
+  if (held?.signal === authority.signal && held.current()) {
+    if (title !== undefined) held.title = title
+    return held.result
+  }
 
   void directory
   const generation = getOpenCodeInstanceGeneration(instanceId)
+  const current = () => authority.current() && isInstanceGenerationCurrent(instanceId, generation)
   const captured = sessions().get(instanceId)?.get(sessionId)
+  const observation = { ...authority, current, title, result: Promise.resolve<Session | null>(null) }
   const result = (async () => {
     try {
       const info = await getRootClient(instanceId).session.get({ sessionID: sessionId }, { signal: authority.signal })
       // A project closed or a client replaced during the read publishes nothing.
-      if (info.id !== sessionId || !authority.current() || !isInstanceGenerationCurrent(instanceId, generation)) return null
-      return publishFetchedSessionInfo(instanceId, info, captured, authority.current)
+      if (info.id !== sessionId || !current()) return null
+      return publishFetchedSessionInfo(instanceId, observation.title === undefined ? info : { ...info, title: observation.title }, captured, current)
     } catch (error) {
       if (authority.current()) log.error("Failed to fetch session info", error)
       return null
@@ -814,7 +827,8 @@ function fetchSessionInfo(instanceId: string, sessionId: string, directory?: str
   })().finally(() => {
     if (sessionInfoReads.get(key)?.result === result) sessionInfoReads.delete(key)
   })
-  sessionInfoReads.set(key, { ...authority, result })
+  observation.result = result
+  sessionInfoReads.set(key, observation)
   return result
 }
 

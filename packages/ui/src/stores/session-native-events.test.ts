@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { sseManager } from "../lib/sse-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
@@ -10,6 +11,46 @@ import { clearInstanceDeletedSessionAuthority, messagesLoaded, sessions, setActi
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
 describe("native session event reducer", () => {
+  it("projects rename titles and reads only missing metadata, retaining the latest title in flight", async () => {
+    const instanceId = "native-session-rename"
+    let reads = 0
+    let reply!: (info: any) => void
+    const client = { session: { get: () => {
+      reads++
+      return new Promise(resolve => { reply = resolve })
+    } } } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    sseManager.seedStatus(instanceId, "connected")
+    const rename = (sessionID: string, title: string) => {
+      const event = { id: title, type: "session.renamed", created: 2, location: { directory: "/work" },
+        data: { sessionID, title } } as const
+      handleInstanceInvalidation(instanceId, event as any)
+      handleNativeSessionEvent(instanceId, event as any)
+    }
+    try {
+      const info = { id: "known", location: { directory: "/work" }, projectID: "project", title: "Old",
+        time: { created: 1, updated: 1 }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }
+      setSessions(previous => new Map(previous).set(instanceId, new Map([["known", { ...info, parentId: null, instanceId, status: "idle" } as any]])))
+      rename("known", "New")
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(reads, 0)
+      assert.equal(sessions().get(instanceId)?.get("known")?.title, "New")
+      rename("cold", "First")
+      rename("cold", "Second")
+      assert.equal(reads, 1)
+      reply({ ...info, id: "cold", parentID: "known" })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(sessions().get(instanceId)?.get("cold")?.title, "Second")
+      rename("cold", "Third")
+      assert.equal(reads, 1)
+      assert.equal(sessions().get(instanceId)?.get("cold")?.title, "Third")
+    } finally {
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
   it("preserves durable session metadata and recognizes the streamed step boundary", () => {
     const instanceId = "native-session-metadata"
     const sessionId = "session"

@@ -2704,6 +2704,9 @@ const publishTranscriptChunk: NonNullable<OpenCodeDataEventAdmission["publicatio
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
+  // The catalog consumes the title directly. The SDK's rename reducer instead
+  // fetches SessionInfo even for unseen transcripts, which have no use for it.
+  if (event.type === "session.renamed") return
   observePendingCompaction(instanceId, event)
   const sessionId = "sessionID" in event.data && typeof event.data.sessionID === "string"
     ? event.data.sessionID
