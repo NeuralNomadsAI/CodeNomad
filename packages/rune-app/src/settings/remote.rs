@@ -12,6 +12,8 @@ use rune_theme_codenomad::{
 };
 use std::{cell::RefCell, rc::Rc};
 
+mod pairing_view;
+
 #[derive(Default)]
 pub(super) struct Remote {
     owner: Option<String>,
@@ -19,6 +21,9 @@ pub(super) struct Remote {
     pairing: Option<Pairing>,
     flight: Option<(Option<Sender<()>>, Receiver<Reply>)>,
     failed: bool,
+    needs_read: bool,
+    unconfirmed: Option<Mutation>,
+    copy: pairing_view::Copy,
 }
 
 type Snapshot = (Status, Option<Vec<Device>>);
@@ -29,9 +34,14 @@ enum Action {
     Revoke(String),
 }
 
+enum Mutation {
+    Pair,
+    Revoke(String),
+}
+
 enum Reply {
-    Snapshot(Option<Snapshot>, bool),
-    Pairing(Option<Pairing>),
+    Snapshot(Option<Snapshot>),
+    Pairing(Pairing),
 }
 
 async fn snapshot(backend: &Backend) -> codenomad_client::history::Result<Snapshot> {
@@ -60,38 +70,63 @@ impl Remote {
             }
             return true;
         }
+        let copied = self.copy.poll();
         let expired = self
             .pairing
             .as_ref()
             .is_some_and(|pairing| pairing.remaining().is_zero());
         if expired {
-            self.pairing = None;
+            self.clear_pairing();
         }
         let Some((_, flight)) = &self.flight else {
-            return expired;
+            return expired | copied;
         };
         let result = match flight.try_recv() {
             Ok(result) => result,
-            Err(_) if flight.is_closed() => Reply::Snapshot(None, true),
-            Err(_) => return expired,
+            Err(_) if flight.is_closed() => Reply::Snapshot(None),
+            Err(_) => return expired | copied,
         };
         self.flight = None;
         match result {
-            Reply::Snapshot(snapshot, failed) => {
-                self.failed = failed;
-                if let Some(snapshot) = snapshot {
-                    if !snapshot.0.manageable || snapshot.0.disabled_by_administrator {
-                        self.pairing = None;
+            Reply::Snapshot(Some(snapshot)) => {
+                let (status, devices) = &snapshot;
+                if !status.manageable || status.disabled_by_administrator {
+                    self.clear_pairing();
+                }
+                self.needs_read =
+                    matches!(self.unconfirmed, Some(Mutation::Revoke(_))) && devices.is_none();
+                self.failed = if self.needs_read {
+                    true
+                } else {
+                    match self.unconfirmed.take() {
+                        Some(Mutation::Revoke(id)) => devices
+                            .as_ref()
+                            .is_some_and(|devices| devices.iter().any(|device| device.id == id)),
+                        Some(Mutation::Pair) => true,
+                        None => false,
                     }
+                };
+                if !self.needs_read {
                     self.snapshot = Some(snapshot);
                 }
             }
+            Reply::Snapshot(None) => {
+                self.needs_read = true;
+                self.failed = true;
+            }
             Reply::Pairing(pairing) => {
-                self.failed = pairing.is_none();
-                self.pairing = pairing.filter(|value| !value.remaining().is_zero());
+                self.unconfirmed = None;
+                self.needs_read = false;
+                self.failed = pairing.remaining().is_zero();
+                self.pairing = (!self.failed).then_some(pairing);
             }
         }
         true
+    }
+
+    fn clear_pairing(&mut self) {
+        self.pairing = None;
+        self.copy = Default::default();
     }
 
     fn start(&mut self, backend: &Backend, wake: &Waker, action: Action) {
@@ -112,16 +147,23 @@ impl Remote {
                         .is_some_and(|devices| devices.iter().any(|device| device.id == *id))
             }),
         };
-        if !eligible {
+        if !eligible || (self.needs_read && !matches!(action, Action::Refresh)) {
             return;
         }
-        self.failed = false;
+        if !matches!(action, Action::Refresh) {
+            self.failed = false;
+        }
         let (cancel, cancelled) = bounded(1);
         let (out, input) = bounded(1);
         self.flight = Some((matches!(action, Action::Refresh).then_some(cancel), input));
         let (backend, wake) = (backend.clone(), wake.clone());
-        if matches!(action, Action::Pair(_)) {
-            self.pairing = None;
+        match &action {
+            Action::Pair(_) => {
+                self.clear_pairing();
+                self.unconfirmed = Some(Mutation::Pair);
+            }
+            Action::Revoke(id) => self.unconfirmed = Some(Mutation::Revoke(id.clone())),
+            Action::Refresh => {}
         }
         platform::spawn(async move {
             let result = match action {
@@ -131,21 +173,19 @@ impl Remote {
                     else {
                         return;
                     };
-                    let failed = result.is_err();
-                    Reply::Snapshot(result.ok(), failed)
+                    Reply::Snapshot(result.ok())
                 }
-                Action::Pair(origin) => {
-                    Reply::Pairing(remote::pairing(&backend, &origin).await.ok())
-                }
+                Action::Pair(origin) => match remote::pairing(&backend, &origin).await {
+                    Ok(pairing) => Reply::Pairing(pairing),
+                    Err(_) => Reply::Snapshot(snapshot(&backend).await.ok()),
+                },
                 Action::Revoke(id) => {
-                    let failed = remote::revoke(&backend, &id).await.is_err();
-                    let result = snapshot(&backend).await;
-                    let failed = failed || result.is_err();
-                    Reply::Snapshot(result.ok(), failed)
+                    let _ = remote::revoke(&backend, &id).await;
+                    Reply::Snapshot(snapshot(&backend).await.ok())
                 }
             };
             let expiry = match &result {
-                Reply::Pairing(Some(value)) => Some(value.remaining()),
+                Reply::Pairing(value) => Some(value.remaining()),
                 _ => None,
             };
             if out.send(result).await.is_ok() {
@@ -170,6 +210,8 @@ impl Remote {
         let control = |label: &str, action: Action| {
             let shared = shared.clone();
             let primary = matches!(action, Action::Pair(_));
+            let disabled =
+                !available || busy || self.needs_read && !matches!(action, Action::Refresh);
             let press = move |s: &mut S| {
                 let Some(state) = access(s) else {
                     return;
@@ -192,9 +234,9 @@ impl Remote {
                 );
             };
             if primary {
-                chrome::primary_action(label, !available || busy, press)
+                chrome::primary_action(label, disabled, press)
             } else {
-                layout::button(label, !available || busy, press)
+                layout::button(label, disabled, press)
             }
         };
         let heading = |key| text(t(key)).text_role(TextRole::Title).role("heading");
@@ -218,7 +260,7 @@ impl Remote {
                 .role("status")
                 .wrap(),
             );
-            if !status.direct_origins.is_empty() && !self.failed {
+            if !status.direct_origins.is_empty() {
                 card = card.child(heading("remoteControl.direct.title"));
                 for origin in &status.direct_origins {
                     card = card.child(chrome::setting_row(
@@ -230,31 +272,10 @@ impl Remote {
                     ));
                 }
             }
-            if self.pairing.is_some() {
-                let shared = shared.clone();
-                card = card
-                    .child(heading("remoteControl.pairing.title"))
-                    .child(layout::button_tx(
-                        t("remoteControl.pairing.copy"),
-                        busy,
-                        move |s, tx| {
-                            let Some(state) = access(s) else {
-                                return;
-                            };
-                            let prefs = shared.borrow();
-                            if let Some(pairing) = state.pairing.as_ref()
-                                && prefs.can_retry()
-                                && state.owner.as_ref()
-                                    == prefs.backend.as_ref().map(|backend| &backend.client_id)
-                                && !pairing.remaining().is_zero()
-                            {
-                                #[cfg(not(target_arch = "wasm32"))]
-                                let _ = tx.copy_secret(pairing.url.clone(), pairing.remaining());
-                                #[cfg(target_arch = "wasm32")]
-                                tx.copy(pairing.url.clone());
-                            }
-                        },
-                    ));
+            if let Some(pairing) = &self.pairing {
+                card = card.child(pairing_view::view(
+                    pairing, &self.copy, busy, shared, access,
+                ));
             }
             if let Some(devices) = devices {
                 card = card.child(heading("remoteControl.devices.title"));
@@ -262,18 +283,32 @@ impl Remote {
                     card = card.child(text(t("remoteControl.devices.empty")).wrap());
                 }
                 for device in devices {
-                    card = card.child(chrome::setting_row(
-                        &device.name,
-                        control(
-                            t("remoteControl.devices.revoke"),
-                            Action::Revoke(device.id.clone()),
-                        )
-                        .label(&format!(
-                            "{} · {}",
-                            t("remoteControl.devices.revoke"),
-                            device.name
-                        )),
-                    ));
+                    let origin = device.origin.as_ref().map_or_else(
+                        || t("remoteControl.devices.tunnel").to_owned(),
+                        |origin| t("remoteControl.devices.direct").replace("{origin}", origin),
+                    );
+                    let seen = t("remoteControl.devices.lastSeen")
+                        .replace("{time}", &pairing_view::last_seen(&device.last_seen_at));
+                    let uncertain = self.needs_read
+                        && matches!(&self.unconfirmed, Some(Mutation::Revoke(id)) if *id == device.id);
+                    let revoke = t("remoteControl.devices.revoke");
+                    card = card.child(
+                        col()
+                            .full_width()
+                            .separate(Space::Xs)
+                            .child(chrome::setting_row(
+                                &device.name,
+                                control(revoke, Action::Revoke(device.id.clone())).label(&format!(
+                                    "{revoke} · {} · {origin} · {seen}",
+                                    device.name
+                                )),
+                            ))
+                            .child(text(&origin).wrap())
+                            .child(text(&seen).wrap())
+                            .children(uncertain.then(|| {
+                                text(t("remoteControl.devices.revocationPending")).role("status")
+                            })),
+                    );
                 }
             }
         }

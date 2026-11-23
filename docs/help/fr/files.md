@@ -25,7 +25,7 @@ Les fichiers `.mmd` du Workspace s’ouvrent en diagramme. **Afficher la source*
 
 1. Ouvrez un fichier texte du Workspace avec son œil.
 2. Pour Markdown, choisissez **Afficher la source** pour modifier, ou **Aperçu Markdown** pour lire le rendu.
-3. Modifiez et choisissez **Enregistrer**, ou appuyez sur **Ctrl/Cmd+S** lorsque l’éditeur a le focus.
+3. Modifiez et choisissez **Enregistrer**, ou appuyez sur **Ctrl/Cmd+S** lorsque l’éditeur a le focus. Modifiez ou effacez **Enregistrer le fichier** dans les [Raccourcis clavier](shortcuts.md).
 
 Si l’application de bureau ouvre une fenêtre de récupération des brouillons, utilisez **Copier** pour conserver les modifications listées avant de la fermer.
 4. Si le fichier a changé à l’extérieur, examinez la confirmation d’écrasement ; choisissez **Annuler** pour conserver votre brouillon sans écraser ce changement.
@@ -39,6 +39,8 @@ Fermer le lecteur avec son bouton de fermeture final revient à la conversation 
 Remplacer ou fermer le lecteur affecte uniquement l’onglet de projet courant. Des onglets ouverts sur le même projet peuvent lire des fichiers différents ou garder un fichier à côté du chat, du web ou d’un contenu de Mission. Le choix source/rendu, la sélection dans l’éditeur et le défilement sont conservés lors des changements d’onglet tant que la cible et le modèle restent en mémoire. Le mode Fichiers est restauré par onglet ; les préférences de diff et de retour à la ligne restent partagées.
 
 Le lecteur de source garde le retour à la ligne d’un fichier ou d’un onglet à l’autre et le rétablit avec l’état de la fenêtre.
+Rouvrir un fichier source récent dans le même onglet de projet rétablit la sélection et la position de défilement.
+La première ligne source visible reste à l’écran lors de l’actualisation du fichier ou du redimensionnement du lecteur.
 
 ## Aperçus bornés et en lecture seule {#preview-limits}
 

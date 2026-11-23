@@ -1,4 +1,5 @@
 mod general;
+mod shortcuts;
 #[cfg(test)]
 mod tests;
 
@@ -34,6 +35,8 @@ pub(super) struct Window {
     memory_editor: super::memory::editor::Editor,
     seen_revision: u64,
     section: Section,
+    recording_shortcut: bool,
+    recording_target: Option<&'static str>,
     pub(super) opencode: opencode::Status,
     logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
@@ -55,6 +58,7 @@ enum Section {
     OpenCode,
     Notifications,
     Providers,
+    Shortcuts,
     Remote,
 }
 
@@ -213,6 +217,10 @@ pub(super) fn spec() -> AppSpec<Window> {
                     s.request_close(tx);
                     return true;
                 }
+                let recording_ended = s.recording_shortcut && tx.focused() != s.recording_target;
+                if recording_ended {
+                    s.recording_shortcut = false;
+                }
                 let mut prefs = s.shared.borrow_mut();
                 let changed = prefs.poll();
                 if changed && let Some(wake) = &prefs.main_wake {
@@ -248,7 +256,12 @@ pub(super) fn spec() -> AppSpec<Window> {
                 } else {
                     false
                 };
-                updated | status_changed | remote_changed | providers_changed | editor_changed
+                updated
+                    | status_changed
+                    | remote_changed
+                    | providers_changed
+                    | editor_changed
+                    | recording_ended
             })
         }),
         on_key: Some(|s, event, tx| {
@@ -306,6 +319,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let notifications_label = t("settings.nav.notifications");
         let providers_label = t("settings.nav.providers");
         let conversation_label = t("settings.nav.chat");
+        let shortcuts_label = t("settings.nav.hotkeys");
         let remote_label = t("settings.nav.remote");
         let section = match s.section {
             Section::General => general_label,
@@ -313,6 +327,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::OpenCode => opencode_label,
             Section::Notifications => notifications_label,
             Section::Providers => providers_label,
+            Section::Shortcuts => shortcuts_label,
             Section::Remote => remote_label,
         };
         let nav = chrome::nav(
@@ -345,6 +360,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     s.section == Section::Providers,
                 ),
                 (
+                    "settings-hotkeys",
+                    shortcuts_label,
+                    s.section == Section::Shortcuts,
+                ),
+                (
                     "settings-remote",
                     remote_label,
                     s.section == Section::Remote,
@@ -353,12 +373,14 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             |s: &mut Window, key| {
                 s.picker.set(None);
                 s.contrast_help = false;
+                s.recording_shortcut = false;
                 s.permissions.close();
                 s.section = match key {
                     "settings-opencode" => Section::OpenCode,
                     "settings-conversation" => Section::Conversation,
                     "settings-notifications" => Section::Notifications,
                     "settings-providers" => Section::Providers,
+                    "settings-hotkeys" => Section::Shortcuts,
                     "settings-remote" => Section::Remote,
                     _ => Section::General,
                 };
@@ -400,6 +422,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             rune::el()
         };
         let (key, controls) = match s.section {
+            Section::Shortcuts => ("hotkeys", shortcuts::view(s, &prefs)),
             Section::OpenCode => (
                 "opencode",
                 col()
@@ -483,7 +506,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         }
         chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers).on_window_focus(
             |s: &mut Window, focused, _| {
-                if focused && s.section == Section::OpenCode {
+                if !focused {
+                    s.recording_shortcut = false;
+                } else if s.section == Section::OpenCode {
                     s.check_opencode(Some(false));
                 } else if focused && s.section == Section::General {
                     s.shared.borrow_mut().memory.invalidate();

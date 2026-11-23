@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) enum Choice {
     Locale,
     Contrast,
+    Shortcut(&'static str),
     NewConversationPermissions,
     UsageVisible,
     UsageExpansion,
@@ -19,7 +20,16 @@ pub(super) enum Choice {
 }
 
 impl Choice {
-    fn put(self, patch: &mut Value, value: &'static str) {
+    fn put(self, patch: &mut Value, value: &ChoiceValue) {
+        if let Self::Shortcut(id) = self {
+            if let ChoiceValue::Shortcut(binding) = value {
+                patch["settings"]["hotkeyOverrides"][id] = binding.clone();
+            }
+            return;
+        }
+        let ChoiceValue::Text(value) = *value else {
+            return;
+        };
         match self {
             Self::Locale => patch["settings"]["locale"] = json!(value),
             Self::Contrast => patch["settings"]["highContrast"] = json!(value),
@@ -37,6 +47,7 @@ impl Choice {
             Self::UsageVisible => patch["settings"]["showUsageMetrics"] = json!(value == "on"),
             Self::UsageExpansion => patch["settings"]["usageMetricsExpansion"] = json!(value),
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
+            Self::Shortcut(_) => (),
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 patch["appearancePreferences"][mode] = json!({
@@ -46,7 +57,14 @@ impl Choice {
         }
     }
 
-    fn confirmed(self, value: &'static str, snapshot: &Value) -> bool {
+    fn confirmed(self, value: &ChoiceValue, snapshot: &Value) -> bool {
+        if let Self::Shortcut(id) = self {
+            return matches!(value, ChoiceValue::Shortcut(binding)
+                if &snapshot["settings"]["hotkeyOverrides"][id] == binding);
+        }
+        let ChoiceValue::Text(value) = *value else {
+            return false;
+        };
         let appearance = &snapshot["appearancePreferences"];
         match self {
             Self::Locale => snapshot["settings"]["locale"] == value,
@@ -65,6 +83,7 @@ impl Choice {
             Self::UsageVisible => snapshot["settings"]["showUsageMetrics"] == (value == "on"),
             Self::UsageExpansion => snapshot["settings"]["usageMetricsExpansion"] == value,
             Self::Mode => appearance["mode"] == value,
+            Self::Shortcut(_) => false,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 let slot = &appearance[mode];
@@ -78,7 +97,13 @@ impl Choice {
     }
 }
 
-type Choices = BTreeMap<Choice, &'static str>;
+#[derive(Clone, PartialEq)]
+enum ChoiceValue {
+    Text(&'static str),
+    Shortcut(Value),
+}
+
+type Choices = BTreeMap<Choice, ChoiceValue>;
 
 #[derive(Default)]
 struct Write {
@@ -184,6 +209,15 @@ impl Document {
     }
 
     pub(super) fn stage(&mut self, choice: Choice, value: &'static str) {
+        self.stage_value(choice, ChoiceValue::Text(value));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn stage_shortcut(&mut self, id: &'static str, binding: Value) {
+        self.stage_value(Choice::Shortcut(id), ChoiceValue::Shortcut(binding));
+    }
+
+    fn stage_value(&mut self, choice: Choice, value: ChoiceValue) {
         if matches!(
             choice,
             Choice::Contrast
@@ -193,6 +227,7 @@ impl Document {
                 | Choice::LogLevel
                 | Choice::NotificationRoute(..)
                 | Choice::NotificationsFocused
+                | Choice::Shortcut(_)
         ) {
             self.write.failed.remove(&choice);
         }
@@ -201,7 +236,16 @@ impl Document {
     }
 
     pub(super) fn requested(&self, choice: Choice) -> Option<&'static str> {
-        self.write.requested.get(&choice).copied()
+        match self.write.requested.get(&choice)? {
+            ChoiceValue::Text(value) => Some(*value),
+            ChoiceValue::Shortcut(_) => None,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn shortcut_pending(&self, id: &'static str) -> bool {
+        self.write.requested.contains_key(&Choice::Shortcut(id))
+            && !self.choice_failed(Choice::Shortcut(id))
     }
 
     pub(super) fn choice_failed(&self, choice: Choice) -> bool {
@@ -238,7 +282,7 @@ impl Document {
 
     fn settle(&mut self, operation: Operation, snapshot: Option<Value>, current: bool) {
         if let Operation::Write(sent) = &operation {
-            for (&choice, &value) in sent {
+            for (&choice, value) in sent {
                 if !self.write.pending.contains(&choice)
                     && !snapshot
                         .as_ref()
@@ -316,7 +360,13 @@ impl Document {
             Operation::Write(
                 std::mem::take(&mut self.write.pending)
                     .into_iter()
-                    .filter_map(|choice| self.requested(choice).map(|value| (choice, value)))
+                    .filter_map(|choice| {
+                        self.write
+                            .requested
+                            .get(&choice)
+                            .cloned()
+                            .map(|value| (choice, value))
+                    })
                     .collect(),
             )
         } else if std::mem::take(&mut self.read.queued) {
@@ -334,7 +384,7 @@ impl Document {
             {
                 patch["settings"]["notificationRouting"] = notification_routing::seed(before);
             }
-            for (&choice, &value) in sent {
+            for (&choice, value) in sent {
                 choice.put(&mut patch, value);
             }
             Some(patch)

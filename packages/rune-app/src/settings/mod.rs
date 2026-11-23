@@ -19,7 +19,7 @@ mod web_contrast;
 mod appearance;
 mod connection;
 mod delivery;
-mod shortcuts;
+pub(crate) mod shortcuts;
 mod window;
 
 use appearance::awaiting_appearance;
@@ -224,4 +224,9 @@ pub(crate) fn poll(s: &mut State) -> bool {
         }
     }
     changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_shortcuts(s: &State, overrides: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_shortcuts(overrides);
 }

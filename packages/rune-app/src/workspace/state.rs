@@ -4,6 +4,7 @@ pub use tabs::{can_new, close, new_tab, select};
 
 mod drafts;
 mod notification;
+mod observation;
 mod panel_state;
 mod polling;
 mod strip;
@@ -23,7 +24,7 @@ pub(crate) use panel_state::{
     suspend_missions,
 };
 #[cfg(target_arch = "wasm32")]
-pub(crate) use polling::poll_cached_notifications;
+pub(crate) use observation::poll_cached_notifications;
 pub use polling::{poll, status};
 pub use strip::strip;
 

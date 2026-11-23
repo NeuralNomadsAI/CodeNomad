@@ -1,6 +1,170 @@
 use super::*;
 
 #[test]
+fn wrapped_reader_keeps_its_logical_top_line_across_resize_and_reopen() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "source-reflow"));
+        let text = format!(
+            "{}short target\n{}",
+            "long prefix ".repeat(30) + "\n",
+            "after\n".repeat(120)
+        );
+        let contents = STANDARD.encode(text);
+        open(&mut rt, &http, "wrapped.txt", &contents).await;
+        click(&mut rt, "file-wrap");
+        let top_line = |rt: &Runtime<State>| {
+            let nodes = rt.elements();
+            let gutter = nodes
+                .iter()
+                .find(|node| node.key.as_deref() == Some("file-line-numbers"))
+                .unwrap();
+            let viewport = nodes
+                .iter()
+                .find(|node| {
+                    node.key.as_deref().is_some_and(|key| {
+                        key.starts_with("file-source-scroll-") && !key.contains("-anchor-")
+                    })
+                })
+                .unwrap();
+            let row = gutter
+                .text
+                .as_deref()
+                .unwrap()
+                .split('\n')
+                .position(|line| line == "2")
+                .unwrap();
+            (row, gutter.rect[1] + 17.5 * row as f32 - viewport.rect[1])
+        };
+        let (wide, _) = top_line(&rt);
+        assert!(wide > 1);
+        rt.update(|s, tx| {
+            let scope = s.files.as_ref().unwrap().document.scope();
+            tx.scroll_to_instant(
+                format!("file-source-scroll-{scope}"),
+                0.0,
+                10.0 + 17.5 * wide as f32,
+            );
+        });
+        rt.frame(0.02);
+        let (_, y) = top_line(&rt);
+        rt.set_viewport((550.0, 700.0), 1.0);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let (narrow, new_y) = top_line(&rt);
+        assert!(narrow > wide);
+        assert!((new_y - y).abs() < 1.0, "{y} → {new_y} on resize");
+        click(&mut rt, "file-close");
+        rt.set_viewport((1000.0, 700.0), 1.0);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        open(&mut rt, &http, "wrapped.txt", &contents).await;
+        let (row, new_y) = top_line(&rt);
+        assert_eq!(row, wide);
+        assert!((new_y - y).abs() < 1.0, "{y} → {new_y} after reopening");
+
+        let shortened = STANDARD.encode(format!("prefix\nshort target\n{}", "after\n".repeat(120)));
+        click(&mut rt, "file-refresh");
+        rt.update_if(|s, _| s.files.as_mut().unwrap().poll(20.0));
+        http.request("GET", "wrapped.txt")
+            .await
+            .preview("wrapped.txt", &shortened, Some("v2"))
+            .await;
+        settle(&mut rt).await;
+        let (row, new_y) = top_line(&rt);
+        assert_eq!(row, 1);
+        assert!((new_y - y).abs() < 1.0, "{y} → {new_y} after refresh");
+
+        click(&mut rt, "file-close");
+        open(&mut rt, &http, "wrapped.txt", &contents).await;
+        let (row, new_y) = top_line(&rt);
+        assert_eq!(row, wide);
+        assert!(
+            (new_y - y).abs() < 1.0,
+            "{y} → {new_y} with the same width but different wrapping"
+        );
+        http.quiet().await;
+    });
+}
+
+#[test]
+fn reopening_source_restores_selection_and_both_scroll_axes() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "source-position"));
+        let contents = STANDARD.encode(format!("{}\n", "un mot été 🦀 ".repeat(20)).repeat(80));
+        let source_rect = |rt: &Runtime<State>| {
+            rt.elements()
+                .into_iter()
+                .find(|node| editable_source(&node.path, &node.role))
+                .unwrap()
+                .rect
+        };
+        let selection = |rt: &Runtime<State>| {
+            let edit = rt.state.files.as_ref().unwrap().document.edit();
+            [edit.anchor, edit.focus]
+        };
+        open(&mut rt, &http, "main.rs", &contents).await;
+        let input = rt
+            .elements()
+            .into_iter()
+            .find(|node| editable_source(&node.path, &node.role))
+            .unwrap();
+        let [x, y, _, _] = input.visible;
+        rt.pointer_down(x + 30.0, y + 10.0);
+        rt.pointer_move(x + 105.0, y + 10.0);
+        rt.pointer_up(x + 105.0, y + 10.0);
+        rt.frame(0.02);
+        let selected = selection(&rt);
+        assert_ne!(selected[0], selected[1]);
+        let initial = source_rect(&rt);
+        rt.update(|s, tx| {
+            let scope = s.files.as_ref().unwrap().document.scope();
+            tx.scroll_to_instant(format!("file-source-scroll-{scope}"), 200.0, 500.0);
+        });
+        rt.frame(0.02);
+        let scrolled = source_rect(&rt);
+        assert!(scrolled[0] < initial[0] && scrolled[1] < initial[1]);
+
+        click(&mut rt, "file-close");
+        open(&mut rt, &http, "other.rs", &contents).await;
+        let other = source_rect(&rt);
+        assert_eq!(other[..2], initial[..2]);
+        assert_ne!(selection(&rt), selected);
+        click(&mut rt, "file-close");
+        rt.update(|state, _| state.files.as_mut().unwrap().open("main.rs".into()));
+        rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
+        http.request("GET", "main.rs")
+            .await
+            .reply(500, serde_json::json!({"error":"temporary"}))
+            .await;
+        settle(&mut rt).await;
+        click(&mut rt, "file-close");
+        open(&mut rt, &http, "main.rs", &contents).await;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        assert_eq!(selection(&rt), selected);
+        let restored = source_rect(&rt);
+        assert_eq!(restored[..2], scrolled[..2]);
+
+        click(&mut rt, "file-close");
+        open(&mut rt, &http, "main.rs", "YQ==").await;
+        assert_eq!(selection(&rt), [1, 1], "shorter source clamps both ends");
+        assert_eq!(
+            source_rect(&rt)[..2],
+            initial[..2],
+            "shorter source clamps scroll"
+        );
+        http.quiet().await;
+    });
+}
+
+#[test]
 fn overwrite_dialog_defaults_to_cancel_and_keeps_the_draft() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;
@@ -103,6 +267,59 @@ fn typing_and_primary_save_use_the_versioned_workspace_file() {
         settle(&mut rt).await;
         let request = http.request("PUT", "main.rs").await;
         assert_eq!(request.body["contents"], "\u{feff}a\r\nadded\r\nb");
+        assert_eq!(request.body["expectedVersion"], "v1");
+        request.reply(204, serde_json::Value::Null).await;
+        http.quiet().await;
+    });
+}
+
+#[test]
+fn source_save_uses_the_live_override_and_disable_preference() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "source-save-shortcut"));
+        open(&mut rt, &http, "main.rs", "YQ==").await;
+        let input = rt
+            .elements()
+            .into_iter()
+            .find(|node| editable_source(&node.path, &node.role))
+            .unwrap();
+        let [x, y, w, h] = input.visible;
+        rt.pointer_down(x + w / 2.0, y + h / 2.0);
+        rt.pointer_up(x + w / 2.0, y + h / 2.0);
+        rt.frame(0.02);
+        rt.key(KeyEvent {
+            key: Key::Text("b".to_owned()),
+            mods: Mods::default(),
+        });
+        rt.frame(0.02);
+        let chord = |key| KeyEvent {
+            key,
+            mods: Mods {
+                cmd: true,
+                ..Mods::default()
+            },
+        };
+        for overrides in [
+            serde_json::json!({"file-save": []}),
+            serde_json::json!({"file-save": [{"key": "f8", "mod": true}]}),
+        ] {
+            rt.update(|s, _| crate::settings::fixture_shortcuts(s, overrides));
+            rt.key(chord(Key::Command('s')));
+            rt.frame(0.02);
+            rt.update_if(|s, _| s.files.as_mut().unwrap().poll(20.0));
+            http.quiet().await;
+        }
+        rt.key(chord(Key::Function(8)));
+        rt.frame(0.02);
+        rt.update_if(|s, _| s.files.as_mut().unwrap().poll(20.0));
+        http.request("GET", "main.rs")
+            .await
+            .preview("main.rs", "YQ==", Some("v1"))
+            .await;
+        settle(&mut rt).await;
+        let request = http.request("PUT", "main.rs").await;
+        assert!(request.body["contents"].as_str().unwrap().contains('b'));
         assert_eq!(request.body["expectedVersion"], "v1");
         request.reply(204, serde_json::Value::Null).await;
         http.quiet().await;

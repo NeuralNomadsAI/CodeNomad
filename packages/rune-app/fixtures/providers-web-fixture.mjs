@@ -9,6 +9,7 @@ const bundle = path.resolve(process.argv[2] ?? 'target/rune-web-settings-provide
 const loseHeaders = process.argv.includes('--lost-headers')
 const opencodeMode = process.argv.find(arg => arg === '--local-opencode' || arg === '--remote-opencode')
 const remoteAccess = process.argv.includes('--remote-access')
+const remoteReceipts = process.argv.includes('--remote-receipts')
 const notifications = process.argv.includes('--notifications')
 const noDeviceRegistry = process.argv.includes('--no-device-registry')
 const local = opencodeMode === '--local-opencode' || remoteAccess
@@ -31,6 +32,7 @@ const remoteRequests = []
 const directOrigin = 'https://fixture.example:444'
 const deviceId = '004633fb-53c4-477c-8b01-4cc5c177724b'
 let deviceExists = true
+let losePair = remoteReceipts, failDeviceRead = false
 let logLevel = 'DEBUG'
 let releaseInstall, installed = false
 const installReady = new Promise(resolve => { releaseInstall = resolve })
@@ -74,18 +76,34 @@ const server = createServer(async (req,res) => {
       }
       if (p === '/api/remote-control/devices') {
         if (noDeviceRegistry) return res.writeHead(501).end()
-        return json({devices:deviceExists?[{id:deviceId,name:'Fixture Tablet',lastSeenAt:date}]:[]})
+        if (failDeviceRead) {
+          failDeviceRead = false
+          return res.writeHead(503).end()
+        }
+        return json({devices:deviceExists?[{id:deviceId,name:'Fixture Tablet',origin:directOrigin,lastSeenAt:date}]:[]})
       }
       if (p === '/api/remote-control/pairings') {
         assert.equal(req.method,'POST')
         let body = ''
         for await (const chunk of req) body += chunk
         assert.deepEqual(JSON.parse(body),{origin:directOrigin})
+        if (losePair) {
+          losePair = false
+          res.writeHead(200,{'content-type':'application/json','content-length':'80'})
+          res.write('{"url":')
+          return setTimeout(()=>res.destroy(),50)
+        }
         return json({url:`${directOrigin}/remote-pair#abcdefghijklmnopqrstuv`,expiresAt:new Date(Date.now()+240000).toISOString()})
       }
       assert.equal(p,`/api/remote-control/devices/${deviceId}`)
       assert.equal(req.method,'DELETE')
       deviceExists = false
+      if (remoteReceipts) {
+        failDeviceRead = true
+        res.writeHead(200,{'content-type':'application/json','content-length':'80'})
+        res.write('{')
+        return setTimeout(()=>res.destroy(),50)
+      }
       return res.writeHead(204).end()
     }
     if (p === '/api/workspaces' && req.method === 'GET') return json([project])
@@ -245,6 +263,12 @@ try {
       }
     }
   })
+  if (remoteAccess) await page.addInitScript(() => {
+    const write = Clipboard.prototype.writeText
+    Clipboard.prototype.writeText = function(text) {
+      return window.rejectPairingCopy ? Promise.reject(new DOMException('Fixture refusal','NotAllowedError')) : write.call(this,text)
+    }
+  })
   const click = name => page.getByRole('button',{name,exact:true}).click({force:true,timeout:15000})
   const afterPaint = () => page.evaluate(() => new Promise(resolve =>
     requestAnimationFrame(() => requestAnimationFrame(resolve))))
@@ -334,7 +358,7 @@ try {
 
   async function checkRemoteAccess() {
     await click('Settings')
-    await radio('Remote Access').click({force:true})
+    await radio('Remote Access').press('Enter')
     if (noDeviceRegistry) {
       await visible('Remote Control is off')
       assert.equal(await page.getByRole('heading',{name:'Paired devices',exact:true}).count(),0)
@@ -344,19 +368,45 @@ try {
       return
     }
     await visible('Fixture Tablet')
+    await visible(`HTTPS · ${directOrigin}`)
+    const seen = page.getByText(/^Last seen /)
+    await seen.waitFor({state:'attached'})
+    const revoke = page.getByRole('button',{name:/^Revoke · Fixture Tablet · HTTPS · https:\/\/fixture\.example:444 · Last seen /})
+    await revoke.waitFor({state:'attached'})
     assert.deepEqual(remoteRequests,['GET status','GET devices'])
     assert.equal(await page.getByRole('button',{name:'Start Remote Control',exact:true}).count(),0)
-    await click('Create HTTPS pairing link')
-    await page.getByRole('button',{name:'Copy link',exact:true}).waitFor({state:'attached'})
-    assert.equal(await page.getByText(/abcdefghijklmnopqrstuv/).count(),0)
-    assert.deepEqual(remoteRequests,['GET status','GET devices','POST pairings'])
+    const pair = page.getByRole('button',{name:'Create HTTPS pairing link',exact:true})
+    if (remoteReceipts) {
+      await pair.press('Enter')
+      await page.getByRole('alert').filter({hasText:'Connection failed'}).waitFor({state:'attached'})
+      assert.deepEqual(remoteRequests,['GET status','GET devices','POST pairings','GET status','GET devices'])
+      assert.equal(await page.getByRole('button',{name:'Copy link',exact:true}).count(),0)
+    }
+    await pair.press('Enter')
+    const copy = page.getByRole('button',{name:'Copy link',exact:true})
+    await copy.waitFor({state:'attached'})
+    const link = `${directOrigin}/remote-pair#abcdefghijklmnopqrstuv`
+    await visible(link)
     await page.context().grantPermissions(['clipboard-read','clipboard-write'])
-    await click('Copy link')
-    await page.waitForFunction(async expected => await navigator.clipboard.readText() === expected,
-      `${directOrigin}/remote-pair#abcdefghijklmnopqrstuv`)
-    await click('Revoke · Fixture Tablet')
+    await page.evaluate(()=>{window.rejectPairingCopy=true})
+    await copy.press('Enter')
+    await page.getByRole('alert').filter({hasText:'Copy failed'}).waitFor({state:'attached'})
+    await page.evaluate(()=>{window.rejectPairingCopy=false})
+    await copy.press('Enter')
+    await page.waitForFunction(async expected => await navigator.clipboard.readText() === expected,link)
+    await visible('Copied')
+    await revoke.press('Enter')
+    if (remoteReceipts) {
+      await visible('Revocation pending')
+      assert(await revoke.isDisabled())
+      assert.equal(remoteRequests.filter(value=>value.startsWith('DELETE')).length,1)
+      await page.getByRole('button',{name:'Refresh',exact:true}).press('Enter')
+    }
     await visible('No devices are paired yet.')
-    assert.deepEqual(remoteRequests,['GET status','GET devices','POST pairings',`DELETE devices/${deviceId}`,'GET status','GET devices'])
+    assert.equal(await page.getByRole('alert').filter({hasText:'Connection failed'}).count(),0)
+    assert.deepEqual(remoteRequests,remoteReceipts
+      ? ['GET status','GET devices','POST pairings','GET status','GET devices','POST pairings',`DELETE devices/${deviceId}`,'GET status','GET devices','GET status','GET devices']
+      : ['GET status','GET devices','POST pairings',`DELETE devices/${deviceId}`,'GET status','GET devices'])
     assert.deepEqual(opencodeRequests,[])
     console.log(JSON.stringify({fixture:'remote-access',remoteRequests}))
   }
