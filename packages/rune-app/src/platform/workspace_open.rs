@@ -38,7 +38,7 @@ mod web;
 
 pub fn windows_default_mode(path: &str) -> DefaultMode {
     let extension = path
-        .rsplit('/')
+        .rsplit(['/', '\\'])
         .next()
         .unwrap_or_default()
         .rsplit_once('.')

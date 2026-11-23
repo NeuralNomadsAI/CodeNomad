@@ -4,8 +4,9 @@ use std::{
     io,
     os::windows::process::CommandExt,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     sync::Weak,
+    time::Duration,
 };
 
 pub async fn open(
@@ -62,6 +63,24 @@ fn launch_path(path: &Path) -> PathBuf {
     value.strip_prefix(r"\\?\").unwrap_or(&value).into()
 }
 
+fn confirm_chooser_start(mut child: Child) -> io::Result<()> {
+    // Match the desktop hosts: report immediate failure without waiting for the chooser to close.
+    for _ in 0..10 {
+        if let Some(status) = child.try_wait()? {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(io::Error::other(status.to_string()))
+            };
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
 fn launch(selected: &Path, target: Target) -> io::Result<()> {
     let folder = selected.is_dir();
     let path = launch_path(selected);
@@ -82,15 +101,15 @@ fn launch(selected: &Path, target: Target) -> io::Result<()> {
         )
     };
     let literal = || path.to_string_lossy().replace('\'', "''");
-    let start = |command: &mut Command| {
+    let spawn = |command: &mut Command| {
         command
             .current_dir(cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map(drop)
     };
+    let start = |command: &mut Command| spawn(command).map(drop);
     let hidden = |command: &mut Command| {
         command
             .creation_flags(0x0800_0000)
@@ -122,7 +141,7 @@ fn launch(selected: &Path, target: Target) -> io::Result<()> {
         ),
         Target::Terminal => Err(io::ErrorKind::NotADirectory.into()),
         Target::Default => {
-            let mode = windows_default_mode(&selected.to_string_lossy().replace('\\', "/"));
+            let mode = windows_default_mode(&selected.to_string_lossy());
             if folder || mode == DefaultMode::Open {
                 return start(explorer().arg(&path));
             }
@@ -132,11 +151,11 @@ fn launch(selected: &Path, target: Target) -> io::Result<()> {
             {
                 return Ok(());
             }
-            start(
+            confirm_chooser_start(spawn(
                 Command::new(system.join("System32/rundll32.exe"))
                     .arg("shell32.dll,OpenAs_RunDLL")
                     .arg(&path),
-            )
+            )?)
         }
     }
 }
@@ -166,10 +185,28 @@ mod tests {
         }
         for (path, expected) in [
             ("docs/ÉTÉ.TXT", DefaultMode::Open),
+            (r"docs.txt\README", DefaultMode::Choose),
             ("script.ps1", DefaultMode::Edit),
             ("setup.exe", DefaultMode::Choose),
+            (".txt", DefaultMode::Choose),
         ] {
             assert_eq!(windows_default_mode(path), expected);
         }
+    }
+
+    #[test]
+    fn chooser_reports_an_immediate_failure_without_opening_a_window() {
+        let system = std::env::var_os("SystemRoot").unwrap();
+        let exited = |code| {
+            let mut child = Command::new(PathBuf::from(&system).join("System32/cmd.exe"))
+                .raw_arg(format!("/D /C exit {code}"))
+                .creation_flags(0x0800_0000)
+                .spawn()
+                .unwrap();
+            assert_eq!(child.wait().unwrap().code(), Some(code));
+            child
+        };
+        assert!(confirm_chooser_start(exited(0)).is_ok());
+        assert!(confirm_chooser_start(exited(7)).is_err());
     }
 }
