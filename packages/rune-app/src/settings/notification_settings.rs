@@ -68,11 +68,9 @@ pub(super) fn view<S: 'static>(
         .label(t("settings.notifications.routing.caption"))
         .full_width()
         .separate(Space::Sm)
-        .child(chrome::checkbox_table_row(
+        .child(chrome::checkbox_table_header(
             t("settings.notifications.routing.category"),
-            true,
-            Destination::ALL
-                .map(|destination| text(label(destination)).wrap().role("columnheader")),
+            Destination::ALL.map(label),
         ));
     for category in Category::ALL {
         let category_label = t(&format!(
@@ -81,7 +79,6 @@ pub(super) fn view<S: 'static>(
         ));
         table = table.child(chrome::checkbox_table_row(
             category_label,
-            false,
             Destination::ALL.map(|destination| {
                 let shared = shared.clone();
                 let system = destination == Destination::System;
@@ -188,9 +185,28 @@ fn a_system_check_requests_permission_in_its_click_but_a_history_check_does_not(
         runtime.frame(0.0);
         let tree = runtime.accessibility_json().to_string();
         assert_eq!(tree.matches("\"role\":\"check-box\"").count(), 27);
+        assert_eq!(tree.matches("\"role\":\"column-header\"").count(), 4);
+        assert_eq!(tree.matches("\"role\":\"row-header\"").count(), 9);
+        assert_eq!(tree.matches("\"role\":\"cell\"").count(), 27);
         assert_eq!(tree.contains("\"disabled\""), blocked);
         if permission != Permission::Ask {
             continue;
+        }
+        runtime.update(|_, tx| tx.focus("needsInput-screen", true));
+        runtime.frame(0.02);
+        for expected in [
+            "needsInput-history",
+            "needsInput-system",
+            "sessionDone-screen",
+        ] {
+            let event = rune::KeyEvent {
+                key: rune::Key::Tab,
+                mods: rune::Mods::default(),
+            };
+            runtime.key(event.clone());
+            runtime.key_up(event);
+            runtime.frame(0.02);
+            runtime.update(|_, tx| assert_eq!(tx.focused(), Some(expected)));
         }
         let click = |runtime: &mut rune::Runtime<State>, key| {
             let (x, y) = runtime.find(key).unwrap();
