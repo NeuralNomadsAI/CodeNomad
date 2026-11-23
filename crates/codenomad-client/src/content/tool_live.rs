@@ -10,6 +10,10 @@ fn no_progress(metadata: &Value) -> bool {
     metadata.is_null() || metadata.as_object().is_some_and(|fields| fields.is_empty())
 }
 
+fn execute_calls(metadata: &Value) -> &[Value] {
+    metadata["toolCalls"].as_array().map_or(&[], Vec::as_slice)
+}
+
 pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
     let replace = match (live.status.as_str(), fetched.status.as_str()) {
         ("streaming", "streaming") => live
@@ -25,6 +29,36 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
             let snapshot = Arc::make_mut(fetched);
             snapshot.metadata = live.metadata.clone();
             measure(snapshot);
+            false
+        }
+        ("running", "running") if live.name == "execute" && fetched.name == "execute" => {
+            let saved = execute_calls(&live.metadata);
+            let published = execute_calls(&fetched.metadata);
+            if saved.len() > published.len()
+                && saved
+                    .iter()
+                    .zip(published)
+                    .all(|(a, b)| a["tool"] == b["tool"])
+            {
+                let calls = published
+                    .iter()
+                    .zip(saved)
+                    .map(|(http, sse)| {
+                        if http["status"] == "running" && sse["status"] != "running" {
+                            sse
+                        } else {
+                            http
+                        }
+                    })
+                    .chain(saved.iter().skip(published.len()))
+                    .cloned()
+                    .collect();
+                let snapshot = Arc::make_mut(fetched);
+                if let Some(fields) = snapshot.metadata.as_object_mut() {
+                    fields.insert("toolCalls".into(), Value::Array(calls));
+                }
+                measure(snapshot);
+            }
             false
         }
         _ => false,
@@ -72,6 +106,7 @@ pub(crate) fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
             metadata: Value::Null,
             output: String::new(),
             error: String::new(),
+            started: None,
             bytes: 0,
             output_bytes: 0,
         };
@@ -123,6 +158,19 @@ pub(crate) fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
         _ => return Fit::Repair,
     }
     measure(&mut tool);
+    if tool.name == "execute"
+        && kind == "session.tool.progress"
+        && tool.bytes.saturating_add(tool.output_bytes) > LIVE_BYTES
+        && let Some(calls) = tool.metadata["toolCalls"].as_array_mut()
+    {
+        // Keep progress visible even when the nested inputs cannot be retained.
+        for call in calls {
+            if let Some(fields) = call.as_object_mut() {
+                fields.remove("input");
+            }
+        }
+        measure(&mut tool);
+    }
     if tool.bytes.saturating_add(tool.output_bytes) > LIVE_BYTES {
         return Fit::Repair;
     }
@@ -159,6 +207,66 @@ pub fn install(row: &mut Message, tool: Arc<Tool>) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn large_execute_progress_keeps_statuses_and_pages_recover_missing_calls() {
+        let row = |metadata| {
+            crate::history::decode_message(&json!({
+            "id":"row","type":"assistant","content":[
+                {"type":"tool","id":"call","name":"execute","state":{"status":"running","input":{},"metadata":metadata}}
+            ]
+        })).unwrap()
+        };
+        let mut live = row(json!({}));
+        let calls: Vec<_> = (0..4)
+            .map(|index| {
+                json!({
+                    "tool":"write","status":if index == 3 {"running"} else {"completed"},
+                    "input":{"filePath":format!("{index}.txt"),"content":"x".repeat(70 * 1024)}
+                })
+            })
+            .collect();
+        let Fit::Applied(tool) = apply(
+            &mut live,
+            "session.tool.progress",
+            &json!({"id":"call","metadata":{"toolCalls":calls}}),
+        ) else {
+            panic!("large progress snapshot was lost")
+        };
+        assert_eq!(execute_calls(&tool.metadata).len(), 4);
+        assert_eq!(tool.metadata["toolCalls"][3]["status"], "running");
+        assert!(
+            execute_calls(&tool.metadata)
+                .iter()
+                .all(|call| call["tool"] == "write" && call.get("input").is_none())
+        );
+        assert!(tool.bytes + tool.output_bytes <= LIVE_BYTES);
+
+        let mut behind = [Arc::new(row(
+            json!({"title":"HTTP title","toolCalls":calls[..1]}),
+        ))];
+        crate::content::merge_page(&[Arc::new(live.clone())], &mut behind).unwrap();
+        let Part::Tool(restored) = &behind[0].parts[0] else {
+            panic!("tool part")
+        };
+        assert_eq!(execute_calls(&restored.metadata).len(), 4);
+        assert_eq!(restored.metadata["title"], "HTTP title");
+        assert_eq!(
+            restored.metadata["toolCalls"][0]["input"]["content"]
+                .as_str()
+                .unwrap()
+                .len(),
+            70 * 1024
+        );
+
+        let older = row(json!({"toolCalls":calls[..1]}));
+        let mut ahead = [Arc::new(row(json!({"toolCalls":calls})))];
+        crate::content::merge_page(&[Arc::new(older)], &mut ahead).unwrap();
+        let Part::Tool(restored) = &ahead[0].parts[0] else {
+            panic!("tool part")
+        };
+        assert_eq!(execute_calls(&restored.metadata).len(), 4);
+    }
 
     #[test]
     fn input_appends_but_progress_replaces() {

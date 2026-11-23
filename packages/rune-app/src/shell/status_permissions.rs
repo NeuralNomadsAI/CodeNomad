@@ -139,7 +139,7 @@ impl Permissions {
         if !demand(
             s.screen.is_launcher(),
             s.shell.visible(1),
-            crate::workspace::files_tab(s),
+            crate::workspace::right_panel_tab(s) == crate::workspace::RightPanelTab::Status,
         ) || s.composer.pending()
             || s.screen.launcher().is_some_and(|launcher| launcher.pending)
             || crate::git::placement_unconfirmed(s)
@@ -241,15 +241,15 @@ fn arrived<T>(reply: &Receiver<T>, fallback: T) -> Option<T> {
     }
 }
 
-fn demand(launcher: bool, panel: bool, files: bool) -> bool {
-    !launcher && panel && !files
+fn demand(launcher: bool, panel: bool, status: bool) -> bool {
+    !launcher && panel && status
 }
 
 pub(crate) fn poll(s: &mut State) -> bool {
     s.status_permissions.show(demand(
         s.screen.is_launcher(),
         s.shell.visible(1),
-        crate::workspace::files_tab(s),
+        crate::workspace::right_panel_tab(s) == crate::workspace::RightPanelTab::Status,
     ));
     s.status_permissions.poll(&s.reads, &s.wake)
 }

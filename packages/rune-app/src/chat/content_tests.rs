@@ -119,6 +119,37 @@ fn user_attachments_render_as_chips_without_instructions_or_uris() {
     });
 }
 #[test]
+fn write_renders_and_copies_the_file_instead_of_the_tool_acknowledgement() {
+    let row = history::decode_message(
+        &json!({"id":"written","type":"assistant","time":{"completed":1},"content":[
+            {"type":"tool","id":"write","name":"write","state":{"status":"completed",
+                "input":{"filePath":"demo.rs","content":"fn written() {}\n"},
+                "metadata":{"content":"stale metadata"},
+                "content":[{"type":"text","text":"Write applied."}]}}
+        ]}),
+    )
+    .unwrap();
+    let mut state = init();
+    state.messages = vec![row.into()];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    rt.frame(0.0);
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("fn written() {}"));
+    assert!(!tree.contains("Write applied.") && !tree.contains("stale metadata"));
+    let (x, y) = rt.find("copy-tool-written:5:write-output").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some("fn written() {}\n")
+    );
+}
+
+#[test]
 fn streamed_text_after_a_tool_reaches_the_rendered_transcript() {
     let row = history::decode_message(&json!({"id":"mixed","type":"assistant","content":[
         {"type":"text","text":"Before"},

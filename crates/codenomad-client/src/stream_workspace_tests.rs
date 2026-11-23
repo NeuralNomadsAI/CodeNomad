@@ -1,8 +1,9 @@
 use super::*;
 use crate::{
     bounded,
-    transport::{Command, Event},
+    transport::{Command, DirectoryChange, Event},
 };
+use serde_json::{Value, json};
 
 fn run(task: impl std::future::Future<Output = ()>) {
     tokio::runtime::Builder::new_current_thread()

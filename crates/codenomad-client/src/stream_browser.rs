@@ -1,13 +1,16 @@
 //! Browser-owned EventSource. Recovery owns reconnect epochs and backoff.
+use super::limits::{FRAME_LIMIT, reread};
 use super::*;
 use std::{cell::Cell, rc::Rc};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::{Event, EventSource, EventSourceInit, MessageEvent};
 
+const BACKLOG_LIMIT: usize = 2 * FRAME_LIMIT;
+
 enum Frame {
     Open,
     Data(String, String),
-    Preferences(crate::settings::Owner),
+    Skipped,
     Closed,
 }
 struct Source {
@@ -48,6 +51,7 @@ pub(super) async fn read(
         .map_err(|_| "browser event stream unavailable")?;
     let (tx, rx) = crate::bounded(128);
     let overflow = Rc::new(Cell::new(false));
+    let queued_bytes = Rc::new(Cell::new(0usize));
     let tx_open = tx.clone();
     let fail_open = overflow.clone();
     let close_open = source.clone();
@@ -60,23 +64,25 @@ pub(super) async fn read(
     let message = |kind: &'static str| -> Closure<dyn FnMut(MessageEvent)> {
         let tx = tx.clone();
         let overflow = overflow.clone();
+        let queued_bytes = queued_bytes.clone();
         let source = source.clone();
         Closure::new(move |event: MessageEvent| {
             let data = event.data().as_string().unwrap_or_default();
-            let frame = if data.len() <= NATIVE_EVENT_LIMIT {
-                Some(Frame::Data(kind.into(), data))
-            } else if data.len() <= OWNER_EVENT_LIMIT && kind == "message" {
-                serde_json::from_str::<Value>(&data)
-                    .ok()
-                    .as_ref()
-                    .and_then(storage_owner)
-                    .map(Frame::Preferences)
+            let frame = if data.len() <= FRAME_LIMIT {
+                Frame::Data(kind.into(), data)
             } else {
-                None
+                Frame::Skipped
             };
-            if frame.is_none_or(|frame| tx.try_send(frame).is_err()) {
+            let bytes = match &frame {
+                Frame::Data(_, data) => data.len(),
+                _ => 0,
+            };
+            let total = queued_bytes.get() + bytes;
+            if total > BACKLOG_LIMIT || tx.try_send(frame).is_err() {
                 overflow.set(true);
                 source.close();
+            } else {
+                queued_bytes.set(total);
             }
         })
     };
@@ -116,11 +122,18 @@ pub(super) async fn read(
             return Err("browser event queue budget reached".into());
         }
         match runtime::recv_timeout(&rx, Duration::from_millis(25)).await {
-            Some(Frame::Open) => opened(epoch, out, state).await?,
+            Some(Frame::Open) => {
+                b.client.children().invalidate(b, None);
+                opened(epoch, out, state).await?;
+            }
             Some(Frame::Data(kind, data)) => {
+                queued_bytes.set(queued_bytes.get() - data.len());
                 dispatch(b, epoch, out, state, &connection, &kind, &data).await?
             }
-            Some(Frame::Preferences(owner)) => state.storage_changed(epoch, owner, out).await?,
+            Some(Frame::Skipped) => {
+                b.client.children().invalidate(b, None);
+                reread(epoch, out, state).await?;
+            }
             Some(Frame::Closed) => return Err("browser event stream ended".into()),
             None => {}
         }

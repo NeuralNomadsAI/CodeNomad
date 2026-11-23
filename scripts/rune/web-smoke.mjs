@@ -10,10 +10,11 @@ import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreat
 import {mobileClientHints, mobileContext, mobileInteraction} from './web-mobile.mjs'
 import {mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste} from './web-paste.mjs'
+import {missionsFixture} from './web-missions.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'same-origin-pairing':{type:'boolean'}, 'paste-only':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'paste-only':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
@@ -21,6 +22,7 @@ if(values.connected){assert(values.workspace&&values.project&&values['storage-st
 else url.searchParams.set('scene', values['paste-only'] ? 'synthetic-paste' : 'synthetic')
 if(values.mobile)assert(values.connected && url.protocol==='https:')
 if(values['paste-only'])assert(!values.connected)
+if(values.missions)assert(values.connected&&!values.mobile&&url.protocol==='http:')
 url.searchParams.set('locale', values.locale)
 const catalogueIndex = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/catalogues.json'), 'utf8'))
 assert(catalogueIndex.locales.includes(values.locale), 'Select a supported locale from the generated catalogue')
@@ -47,7 +49,7 @@ const connectedPalettes = values.connected
   if(values.mobile)assets.add('/remote-pair')
 try {
   const android=mobileContext(browser)
-  const sizes=values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
+  const sizes=values.missions?[['desktop',1200,900,false]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
     [['desktop',960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
   for (const [name, width, height, touch] of sizes) {
     const control=name==='phone-dpr1-control'
@@ -57,9 +59,11 @@ try {
         ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
       const page = await context.newPage()
       page.setDefaultTimeout(15000)
+      const missions=values.missions?missionsFixture({page,messages,artifact:path.join(out,`missions-${colorScheme}`),project:values.project}):null
+      if(missions)await context.addInitScript(()=>Object.defineProperty(Crypto.prototype,'subtle',{value:undefined}))
       const errors = [], forbiddenRequests = [], routes=[], history=[]
       let measured
-      const policy=workspacePolicy({origin:url.origin,project:values.project,assets})
+      const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions})
       let eventSource=0
       let releaseLinked
       const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
@@ -92,6 +96,7 @@ try {
             try{Object.assign(entry,await fulfillWorkspaceCreation(route,policy));return}
             catch{errors.push({name:'WorkspaceAdmission',message:'Private workspace response was refused before delivery'});return route.abort('blockedbyclient')}
           }
+          if(missions&&await missions.route(route,p))return
         }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/worktrees')){
           markLinked()
@@ -205,6 +210,7 @@ try {
           await select('Another session','ses_another')
           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
           await select('Existing history','ses_existing');await reading()
+          if(missions)await missions.check(press)
          }else{
         // The DOM editing proxy is ready before the browser presents the GPU handover.
         // Start the synthetic interactions on the canvas that will be sampled.
@@ -346,7 +352,7 @@ try {
         await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot(),
           marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))}, null, 2))
         throw error
-      } finally {releaseLinked?.();await context.close()}
+       } finally {missions?.release();releaseLinked?.();await context.close()}
     }
   }
 } finally {

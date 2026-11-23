@@ -36,6 +36,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::Connected(backend) => {
                 s.renew_scope();
                 s.status_permissions.bind(&backend);
+                s.transcript_display.children.bind(backend.clone());
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -48,6 +49,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::AgentHint(catalog) => {
                 if catalog {
                     s.status_permissions.online(true);
+                    workspace::mission_event(s, None);
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
                     git::online(s, true);
@@ -113,6 +115,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     s.history_detached = false;
                     s.can_older = false;
                 }
+                workspace::mission_event(s, Some(&event));
                 git::event(s, &event);
                 if let Some(files) = &mut s.files {
                     files.event(event);
@@ -202,6 +205,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.history_error = true;
             }
             Event::HistoryInvalidated => {
+                s.transcript_display.children.clear();
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();
@@ -213,6 +217,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::WorkspaceMissing => {
                 s.status_permissions.online(false);
+                s.transcript_display.children.clear();
                 #[cfg(target_arch = "wasm32")]
                 {
                     s.phase = Phase::WorkspaceMissing;
@@ -266,6 +271,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.history_error = true;
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
+                s.transcript_display.children.clear();
                 #[cfg(target_arch = "wasm32")]
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
@@ -298,6 +304,10 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
     {
         composer::settle_pending(s, transport::PromptOutcome::Unconfirmed);
         s.phase = Phase::Failed;
+        changed = true;
+    }
+    if s.transcript_display.children.poll() {
+        s.revision += 1;
         changed = true;
     }
     changed

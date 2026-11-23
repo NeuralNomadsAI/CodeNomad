@@ -125,6 +125,19 @@ pub(crate) fn poll(s: &mut State) -> bool {
     };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
+    let (reconnected, missions) = shared.mission_changes();
+    drop(shared);
+    if expired {
+        s.show_launcher();
+        crate::workspace::suspend_missions(s);
+    } else {
+        if reconnected {
+            crate::workspace::mission_event(s, None);
+        }
+        for event in &missions {
+            crate::workspace::mission_event(s, Some(event));
+        }
+    }
     changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))
 }
 
@@ -170,6 +183,9 @@ fn authentication_required(s: &mut State, expired: &crate::backend::Backend) -> 
         if let Some(launcher) = s.screen.launcher_mut() {
             launcher.authentication_required = true;
         }
+        drop(prefs);
+        s.show_launcher();
+        crate::workspace::suspend_missions(s);
     }
     true
 }
