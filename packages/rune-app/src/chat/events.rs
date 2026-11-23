@@ -1,7 +1,7 @@
 #[cfg(target_arch = "wasm32")]
 use crate::platform;
 use crate::{
-    Phase, State, agent, chat, composer, content, files, git, settings,
+    Phase, State, agent, chat, composer, content, git, settings,
     transport::{self, Event},
     workspace,
 };
@@ -107,7 +107,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                             .as_ref()
                             .is_some_and(|reader| reader.activity_after(version)),
                     ),
-                    _ => unreachable!(),
+                    _ => continue,
                 };
                 chat::reader::reconcile_bookmark(s, &page.rows);
                 if let Some(reader) = &mut s.reader {
