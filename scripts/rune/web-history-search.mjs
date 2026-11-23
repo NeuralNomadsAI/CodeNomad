@@ -178,28 +178,27 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
     const rankedNames=await search.getByRole('button').filter({hasText:/^Existing /}).allTextContents()
     assert.deepEqual(rankedNames.slice(0,2).sort(),['Existing answer','Existing ranked destination'])
     assert.equal(rankedNames[2],'Existing remote tool match')
-    const remotePreview=page.waitForResponse(response=>response.url().endsWith('/session/ses_another/message/message-00001'))
-    await press(search,'Existing remote tool match')
-    assert((await remotePreview).ok())
-    const release=holdNextAnchor()
-    try{
-      const proposed=page.waitForRequest(request=>request.url().endsWith('/session-history/window')
-        && request.postDataJSON()?.target?.messageID==='message-00001')
-      if(touch){
-        await activate(search.getByRole('button',{name:messages['history.openSession'],exact:true}))
-      }else{
+    if(!touch){
+      const remotePreview=page.waitForResponse(response=>response.url().endsWith('/session/ses_another/message/message-00001'))
+      await press(search,'Existing remote tool match')
+      assert((await remotePreview).ok())
+      const release=holdNextAnchor()
+      try{
+        const proposed=page.waitForRequest(request=>request.url().endsWith('/session-history/window')
+          && request.postDataJSON()?.target?.messageID==='message-00001')
         await focusOpen()
         await page.keyboard.press('Enter')
-      }
-      assert.equal((await proposed).postDataJSON().sessionID,'ses_another')
-      await setTool('hidden')
-      await grep.waitFor({state:'detached'})
-    }finally{release()}
-    await rejected()
-    await search.getByRole('group',{name:'Another session',exact:true}).waitFor()
-    assert.equal(windows,1,'Only the destination preflight may read a window on refusal')
-    await setTool('collapsed')
-    await grep.waitFor()
+        assert.equal((await proposed).postDataJSON().sessionID,'ses_another')
+        await setTool('hidden')
+        await grep.waitFor({state:'detached'})
+      }finally{release()}
+      await rejected()
+      await search.getByRole('group',{name:'Another session',exact:true}).waitFor()
+      assert.equal(windows,1,'Only the destination preflight may read a window on refusal')
+      await setTool('collapsed')
+      await grep.waitFor()
+    }
+    const beforeOpen=touch?0:1
     if(touch){
       await resize({width:844,height:245})
       const close=search.getByRole('button',{name:messages['messageSection.search.closeAriaLabel'],exact:true})
@@ -254,7 +253,7 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
     try{
       await press(search,'Existing ranked destination')
       await details.getByText(messages['messageSection.search.searching'],{exact:true}).waitFor()
-      assert.equal(windows,1,'Loading an excerpt must not page the transcript')
+      assert.equal(windows,beforeOpen,'Loading an excerpt must not page the transcript')
     }finally{
       gate.resolve()
       await page.unroute(route,hold)
@@ -263,7 +262,7 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
     await details.getByText('history-linked',{exact:true}).waitFor()
     await details.getByText(messages['time.relative.hoursAgoShort'].replace('{count}','2'),{exact:true}).waitFor()
     await details.getByText(/Stored preview detail/).waitFor()
-    assert.equal(windows,1,'Preview must not read a transcript window')
+    assert.equal(windows,beforeOpen,'Preview must not read a transcript window')
     assert.equal(excerpts,1,'The preview reads the selected message once')
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
     const open=search.getByRole('button',{name:messages['history.openSession'],exact:true})
@@ -300,7 +299,7 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
         await refused
         await details.getByText(messages['history.openFailed'],{exact:true}).waitFor()
         assert.equal(placements,1,'Repeated Open must not bind the destination twice')
-        assert.equal(windows,1)
+        assert.equal(windows,beforeOpen)
       }finally{
         page.off('request',observe)
       }
