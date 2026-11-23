@@ -154,7 +154,7 @@ test("long recent lists stay bounded while panels switch between columns and sta
       }
       const list = recent.getByRole("list")
       assert.ok(await list.evaluate(el => el.scrollHeight > el.clientHeight), "recents scroll inside the panel")
-      const footer = (await root.locator(".folder-home-shell > .text-center").boundingBox())!
+      const footer = (await root.locator(".folder-home-shell > .text-center").last().boundingBox())!
       assert.ok(footer.y >= second.y + second.height, "the footer follows both panels")
       assert.ok(await root.evaluate(el => el.scrollWidth <= el.clientWidth), "the page fits horizontally")
     }
@@ -169,6 +169,7 @@ for (const width of [1280, 390]) {
       await page.locator('[data-remote-server="alpha"]').click()
       await page.getByRole("textbox", { name: "New pairing link", exact: true }).waitFor()
       const submit = page.getByRole("button", { name: "Sign in", exact: true })
+      await submit.scrollIntoViewIfNeeded()
       const bounds = await page.locator(".browse-menu:visible").boundingBox()
       const button = await submit.boundingBox()
       assert.ok(bounds && button && button.y + button.height <= bounds.y + bounds.height + 1, JSON.stringify({ bounds, button }))
