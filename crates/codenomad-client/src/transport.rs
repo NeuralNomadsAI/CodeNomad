@@ -8,7 +8,19 @@ pub struct DirectoryChange {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceEvent {
+    SessionCompacted {
+        id: String,
+    },
+    OpenCodeNotice {
+        id: String,
+        title: Option<String>,
+        body: String,
+    },
     SessionRequest {
+        form: bool,
+        id: String,
+    },
+    SessionRequestResolved {
         form: bool,
         id: String,
     },

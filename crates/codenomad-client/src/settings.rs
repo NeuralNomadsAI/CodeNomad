@@ -240,7 +240,7 @@ impl PreferencesWatch {
                             async {
                                 while let Ok(event) = events.recv().await {
                                     let flag = match event {
-                                        Input::Opened(e) => if e > 1 { 11 | 16 } else { 11 },
+                                        Input::Opened(e) => if e > 1 { 11 | 16 | 32 } else { 11 | 32 },
                                         Input::Preferences(Owner::Config) => 1,
                                         Input::Preferences(Owner::State) => 2,
                                         Input::Preferences(Owner::Server) => 32,

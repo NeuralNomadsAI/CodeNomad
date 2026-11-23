@@ -9,7 +9,8 @@ mod strip;
 
 pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
 pub(crate) use notification::{
-    Activation, notification_target, observes_notification, open_notification, owns_notification,
+    Activation, can_switch_for_notification, check_notification, notification_target,
+    observes_notification, open_notification, owns_notification, workspace_notification,
 };
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use panel_state::set_files_tab;
@@ -495,6 +496,7 @@ fn poll_cached(s: &mut State, ui: &mut Ui, now: Option<f64>, tx: &mut Tx) -> boo
             let awaiting_prompt = s.composer.pending();
             let uncertain_prompt = s.composer.unconfirmed_id().is_some();
             changed |= crate::poll_chat(s, 8);
+            changed |= crate::files::poll_notices(s);
             crate::shell::notifications::collect(s, |s| notification::entry_target(item, s));
             if awaiting_prompt && !s.composer.pending()
                 || uncertain_prompt && s.composer.unconfirmed_id().is_none()

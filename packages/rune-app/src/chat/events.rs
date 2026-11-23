@@ -111,19 +111,31 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 form,
                 id,
             }) => {
-                if let Some(agent) = &mut s.agent {
+                if !uses_workspace_attention(s)
+                    && let Some(agent) = &mut s.agent
+                {
                     agent.notice_request(form, id);
                 }
             }
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionExecution {
                 notice,
             }) => {
-                if let Some(agent) = &mut s.agent {
+                if !uses_workspace_attention(s)
+                    && let Some(agent) = &mut s.agent
+                {
                     let verify = notice.is_some();
                     agent.attention.execution(notice);
                     if verify {
                         agent.refresh(false);
                     }
+                }
+            }
+            Event::Workspace(
+                event @ (codenomad_client::transport::WorkspaceEvent::SessionCompacted { .. }
+                | codenomad_client::transport::WorkspaceEvent::OpenCodeNotice { .. }),
+            ) => {
+                if !uses_workspace_attention(s) {
+                    crate::shell::notifications::relay_notice(s, event);
                 }
             }
             Event::Workspace(event) => {
@@ -343,4 +355,10 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         changed = true;
     }
     changed | super::usage::family::Totals::poll(s)
+}
+
+fn uses_workspace_attention(s: &State) -> bool {
+    s.screen
+        .launcher()
+        .is_some_and(|launcher| launcher.catalogue_watch.is_some())
 }

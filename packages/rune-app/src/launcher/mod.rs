@@ -29,6 +29,7 @@ use rune::{Tx, edit::TextEdit};
 use sessions::attach;
 #[cfg(feature = "test-support")]
 pub use sessions::back;
+pub(crate) use sessions::choose_destination;
 use sessions::{bind, dismiss_origin_panel, retire_session};
 pub use sessions::{can_change_session, can_visit, choose, create, list, visit};
 use std::{collections::HashSet, future::Future};
@@ -62,6 +63,7 @@ pub struct Launcher {
     pub creation_uncertain: bool,
     pub openings: crate::workspace::opening::Openings,
     result: Option<Receiver<Result<Reply>>>,
+    selection_ticket: Option<u64>,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
     wake: rune::Waker,
@@ -157,6 +159,7 @@ impl Launcher {
             creation_uncertain: false,
             openings: Default::default(),
             result: None,
+            selection_ticket: None,
             boot,
             host: None,
             wake,
@@ -203,6 +206,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.result = None;
     l.pending = false;
     l.listing = false;
+    if l.selection_ticket
+        .take()
+        .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
+    {
+        tx.instant();
+        return true;
+    }
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
             let reauthenticated = std::mem::take(&mut l.authentication_required);
@@ -219,7 +229,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 crate::workspace::renew_connection(s);
                 if let Some(id) = selected {
                     s.show_chat();
-                    choose(s, id, tx);
+                    choose_destination(s, id, None, tx);
                 } else {
                     crate::git::project_opened(s);
                     crate::workspace::restore_files_mode(s);
@@ -370,6 +380,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.creation_uncertain = true;
             }
             l.error = Some(key);
+            if matches!(key, "rune.restore_error" | "rune.open_error") {
+                use crate::shell::notifications::{Category, emit};
+                emit(s, Category::Projects, None, crate::strings::t(key));
+            }
             #[cfg(target_arch = "wasm32")]
             {
                 if key == "rune.restore_error" && !s.screen.is_launcher() {

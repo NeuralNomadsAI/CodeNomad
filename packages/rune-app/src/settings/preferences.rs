@@ -18,6 +18,8 @@ pub(super) struct Preferences {
     pub(super) provider_target: Option<super::providers::Target>,
     pub(super) memory: super::memory::Setting,
     pub(super) opencode_install: super::opencode::install::Install,
+    pub(super) notification_update: Option<String>,
+    pub(super) announced_update: Option<String>,
     config: Document,
     state: Document,
     server: Document,
@@ -72,6 +74,17 @@ impl Preferences {
             self.config.stage(Choice::UsageExpansion, mode);
         }
         self.revision += 1;
+    }
+
+    pub(super) fn take_notification_failure(&mut self) -> bool {
+        self.config.take_notification_failure()
+            | self.state.take_notification_failure()
+            | self.server.take_notification_failure()
+    }
+    #[cfg(test)]
+    pub(super) fn notification_test_config(&mut self, snapshot: Value) {
+        self.reset_notification_fixture();
+        self.config.snapshot = Some(snapshot);
     }
 
     pub(super) fn shortcut(&self, action: &str) -> Option<&[Value]> {

@@ -34,9 +34,9 @@ pub(crate) use connection::{
 };
 #[cfg(test)]
 use connection::{provider_changed, provider_stopped};
+pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_notification};
 #[cfg(test)]
-pub(crate) use delivery::notification_fixture;
-pub(crate) use delivery::{Delivery, system_notification};
+pub(crate) use delivery::{notification_fixture, notification_test_config};
 pub(crate) use shortcuts::matches_shortcut;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
@@ -188,7 +188,26 @@ pub(crate) fn poll(s: &mut State) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
     let (reconnected, missions) = shared.mission_changes();
+    let notify_failure = shared.take_notification_failure();
+    let update = shared.notification_update.take();
     drop(shared);
+    use crate::shell::notifications::{Category, emit};
+    if notify_failure {
+        emit(
+            s,
+            Category::Settings,
+            None,
+            strings::t("settings.preferenceSaveFailed"),
+        );
+    }
+    if let Some(version) = update {
+        emit(
+            s,
+            Category::Updates,
+            Some(strings::t("releases.devUpdateAvailable.title").into()),
+            strings::t("settings.opencode.update.available").replace("{version}", &version),
+        );
+    }
     if expired {
         s.show_launcher();
         crate::workspace::suspend_missions(s);

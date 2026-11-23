@@ -112,9 +112,13 @@ pub(super) struct Document {
     write: Write,
     flight: Option<Flight>,
     barrier: Option<Flight>,
+    notification_failure: bool,
 }
 
 impl Document {
+    pub(super) fn take_notification_failure(&mut self) -> bool {
+        std::mem::take(&mut self.notification_failure)
+    }
     pub(super) fn refreshing(&self) -> bool {
         self.read.queued || self.read.reattach || self.flight.is_some() || self.barrier.is_some()
     }
@@ -241,6 +245,8 @@ impl Document {
                         .is_some_and(|data| choice.confirmed(value, data))
                 {
                     self.write.failed.insert(choice);
+                    self.notification_failure |=
+                        current && choice != Choice::NewConversationPermissions;
                 }
             }
         }

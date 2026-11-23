@@ -9,6 +9,7 @@ use rune_theme_codenomad::{
 };
 
 mod actions;
+pub(super) use actions::poll_notices;
 mod editor;
 mod tree;
 pub(super) use actions::Actions;

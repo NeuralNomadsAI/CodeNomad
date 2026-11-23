@@ -15,7 +15,8 @@ use rune_theme_codenomad::{
 };
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
-type Notice = (bool, String);
+use crate::shell::notifications::{Category, emit};
+type Notice = (Category, bool, String);
 
 pub(in crate::files) struct Actions {
     rows: HashMap<String, controls::State>,
@@ -25,7 +26,7 @@ pub(in crate::files) struct Actions {
     owner: Arc<()>,
     incoming: codenomad_client::Receiver<Notice>,
     out: codenomad_client::Sender<Notice>,
-    pub(super) notice: Option<Notice>,
+    pub(super) notice: Option<(bool, String)>,
 }
 
 impl Default for Actions {
@@ -87,10 +88,6 @@ pub(in crate::files) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         })
         .cloned();
     let mut changed = false;
-    while let Ok(notice) = ui.actions.incoming.try_recv() {
-        ui.actions.notice = Some(notice);
-        changed = true;
-    }
     let focused = visible
         .then(|| tx.focused().map(str::to_owned))
         .flatten()
@@ -107,6 +104,22 @@ pub(in crate::files) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         changed = true;
     }
     changed | action_menu::poll(s, menu_at, tx)
+}
+
+pub(in crate::files) fn poll_notices(s: &mut State) -> bool {
+    let Some(ui) = s.files.as_mut() else {
+        return false;
+    };
+    let mut notices = Vec::new();
+    while let Ok((category, success, message)) = ui.actions.incoming.try_recv() {
+        ui.actions.notice = Some((success, message.clone()));
+        notices.push((category, message));
+    }
+    let changed = !notices.is_empty();
+    for (category, message) in notices {
+        emit(s, category, None, message);
+    }
+    changed
 }
 
 fn item(
@@ -138,12 +151,15 @@ pub(super) fn row(s: &State, ui: &Ui, row: &Row, width: f32, touch: bool) -> (El
                 if !has_session(s) {
                     return;
                 }
-                match s
+                let opened = s
                     .files
                     .as_mut()
                     .filter(|ui| owns(ui, &directory, &path))
-                    .and_then(|ui| ui.toggle_preview(&directory, &path))
-                {
+                    .and_then(|ui| ui.toggle_preview(&directory, &path));
+                if opened.is_some() {
+                    s.notifications.supersede_navigation();
+                }
+                match opened {
                     Some(true) => {
                         #[cfg(target_arch = "wasm32")]
                         super::refresh_browser_file_wrap(s);
@@ -354,7 +370,7 @@ fn launch(s: &mut State, directory: &str, path: &str, slug: &str, target: Target
                 "instanceShell.filesShell.toast.openError",
                 &[("message", &error)],
             );
-            if out.try_send((false, message)).is_ok() {
+            if out.try_send((Category::Files, false, message)).is_ok() {
                 wake();
             }
         }

@@ -7,6 +7,34 @@ pub(crate) enum Delivery {
     Body(String),
 }
 
+pub(crate) enum ConfirmedRoute {
+    Unavailable,
+    Refreshing,
+    Ready(notification_routing::Route, bool),
+}
+
+pub(crate) fn notification_route(
+    s: &State,
+    source: &crate::backend::Backend,
+    category: notification_routing::Category,
+) -> ConfirmedRoute {
+    let prefs = s.settings.shared.borrow();
+    if !prefs.can_retry()
+        || !prefs.backend.as_ref().is_some_and(|backend| {
+            backend.base == source.base && backend.client.same_connection(&source.client)
+        })
+    {
+        return ConfirmedRoute::Unavailable;
+    }
+    if prefs.notification_config_refreshing() {
+        return ConfirmedRoute::Refreshing;
+    }
+    let config = prefs.notification_config();
+    notification_routing::route(config, category).map_or(ConfirmedRoute::Unavailable, |route| {
+        ConfirmedRoute::Ready(route, notification_routing::allow_focused(config))
+    })
+}
+
 pub(crate) fn system_notification(
     s: &State,
     target: &crate::shell::notifications::Target,
@@ -15,10 +43,12 @@ pub(crate) fn system_notification(
     label: &str,
 ) -> Delivery {
     let prefs = s.settings.shared.borrow();
-    if !prefs.backend.as_ref().is_some_and(|backend| {
-        backend.base == target.backend_url
-            && backend.client.server_identity() == target.server.as_deref()
-    }) {
+    if !prefs.can_retry()
+        || !prefs.backend.as_ref().is_some_and(|backend| {
+            backend.base == target.backend_url
+                && backend.client.server_identity() == target.server.as_deref()
+        })
+    {
         return Delivery::Suppressed;
     }
     if prefs.notification_config_refreshing() {
@@ -38,6 +68,14 @@ pub(crate) fn system_notification(
     } else {
         Delivery::Suppressed
     }
+}
+
+#[cfg(test)]
+pub(crate) fn notification_test_config(s: &State, snapshot: serde_json::Value) {
+    s.settings
+        .shared
+        .borrow_mut()
+        .notification_test_config(snapshot);
 }
 
 #[cfg(test)]

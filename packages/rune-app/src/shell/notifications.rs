@@ -1,14 +1,21 @@
-use crate::{
-    State,
-    agent_api::Snapshot,
-    settings::notification_routing::{self, Category},
-};
+use crate::{State, agent_api::Snapshot, settings::notification_routing};
+pub(crate) use notification_routing::Category;
 use rune::Tx;
 use serde_json::Value;
 use std::collections::{HashSet, VecDeque};
 
 const RETAINED: usize = 128;
 
+mod background;
+mod messages;
+pub(crate) use messages::emit;
+pub(crate) fn relay_notice(s: &mut State, event: codenomad_client::transport::WorkspaceEvent) {
+    if let Some((target, project)) = crate::workspace::notification_target(s)
+        && let Some(source) = crate::settings::bound_backend(s)
+    {
+        messages::native(s, source, target, project, event);
+    }
+}
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(target_arch = "wasm32")]
@@ -133,15 +140,32 @@ pub(crate) struct Target {
     pub session: String,
 }
 
+impl Target {
+    fn same_event_scope(&self, other: &Self) -> bool {
+        self.session == other.session
+            && match (&self.server, &other.server) {
+                (Some(a), Some(b)) => a == b,
+                (None, None) => self.backend_url == other.backend_url,
+                _ => false,
+            }
+    }
+}
+
 pub(crate) struct Host {
     focused: bool,
     routes: VecDeque<(u64, Target, Presented)>,
     delivered: VecDeque<(Target, Category, String)>,
     deferred: VecDeque<Notice>,
-    activation: Option<(Target, std::rc::Rc<()>, bool)>,
+    background_attention: background::Background,
+    messages: VecDeque<messages::Message>,
+    system_messages: VecDeque<Presented>,
+    activation: Option<(Click, bool)>,
+    click_check: Option<(Click, codenomad_client::Receiver<bool>)>,
+    click_wait: Option<Click>,
+    navigation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     next_id: u64,
-    clicks: codenomad_client::Receiver<u64>,
-    send_click: codenomad_client::Sender<u64>,
+    clicks: codenomad_client::Receiver<(u64, u64)>,
+    send_click: codenomad_client::Sender<(u64, u64)>,
     #[cfg(target_os = "windows")]
     pub(crate) window: Option<rune::WindowHandle>,
     #[cfg(target_os = "windows")]
@@ -150,6 +174,11 @@ pub(crate) struct Host {
     pub(crate) background: Option<rune_theme_codenomad::shell::WindowFeed<State>>,
     #[cfg(test)]
     recorded: Option<Vec<(u64, String, String)>>,
+}
+
+struct Click {
+    target: Target,
+    ticket: u64,
 }
 
 struct Notice {
@@ -177,7 +206,13 @@ impl Default for Host {
             routes: VecDeque::new(),
             delivered: VecDeque::new(),
             deferred: VecDeque::new(),
+            background_attention: Default::default(),
+            messages: VecDeque::new(),
+            system_messages: VecDeque::new(),
             activation: None,
+            click_check: None,
+            click_wait: None,
+            navigation: Default::default(),
             next_id: 0,
             clicks,
             send_click,
@@ -208,10 +243,26 @@ pub(crate) fn native_delivery() -> Option<crate::platform::notifications::Delive
 }
 
 impl Host {
+    pub(crate) fn supersede_navigation(&mut self) {
+        self.navigation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.activation = None;
+        self.click_check = None;
+        self.click_wait = None;
+    }
+
+    pub(crate) fn navigation_ticket(&self) -> u64 {
+        self.navigation.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn already_delivered(&self, target: &Target, category: Category, id: &str) -> bool {
+        self.delivered.iter().any(|(owner, event, seen)| {
+            owner.same_event_scope(target) && *event == category && seen == id
+        })
+    }
     pub(crate) fn forget_tab(&mut self, tab: &str) {
         let keeps = |target: &Target| target.tab.as_deref() != Some(tab);
         self.routes.retain(|(_, target, _)| keeps(target));
-        self.delivered.retain(|(target, _, _)| keeps(target));
         self.deferred.retain(|notice| keeps(&notice.target));
     }
 
@@ -226,11 +277,32 @@ impl Host {
         let id = self.next_id;
         self.next_id += 1;
         let clicks = self.send_click.clone();
+        let navigation = self.navigation.clone();
         let action = move || {
-            if clicks.try_send(id).is_ok() {
+            let ticket = navigation
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .wrapping_add(1);
+            if clicks.try_send((id, ticket)).is_ok() {
                 wake();
             }
         };
+        if let Some(presented) = self.show_system(id, title, body, action) {
+            self.routes.push_back((id, target, presented));
+            if self.routes.len() > RETAINED {
+                self.routes.pop_front();
+            }
+        }
+    }
+
+    fn show_system(
+        &mut self,
+        id: u64,
+        title: &str,
+        body: &str,
+        action: impl FnOnce() + Clone + Send + 'static,
+    ) -> Option<Presented> {
+        #[cfg(not(test))]
+        let _ = id;
         #[cfg(test)]
         let fake = self.recorded.as_mut().map(|recorded| {
             recorded.push((id, title.into(), body.into()));
@@ -238,7 +310,7 @@ impl Host {
         });
         #[cfg(not(test))]
         let fake = None;
-        let presented = fake.or_else(|| {
+        fake.or_else(|| {
             #[cfg(target_os = "windows")]
             return self
                 .native
@@ -254,13 +326,7 @@ impl Host {
                 let _ = (title, body, action);
                 None
             }
-        });
-        if let Some(presented) = presented {
-            self.routes.push_back((id, target, presented));
-            if self.routes.len() > RETAINED {
-                self.routes.pop_front();
-            }
-        }
+        })
     }
 
     fn focus(&self) {
@@ -321,11 +387,6 @@ pub(crate) fn collect(s: &mut State, target: impl FnOnce(&State) -> Option<(Targ
     }
     if updated != [false; 2] {
         let requests = &s.agent.as_ref().unwrap().attention.requests;
-        s.notifications.delivered.retain(|(owner, event, key)| {
-            owner != &target
-                || *event != Category::NeedsInput
-                || request_present(key, updated, requests)
-        });
         s.notifications.deferred.retain(|notice| {
             notice.target != target
                 || notice.category != Category::NeedsInput
@@ -364,11 +425,7 @@ fn deliver(s: &mut State, notice: Notice) {
         label,
     } = &notice;
     let shelf = &s.notifications;
-    if shelf
-        .delivered
-        .iter()
-        .any(|(owner, event, seen)| owner == target && event == category && seen == id)
-    {
+    if shelf.already_delivered(target, *category, id) {
         return;
     }
     let body =
@@ -399,6 +456,8 @@ fn deliver(s: &mut State, notice: Notice) {
 
 pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     use crate::workspace::Activation;
+    background::poll(s);
+    messages::poll(s);
     let notices = std::mem::take(&mut s.notifications.deferred);
     for notice in notices {
         if crate::workspace::observes_notification(
@@ -409,19 +468,18 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             deliver(s, notice);
         }
     }
-    if s.notifications.routes.is_empty() && s.notifications.activation.is_none() {
+    if s.notifications.routes.is_empty()
+        && s.notifications.activation.is_none()
+        && s.notifications.click_check.is_none()
+        && s.notifications.click_wait.is_none()
+    {
         return false;
     }
     let mut routes = std::mem::take(&mut s.notifications.routes);
     routes.retain(|(_, target, _)| crate::workspace::owns_notification(s, target));
     s.notifications.routes = routes;
-    let mut target = s
-        .notifications
-        .activation
-        .take()
-        .filter(|(_, scope, _)| s.current_scope(scope))
-        .map(|(target, _, started)| (target, started));
-    while let Ok(id) = s.notifications.clicks.try_recv() {
+    let mut target = s.notifications.activation.take();
+    while let Ok((id, ticket)) = s.notifications.clicks.try_recv() {
         let Some(index) = s
             .notifications
             .routes
@@ -432,16 +490,58 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         };
         let (_, clicked, presented) = s.notifications.routes.remove(index).unwrap();
         drop(presented);
-        s.notifications.focus();
-        target = Some((clicked, false));
+        if ticket != s.notifications.navigation_ticket() {
+            continue;
+        }
+        target = None;
+        s.notifications.click_wait = None;
+        s.notifications.click_check =
+            crate::workspace::check_notification(s, &clicked).map(|check| {
+                (
+                    Click {
+                        target: clicked,
+                        ticket,
+                    },
+                    check,
+                )
+            });
     }
-    let Some((target, mut started)) = target else {
+    if let Some(waiting) = s.notifications.click_wait.take()
+        && waiting.ticket == s.notifications.navigation_ticket()
+        && crate::workspace::owns_notification(s, &waiting.target)
+    {
+        if crate::workspace::can_switch_for_notification(s, &waiting.target) {
+            s.notifications.click_check = crate::workspace::check_notification(s, &waiting.target)
+                .map(|check| (waiting, check));
+        } else {
+            s.notifications.click_wait = Some(waiting);
+        }
+    }
+    if let Some((clicked, check)) = s.notifications.click_check.take()
+        && clicked.ticket == s.notifications.navigation_ticket()
+        && crate::workspace::owns_notification(s, &clicked.target)
+    {
+        match check.try_recv() {
+            Ok(true) if crate::workspace::can_switch_for_notification(s, &clicked.target) => {
+                s.notifications.focus();
+                target = Some((clicked, false));
+            }
+            Ok(true) => s.notifications.click_wait = Some(clicked),
+            Err(codenomad_client::TryRecvError::Empty) => {
+                s.notifications.click_check = Some((clicked, check))
+            }
+            _ => {}
+        }
+    }
+    let Some((click, mut started)) =
+        target.filter(|(click, _)| click.ticket == s.notifications.navigation_ticket())
+    else {
         return false;
     };
     let before = s.workspace.as_ref().map(|ui| ui.active_key().to_owned());
-    match crate::workspace::open_notification(s, &target, &mut started, tx) {
+    match crate::workspace::open_notification(s, &click.target, click.ticket, &mut started, tx) {
         Activation::Wait => {
-            s.notifications.activation = Some((target, s.input_scope.clone(), started));
+            s.notifications.activation = Some((click, started));
             before.as_deref() != s.workspace.as_ref().map(|ui| ui.active_key())
         }
         Activation::Opened => true,
