@@ -28,6 +28,8 @@ Les agents peuvent lire, enregistrer, remplacer ou renommer, supprimer et répar
 
 **Enregistrer la configuration**, en bas à côté d’Annuler et Créer, nomme et conserve une configuration réutilisable. Cette action ne crée ni ne démarre de Mission. Programmation et **Démarrer automatiquement** se règlent séparément. L’engrenage des Missions ouvre les Préférences et la bibliothèque ; supprimer une configuration conserve les missions et conversations existantes.
 
+Pour remplacer une configuration enregistrée, utilisez son nom et choisissez **Remplacer**. Si plusieurs portent ce nom, chargez d’abord celle à remplacer. Un nouveau nom crée une copie.
+
 ### Objectif, Titre et Notes {#mission-instructions}
 
 Pour les Missions ponctuelles, les agents peuvent démarrer, reprendre, mettre en pause douce, interrompre immédiatement, arrêter, modifier, supprimer, reprendre la coordination après échec, demander un rapport manquant ou un point. Cela inclut vos Missions, avec les mêmes contrôles d’admission et de révision que le panneau. La suppression suit votre préférence de suppression des sessions gérées, sauf choix explicite. Un contrôle ou nettoyage non confirmé conserve son identité ; les agents lisent son état enregistré avant de poursuivre explicitement une action partielle confirmée.

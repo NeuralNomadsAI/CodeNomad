@@ -28,6 +28,8 @@ Los agentes pueden leer, guardar, reemplazar o renombrar, eliminar y reparar con
 
 **Guardar configuración**, abajo junto a Cancelar y Crear, conserva una configuración reutilizable sin crear ni iniciar una Misión. Programación e inicio automático se eligen aparte. El engranaje abre Preferencias y la biblioteca; eliminar una configuración conserva las misiones y conversaciones.
 
+Para sustituir una configuración guardada, usa su nombre y elige **Reemplazar**. Si varias tienen ese nombre, carga primero la que quieras sustituir. Un nombre nuevo guarda una copia.
+
 ### Objetivo, Título y Notas {#mission-instructions}
 
 En las Missions puntuales, los agentes pueden iniciar, reanudar, pausar suavemente, interrumpir de inmediato, detener, editar, eliminar, recuperar la coordinación tras un fallo y pedir un informe pendiente o una actualización. Esto incluye las Missions que usted creó, con las mismas comprobaciones de admisión y revisión del panel. La eliminación sigue su preferencia para las sesiones administradas salvo indicación expresa. Las acciones y limpiezas sin confirmar conservan su identidad original; los agentes leen el estado guardado antes de continuar explícitamente una acción parcial confirmada.

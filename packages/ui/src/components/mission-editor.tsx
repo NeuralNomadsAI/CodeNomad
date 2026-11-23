@@ -135,6 +135,10 @@ export function MissionEditor(props: {
   const compareError = () => template() === "compare" ? compareModelError(profiles()) : undefined
   const [selectedModel, setSelectedModel] = createSignal<Pick<UserMissionModel, "id" | "name"> | undefined>(held ? submittedMissionModel(held.requestId)
     : recurrenceHold ? submittedMissionModel(recurrenceHold.requestID) : draft?.selectedModel)
+  const initialConfigurationName = () => {
+    const loaded = selectedModel(), current = submittedTitle()
+    return loaded && missionConfigurationTitle(loaded.name) === current ? loaded.name : current
+  }
   // One creation-time snapshot only, after the owned preference document loads.
   // Refreshes and other windows' preference edits never replace this draft.
   createEffect(() => {
@@ -462,6 +466,7 @@ export function MissionEditor(props: {
 
   const createBody = () => <>
     <Show when={kind === "create"}><MissionBriefPicker instanceId={props.instanceId} disabled={locked() || !isActive()} active={isActive} value={selectedModel()?.id}
+      onClear={() => setSelectedModel(undefined)}
       onUse={model => {
         requestId = generateUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
         const configurationTitle = missionConfigurationTitle(model.name)
@@ -633,7 +638,7 @@ export function MissionEditor(props: {
       <Show when={kind === "create"}>
         {/* An unsent draft beside another request's hold may still be kept as a brief. */}
         <MissionBriefSave instanceId={props.instanceId} buttonClass="button-secondary" disabled={(otherUncertain() ? !creationReady() || defaultsRefreshing() : locked()) || !isActive()} active={isActive}
-          initialName={submittedTitle}
+          initialName={initialConfigurationName} selectedId={selectedModel()?.id}
           draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })} />
       </Show>
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>

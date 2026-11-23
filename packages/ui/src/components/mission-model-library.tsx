@@ -32,21 +32,35 @@ function createMissionModelActions(props: LibraryProps) {
     return { target: preferencesOf(instanceId), operation: captureBackendOperation(instanceId, undefined, () => owner() === backendId && admitted === generation) }
   }
   let alive = true
-  onCleanup(() => { alive = false })
+  const lifetime = new AbortController()
+  onCleanup(() => { alive = false; lifetime.abort() })
   const active = () => props.active?.() ?? true
   const disabled = () => props.disabled || !active() || pending() || !config.missionModelsValid()
   const begin = (label = "") => { setPendingLabel(label); setPending(true); setFailed(false); setReconciliationPending(false) }
   const settle = (error: unknown) => { if (alive) { if (error instanceof ConfigOwnerReconciliationPendingError) setReconciliationPending(true); else setFailed(true) } }
   /** Resolves the saved ID once acknowledged (including an unreadable-owner acknowledgement), never retrying. */
-  const save = async (name: string, draft: MissionModelBrief): Promise<string | undefined> => {
+  const save = async (name: string, draft: MissionModelBrief, replacement?: UserMissionModel,
+    returnFocus?: () => void): Promise<string | undefined> => {
     const { target, operation } = capture()
     if (!operation.current()) return
     if (disabled() || !name.trim()) return
-    begin("missions.models.saving")
+    const expected = target.missionPreferenceSnapshot("missionModels")
+    const inherited = expected.present ? undefined : JSON.stringify(target.preferences().missionModels)
+    begin()
     let acknowledged: string | undefined
     try {
-      const record = parseMissionModel({ version: 1, id: generateUUID(), name, ...draft })
-      try { await target.saveUserMissionModel(record) }
+      const record = parseMissionModel({ version: 1, id: replacement?.id ?? generateUUID(), name, ...draft })
+      if (replacement) {
+        const confirmed = await showConfirmDialog(t("missions.models.replaceConfirm", { name: replacement.name }), {
+          variant: "warning", confirmLabel: t("missions.models.replace"), returnFocus,
+        }, AbortSignal.any([operation.signal, lifetime.signal]))
+        if (!confirmed || !operation.current() || !alive || !active() || props.disabled) return
+        if (inherited !== undefined && inherited !== JSON.stringify(target.preferences().missionModels)) {
+          setFailed(true); return
+        }
+      }
+      setPendingLabel("missions.models.saving")
+      try { await target.saveUserMissionModel(record, expected) }
       catch (error) {
         if (error instanceof ConfigOwnerReconciliationPendingError) acknowledged = record.id
         throw error
@@ -142,14 +156,14 @@ export function MissionModelLibrary(props: LibraryProps) {
 }
 
 /** Creation: one "Start from a brief" select that loads on selection; Remove/Reload sit in its small overflow. */
-export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse: (model: UserMissionModel) => void }) {
+export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse: (model: UserMissionModel) => void; onClear?: () => void }) {
   const { t } = useI18n(), config = useConfig(() => props.instanceId), actions = createMissionModelActions(props)
   const [selected, setSelected] = createSignal(props.value ?? ""), selectId = createUniqueId()
   const selection = () => config.preferences().missionModels.find(model => model.id === selected())
   const items = createMemo(() => [
     { key: "remove", label: t("missions.models.remove"), disabled: actions.disabled() || !selection(), onSelect: async () => {
       const model = selection()
-      if (model && await actions.remove(model)) setSelected("")
+      if (model && await actions.remove(model)) { setSelected(""); props.onClear?.() }
     } },
     { key: "reload", label: t("missions.models.reload"), disabled: actions.pending() || !(props.active?.() ?? true), onSelect: () => actions.reload() },
   ])
@@ -162,6 +176,7 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
             const model = config.preferences().missionModels.find(item => item.id === event.currentTarget.value)
             setSelected(event.currentTarget.value)
             if (model && !actions.disabled()) props.onUse(parseMissionModel(model))
+            else if (!model) props.onClear?.()
           }}>
             <option value="">{t("missions.create.brief.none")}</option>
             <For each={config.preferences().missionModels}>{model => <option value={model.id}>{model.name}</option>}</For>
@@ -186,7 +201,7 @@ export interface MissionBriefSaveTrigger {
  * the command lives elsewhere (the selected toolbar's overflow menu) and only the name
   * field shows here; otherwise a labelled button opens it (a window
  * footer passes its own template for the field's buttons). */
-export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; buttonClass?: string
+export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; selectedId?: string; buttonClass?: string
   onOpen?: (open: boolean) => void; reading?: () => { failed: boolean; changed?: boolean; onRetry: () => void } | undefined
   trigger?: (trigger: MissionBriefSaveTrigger) => void }) {
   const { t } = useI18n(), config = useConfig(() => props.instanceId), actions = createMissionModelActions(props)
@@ -206,23 +221,31 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
     // Once the closing (and a save's preference update) has re-rendered the toolbar.
     if (hadFocus && free && target) queueMicrotask(() => { const element = target(); if (element?.isConnected) element.focus({ preventScroll: true }) })
   }
-  const full = () => config.preferences().missionModels.length >= MAX_MISSION_MODELS
+  const models = () => config.preferences().missionModels
+  const matches = createMemo(() => models().filter(model => model.name === name().trim()))
+  const replacement = () => matches().length === 1 ? matches()[0] : matches().find(model => model.id === props.selectedId)
+  const nameProblem = () => replacement() || !name().trim() ? undefined
+    : matches().length > 1 ? "missions.models.ambiguousName"
+    : models().length >= MAX_MISSION_MODELS ? "missions.models.existingNameRequired" : undefined
+  const saveDisabled = () => actions.disabled() || !name().trim() || !props.draft().objective.trim() || Boolean(nameProblem())
   const save = async () => {
-    if (actions.disabled() || !name().trim() || !props.draft().objective.trim() || full()) return
+    if (saveDisabled()) return
     const hadFocus = root.contains(document.activeElement)
-    if (await actions.save(name(), props.draft())) { setName(""); close(hadFocus) }
+    if (await actions.save(name(), props.draft(), replacement(), () => {
+      queueMicrotask(() => { if (input?.isConnected && !input.disabled) input.focus({ preventScroll: true }) })
+    })) { setName(""); close(hadFocus) }
   }
   const begin = (fromMenu: boolean, returnFocus?: () => HTMLElement | undefined) => {
-    if (actions.disabled() || full()) return
+    if (actions.disabled()) return
     returnTo = returnFocus
     setName(props.initialName?.().slice(0, 80) ?? ""); setOpen(true)
     // A closing menu returns focus to its trigger first: take it back on the next frames.
     if (fromMenu) requestAnimationFrame(() => requestAnimationFrame(() => input?.select()))
     else queueMicrotask(() => input?.select())
   }
-  props.trigger?.({ open: returnFocus => begin(true, returnFocus), disabled: () => actions.disabled() || full() })
+  props.trigger?.({ open: returnFocus => begin(true, returnFocus), disabled: actions.disabled })
   return <div ref={root} class="mission-brief-save">
-    <Show when={open()} fallback={props.trigger ? undefined : <button type="button" class={buttonClass()} disabled={actions.disabled() || full()}
+    <Show when={open()} fallback={props.trigger ? undefined : <button type="button" class={buttonClass()} disabled={actions.disabled()}
       onClick={() => begin(false)}>{t("missions.create.brief.saveAs")}</button>}>
       <input ref={input} aria-label={t("missions.models.name")} placeholder={t("missions.models.name")} value={name()} maxLength={80}
         disabled={actions.disabled()} onInput={event => setName(event.currentTarget.value)} onKeyDown={event => {
@@ -230,10 +253,11 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
           if (event.key === "Enter") { event.preventDefault(); void save() }
           else if (event.key === "Escape") { event.preventDefault(); close() }
         }} />
-      <button type="button" class={buttonClass()} disabled={actions.disabled() || !name().trim() || !props.draft().objective.trim() || full()}
+      <button type="button" class={buttonClass()} disabled={saveDisabled()}
         onClick={() => void save()}>{t("missions.models.save")}</button>
       <button type="button" class={buttonClass()} aria-label={t("missions.create.brief.cancel")} onClick={() => close()}>{t("missions.control.cancel")}</button>
       <Show when={props.reading?.()}>{reading => <MissionBodyPending failed={reading().failed} changed={reading().changed} onRetry={() => reading().onRetry()} />}</Show>
+      <Show when={nameProblem()}>{problem => <span role="status">{t(problem())}</span>}</Show>
     </Show>
     {actions.status()}
   </div>
