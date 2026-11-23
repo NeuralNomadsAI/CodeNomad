@@ -1,11 +1,10 @@
 // Real Chrome and Android software keyboard on an explicitly owned headless emulator.
 import assert from 'node:assert/strict'
-import {execFile} from 'node:child_process'
 import {createHash,X509Certificate} from 'node:crypto'
 import {readFile,readdir,writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {promisify} from 'node:util'
 import {_android} from 'playwright'
+import {androidDevice,hierarchy} from '../../packages/rune-app/fixtures/android-device.mjs'
 import {bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {command,navigatePair} from './web-live.mjs'
 import {androidLive,androidPrompt} from './web-android-contract.mjs'
@@ -14,9 +13,6 @@ import {observeRenderer,traceSwipe} from './web-android-trace.mjs'
 import {observeGpu,gpuState,chromeGraphicsReport,observeBoot,bootActivity} from './web-android-gpu.mjs'
 
 const [origin,profile,project,bundle]=process.argv.slice(2)
-const {RUNE_ANDROID_ADB:adb,RUNE_ANDROID_SERIAL:serial,RUNE_ANDROID_ADB_PORT:port}=process.env
-assert(adb&&path.isAbsolute(adb)&&/^emulator-\d+$/.test(serial)&&Number(port)>1024)
-assert(Number(port)!==5037,'Use a dedicated ADB server for the disposable emulator')
 const useTs=process.env.RUNE_ANDROID_TS_SERVER==='1'
 assert.match(origin,useTs?/^https:\/\/rune-server\.fixture\.test:\d+$/:/^https:\/\/127\.0\.0\.1:\d+$/)
 assert(process.send&&path.basename(profile).startsWith('launcher-'))
@@ -31,10 +27,9 @@ assert(!bootControl||gpuProbe==='only'&&['cpu-only','no-webgl'].includes(bootCon
 const scrollOnly=process.env.RUNE_ANDROID_SAMPLE==='scroll'
 const locale=comparison?'en':'fr'
 const messages=JSON.parse(await readFile(new URL(`../../crates/rune-theme-codenomad/assets/catalogues/${locale}.json`,import.meta.url),'utf8'))
-const run=(...args)=>promisify(execFile)(adb,['-P',port,'-s',serial,...args],{timeout:15000,windowsHide:true})
+const {serial,port,run}=androidDevice(process.env)
 const [device,...others]=await _android.devices({port:Number(port),omitDriverInstall:true})
 assert(device?.serial()===serial&&!others.length,'Use a dedicated ADB server with the single named emulator')
-const target=`tcp:${new URL(origin).port}`
 let context, page, cdp
 const evidence={timings:{},memory:{}}
 const metrics=page=>page.evaluate(()=>({height:visualViewport.height,top:visualViewport.offsetTop,layout:innerHeight,
@@ -42,8 +37,6 @@ const metrics=page=>page.evaluate(()=>({height:visualViewport.height,top:visualV
   dpr:devicePixelRatio,mobile:navigator.userAgentData?.mobile,ua:navigator.userAgent,
   active:document.activeElement?.tagName,inputMode:document.activeElement?.inputMode}))
 async function runAndroid() {
-  await run('reverse',target,target)
-  await run('shell','am','set-debug-app','--persistent','com.android.chrome')
   context=await device.launchBrowser({noDefaultViewport:true,serviceWorkers:'block',
     args:[`--ignore-certificate-errors-spki-list=${pin}`,'--disable-background-networking',
       ...(useTs?['--host-resolver-rules="MAP rune-server.fixture.test 127.0.0.1"']:[]),
@@ -140,7 +133,12 @@ async function runAndroid() {
     await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]})
     await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]})
   }
-  const hit=async locator=>{const box=await locator.boundingBox();assert(box);await tap(box.x+box.width/2,box.y+box.height/2)}
+  const center=async locator=>{
+    await locator.scrollIntoViewIfNeeded()
+    const box=await locator.boundingBox();assert(box)
+    return [box.x+box.width/2,box.y+box.height/2]
+  }
+  const hit=async locator=>tap(...await center(locator))
   const button=name=>page.getByRole('button',{name,exact:true})
   const left=messages['window.menu.leftPanel']
   const row=solid?page.locator('.session-item-base[data-session-id="ses_existing"] .session-item-select'):
@@ -157,10 +155,9 @@ async function runAndroid() {
     await button(left).waitFor()
     if(await button(left).getAttribute('aria-expanded')!=='true')await hit(button(left))
   }
-  await row.waitFor()
+  const sessionTarget=await center(row)
   const opened=performance.now()
-  if(solid)await row.click()
-  else await hit(row)
+  await tap(...sessionTarget)
   await page.getByText('Existing answer',{exact:true}).waitFor()
   await paint()
   evidence.timings.selectConversationToAnswerMs=performance.now()-opened
@@ -168,7 +165,6 @@ async function runAndroid() {
   if(gpuProbe==='webgl')assertWebGL(await gpuState(page))
   const group=solid?page.locator('textarea.prompt-input:visible').first():page.getByRole('group',{name:messages['rune.prompt'],exact:true})
   const viewport=()=>metrics(page)
-  const hierarchy='/data/local/tmp/codenomad-rune-web.xml'
   const dump=async()=>{
     await run('shell','uiautomator','dump',hierarchy)
     return (await run('shell','cat',hierarchy)).stdout
@@ -244,9 +240,9 @@ async function runAndroid() {
   evidence.memory.beforeSend=await chromeMemory(run,cdp)
   const outgoing=page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname.endsWith('/session/ses_existing/prompt'))
   void outgoing.catch(()=>{})
+  const sendTarget=await center(sendButton)
   const sent=performance.now()
-  if(solid)await sendButton.click()
-  else await hit(sendButton)
+  await tap(...sendTarget)
   const accepted=await outgoing
   assert(accepted.ok(),`Android prompt admission returned ${accepted.status()}`)
   const live=evidence.live={promptAccepted:accepted.status()}
@@ -311,9 +307,5 @@ try {
 } finally {
   await cdp?.detach().catch(()=>{})
   await context?.close().catch(()=>{})
-  await run('shell','am','force-stop','com.android.chrome').catch(()=>{})
-  await run('shell','am','clear-debug-app').catch(()=>{})
-  await run('shell','rm','-f','/data/local/tmp/codenomad-rune-web.xml').catch(()=>{})
-  await run('reverse','--remove',target).catch(()=>{})
   await device.close()
 }

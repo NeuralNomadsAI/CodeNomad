@@ -41,7 +41,16 @@ Le contrôle `--web-mobile --same-origin-pairing` ouvre les liens sans page réf
 
 `node packages/rune-app/fixtures/launcher-fixture.mjs --web-android` utilise Chrome et le clavier logiciel d'un émulateur Android jetable déjà démarré, avec `RUNE_ANDROID_ADB` (chemin absolu), `RUNE_ANDROID_ADB_PORT` (serveur ADB privé) et `RUNE_ANDROID_SERIAL` (unique `emulator-*`). Le parcours suit un lien d'appairage externe, ouvre la conversation, défile via un geste Android, injecte un texte par CDP puis l'envoie via l'interface. Le banc coupe l'amont SSE et redémarre le serveur Rust sans recharger le document. `android-proof.json` contient les temps au premier contenu, les intervalles rAF du geste et la PSS des processus Chrome. Le cache HTTP est désactivé et le certificat de fixture épinglé. La dictée, la composition propre à Gboard et TalkBack gardent leurs essais distincts.
 
-Pour une comparaison, régler `RUNE_ANDROID_COMPARE=1` dans les deux modes, et `RUNE_ANDROID_SOLID_DIR` sur le répertoire du build Solid uniquement pour Solid. Le serveur Rust de qualification sert les deux builds sur son listener HTTPS. `RUNE_ANDROID_TRACE=display` ajoute un deuxième geste pour mesurer les images présentées par Chrome ; `RUNE_ANDROID_TRACE=1` produit la trace détaillée et les compteurs Rune.
+Pour une comparaison, compiler le serveur Rust de ce checkout et le build Solid :
+
+```powershell
+cargo build --locked --manifest-path packages/server-rs/Cargo.toml
+npm run build --workspace @codenomad/ui
+```
+
+Si la compilation utilise une cible Cargo dédiée, pointer `RUNE_SERVER_EXE` vers son `codenomad-rs`. Régler `RUNE_ANDROID_COMPARE=1` dans les deux modes et `RUNE_ANDROID_SOLID_DIR` sur `packages/ui/src/renderer/dist` (chemin absolu) uniquement pour Solid. Le comparatif avec Rust exige la correction du chantier serveur qui sert l'entrée et les ressources Vite Solid aux navigateurs appairés sur le listener HTTPS. Recompiler le serveur du checkout une fois cette correction intégrée.
+
+Les délais de sélection et d'envoi démarrent au même toucher CDP, après résolution de la cible dans chaque client. Le lanceur garde la réservation ADB : il arrête Chrome et retire le reverse de l'essai même si le processus client est tué. `RUNE_ANDROID_CLIENT_BUDGET_MS` permet de raccourcir l'échéance pour vérifier ce nettoyage. `RUNE_ANDROID_TRACE=display` ajoute un deuxième geste pour mesurer les images présentées par Chrome ; `RUNE_ANDROID_TRACE=1` produit la trace détaillée et les compteurs Rune.
 
 `RUNE_ANDROID_GPU_PROBE=only` s'arrête au lanceur et consigne la demande d'adaptateur de Rune, les appels témoins et la configuration Chrome. `RUNE_ANDROID_TS_SERVER=1`, en mode Solid, utilise le serveur TS compilé du checkout et un nom HTTPS de fixture résolu par Chrome pour comparer la reprise après redémarrage.
 

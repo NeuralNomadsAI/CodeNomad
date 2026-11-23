@@ -16,6 +16,7 @@ import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.m
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {webLiveFixture} from './web-live-fixture.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
+import {androidDevice,androidLease} from './android-device.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
 const solid=webAndroid&&process.env.RUNE_ANDROID_SOLID_DIR
 const compare=webAndroid&&process.env.RUNE_ANDROID_COMPARE
@@ -329,10 +330,9 @@ const env=await privateEnvironment(profile)
 if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
 if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
-if(solid)env.CNRS_FIXTURE_SOLID_UI='1'
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
-let server,exited,log='',client,result=1,http,staticProof,diagnostic='',runLog=''
+let server,exited,log='',client,clientClosed,mobileAction,deviceLease,androidCleanup,result=1,http,staticProof,diagnostic='',runLog='',expired=false
 async function startServer(){
   runLog=''
   server=spawn(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
@@ -383,9 +383,14 @@ try{
     const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
     const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()]
     const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
-    if(webAndroid)androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
+    if(webAndroid){
+      androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
+      deviceLease=androidLease(androidDevice(androidEnv),uiOrigin)
+      await deviceLease.open()
+    }
     client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
-    if(mobile)client.on('message',async action=>{
+    if(webAndroid)clientClosed=new Promise(resolve=>client.once('close',resolve))
+    const handleMobileAction=async action=>{
       try{
         if(action==='restart'){
           const {serverId}=await (await http.get('/api/meta')).json()
@@ -400,10 +405,16 @@ try{
           assert.equal((await (await http.get('/api/meta')).json()).serverId,serverId)
           const opened=await http.post('/api/workspaces',{data:{path:project}})
           assert(opened.ok())
-          client.send({value:{older,witness:(await opened.json()).id}})
-        }else client.send({value:await mobile.command(action,http,ts?.https)})
+          return {value:{older,witness:(await opened.json()).id}}
+        }
+        return {value:await mobile.command(action,http,ts?.https)}
       }
-      catch(error){client.send({error:String(error.message)})}
+      catch(error){return {error:String(error.message)}}
+    }
+    if(mobile)client.on('message',action=>{
+      mobileAction=handleMobileAction(action).then(reply=>{
+        if(client.connected)client.send(reply,()=>{})
+      })
     })
     for(const stream of [client.stdout,client.stderr])stream.on('data',d=>{if(diagnostic.length<262144)diagnostic+=d})
   }else if(pendingOpen){
@@ -426,8 +437,8 @@ try{
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
   if(!restoreState&&!pendingOpen){
-    const budget=web||filesState||gitPanel?300000:120000
-    let expired=false
+    const budget=webAndroid?Number(process.env.RUNE_ANDROID_CLIENT_BUDGET_MS??300000):web||filesState||gitPanel?300000:120000
+    assert(Number.isInteger(budget)&&budget>0&&budget<=300000,'Invalid client deadline')
     const timer=setTimeout(()=>{expired=true;client.kill()},budget)
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
@@ -462,13 +473,21 @@ try{
 }catch(error){result=1;console.error(JSON.stringify({profile,stats}));throw error}finally{
   control?.close()
   for(const gate of gates.values())gate.reject()
+  if(client?.exitCode===null&&client.signalCode===null)client.kill()
+  if(deviceLease){
+    await clientClosed
+    androidCleanup=await deviceLease.close()
+  }
+  await mobileAction
   await http?.dispose()
-  if(client?.exitCode===null)client.kill()
   await stopServer()
   for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
-  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:staticProof,profile,project,forbidden,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2));await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
+  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result:androidCleanup?.length?1:result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:staticProof,profile,project,forbidden,androidCleanup,expired,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2));await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
   if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
   if(web)await writeFile(path.join(profile,'browser-run.log'),diagnostic)
-  if(result===0)assert.equal(server.exitCode,0,'Owned server must exit cleanly')
+  if(result===0){
+    if(deviceLease)assert.deepEqual(androidCleanup,[],'Android fixture cleanup must complete')
+    assert.equal(server.exitCode,0,'Owned server must exit cleanly')
+  }
 }
 process.exitCode=result??1
