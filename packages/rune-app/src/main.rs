@@ -39,6 +39,10 @@ use transport::{Command, Event};
 pub const CODE: &str = "fn main() {\n    println!(\"Rune · Code Nomad\");\n}";
 pub use codenomad_client::Message;
 struct State {
+    #[cfg(target_os = "windows")]
+    native_locale: std::cell::Cell<Option<&'static str>>,
+    #[cfg(target_os = "windows")]
+    native_locale_repaint: std::cell::Cell<bool>,
     wake: codenomad_client::Wake,
     agent: Option<agent::Ui>,
     files: Option<files::Ui>,
@@ -80,6 +84,10 @@ enum Phase {
 }
 fn init() -> State {
     State {
+        #[cfg(target_os = "windows")]
+        native_locale: std::cell::Cell::new(None),
+        #[cfg(target_os = "windows")]
+        native_locale_repaint: std::cell::Cell::new(false),
         wake: std::sync::Arc::new(|| {}),
         agent: None,
         files: None,
@@ -128,7 +136,7 @@ fn setup(s: &mut State, wake: rune::Waker) {
         workspace::connected(s);
         return;
     }
-    transport::start(s);
+    transport::start(s, true);
 }
 fn local_stress() -> bool {
     #[cfg(feature = "test-support")]
@@ -181,8 +189,29 @@ fn request_older(s: &mut State, _: &mut Tx) {
 }
 fn retry_connection(s: &mut State, tx: &mut Tx) {
     #[cfg(target_arch = "wasm32")]
-    if s.phase == Phase::RestoreFailed {
-        launcher::reopen(s);
+    {
+        if platform::pairing::required(s) {
+            platform::pairing::observe(s);
+            return;
+        }
+        if matches!(s.phase, Phase::WorkspaceMissing | Phase::RestoreFailed) {
+            launcher::reopen(s);
+            return;
+        }
+        if s.screen.is_launcher() && s.commands.is_none() {
+            if s.screen.launcher().is_some_and(|l| l.connection.is_some()) {
+                launcher::list(s, false);
+            } else {
+                launcher::connect(s, tx);
+            }
+            return;
+        }
+    }
+    if s.screen
+        .launcher()
+        .is_some_and(|l| l.authentication_required)
+    {
+        s.show_launcher();
         return;
     }
     if s.incoming.as_ref().is_none_or(Receiver::is_closed)
@@ -190,11 +219,9 @@ fn retry_connection(s: &mut State, tx: &mut Tx) {
     {
         if let Some(id) = workspace::active_session(s).map(str::to_owned) {
             launcher::choose(s, id, tx);
-        } else if s.screen.launcher().is_none()
-            && s.incoming.as_ref().is_some_and(Receiver::is_closed)
-        {
+        } else if s.screen.launcher().is_none() && s.incoming.is_some() {
             s.phase = Phase::Reconnecting;
-            transport::start(s);
+            transport::start(s, false);
         }
     } else if s
         .commands
@@ -210,11 +237,13 @@ fn latest(_: &mut State, tx: &mut Tx) {
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = poll_chat(s, 64);
     let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
+    changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
     {
         changed |= platform::pairing::poll(s, tx);
     }
+    shell::sync(s);
     changed |= workspace::poll(s, now, tx);
     changed |= settings::poll(s);
     #[cfg(target_arch = "wasm32")]
@@ -223,6 +252,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     changed |= git::poll(s, now, tx);
+    workspace::capture_files_mode(s);
     if changed {
         tx.instant();
     }
@@ -239,6 +269,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.renew_scope();
                 git::connected(s, &backend);
                 settings::connected(s, &backend);
+                workspace::restore_files_mode(s);
                 if s.agent.is_none() {
                     s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
                 }
@@ -336,10 +367,14 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Done => s.phase = Phase::Ready,
-            Event::Failed => {
+            Event::AuthenticationRequired(_) | Event::Failed => {
                 #[cfg(target_arch = "wasm32")]
-                if !platform::pairing::required(s) {
+                if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
+                }
+                if let Event::AuthenticationRequired(expired) = event {
+                    s.commands = None;
+                    settings::authentication_required(s, &expired);
                 }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
@@ -378,11 +413,12 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let expanded = interruption_expanded(s);
     rune_theme_codenomad::interruption::session_surface(expanded)
-        .child(
+        .child(shell::reader(s, || {
             rune_theme_codenomad::interruption::history(expanded)
                 .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
-                .child(transcript::rows(s)),
-        )
+                .on_layout_tx(chat::ToolDiffPreferences::history_layout)
+                .child(transcript::rows(s))
+        }))
         .child(agent_view::view(s, cx))
         .child(composer(s))
 }

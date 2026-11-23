@@ -8,8 +8,8 @@ mod refresh;
 mod request;
 mod view;
 pub(crate) use binding::{
-    Binding, close_preview, connected, diff_preferences, event, has_preview, mode, online, poll,
-    project_opened, set_diff_preferences, set_mode, show,
+    Binding, close_preview, connected, connected_placed, diff_preferences, event, has_preview,
+    mode, online, poll, project_opened, set_diff_preferences, set_mode, show,
 };
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader};
@@ -70,6 +70,7 @@ pub(crate) struct Ui {
     root: Option<String>,
     inventory: Option<Worktrees>,
     slug: String,
+    session_slug: String,
     scope: std::rc::Rc<()>,
     tree_epoch: u64,
     index_revision: u64,
@@ -117,6 +118,7 @@ impl Ui {
             root,
             inventory: None,
             slug: "root".into(),
+            session_slug: "root".into(),
             scope: std::rc::Rc::new(()),
             tree_epoch: 0,
             index_revision: 0,
@@ -155,14 +157,23 @@ impl Ui {
     }
 
     pub(crate) fn bind(&mut self, backend: &Backend) -> bool {
+        self.bind_placed(backend, None)
+    }
+
+    fn bind_placed(&mut self, backend: &Backend, placement: Option<&str>) -> bool {
         if self.backend.workspace != backend.workspace || self.backend.base != backend.base {
             return false;
         }
-        if self.backend.session != backend.session {
+        let placement =
+            placement.or_else(|| (self.backend.session != backend.session).then_some("root"));
+        if self.backend.session != backend.session
+            || placement.is_some_and(|slug| self.session_slug != slug)
+        {
             self.backend.session.clone_from(&backend.session);
+            self.session_slug = placement.unwrap_or("root").into();
             self.close_preview();
-            if self.slug != "root" {
-                self.slug = "root".into();
+            if self.slug != self.session_slug {
+                self.slug.clone_from(&self.session_slug);
                 self.reset_tree();
             }
         }
@@ -193,6 +204,7 @@ impl Ui {
         if !active {
             self.keep_scroll();
         } else if !self.active {
+            self.invalidate_index();
             self.retry_panel_reads();
         }
         self.active = active;
@@ -377,6 +389,11 @@ impl Ui {
         self.mode = mode;
         self.online = true;
         self.shown = true;
+    }
+
+    pub(crate) fn load_commit_scene(&mut self, details: Details) {
+        self.history.selected = Some(details.id.clone());
+        self.accept(Lane::Details, Value::Details(details));
     }
 }
 mod settle;

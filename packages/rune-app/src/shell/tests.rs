@@ -22,6 +22,36 @@ fn click(rt: &mut Runtime<State>, key: &str) {
 }
 
 #[test]
+fn a_large_session_catalogue_mounts_only_visible_rows_but_search_reaches_the_tail() {
+    let mut state = init();
+    fixture(&mut state);
+    state.screen.launcher_mut().unwrap().sessions = (0..2_100)
+        .map(|i| crate::catalog::Session {
+            id: format!("catalogue-{i}"),
+            title: format!("Row {i:04}"),
+        })
+        .collect();
+    let mut rt = Runtime::new(state, english, (1400.0, 900.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    assert!(rt.find("session-catalogue-0").is_some());
+    assert!(rt.find("session-catalogue-2099").is_none());
+    assert!(
+        rt.elements()
+            .iter()
+            .filter(|e| e
+                .key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("session-catalogue-")))
+            .count()
+            < 100
+    );
+    click(&mut rt, "session-search-toggle");
+    rt.paste("Row 2099");
+    settle(&mut rt);
+    assert!(rt.find("session-catalogue-2099").is_some());
+}
+
+#[test]
 fn fixed_toggles_keep_their_positions_and_drawers_retrace_on_resize() {
     let mut state = init();
     fixture(&mut state);

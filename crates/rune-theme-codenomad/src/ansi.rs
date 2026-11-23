@@ -275,6 +275,11 @@ pub fn code(source: &str, wrap: bool) -> El {
 
 type Strike = (usize, usize, Option<Color>);
 
+fn joins(ascii: bool, end: usize, style: &Style, next: &(Range<usize>, Style)) -> bool {
+    // Budget Unicode underline runs separately so a long run cannot swallow a short one.
+    (ascii || !style.underline) && end == next.0.start && *style == next.1
+}
+
 fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
     let mut spans: Vec<Span> = Vec::with_capacity(log.runs.len().min(COPY_RUN_LIMIT));
     let mut strikes: Vec<Strike> = vec![];
@@ -305,21 +310,20 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
             }
             line_budget = LINE_WORK_LIMIT;
             ascii = text[line.clone()].is_ascii();
-            line_runs = runs.partition_point(|(range, _)| range.start < line.end);
+            let end = runs.partition_point(|(range, _)| range.start < line.end);
+            line_runs = 1 + runs[..end]
+                .windows(2)
+                .filter(|pair| !joins(ascii, pair[0].0.end, &pair[0].1, &pair[1]))
+                .count();
         }
         runs = tail;
         line_runs -= 1;
-        // Keep Unicode underline requests separate until charging them. A long run
-        // that exceeds the budget should not displace a short SGR run after it.
-        if ascii || !style.underline {
-            while let Some(((next, next_style), tail)) = runs.split_first() {
-                if range.end != next.start || style != next_style {
-                    break;
-                }
-                range.end = next.end;
-                runs = tail;
-                line_runs -= 1;
+        while let Some((next, tail)) = runs.split_first() {
+            if !joins(ascii, range.end, style, next) {
+                break;
             }
+            range.end = next.0.end;
+            runs = tail;
         }
         // Reserve the base paint passes before spending the remainder on decorations.
         let ink_reserve = line.len().saturating_mul(line_runs);
@@ -371,16 +375,6 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
                     span = span.underline(dim(style.fg.unwrap_or(default)));
                 }
             }
-            if style.strike && line.len() <= decoration_budget && charge(line.len()) {
-                let ink = Some(dim(style.fg.unwrap_or(default)));
-                if let Some(last) = strikes.last_mut().filter(|last| {
-                    last.2 == ink && matches!(text.get(last.1..range.start), Some(b"" | b"\n"))
-                }) {
-                    last.1 = range.end;
-                } else if spans.len() + strikes.len() + 1 < COPY_RUN_LIMIT {
-                    strikes.push((range.start, range.end, ink));
-                }
-            }
         }
         if style.bold {
             span = span.weight(metrics.number("font-weight-semibold").px());
@@ -388,24 +382,33 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
         if style.italic {
             span = span.italic();
         }
-        if span == Span::new(range.start, range.end) {
-            continue;
+        if span != Span::new(range.start, range.end) {
+            if let Some(last) = spans.last_mut()
+                && (last.end == span.start
+                    || (range.start == line.start && last.end as usize == previous_content_end))
+                && span
+                    == (Span {
+                        start: span.start,
+                        end: span.end,
+                        ..last.clone()
+                    })
+            {
+                last.end = span.end;
+            } else if spans.len() + strikes.len() < COPY_RUN_LIMIT {
+                spans.push(span);
+            } else if style.hidden {
+                text[range.clone()].fill(b' ');
+            }
         }
-        if let Some(last) = spans.last_mut()
-            && (last.end == span.start
-                || (range.start == line.start && last.end as usize == previous_content_end))
-            && span
-                == (Span {
-                    start: span.start,
-                    end: span.end,
-                    ..last.clone()
-                })
-        {
-            last.end = span.end;
-        } else if spans.len() + strikes.len() < COPY_RUN_LIMIT {
-            spans.push(span);
-        } else if style.hidden {
-            text[range].fill(b' ');
+        if !style.hidden && style.strike && line.len() <= decoration_budget && charge(line.len()) {
+            let ink = Some(dim(style.fg.unwrap_or(default)));
+            if let Some(last) = strikes.last_mut().filter(|last| {
+                last.2 == ink && matches!(text.get(last.1..range.start), Some(b"" | b"\n"))
+            }) {
+                last.1 = range.end;
+            } else if spans.len() + strikes.len() < COPY_RUN_LIMIT {
+                strikes.push((range.start, range.end, ink));
+            }
         }
     }
     (String::from_utf8(text).unwrap_or_default(), spans, strikes)
@@ -580,11 +583,13 @@ mod tests {
         assert!(text.ends_with("\n      END"));
     }
 
-    #[test]
-    fn dense_log_can_copy_a_real_runtime_selection() {
-        let (text, spans, strikes) = styled(parse(&"\u{1b}[31mA\u{1b}[32mB\n".repeat(4096)));
+    fn copy_selection(
+        text: &str,
+        spans: Vec<Span>,
+        strikes: Vec<Strike>,
+    ) -> rune::ClipboardContent {
         let mut rt = rune::Runtime::new(
-            (text, spans, strikes),
+            (text.to_owned(), spans, strikes),
             |(text, spans, strikes), _| {
                 rune::rich(text.as_str(), spans.clone())
                     .strikes(strikes.iter().copied())
@@ -608,10 +613,13 @@ mod tests {
             },
         });
         rt.frame(0.0);
-        assert_eq!(
-            clipboard.text().as_deref().map(String::as_str),
-            Some(rt.state.0.as_str())
-        );
+        clipboard.content().unwrap()
+    }
+
+    #[test]
+    fn dense_log_can_copy_a_real_runtime_selection() {
+        let (text, spans, strikes) = styled(parse(&"\u{1b}[31mA\u{1b}[32mB\n".repeat(4096)));
+        assert_eq!(copy_selection(&text, spans, strikes).text(), text);
     }
 
     #[test]
@@ -752,6 +760,36 @@ mod tests {
                 assert_eq!(last.color, Some(rgb(187, 0, 0)));
             }
         }
+    }
+
+    #[test]
+    fn paint_reservation_counts_joined_runs() {
+        let source = format!(
+            "\u{1b}[4mÉCHEC\u{1b}[m{}{}",
+            "\u{1b}[34;41;7mA\u{1b}[31;44;27mB".repeat(170),
+            "x".repeat(5654)
+        );
+        let (_, spans, _) = styled(parse(&source));
+        assert_eq!(spans.len(), 2);
+        assert!(spans[0].underline.is_some());
+    }
+
+    #[test]
+    fn a_strike_without_other_ink_can_use_the_last_range() {
+        let head = "\u{1b}[9mA\u{1b}[29mB\n".repeat(COPY_RUN_LIMIT - 1);
+        let tail = "OK\n".repeat(1000);
+        let (text, spans, strikes) = styled(parse(&format!("{head}\u{1b}[9m{tail}")));
+        assert!(spans.is_empty());
+        assert_eq!(strikes.len(), COPY_RUN_LIMIT);
+        let &(start, end, _) = strikes.last().unwrap();
+        assert_eq!(&text[start..end], tail.trim_end());
+        let expected = format!("<s>{}</s>", tail.trim_end().replace('\n', "<br>"));
+        assert!(
+            copy_selection(&text, spans, strikes)
+                .html()
+                .unwrap()
+                .contains(&expected)
+        );
     }
 
     #[test]

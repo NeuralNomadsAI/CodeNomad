@@ -23,6 +23,8 @@ impl Ui {
         let changes = self.requests.slot(Lane::Changes);
         let preference = self.requests.slot(Lane::Preferences);
         self.can_mutate()
+            // The catalogue-only connection does not fence index mutations.
+            && !self.backend.session.is_empty()
             && self.mode == Mode::Changes
             && self.repository() == Repository::Git
             && self.changes.ready()
@@ -59,7 +61,11 @@ impl Ui {
     }
 
     pub(super) fn can_commit(&self) -> bool {
+        let changes = self.requests.slot(Lane::Changes);
         self.can_change_index()
+            && self.passive_due.is_none()
+            && !changes.dirty
+            && !changes.busy()
             && self.changes.section(Section::Staged).next().is_some()
             && !self.changes.draft.text.trim().is_empty()
     }

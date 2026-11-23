@@ -48,7 +48,8 @@ impl Ui {
                 let repository = self.repository();
                 self.inventory = Some(inventory);
                 if self.tree().is_none() {
-                    self.slug = "root".into();
+                    // The conversation's placement is not a request to browse the root.
+                    self.slug.clone_from(&self.session_slug);
                 }
                 let replaced = previous
                     .as_ref()

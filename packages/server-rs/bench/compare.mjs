@@ -17,8 +17,8 @@ import { browserWorktrees } from "./worktrees.mjs"
 
 const MODES = ["http", "files", "contract", "history-bytes", "attachment-history", "workspace-claims", "agent-controls", "remote-session-controls", "static-assets", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
-if (mode === "prompt-admission") {
-  await (await import("./prompt-admission.mjs")).run()
+if (["prompt-admission", "command-admission"].includes(mode)) {
+  await (await import("./prompt-admission.mjs")).run(mode === "command-admission")
   process.exit(process.exitCode ?? 0)
 }
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)

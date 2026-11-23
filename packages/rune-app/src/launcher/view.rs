@@ -13,11 +13,12 @@ pub fn view(s: &State) -> El {
     let scope = s.input_scope.clone();
     let waiting = !crate::workspace::input_ready(s);
     let mut body = col().full_width().separate(Space::Md);
-    if l.connection.is_none() {
+    if l.connection.is_none() || l.authentication_required {
         body = body
             .child(text(t("rune.server")).text_role(TextRole::Title))
             .child(
                 literal_field(&l.address)
+                    .disabled(l.authentication_required)
                     .label(t("rune.server"))
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Address))
                     .build(field_kit(layout::dark()))

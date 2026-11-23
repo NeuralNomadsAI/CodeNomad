@@ -9,6 +9,8 @@ use std::{
     },
     time::Duration,
 };
+mod catalogue;
+pub use catalogue::{CatalogueChanges, CatalogueWatch};
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_browser.rs"]
 mod browser;
@@ -35,6 +37,7 @@ pub struct State {
     pub alive: AtomicBool,
     pub upstream: AtomicBool,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
+    catalogue: Option<Arc<catalogue::Signals>>,
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -153,23 +156,22 @@ impl State {
 
 pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>) {
     runtime::spawn(async move {
-        #[cfg(not(target_arch = "wasm32"))]
-        let result =
-            futures_lite::future::race(read_native(&backend, epoch, &out, &state), async {
-                while !state.cancelled.load(SeqCst) && !out.is_closed() {
-                    runtime::sleep(Duration::from_millis(25)).await;
-                }
-                Ok(())
-            })
-            .await;
-        #[cfg(target_arch = "wasm32")]
-        let result = browser::read(&backend, epoch, &out, &state).await;
+        let result = read(&backend, epoch, &out, &state).await;
         state.alive.store(false, SeqCst);
         state.version.fetch_add(1, SeqCst);
+        let expired = result
+            .as_ref()
+            .is_err_and(crate::http::authentication_expired);
         if result.is_err() {
             eprintln!("Rune event stream unavailable");
         }
-        let _ = out.send(Input::Closed(epoch)).await;
+        let _ = out
+            .send(if expired {
+                Input::AuthenticationRequired(epoch)
+            } else {
+                Input::Closed(epoch)
+            })
+            .await;
         if let Some(wake) = state.preferences.as_ref().map(|(_, wake)| wake.clone()) {
             drop(state);
             wake();
@@ -177,7 +179,28 @@ pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>
     });
 }
 
+pub(crate) async fn read(
+    backend: &Backend,
+    epoch: u64,
+    out: &Sender<Input>,
+    state: &State,
+) -> Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return futures_lite::future::race(read_native(backend, epoch, out, state), async {
+        while !state.cancelled.load(SeqCst) && !out.is_closed() {
+            runtime::sleep(Duration::from_millis(25)).await;
+        }
+        Ok(())
+    })
+    .await;
+    #[cfg(target_arch = "wasm32")]
+    browser::read(backend, epoch, out, state).await
+}
+
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {
+    if let Some(signals) = &state.catalogue {
+        signals.invalidate(None);
+    }
     state.alive.store(true, SeqCst);
     state.upstream.store(true, SeqCst);
     out.send(Input::Opened(epoch)).await?;
@@ -216,6 +239,13 @@ pub(super) async fn dispatch(
         return Ok(());
     }
     let value: Value = serde_json::from_str(data.trim())?;
+    if let Some(signals) = &state.catalogue {
+        if data.len() > NATIVE_EVENT_LIMIT && storage_owner(&value).is_none() {
+            return Err("oversized SSE event".into());
+        }
+        signals.observe(&value);
+        return Ok(());
+    }
     if let Some(owner) = storage_owner(&value) {
         return state.storage_changed(epoch, owner, out).await;
     }
@@ -259,6 +289,17 @@ pub(super) async fn dispatch(
         out.send(Input::Hint(epoch, version)).await?;
     } else if own
         && value["type"] == "instance.event"
+        && !matches!(
+            native["type"].as_str(),
+            Some(
+                "session.created"
+                    | "session.forked"
+                    | "session.renamed"
+                    | "session.archived"
+                    | "session.unarchived"
+                    | "worktree.updated"
+            )
+        )
         && (native["data"]["sessionID"] == b.session
             || native["data"]["form"]["sessionID"] == b.session
             || native["type"] == "server.connected")

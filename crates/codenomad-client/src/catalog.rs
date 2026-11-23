@@ -6,6 +6,9 @@ use crate::{
 use futures_lite::StreamExt;
 use serde_json::{Value, json};
 
+mod inventory;
+pub use inventory::{InventoryPage, InventoryScope, Member};
+
 #[derive(Debug)]
 pub struct CreationRefused;
 impl std::fmt::Display for CreationRefused {
@@ -81,6 +84,15 @@ impl Backend {
             )
             .await?,
         )
+    }
+
+    pub async fn attest_server(&self) -> Result<String> {
+        let id = self.server_id().await?;
+        if self.client.verify_server_identity(&id) {
+            Ok(id)
+        } else {
+            Err("Server identity changed".into())
+        }
     }
     /// Creates an independent occurrence; the request retains cleanup ownership until released.
     pub async fn create_project(&self, path: &str, request_id: &str) -> Result<Project> {
@@ -234,39 +246,19 @@ impl Backend {
             }
         };
         let data = read_json(request.send().await?.error_for_status()?).await?;
-        let rows = data["data"]
-            .as_array()
-            .filter(|v| v.len() <= 200)
-            .ok_or("invalid session list")?;
-        let mut ids = std::collections::HashSet::new();
+        let page = inventory::decode_page(&data)?;
         let mut sessions = vec![];
-        for row in rows {
-            let item = session_at(row, directory)?;
-            if !ids.insert(item.id.clone()) {
-                return Err("duplicate session".into());
+        for member in page.members {
+            if !crate::server_path::same(&member.directory, directory) {
+                return Err("foreign session location".into());
             }
-            let root = match row.get("parentID") {
-                None | Some(Value::Null) => true,
-                Some(Value::String(id)) if valid_id(id) => false,
-                _ => return Err("invalid session parent".into()),
-            };
-            if root && !item.id.starts_with("ses_cn_schedule_") {
-                sessions.push(item);
+            if member.parent.is_none() && !member.session.id.starts_with("ses_cn_schedule_") {
+                sessions.push(member.session);
             }
         }
-        let cursor = match data.get("cursor") {
-            None | Some(Value::Null) => None,
-            Some(Value::Object(cursor)) => cursor.get("next"),
-            _ => return Err("invalid session cursor".into()),
-        };
-        let next = match cursor {
-            None | Some(Value::Null) => None,
-            Some(Value::String(v)) if !v.is_empty() && v.len() <= 65536 => Some(v.clone()),
-            _ => return Err("invalid session cursor".into()),
-        };
         Ok(Sessions {
             rows: sessions,
-            next,
+            next: page.next,
         })
     }
     async fn session_directories(&self, project: &Project) -> Result<Vec<String>> {
@@ -394,7 +386,8 @@ impl Backend {
         id: &str,
         fresh: bool,
     ) -> Result<(Self, Session)> {
-        self.bind_at(project, id, Some(&project.path), fresh).await
+        let (backend, session, _) = self.bind_session_placed(project, id, fresh).await?;
+        Ok((backend, session))
     }
     pub async fn bind_at(
         &self,
@@ -403,6 +396,29 @@ impl Backend {
         expected: Option<&str>,
         fresh: bool,
     ) -> Result<(Self, Session)> {
+        let (backend, session, _) = self
+            .bind_at_placed(project, id, expected, fresh, true)
+            .await?;
+        Ok((backend, session))
+    }
+
+    pub async fn bind_session_placed(
+        &self,
+        project: &Project,
+        id: &str,
+        fresh: bool,
+    ) -> Result<(Self, Session, String)> {
+        self.bind_at_placed(project, id, None, fresh, false).await
+    }
+
+    async fn bind_at_placed(
+        &self,
+        project: &Project,
+        id: &str,
+        expected: Option<&str>,
+        fresh: bool,
+        verify_directory: bool,
+    ) -> Result<(Self, Session, String)> {
         if !valid_id(id) || id.starts_with("ses_cn_schedule_") {
             return Err("invalid session".into());
         }
@@ -412,6 +428,7 @@ impl Backend {
                 "{}workspaces/{}/instance/api/session/{id}",
                 self.base, project.id
             ))
+            .header("x-codenomad-session-placement", "1")
             .send()
             .await?;
         let status = response.status();
@@ -432,21 +449,31 @@ impl Backend {
             });
         }
         let data = read_json(response.error_for_status()?).await?;
-        let directory = data["data"]["location"]["directory"]
+        let row = &data["data"];
+        let directory = row["location"]["directory"]
             .as_str()
             .ok_or("missing session directory")?;
-        if expected.is_some_and(|d| !crate::server_path::same(d, directory))
-            || (!crate::server_path::same(&project.path, directory)
-                && (fresh
-                    || !self
-                        .session_directories(project)
-                        .await?
-                        .iter()
-                        .any(|d| crate::server_path::same(d, directory))))
-        {
+        let placement = row["listWorktreeSlug"]
+            .as_str()
+            .filter(|slug| valid_id(slug));
+        let linked = !crate::server_path::same(&project.path, directory);
+        if expected.is_some_and(|d| !crate::server_path::same(d, directory)) || linked && fresh {
             return Err("foreign session location".into());
         }
-        let info = session_at(&data["data"], directory)?;
+        if linked {
+            let owned = if verify_directory {
+                self.session_directories(project)
+                    .await?
+                    .iter()
+                    .any(|d| crate::server_path::same(d, directory))
+            } else {
+                placement.is_some_and(|slug| slug != "root")
+            };
+            if !owned {
+                return Err("foreign session location".into());
+            }
+        }
+        let info = session_at(row, directory)?;
         if info.id != id {
             return Err("session response identity mismatch".into());
         }
@@ -455,7 +482,7 @@ impl Backend {
         backend.session = id.into();
         backend.fresh_mode = fresh;
         backend.client_id = crate::http::client_id()?;
-        Ok((backend, info))
+        Ok((backend, info, placement.unwrap_or("root").into()))
     }
 }
 fn server_id(data: &Value) -> Result<String> {

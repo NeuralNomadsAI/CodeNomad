@@ -12,6 +12,7 @@ fn workspace(id: &str, draft: &str) -> Workspace {
         workspace_id: None,
         active_session_id: Some(id.into()),
         drafts: BTreeMap::from([(id.into(), draft.into())]),
+        view: Default::default(),
     }
 }
 fn backend(session: &str) -> Backend {
@@ -45,6 +46,34 @@ fn panel_visibility_returns_only_with_its_own_project_tab() {
         assert_eq!(s.shell.wanted, [Some([false, true]), None]);
         select(s, "tab-1", tx);
         assert_eq!(s.shell.wanted, [Some([true, false]), None]);
+    });
+}
+
+#[test]
+fn right_panel_selection_is_specific_to_each_project_occurrence() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries[0].saved = Tab::Workspace(workspace("first", ""));
+    ui.entries.push(entry(
+        "tab-1".into(),
+        Tab::Workspace(workspace("second", "")),
+    ));
+    s.workspace = Some(ui);
+    let mut rt = runtime(s);
+    rt.update(|s, tx| {
+        set_files_tab(s, true);
+        assert!(files_tab(s));
+        select(s, "tab-1", tx);
+        assert!(!files_tab(s));
+        select(s, "tab-0", tx);
+        assert!(files_tab(s));
+        set_files_tab(s, false);
+        let saved = s.workspace.as_ref().unwrap().snapshot();
+        assert!(
+            matches!(&saved.tabs[0], Tab::Workspace(w) if w.view.files_mode == Some("workspace"))
+        );
+        assert!(matches!(&saved.tabs[1], Tab::Workspace(w) if w.view.files_mode.is_none()));
     });
 }
 

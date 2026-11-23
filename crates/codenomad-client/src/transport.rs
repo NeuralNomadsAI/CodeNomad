@@ -42,6 +42,7 @@ pub enum Event {
     Message(Message),
     Text(String, crate::content::TextEvent),
     Done,
+    AuthenticationRequired(crate::backend::Backend),
     Failed,
     ConnectionLost,
     WorkspaceMissing,

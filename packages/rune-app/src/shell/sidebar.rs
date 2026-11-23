@@ -107,40 +107,70 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 .key("session-search"),
         );
     }
-    let searching = l.show_search && !l.search.text.trim().is_empty();
+    let query = l.search.text.trim();
+    let searching = l.show_search && !query.is_empty();
+    let folded = query.to_lowercase();
+    let has_results = searching
+        && l.project
+            .as_ref()
+            .is_some_and(|project| l.search_results.matches(&project.id, query));
     let mut seen = std::collections::HashSet::new();
-    let sessions: Vec<_> = if searching {
-        l.search_results.rows.iter().collect()
-    } else {
-        l.sessions
-            .iter()
-            .chain(l.linked.pages.iter().flat_map(|page| &page.rows))
-            .filter(|row| seen.insert(row.id.as_str()))
-            .collect()
-    };
-    let count = sessions.len();
-    let selected = workspace::active_session(s);
-    let mut items = col().full_width().role("list").label(title).focus_group();
-    for session in sessions {
-        let id = session.id.clone();
-        let title = if session.title.is_empty() {
-            t("sessionList.session.untitled")
-        } else {
-            &session.title
-        };
-        let key = format!("session-{id}");
-        items = items.child(
+    let rows: Vec<_> = l
+        .sessions
+        .iter()
+        .enumerate()
+        .map(|(i, row)| (0, i, row))
+        .chain(
+            l.linked
+                .pages
+                .iter()
+                .flat_map(|page| page.rows.iter().enumerate().map(|(i, row)| (1, i, row))),
+        )
+        .filter(|(_, _, row)| !searching || row.title.to_lowercase().contains(&folded))
+        .chain(
+            l.search_results
+                .rows
+                .iter()
+                .enumerate()
+                .filter(|_| has_results)
+                .map(|(i, row)| (2, i, row)),
+        )
+        .filter_map(|(source, index, row)| seen.insert(row.id.as_str()).then_some((source, index)))
+        .collect();
+    let count = rows.len();
+    let rows = std::rc::Rc::new(rows);
+    let keys = rows.clone();
+    let items = layout::transcript_rows(
+        count,
+        move |s: &State, i| {
+            sidebar_row(s, keys[i]).map_or_else(
+                || format!("row-{i}").into(),
+                |row| format!("session-{}", row.id).into(),
+            )
+        },
+        move |s: &State, i| {
+            let Some(session) = sidebar_row(s, rows[i]) else {
+                return rune::el();
+            };
+            let title = if session.title.is_empty() {
+                t("sessionList.session.untitled")
+            } else {
+                &session.title
+            };
+            let id = session.id.clone();
             shell::session_row(
                 title,
-                selected == Some(id.as_str()),
+                workspace::active_session(s) == Some(id.as_str()),
                 disabled,
-                screen::action_tx(scope, move |s, tx| {
-                    launcher::choose(s, id.clone(), tx);
+                screen::action_tx(&s.input_scope, move |s, tx| {
+                    launcher::choose(s, id.clone(), tx)
                 }),
             )
-            .key(key),
-        );
-    }
+        },
+    )
+    .role("list")
+    .label(title)
+    .focus_group();
     let mut items = col().full_width().child(items);
     if searching && l.search_results.pending() {
         items = items.child(text(t("rune.loading")).role("status"));
@@ -149,19 +179,11 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     } else if !searching && count == 0 && !l.pending && !l.linked.pending() {
         items = items.child(text(t("rune.empty_sessions")).pad(Space::Sm));
     }
-    if !searching
-        && (l.next.is_some()
-            || l.linked
-                .pages
-                .as_ref()
-                .is_some_and(launcher::linked::Pages::more))
-    {
+    if !searching && l.next.is_some() {
         items = items.child(button(
             "more-sessions",
             t("rune.more"),
-            disabled
-                || l.next.is_none() && l.linked.pending()
-                || count >= launcher::MAX_BROWSED_SESSIONS,
+            disabled || !l.can_page(),
             screen::action(scope, |s| launcher::list(s, true)),
         ));
     }
@@ -211,4 +233,13 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
             })
             .child(items),
     )
+}
+
+fn sidebar_row(s: &State, (source, index): (u8, usize)) -> Option<&crate::catalog::Session> {
+    let launcher = s.screen.launcher()?;
+    match source {
+        0 => launcher.sessions.get(index),
+        1 => launcher.linked.pages.as_ref()?.rows.get(index),
+        _ => launcher.search_results.rows.get(index),
+    }
 }

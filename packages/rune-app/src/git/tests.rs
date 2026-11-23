@@ -110,6 +110,71 @@ fn ui() -> Ui {
 }
 
 #[test]
+fn the_linked_conversation_owns_the_git_target_without_a_root_fallback() {
+    let mut ui = ui();
+    let mut backend = ui.backend.clone();
+    backend.session = "linked-session".into();
+    assert!(ui.bind_placed(&backend, Some("other")));
+    assert_eq!(ui.tree().unwrap().slug, "other");
+    assert!(ui.bind(&backend));
+    assert_eq!(ui.tree().unwrap().slug, "other");
+    let mut inventory = ui.inventory.clone().unwrap();
+    inventory.trees.retain(|tree| tree.slug == "root");
+    ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
+    assert!(ui.tree().is_none());
+    assert!(!ui.can_mutate());
+}
+
+#[test]
+fn the_index_is_read_only_until_a_conversation_can_observe_it() {
+    let mut ui = ui();
+    ui.online = true;
+    ui.shown = true;
+    ui.mode = Mode::Changes;
+    ui.requests.slot_mut(Lane::Worktrees).dirty = false;
+    ui.requests.slot_mut(Lane::Preferences).dirty = false;
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
+    statuses(&mut ui, vec![change("a.txt", true, false, 1)]);
+    ui.changes.draft = TextEdit::new("commit");
+    assert!(ui.can_commit());
+    ui.backend.session.clear();
+    assert!(!ui.can_change_index() && !ui.can_commit());
+}
+
+#[test]
+fn commit_waits_for_index_display_to_catch_up_after_filesystem_changes() {
+    let mut ui = ui();
+    ui.online = true;
+    ui.shown = true;
+    ui.mode = Mode::Changes;
+    for lane in [Lane::Worktrees, Lane::Preferences, Lane::Changes] {
+        ui.requests.slot_mut(lane).dirty = false;
+    }
+    statuses(&mut ui, vec![change("a.txt", true, false, 1)]);
+    ui.changes.draft = TextEdit::new("commit");
+    assert!(ui.can_commit());
+    ui.filesystem_hint();
+    assert!(!ui.can_commit());
+    ui.passive_due = None;
+    ui.requests.slot_mut(Lane::Changes).dirty = true;
+    assert!(!ui.can_commit());
+    statuses(
+        &mut ui,
+        vec![
+            change("a.txt", true, false, 1),
+            change("b.txt", true, false, 1),
+        ],
+    );
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
+    assert!(ui.can_commit());
+    ui.shown = false;
+    ui.activate(false);
+    ui.activate(true);
+    ui.shown = true;
+    assert!(!ui.can_commit());
+}
+
+#[test]
 fn status_moves_an_open_file_without_opening_sidebar_selection() {
     let mut ui = ui();
     let unstaged = change("file.rs", false, false, 2);
@@ -219,6 +284,7 @@ fn only_live_history_with_a_different_head_revokes_index_authority() {
     ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
     ui.accept(Lane::Changes, Value::Changes(rows.clone(), None, checked));
     assert!(!ui.can_commit());
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
     statuses(&mut ui, rows);
     assert!(ui.can_commit());
 }
@@ -560,6 +626,7 @@ fn refreshed_inventory_detects_a_branch_switch_without_a_stream_hint() {
     assert!(ui.has_preview());
     assert!(ui.requests.slot(Lane::Preview).dirty);
     assert!(!ui.can_commit());
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
     statuses(&mut ui, vec![change("a", true, false, 1)]);
     assert!(ui.can_commit());
 }
@@ -617,7 +684,7 @@ fn invalidated_status_cannot_remove_the_diff_before_its_trailing_read() {
 }
 
 #[test]
-fn repeated_file_hints_do_not_starve_display_or_revoke_a_checked_index() {
+fn repeated_file_hints_keep_rows_and_path_actions_but_suspend_commit() {
     let mut ui = ui();
     ui.mode = Mode::Changes;
     ui.shown = true;
@@ -640,7 +707,8 @@ fn repeated_file_hints_do_not_starve_display_or_revoke_a_checked_index() {
                 .collect(),
         );
         assert_eq!(ui.changes.count(), step as usize);
-        assert!(ui.can_commit());
+        assert!(ui.can_change_index());
+        assert!(!ui.can_commit());
     }
 }
 

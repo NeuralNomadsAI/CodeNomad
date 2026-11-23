@@ -27,7 +27,18 @@ pub(crate) fn poll(s: &mut State) -> bool {
         .screen
         .launcher()
         .is_some_and(|launcher| shared.bind(launcher.connection.clone()));
-    if crate::workspace::has_conversation_stream(s) {
+    let expired = shared.observe_authentication();
+    if expired {
+        if let Some(launcher) = s.screen.launcher_mut() {
+            launcher.authentication_required = true;
+        }
+        s.phase = crate::Phase::Failed;
+    }
+    if crate::workspace::has_conversation_stream(s)
+        || s.screen
+            .launcher()
+            .is_some_and(|launcher| launcher.authentication_required)
+    {
         shared.unwatch();
     } else {
         shared.watch(&s.wake);
@@ -43,12 +54,30 @@ pub(crate) fn poll(s: &mut State) -> bool {
         shared.palette(false).map_or("", |p| p.id),
         shared.palette(true).map_or("", |p| p.id),
     ]);
-    display != std::mem::replace(&mut s.settings.last_display, display)
+    expired | (display != std::mem::replace(&mut s.settings.last_display, display))
 }
 
 pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {
     if s.screen.launcher().is_none() {
         s.settings.shared.borrow_mut().bind(Some(backend.clone()));
+    }
+}
+
+pub(crate) fn stop_before_conversation(s: &State) -> Option<codenomad_client::Receiver<()>> {
+    s.settings.shared.borrow_mut().stop_before_conversation()
+}
+
+pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::Backend) {
+    let mut prefs = s.settings.shared.borrow_mut();
+    let current = match s.screen.launcher() {
+        Some(launcher) => launcher.connection.as_ref(),
+        None => prefs.backend.as_ref(),
+    };
+    if current.is_some_and(|current| current.client.same_connection(&expired.client)) {
+        prefs.require_authentication();
+        if let Some(launcher) = s.screen.launcher_mut() {
+            launcher.authentication_required = true;
+        }
     }
 }
 

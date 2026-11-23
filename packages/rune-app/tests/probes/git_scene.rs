@@ -2,7 +2,9 @@
 use crate::git::{Mode, Ui};
 use codenomad_client::{
     backend::Backend,
-    git::{Change, Commit, Diff, Page, Repository, Status, Worktree, Worktrees},
+    git::{
+        Change, Commit, CommitFile, Details, Diff, Page, Repository, Status, Worktree, Worktrees,
+    },
 };
 use rune_theme_codenomad::{Space, git_panel, layout::Layout};
 
@@ -132,6 +134,22 @@ fn setup(s: &mut crate::State, mode: Mode) {
         before: "export function openGitPanel() {\n  return {\n    title: \"Git Changes\",\n    view: \"changes\",\n    diffPlacement: \"sidebar\",\n  }\n}\n".into(),
         after: "export function openGitPanel() {\n  return {\n    title: \"Git\",\n    view: \"history\",\n    diffPlacement: \"conversation\",\n    preserveDraft: true,\n  }\n}\n".into(),
     });
+    if let Some(detail) =
+        crate::platform::setting("RUNE_GIT_COMMIT_DETAIL").filter(|_| mode == Mode::History)
+    {
+        ui.load_commit_scene(Details {
+            id: "1".repeat(40),
+            message: if detail == "hash" {
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into()
+            } else {
+                "Make Git history the starting point\n\nKeep history and local changes as two simple paths to the central diff.".into()
+            },
+            files: vec![
+                CommitFile { path: PATH.into(), kind: "M".into(), original_path: None },
+                CommitFile { path: "src/styles/panels/git-history.css".into(), kind: "A".into(), original_path: None },
+            ],
+        });
+    }
     s.git.owner = Some(ui);
     s.git.scene = true;
     s.phase = crate::Phase::Ready;

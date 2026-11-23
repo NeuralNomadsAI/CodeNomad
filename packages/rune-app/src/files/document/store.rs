@@ -57,6 +57,13 @@ pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     }
 }
 impl Store {
+    pub(crate) fn has_tab_edits(&self, tab_key: &str) -> bool {
+        lock(&self.0)
+            .drafts
+            .keys()
+            .any(|key| key.instance == tab_key)
+    }
+
     pub(super) fn writes(&self, server: &str, instance: &str) -> Writes {
         let mut store = lock(&self.0);
         store.writes.retain(|_, writes| writes.strong_count() > 0);
@@ -80,13 +87,11 @@ impl Store {
         store.sequence
     }
     pub(super) fn sync(&self, key: &Key, shared: &Shared) {
-        let retained = {
-            let draft = lock(shared);
-            draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some()
-        };
+        // Document operations take the draft lock before the store lock.
+        let draft = lock(shared);
         let mut store = lock(&self.0);
         let drafts = &mut store.drafts;
-        if retained {
+        if draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some() {
             drafts.insert(key.clone(), shared.clone());
         } else if drafts.get(key).is_some_and(|old| Arc::ptr_eq(old, shared)) {
             drafts.remove(key);

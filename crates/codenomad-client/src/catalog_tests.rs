@@ -673,3 +673,41 @@ fn catalogue_omissions_require_targeted_absence() {
         assert!(results.try_recv().is_err());
     });
 }
+
+#[test]
+fn a_linked_session_requires_the_owned_proxy_placement() {
+    run(async {
+        let route = "GET /workspaces/workspace/instance/api/session/linked";
+        let server = Server::start(vec![
+            reply(
+                route,
+                None,
+                200,
+                json!({"data":{"id":"linked","location":{"directory":"/linked"}}}),
+            ),
+            reply(
+                route,
+                None,
+                200,
+                json!({"data":{"id":"linked","location":{"directory":"/linked"},"listWorktreeSlug":"linked-worktree"}}),
+            ),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        let project = crate::catalog::Project {
+            id: "workspace".into(),
+            path: "/trial".into(),
+        };
+        assert!(
+            backend
+                .bind_session(&project, "linked", false)
+                .await
+                .is_err()
+        );
+        let (bound, row) = backend
+            .bind_session(&project, "linked", false)
+            .await
+            .unwrap();
+        assert_eq!(bound.workspace, "workspace");
+        assert_eq!(row.id, "linked");
+    });
+}

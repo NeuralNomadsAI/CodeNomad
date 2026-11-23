@@ -225,7 +225,7 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
         let content = if i == 0 {
             sidebar::view(s, touch, rtl, floating)
         } else {
-            right_panel::view(s, touch, floating)
+            right_panel::view(s, width, touch, floating)
         };
         let pane = shell::panel(width, floating)
             .key(REGIONS[i])

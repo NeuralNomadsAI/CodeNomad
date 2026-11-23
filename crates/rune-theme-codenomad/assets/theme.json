@@ -327,6 +327,11 @@
         "height": 14,
         "width": 14
       },
+      "gitCommitSummary": {
+        "borderBottomWidth": 1,
+        "paddingLeft": 12,
+        "paddingTop": 12
+      },
       "gitContext": {
         "borderBottomWidth": 1,
         "paddingLeft": 12,
@@ -522,6 +527,11 @@
       "fileRowActionGlyph": {
         "height": 14,
         "width": 14
+      },
+      "gitCommitSummary": {
+        "borderBottomWidth": 1,
+        "paddingLeft": 12,
+        "paddingTop": 12
       },
       "gitContext": {
         "borderBottomWidth": 1,
