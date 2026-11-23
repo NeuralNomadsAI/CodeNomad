@@ -2,6 +2,8 @@
 
 ## Agent conventions
 
+- Session and connection status dots use static state colors and retain their accessible labels.
+
 - View stores read the active conversation identity from `stores/session-selection-state.ts`. Session selection actions, catalog refresh and restoration authority remain in `stores/session-state.ts`; keep those UI-effect dependencies out of the view-state import graph.
 
 - `stores/session-surface.ts` owns the central foreground projection and gesture generation within one tab occurrence (`instanceId`). Its fixed union selects conversation, web, file or Mission. Browser targets bind explicitly to a native session; file targets retain their session/worktree lifetime; schedule and playbook readers can open without a conversation. Duplicate project tabs can consult different readers or the shared conversation. Feature stores retain browser guests/history, file bytes/drafts/editor state and Mission data/selection/tree/disclosures.

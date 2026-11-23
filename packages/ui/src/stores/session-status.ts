@@ -2,6 +2,7 @@ import type { Session, SessionRetryState, SessionStatus } from "../types/session
 import { getInstanceSessionIndicatorStatusCached, isSessionInWorkspaceScope, sessions } from "./session-state"
 import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility"
 import { createSignal } from "solid-js"
+import { sessionIndicatorRows } from "./session-projection"
 
 export const IDLE_STATUS_VISIBILITY_MS = 5000
 
@@ -22,7 +23,7 @@ export function hasWakeLockEligibleWork(instanceId: string): boolean {
     return false
   }
 
-  for (const session of instanceSessions.values()) {
+  for (const session of sessionIndicatorRows(instanceSessions).values()) {
     if (shouldSessionHoldWakeLock(session)) {
       return true
     }
@@ -85,15 +86,28 @@ export function getInstanceIdleFadeClass(instanceId: string, now = Date.now(), k
   if (!instanceSessions) return ""
 
   let hasVisibleIdle = false
-  for (const session of instanceSessions.values()) {
-    if (!session.id || !isSessionInWorkspaceScope(instanceId, session.id)) continue
-    const isFading = Boolean(getSessionIdleFadeClass(instanceId, session.id))
+  for (const session of idleIndicatorRows(instanceId, instanceSessions)) {
+    if (!isSessionInWorkspaceScope(instanceId, session.id)) continue
+    const isFading = Boolean(idleFadeClassForSession(instanceId, session))
     if (!isFading && !shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)) continue
     hasVisibleIdle = true
     if (!isFading) return ""
   }
 
   return hasVisibleIdle ? "session-status-fading" : ""
+}
+
+function* idleIndicatorRows(instanceId: string, rows: Map<string, Session>): Iterable<Session> {
+  const candidates = sessionIndicatorRows(rows)
+  yield* candidates.values()
+  // A fade may briefly outlive the cleared unread marker.
+  const prefix = `${instanceId}:`
+  for (const key of idleFades().keys()) {
+    if (!key.startsWith(prefix)) continue
+    const id = key.slice(prefix.length)
+    const row = rows.get(id)
+    if (row && !candidates.has(id)) yield row
+  }
 }
 
 export function shouldShowIdleStatus(
@@ -167,9 +181,9 @@ export function getInstanceSessionIndicatorStatus(
     return null
   }
 
-  for (const session of instanceSessions.values()) {
+  for (const session of idleIndicatorRows(instanceId, instanceSessions)) {
     if (!isSessionInWorkspaceScope(instanceId, session.id)) continue
-    if (session.id && getSessionIdleFadeClass(instanceId, session.id)) {
+    if (session.id && idleFadeClassForSession(instanceId, session)) {
       return "idle"
     }
     if (shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)) {

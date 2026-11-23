@@ -6,7 +6,7 @@ import { observeListEnd } from "../lib/list-end-observer"
 import { preserveListFocus } from "../lib/preserve-list-focus"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
-import { clearSessionIdleFade, getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus, shouldShowSessionStatusForRow } from "../stores/session-status"
+import { clearSessionIdleFade, getRetrySeconds, getSessionIdleFadeClass, shouldShowSessionStatus, shouldShowSessionStatusForRow } from "../stores/session-status"
 import { Archive, ArchiveRestore, Bot, User, Copy, Trash2, Pencil, ShieldAlert, Search, Square, CheckSquare, MinusSquare, Split, RotateCw, Star } from "lucide-solid"
 import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
@@ -44,7 +44,7 @@ import {
   isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession, getWorktrees } from "../stores/worktrees"
-import { collectDescendantActivity, collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, isSessionArchived, projectSessionFamilies, projectSessionSearchResults, projectUnarchivedSessionThreads, sortSessionIdsDeepestFirst, type SessionFamilySort, type SessionArchiveFilter } from "../stores/session-tree"
+import { getDescendantActivity, collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, isSessionArchived, projectSessionFamilies, projectSessionSearchResults, projectUnarchivedSessionThreads, sortSessionIdsDeepestFirst, type SessionFamilySort, type SessionArchiveFilter } from "../stores/session-tree"
 import { setSessionArchived } from "../stores/session-archive"
 import { normalizeSessionDirectory } from "../stores/session-list-options"
 import { getLogger } from "../lib/logger"
@@ -174,11 +174,6 @@ const SessionList: Component<SessionListProps> = (props) => {
   const sessionListError = createMemo(() => getSessionListError(props.instanceId))
   // Over the listed sessions only, like the rows and the tab indicator.
   const listedSessions = createMemo(() => getListedSessionMap(props.instanceId))
-  const descendantActivity = createMemo(() => collectDescendantActivity(
-    listedSessions(),
-    session => !session.retry && session.generationRecovery !== "interrupted"
-      && shouldShowSessionStatusForRow(props.instanceId, session, now(), preferences().keepUnseenSubagentIdleStatus),
-  ))
 
   createEffect(() => {
     const sort = sortBy()
@@ -794,7 +789,12 @@ const SessionList: Component<SessionListProps> = (props) => {
 
     const isActive = () => props.activeSessionId === sessionId()
     // A parent's chevron carries its subsessions' visible status, expanded or not.
-    const childActivity = () => rowProps.hasChildren ? descendantActivity().get(sessionId()) : undefined
+    const descendantActivity = createMemo(() => rowProps.hasChildren ? getDescendantActivity(
+      listedSessions(), sessionId(),
+      session => !session.retry && session.generationRecovery !== "interrupted"
+        && shouldShowSessionStatusForRow(props.instanceId, session, now(), preferences().keepUnseenSubagentIdleStatus),
+    ) : undefined)
+    const childActivity = () => rowProps.hasChildren ? descendantActivity() : undefined
     // The row and descendants whose Idle or Interrupted badge "Mark as read" clears.
     const readableHierarchy = () => [rowProps.session, ...getDescendantSessions(props.instanceId, sessionId())]
       .filter(session => session.status === "idle" && !session.pendingPermission && !session.pendingForm
@@ -804,7 +804,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     // Observe activity independently of expansion: folding a busy branch is not
     // a new activity transition. Visible descendants follow the same rule.
     const activityKind = createMemo(() => {
-      const activity = descendantActivity().get(sessionId())
+      const activity = descendantActivity()
       return activity ? childActivityKind(activity) : undefined
     })
     createEffect(on(activityKind, (kind, previous) => {
@@ -830,9 +830,9 @@ const SessionList: Component<SessionListProps> = (props) => {
       return activity ? t("sessionList.expand.withChildActivity", { action: label, activity: childActivityLabel(t, activity) }) : label
     }
     const title = () => rowProps.session.title || t("sessionList.session.untitled")
-    const status = () => getSessionStatus(props.instanceId, sessionId())
+    const status = () => rowProps.session.status
     const interrupted = () => isSessionInterruptionUnseen(props.instanceId, rowProps.session)
-    const retry = () => getSessionRetry(props.instanceId, sessionId())
+    const retry = () => rowProps.session.retry
     const statusLabel = () => {
       if (interrupted()) return t("sessionList.status.interrupted")
       const retryState = retry()
@@ -862,9 +862,9 @@ const SessionList: Component<SessionListProps> = (props) => {
     const showStatus = () =>
       interrupted() ||
       needsInput() ||
-      shouldShowSessionStatus(
+      shouldShowSessionStatusForRow(
         props.instanceId,
-        sessionId(),
+        rowProps.session,
         now(),
         preferences().keepUnseenSubagentIdleStatus,
       )
@@ -1326,7 +1326,11 @@ const SessionList: Component<SessionListProps> = (props) => {
                  keepMounted={keptMountedIndexes()}
                >
                  {(sessionId, index) => {
-                   const row = createMemo(() => visibleProjection().rowsById.get(sessionId))
+                   const row = createMemo(() => visibleProjection().rowsById.get(sessionId), undefined, {
+                     equals: (a, b) => a === b || Boolean(a && b && a.thread === b.thread
+                       && a.depth === b.depth && a.isLastChild === b.isLastChild
+                       && a.hasChildren === b.hasChildren && a.expanded === b.expanded),
+                   })
                    return (
                      <Show when={Boolean(row())}>
                        <SessionRow

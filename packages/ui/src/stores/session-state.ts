@@ -1,4 +1,5 @@
 import { batch, createSignal } from "solid-js"
+import { carrySessionProjection, sessionCheckpoint, sessionIndicatorRows, sessionTopology } from "./session-projection"
 import { beginGesture, type SurfaceGesture } from "./session-surface"
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 
@@ -226,7 +227,7 @@ function isSessionSearchLoading(instanceId: string): boolean {
 // always in scope: a session opened explicitly is shown where it was opened.
 // A session a move located elsewhere (`markSessionMovedAway`) is never in scope.
 const NO_SESSIONS: ReadonlyMap<string, Session> = new Map()
-const workspaceScopes = new WeakMap<ReadonlyMap<string, Session>, {
+const workspaceScopes = new WeakMap<object, {
   worktrees: unknown; active?: string; away: unknown; scope: ReadonlySet<string>; unscoped: boolean; folder: string; client: unknown; evidence: unknown
 }>()
 
@@ -241,7 +242,8 @@ function getWorkspaceSessionScope(instanceId: string): ReadonlySet<string> | nul
   const folder = instance?.folder ?? ""
   const client = instance?.client
   const evidence = getSessionPlacementEvidence(instanceId)
-  const cached = workspaceScopes.get(held)
+  const topology = sessionTopology(held)
+  const cached = workspaceScopes.get(topology)
   if (cached && cached.worktrees === worktrees && cached.active === active && cached.away === away
     && cached.unscoped === unscoped && cached.folder === folder && cached.client === client && cached.evidence === evidence) return cached.scope
   const scope = unscoped ? new Set(held.keys())
@@ -249,7 +251,7 @@ function getWorkspaceSessionScope(instanceId: string): ReadonlySet<string> | nul
       id: session.id, parentId: session.parentId, directory: confirmedSessionListDirectory(instanceId, session.id, session) ?? session.location?.directory })),
     folder, worktrees!, active ? [active] : [])
   for (const id of away.keys()) scope.delete(id)
-  workspaceScopes.set(held, { worktrees, active, away, scope, unscoped, folder, client, evidence })
+  workspaceScopes.set(topology, { worktrees, active, away, scope, unscoped, folder, client, evidence })
   return scope
 }
 
@@ -288,8 +290,9 @@ function getListedSessionMap(instanceId: string): ReadonlyMap<string, Session> {
   if (cached && cached.scope === scope && cached.directory === directory) return cached.listed
   const scoped = new Map([...held].filter(([id]) => scope.has(id)))
   const listed = new Map([...scoped].filter(([id]) => getSessionRootFromMap(scoped, id, directory) !== null))
-  listedSessionMaps.set(held, { scope, directory, listed })
-  return listed
+  const result = listed.size === held.size ? held : listed
+  listedSessionMaps.set(held, { scope, directory, listed: result })
+  return result
 }
 
 const indicatorStatuses = new WeakMap<ReadonlyMap<string, Session>, InstanceSessionIndicatorStatus>()
@@ -299,7 +302,7 @@ export function getInstanceSessionIndicatorStatusCached(instanceId: string): Ins
   const cached = indicatorStatuses.get(listed)
   if (cached !== undefined) return cached
   let status: InstanceSessionIndicatorStatus = "idle"
-  for (const session of listed.values()) {
+  for (const session of sessionIndicatorRows(listed).values()) {
     if (session.pendingPermission || session.pendingForm) {
       status = "permission"
       break
@@ -638,6 +641,14 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
     }
 
     const updated = new Map(instanceSessions).set(sessionId, updatedSession)
+    carrySessionProjection(instanceSessions, updated, current, updatedSession)
+    const projection = listedSessionMaps.get(instanceSessions)
+    if (projection && sessionTopology(instanceSessions) === sessionTopology(updated)) {
+      const before = projection.listed
+      const listed = before === instanceSessions ? updated : before.has(sessionId) ? new Map(before).set(sessionId, updatedSession) : before
+      if (listed !== before && listed !== updated) carrySessionProjection(before, listed, current, updatedSession)
+      listedSessionMaps.set(updated, { ...projection, listed })
+    }
     return new Map(prev).set(instanceId, updated)
   })
 }
@@ -965,6 +976,14 @@ function getSessions(instanceId: string): Session[] {
   return instanceSessions ? Array.from(instanceSessions.values()) : []
 }
 
+export function getSessionCheckpoint(instanceId: string): object {
+  return sessionCheckpoint(sessions().get(instanceId) ?? NO_SESSIONS)
+}
+
+export function getSessionTopology(instanceId: string): object {
+  return sessionTopology(sessions().get(instanceId) ?? NO_SESSIONS)
+}
+
 function getParentSessions(instanceId: string): Session[] {
   const allSessions = getSessions(instanceId)
   return allSessions.filter((s) => getSessionRoot(instanceId, s.id)?.id === s.id)
@@ -1004,6 +1023,9 @@ function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: S
 const sessionThreadProjections = new WeakMap<ReadonlyMap<string, Session>, {
   listed: ReadonlyMap<string, Session>; ids: string[]; directory?: string; threads: SessionThread[]
 }>()
+const sessionThreadRoots = new WeakMap<object, {
+  listedTopology: object; ids: string[]; directory?: string; roots: string[]
+}>()
 const EMPTY_SESSION_THREADS: SessionThread[] = []
 
 function getSessionThreads(instanceId: string): SessionThread[] {
@@ -1018,7 +1040,14 @@ function getSessionThreads(instanceId: string): SessionThread[] {
   const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
   const cached = sessionThreadProjections.get(held)
   if (cached && cached.listed === listed && cached.ids === ids && cached.directory === directory) return cached.threads
-  const threads = buildSessionThreadsFromMap(listed, projectSessionListIds(ids, held, directory).filter(id => listed.has(id)), undefined, directory)
+  const topology = sessionTopology(held)
+  const listedTopology = sessionTopology(listed)
+  let rootProjection = sessionThreadRoots.get(topology)
+  if (rootProjection?.listedTopology !== listedTopology || rootProjection.ids !== ids || rootProjection.directory !== directory) {
+    rootProjection = { listedTopology, ids, directory, roots: projectSessionListIds(ids, held, directory).filter(id => listed.has(id)) }
+    sessionThreadRoots.set(topology, rootProjection)
+  }
+  const threads = buildSessionThreadsFromMap(listed, rootProjection.roots, undefined, directory, true)
   sessionThreadProjections.set(held, { listed, ids, directory, threads })
   return threads
 }

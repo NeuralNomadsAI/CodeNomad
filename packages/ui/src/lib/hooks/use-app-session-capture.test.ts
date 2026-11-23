@@ -15,7 +15,7 @@ it("makes native shutdown terminal for reactive captures", () => {
 })
 
 it("keeps navigation flushes nonterminal", () => {
-  assert.match(capture, /flush\(nativeShutdown \? generation : undefined\)/)
+  assert.match(capture, /nativeShutdown \? flush\(generation\) : flushNavigation\(generation\)/)
   assert.match(capture, /"client-state:flush-requested",[\s\S]*?, true\)/)
   assert.match(capture, /"client-state:navigation-flush-requested",[\s\S]*?, false\)/)
 })

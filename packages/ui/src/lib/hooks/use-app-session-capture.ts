@@ -45,13 +45,24 @@ import { captureSeenInterruptions, seenInterruptionsRevision } from "../../store
 import { hydrateWorkspacePromptState, recoverDeletedWorkspacePrompts } from "../../stores/app-session-prompt-hydration"
 import { captureSessionOutlineIndexes, outlineCacheRevision } from "../../stores/session-outline"
 import { captureSessionCatalog } from "../../stores/session-catalog-persistence"
+import { getSessionCheckpoint, getSessionTopology, sessions as sessionRows } from "../../stores/session-state"
+import type { SessionRows } from "../../stores/session-projection"
 import { captureTabViewState } from "../../stores/tab-view-state"
 import {
   hydrateRestoredWorkspaceState, NO_SESSION_DRAFT_SESSION_ID,
 } from "../../stores/app-session-workspace-hydration"
 const log = getLogger("actions")
 const MAX_CAPTURED_SCROLL_SNAPSHOTS = 96
-const CAPTURE_DEBOUNCE_MS = 100
+const CAPTURE_DEBOUNCE_MS = 500
+const CAPTURE_MAX_WAIT_MS = 2000
+const NO_SESSION_ROWS: SessionRows = new Map()
+const capturedSessionData = new WeakMap<object, {
+  rows: SessionRows
+  seenRevision: ReturnType<typeof seenInterruptionsRevision>
+  sessionIds: ReadonlySet<string>
+  runtime: ReturnType<typeof captureRuntimeState>
+  catalog: ReturnType<typeof captureSessionCatalog>
+}>()
 function captureScrollSnapshots(instanceId: string): Record<string, ScrollSnapshot> {
   const store = messageStoreBus.getInstance(instanceId)
   if (!store) return {}
@@ -65,11 +76,10 @@ function captureScrollSnapshots(instanceId: string): Record<string, ScrollSnapsh
     .map(({ sessionId, snapshot }) => [sessionId, { ...snapshot }]))
 }
 function captureRuntimeState(
-  instanceId: string,
+  instanceId: string, sessions: ReturnType<typeof getSessions>,
 ): Pick<RestorableWorkspaceTabState, "unseenIdleSince" | "generationRecovery" | "seenInterruptions"> {
   const unseenIdleSince: Record<string, number> = {}
   const generationRecovery: Record<string, PersistedGenerationRecovery> = {}
-  const sessions = getSessions(instanceId)
   for (const session of sessions) {
     if (session.status === "idle" && typeof session.idleSince === "number") unseenIdleSince[session.id] = session.idleSince
     const recovery = getPersistedGenerationRecovery(session.status, session.generationRecovery)
@@ -106,6 +116,18 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     if (tab.kind === "sidecar") return { kind: "sidecar", sidecarId: tab.sidecarTab.sidecarId }
     if (tab.kind === "remote-restore") return tab.snapshot
     const id = tab.instance.id
+    const rows = sessionRows().get(id) ?? NO_SESSION_ROWS
+    const seenRevision = seenInterruptionsRevision()
+    let sessionData = capturedSessionData.get(tab)
+    if (!sessionData || sessionData.rows !== rows || sessionData.seenRevision !== seenRevision) {
+      const sessions = [...rows.values()]
+      sessionData = {
+        rows, seenRevision, sessionIds: sessionData?.rows === rows ? sessionData.sessionIds : new Set(rows.keys()),
+        runtime: captureRuntimeState(id, sessions),
+        catalog: sessionData?.rows === rows ? sessionData.catalog : captureSessionCatalog(sessions, tab),
+      }
+      capturedSessionData.set(tab, sessionData)
+    }
     const parentId = activeParentSessionId().get(id)
     const sessionId = activeSessionId().get(id)
     const expansionAuthority = getAuthoritativeSessionExpansionIdsForInstance(id)
@@ -121,9 +143,9 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
       ...(tab.instance.serverId ? { serverId: tab.instance.serverId } : {}),
       drafts: { ...pending.drafts, ...live.drafts },
       attachments: { ...pending.attachments, ...live.attachments },
-      ...captureRuntimeState(id), scrollSnapshots: captureScrollSnapshots(id),
+      ...sessionData.runtime, scrollSnapshots: captureScrollSnapshots(id),
       outlineIndexes: captureSessionOutlineIndexes(id, getAuthoritativelyDeletedSessionIdsForInstance(id)),
-      sessionCatalog: captureSessionCatalog(getSessions(id), tab),
+      sessionCatalog: sessionData.catalog,
       viewState: captureTabViewState(id),
       expandedSessionIds: [
         ...expanded.filter((sessionId) => expansionAuthority.has(sessionId)),
@@ -139,7 +161,7 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
   const authorities: Array<RestorableWorkspaceRuntimeAuthority | undefined> = tabs.map((tab) => {
     if (tab.kind !== "instance") return undefined
     const id = tab.instance.id
-    const sessionIds = new Set(getSessions(id).map(({ id }) => id))
+    const sessionIds = capturedSessionData.get(tab)!.sessionIds
     const closed = closedDraftSnapshotAuthority(id)
     return {
       drafts: new Set([...getAuthoritativeDraftSessionIdsForInstance(id), ...closed]),
@@ -163,29 +185,14 @@ export type WorkspaceReleaseResults = ReadonlyMap<string, Promise<"released" | "
 export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: RestorableSessionState, results: WorkspaceReleaseResults) => void) {
   const [started, setStarted] = createSignal(false)
   const enabled = () => started() && clientStateIsPrimary() && restorePreviousStateEnabled()
-  // Snapshot the scalar inputs of catalog/runtime capture and prompt hydration.
-  // Session Maps and nested metadata can mutate in place before publication.
-  // Busy usage is display-cache data: the next real checkpoint/flush reads it fresh.
+  // Single-row publications carry forward this token when persisted inputs
+  // did not change. Bulk publications conservatively invalidate the workspace.
   const checkpointSessions = createMemo(() => {
-    const values: Array<string | number | boolean | null | undefined> = []
-    if (enabled()) for (const tab of appTabs()) if (tab.kind === "instance") {
-      const rows = getSessions(tab.instance.id)
-      values.push(tab.instance.id, rows.length)
-      for (const row of rows) {
-        const idle = row.status !== "working" && row.status !== "compacting"
-        values.push(
-          row.id, row.title, row.parentId, row.projectID, row.location.directory, row.location.workspaceID,
-          row.time.created, row.time.updated, row.time.archived, row.time.idle, row.time.busy,
-          row.agent, row.model.providerId, row.model.modelId, row.subpath,
-          row.status, row.idleSince, row.generationRecovery, row.runtimeStatusKnown, row.outcome,
-          row.pendingPermission, row.pendingForm, row.retry?.attempt, row.retry?.message, row.retry?.next,
-          idle ? row.cost : undefined, idle ? row.tokens.input : undefined, idle ? row.tokens.output : undefined,
-          idle ? row.tokens.reasoning : undefined, idle ? row.tokens.cache.read : undefined, idle ? row.tokens.cache.write : undefined,
-        )
-      }
-    }
-    return values
-  }, [], { equals: (before, after) => before.length === after.length && before.every((value, index) => Object.is(value, after[index])) })
+    return enabled() ? appTabs().flatMap(tab => tab.kind === "instance" ? [getSessionCheckpoint(tab.instance.id)] : []) : []
+  }, [], { equals: (before, after) => before.length === after.length && before.every((value, index) => value === after[index]) })
+  const promptTopology = createMemo(() => {
+    return enabled() ? appTabs().flatMap(tab => tab.kind === "instance" ? [getSessionTopology(tab.instance.id)] : []) : []
+  }, [], { equals: (before, after) => before.length === after.length && before.every((value, index) => value === after[index]) })
   const scrollAuthority = new Map<string, Set<string>>()
   const instanceLifecycleTokens = new Map<string, number>()
   let nextInstanceLifecycleToken = 0
@@ -273,8 +280,10 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     if (navigationGeneration === null) unlockInput?.()
     schedule()
   }
+  let captureDeadline: number | undefined
   const capture = () => {
     timer = null
+    captureDeadline = undefined
     if (enabled() && !disposed && !releasing && nativeShutdownGeneration === null) {
       const state = mergedState()
       if (state.tabs.length > 0) nativeFallbackState = state
@@ -283,8 +292,10 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   }
   const schedule = () => {
     if (!enabled() || disposed || releasing || nativeShutdownGeneration !== null) return
+    const now = performance.now()
+    if (!timer) captureDeadline = now + CAPTURE_MAX_WAIT_MS
     if (timer) clearTimeout(timer)
-    timer = setTimeout(capture, CAPTURE_DEBOUNCE_MS)
+    timer = setTimeout(capture, Math.min(CAPTURE_DEBOUNCE_MS, (captureDeadline ?? now) - now))
   }
   const flush = async (nativeShutdownGenerationRequest?: number) => {
     const nativeShutdown = nativeShutdownGenerationRequest !== undefined
@@ -495,7 +506,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   createEffect(() => {
     if (!enabled()) return
     const tabs = appTabs()
-    checkpointSessions()
+    promptTopology()
     for (const tab of tabs) if (tab.kind === "instance") {
       getAuthoritativelyDeletedSessionIdsForInstance(tab.instance.id)
       untrack(() => hydratePreservedPrompts(tab.instance.id))

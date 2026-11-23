@@ -33,6 +33,12 @@ Keep domain-specific implementations where authority, lifetime or runtime differ
 
 ## Implementations and limits
 
+Session list placement is cached by topology (parent and native location), independently
+of row metadata. Single-row publications retain unaffected descendant indexes and
+family trees; bulk inventory publication rebuilds the affected workspace's indexes
+on demand. Client-state capture tracks workspace checkpoint tokens, waits for a
+quiet period with a bounded deadline, and encodes changed catalog chunks.
+
 Current daily/native-scheduled passages acquire a source identity before slices and reuse
 the bounded selected-mission inventory owner without directory or finish-counter reads.
 Body keys include that exact passage source. Owner revision fences publication separately

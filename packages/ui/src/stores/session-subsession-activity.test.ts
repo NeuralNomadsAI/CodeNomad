@@ -14,7 +14,7 @@ import {
   setSessionStatus,
   setSessions,
 } from "./session-state.ts"
-import { collectDescendantActivity } from "./session-tree.ts"
+import { getDescendantActivity } from "./session-tree.ts"
 
 const session = (id: string, parentId: string | null, status: Session["status"] = "idle") =>
   ({ id, parentId, status, time: { created: 1, updated: 1 }, location: { directory: "/repo" } }) as unknown as Session
@@ -114,16 +114,15 @@ describe("subsession activity", () => {
       next.set("tab-a", sessions)
       return next
     })
-    assert.equal(collectDescendantActivity(undefined).size, 0)
-    const counts = collectDescendantActivity(new Map([
+    const rows = new Map([
       ["root", session("root", null)],
       ["parent", session("parent", "root")],
       ["child", { ...session("child", "parent"), pendingPermission: true }],
       ["grandchild", session("grandchild", "child", "working")],
-    ]))
-    assert.deepEqual(counts.get("root"), { permission: 1, working: 1, compacting: 0, idle: 0 })
-    assert.deepEqual(counts.get("child"), { permission: 0, working: 1, compacting: 0, idle: 0 })
-    assert.equal(counts.has("grandchild"), false)
+    ])
+    assert.deepEqual(getDescendantActivity(rows, "root"), { permission: 1, working: 1, compacting: 0, idle: 0 })
+    assert.deepEqual(getDescendantActivity(rows, "child"), { permission: 0, working: 1, compacting: 0, idle: 0 })
+    assert.equal(getDescendantActivity(rows, "grandchild"), undefined)
     // Only subsessions are active; the root and tab still report it.
     assert.equal(getInstanceSessionIndicatorStatus("tab-a"), "permission")
     assert.deepEqual(expanded("tab-a"), [])

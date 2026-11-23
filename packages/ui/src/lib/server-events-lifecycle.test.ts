@@ -3,6 +3,8 @@ import { spawn } from "node:child_process"
 import { test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { stopWindowsProcessTree } from "../../../server/src/process-tree"
+import { ServerEvents } from "./server-events"
+import type { WorkspaceEventPayload } from "../../../server/src/api-types"
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url))
 const deadlineMs = 30_000
@@ -67,4 +69,47 @@ test("the actual eleven compaction store tests pass and exit naturally without f
   assert.match(result.output, /^# fail 0$/m)
   assert.match(result.output, /^# cancelled 0$/m)
   assert.match(result.output, /^# skipped 0$/m)
+})
+
+test("applies messages in one frame in stream order and flushes before a disconnect", async t => {
+  let scheduled: FrameRequestCallback | undefined
+  Object.assign(globalThis, {
+    requestAnimationFrame: (callback: FrameRequestCallback) => { scheduled = callback; return 1 },
+    cancelAnimationFrame: () => { scheduled = undefined },
+    window: {},
+  })
+  t.after(() => {
+    Reflect.deleteProperty(globalThis, "requestAnimationFrame")
+    Reflect.deleteProperty(globalThis, "cancelAnimationFrame")
+    Reflect.deleteProperty(globalThis, "window")
+  })
+  let emit!: (event: WorkspaceEventPayload) => void
+  let disconnect!: () => void
+  const events = new ServerEvents({
+    api: {
+      connectEvents: (onEvent, onError) => {
+        emit = onEvent
+        disconnect = onError!
+        return { close() {} } as EventSource
+      },
+      sendClientConnectionPong: async () => {},
+    },
+    auth: { onRestored: () => () => true, check: async () => {} },
+  })
+  t.after(() => events.dispose())
+  const received: string[] = []
+  events.on("*", event => received.push((event as { fixture?: string }).fixture!))
+  events.onTransportStatus(status => received.push(status))
+  await events.start()
+  const event = (fixture: string) => ({ type: "workspace.started", fixture }) as unknown as WorkspaceEventPayload
+  emit(event("A"))
+  const firstFrame = scheduled
+  emit(event("B"))
+  assert.equal(scheduled, firstFrame)
+  assert.deepEqual(received, [])
+  firstFrame!(0)
+  assert.deepEqual(received, ["A", "B"])
+  emit(event("C"))
+  disconnect()
+  assert.deepEqual(received.slice(2, 4), ["C", "disconnected"])
 })
