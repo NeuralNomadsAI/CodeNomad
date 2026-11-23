@@ -82,25 +82,29 @@ impl ScrollBookmark {
     pub fn retain_for_remount(&self) {
         self.0.set((self.0.get().0, true));
     }
+
+    pub fn apply<S: 'static>(&self, viewport: El, key: &'static str) -> El {
+        let save = self.0.clone();
+        let restore = self.0.clone();
+        viewport
+            .key(key)
+            .on_scroll_offset(move |position| {
+                if !save.get().1 {
+                    save.set((position.offset[1], false));
+                }
+            })
+            .on_layout_tx(move |_: &mut S, _, tx| {
+                let (offset, queued) = restore.get();
+                if queued {
+                    restore.set((offset, false));
+                    tx.scroll_to_instant(key, 0.0, offset);
+                }
+            })
+    }
 }
 
 pub fn saved_scroll<S: 'static>(key: &'static str, bookmark: &ScrollBookmark) -> El {
-    let save = bookmark.0.clone();
-    let restore = bookmark.0.clone();
-    scroll()
-        .key(key)
-        .on_scroll_offset(move |position| {
-            if !save.get().1 {
-                save.set((position.offset[1], false));
-            }
-        })
-        .on_layout_tx(move |_: &mut S, _, tx| {
-            let (offset, queued) = restore.get();
-            if queued {
-                restore.set((offset, false));
-                tx.scroll_to_instant(key, 0.0, offset);
-            }
-        })
+    bookmark.apply::<S>(scroll(), key)
 }
 
 pub fn section() -> El {

@@ -31,7 +31,7 @@ fn hidden_drawer_returns_focused_listing_retry_to_its_toggle() {
                 Ok,
             );
             ui.panel = true;
-            let mut rt = runtime(ui);
+            let mut rt = shell_runtime(ui);
             let retry = format!("file-retry-{path}");
             rt.update(|_, tx| tx.focus(&retry, true));
             rt.frame(0.02);
@@ -47,7 +47,7 @@ fn hidden_drawer_returns_focused_listing_retry_to_its_toggle() {
                 rt.frame(1.0 / 60.0);
             }
             assert!(accessible(&rt.accessibility_json(), "files-panel").is_none());
-            assert_eq!(focused(&rt).as_deref(), Some("files-toggle"));
+            assert_eq!(focused(&rt).as_deref(), Some("right-panel-toggle"));
             http.quiet().await;
         }
     });
@@ -75,13 +75,14 @@ fn drawer_compresses_redocks_and_keeps_hidden_intent_cancellable() {
             Ok,
         );
         ui.panel = true;
-        let mut rt = runtime(ui);
+        let mut rt = shell_runtime(ui);
         rt.update(|state, _| {
             state.messages = crate::transport::synthetic();
             state.revision += 1;
         });
         let frame = |rt: &mut Runtime<State>| {
             for _ in 0..90 {
+                rt.update(|s, _| crate::shell::sync(s));
                 rt.frame(1.0 / 60.0);
             }
         };
@@ -108,7 +109,7 @@ fn drawer_compresses_redocks_and_keeps_hidden_intent_cancellable() {
             let panel = rt
                 .elements()
                 .into_iter()
-                .find(|node| node.key.as_deref() == Some("files-panel"))
+                .find(|node| node.key.as_deref() == Some("right-panel"))
                 .unwrap();
             assert_eq!(panel.rect[2], expected);
             assert_eq!(rt.scroll_at_bottom("history"), Some(false));
@@ -117,7 +118,6 @@ fn drawer_compresses_redocks_and_keeps_hidden_intent_cancellable() {
         frame(&mut rt);
         rt.set_viewport((589.0, 700.0), 1.0);
         frame(&mut rt);
-        assert!(rt.state.files.as_ref().unwrap().panel);
         assert!(accessible(&rt.accessibility_json(), "files-panel").is_none());
         assert_eq!(
             rt.elements()
@@ -125,12 +125,12 @@ fn drawer_compresses_redocks_and_keeps_hidden_intent_cancellable() {
                 .find(|node| node.focused)
                 .and_then(|node| node.key)
                 .as_deref(),
-            Some("files-toggle")
+            Some("right-panel-toggle")
         );
         assert!(!rt.state.files.as_mut().unwrap().tree.busy("."));
         rt.set_viewport((1000.0, 700.0), 1.0);
         frame(&mut rt);
-        assert!(rt.state.files.as_ref().unwrap().drawer().pinned);
+        assert!(rt.state.shell.visible(1));
         assert_eq!(anchor(&rt), before);
         assert_eq!(rt.scroll_at_bottom("history"), Some(false));
         rt.update(|_, tx| tx.focus("composer", true));
@@ -145,25 +145,22 @@ fn drawer_compresses_redocks_and_keeps_hidden_intent_cancellable() {
                 .as_deref(),
             Some("composer")
         );
-        click(&mut rt, "files-toggle");
-        assert!(!rt.state.files.as_ref().unwrap().panel);
-        let a11y = rt.accessibility_json();
-        assert_eq!(
-            accessible(&a11y, "files-toggle").unwrap()["name"],
-            "Files — widen window"
-        );
-        click(&mut rt, "files-toggle");
-        assert!(!rt.state.files.as_ref().unwrap().panel);
+        click(&mut rt, "right-panel-toggle");
+        assert!(rt.state.shell.has_floating() && rt.state.shell.visible(1));
+        click(&mut rt, "right-panel-toggle");
+        assert!(!rt.state.shell.visible(1));
         rt.set_viewport((1000.0, 700.0), 1.0);
         frame(&mut rt);
-        assert!(!rt.state.files.as_ref().unwrap().drawer().pinned);
-        let (x, y) = rt.find("files-toggle").unwrap();
+        assert!(rt.state.shell.visible(1));
+        let (x, y) = rt.find("right-panel-toggle").unwrap();
         rt.pointer_down(x, y);
         rt.set_viewport((589.0, 700.0), 1.0);
         frame(&mut rt);
         rt.pointer_up(x, y);
         frame(&mut rt);
-        assert!(!rt.state.files.as_ref().unwrap().panel);
+        assert!(rt.state.shell.has_floating() && rt.state.shell.visible(1));
+        click(&mut rt, "right-panel-toggle");
+        assert!(!rt.state.shell.visible(1));
         http.quiet().await;
     });
 }

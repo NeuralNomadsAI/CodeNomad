@@ -471,11 +471,13 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let expanded = interruption_expanded(s);
     rune_theme_codenomad::interruption::session_surface(expanded)
         .child(shell::reader(s, || {
-            let history = rune_theme_codenomad::interruption::history(expanded)
-                .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
-                .on_layout_tx(chat::ToolDiffPreferences::history_layout)
-                .child(transcript::rows(s));
-            files::view::body(s, chat::reading::history(s, history), expanded)
+            chat::reading::history(
+                s,
+                rune_theme_codenomad::interruption::history(expanded)
+                    .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
+                    .on_layout_tx(chat::ToolDiffPreferences::history_layout)
+                    .child(transcript::rows(s)),
+            )
         }))
         .child(agent_view::view(s, cx))
         .child(composer(s, expanded.then_some(cx)))

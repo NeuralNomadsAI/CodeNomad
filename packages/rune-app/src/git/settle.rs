@@ -47,6 +47,9 @@ impl Ui {
                 let previous = self.tree().cloned();
                 let repository = self.repository();
                 self.inventory = Some(inventory);
+                if self.session_checkout_removed() {
+                    self.close_preview();
+                }
                 if self.tree().is_none() {
                     // The conversation's placement is not a request to browse the root.
                     self.slug.clone_from(&self.session_slug);

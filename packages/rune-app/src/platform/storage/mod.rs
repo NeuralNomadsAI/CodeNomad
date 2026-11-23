@@ -68,28 +68,34 @@ mod native {
             })
         }
         pub fn load(&self) -> Result<Option<Vec<u8>>> {
-            let path = self.directory.join("state.json");
+            self.load_file("state.json", MAX_BYTES)
+        }
+        fn load_file(&self, name: &str, limit: usize) -> Result<Option<Vec<u8>>> {
+            let path = self.directory.join(name);
             plain(&path, false)?;
             let file = match File::open(path) {
                 Ok(file) => file,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                 Err(e) => return Err(e.into()),
             };
-            if file.metadata()?.len() > MAX_BYTES as u64 {
+            if file.metadata()?.len() > limit as u64 {
                 return Err("state too large".into());
             }
             let mut bytes = Vec::new();
-            file.take(MAX_BYTES as u64 + 1).read_to_end(&mut bytes)?;
-            if bytes.len() > MAX_BYTES {
+            file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+            if bytes.len() > limit {
                 return Err("state too large".into());
             }
             Ok(Some(bytes))
         }
         pub fn save(&self, bytes: &[u8]) -> Result<()> {
-            if bytes.len() > MAX_BYTES {
+            self.save_file("state.json", MAX_BYTES, bytes)
+        }
+        fn save_file(&self, name: &str, limit: usize, bytes: &[u8]) -> Result<()> {
+            if bytes.len() > limit {
                 return Err("state too large".into());
             }
-            let destination = self.directory.join("state.json");
+            let destination = self.directory.join(name);
             plain(&destination, false)?;
             let temporary = self.directory.join(format!(
                 ".state-{}.tmp",
@@ -124,6 +130,24 @@ mod native {
         staged: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
     }
     impl Store {
+        #[cfg(target_os = "windows")]
+        pub(crate) fn preferences_frame(&self) -> Option<Vec<u8>> {
+            self.files
+                .lock()
+                .ok()?
+                .load_file("preferences.json", 512)
+                .ok()
+                .flatten()
+        }
+
+        #[cfg(target_os = "windows")]
+        pub(crate) fn save_preferences_frame(&self, bytes: &[u8]) -> Result<()> {
+            self.files
+                .lock()
+                .map_err(|_| "state store unavailable")?
+                .save_file("preferences.json", 512, bytes)
+        }
+
         pub async fn open(directory: PathBuf) -> Result<Self> {
             let files = tokio::task::spawn_blocking(move || Files::open(directory)).await??;
             Ok(Self {

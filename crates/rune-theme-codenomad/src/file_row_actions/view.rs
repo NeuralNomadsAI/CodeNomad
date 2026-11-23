@@ -81,7 +81,18 @@ fn button<S: 'static>(
     }
     if !item.disabled {
         let action = item.on_select.clone();
-        e = e.on_press_tx(move |s, tx| action(s, tx));
+        let enter = action.clone();
+        e = e
+            .on_press_tx(move |s, tx| action(s, tx))
+            .on_key(move |s: &mut S, event, tx| {
+                if event.key != rune::Key::Enter || event.mods != rune::Mods::default() {
+                    return false;
+                }
+                if !tx.key_repeat() {
+                    enter(s, tx);
+                }
+                true
+            });
         let owner = owner.to_owned();
         e = e.on_hover_change(move |s, inside, _| {
             if let Some(state) = at(s, &owner) {

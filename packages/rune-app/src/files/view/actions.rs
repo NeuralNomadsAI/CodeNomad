@@ -304,6 +304,11 @@ fn owns(ui: &Ui, directory: &str, path: &str) -> bool {
 fn has_session(s: &State) -> bool {
     !s.screen.is_launcher()
         && crate::workspace::active_session(s).is_some_and(|id| !matches!(id, "" | "info"))
+        && !s
+            .git
+            .owner
+            .as_ref()
+            .is_some_and(|owner| owner.session_checkout_removed())
 }
 
 fn launch(s: &mut State, directory: &str, path: &str, slug: &str, target: Target) {

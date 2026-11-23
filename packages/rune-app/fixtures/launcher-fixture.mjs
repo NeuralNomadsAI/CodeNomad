@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn,execFile} from 'node:child_process'
 import {promisify} from 'node:util'
-import {mkdir,readFile,writeFile,rename,unlink} from 'node:fs/promises'
+import {mkdir,readFile,writeFile,rename,unlink,access} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
 import {chromium,request} from 'playwright'
 import path from 'node:path'
@@ -95,6 +95,8 @@ async function filesStage(ack) {
   client.stdin.write(`${JSON.stringify({stage:ack.stage})}\n`)
 }
 let clientLog='',clientLines=''
+let removeReview, reviewRemoved=false, allowReviewRemoval
+const readerClosedBeforeRemoval=new Promise(resolve=>{allowReviewRemoval=resolve})
 function visibleGate(turn,replyID) {
   return new Promise((resolve,reject)=>{
     const timer=setTimeout(()=>{gates.delete(turn);reject(Error(`Missing visible streaming ACK for turn ${turn}`))},10000)
@@ -108,6 +110,19 @@ function clientOutput(chunk) {
   for(let at;(at=clientLines.indexOf('\n'))>=0;){
     const line=clientLines.slice(0,at);clientLines=clientLines.slice(at+1)
     let ack;try{ack=JSON.parse(line)}catch{continue}
+    if(gitPanel&&ack.type==='files-evacuation'){
+      removeReview=(async()=>{
+        const inventory=await http.get(`/api/workspaces/${encodeURIComponent(ack.workspace)}/worktrees`)
+        assert(inventory.ok(),await inventory.text())
+        const checkout=(await inventory.json()).worktrees.find(row=>path.resolve(row.directory)===review)
+        assert(checkout&&checkout.slug!=='root')
+        const response=await http.delete(`/api/workspaces/${encodeURIComponent(ack.workspace)}/worktrees/${encodeURIComponent(checkout.slug)}`)
+        assert.equal(response.status(),204,await response.text())
+        client.stdin.write('removed\n')
+      })()
+      removeReview.catch(error=>{console.error(error);client.kill()});continue
+    }
+    if(gitPanel&&ack.type==='files-reader-closed'){allowReviewRemoval();continue}
     if(filesState&&ack.type==='files-state-stage'){filesChain=filesChain.then(()=>filesStage(ack));filesChain.catch(error=>{console.error(error);client.kill()});continue}
     if(filesState&&ack.type==='files-state-proof'){filesProof=ack;continue}
     if(restoreState&&ack.type==='window-restore-stage'){restoreStages.push(ack);continue}
@@ -119,13 +134,13 @@ function clientOutput(chunk) {
   }
 }
 function add(id,title,directory=project) {
-  const row={id,title,projectID:linked?'fixture_project':'global',location:{directory},permissions:[{action:'*',resource:'*',effect:'deny'}],time:{created:1,busy:0,idle:1}}
+  const row={id,title,projectID:linked||gitPanel?'fixture_project':'global',location:{directory},permissions:[{action:'*',resource:'*',effect:'deny'}],time:{created:1,busy:0,idle:1}}
   records.set(id,row);stores.set(id,new FixtureStore(0));return row
 }
 add('ses_existing','Existing history')
 if(webMobile)for(let i=0;i<(webAndroid?70:210);i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
 stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
-add('ses_another','Another session')
+add('ses_another','Another session',gitPanel?review:project)
 if(linked){
   add('ses_linked','Linked checkout session',linked)
   add('ses_linked_next','Linked checkout next page',linked)
@@ -164,15 +179,28 @@ const upstream=createServer(async(req,res)=>{
     }
     if(linked&&url.pathname==='/api/worktree')return json([{directory:project},{directory:linked}])
     if(linked&&url.pathname==='/api/worktree/refresh'){res.writeHead(204);res.end();return}
-    if(gitPanel&&url.pathname==='/api/worktree')return json([{directory:project},{directory:review}])
+    if(gitPanel&&url.pathname==='/api/worktree'&&req.method==='DELETE'){
+      const body=JSON.parse(raw);assert.deepEqual(body,{projectID:'fixture_project',directory:review,force:false})
+      // Hold physical removal (and its inventory announcement) until Rune acknowledges the move.
+      await readerClosedBeforeRemoval
+      await git('worktree','remove',review)
+      reviewRemoved=true
+      return json({})
+    }
+    if(gitPanel&&url.pathname==='/api/worktree')return json([{directory:project},...(!reviewRemoved?[{directory:review}]:[])])
     if(gitPanel&&url.pathname==='/api/worktree/refresh'&&req.method==='POST')return json({})
+    if(gitPanel&&url.pathname==='/api/debug/location')return json([{directory:project},{directory:review}])
+    if(gitPanel&&url.pathname==='/api/project')return json([{id:'fixture_project'}])
+    if(gitPanel&&/^\/api\/experimental\/session\/[^/]+\/terminal$/.test(url.pathname))return json({data:[]})
+    if(gitPanel&&['/api/pty','/api/shell'].includes(url.pathname))return json({data:[]})
+    if(gitPanel&&url.pathname==='/api/session/active')return json({data:{}})
     if(gitCount&&url.pathname==='/api/worktree')return json(Array.from({length:gitCount},(_,i)=>({directory:i?path.join(profile,`absent-checkout-${i}`):project})))
     if(url.pathname==='/api/session'&&req.method==='GET') {
       stats.lists++
       const cursor=url.searchParams.get('cursor')
       if(gitPanel&&url.searchParams.get('project')==='fixture_project'){
         assert.equal(url.searchParams.get('directory'),null)
-        assert.equal(url.searchParams.get('order'),'desc')
+        assert(['desc','asc'].includes(url.searchParams.get('order')))
         return json({data:[...records.values()],cursor:{}})
       }
       const directory=cursor?JSON.parse(Buffer.from(cursor,'base64url')).directory:url.searchParams.get('directory')
@@ -205,6 +233,15 @@ const upstream=createServer(async(req,res)=>{
       if(!action)return json({data:record})
       if(action==='message')return json({data:store.rows.slice(-Number(url.searchParams.get('limit'))),cursor:url.searchParams.get('order')==='asc'?{next:'future-read-anchor'}:{}})
       if(action==='environment'){res.statusCode=204;res.end();return}
+      if(gitPanel&&id==='ses_another'&&action==='move'){
+        assert.equal(req.method,'POST');assert.equal(record.location.directory,review)
+        assert.deepEqual(JSON.parse(raw),{directory:project})
+        const previous=record.location
+        record.location={directory:project}
+        const event={id:randomUUID(),type:'session.moved',created:Date.now(),location:previous,data:{sessionID:id,location:record.location}}
+        for(const stream of streams)stream.write(`data: ${JSON.stringify(event)}\n\n`)
+        return json({data:record})
+      }
       if(action==='prompt'){
         const turn=++stats.prompts;assert(id.startsWith('ses_created_'),'send belongs to selected created session')
         const body=JSON.parse(raw),reply=store.append('assistant','',false)
@@ -333,7 +370,8 @@ try{
       assert.equal(stats.created,2,'Restore must not create native sessions');assert.equal(stats.prompts,stage==='prepare'?0:2,'Only explicit resumed sends submit prompts')
     }
   }else {
-    client=spawn(clientBinary,[gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:[filesState?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
+    if(gitPanel)await signIn(origin)
+    client=spawn(clientBinary,[gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
@@ -346,6 +384,9 @@ try{
   }
   assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=(webAndroid?1:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
+    await removeReview
+    assert(reviewRemoved)
+    await assert.rejects(access(review),{code:'ENOENT'})
     assert(clientLog.split(/\r?\n/).includes('{"type":"git-panel-proof","mounted":true}'))
     assert.equal((await git('log','-1','--format=%s','main')).trim(),'Commit from Rune')
     assert.equal((await git('show','main:git-panel.txt')).trim(),'git-panel edited')
