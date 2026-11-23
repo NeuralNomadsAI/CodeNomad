@@ -137,7 +137,14 @@ async fn run_bound(
 ) {
     let result = match (backend, reading) {
         (Ok(backend), Some(reading)) => {
-            codenomad_client::transport::run_backend_reading(backend, out.clone(), input, wake.clone(), reading).await
+            codenomad_client::transport::run_backend_reading(
+                backend,
+                out.clone(),
+                input,
+                wake.clone(),
+                reading,
+            )
+            .await
         }
         (Ok(backend), None) => run_backend(backend, out.clone(), input, wake.clone()).await,
         (Err(error), _) => Err(error),

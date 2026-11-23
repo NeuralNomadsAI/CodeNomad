@@ -544,6 +544,10 @@ fn composer(s: &State, scroll_stack: Option<&Cx<State>>) -> El {
     } else {
         layout::composer
     };
+    let retry = s
+        .reader
+        .as_ref()
+        .is_some_and(chat::reader::Reader::can_retry);
     col()
         .key("session-composer")
         .role("group")
@@ -571,7 +575,7 @@ fn composer(s: &State, scroll_stack: Option<&Cx<State>>) -> El {
         )
         .child(
             layout::action_row()
-                .children(s.can_older.then(|| {
+                .children((s.can_older || retry).then(|| {
                     rune_theme_codenomad::shell::older_button(
                         strings::t(if s.paging {
                             "rune.loading"
@@ -581,7 +585,14 @@ fn composer(s: &State, scroll_stack: Option<&Cx<State>>) -> El {
                             "rune.older"
                         }),
                         s.paging || !matches!(s.phase, Phase::Ready | Phase::Streaming),
-                        crate::screen::action_tx(&scope, request_older),
+                        crate::screen::action_tx(
+                            &scope,
+                            if retry {
+                                chat::reader::retry
+                            } else {
+                                request_older
+                            },
+                        ),
                     )
                 }))
                 .child(components::button_tx(

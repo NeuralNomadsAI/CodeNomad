@@ -101,6 +101,14 @@ try{
         recoveredPermission=true
       }
       if(action==='cut-observer')cutTransport()
+      if(action==='step-while-hidden'){
+        busy=Date.now()
+        emit('session.step.started',{assistantMessageID:'message-00600',agent:'fixture',model:{providerID:'fixture',id:'fixture'}})
+      }
+      if(action==='finish-hidden-step'){
+        idle=Date.now()+1
+        emit('session.execution.succeeded',{})
+      }
       if(action==='permission-after-reopens'){
         afterCutsPermission=true
         emit('permission.asked',{permissionID:'permission-after-reopens',action:permission.action,resources:permission.resources})
