@@ -227,6 +227,11 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
             }
+            Event::Reasoning(id, event) => {
+                if let Some(row) = s.messages.iter_mut().find(|row| row.id == id) {
+                    content::apply_reasoning(std::sync::Arc::make_mut(row), &event);
+                }
+            }
             Event::Tool(id, tool) => {
                 if let Some(row) = s
                     .messages

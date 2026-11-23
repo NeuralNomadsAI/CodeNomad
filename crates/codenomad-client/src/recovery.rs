@@ -608,6 +608,38 @@ pub(crate) async fn run_with_reading(
                             .await;
                         }
                     }
+                    "session.reasoning.started"
+                    | "session.reasoning.delta"
+                    | "session.reasoning.ended" => {
+                        let Some(Event::Reasoning(id, event)) = crate::wire::decode_native(&native)
+                        else {
+                            continue;
+                        };
+                        match resident
+                            .iter_mut()
+                            .find(|row| row.id == id)
+                            .map_or(TextFit::Repair, |row| {
+                                content::apply_reasoning(Arc::make_mut(row), &event)
+                            }) {
+                            TextFit::Applied => {
+                                history::check(&resident)?;
+                                reader_event(
+                                    reading,
+                                    generation,
+                                    &out,
+                                    &wake,
+                                    Event::Reasoning(id, event),
+                                )
+                                .await;
+                            }
+                            TextFit::Repair if !dirty && repairs < 3 => {
+                                repairs += 1;
+                                dirty = true;
+                                quiet = Instant::now() + Duration::from_millis(100);
+                            }
+                            _ => {}
+                        }
+                    }
                     kind if kind.starts_with("session.tool.") => {
                         let fit = resident
                             .iter_mut()

@@ -37,6 +37,7 @@ impl Display {
     pub(crate) fn evict_rendered(&mut self) {
         self.diffs = Default::default();
         self.stream = StreamRender::default();
+        self.live_ansi.get_mut().clear();
     }
     pub(super) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
