@@ -60,20 +60,28 @@ fn open(rt: &mut Runtime<State>, id: &str, title: &str) {
 }
 
 fn click_more(rt: &mut Runtime<State>) {
-    rt.update(|_, tx| {
-        tx.scroll_into_view("more-sessions");
-        tx.instant();
-    });
-    for _ in 0..3 {
-        rt.frame(1.0 / 60.0);
-    }
-    let node = rt
-        .elements()
-        .into_iter()
-        .find(|e| e.key.as_deref() == Some("more-sessions") && !e.exiting)
-        .expect("More button mounted");
-    let (x, y) = rt.find("more-sessions").expect("More button center");
-    let picked = rt.element_at(x, y).map(|hit| hit.path().to_owned());
+    let (wheel_x, wheel_y) = rt.find("session-list").expect("session viewport");
+    let (node, x, y, picked) = (0..=12)
+        .find_map(|step| {
+            if step != 0 {
+                rt.wheel(wheel_x, wheel_y, -1200.0);
+                for _ in 0..18 {
+                    rt.frame(1.0 / 60.0);
+                }
+            }
+            let node = rt.elements().into_iter().find(|e| {
+                e.key.as_deref() == Some("more-sessions")
+                    && !e.exiting
+                    && e.visible[2] > 0.0
+                    && e.visible[3] > 0.0
+            })?;
+            let [x, y, w, h] = node.visible;
+            let (x, y) = (x + w / 2.0, y + h / 2.0);
+            let picked = rt.element_at(x, y)?.path().to_owned();
+            (picked == node.path || picked.starts_with(&format!("{}/", node.path)))
+                .then_some((node, x, y, picked))
+        })
+        .expect("More button must be reachable by scrolling the session list");
     let eligible = rt
         .state
         .screen
@@ -83,6 +91,7 @@ fn click_more(rt: &mut Runtime<State>) {
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     let micros = start.elapsed().as_micros();
+    assert!(micros < 500_000, "pagination must use a short click");
     rt.frame(1.0 / 60.0);
     let pending = rt.state.screen.launcher().is_some_and(|l| l.pending);
     println!(
