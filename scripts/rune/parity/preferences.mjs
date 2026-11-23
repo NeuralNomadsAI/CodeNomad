@@ -8,12 +8,14 @@ import {root} from '../generate-common.mjs'
 import {installPngReader} from '../png-pixels.mjs'
 import {requireTestSupport} from '../../../packages/rune-app/fixtures/fixture-binaries.mjs'
 
-const {values:{binary,section='general'}}=parseArgs({options:{binary:{type:'string'},section:{type:'string'}}})
+const {values:{binary,section='general',contrast=false}}=parseArgs({options:{binary:{type:'string'},section:{type:'string'},contrast:{type:'boolean'}}})
 assert(binary&&path.isAbsolute(binary),'Supply --binary ABSOLUTE_EXE')
 assert(['general','opencode'].includes(section),'Unknown preferences section')
 requireTestSupport(binary)
 const ui=path.join(root,'packages/ui')
-const out=path.join(root,'target/rune-parity/preferences',section==='general'?'':'opencode')
+const out=path.join(root,'target/rune-parity/preferences',contrast?'contrast':section==='general'?'':'opencode')
+assert(!contrast||section==='general','Contrast capture exercises General')
+const palettes=contrast?JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/palettes.json'),'utf8')):null
 await mkdir(out,{recursive:true})
 const {startFixtureDaemon}=await import('../../../packages/ui/tests/browser/fixture-daemon/server.ts')
 const fixture='/tests/browser/fixtures/preferences-window.tsx'
@@ -26,7 +28,7 @@ try {
   browser=await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined})
   for(const theme of ['light','dark']) {
     const locale=section==='general'?'en':'fr'
-    const page=await browser.newPage({viewport:{width:1100,height:760},locale,colorScheme:theme,reducedMotion:'reduce'})
+    const page=await browser.newPage({viewport:{width:1100,height:760},locale,colorScheme:theme,contrast:contrast?'more':'no-preference',reducedMotion:'reduce'})
     page.on('pageerror',error=>console.error(error.message))
     await page.addInitScript(section=>{
       window.__CODENOMAD_RUNTIME_HOST__='electron'
@@ -55,19 +57,21 @@ try {
     if(section==='general')await page.locator('.settings-language-row .selector-trigger').waitFor({timeout:90000})
     else await page.getByText('2.3.0',{exact:true}).first().waitFor({timeout:90000})
     await page.waitForFunction(id=>document.documentElement.dataset.colorScheme===id,theme==='dark'?'classic':'light')
+    if(contrast)await page.waitForFunction(()=>document.documentElement.dataset.contrast==='more')
     const solidPng=path.join(out,`solid-${theme}.png`)
     const notices={
       restart:'Une version plus récente est installée.',
       check:'Impossible de vérifier les mises à jour d’OpenCode.',
     }
-    const sourceBounds=section==='general'?await page.evaluate(()=>Object.fromEntries(Object.entries({
+    const sourceBounds=section==='general'?await page.evaluate(contrast=>Object.fromEntries(Object.entries({
       locale:'.settings-language-row .selector-trigger',
       mode:'.theme-scheme-mode .theme-scheme-appearance-options',
       palette:'.theme-scheme-picker',
+      ...(contrast?{contrast:'.theme-scheme-contrast .theme-scheme-appearance-options'}:{}),
     }).map(([key,query])=>{
       const {x,y,width,height}=document.querySelector(query).getBoundingClientRect()
       return [key,[x,y,width,height]]
-    }))):Object.fromEntries(await Promise.all(Object.entries(notices).map(async ([key,label])=>{
+    })),contrast):Object.fromEntries(await Promise.all(Object.entries(notices).map(async ([key,label])=>{
       const {x,y,width,height}=await page.getByText(label,{exact:key==='check'}).first().boundingBox()
       return [key,[x,y,width,height]]
     })))
@@ -80,6 +84,7 @@ try {
     const png=path.join(out,`rune-${theme}.png`)
     const env={...process.env,CODENOMAD_PROFILE:'trial-settings-parity',RUNE_LOCALE:locale}
     for(const key of Object.keys(env))if(key.startsWith('RUNE_')&&key!=='RUNE_LOCALE')delete env[key]
+    if(contrast)env.RUNE_INCREASE_CONTRAST='1'
     await new Promise((resolve,reject)=>{
       const child=spawn(binary,['--gallery-preferences','--scene',section==='general'?'settings':'opencode','--theme',theme,'--tree',tree,'--snap',png,
         '--size','1100x760','--scale','1','--at','0.5'],{cwd:root,env,windowsHide:true,stdio:['ignore','ignore','inherit']})
@@ -91,6 +96,7 @@ try {
     const walk=node=>{nodes.push(node);for(const child of node.children??[])walk(child)}
     walk(JSON.parse(await readFile(tree,'utf8')).accessibility)
     if(section==='general'){
+      assert(nodes.some(node=>node.role==='radio-group'&&node.name==='Contrast'))
       for(const [key,name,value] of [['locale-trigger','Language','English'],['palette-trigger','Color scheme','Classic']]){
         const node=nodes.find(node=>node.key===key)
         assert.equal(node?.name,name)
@@ -111,6 +117,7 @@ try {
       locale:nodes.find(node=>node.key==='locale-trigger').bounds,
       mode:nodes.find(node=>node.role==='radio-group'&&node.name==='Mode').bounds,
       palette:nodes.find(node=>node.key==='palette-trigger').bounds,
+      ...(contrast?{contrast:nodes.find(node=>node.role==='radio-group'&&node.name==='Contrast').bounds}:{}),
     }:{
       restart:nodes.find(node=>node.key==='opencode-restart-status').bounds,
       check:nodes.find(node=>node.key==='opencode-check-failed').bounds,
@@ -119,7 +126,7 @@ try {
     try{
       await installPngReader(pixels)
       const sources=await Promise.all([solidPng,png].map(async file=>'data:image/png;base64,'+(await readFile(file)).toString('base64')))
-      const {metrics,blankInk,noticeRows}=await pixels.evaluate(async({sources,sourceBounds,actualBounds})=>{
+      const {metrics,blankInk,noticeRows,paneColors}=await pixels.evaluate(async({sources,sourceBounds,actualBounds})=>{
         const [solid,rune]=await __codenomadReadPngs(sources)
         const measure=(img,[x,y,w,h],column,row,columns,rows)=>{
           const index=(Math.floor(y+(row+.5)*h/rows)*img.width+Math.floor(x+(column+.5)*w/columns))*4
@@ -165,15 +172,19 @@ try {
         const keys=Object.keys(sourceBounds)
         return {metrics:Object.fromEntries(keys.map(key=>[key,compare(key,false)])),
           blankInk:Object.fromEntries(keys.map(key=>[key,compare(key,true).visibleInk])),
+          paneColors:sourceBounds.contrast?[solid,rune].map(img=>{
+            const pixel=(img.width*500+800)*4
+            return '#'+Array.from(img.pixels.subarray(pixel,pixel+3)).map(channel=>channel.toString(16).padStart(2,'0')).join('')
+          }):undefined,
           noticeRows:sourceBounds.restart?Object.fromEntries(keys.map(key=>[key,{
             solid:inkRows(solid,sourceBounds[key]),rune:inkRows(rune,actualBounds[key])
           }])):undefined}
       },{sources,sourceBounds,actualBounds})
-      evidence.push({theme,sourceBounds,actualBounds,metrics,blankInk,noticeRows})
+      evidence.push({theme,sourceBounds,actualBounds,metrics,blankInk,noticeRows,paneColors})
     }finally{await pixels.close()}
   }
   // Windows at scale 1. Kit metrics differ from Solid; guard just the three ported controls.
-  const budgets=section==='general'?{
+  const budgets=section==='general'&&!contrast?{
     locale:{meanDelta:14,different:.09,visibleInk:80,widthDifference:2,heightDifference:9,leadingDifference:13,rowDifference:0},
     mode:{meanDelta:29,different:.14,visibleInk:240,widthDifference:52,heightDifference:3,leadingDifference:6,rowDifference:13},
     palette:{meanDelta:11,different:.07,visibleInk:65,widthDifference:22,heightDifference:2,leadingDifference:3,rowDifference:29},
@@ -193,6 +204,13 @@ try {
     assert.equal(noticeRows.restart.rune,noticeRows.restart.solid,`${theme}: restart notice paint`)
     assert.equal(noticeRows.check.solid,1,`${theme}: Solid update failure paint`)
     assert.equal(noticeRows.check.rune,noticeRows.check.solid,`${theme}: update failure paint`)
+  }
+  if(contrast)for(const {theme,paneColors,metrics,blankInk} of evidence){
+    const palette=palettes.find(({id})=>id===(theme==='dark'?'classic':'light'))
+    const expected=palette.contrast.colors['surface-secondary'].slice(0,7)
+    assert.notEqual(expected,palette.colors['surface-secondary'].slice(0,7))
+    assert.deepEqual(paneColors,[expected,expected],`${theme}: the painted surface must use the same Solid contrast token`)
+    assert(metrics.contrast.visibleInk>100&&blankInk.contrast===0,`${theme}: contrast controls must paint`)
   }
   console.log(out)
 }finally {
