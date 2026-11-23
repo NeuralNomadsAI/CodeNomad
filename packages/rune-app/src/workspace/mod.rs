@@ -15,9 +15,10 @@ pub(crate) use state::evict_for_probe;
 pub(crate) use state::native_window_store;
 pub(crate) use state::{
     Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
-    close, connected, draft_changed, files_tab, has_conversation_stream, input_ready, new_tab,
-    opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume, retry,
-    schedule_catalogue, select, set_files_tab, status, strip, unselect_missing,
+    close, connected, draft_changed, file_wrap, files_tab, has_conversation_stream, input_ready,
+    new_tab, opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume,
+    retry, schedule_catalogue, select, set_files_tab, status, strip, toggle_file_wrap,
+    unselect_missing,
 };
 
 use crate::composer::draft_storage::SavedParts;
@@ -35,12 +36,14 @@ const PANEL_WIDTH_KEYS: [&str; 2] = [
     "opencode-session-sidebar-width-v8",
     "opencode-session-right-drawer-width-v1",
 ];
+pub(crate) const FILE_WRAP_KEY: &str = "opencode-session-right-panel-files-word-wrap-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub revision: u64,
     pub saved_at: u64,
     pub panel_widths: [Option<u16>; 2],
+    pub file_wrap: Option<bool>,
     pub tabs: Vec<Tab>,
     pub active: Option<usize>,
 }
@@ -94,7 +97,15 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
         return Err(Error::Unsupported);
     }
     let layout = object(required(root, "layout")?)?;
-    fields(layout, &PANEL_WIDTH_KEYS)?;
+    fields(
+        layout,
+        &[PANEL_WIDTH_KEYS[0], PANEL_WIDTH_KEYS[1], FILE_WRAP_KEY],
+    )?;
+    let file_wrap = match layout.get(FILE_WRAP_KEY).and_then(Value::as_str) {
+        Some("on") => Some(true),
+        Some("off") => Some(false),
+        _ => None,
+    };
     let mut panel_widths = [None; 2];
     for (side, key) in PANEL_WIDTH_KEYS.iter().enumerate() {
         if let Some(raw) = layout.get(*key) {
@@ -134,6 +145,7 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
         revision,
         saved_at,
         panel_widths,
+        file_wrap,
         tabs,
         active,
     };
@@ -197,11 +209,14 @@ fn snapshot_bytes(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
         })
         .collect();
     let active = snapshot.active.map(|index| index as i64).unwrap_or(-1);
-    let layout: Map<_, _> = PANEL_WIDTH_KEYS
+    let mut layout: Map<_, _> = PANEL_WIDTH_KEYS
         .into_iter()
         .zip(snapshot.panel_widths)
         .filter_map(|(key, width)| Some((key.into(), json!(width?.to_string()))))
         .collect();
+    if let Some(wrap) = snapshot.file_wrap {
+        layout.insert(FILE_WRAP_KEY.into(), json!(if wrap { "on" } else { "off" }));
+    }
     let value = json!({"version": 1, "revision": snapshot.revision, "savedAt": snapshot.saved_at,
         "layout": layout, "session": {"tabs": tabs, "activeTabIndex": active}});
     serde_json::to_vec(&value).map_err(|_| Error::Malformed)

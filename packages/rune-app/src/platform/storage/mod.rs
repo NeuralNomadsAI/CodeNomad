@@ -1,6 +1,34 @@
 use crate::history::Result;
 use crate::workspace::MAX_BYTES;
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn browser_file_wrap() -> Option<bool> {
+    let storage = web_sys::window()?.local_storage().ok()??;
+    match storage
+        .get_item(crate::workspace::FILE_WRAP_KEY)
+        .ok()??
+        .as_str()
+    {
+        "on" => Some(true),
+        "off" => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn set_browser_file_wrap(wrap: bool) {
+    if let Some(storage) =
+        web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+    {
+        let _ = storage.set_item(
+            crate::workspace::FILE_WRAP_KEY,
+            if wrap { "on" } else { "off" },
+        );
+    }
+}
+
+const FILE_DRAFT_BYTES: usize = 256 * 1024;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn configured_directory() -> Option<std::path::PathBuf> {
     crate::platform::setting("CODENOMAD_PROFILE")
@@ -169,6 +197,22 @@ mod native {
             })
             .await?
         }
+        pub async fn load_file_drafts(&self) -> Result<Option<Vec<u8>>> {
+            let files = self.files.clone();
+            tokio::task::spawn_blocking(move || {
+                files
+                    .lock()
+                    .map_err(|_| "state store unavailable")?
+                    .load_file("workspace-file-drafts.json", FILE_DRAFT_BYTES)
+            })
+            .await?
+        }
+        pub fn save_file_drafts(&self, bytes: &[u8]) -> Result<()> {
+            self.files
+                .lock()
+                .map_err(|_| "state store unavailable")?
+                .save_file("workspace-file-drafts.json", FILE_DRAFT_BYTES, bytes)
+        }
         pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
             let files = self.files.clone();
             let staged = self.staged.clone();
@@ -278,6 +322,7 @@ impl Drop for BrowserListener {
 #[cfg(target_arch = "wasm32")]
 impl Store {
     const KEY: &'static str = "codenomad.rune.alpha.client-state.v1";
+    const FILE_DRAFTS: &'static str = "codenomad.rune.alpha.workspace-file-drafts.v1";
     const RELEASED: &'static str = "codenomad.rune.alpha.records-released";
     pub async fn open() -> Result<Self> {
         use wasm_bindgen::JsCast;
@@ -323,6 +368,27 @@ impl Store {
             return Err("state too large".into());
         }
         Ok(raw.map(String::into_bytes))
+    }
+    pub async fn load_file_drafts(&self) -> Result<Option<Vec<u8>>> {
+        let raw = self
+            .storage
+            .get_item(Self::FILE_DRAFTS)
+            .map_err(|_| "file draft read failed")?;
+        if raw
+            .as_ref()
+            .is_some_and(|text| text.len() > FILE_DRAFT_BYTES)
+        {
+            return Err("file draft store too large".into());
+        }
+        Ok(raw.map(String::into_bytes))
+    }
+    pub fn save_file_drafts(&self, bytes: &[u8]) -> Result<()> {
+        if bytes.len() > FILE_DRAFT_BYTES {
+            return Err("file draft store too large".into());
+        }
+        self.storage
+            .set_item(Self::FILE_DRAFTS, std::str::from_utf8(bytes)?)
+            .map_err(|_| "file draft write failed".into())
     }
     pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
         if self.staged.payload.borrow().0 != bytes {

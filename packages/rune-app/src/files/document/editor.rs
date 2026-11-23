@@ -1,16 +1,13 @@
 use super::{
     Content, content,
     source_text::{Snapshot, lf},
-    store::{Error, Key, Pending, Shared, Store, Writes, lock},
+    store::{Error, Key, Pending, SavedKey, Shared, Store, Writes, lock, version},
 };
 use crate::{files::reader::Reader, platform};
-use codenomad_client::{
-    Wake,
-    backend::Backend,
-    files::{MAX_FILE_BYTES, WriteResult},
-};
+use codenomad_client::{Receiver, Wake, backend::Backend, bounded, catalog::Project};
 use rune::TextEdit;
 
+mod save;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decision {
     Overwrite,
@@ -42,8 +39,13 @@ pub struct Editor {
     writes: Writes,
     written: u64,
     instance: String,
+    project: Option<Project>,
+    native_project: Option<Option<String>>,
+    project_read: Option<Receiver<crate::history::Result<Option<String>>>>,
+    project_error: bool,
     wake: Wake,
     key: Option<Key>,
+    saved_key: Option<SavedKey>,
     draft: Option<Shared>,
     intent: Intent,
     receipt: u64,
@@ -65,8 +67,13 @@ impl Editor {
             writes,
             written,
             instance,
+            project: None,
+            native_project: None,
+            project_read: None,
+            project_error: false,
             wake,
             key: None,
+            saved_key: None,
             draft: None,
             intent: Intent::Idle,
             receipt: 0,
@@ -81,6 +88,30 @@ impl Editor {
     }
     pub fn key(&self) -> Option<&Key> {
         self.key.as_ref()
+    }
+    pub(crate) fn set_project(&mut self, project: Project) {
+        self.project = Some(project);
+    }
+    fn read_project(&mut self) {
+        if self.native_project.is_some() || self.project_read.is_some() {
+            return;
+        }
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+        let (out, input) = bounded(1);
+        self.project_read = Some(input);
+        let backend = self.backend.clone();
+        let wake = self.wake.clone();
+        platform::spawn(async move {
+            let _ = out.send(backend.native_project(&project).await).await;
+            wake();
+        });
+    }
+    pub(crate) fn not_retained(&self) -> bool {
+        self.draft
+            .as_ref()
+            .is_some_and(|draft| lock(draft).not_retained)
     }
     pub fn dirty(&self) -> bool {
         self.draft.as_ref().is_some_and(|draft| lock(draft).dirty())
@@ -107,6 +138,9 @@ impl Editor {
             .as_ref()
             .and_then(|draft| lock(draft).error.clone())
     }
+    pub(crate) fn project_error(&self) -> bool {
+        self.project_error
+    }
     pub fn confirmation(&self) -> Option<Confirmation> {
         match self.intent {
             Intent::Overwrite { id, .. } => Some(Confirmation {
@@ -131,22 +165,31 @@ impl Editor {
     }
     pub fn editable(&self) -> bool {
         self.active
+            && (self.project.is_none() || self.native_project.is_some())
+            && self.draft.as_ref().is_some_and(|draft| {
+                let draft = lock(draft);
+                draft.original.is_some() || draft.recovered
+            })
+    }
+    pub fn writable(&self) -> bool {
+        self.editable()
+            && self.online
+            && self.dirty()
+            && !self.pending()
             && self
                 .draft
                 .as_ref()
                 .is_some_and(|draft| lock(draft).original.is_some())
     }
-    pub fn writable(&self) -> bool {
-        self.editable() && self.online && self.dirty() && !self.pending()
-    }
     pub fn input(&mut self, scope: u64) -> &mut TextEdit {
         self.rejected = TextEdit::new("");
         if scope != self.scope
             || !self.active
-            || self
-                .draft
-                .as_ref()
-                .is_none_or(|draft| lock(draft).original.is_none())
+            || self.project.is_some() && self.native_project.is_none()
+            || self.draft.as_ref().is_none_or(|draft| {
+                let draft = lock(draft);
+                draft.original.is_none() && !draft.recovered
+            })
         {
             &mut self.rejected
         } else {
@@ -155,24 +198,54 @@ impl Editor {
     }
     pub fn open(&mut self, directory: String, path: String) {
         self.close();
+        self.native_project = None;
+        self.project_read = None;
+        self.project_error = false;
+        self.read_project();
+        self.attach(directory, path);
+    }
+    fn attach(&mut self, directory: String, path: String) {
         let key = Key {
             server: self.backend.base.clone(),
             instance: self.instance.clone(),
+            native_project: self.native_project.clone().flatten(),
             directory,
             path,
         };
-        let draft = self.store.open(&key);
+        let saved_key = self
+            .backend
+            .client
+            .server_identity()
+            .zip(self.project.as_ref())
+            .zip(self.native_project.as_ref())
+            .map(|((server, project), native_project)| SavedKey {
+                server: server.into(),
+                project: project.path.clone(),
+                native_project: native_project.clone(),
+                directory: key.directory.clone(),
+                path: key.path.clone(),
+            });
+        let draft = if self.project.is_some() && self.native_project.is_none() {
+            Shared::default()
+        } else {
+            self.store.open_saved(&key, saved_key.as_ref())
+        };
+        if saved_key.is_some() {
+            self.store.sync(&key, &draft);
+        }
         self.edit = TextEdit::new(&lock(&draft).text);
         self.revision = lock(&draft).revision;
         self.draft = Some(draft);
         self.key = Some(key);
+        self.saved_key = saved_key;
     }
     pub fn close(&mut self) {
         self.cancel_check();
         if let (Some(key), Some(draft)) = (&self.key, &self.draft) {
-            self.store.sync(key, draft);
+            self.store.sync_saved(key, self.saved_key.as_ref(), draft);
         }
         self.key = None;
+        self.saved_key = None;
         self.draft = None;
         self.receipt = 0;
         self.observed = None;
@@ -198,7 +271,7 @@ impl Editor {
         if let (Some(key), Some(shared)) = (&self.key, &self.draft) {
             {
                 let mut draft = lock(shared);
-                if draft.original.is_none() {
+                if draft.original.is_none() && !draft.recovered {
                     self.edit = TextEdit::new(&draft.text);
                     return;
                 }
@@ -206,14 +279,17 @@ impl Editor {
                 draft.revision += 1;
                 self.revision = draft.revision;
             }
-            self.store.sync(key, shared);
+            self.store.sync_saved(key, self.saved_key.as_ref(), shared);
         }
     }
     fn cancel_check(&mut self) {
-        self.intent = Intent::Idle;
+        let id = match std::mem::replace(&mut self.intent, Intent::Idle) {
+            Intent::Checking { id, .. } | Intent::Overwrite { id, .. } | Intent::Discard(id) => id,
+            _ => return,
+        };
         if let Some(shared) = &self.draft {
             let mut draft = lock(shared);
-            if matches!(draft.pending, Some(Pending::Check(_))) {
+            if draft.pending == Some(Pending::Check(id)) {
                 draft.pending = None;
             }
         }
@@ -229,44 +305,11 @@ impl Editor {
                 })
             })
     }
-    pub fn save(&mut self, scope: u64, reader: &mut Reader) {
-        if scope != self.scope || !self.ready(reader) {
-            return;
-        }
-        let Some(shared) = &self.draft else { return };
-        let mut draft = lock(shared);
-        if draft.pending.is_some() || !draft.dirty() {
-            return;
-        }
-        let Some(original) = &draft.original else {
-            return;
-        };
-        if draft.text.len() > MAX_FILE_BYTES {
-            draft.error = Some(Error::TooLarge);
-            return;
-        }
-        let text = original.edited(&draft.text);
-        if text.wire.len() > MAX_FILE_BYTES {
-            draft.error = Some(Error::TooLarge);
-            return;
-        }
-        let id = self.store.next();
-        draft.pending = Some(Pending::Check(id));
-        draft.error = None;
-        self.intent = Intent::Checking {
-            id,
-            receipt: reader.reread(),
-            text,
-        };
-        drop(draft);
-        if let Some(key) = &self.key {
-            self.store.sync(key, shared);
-        }
-    }
     pub fn refresh(&mut self, scope: u64, reader: &mut Reader) {
         if scope != self.scope || !self.ready(reader) || self.pending() {
             return;
         }
+        self.read_project();
         let Some(shared) = &self.draft else { return };
         let mut draft = lock(shared);
         if draft.dirty() {
@@ -300,6 +343,8 @@ impl Editor {
             }
             Intent::Discard(_) => {
                 draft.original = None;
+                draft.version = None;
+                draft.recovered = false;
                 draft.text.clear();
                 draft.revision += 1;
                 draft.uncertain = None;
@@ -307,7 +352,7 @@ impl Editor {
                 self.edit = TextEdit::new("");
                 drop(draft);
                 if let Some(key) = &self.key {
-                    self.store.sync(key, &shared);
+                    self.store.sync_saved(key, self.saved_key.as_ref(), &shared);
                 }
                 self.intent = Intent::Refreshing(reader.reread());
             }
@@ -315,6 +360,17 @@ impl Editor {
         }
     }
     pub fn poll(&mut self, reader: &mut Reader) -> bool {
+        if let Some(Ok(result)) = self.project_read.as_ref().map(Receiver::try_recv) {
+            self.project_read = None;
+            self.project_error = result.is_err();
+            if let Ok(project) = result {
+                self.native_project = Some(project);
+                if let Some(key) = self.key.clone() {
+                    self.close();
+                    self.attach(key.directory, key.path);
+                }
+            }
+        }
         if !self.ready(reader) {
             return false;
         }
@@ -356,6 +412,31 @@ impl Editor {
         }
         if let (Some(preview), Some(shared)) = (reader.preview(), &self.draft) {
             let mut draft = lock(shared);
+            let observed = version(preview.version.as_deref());
+            if draft.recovered && draft.original.is_none() {
+                let same = observed.is_some() && observed == draft.version;
+                draft.original = disk_text(&preview.path, &preview.bytes);
+                draft.error = (!same).then_some(Error::Conflict(None));
+                if same {
+                    draft.recovered = false;
+                }
+                return;
+            }
+            if draft.dirty()
+                && !draft.recovered
+                && observed != draft.version
+                && draft
+                    .original
+                    .as_ref()
+                    .is_some_and(|original| original.wire.as_bytes() == preview.bytes)
+            {
+                draft.version = observed.clone();
+                drop(draft);
+                if let Some(key) = &self.key {
+                    self.store.sync_saved(key, self.saved_key.as_ref(), shared);
+                }
+                return;
+            }
             if draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some() && !refreshed {
                 return;
             }
@@ -365,6 +446,7 @@ impl Editor {
                     draft.revision += 1;
                 }
                 draft.original = Some(text);
+                draft.version = observed;
                 draft.error = None;
             } else {
                 draft.original = None;
@@ -375,114 +457,6 @@ impl Editor {
             }
             draft.uncertain = None;
         }
-    }
-    fn checked(&mut self, id: u64, text: Snapshot, reader: &mut Reader) {
-        let Some(shared) = self.draft.clone() else {
-            return;
-        };
-        let mut draft = lock(&shared);
-        if draft.pending != Some(Pending::Check(id)) {
-            return;
-        }
-        draft.pending = None;
-        if !reader.receipt().1 {
-            draft.error = Some(Error::Read);
-            return;
-        }
-        let Some(preview) = reader.preview() else {
-            draft.error = Some(Error::Read);
-            return;
-        };
-        let Some(disk) = disk_text(&preview.path, &preview.bytes) else {
-            draft.error = Some(Error::ReadOnly);
-            return;
-        };
-        if draft
-            .uncertain
-            .as_ref()
-            .is_some_and(|saved| saved.wire == disk.wire)
-        {
-            draft.original = draft.uncertain.take();
-        }
-        if disk.wire == text.wire {
-            draft.original = Some(text);
-            draft.uncertain = None;
-            draft.error = None;
-            drop(draft);
-            if let Some(key) = &self.key {
-                self.store.sync(key, &shared);
-            }
-            *lock(&self.writes) += 1;
-            return;
-        }
-        let Some(version) = preview
-            .version
-            .as_ref()
-            .filter(|version| !version.is_empty())
-        else {
-            draft.error = Some(Error::MissingVersion);
-            return;
-        };
-        if draft
-            .original
-            .as_ref()
-            .is_none_or(|original| original.wire != disk.wire)
-        {
-            draft.pending = Some(Pending::Check(id));
-            self.intent = Intent::Overwrite {
-                id,
-                text,
-                version: version.clone(),
-            };
-        } else {
-            drop(draft);
-            self.write(id, text, version.clone(), reader);
-        }
-    }
-    fn write(&mut self, id: u64, text: Snapshot, version: String, reader: &mut Reader) {
-        let (Some(key), Some(shared)) = (self.key.clone(), self.draft.clone()) else {
-            return;
-        };
-        lock(&shared).pending = Some(Pending::Write(id));
-        reader.activate(false);
-        let (backend, store, wake, writes) = (
-            self.backend.clone(),
-            self.store.clone(),
-            self.wake.clone(),
-            self.writes.clone(),
-        );
-        platform::spawn(async move {
-            let result = backend
-                .write_file(&key.directory, &key.path, &text.wire, &version)
-                .await;
-            let saved = matches!(&result, Ok(WriteResult::Saved));
-            {
-                let mut draft = lock(&shared);
-                if draft.pending != Some(Pending::Write(id)) {
-                    return;
-                }
-                draft.pending = None;
-                match result {
-                    Ok(WriteResult::Saved) => {
-                        draft.original = Some(text);
-                        draft.uncertain = None;
-                        draft.error = None;
-                    }
-                    Ok(WriteResult::Conflict(reason)) => {
-                        draft.error = Some(Error::Conflict(reason))
-                    }
-                    Err(_) => {
-                        draft.uncertain = Some(text);
-                        draft.error = Some(Error::Uncertain);
-                    }
-                }
-            }
-            store.sync(&key, &shared);
-            if saved {
-                *lock(&writes) += 1;
-            }
-            wake();
-        });
     }
 }
 fn disk_text(path: &str, bytes: &[u8]) -> Option<Snapshot> {

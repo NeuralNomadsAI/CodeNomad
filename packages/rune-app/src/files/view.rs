@@ -55,14 +55,33 @@ fn document_action_tx(
     s: &State,
     run: impl Fn(&mut super::Ui, &mut rune::Tx) + 'static,
 ) -> impl Fn(&mut State, &mut rune::Tx) + 'static {
-    let scope = s.files.as_ref().map(|ui| ui.document.scope());
-    screen::action_tx(&s.input_scope, move |s, tx| {
+    document_state_action_tx(s, move |s, tx| {
         if let Some(ui) = &mut s.files {
-            if scope == Some(ui.document.scope()) {
-                run(ui, tx);
-            }
+            run(ui, tx);
         }
     })
+}
+
+fn document_state_action_tx(
+    s: &State,
+    run: impl Fn(&mut State, &mut rune::Tx) + 'static,
+) -> impl Fn(&mut State, &mut rune::Tx) + 'static {
+    let scope = s.files.as_ref().map(|ui| ui.document.scope());
+    screen::action_tx(&s.input_scope, move |s, tx| {
+        if s.files
+            .as_ref()
+            .is_some_and(|ui| scope == Some(ui.document.scope()))
+        {
+            run(s, tx);
+        }
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn refresh_browser_file_wrap(s: &mut State) {
+    if let Some(wrap) = crate::platform::storage::browser_file_wrap() {
+        s.shell.file_wrap = wrap;
+    }
 }
 fn reader_action(
     s: &State,
@@ -195,18 +214,19 @@ fn reader_content(s: &State) -> El {
                 }
                 let source = ui.presentation.source || format == Format::Source;
                 if source {
+                    let wrap = crate::workspace::file_wrap(s);
                     let field = editor::source(s, ui, &target.path, view_width, &mut actions);
                     actions.push(
                         theme::wrap_button(
                             dark,
-                            t(if ui.presentation.wrap {
+                            t(if wrap {
                                 "instanceShell.filesShell.disableWordWrap"
                             } else {
                                 "instanceShell.filesShell.enableWordWrap"
                             }),
-                            ui.presentation.wrap,
-                            document_action_tx(s, |ui, _| {
-                                ui.presentation.wrap = !ui.presentation.wrap
+                            wrap,
+                            document_state_action_tx(s, |s, _| {
+                                crate::workspace::toggle_file_wrap(s)
                             }),
                         )
                         .key("file-wrap"),
@@ -218,10 +238,10 @@ fn reader_content(s: &State) -> El {
                                 dark,
                                 &target.path,
                                 text,
-                                ui.presentation.wrap,
+                                wrap,
                                 view_width.map(|width| theme::source_width(dark, width)),
                             ),
-                            ui.presentation.wrap,
+                            wrap,
                         )
                     })
                 } else {
@@ -306,15 +326,26 @@ fn reader_content(s: &State) -> El {
     let status = if ui.document.dirty() {
         Some(t("settings.configFiles.state.unsaved"))
     } else {
-        (!matches!(kind, Some(Kind::Text(_)))).then(|| t("filesPanel.readOnly"))
+        (!matches!(kind, Some(Kind::Text(_))) || !ui.document.editable())
+            .then(|| t("filesPanel.readOnly"))
     };
-    let error =
+    let error = if ui.document.project_error() {
+        Some(format!(
+            "{} — {}",
+            t("directoryBrowser.load.errorFallback"),
+            t("instanceShell.rightPanel.actions.refresh")
+        ))
+    } else {
         match ui.document.error() {
             Some(super::document::store::Error::Conflict(Some(reason))) => Some(reason),
+            Some(super::document::store::Error::Conflict(None)) => {
+                Some(t("filesPanel.draftConflict").into())
+            }
             save_error => ui.reader.error().map(str::to_owned).or_else(|| {
                 save_error.map(|_| t("instanceShell.rightPanel.toast.saveError").into())
             }),
-        };
+        }
+    };
     theme::surface(dark)
         .key(format!("file-reader-{scope}"))
         .role("region")
@@ -326,6 +357,11 @@ fn reader_content(s: &State) -> El {
             actions,
         ))
         .children(error.map(|message| text(message).role("alert").pad(Space::Md)))
+        .children(ui.document.not_retained().then(|| {
+            text(t("filesPanel.draftLimit"))
+                .role("alert")
+                .pad(Space::Md)
+        }))
         .children(
             (ui.reader.busy() && ui.reader.preview().is_none()).then(|| {
                 text(t("instanceInfo.loading"))
