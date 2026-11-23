@@ -112,7 +112,7 @@ fn http_scan(steps: Vec<(&'static str, Option<Value>, Value, bool)>) -> Result<O
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn http_probe<T>(
+pub(crate) fn http_probe<T>(
     steps: Vec<(&'static str, Option<Value>, Value, bool)>,
     run: impl AsyncFnOnce(Backend, std::sync::Arc<OutlineRevision>) -> T,
 ) -> T {

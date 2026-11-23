@@ -3,6 +3,46 @@ fn main() {}
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
+pub async fn search_history() -> Result<String, wasm_bindgen::JsValue> {
+    use codenomad_client::{backend::Backend, search::Ranked};
+    use wasm_bindgen::JsValue;
+    let check = |e: codenomad_client::history::Error| JsValue::from_str(&e.to_string());
+    let mut backend = Backend::unauthenticated("/").map_err(check)?;
+    backend.workspace = "workspace".into();
+    backend.session = "session".into();
+    let literal = backend
+        .search_history("Été", false, None, |_| {})
+        .await
+        .map_err(check)?;
+    let Ranked::Ranked { page, .. } = backend
+        .rank_history("Été Québec", true, None)
+        .await
+        .map_err(check)?
+    else {
+        return Err(JsValue::from_str("expected ranked results"));
+    };
+    if !matches!(
+        backend
+            .rank_history("Été Québec", true, page.cursor.as_deref())
+            .await
+            .map_err(check)?,
+        Ranked::RestartRequired
+    ) {
+        return Err(JsValue::from_str(
+            "expired rank window must offer a fresh search",
+        ));
+    }
+    Ok(literal
+        .hits
+        .iter()
+        .chain(&page.hits)
+        .map(|h| h.message.as_str())
+        .collect::<Vec<_>>()
+        .join(","))
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
 pub async fn fetch_outline() -> Result<String, wasm_bindgen::JsValue> {
     use codenomad_client::{backend::Backend, timeline::OutlineRevision};
     use wasm_bindgen::JsValue;
