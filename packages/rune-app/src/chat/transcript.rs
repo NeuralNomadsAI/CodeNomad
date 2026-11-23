@@ -14,6 +14,18 @@ use rune_theme_codenomad::{
 
 const PART_LIMIT: usize = 1000;
 
+pub(super) fn part_window(len: usize, steps: usize) -> (usize, usize) {
+    let initial = if len > PART_LIMIT {
+        PART_LIMIT / 2
+    } else {
+        len
+    };
+    (
+        initial.saturating_add(steps.saturating_mul(PART_LIMIT)),
+        len.saturating_sub(PART_LIMIT / 2),
+    )
+}
+
 pub fn rows(s: &State) -> El {
     let locale = locale();
     layout::transcript_rows(
@@ -82,17 +94,9 @@ pub fn message(s: &State, i: usize) -> El {
         view = view.child(document::prose(s, format!("body-{}", m.id), &m.body, false));
     }
     let gap_key = format!("parts-gap-{}", m.id);
-    let initial = if m.parts.len() > PART_LIMIT {
-        PART_LIMIT / 2
-    } else {
-        m.parts.len()
-    };
-    let tail = m.parts.len().saturating_sub(PART_LIMIT / 2);
-    let head = initial.saturating_add(
-        s.transcript_display
-            .steps(&gap_key)
-            .saturating_mul(PART_LIMIT),
-    );
+    let (initial, _) = part_window(m.parts.len(), 0);
+    let (head, tail) = part_window(m.parts.len(), s.transcript_display.steps(&gap_key));
+    let usage_after = super::usage::last_text(m).filter(|&index| index < head || index >= tail);
     let mut reveal_start = (head > initial).then(|| head.saturating_sub(PART_LIMIT));
     let mut reasoning_end = 0;
     for (index, part) in m.parts.iter().enumerate() {
@@ -186,7 +190,10 @@ pub fn message(s: &State, i: usize) -> El {
             } else {
                 view = view.child(body);
             }
+            if usage_after == Some(index) {
+                view = view.children(super::usage::message(s, i, index));
+            }
         }
     }
-    view.children(super::usage::message(s, i))
+    view
 }

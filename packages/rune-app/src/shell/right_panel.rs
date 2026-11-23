@@ -28,6 +28,9 @@ pub fn view(s: &State, width: f32, touch: bool, floating: bool) -> El {
         .child(if crate::workspace::files_tab(s) {
             crate::git::panel(s, width, crate::files::tree(s, width, touch)).remaining()
         } else {
-            col().pad(Space::Md).child(text(connection(s))).children(crate::chat::usage::session(s))
+            col()
+                .pad(Space::Md)
+                .child(text(connection(s)))
+                .children(crate::chat::usage::session(s))
         })
 }

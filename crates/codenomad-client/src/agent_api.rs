@@ -115,7 +115,10 @@ impl Backend {
             models,
             current,
             session_known: session.is_ok(),
-            usage: session.as_ref().ok().and_then(|v| crate::content::Usage::decode(&v["data"])),
+            usage: session
+                .as_ref()
+                .ok()
+                .and_then(|v| crate::content::Usage::decode(&v["data"])),
             running,
             permissions,
             forms,

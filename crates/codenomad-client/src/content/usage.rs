@@ -22,7 +22,10 @@ impl Usage {
             reasoning: count("reasoning"),
             cache_read: cache["read"].as_u64().unwrap_or(0),
             cache_write: cache["write"].as_u64().unwrap_or(0),
-            cost: record["cost"].as_f64().filter(|cost| cost.is_finite() && *cost >= 0.0).unwrap_or(0.0),
+            cost: record["cost"]
+                .as_f64()
+                .filter(|cost| cost.is_finite() && *cost >= 0.0)
+                .unwrap_or(0.0),
         })
     }
 

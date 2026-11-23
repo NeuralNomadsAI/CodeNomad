@@ -28,7 +28,7 @@ pub(crate) struct Host {
     contrast: Option<web_contrast::Watch>,
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
-    last_display: Option<[&'static str; 5]>,
+    last_display: Option<[&'static str; 6]>,
 }
 
 pub(crate) fn poll(s: &mut State) -> bool {
@@ -105,7 +105,11 @@ pub(crate) fn poll(s: &mut State) -> bool {
         shared.palette(false).map_or("", |p| p.id),
         shared.palette(true).map_or("", |p| p.id),
         shared.contrast(),
+        usage_visibility(&shared),
     ]);
+    if s.settings.last_display.map(|last| last[5]) != display.map(|next| next[5]) {
+        s.revision += 1;
+    }
     #[cfg(target_arch = "wasm32")]
     let changed = {
         let more = s
@@ -119,6 +123,32 @@ pub(crate) fn poll(s: &mut State) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
     changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))
+}
+
+fn usage_visibility(prefs: &Preferences) -> &'static str {
+    use codenomad_client::settings::Owner::Config;
+    let Some(settings) = prefs.saved(Config).and_then(|value| value.get("settings")) else {
+        return "hidden";
+    };
+    if settings["showUsageMetrics"].as_bool() != Some(true) {
+        return "hidden";
+    }
+    match settings["usageMetricsExpansion"].as_str() {
+        Some("expanded") => "expanded",
+        Some("collapsed") => "collapsed",
+        _ if settings["toolCallExpansionDefaults"]["preset"] == "everything" => "expanded",
+        _ => "collapsed",
+    }
+}
+
+pub(crate) fn message_usage_visibility(s: &State) -> &'static str {
+    usage_visibility(&s.settings.shared.borrow())
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
+    s.settings.shared.borrow_mut().fixture_usage(mode);
+    s.revision += 1;
 }
 
 pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {

@@ -442,6 +442,16 @@ impl Preferences {
             self.revision += 1;
         }
     }
+
+    #[cfg(test)]
+    pub(super) fn fixture_usage(&mut self, mode: &str) {
+        let config = self
+            .config
+            .snapshot
+            .get_or_insert_with(|| json!({"settings": {}}));
+        config["settings"]["showUsageMetrics"] = json!(mode != "hidden");
+        config["settings"]["usageMetricsExpansion"] = json!(mode);
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
