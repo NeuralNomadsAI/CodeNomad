@@ -14,6 +14,10 @@ import {out, repo, rustBinary} from './fixtures.mjs'
 const post = body => ({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
 const canonical = value => Array.isArray(value)?value.map(canonical):value&&typeof value==='object'
   ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value
+// GIT_CEILING_DIRECTORIES makes strict TS discovery inconclusive in this fixture.
+const assertIndependentRefusal = (label, body) => assert.deepEqual(body, {
+  error:'Session does not belong to workspace', ...(label==='rs'?{reason:'session_located_elsewhere'}:{}),
+})
 const digest = body => createHash('sha256').update(JSON.stringify(canonical(body))).digest('hex')
 const listen = server => new Promise(resolve => server.listen(0,'127.0.0.1',()=>resolve(`http://127.0.0.1:${server.address().port}`)))
 const close = server => new Promise(resolve => {server.closeAllConnections();server.close(resolve)})
@@ -229,12 +233,7 @@ export async function run(commandOnly=false){
         assert.deepEqual(forwarded.map(call=>call.path),dispatch?[`/api/session/${session}/prompt`]:[])
         assert.deepEqual(environment.map(call=>call.path),dispatch?[`/api/session/${session}/environment`]:[])
         if(dispatch) assert.equal(body.data.id,'inbox_tree')
-        else {
-          assert.equal(body.error,'Session does not belong to workspace')
-          // The fixture sets GIT_CEILING_DIRECTORIES, so TS cannot prove a departure
-          // in strict discovery. Both implementations must refuse before all writes.
-          ;(result.placementDiagnostics??={})[label]=body
-        }
+        else assertIndependentRefusal(label,body)
         rows.push({name,status:response.status,forwarded:forwarded.length,environment:environment.length})
       }
       for(const [carrier,expected] of [['owned',403],['unavailable',503],['move',403]]){
@@ -316,6 +315,7 @@ async function commandCases(label, host, native, rows, errors) {
     ['nested-session','ses_nested',command,204,true],
     ['linked-subfolder-incomplete-git','ses_tree_nested',command,204,true],
     ['nested-repo-inside-opened-folder','ses_local_independent',command,204,true],
+    ['nested-independent-repo','ses_independent',command,403,false],
     ['nested-no-repo','ses_plain',command,204,true],
     ['files','ses_owned',{...command,files:[{uri:pathToFileURL(path.join(native.directory,'a b#%.txt')).href}]},204,true],
     ['foreign-file','ses_owned',{...command,files:[{uri:path.join(native.foreign,'private.txt')}]},403,false],
@@ -344,7 +344,8 @@ async function commandCases(label, host, native, rows, errors) {
       assert(calls.indexOf(environment[0])<calls.indexOf(forwarded[0]))
       assert.equal(environment[0].body.variables.FIXTURE_SETTING,'profile')
     }
-    if(response.status>=400)errors[name]=JSON.parse(responseBody)
+    if(name==='nested-independent-repo') assertIndependentRefusal(label,JSON.parse(responseBody))
+    else if(response.status>=400)errors[name]=JSON.parse(responseBody)
     rows.push({name,status:response.status,forwarded:forwarded.length,environment:environment.length})
   }
   const beforePrompt=native.calls.length

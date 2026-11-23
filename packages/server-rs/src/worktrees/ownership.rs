@@ -26,6 +26,11 @@ pub(crate) struct DirectoryProof {
 }
 
 impl DirectoryProof {
+    pub(crate) fn same_checkout(&self, other: &Self) -> bool {
+        self.tree.as_ref().map(super::inventory::Tree::registered)
+            == other.tree.as_ref().map(super::inventory::Tree::registered)
+    }
+
     pub(crate) fn live(&self, physical: &Path) -> bool {
         let no_nested_git = |path: &Path, root: &Path| {
             let absent = |path: &Path| {

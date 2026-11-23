@@ -500,7 +500,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     };
     let recheck_input = || async {
         let (physical, _) = initial_identity.as_ref().ok_or_else(foreign)?;
-        if crate::worktrees::ownership::capture_directory(&app, &workspace, physical).await.is_none() {
+        let admitted = input_checkout.as_ref().ok_or_else(foreign)?;
+        if !crate::worktrees::ownership::capture_directory(&app, &workspace, physical)
+            .await
+            .is_some_and(|current| admitted.same_checkout(&current))
+        {
             return Err(foreign());
         }
         let fresh = super::session_record_at(&app, &endpoint, session.ok_or_else(upstream_error)?).await?;
