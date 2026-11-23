@@ -65,6 +65,16 @@ fn wrapped_reader_keeps_its_logical_top_line_across_resize_and_reopen() {
         let (row, new_y) = top_line(&rt);
         assert_eq!(row, wide);
         assert!((new_y - y).abs() < 1.0, "{y} → {new_y} after reopening");
+
+        click(&mut rt, "file-close");
+        let shortened = STANDARD.encode(format!("prefix\nshort target\n{}", "after\n".repeat(120)));
+        open(&mut rt, &http, "wrapped.txt", &shortened).await;
+        let (row, new_y) = top_line(&rt);
+        assert_eq!(row, 1);
+        assert!(
+            (new_y - y).abs() < 1.0,
+            "{y} → {new_y} with the same width but different wrapping"
+        );
         http.quiet().await;
     });
 }

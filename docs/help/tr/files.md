@@ -40,6 +40,7 @@ Okuyucunun değiştirilmesi ve kapatılması yalnızca geçerli proje sekmesini 
 
 Kaynak okuyucu, dosya veya proje sekmesi değiştiğinde satır kaydırma tercihini korur ve pencere durumuyla birlikte geri yükler.
 Yakın zamanda görüntülenen bir kaynak dosyayı aynı proje sekmesinde yeniden açtığınızda seçim ve kaydırma konumu geri yüklenir.
+Okuyucunun genişliği değişip satırlar yeniden kaydırıldığında ilk görünen kaynak satırı ekranda kalır.
 
 ## Salt okunur ve sınırlı önizlemeler {#preview-limits}
 

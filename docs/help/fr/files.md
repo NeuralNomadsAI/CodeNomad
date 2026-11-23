@@ -40,6 +40,7 @@ Remplacer ou fermer le lecteur affecte uniquement l’onglet de projet courant. 
 
 Le lecteur de source garde le retour à la ligne d’un fichier ou d’un onglet à l’autre et le rétablit avec l’état de la fenêtre.
 Rouvrir un fichier source récent dans le même onglet de projet rétablit la sélection et la position de défilement.
+Si la largeur modifie le retour à la ligne, la première ligne source visible reste à l’écran.
 
 ## Aperçus bornés et en lecture seule {#preview-limits}
 

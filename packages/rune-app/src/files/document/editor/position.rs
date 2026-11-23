@@ -137,11 +137,11 @@ impl Viewport {
         let moved = old.layout != Some(layout);
         if self.pending.replace(false) || moved {
             let [x, mut y] = old.offset;
-            if moved
-                && let Some(anchor) = old
-                    .anchor
-                    .or_else(|| old.layout.and_then(|layout| layout.capture(text, y)))
-            {
+            if let Some(anchor) = old.anchor.or_else(|| {
+                old.layout
+                    .filter(|_| moved)
+                    .and_then(|layout| layout.capture(text, y))
+            }) {
                 y = layout.restore(text, anchor).unwrap_or(y);
             }
             self.position.set(ScrollPosition {
