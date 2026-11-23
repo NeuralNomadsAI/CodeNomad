@@ -142,11 +142,63 @@ test("Workspace editing saves the exact directory, retains drafts and checks ext
     await edit('{"keyboard": true}')
     await page.keyboard.press("Control+s")
     await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "save" && call.message.includes("keyboard")))
+    await page.evaluate(async () => {
+      const api = "/src/lib/api-client.ts"
+      await (await import(api)).serverApi.writeWorkspaceFile("git-prototype", "package.json", '{"diskAfterSave": true}', { directory: "/CodeNomad" })
+    })
+    await page.locator('.workspace-file-view').getByRole("button", { name: "Actualiser", exact: true }).click()
+    await page.locator('.workspace-file-view .view-line').filter({ hasText: 'diskAfterSave' }).waitFor()
     await edit('{"discard": true}')
     await page.locator('.workspace-file-view').getByRole("button", { name: "Actualiser", exact: true }).click()
     await page.getByRole("dialog").getByRole("button", { name: "Actualiser", exact: true }).click()
-    await page.locator('.workspace-file-view .view-line').filter({ hasText: 'keyboard' }).waitFor()
+    await page.locator('.workspace-file-view .view-line').filter({ hasText: 'diskAfterSave' }).waitFor()
     assert.equal(await save().isDisabled(), true)
+  } finally { await page.close() }
+})
+test("Workspace restores a file draft into a fresh renderer without writing the file", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  const eye = () => page.getByRole("button", { name: "Aperçu du fichier · package.json", exact: true })
+  try {
+    await page.goto(url)
+    await page.evaluate(async () => {
+      const module = "/src/stores/client-state.ts"
+      await (await import(module)).initializeClientState()
+    })
+    await eye().click()
+    await page.locator(".workspace-file-view .view-line").first().waitFor()
+    await page.evaluate(async () => {
+      const state = "/src/stores/client-state.ts"
+      const model = (window as any).monaco.editor.getEditors().find((e: any) => e.getModel()?.uri.toString().includes("workspace-editor"))
+      model.setValue('{"restored": "été"}')
+      await (await import(state)).flushClientState()
+    })
+    for (const changed of [false, true]) {
+      await page.reload()
+      await page.evaluate(async changed => {
+        const state = "/src/stores/client-state.ts"
+        await (await import(state)).initializeClientState()
+        if (changed) {
+          const api = "/src/lib/api-client.ts"
+          const { serverApi } = await import(api)
+          serverApi.previewWorkspaceFile = async () => ({ contents: '{"changed": true}', relativePath: "package.json", workspaceId: "git-prototype" })
+        }
+      }, changed)
+      await eye().click()
+      await page.locator(".workspace-file-view .view-line").filter({ hasText: "été" }).waitFor()
+      const conflict = page.getByText("Le fichier a changé sur le disque. Votre brouillon a été conservé.", { exact: true })
+      if (changed) await conflict.waitFor()
+      else assert.equal(await conflict.count(), 0)
+      assert.equal(await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "save").length), 0)
+    }
+    await page.evaluate(() => sessionStorage.setItem("fixture-server-id", "replacement-installation"))
+    await page.reload()
+    await page.evaluate(async () => {
+      const state = "/src/stores/client-state.ts"
+      await (await import(state)).initializeClientState()
+    })
+    await eye().click()
+    await page.locator(".workspace-file-view .view-line").first().waitFor()
+    assert.equal(await page.locator(".workspace-file-view .view-line").filter({ hasText: "restored" }).count(), 0)
   } finally { await page.close() }
 })
 test("a reader reopened before save completion retains its undo through filesystem invalidation", async () => {

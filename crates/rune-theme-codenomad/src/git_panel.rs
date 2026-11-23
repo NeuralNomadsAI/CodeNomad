@@ -173,7 +173,7 @@ fn history_action<S: 'static>(
                 .color(t.color("text-muted"))
                 .a11y_hidden(),
         )
-        .child(content.remaining().a11y_hidden());
+        .child(content.remaining().shrink().min_w(0.0).a11y_hidden());
     if disabled {
         body
     } else {

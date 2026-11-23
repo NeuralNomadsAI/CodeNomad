@@ -56,7 +56,10 @@ pub fn request(s: &mut State, tx: &mut Tx) {
         {
             return;
         }
-        if !platform::device_picker::paste(s, content) && !content.text().is_empty() {
+        if !platform::device_picker::paste(s, content)
+            && !content.text().is_empty()
+            && !super::long_paste::paste(s, content.text(), tx)
+        {
             s.draft.paste(content.text());
             super::view::changed(s, tx);
         }

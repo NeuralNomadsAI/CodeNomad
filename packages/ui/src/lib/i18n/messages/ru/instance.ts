@@ -161,6 +161,8 @@ export const instanceMessages = {
   "filesPanel.draftConflict": "Файл на диске изменился. Ваш черновик сохранён.",
   "filesPanel.draftLimit": "Не удалось сохранить черновик. Перед закрытием сохраните или скопируйте последние правки.",
   "filesPanel.binary": "Предпросмотр этого двоичного файла недоступен.",
+  "filesPanel.draftConflict": "Файл на диске изменился. Ваш черновик сохранён.",
+  "filesPanel.draftLimit": "Не удалось сохранить черновик. Перед закрытием сохраните или скопируйте последние изменения.",
   "filesPanel.image.before": "До",
   "filesPanel.image.after": "После",
   "gitPanel.changes": "Изменения",

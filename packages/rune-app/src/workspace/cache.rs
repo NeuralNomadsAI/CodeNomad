@@ -16,6 +16,7 @@ pub(super) struct Cache {
     draft: TextEdit,
     composer: crate::composer::Owner,
     incoming: Option<Receiver<Event>>,
+    reader: Option<crate::chat::reader::Reader>,
     commands: Option<Sender<Command>>,
     phase: Phase,
     revision: u64,
@@ -33,6 +34,28 @@ impl Cache {
             .is_some_and(|incoming| !incoming.is_closed())
     }
 
+    pub(super) fn history_weight(&self) -> (usize, usize) {
+        (
+            self.messages.len(),
+            crate::history::retained_bytes(&self.messages),
+        )
+    }
+    pub(super) fn history_protected(&self) -> bool {
+        self.phase == Phase::Streaming
+            || self.agent.as_ref().is_some_and(|agent| agent.running)
+            || self
+                .reader
+                .as_ref()
+                .and_then(crate::chat::reader::Reader::running)
+                == Some(true)
+            || self.navigation_blocked()
+    }
+    pub(super) fn evict_history(&mut self) {
+        self.messages = Vec::new();
+        self.can_older = false;
+        self.paging = false;
+        self.transcript_display.evict_rendered();
+    }
     pub fn navigation_blocked(&self) -> bool {
         self.composer.pending()
             || self
@@ -55,6 +78,7 @@ impl Cache {
             draft: std::mem::replace(&mut s.draft, TextEdit::new("")),
             composer: std::mem::take(&mut s.composer),
             incoming: s.incoming.take(),
+            reader: s.reader.take(),
             commands: s.commands.take(),
             phase: std::mem::replace(&mut s.phase, Phase::Ready),
             revision: s.revision,
@@ -78,6 +102,7 @@ impl Cache {
         s.draft = self.draft;
         s.composer = self.composer;
         s.incoming = self.incoming;
+        s.reader = self.reader;
         s.commands = self.commands;
         s.phase = self.phase;
         s.revision = self.revision;
@@ -100,7 +125,7 @@ pub(super) fn status(
     use rune_theme_codenomad::tabs::Status;
     if agent.is_some_and(|a| !a.ids().is_empty()) {
         Some(Status::Permission)
-    } else if *phase == Phase::Streaming {
+    } else if *phase == Phase::Streaming || agent.is_some_and(|a| a.online && a.running) {
         Some(Status::Working)
     } else if matches!(phase, Phase::Failed | Phase::Reconnecting) {
         Some(Status::Unavailable)

@@ -5,8 +5,11 @@ import { acknowledgeNativeClientStateNavigationFlush, acknowledgeNativeClientSta
 import { isElectronHost, isLocalWindow, isTauriHost, isWebHost } from "../runtime-env"
 import {
   clientStateIsPrimary, flushClientState, loadedRestorableSession, restorePreviousStateEnabled, updateRestorableSession,
+  flushWorkspaceFileDraftsForClose, WorkspaceDraftFlushError,
   type RestorableSessionState, type RestorableTabState, type RestorableWorkspaceTabState,
 } from "../../stores/client-state"
+import { tGlobal } from "../i18n"
+import { showToastNotification } from "../notifications"
 import { storage } from "../storage"
 import { completeWebSessionRestore, markWebSessionRecordsReleased } from "../web-session-client-state"
 import { matchesRestoredServer, workspaceInstallationKey } from "../../stores/app-session-reconciliation"
@@ -239,6 +242,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   }
   let preparedRecords: ReturnType<typeof captureWorkspaceRecords> | undefined
   let unlockInput: (() => void) | undefined
+  let navigationGeneration: number | null = null
   const lockInput = () => {
     if (unlockInput) return
     // Close can keep this document visible while the host saves its snapshot.
@@ -266,7 +270,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     nativeShutdownGeneration = null
     releasing = undefined
     releaseResults = new Map()
-    unlockInput?.()
+    if (navigationGeneration === null) unlockInput?.()
     schedule()
   }
   const capture = () => {
@@ -308,8 +312,27 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     if (nativeShutdown && !releasing) preparedRecords = captureWorkspaceRecords()
     await Promise.all([
       flushClientState(),
+      flushWorkspaceFileDraftsForClose(),
       ...(nativeShutdown ? [storage.flushWrites()] : []),
-    ])
+    ]).catch(error => {
+      if (error instanceof WorkspaceDraftFlushError) {
+        showToastNotification({ category: "files", message: tGlobal("filesPanel.draftLimit"), variant: "error" })
+      }
+      throw error
+    })
+  }
+  const cancelNavigation = (generation: number) => {
+    if (navigationGeneration !== generation) return
+    navigationGeneration = null
+    if (nativeShutdownGeneration === null && !releasing) unlockInput?.()
+  }
+  const flushNavigation = async (generation: number) => {
+    navigationGeneration = generation
+    lockInput()
+    try { await flush() } catch (error) {
+      cancelNavigation(generation)
+      throw error
+    }
   }
   const release = (deleteTabs = true) => {
     if (releasing) return releasing
@@ -348,7 +371,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   }>(event, ({ payload: { generation, prepareGeneration } }) => {
     // A replacement document can receive release without having seen prepare.
     if (prepareGeneration !== undefined) nativeShutdownGeneration = prepareGeneration
-    void (prepareGeneration !== undefined ? awaitRelease() : flush(nativeShutdown ? generation : undefined))
+    void (prepareGeneration !== undefined ? awaitRelease() : nativeShutdown ? flush(generation) : flushNavigation(generation))
       .then(() => acknowledge(generation)).catch((error) => log.error(`Failed to handle ${event}`, error))
   }).then((unlisten) => {
     if (nativeDisposed) unlisten()
@@ -358,6 +381,12 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     ? Promise.all([
         register("client-state:flush-requested", acknowledgeNativeClientStateRendererFlush, true),
         register("client-state:navigation-flush-requested", acknowledgeNativeClientStateNavigationFlush, false),
+        nativeView.listen<{ generation: number }>("client-state:navigation-flush-cancelled", ({ payload }) => {
+          cancelNavigation(payload.generation)
+        }).then((unlisten) => {
+          if (nativeDisposed) unlisten()
+          else nativeUnlisteners.push(unlisten)
+        }),
         nativeView.listen<{ generation: number }>("client-state:flush-cancelled", ({ payload }) => {
           if (nativeShutdownGeneration !== payload.generation) return
           resumeCapture()
@@ -481,6 +510,8 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     }
     const nativeFlush: NonNullable<Window["__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__"]> = async closing => {
       if (closing === "cancel") resumeCapture()
+      else if (closing === "navigation-cancel") cancelNavigation(0)
+      else if (closing === "navigation") await flushNavigation(0)
       else if (closing === "prepare") await flush(0)
       else if (closing === "release") await awaitRelease()
       else await flush()

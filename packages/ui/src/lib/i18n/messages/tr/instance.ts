@@ -150,6 +150,8 @@ export const instanceMessages = {
   "filesPanel.draftConflict": "Diskteki dosya değişti. Taslağınız korundu.",
   "filesPanel.draftLimit": "Taslağınız korunamadı. Kapatmadan önce son düzenlemelerinizi kaydedin veya kopyalayın.",
   "filesPanel.binary": "Bu ikili dosya için önizleme kullanılamıyor.",
+  "filesPanel.draftConflict": "Diskteki dosya değişti. Taslağınız korundu.",
+  "filesPanel.draftLimit": "Taslağınız korunamadı. Kapatmadan önce son düzenlemelerinizi kaydedin veya kopyalayın.",
   "filesPanel.image.before": "Önce",
   "filesPanel.image.after": "Sonra",
   "gitPanel.changes": "Değişiklikler",

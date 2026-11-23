@@ -1,12 +1,13 @@
 import { createSignal } from "solid-js"
 import { clearNativeClientState, commitNativeClientStatePartitions, loadNativeClientState, loadNativeClientStatePartition,
-  saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
+  loadNativeFileDrafts, saveNativeFileDraft, saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
 import { decodeClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState } from "./client-state-codec"
 import { canCommitClientSnapshotV2, createClientSnapshotV2Encoder, decodeClientSnapshotV2, isClientSnapshotV2 } from "./client-state-partitions"
 import type { ClientSnapshotV2, EncodedClientSnapshotV2 } from "./client-state-partitions"
 import { LEGACY_SESSION_PREVIEWS_KEY, SESSION_BROWSER_STATE_KEY, mergeSessionBrowsers, tabPreviewModes } from "./tab-view-state-codec"
 import { migrateLegacyTabPreviews } from "./tab-view-state-migration"
+import { changeWorkspaceFileDrafts, MAX_FILE_DRAFT_BYTES, normalizeWorkspaceFileDrafts, type WorkspaceFileDraft } from "./workspace-file-drafts-codec"
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
 export type { ClientSnapshotV2 }
 const SAVE_DEBOUNCE_MS = 250
@@ -24,6 +25,19 @@ const [loadedRestorableSession, setLoadedRestorableSession] = createSignal<Resto
 let initialized = false
 let initialization: Promise<void> | null = null
 let layout: Record<string, string> = Object.create(null)
+let fileDrafts: WorkspaceFileDraft[] = []
+const FILE_DRAFTS_KEY = "codenomad.workspace-file-drafts.v1"
+export class WorkspaceDraftFlushError extends Error {}
+type DraftValue = Omit<WorkspaceFileDraft, "key"> | null
+type DraftWrite = { value: DraftValue; base: { value: DraftValue }; finish: (ok: boolean) => void }
+const nativeDraftBase = new Map<string, { value: DraftValue }>()
+const nativeDraftReads = new Map<string, Promise<WorkspaceFileDraft | undefined>>()
+const pendingFileDrafts = new Map<string, DraftWrite>()
+const inflightFileDrafts = new Map<string, DraftWrite>()
+const keptFileDrafts = new Map<string, DraftWrite>()
+const refusedFileDrafts = new Set<string>()
+let draftTimer: ReturnType<typeof setTimeout> | undefined
+let draftWrites = Promise.resolve()
 let revision = 0
 let dirty = false
 let writeBlock: false | "snapshot" | "transaction" = false
@@ -271,6 +285,136 @@ export function updateRestorableSession(state: RestorableSessionState | null): v
   scheduleSave()
 }
 
+export function restoredWorkspaceFileDraft(key: string) {
+  if (!restorePreviousStateEnabled()) return
+  const queued = pendingFileDrafts.get(key) ?? inflightFileDrafts.get(key)
+  if (queued) return queued.value ? { key, ...queued.value } : undefined
+  if (!snapshotOwnsLayout) return fileDrafts.find(draft => draft.key === key)
+}
+
+export async function refreshWorkspaceFileDraft(key: string) {
+  if (!snapshotOwnsLayout || !clientStateIsPrimary() || !restorePreviousStateEnabled()) return restoredWorkspaceFileDraft(key)
+  const existing = nativeDraftReads.get(key)
+  if (existing) return existing
+  const base = nativeDraftBase.get(key)
+  const expected = base?.value
+  const reading = (async () => {
+    const fresh = await loadNativeFileDrafts(key)?.catch(() => undefined)
+    const pending = pendingFileDrafts.has(key) || inflightFileDrafts.has(key)
+    if (fresh && !pending && !refusedFileDrafts.has(key) && nativeDraftBase.get(key) === base && base?.value === expected) {
+      const next = normalizeWorkspaceFileDrafts(fresh).find(entry => entry.key === key)
+      if (next) nativeDraftBase.set(key, { value: { fingerprint: next.fingerprint, text: next.text } })
+      else nativeDraftBase.delete(key)
+      return next
+    }
+    return restoredWorkspaceFileDraft(key)
+  })().finally(() => nativeDraftReads.delete(key))
+  nativeDraftReads.set(key, reading)
+  return reading
+}
+
+export function keepRecoveredWorkspaceFileDraft({ key, fingerprint, text }: WorkspaceFileDraft) {
+  const base = nativeDraftBase.get(key)
+  if (!base || keptFileDrafts.has(key) || pendingFileDrafts.has(key) || inflightFileDrafts.has(key)
+    || base.value?.fingerprint !== fingerprint || base.value.text !== text) return
+  keptFileDrafts.set(key, { base, value: { fingerprint, text }, finish: () => {} })
+}
+
+/** Keep admitted drafts intact if a new or larger draft exceeds the storage budget. */
+export function updateWorkspaceFileDraft(key: string, value: DraftValue, finish: (ok: boolean) => void): boolean {
+  if (!initialized || !clientStateIsPrimary()) return false
+  if (value && !changeWorkspaceFileDrafts([], key, value)) {
+    keptFileDrafts.delete(key)
+    pendingFileDrafts.delete(key)
+    inflightFileDrafts.delete(key)
+    refusedFileDrafts.add(key)
+    return false
+  }
+  const base = nativeDraftBase.get(key) ?? { value: null }
+  if (!restorePreviousStateEnabled() && value) {
+    if (pendingFileDrafts.size >= 32 && !pendingFileDrafts.has(key)) {
+      inflightFileDrafts.delete(key)
+      refusedFileDrafts.add(key)
+      return false
+    }
+    refusedFileDrafts.delete(key)
+    keptFileDrafts.delete(key)
+    pendingFileDrafts.set(key, { value, base, finish })
+    return true
+  }
+  const queued = pendingFileDrafts.get(key) ?? inflightFileDrafts.get(key)
+  const previous = queued ? queued.value : base.value
+  if (!snapshotOwnsLayout) {
+    pendingFileDrafts.delete(key)
+    const next = changeWorkspaceFileDrafts(fileDrafts, key, value)
+    try {
+      if (!next) throw new Error("Draft budget exceeded")
+      window.sessionStorage.setItem(FILE_DRAFTS_KEY, JSON.stringify(next))
+      fileDrafts = next
+      refusedFileDrafts.delete(key)
+      return true
+    } catch { refusedFileDrafts.add(key); return false }
+  }
+  // The host decides the shared profile limit under its ownership lock.
+  if (!refusedFileDrafts.has(key)
+    && previous?.text === value?.text && previous?.fingerprint === value?.fingerprint) return true
+  keptFileDrafts.delete(key)
+  nativeDraftBase.set(key, base)
+  pendingFileDrafts.set(key, { value, base, finish })
+  clearTimeout(draftTimer)
+  draftTimer = setTimeout(flushWorkspaceFileDrafts, SAVE_DEBOUNCE_MS)
+  return true
+}
+
+function flushWorkspaceFileDrafts() {
+  clearTimeout(draftTimer)
+  const changes = [...pendingFileDrafts].filter(([, change]) => restorePreviousStateEnabled() || !change.value)
+  if (!snapshotOwnsLayout) {
+    pendingFileDrafts.clear()
+    for (const [key, { value, finish }] of changes) finish(updateWorkspaceFileDraft(key, value, finish))
+    return draftWrites
+  }
+  for (const [key] of changes) pendingFileDrafts.delete(key)
+  if (!changes.length) return draftWrites
+  for (const [key, change] of changes) {
+    inflightFileDrafts.set(key, change)
+    nativeDraftBase.set(key, change.base)
+  }
+  draftWrites = draftWrites.then(async () => {
+    for (const [key, change] of changes) {
+      const { value, base, finish } = change
+      const accepted = await (saveNativeFileDraft({ key, draft: value, expected: base.value })?.catch(() => false) ?? false)
+      if (accepted) base.value = value
+      if (inflightFileDrafts.get(key) === change) {
+        inflightFileDrafts.delete(key)
+        if (!pendingFileDrafts.has(key)) {
+          if (accepted) {
+            refusedFileDrafts.delete(key)
+            if (value) keptFileDrafts.set(key, change)
+            if (!value && nativeDraftBase.get(key) === base) nativeDraftBase.delete(key)
+          } else if (value && !restorePreviousStateEnabled()) {
+            pendingFileDrafts.set(key, change)
+            continue
+          } else {
+            refusedFileDrafts.add(key)
+            if (!value) pendingFileDrafts.set(key, change)
+          }
+          finish(accepted)
+        }
+      }
+    }
+  })
+  return draftWrites
+}
+
+async function loadWorkspaceFileDrafts() {
+  if (snapshotOwnsLayout) return
+  try {
+    const raw = window.sessionStorage.getItem(FILE_DRAFTS_KEY)
+    fileDrafts = raw && raw.length <= MAX_FILE_DRAFT_BYTES ? normalizeWorkspaceFileDrafts(JSON.parse(raw)) : []
+  } catch { fileDrafts = [] }
+}
+
 export function readClientLayoutValue(key: string): string | null {
   if (!isValidLayoutKey(key)) return null
   if (!clientStateIsPrimary() || !snapshotOwnsLayout) return readLegacyLayoutValue(key)
@@ -316,6 +460,29 @@ export function removeClientLayoutValue(key: string): void {
   if (!hasLayoutKey(key)) return
   delete layout[key]
   scheduleSave()
+}
+
+export async function flushWorkspaceFileDraftsForClose(): Promise<void> {
+  if (!snapshotOwnsLayout) return
+  await flushWorkspaceFileDrafts()
+  if (!restorePreviousStateEnabled()) return
+  if (refusedFileDrafts.size) throw new WorkspaceDraftFlushError("Workspace file drafts could not be retained")
+  if (!keptFileDrafts.size && !pendingFileDrafts.size && !inflightFileDrafts.size) return
+  const fresh = await loadNativeFileDrafts()?.catch(() => undefined)
+  if (!fresh) throw new WorkspaceDraftFlushError("Workspace file drafts could not be checked")
+  const latest = new Map(normalizeWorkspaceFileDrafts(fresh).map(draft => [draft.key, draft]))
+  for (const [key, change] of keptFileDrafts) {
+    const stored = latest.get(key)
+    const { value } = change
+    if (stored?.fingerprint === value?.fingerprint && stored?.text === value?.text) continue
+    if (!stored && keptFileDrafts.get(key) === change
+      && await saveNativeFileDraft({ key, draft: value, expected: null })?.catch(() => false)) continue
+    change.finish(false)
+    throw new WorkspaceDraftFlushError("A workspace file draft changed in another window")
+  }
+  if (refusedFileDrafts.size || pendingFileDrafts.size || inflightFileDrafts.size) {
+    throw new WorkspaceDraftFlushError("A newer workspace file draft is not confirmed")
+  }
 }
 
 export async function flushClientState(): Promise<void> {
@@ -365,6 +532,7 @@ export async function setRestorePreviousStateEnabled(enabled: boolean): Promise<
       if (!await setNativeRestoreEnabled(true)) throw new Error("Native restore preference update was rejected")
       writeBlock = false
       setRestorePreviousStateEnabledSignal(true)
+      await flushWorkspaceFileDrafts()
       return
     }
     setRestorePreviousStateEnabledSignal(false)
@@ -393,6 +561,7 @@ export function initializeClientState(): Promise<void> {
       transactionLayoutWrites.clear()
       layoutMigrations.clear()
       initialized = true
+      if (loaded.isPrimary) await loadWorkspaceFileDrafts()
       if (!loaded.isPrimary || !loaded.restoreEnabled) return
       let snapshot: ClientSnapshotV1 | null
       const verified = new Set<string>()

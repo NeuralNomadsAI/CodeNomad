@@ -1,6 +1,9 @@
 //! Session-owned transcript disclosure actions.
 use crate::State;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::{
+    cell::RefCell,
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
+};
 
 const RENDER_INTERVAL: f64 = 0.2;
 
@@ -11,6 +14,7 @@ pub struct Display {
     active: SessionDisplay,
     saved: HashMap<String, SessionDisplay>,
     stream: StreamRender,
+    live_ansi: RefCell<VecDeque<(String, rune_theme_codenomad::ansi::Stream)>>,
     pub(super) diffs: super::tool_diff::Cache,
 }
 
@@ -23,12 +27,21 @@ struct StreamRender {
 
 #[derive(Default)]
 struct SessionDisplay {
+    reading: super::reading::Reading,
     toggled: HashSet<String>,
     revealed: HashMap<String, usize>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     compact_diffs: (u64, HashSet<String>),
 }
 impl Display {
+    pub(crate) fn evict_rendered(&mut self) {
+        self.diffs = Default::default();
+        self.stream = StreamRender::default();
+    }
+    pub(super) fn reading_mut(&mut self) -> &mut super::reading::Reading {
+        &mut self.active.reading
+    }
+
     pub fn bind(&mut self, server: &str, workspace: &str, session: &str) {
         if !self
             .workspace
@@ -47,6 +60,7 @@ impl Display {
                 std::mem::replace(&mut self.active, next),
             );
             self.stream = StreamRender::default();
+            self.live_ansi.get_mut().clear();
             self.diffs = Default::default();
         }
     }
@@ -84,6 +98,24 @@ impl Display {
 
     pub fn steps(&self, key: &str) -> usize {
         self.active.revealed.get(key).copied().unwrap_or_default()
+    }
+
+    pub(super) fn live_ansi(&self, key: &str, source: &str, wrap: bool) -> rune::El {
+        let mut cache = self.live_ansi.borrow_mut();
+        let prior = cache
+            .iter()
+            .position(|(id, _)| id == key)
+            .and_then(|index| cache.remove(index));
+        if source.len() > 256 * 1024 {
+            return rune_theme_codenomad::ansi::code(source, wrap);
+        }
+        let (id, mut stream) = prior.unwrap_or_else(|| (key.into(), Default::default()));
+        let output = stream.code(source, wrap);
+        if cache.len() == 4 {
+            cache.pop_front();
+        }
+        cache.push_back((id, stream));
+        output
     }
 
     pub fn stream_version(&self) -> u64 {

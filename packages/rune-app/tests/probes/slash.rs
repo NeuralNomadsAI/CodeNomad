@@ -25,13 +25,16 @@ pub fn run() {
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     rt.frame(0.0);
-    assert!(rt.find("attachments-disabled").is_some());
-    let files = [std::path::PathBuf::from("not-read.txt")];
-    rt.drop_files(files.to_vec(), Some((x, y)));
-    rt.paste_content(rune::ClipboardContent::default().with_files(files));
-    rt.frame(0.0);
-    assert!(rt.state.draft.text.is_empty());
-    assert!(rt.state.composer.draft.attachments.is_empty());
+    let supported = rt.state.composer.picker.attachments_supported();
+    assert_eq!(rt.find("attachments-disabled").is_none(), supported);
+    if !supported {
+        let files = [std::path::PathBuf::from("not-read.txt")];
+        rt.drop_files(files.to_vec(), Some((x, y)));
+        rt.paste_content(rune::ClipboardContent::default().with_files(files));
+        rt.frame(0.0);
+        assert!(rt.state.draft.text.is_empty());
+        assert!(rt.state.composer.draft.attachments.is_empty());
+    }
     rt.paste("/review résumé 🦀");
     rt.frame(0.0);
     assert_eq!(rt.state.draft.text, "/review résumé 🦀");

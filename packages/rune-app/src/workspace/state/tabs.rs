@@ -7,6 +7,7 @@ fn stash(s: &mut State) {
     s.attachments.cancel();
     s.composer.picker.reset();
     s.composer.device.cancel();
+    crate::chat::suspend(s);
     if let Some(files) = &mut s.files {
         files.activate(false);
     }
@@ -15,7 +16,15 @@ fn stash(s: &mut State) {
     }
     let cache = Cache::take(s);
     if let Some(ui) = &mut s.workspace {
+        let stamp = ui
+            .entries
+            .iter()
+            .map(|entry| entry.history_touched)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
         let entry = &mut ui.entries[ui.active];
+        entry.history_touched = stamp;
         entry.catalogue.pause(ui.clock);
         entry.cache = Some(cache);
         entry.wanted_panels = s.shell.wanted;
@@ -94,7 +103,7 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
             crate::launcher::restore(s, saved);
         }
     }
-    tx.scroll_to_bottom_instant("history");
+    crate::chat::resume(s, tx);
     tx.instant();
 }
 pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
@@ -118,6 +127,7 @@ pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
         ui.changed();
     }
     activate(s, tx);
+    super::history_budget::enforce(s);
     capture(s);
 }
 pub fn can_new(s: &State) -> bool {
@@ -139,6 +149,7 @@ pub fn new_tab(s: &mut State, tx: &mut Tx) {
         ui.changed();
     }
     activate(s, tx);
+    super::history_budget::enforce(s);
     capture(s);
 }
 pub fn close(s: &mut State, id: &str, tx: &mut Tx) {

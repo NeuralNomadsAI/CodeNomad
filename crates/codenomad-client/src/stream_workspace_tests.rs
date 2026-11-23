@@ -54,8 +54,8 @@ fn an_upstream_reconnect_invalidates_picker_catalogues_without_a_new_sse_connect
             input.try_recv().unwrap(),
             Input::Workspace(7, WorkspaceEvent::ComposerCataloguesChanged)
         ));
-        assert!(matches!(input.try_recv().unwrap(), Input::Hint(7, _)));
-        assert!(matches!(input.try_recv().unwrap(), Input::Hint(7, _)));
+        assert!(matches!(input.try_recv().unwrap(), Input::Available(7, _)));
+        assert!(matches!(input.try_recv().unwrap(), Input::Available(7, _)));
         assert!(input.is_empty());
     });
 }

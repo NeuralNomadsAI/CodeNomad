@@ -1,4 +1,5 @@
 mod panels;
+pub(crate) mod render;
 mod right_panel;
 mod sidebar;
 
@@ -120,9 +121,8 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
                         return false;
                     }
                     files.close_reader();
-                    files.reading.restore(tx);
                 }
-                tx.instant();
+                crate::chat::reading::restore_position(s, tx);
                 true
             }
             Key::Function(11) if crate::platform::titlebar::available() => {

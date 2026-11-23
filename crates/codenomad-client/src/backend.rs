@@ -202,6 +202,28 @@ impl Backend {
         }
         Err("recovery page budget reached".into())
     }
+
+    pub(crate) async fn reading_window(
+        &self,
+        target: &crate::recovery::demand::Target,
+    ) -> Result<Page> {
+        use crate::recovery::demand::Target;
+        let request = match target {
+            Target::Latest => json!({"kind":"latest"}),
+            Target::Around(id) => json!({"kind":"around", "messageID":id}),
+        };
+        let mut page = match (target, self.page(request).await) {
+            (Target::Around(_), Err(error)) if error.is::<history::AnchorMissing>() => {
+                self.page(json!({"kind":"latest"})).await?
+            }
+            (Target::Around(id), Ok(page)) if !page.rows.iter().any(|row| &row.id == id) => {
+                return Err("resident anchor missing".into());
+            }
+            (_, result) => result?,
+        };
+        self.read_running(&mut page).await?;
+        Ok(page)
+    }
 }
 pub async fn read_json(response: Response) -> Result<Value> {
     read_json_limited(response, 2 * 1024 * 1024).await

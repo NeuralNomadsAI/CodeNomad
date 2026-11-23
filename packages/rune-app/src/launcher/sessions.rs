@@ -267,6 +267,7 @@ pub(super) fn retire_session(s: &mut State, id: &str) {
     }
     s.commands = None;
     s.incoming = None;
+    s.reader = None;
     s.agent = None;
     s.files = None;
     s.attachments = Default::default();
@@ -311,6 +312,7 @@ pub(super) fn bind(
     s.transcript_display.bind(&b.base, &b.workspace, &b.session);
     s.chat_title = title;
     if !same_session {
+        s.reader = None;
         crate::files::bind(s, &b);
         s.agent = None;
         s.attachments = Default::default();
@@ -327,6 +329,7 @@ pub(super) fn bind(
         }
     }
     s.draft = TextEdit::new(draft);
+    crate::composer::literal::restore(&mut s.draft, &s.composer.draft.literal_spans);
     s.phase = Phase::Loading;
     crate::git::online(s, false);
     crate::git::connected_placed(s, &b, slug);
@@ -359,6 +362,7 @@ pub fn back(s: &mut State) {
     s.agent = None;
     s.commands = None;
     s.incoming = None;
+    s.reader = None;
     s.files = None;
     if let Some(git) = &mut s.git.owner {
         git.online(false);

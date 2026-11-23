@@ -107,30 +107,6 @@ fn document_link(s: &State) -> impl Fn(&mut State, &str, &mut rune::Tx) + 'stati
         }
     }
 }
-pub fn body(s: &State, history: El, expanded: bool) -> El {
-    let Some(ui) = &s.files else {
-        return history;
-    };
-    let main = theme::pages(history, super::has_preview(s).then(|| reader(s)));
-    let drawer = ui.drawer();
-    theme::split(
-        main,
-        (!ui.shell_managed && drawer.pinned).then(|| tree(s, drawer.width, false)),
-        drawer.width,
-        expanded,
-    )
-    .key("files-host")
-    .on_layout_tx({
-        let scope = s.input_scope.clone();
-        move |s: &mut State, rect, tx| {
-            if s.current_scope(&scope) {
-                if let Some(ui) = &mut s.files {
-                    ui.resize(rect[2], tx);
-                }
-            }
-        }
-    })
-}
 pub(crate) fn reader(s: &State) -> El {
     layout::with_source_palette(|| reader_content(s))
 }
@@ -322,7 +298,7 @@ fn reader_content(s: &State) -> El {
             if let Some(ui) = &mut s.files {
                 if scope == ui.document.scope() {
                     ui.close_reader();
-                    ui.reading.restore(tx);
+                    crate::chat::reading::restore_position(s, tx);
                 }
             }
         }),

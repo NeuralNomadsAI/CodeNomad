@@ -55,6 +55,7 @@ pub struct Ui {
     pub pending_known: bool,
     pub online: bool,
     reading: bool,
+    activity_during_job: bool,
     trailing: Option<bool>,
 }
 pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
@@ -102,6 +103,7 @@ impl Ui {
     pub fn rebind(&mut self, handle: Handle) {
         self.handle = handle;
         self.reading = false;
+        self.activity_during_job = false;
         self.trailing = None;
         self.busy = false;
         self.stopping = false;
@@ -200,6 +202,7 @@ impl Ui {
             pending_known: false,
             online: false,
             reading: false,
+            activity_during_job: false,
             trailing: None,
         };
         ui.refresh(true);
@@ -212,6 +215,15 @@ impl Ui {
         }
         if self.handle.jobs.try_send(Job::Read(catalog)).is_ok() {
             self.reading = true
+        }
+    }
+
+    pub(crate) fn observe_running(&mut self, running: bool) {
+        let refresh = !self.known || self.running != running;
+        self.running = running;
+        self.activity_during_job |= self.reading || self.busy;
+        if refresh {
+            self.refresh(false);
         }
     }
     pub fn act(&mut self, action: Action) {
@@ -243,10 +255,13 @@ impl Ui {
             .collect()
     }
     fn snapshot(&mut self, s: Snapshot) {
+        let current_activity = !std::mem::take(&mut self.activity_during_job);
         self.known = s.session_known;
         if s.session_known {
             self.current = s.current;
-            self.running = s.running
+            if current_activity {
+                self.running = s.running;
+            }
         }
         if let Some(models) = s.models {
             self.models = models

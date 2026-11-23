@@ -161,6 +161,8 @@ export const instanceMessages = {
   "filesPanel.draftConflict": "ディスク上のファイルが変更されました。下書きは保持されています。",
   "filesPanel.draftLimit": "下書きを保持できませんでした。閉じる前に最新の変更を保存するかコピーしてください。",
   "filesPanel.binary": "このバイナリファイルはプレビューできません。",
+  "filesPanel.draftConflict": "ディスク上のファイルが変更されました。下書きは保持されています。",
+  "filesPanel.draftLimit": "下書きを保持できませんでした。閉じる前に最新の変更を保存するかコピーしてください。",
   "filesPanel.image.before": "変更前",
   "filesPanel.image.after": "変更後",
   "gitPanel.changes": "変更",

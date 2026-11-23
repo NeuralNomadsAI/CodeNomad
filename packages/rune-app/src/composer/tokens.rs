@@ -40,11 +40,16 @@ pub fn query(text: &str, caret: usize) -> Option<Query> {
     None
 }
 
-pub fn mention(text: &str, token: &str) -> Option<Mention> {
+pub fn mention(text: &str, token: &str, pasted: &[Range<usize>]) -> Option<Mention> {
     if token.is_empty() {
         return None;
     }
-    let at = text.find(token)?;
+    let (at, _) = text.match_indices(token).find(|(start, _)| {
+        let end = start + token.len();
+        pasted
+            .iter()
+            .all(|span| end <= span.start || *start >= span.end)
+    })?;
     let start = text[..at].encode_utf16().count();
     Some(Mention {
         start,
@@ -78,7 +83,7 @@ mod tests {
         assert_eq!(query("/test @name", 5), Some(Query::Command(0..5)));
         assert_eq!(query("/test @name", 11), Some(Query::Mention(6..11)));
         assert_eq!(
-            mention("🦀 Ask @reviewer now", "@reviewer"),
+            mention("🦀 Ask @reviewer now", "@reviewer", &[]),
             Some(Mention {
                 start: 7,
                 end: 16,

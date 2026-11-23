@@ -27,6 +27,7 @@ pub(super) struct Entry {
     key: String,
     saved: Tab,
     cache: Option<Cache>,
+    history_touched: u64,
     project: Option<Project>,
     sessions: Vec<Session>,
     listed_sessions: HashSet<String>,
@@ -203,6 +204,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         key,
         saved,
         cache: None,
+        history_touched: 0,
         project: None,
         sessions: Vec::new(),
         listed_sessions: HashSet::new(),
@@ -520,6 +522,9 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if became_ready {
         resume(s, tx);
     }
+    if changed {
+        history_budget::enforce(s);
+    }
     changed |= catalogue::poll(s, now, tx);
     changed || became_ready || error != previous_error
 }
@@ -543,5 +548,8 @@ pub fn status(s: &State) -> Option<&'static str> {
 #[cfg(test)]
 mod authentication_tests;
 mod catalogue;
+mod history_budget;
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(crate) use history_budget::evict_for_probe;
 #[cfg(test)]
 mod tests;

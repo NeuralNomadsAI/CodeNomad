@@ -120,10 +120,28 @@ pub(super) fn run() {
     wait(&mut rt, "unstaged again", |rt| {
         rt.find(UNSTAGED).is_some() && rt.find(STAGED).is_none()
     });
-    tap(&mut rt, &format!("git-row-unstaged:stage:{FILE}"));
-    wait(&mut rt, "restaged", |rt| {
-        rt.find(STAGED).is_some() && rt.find(UNSTAGED).is_none()
-    });
+    tap(&mut rt, "git-section-staged");
+    drag(&mut rt, UNSTAGED, "git-section-staged");
+    tap(&mut rt, "git-section-staged");
+    wait(
+        &mut rt,
+        "staged by dropping on the collapsed section",
+        |rt| rt.find(STAGED).is_some() && rt.find(UNSTAGED).is_none(),
+    );
+    tap(&mut rt, STAGED);
+    tap(&mut rt, "git-bulk-staged");
+    wait(
+        &mut rt,
+        "unstaged through the actions above the commit field",
+        |rt| rt.find(UNSTAGED).is_some() && rt.find(STAGED).is_none(),
+    );
+    tap(&mut rt, UNSTAGED);
+    tap(&mut rt, "git-bulk-unstaged");
+    wait(
+        &mut rt,
+        "restaged through the actions above the commit field",
+        |rt| rt.find(STAGED).is_some() && rt.find(UNSTAGED).is_none(),
+    );
 
     type_text(&mut rt, "git-commit-message", "Commit from Rune");
     wait(
@@ -170,6 +188,15 @@ pub(super) fn run() {
     wait(&mut rt, "linked checkout history", |rt| {
         visible_text(rt, "/git-history-list", "Initial Git panel fixture")
     });
+    let project = std::path::PathBuf::from(std::env::var_os("RUNE_TEST_FOLDER").unwrap());
+    let linked = project.with_file_name("review");
+    assert!(rt.elements().iter().any(|element| {
+        !element.exiting
+            && element.key.as_deref() == Some("git-worktree-trigger")
+            && element.help.as_deref().is_some_and(|directory| {
+                codenomad_client::same_server_path(directory, &linked.to_string_lossy())
+            })
+    }));
     assert!(!crate::git::has_preview(&rt.state));
     assert!(rt.find("composer").is_some());
 
@@ -178,14 +205,42 @@ pub(super) fn run() {
         workspace::active_session(&rt.state) == Some("ses_another")
             && rt.state.phase == Phase::Ready
     });
+    rt.set_viewport((1100.0, 920.0), 1.0);
+    rt.frame(1.0 / 60.0);
     tap_mode(&mut rt, 0);
     wait(&mut rt, "linked Workspace row", |rt| {
-        rt.find(&eye).is_some()
+        rt.find(&eye).is_some() && rt.state.messages.len() == 50
     });
-    let (x, y) = rt.find(&eye).unwrap();
-    rt.pointer_move(x, y);
-    rt.frame(1.0 / 60.0);
-    tap(&mut rt, &eye);
+    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 1600.0));
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    let reading = super::recovery::anchor(&rt);
+    let open = |rt: &mut Runtime<State>| {
+        let (x, y) = rt.find(&eye).unwrap();
+        rt.pointer_move(x, y);
+        rt.frame(1.0 / 60.0);
+        tap(rt, &eye);
+        wait(rt, "linked file replaces the transcript", |rt| {
+            rt.find("file-editor").is_some() && rt.find("history").is_none()
+        });
+    };
+    for close in ["file-close", eye.as_str(), "Escape"] {
+        open(&mut rt);
+        if close == "Escape" {
+            rt.key(rune::KeyEvent {
+                key: rune::Key::Escape,
+                mods: Default::default(),
+            });
+        } else {
+            tap(&mut rt, close);
+        }
+        wait(&mut rt, "linked transcript remounted", |rt| {
+            rt.find(&reading.0).is_some()
+        });
+        super::recovery::check_anchor(&rt, &reading);
+    }
+    open(&mut rt);
     wait(&mut rt, "linked editor", |rt| {
         rt.find("file-editor").is_some()
             && rt
@@ -249,6 +304,20 @@ pub(super) fn run() {
 
 fn tap_mode(rt: &mut Runtime<State>, index: usize) {
     tap(rt, &format!("git-mode/segment{index}"));
+}
+
+fn drag(rt: &mut Runtime<State>, source: &str, target: &str) {
+    let (x, y) = rt.find(source).expect("Git drag source");
+    let (end_x, end_y) = rt.find(target).expect("Git drop target");
+    rt.pointer_down(x, y);
+    rt.frame(1.0 / 60.0);
+    for i in 1..=8 {
+        let t = i as f32 / 8.0;
+        rt.pointer_move(x + (end_x - x) * t, y + (end_y - y) * t);
+        rt.frame(1.0 / 60.0);
+    }
+    rt.pointer_up(end_x, end_y);
+    rt.frame(1.0 / 60.0);
 }
 
 fn press(rt: &mut Runtime<State>, key: &str) -> bool {

@@ -4,6 +4,8 @@ import { productionModule } from "../../tests/test-support/production-ast"
 import { deferred } from "../../tests/test-support/deferred"
 import { createEffect, createMemo, createRoot, createSignal, on, onCleanup, untrack } from "solid-js"
 import { z } from "zod"
+import { sha256 } from "@noble/hashes/sha2.js"
+import { bytesToHex } from "@noble/hashes/utils.js"
 import { BackgroundReadQueue } from "../lib/background-read-queue"
 import { integrationAttachChoice, integrationLink } from "../lib/integration-row-state"
 
@@ -13,6 +15,7 @@ function view(path: string, imports: Record<string, unknown>) {
   return productionModule(new URL(path, import.meta.url), { backendOf: () => ({ api: imports.serverApi }), ...imports })
 }
 const solid = { createEffect, createMemo, createSignal, on, onCleanup, untrack }
+const fileDraftImports = { sha256, bytesToHex, instances: () => new Map(), localServerMeta: { meta: () => undefined } }
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 function attachment() {
   let controller = new AbortController()
@@ -32,7 +35,7 @@ test("files: revocation during the conflict read cannot prepare a write or lose 
   const backend = attachment(), disk = deferred<{ contents: string }>()
   let writes = 0, signal!: AbortSignal, close!: () => void
   const { useWorkspaceFileEditor } = view("./workspace-file-editor.ts", {
-    ...solid, serverApi: {
+    ...solid, ...fileDraftImports, serverApi: {
       previewWorkspaceFile: (_id: string, _path: string, _directory: string, requestSignal: AbortSignal) => { signal = requestSignal; return disk.promise },
       writeWorkspaceFile: async () => { writes++ },
     }, showConfirmDialog: async () => true, showToastNotification: () => {}, invalidateFilesystemCaches: () => {},
@@ -59,7 +62,7 @@ test("files: revocation during confirmation prevents the later write", async () 
   const backend = attachment(), consent = deferred<boolean>()
   let writes = 0, close!: () => void
   const { useWorkspaceFileEditor } = view("./workspace-file-editor.ts", {
-    ...solid, serverApi: { previewWorkspaceFile: async () => ({ contents: "changed on disk" }), writeWorkspaceFile: async () => { writes++ } },
+    ...solid, ...fileDraftImports, serverApi: { previewWorkspaceFile: async () => ({ contents: "changed on disk" }), writeWorkspaceFile: async () => { writes++ } },
     showConfirmDialog: () => consent.promise, showToastNotification: () => {}, invalidateFilesystemCaches: () => {},
   })
   const target = { directory: "/repo", path: "confirm.txt" }

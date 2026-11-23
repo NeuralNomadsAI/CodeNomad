@@ -122,7 +122,7 @@ fn retained_empty_device_files_consume_the_window_file_budget() {
 }
 
 #[test]
-fn oversized_paste_keeps_the_last_valid_draft_and_the_same_tab_sibling() {
+fn oversized_inline_edit_keeps_the_last_valid_draft_and_the_same_tab_sibling() {
     let mut s = init();
     let mut ui = Ui::new();
     ui.ready = true;
@@ -140,8 +140,10 @@ fn oversized_paste_keeps_the_last_valid_draft_and_the_same_tab_sibling() {
     rt.pointer_up(x, y);
     rt.frame(0.0);
     let long = "🦀".repeat(crate::workspace::MAX_DRAFT / 2 + 1);
-    rt.paste(long.as_str());
-    rt.frame(0.0);
+    rt.update(|s, tx| {
+        s.draft.paste(&long);
+        draft_changed(s, tx);
+    });
     rt.update(|s, _| {
         assert!(s.draft.text.contains(&long));
         let ui = s.workspace.as_ref().unwrap();

@@ -161,6 +161,8 @@ export const instanceMessages = {
   "filesPanel.draftConflict": "The file changed on disk. Your draft was kept.",
   "filesPanel.draftLimit": "Could not keep this draft. Save or copy your latest edits before closing.",
   "filesPanel.binary": "Preview unavailable for this binary file.",
+  "filesPanel.draftConflict": "The file changed on disk. Your draft was kept.",
+  "filesPanel.draftLimit": "Could not keep this draft. Save or copy your latest edits before closing.",
   "filesPanel.image.before": "Before",
   "filesPanel.image.after": "After",
   "gitPanel.changes": "Changes",
