@@ -290,7 +290,8 @@ fn audit_settlement_during_edit(permission: bool) {
                     permissions: Some(vec![]),
                     forms: Some(vec![]),
                 },
-                false
+                false,
+                0
             ))
             .is_ok()
     );

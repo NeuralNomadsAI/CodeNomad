@@ -6,7 +6,7 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::FreeLibrary,
-    Globalization::{UDAT_PATTERN, UErrorCode, UFieldPosition},
+    Globalization::{UDAT_PATTERN, UDAT_SHORT, UErrorCode, UFieldPosition},
     System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW},
 };
 
@@ -43,6 +43,8 @@ struct Icu {
     close_date: Close,
 }
 
+static ICU: OnceLock<Option<Icu>> = OnceLock::new();
+
 impl Icu {
     fn load() -> Option<Self> {
         // Only system exports are loaded. Signatures match Win32::Globalization's ICU ABI.
@@ -78,13 +80,11 @@ impl Icu {
 }
 
 pub(super) fn month_day(millis: f64, locale: &str) -> Option<String> {
-    static ICU: OnceLock<Option<Icu>> = OnceLock::new();
     let icu = ICU.get_or_init(Icu::load).as_ref()?;
     let locale = CString::new(locale).ok()?;
     let locale = locale.as_ptr().cast();
     let skeleton = [b'M' as u16, b'M' as u16, b'M' as u16, b'd' as u16];
     let mut pattern = [0; 128];
-    let mut text = [0; 128];
     let mut status = 0;
     // Each handle belongs to this call. The null zone asks ICU for the user's default zone.
     unsafe {
@@ -104,32 +104,54 @@ pub(super) fn month_day(millis: f64, locale: &str) -> Option<String> {
         if status > 0 || len <= 0 || len as usize >= pattern.len() {
             return None;
         }
-        status = 0;
-        let format = (icu.open_date)(
-            UDAT_PATTERN,
-            UDAT_PATTERN,
-            locale,
-            null(),
-            0,
-            pattern.as_ptr(),
-            len,
-            &mut status,
-        );
-        if format.is_null() {
-            return None;
+        icu.format(millis, locale, UDAT_PATTERN, &pattern[..len as usize])
+    }
+}
+
+pub(super) fn short_date_time(millis: f64, locale: &str) -> Option<String> {
+    let icu = ICU.get_or_init(Icu::load).as_ref()?;
+    let locale = CString::new(locale).ok()?;
+    icu.format(millis, locale.as_ptr().cast(), UDAT_SHORT, &[])
+}
+
+impl Icu {
+    fn format(
+        &self,
+        millis: f64,
+        locale: *const u8,
+        style: i32,
+        pattern: &[u16],
+    ) -> Option<String> {
+        let mut status = 0;
+        let mut text = [0; 128];
+        // ICU owns the formatter until it is closed here; a null zone uses the local timezone.
+        unsafe {
+            let format = (self.open_date)(
+                style,
+                style,
+                locale,
+                null(),
+                0,
+                pattern.as_ptr(),
+                pattern.len() as i32,
+                &mut status,
+            );
+            if format.is_null() {
+                return None;
+            }
+            let len = (self.format_date)(
+                format.cast(),
+                millis,
+                text.as_mut_ptr(),
+                text.len() as i32,
+                null_mut(),
+                &mut status,
+            );
+            (self.close_date)(format);
+            if status > 0 || len <= 0 {
+                return None;
+            }
+            String::from_utf16(text.get(..len as usize)?).ok()
         }
-        let len = (icu.format_date)(
-            format.cast(),
-            millis,
-            text.as_mut_ptr(),
-            text.len() as i32,
-            null_mut(),
-            &mut status,
-        );
-        (icu.close_date)(format);
-        if status > 0 || len <= 0 {
-            return None;
-        }
-        String::from_utf16(text.get(..len as usize)?).ok()
     }
 }

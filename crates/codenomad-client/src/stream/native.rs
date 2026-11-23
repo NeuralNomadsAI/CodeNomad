@@ -40,13 +40,26 @@ pub(super) async fn read_native(
     if let Some(quota) = &quota {
         quota.transport(true);
     }
-    opened(epoch, out, state).await?;
-    let mut chunks = response.bytes_stream();
-    let mut parser = Parser::default();
-    let mut frames = Vec::new();
-    while let Some(chunk) = chunks.next().await {
-        collect(&mut parser, &chunk?, quota.as_ref(), &mut frames)?;
-        for frame in frames.drain(..) {
+    // One bounded frame of read-ahead keeps SSE authority ahead of transcript dispatch.
+    let (send, receive) = crate::bounded(1);
+    let read = async move {
+        let result: Result<()> = async {
+            let mut chunks = response.bytes_stream();
+            let mut parser = Parser::default();
+            while let Some(chunk) = chunks.next().await {
+                receive_chunk(&mut parser, &chunk?, quota.as_ref(), &send).await?;
+            }
+            Err("event stream ended".into())
+        }
+        .await;
+        if let Some(quota) = &quota {
+            quota.transport(false);
+        }
+        Ok(result)
+    };
+    let route = async move {
+        opened(epoch, out, state).await?;
+        while let Ok(frame) = receive.recv().await {
             match frame {
                 Parsed::Data(kind, data) => {
                     dispatch(b, epoch, out, state, &connection, &kind, &data).await?;
@@ -57,17 +70,18 @@ pub(super) async fn read_native(
                 }
             }
         }
-    }
-    Err("event stream ended".into())
+        Ok(())
+    };
+    let (read, ()) = futures_lite::future::try_zip(read, route).await?;
+    read
 }
 
-pub(super) fn collect(
+pub(super) async fn receive_chunk(
     parser: &mut Parser,
     chunk: &[u8],
     quota: Option<&crate::provider_usage::Ingress>,
-    frames: &mut Vec<Parsed>,
+    frames: &Sender<Parsed>,
 ) -> Result<()> {
-    // Qualify every event already received in this chunk before recovery can stall dispatch.
     for byte in chunk {
         if let Some(frame) = parser.byte(*byte)? {
             if let Some(quota) = quota {
@@ -79,7 +93,20 @@ pub(super) fn collect(
                     _ => {}
                 }
             }
-            frames.push(frame);
+            match frames.try_send(frame) {
+                Ok(()) => {}
+                Err(crate::TrySendError::Full(frame)) => {
+                    if let Some(quota) = quota {
+                        quota.backpressure(true);
+                    }
+                    let sent = frames.send(frame).await;
+                    if let Some(quota) = quota {
+                        quota.backpressure(false);
+                    }
+                    sent?;
+                }
+                Err(crate::TrySendError::Closed(_)) => return Err("event reader closed".into()),
+            }
         }
     }
     Ok(())

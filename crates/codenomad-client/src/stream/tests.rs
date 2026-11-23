@@ -23,28 +23,36 @@ fn received_credentials_revoke_quota_authority_before_a_full_recovery_queue() {
                     "type":"instance.event", "instanceId":"project", "event":{"type":kind}
                 })
             };
-            let chunk = format!(
-                "data: {}\n\ndata: {}\n\n",
-                payload("provider.updated"),
-                payload("credential.switched")
-            );
-            let mut frames = Vec::new();
-            native::collect(
-                &mut frames::Parser::default(),
-                chunk.as_bytes(),
-                state.quota_ingress(&backend).as_ref(),
-                &mut frames,
+            let chunk = |kind| format!("data: {}\n\n", payload(kind));
+            let mut parser = frames::Parser::default();
+            let (bytes, parsed) = crate::bounded(1);
+            let quota = state.quota_ingress(&backend).unwrap();
+            native::receive_chunk(
+                &mut parser,
+                chunk("provider.updated").as_bytes(),
+                Some(&quota),
+                &bytes,
             )
+            .await
             .unwrap();
-            assert_eq!(frames.len(), 2);
-            let frames::Parsed::Data(kind, payload) = &frames[0] else {
+            let frames::Parsed::Data(kind, payload) = parsed.try_recv().unwrap() else {
                 panic!("provider event missing")
             };
-            let mut routed =
-                std::pin::pin!(dispatch(&backend, 1, &out, &state, "stream", kind, payload));
+            let mut routed = std::pin::pin!(dispatch(
+                &backend, 1, &out, &state, "stream", &kind, &payload
+            ));
             assert!(futures_lite::future::poll_once(&mut routed).await.is_none());
-            assert_eq!(watch.current(), (before.0 + 1, true));
-            state.quota_ingress(&backend).unwrap().transport(false);
+            assert_eq!(watch.current(), before);
+            native::receive_chunk(
+                &mut parser,
+                chunk("credential.switched").as_bytes(),
+                Some(&quota),
+                &bytes,
+            )
+            .await
+            .unwrap();
+            assert_eq!(watch.current(), (before.0 + 1, true, before.2));
+            quota.transport(false);
             assert!(!watch.current().1);
             assert!(matches!(recovery.try_recv().unwrap(), Input::Opened(1)));
             assert!(futures_lite::future::poll_once(&mut routed).await.is_none());

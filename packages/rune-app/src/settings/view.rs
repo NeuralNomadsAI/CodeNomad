@@ -73,6 +73,7 @@ impl Window {
             prefs.window_wake = None;
             prefs.memory.show(false);
             prefs.provider_target = None;
+            prefs.open_providers = false;
         }
         if !self.token.take().is_some_and(|token| token.get()) {
             super::settle_close(&self.shared, warn);
@@ -114,6 +115,9 @@ pub(super) fn spec() -> AppSpec<Window> {
         setup: Some(|s, wake| {
             let mut prefs = s.shared.borrow_mut();
             prefs.window_wake = Some(wake);
+            if std::mem::take(&mut prefs.open_providers) {
+                s.section = Section::Providers;
+            }
             prefs.memory.show(s.section == Section::General);
             if prefs.backend.is_some() {
                 prefs.refresh();
@@ -121,6 +125,14 @@ pub(super) fn spec() -> AppSpec<Window> {
         }),
         poll: Some(|s, _, tx| {
             let mut prefs = s.shared.borrow_mut();
+            let jump = std::mem::take(&mut prefs.open_providers);
+            if jump {
+                s.section = Section::Providers;
+                s.picker.set(None);
+                s.contrast_help = false;
+                s.permissions.close();
+                prefs.memory.show(false);
+            }
             let changed = prefs.poll();
             if changed && let Some(wake) = &prefs.main_wake {
                 wake();
@@ -144,7 +156,7 @@ pub(super) fn spec() -> AppSpec<Window> {
             } else {
                 false
             };
-            updated | status_changed | providers_changed
+            jump | updated | status_changed | providers_changed
         }),
         on_key: Some(|_, event, tx| {
             if event.key != rune::Key::Escape {

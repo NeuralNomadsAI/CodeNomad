@@ -48,17 +48,27 @@ impl Panel {
 }
 
 pub(super) fn entry() -> El {
-    layout::button(t("settings.title"), false, |s: &mut State| {
-        let target = Target::capture(s);
-        let mut prefs = s.settings.shared.borrow_mut();
-        prefs.provider_target = target;
-        prefs
-            .memory
-            .show(s.settings.web.section == Section::General);
-        s.settings.web.shown = true;
-        (s.wake)();
-    })
-    .key("open-preferences")
+    layout::button(t("settings.title"), false, open).key("open-preferences")
+}
+
+fn open(s: &mut State) {
+    let target = Target::capture(s);
+    let mut prefs = s.settings.shared.borrow_mut();
+    prefs.provider_target = target;
+    prefs
+        .memory
+        .show(s.settings.web.section == Section::General);
+    s.settings.web.shown = true;
+    (s.wake)();
+}
+
+pub(super) fn open_providers(s: &mut State) {
+    let panel = &mut s.settings.web;
+    panel.section = Section::Providers;
+    panel.contrast_help = false;
+    panel.permissions.close();
+    panel.memory_help_failed = false;
+    open(s);
 }
 
 fn close(s: &mut State) {

@@ -1,7 +1,11 @@
-use crate::{State, settings, strings::t};
+use super::date::reset;
+use crate::{
+    State, screen, settings,
+    strings::{locale, t},
+};
 use codenomad_client::provider_usage::{Consumption, Usage, Window};
 use rune::{El, text};
-use rune_theme_codenomad::{TextRole, layout::Layout, provider_usage as chrome};
+use rune_theme_codenomad::{TextRole, layout::Layout, provider_usage as chrome, usage::numbers};
 
 pub(super) fn usage(usage: &Usage, s: &State) -> El {
     let balance = settings::show_provider_usage_credit_balance(s);
@@ -12,16 +16,23 @@ pub(super) fn usage(usage: &Usage, s: &State) -> El {
             .filter(|(key, _)| key.as_str() != "credits_balance" || balance)
     };
     if let Some((message, link)) = unavailable(usage) {
+        let configure = matches!(
+            usage.unavailable_reason.as_deref(),
+            Some(
+                "opencode-console-missing-credential"
+                    | "opencode-console-access-denied"
+                    | "opencode-console-invalid-credential"
+            )
+        );
         return chrome::card(
             [text(message).role("status").wrap()]
                 .into_iter()
-                .chain(link.map(|(caption, url)| {
-                    rune_theme_codenomad::layout::button_tx(
-                        t(caption),
+                .chain(link.map(|(caption, url)| chrome::external_link(t(caption), url)))
+                .chain(configure.then(|| {
+                    rune_theme_codenomad::layout::button(
+                        t("providerUsage.console.settings"),
                         false,
-                        move |_: &mut State, tx| {
-                            let _ = tx.open_url(url);
-                        },
+                        screen::action(&s.input_scope, settings::open_providers),
                     )
                 })),
         );
@@ -50,7 +61,12 @@ pub(super) fn usage(usage: &Usage, s: &State) -> El {
             ("30d", "providerUsage.console.thirtyDays"),
         ] {
             if let Some(count) = console.requests.get(range) {
-                rows.push(chrome::reading(t(label), count.to_string(), None));
+                rows.push(chrome::reading(
+                    t(label),
+                    numbers::exact(locale(), *count),
+                    None,
+                    None,
+                ));
             }
         }
         rows.push(text(t("providerUsage.console.models")).role("heading"));
@@ -60,7 +76,8 @@ pub(super) fn usage(usage: &Usage, s: &State) -> El {
         for model in &console.models {
             rows.push(chrome::reading(
                 &format!("{} · {}", model.model, model.provider),
-                model.requests.to_string(),
+                numbers::exact(locale(), model.requests),
+                None,
                 None,
             ));
         }
@@ -72,7 +89,8 @@ pub(super) fn usage(usage: &Usage, s: &State) -> El {
                 for budget in &console.budgets.items {
                     rows.push(chrome::reading(
                         &budget.name,
-                        format!("${:.2} / ${:.2}", budget.spent_usd, budget.limit_usd),
+                        ratio(money(budget.spent_usd), Some(money(budget.limit_usd))),
+                        reset(Some(budget.reset_at)),
                         None,
                     ));
                 }
@@ -87,7 +105,9 @@ pub(super) fn usage(usage: &Usage, s: &State) -> El {
                 percent,
             )
         });
-        rows.push(chrome::reading(&label, value(usage, window), meter).key(key));
+        rows.push(
+            chrome::reading(&label, value(usage, window), reset(window.reset_at), meter).key(key),
+        );
     }
     let mut name = usage.provider_name.clone();
     if let Some(
@@ -103,20 +123,26 @@ pub(super) fn usage(usage: &Usage, s: &State) -> El {
     chrome::card(rows)
 }
 
+fn money(amount: f64) -> String {
+    numbers::usd(locale(), amount, false)
+}
+
+fn ratio(used: String, limit: Option<String>) -> String {
+    match limit {
+        Some(limit) => format!("\u{2066}{used} / {limit}\u{2069}"),
+        None => format!("\u{2066}{used}\u{2069}"),
+    }
+}
+
 fn value(usage: &Usage, window: &Window) -> String {
-    let ratio = |used: String, limit: Option<String>| {
-        let value = limit.map_or(used.clone(), |limit| format!("{used} / {limit}"));
-        format!("\u{2066}{value}\u{2069}")
-    };
+    let decimal = |amount| numbers::decimal(locale(), amount);
     match &window.consumption {
         Some(Consumption::Count { used, limit }) => {
-            return t("providerUsage.usedCountOnly").replace(
-                "{used}",
-                &ratio(used.to_string(), limit.map(|amount| amount.to_string())),
-            );
+            return t("providerUsage.usedCountOnly")
+                .replace("{used}", &ratio(decimal(*used), limit.map(decimal)));
         }
         Some(Consumption::Credits { used }) => {
-            return t("providerUsage.creditsUsed").replace("{used}", &used.to_string());
+            return t("providerUsage.creditsUsed").replace("{used}", &ratio(decimal(*used), None));
         }
         Some(Consumption::Unlimited { unlimited: true }) => {
             return t("providerUsage.unlimited").into();
@@ -124,25 +150,26 @@ fn value(usage: &Usage, window: &Window) -> String {
         _ => {}
     }
     if let Some(limit) = window.limit_usd {
-        return format!("${limit:.2}");
+        return ratio(money(limit), None);
     }
     if let Some(balance) = &window.balance_usd {
-        return ratio(
-            format!("${:.2}", balance.remaining),
-            balance.total.map(|amount| format!("${amount:.2}")),
-        );
+        return ratio(money(balance.remaining), balance.total.map(money));
     }
     if let Some(label) = &window.value_label {
         if let Some(estimate) = &usage.free_estimate
             && let Some(requests) = estimate.requests
         {
-            return ratio(requests.to_string(), Some(estimate.reference.to_string()));
+            return ratio(
+                numbers::exact(locale(), requests),
+                Some(numbers::exact(locale(), estimate.reference)),
+            );
         }
-        return label.clone();
+        // Like Solid, an opaque provider label is displayed without reparsing it as money.
+        return ratio(label.clone(), None);
     }
     window.used_percent.map_or_else(
         || t("providerUsage.unavailableValue").into(),
-        |percent| t("providerUsage.usedPercent").replace("{percent}", &percent.round().to_string()),
+        |percent| t("providerUsage.usedPercent").replace("{percent}", &decimal(percent.round())),
     )
 }
 

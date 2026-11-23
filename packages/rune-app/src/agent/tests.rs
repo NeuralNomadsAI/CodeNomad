@@ -15,7 +15,7 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
         stop,
         results,
     });
-    assert!(matches!(incoming.try_recv(), Ok(super::Job::Read(true))));
+    assert!(matches!(incoming.try_recv(), Ok(super::Job::Read(true, 0))));
     ui.known = true;
     ui.observe_running(false);
     let snapshot = |forms| agent_api::Snapshot {
@@ -34,7 +34,8 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
                 title: "Pending question".into(),
                 fields: vec![],
             }]),
-            true
+            true,
+            0
         ))
         .is_ok()
     );
@@ -42,13 +43,51 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
     assert!(!ui.running);
     assert_eq!(ui.selected, "form_pending");
     ui.refresh(false);
-    assert!(matches!(incoming.try_recv(), Ok(super::Job::Read(false))));
+    assert!(matches!(
+        incoming.try_recv(),
+        Ok(super::Job::Read(false, 0))
+    ));
     assert!(
-        out.try_send(super::Result::Read(snapshot(vec![]), false))
+        out.try_send(super::Result::Read(snapshot(vec![]), false, 0))
             .is_ok()
     );
     assert!(ui.poll());
     assert!(ui.running);
+}
+
+#[test]
+fn quota_model_waits_for_a_snapshot_requested_after_the_native_change() {
+    use super::{Handle, Job, Result, Ui, bounded};
+    let (jobs, read) = bounded(1);
+    let (stop, _stopped) = bounded(1);
+    let (out, results) = bounded(1);
+    let mut ui = Ui::new(Handle {
+        connection: None,
+        jobs,
+        stop,
+        results,
+    });
+    assert!(matches!(read.try_recv(), Ok(Job::Read(true, 0))));
+    let snapshot = |model| agent_api::Snapshot {
+        models: Some(vec![]),
+        current: Some(json!({"providerID":"fixture","id":model})),
+        directory: Some("/fixture".into()),
+        session_known: true,
+        running: false,
+        permissions: Some(vec![]),
+        forms: Some(vec![]),
+    };
+    ui.refresh_usage_model(1);
+    assert!(out.try_send(Result::Read(snapshot("old"), true, 0)).is_ok());
+    assert!(ui.poll());
+    assert!(ui.usage_model(1).is_none());
+    assert!(matches!(read.try_recv(), Ok(Job::Read(false, 1))));
+    assert!(
+        out.try_send(Result::Read(snapshot("new"), false, 1))
+            .is_ok()
+    );
+    assert!(ui.poll());
+    assert_eq!(ui.usage_model(1).unwrap().1["id"], "new");
 }
 
 #[test]
@@ -86,7 +125,7 @@ fn settled_requests_and_removed_models_reject_late_actions_before_dispatch() {
     ui.choose_model(model.reference);
     assert!(matches!(
         incoming.try_recv(),
-        Ok(super::Job::Act(agent_api::Action::Model(_)))
+        Ok(super::Job::Act(agent_api::Action::Model(_), 0))
     ));
     assert!(ui.busy);
     assert!(!ui.picker);

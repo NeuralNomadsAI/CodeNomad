@@ -22,6 +22,7 @@ pub mod settings;
 pub mod shell;
 pub mod tabs;
 mod tokens;
+pub mod usage;
 pub mod window_control;
 pub mod workspace_tree;
 pub use kit::{field_kit, kit};

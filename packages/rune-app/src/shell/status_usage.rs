@@ -8,6 +8,7 @@ use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{Space, layout::Layout, settings};
 use std::time::Duration;
 
+mod date;
 mod view;
 
 #[derive(Default)]
@@ -16,7 +17,7 @@ pub(crate) struct Panel {
     model: Option<(String, String, String)>,
     expanded: bool,
     watch: Option<Watch>,
-    authority: (u64, bool),
+    authority: (u64, bool, u64),
     due: Option<Instant>,
     trailing: bool,
     read: Option<(Sender<()>, Receiver<Option<Usage>>)>,
@@ -55,15 +56,15 @@ impl Panel {
 
     pub(crate) fn disconnect(&mut self) {
         self.watch = None;
-        self.authority = (0, false);
+        self.authority = (0, false, 0);
         self.invalidate();
     }
 
     fn sync_authority(&mut self) -> bool {
-        self.observe_authority(self.watch.as_ref().map_or((0, false), Watch::current))
+        self.observe_authority(self.watch.as_ref().map_or((0, false, 0), Watch::current))
     }
 
-    fn observe_authority(&mut self, authority: (u64, bool)) -> bool {
+    fn observe_authority(&mut self, authority: (u64, bool, u64)) -> bool {
         if authority == self.authority {
             return false;
         }
@@ -156,17 +157,18 @@ impl Panel {
 }
 
 pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    let panel = &mut s.status_usage;
-    let active = panel.expanded
-        && panel.backend.is_some()
+    let changed = s.status_usage.sync_authority();
+    let generation = s.status_usage.authority.2;
+    let active = s.status_usage.expanded
+        && s.status_usage.backend.is_some()
         && !s.screen.is_launcher()
         && s.shell.visible(1)
         && crate::workspace::right_panel_tab(s) == crate::workspace::RightPanelTab::Status;
     let model = active
         .then(|| {
-            let agent = s.agent.as_ref()?;
-            let directory = agent.directory.as_deref()?;
-            let model = agent.current.as_ref()?;
+            let agent = s.agent.as_mut()?;
+            agent.refresh_usage_model(generation);
+            let (directory, model) = agent.usage_model(generation)?;
             let provider = model["providerID"].as_str()?.trim();
             (!provider.is_empty()).then_some((
                 directory,
@@ -175,21 +177,28 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             ))
         })
         .flatten();
-    s.status_usage.select(model)
-        | s.status_usage.sync_authority()
-        | s.status_usage.poll(now, tx, &s.wake)
+    changed | s.status_usage.select(model) | s.status_usage.poll(now, tx, &s.wake)
 }
 
 pub(super) fn section(s: &State) -> Option<El> {
     let panel = &s.status_usage;
-    panel.backend.as_ref()?;
+    let no_session = s.screen.is_launcher();
+    if panel.backend.is_none()
+        && !(no_session
+            && s.screen
+                .launcher()
+                .and_then(|l| l.connection.as_ref())
+                .is_some_and(|backend| backend.client.supports("provider-usage")))
+    {
+        return None;
+    }
     let body = if let Some(usage) = &panel.usage {
         view::usage(usage, s)
     } else {
-        let key = if !panel.authority.1 || panel.failed {
-            "providerUsage.unavailable"
-        } else if panel.model.is_none() {
+        let key = if no_session {
             "providerUsage.noSession"
+        } else if !panel.authority.1 || panel.failed {
+            "providerUsage.unavailable"
         } else {
             "providerUsage.loading"
         };
@@ -282,15 +291,15 @@ mod tests {
             panel.refresh(Some("/fixture/checkout"));
         }
         assert!(panel.trailing && !cancelled.is_closed());
-        assert!(panel.observe_authority((1, true)));
+        assert!(panel.observe_authority((1, true, 0)));
         assert!(cancelled.is_closed() && send.is_closed() && !panel.trailing);
 
         let (stop, cancelled) = bounded(1);
         let (send, reply) = bounded(1);
         panel.read = Some((stop, reply));
-        assert!(!panel.observe_authority((1, true)));
+        assert!(!panel.observe_authority((1, true, 0)));
         assert!(!cancelled.is_closed());
-        assert!(panel.observe_authority((2, true)));
+        assert!(panel.observe_authority((2, true, 1)));
         assert!(cancelled.is_closed() && send.is_closed());
 
         let (stop, cancelled) = bounded(1);

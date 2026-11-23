@@ -23,6 +23,10 @@ pub fn local_month_day(stamp: &str, locale: &str) -> Option<String> {
     icu::month_day(millis, locale).or_else(|| win32_month_day(ticks, locale))
 }
 
+pub fn local_short_date_time(millis: f64, locale: &str) -> Option<String> {
+    icu::short_date_time(millis, locale)
+}
+
 fn win32_month_day(ticks: u64, locale: &str) -> Option<String> {
     let file = FILETIME {
         dwHighDateTime: (ticks >> 32) as u32,

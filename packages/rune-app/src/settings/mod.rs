@@ -442,16 +442,45 @@ pub(crate) fn direct_entry(s: &State) -> El {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn open(s: &mut State) {
+    open_window(s, false);
+}
+
+pub(crate) fn open_providers(s: &mut State) {
+    #[cfg(not(target_arch = "wasm32"))]
+    open_window(s, true);
+    #[cfg(target_arch = "wasm32")]
+    web::open_providers(s);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn open_window(s: &mut State, providers: bool) {
     let host = &s.settings;
+    if providers {
+        let target = providers::Target::capture(s);
+        let mut prefs = host.shared.borrow_mut();
+        prefs.provider_target = target;
+        prefs.open_providers = true;
+    }
     if let Some((window, token)) = &host.window
         && Rc::strong_count(token) > 1
     {
-        window.close();
+        if providers {
+            window.focus();
+            if let Some(wake) = &host.shared.borrow().window_wake {
+                wake();
+            }
+        } else {
+            window.close();
+        }
         return;
     }
     let token = Rc::new(Cell::new(false));
     let target = providers::Target::capture(s);
-    host.shared.borrow_mut().provider_target = target;
+    {
+        let mut prefs = host.shared.borrow_mut();
+        prefs.provider_target = target;
+        prefs.open_providers = providers;
+    }
     let state = view::Window::new(host.shared.clone(), token.clone());
     let locale = host
         .shared

@@ -14,12 +14,12 @@ use crate::{
 use codenomad_client::{Receiver, Sender, bounded};
 use rune::edit::TextEdit;
 enum Job {
-    Read(bool),
-    Act(Action),
+    Read(bool, u64),
+    Act(Action, u64),
 }
 enum Result {
-    Read(Snapshot, bool),
-    Act(bool, Snapshot),
+    Read(Snapshot, bool, u64),
+    Act(bool, Snapshot, u64),
     Stop(bool),
 }
 pub fn navigation_blocked(s: &crate::State) -> bool {
@@ -41,6 +41,8 @@ pub struct Ui {
     pub models: Vec<Model>,
     pub current: Option<serde_json::Value>,
     pub directory: Option<String>,
+    model_generation: u64,
+    confirmed_model_generation: u64,
     pub permissions: Vec<Permission>,
     pub forms: Vec<Form>,
     pub drafts: Drafts,
@@ -81,10 +83,12 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     crate::platform::spawn(async move {
         while let Ok(job) = rx.recv().await {
             let result = match job {
-                Job::Read(catalog) => Result::Read(backend.agent_snapshot(catalog).await, catalog),
-                Job::Act(action) => {
+                Job::Read(catalog, generation) => {
+                    Result::Read(backend.agent_snapshot(catalog).await, catalog, generation)
+                }
+                Job::Act(action, generation) => {
                     let ok = backend.agent_action(&action).await.is_ok();
-                    Result::Act(ok, backend.agent_snapshot(false).await)
+                    Result::Act(ok, backend.agent_snapshot(false).await, generation)
                 }
             };
             if out.send(result).await.is_err() {
@@ -189,6 +193,8 @@ impl Ui {
             models: vec![],
             current: None,
             directory: None,
+            model_generation: 0,
+            confirmed_model_generation: 0,
             permissions: vec![],
             forms: vec![],
             drafts: Default::default(),
@@ -215,9 +221,26 @@ impl Ui {
             self.trailing = Some(self.trailing.unwrap_or(false) || catalog);
             return;
         }
-        if self.handle.jobs.try_send(Job::Read(catalog)).is_ok() {
+        if self
+            .handle
+            .jobs
+            .try_send(Job::Read(catalog, self.model_generation))
+            .is_ok()
+        {
             self.reading = true
         }
+    }
+
+    pub(crate) fn refresh_usage_model(&mut self, generation: u64) {
+        if generation != self.model_generation {
+            self.model_generation = generation;
+            self.refresh(false);
+        }
+    }
+
+    pub(crate) fn usage_model(&self, generation: u64) -> Option<(&str, &serde_json::Value)> {
+        (generation == self.confirmed_model_generation).then_some(())?;
+        self.directory.as_deref().zip(self.current.as_ref())
     }
 
     pub(crate) fn observe_running(&mut self, running: bool) {
@@ -232,7 +255,12 @@ impl Ui {
         if self.locked() {
             return;
         }
-        if self.handle.jobs.try_send(Job::Act(action)).is_ok() {
+        if self
+            .handle
+            .jobs
+            .try_send(Job::Act(action, self.model_generation))
+            .is_ok()
+        {
             self.busy = true;
             self.error = false
         }
@@ -256,12 +284,17 @@ impl Ui {
             .chain(self.forms.iter().map(|p| p.id.clone()))
             .collect()
     }
-    fn snapshot(&mut self, s: Snapshot) {
+    fn snapshot(&mut self, s: Snapshot, generation: u64) {
         let current_activity = !std::mem::take(&mut self.activity_during_job);
         self.known = s.session_known;
-        self.directory = s.directory;
+        if generation == self.model_generation {
+            self.directory = s.directory;
+            if s.session_known {
+                self.current = s.current;
+                self.confirmed_model_generation = generation;
+            }
+        }
         if s.session_known {
-            self.current = s.current;
             if current_activity {
                 self.running = s.running;
             }
@@ -293,19 +326,19 @@ impl Ui {
         let mut changed = false;
         while let Ok(result) = self.handle.results.try_recv() {
             match result {
-                Result::Read(s, catalog) => {
+                Result::Read(s, catalog, generation) => {
                     self.reading = false;
                     self.error |= !s.session_known
                         || s.permissions.is_none()
                         || s.forms.is_none()
                         || (catalog && s.models.is_none());
-                    self.snapshot(s)
+                    self.snapshot(s, generation)
                 }
-                Result::Act(ok, s) => {
+                Result::Act(ok, s, generation) => {
                     self.busy = false;
                     self.error =
                         !ok || !s.session_known || s.permissions.is_none() || s.forms.is_none();
-                    self.snapshot(s)
+                    self.snapshot(s, generation)
                 }
                 Result::Stop(ok) => {
                     self.stopping = false;

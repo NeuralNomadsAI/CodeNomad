@@ -17,16 +17,21 @@ pub struct Watch(Arc<Mutex<Authority>>);
 #[derive(Debug, Default)]
 struct Authority {
     generation: u64,
+    model_generation: u64,
     online: bool,
+    backpressure: bool,
     upstream: Option<(u64, bool)>,
 }
 
 impl Watch {
-    pub fn current(&self) -> (u64, bool) {
+    pub fn current(&self) -> (u64, bool, u64) {
         let authority = self.0.lock().unwrap();
         (
             authority.generation,
-            authority.online && authority.upstream.is_none_or(|(_, connected)| connected),
+            authority.online
+                && !authority.backpressure
+                && authority.upstream.is_none_or(|(_, connected)| connected),
+            authority.model_generation,
         )
     }
 
@@ -36,6 +41,7 @@ impl Watch {
             return false;
         }
         authority.online = online;
+        authority.backpressure = false;
         authority.upstream = None;
         authority.generation += 1;
         true
@@ -45,6 +51,7 @@ impl Watch {
         let mut authority = self.0.lock().unwrap();
         match hint {
             Hint::Revoke => {}
+            Hint::Model => authority.model_generation += 1,
             Hint::Upstream {
                 generation,
                 connected,
@@ -64,6 +71,7 @@ impl Watch {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Hint {
     Revoke,
+    Model,
     Upstream { generation: u64, connected: bool },
 }
 
@@ -83,6 +91,14 @@ struct Envelope<'a> {
 struct NativeEvent<'a> {
     #[serde(rename = "type")]
     kind: &'a str,
+    #[serde(borrow)]
+    data: Option<ModelEvent<'a>>,
+}
+
+#[derive(Deserialize)]
+struct ModelEvent<'a> {
+    #[serde(rename = "sessionID")]
+    session: Option<&'a str>,
 }
 
 #[derive(Clone)]
@@ -90,14 +106,16 @@ pub(crate) struct Ingress {
     watch: Watch,
     wake: crate::Wake,
     workspace: String,
+    session: String,
 }
 
 impl Ingress {
-    pub fn new(watch: Watch, wake: crate::Wake, workspace: String) -> Self {
+    pub fn new(watch: Watch, wake: crate::Wake, workspace: String, session: String) -> Self {
         Self {
             watch,
             wake,
             workspace,
+            session,
         }
     }
 
@@ -120,20 +138,19 @@ impl Ingress {
                 generation,
                 connected: frame.status == Some("connected"),
             }),
-            "instance.event"
-                if frame.event.is_some_and(|event| {
-                    matches!(
-                        event.kind,
-                        "credential.updated"
-                            | "credential.switched"
-                            | "integration.updated"
-                            | "config.updated"
-                            | "server.connected"
-                    )
-                }) =>
-            {
-                Some(Hint::Revoke)
-            }
+            "instance.event" => frame.event.and_then(|event| match event.kind {
+                "credential.updated"
+                | "credential.switched"
+                | "integration.updated"
+                | "config.updated"
+                | "server.connected" => Some(Hint::Revoke),
+                "session.model.selected"
+                    if event.data.and_then(|data| data.session) == Some(self.session.as_str()) =>
+                {
+                    Some(Hint::Model)
+                }
+                _ => None,
+            }),
             _ => None,
         };
         if let Some(change) = change
@@ -332,7 +349,12 @@ fn console_preserves_counts_at_the_server_model_limit() {
 #[test]
 fn only_catalogue_churn_is_a_passive_quota_refresh() {
     let watch = Watch::default();
-    let ingress = Ingress::new(watch.clone(), Arc::new(|| {}), "project".into());
+    let ingress = Ingress::new(
+        watch.clone(),
+        Arc::new(|| {}),
+        "project".into(),
+        "session".into(),
+    );
     ingress.transport(true);
     let native = |workspace, kind| {
         serde_json::json!({
@@ -356,7 +378,29 @@ fn only_catalogue_churn_is_a_passive_quota_refresh() {
     ] {
         let before = watch.current();
         ingress.frame(&native("project", kind));
-        assert_eq!(watch.current(), (before.0 + 1, true));
+        assert_eq!(watch.current(), (before.0 + 1, true, before.2));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn backpressure(&self, blocked: bool) {
+        let mut authority = self.watch.0.lock().unwrap();
+        if authority.backpressure != blocked {
+            authority.backpressure = blocked;
+            authority.generation += 1;
+            drop(authority);
+            (self.wake)();
+        }
+    }
+    for (session, delta) in [("other", 0), ("session", 1)] {
+        let before = watch.current();
+        ingress.frame(
+            &serde_json::json!({
+                "type":"instance.event", "instanceId":"project",
+                "event":{"type":"session.model.selected","data":{"sessionID":session}}
+            })
+            .to_string(),
+        );
+        assert_eq!(watch.current(), (before.0 + delta, true, before.2 + delta));
     }
 }
 
@@ -377,7 +421,7 @@ fn identical_native_status_preserves_authority_but_new_generations_revoke_it() {
         generation: 8,
         connected: true
     }));
-    assert_eq!(watch.current(), (current.0 + 1, true));
+    assert_eq!(watch.current(), (current.0 + 1, true, current.2));
     assert!(watch.transport(false));
     assert!(!watch.current().1);
     let closed = watch.current();
@@ -385,5 +429,5 @@ fn identical_native_status_preserves_authority_but_new_generations_revoke_it() {
         generation: 9,
         connected: true
     }));
-    assert_eq!(watch.current(), (closed.0 + 1, false));
+    assert_eq!(watch.current(), (closed.0 + 1, false, closed.2));
 }

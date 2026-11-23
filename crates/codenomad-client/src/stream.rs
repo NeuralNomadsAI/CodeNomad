@@ -52,6 +52,7 @@ impl State {
             self.provider_usage.clone()?,
             self.preferences.as_ref()?.1.clone(),
             backend.workspace.clone(),
+            backend.session.clone(),
         ))
     }
 
