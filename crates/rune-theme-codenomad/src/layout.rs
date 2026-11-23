@@ -137,8 +137,8 @@ pub fn composer_field(editor: El, compact: bool, focused: bool) -> El {
         field
     }
 }
-pub fn announce_selection(tx: &mut rune::Tx, name: &str) {
-    tx.announce(name, rune::LiveRegion::Polite);
+pub fn announce_polite(tx: &mut rune::Tx, text: impl Into<String>) {
+    tx.announce(text, rune::LiveRegion::Polite);
 }
 
 pub fn suggestion_list<S: 'static>(

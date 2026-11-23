@@ -162,7 +162,7 @@ pub(crate) fn tick(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     #[cfg(target_arch = "wasm32")]
     if let Some(announcement) = inbox.announcement() {
-        tx.announce(announcement, rune::LiveRegion::Polite);
+        layout::announce_polite(tx, announcement);
     }
     let changed = prior != (inbox.history.len(), inbox.bubbles.len());
     s.notifications.in_app = inbox;
