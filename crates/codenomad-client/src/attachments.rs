@@ -7,6 +7,7 @@ use futures_lite::StreamExt;
 use std::sync::Arc;
 
 pub const MAX_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const USER_FILES_REFERENCE: &str = "reference-v1";
 
 impl Backend {
     pub async fn attachment_bytes(&self, reference: &Reference) -> Result<Arc<Vec<u8>>> {

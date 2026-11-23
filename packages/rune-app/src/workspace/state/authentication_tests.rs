@@ -22,6 +22,7 @@ fn inactive_prompt_rejection_is_saved_before_closing_its_tab() {
         active_session_id: Some("first".into()),
         drafts: Default::default(),
         attachment_drafts: Default::default(),
+        attachment_parts: Default::default(),
         view: Default::default(),
     });
     ui.entries[0].binding = Some(backend.clone());

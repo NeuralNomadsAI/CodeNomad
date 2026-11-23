@@ -94,7 +94,7 @@ pub fn decode(v: Value) -> Result<Page> {
         older: cursor(&v["older"], "before")?,
         newer,
         running,
-        user_file_references: v["userFiles"] == "reference-v1",
+        user_file_references: v["userFiles"] == crate::attachments::USER_FILES_REFERENCE,
     })
 }
 fn stored_size(row: &mut Value) -> Result<usize> {

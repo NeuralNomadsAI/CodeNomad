@@ -82,6 +82,8 @@ impl Policy {
                 "TextEdit",
                 "Key",
                 "KeyEvent",
+                "PhysicalInput",
+                "PhysicalKeyCode",
                 "Mods",
                 "edit",
                 "file_dialog",

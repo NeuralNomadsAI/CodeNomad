@@ -9,6 +9,7 @@ use std::{ops::Range, sync::Arc};
 pub const MAX_FILE: usize = 5 * 1024 * 1024;
 pub const MAX_FILES: usize = 10;
 pub const MAX_TOTAL: usize = 20 * 1024 * 1024;
+pub const MAX_PARTS: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Attachment {
@@ -122,6 +123,9 @@ impl Draft {
     }
 
     pub fn attach(&mut self, item: Attachment) -> bool {
+        if self.attachments.len() >= MAX_PARTS {
+            return false;
+        }
         if let Attachment::Device { bytes, .. } = &item {
             let (count, total) = self.inline_usage();
             if bytes.len() > MAX_FILE || count >= MAX_FILES || total + bytes.len() > MAX_TOTAL {

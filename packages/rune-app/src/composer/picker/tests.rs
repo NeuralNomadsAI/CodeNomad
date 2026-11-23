@@ -71,6 +71,33 @@ fn attachment_support_follows_the_window_marker() {
         );
     }
 }
+
+#[test]
+fn tab_cannot_attach_a_sixty_fifth_part() {
+    let mut rt = runtime();
+    for index in 0..crate::composer::draft::MAX_PARTS {
+        assert!(rt.state.composer.draft.attach(Attachment::Skill {
+            id: format!("skill-{index}"),
+            name: format!("Skill {index}"),
+        }));
+    }
+    rt.paste("@review");
+    rt.frame(0.0);
+    rt.update(|s, _| {
+        s.composer
+            .picker
+            .mentions
+            .catalog
+            .push(Item::Skill(named("review")));
+        s.composer.picker.refresh_entries();
+    });
+    press(&mut rt, Key::Tab, Mods::default());
+    assert_eq!(rt.state.draft.text, "@review");
+    assert_eq!(
+        rt.state.composer.draft.attachments.len(),
+        crate::composer::draft::MAX_PARTS
+    );
+}
 fn press(rt: &mut Runtime<State>, key: Key, mods: Mods) {
     let event = KeyEvent { key, mods };
     rt.key(event.clone());

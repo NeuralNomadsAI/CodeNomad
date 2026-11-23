@@ -6,6 +6,7 @@ fn stash(s: &mut State) {
     capture(s);
     s.attachments.cancel();
     s.composer.picker.reset();
+    s.composer.device.cancel();
     if let Some(files) = &mut s.files {
         files.activate(false);
     }
@@ -173,6 +174,9 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         saved
             .attachment_drafts
             .retain(|id| !removed.pending_drafts.contains(id));
+        saved
+            .attachment_parts
+            .retain(|id, _| !removed.pending_drafts.contains(id));
         // Clear authority belongs to this occurrence's live lifetime, outside text budgets.
         saved.drafts.extend(
             removed
@@ -214,6 +218,9 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
         return false;
     };
     if s.documents.has_tab_edits(&ui.entries[index].key) {
+        return true;
+    }
+    if ui.entries[index].has_unsaved_large_drafts() {
         return true;
     }
     if ui.active == index {

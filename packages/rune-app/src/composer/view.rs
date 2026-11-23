@@ -1,8 +1,8 @@
-use super::{can_send, send};
-use crate::{Phase, State, screen, strings::t};
+use super::{can_send, device, picker::Item, send};
+use crate::{Phase, State, platform, screen, strings::t};
 use rune::{El, Key, KeyEvent, Tx, col, text};
 use rune_theme_codenomad::{
-    Space, attachment, field_kit, kit,
+    Space, attachment, kit,
     layout::{self, Layout},
 };
 
@@ -10,14 +10,48 @@ pub fn view(s: &State, compact: bool) -> El {
     let scope = s.input_scope.clone();
     let edit_scope = scope.clone();
     let stop = s.phase == Phase::Streaming && s.agent.is_some();
+    #[cfg(target_arch = "wasm32")]
     let editor = layout::composer_field(&s.draft, t("promptInput.placeholder.default"), compact)
         .label(t("rune.prompt"))
         .disabled(s.composer.pending())
         .on_edit(screen::edit(&scope, screen::Editor::Composer))
         .on_change(screen::action_tx(&scope, changed))
         .on_key(move |s: &mut State, event, tx| s.current_scope(&edit_scope) && key(s, event, tx))
-        .build(field_kit(layout::dark()))
+        .build(rune_theme_codenomad::field_kit(layout::dark()))
         .key("composer");
+    #[cfg(not(target_arch = "wasm32"))]
+    let editor = {
+        let paste_scope = scope.clone();
+        let menu_scope = scope.clone();
+        let drop_scope = scope.clone();
+        let input = layout::native_composer_input(&s.draft, t("promptInput.placeholder.default"))
+            .key("input")
+            .label(t("rune.prompt"))
+            .disabled(s.composer.pending())
+            .on_edit(screen::edit(&scope, screen::Editor::Composer))
+            .on_input_change(screen::action_tx(&scope, changed))
+            .on_input_key(move |s: &mut State, event, tx| {
+                s.current_scope(&edit_scope) && key(s, event, tx)
+            })
+            .on_physical_input(move |s: &mut State, event, tx| {
+                s.current_scope(&paste_scope) && super::clipboard::physical(s, event, tx)
+            })
+            .on_input_paste(|_: &mut State, content, _| {
+                // File/image reads must enter through the owned gesture, never by focus at delivery.
+                !content.files().is_empty() || content.image().is_some()
+            })
+            .on_secondary_press(move |s: &mut State, point, tx| {
+                if s.current_scope(&menu_scope) {
+                    super::clipboard::menu(s, (point.x, point.y), tx);
+                }
+            })
+            .on_drop_files(move |s: &mut State, paths, _| {
+                if s.current_scope(&drop_scope) {
+                    platform::device_picker::drop_files(s, paths);
+                }
+            });
+        layout::native_composer_field(input, compact).key("composer")
+    };
     let mut actions = layout::action_row()
         .children(
             (s.can_older || s.history_error && s.phase != Phase::Failed).then(|| {
@@ -133,6 +167,15 @@ pub fn view(s: &State, compact: bool) -> El {
             .key("attachments-disabled")
             .description_static(t("rune.attachments_unavailable")),
         );
+    } else {
+        actions = actions.child(
+            layout::button_tx(
+                t("promptInput.attachFiles.ariaLabel"),
+                !device::available(s) || s.composer.device.busy(),
+                screen::action_tx(&scope, platform::device_picker::choose),
+            )
+            .key("attach-device-files"),
+        );
     }
     if s.composer.attachments_missing {
         actions = actions.child(
@@ -141,6 +184,7 @@ pub fn view(s: &State, compact: bool) -> El {
                 false,
                 screen::action_tx(&scope, |s, tx| {
                     s.composer.attachments_missing = false;
+                    s.composer.draft.attachments.clear();
                     crate::workspace::draft_changed(s, tx);
                 }),
             )
@@ -149,6 +193,13 @@ pub fn view(s: &State, compact: bool) -> El {
         );
     }
     body.child(actions)
+        .children(
+            s.composer
+                .device
+                .notice
+                .as_ref()
+                .map(|notice| text(notice).role("alert")),
+        )
         .children(
             s.composer
                 .attachments_missing
@@ -215,24 +266,40 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
     .build(kit(layout::dark()), layer);
 }
 
-fn changed(s: &mut State, tx: &mut Tx) {
+pub(super) fn changed(s: &mut State, tx: &mut Tx) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(read) = &s.composer.device.clipboard {
+        read.set(false);
+    }
     s.composer.picker.changed(&s.draft, &s.reads, &s.wake);
     crate::workspace::draft_changed(s, tx);
 }
 
 fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) {
-    if !tab
-        && !s.composer.picker.slash()
-        && s.composer.picker.attachments_supported()
-        && !crate::workspace::attachment_draft_admissible(s)
-    {
+    let adds_part = s.composer.picker.attachments_supported()
+        && match s.composer.picker.entries.get(index) {
+            Some(Item::File(_)) => !tab,
+            Some(Item::Agent(_) | Item::Skill(_)) => true,
+            _ => false,
+        };
+    if adds_part && s.composer.draft.attachments.len() >= super::draft::MAX_PARTS {
         layout::announce_selection(tx, t("promptInput.attachFiles.errorTitle"));
         return;
     }
+    let previous = adds_part.then(|| (s.draft.clone(), s.composer.draft.clone()));
     if s.composer
         .picker
         .choose(&mut s.draft, &mut s.composer.draft, index, tab, path_only)
     {
+        if let Some((edit, draft)) = previous
+            && !crate::workspace::attachment_draft_admissible(s)
+        {
+            s.draft = edit;
+            s.composer.draft = draft;
+            s.composer.picker.changed(&s.draft, &s.reads, &s.wake);
+            layout::announce_selection(tx, t("promptInput.attachFiles.errorTitle"));
+            return;
+        }
         if tab && s.composer.picker.open() {
             changed(s, tx);
         } else {
@@ -242,6 +309,14 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
 }
 
 fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    if event.edit_command() == Some('v') {
+        super::clipboard::request(s, tx);
+        return true;
+    }
+    if event.key == Key::Enter && s.composer.device.busy() {
+        return true;
+    }
     if event.key == Key::Enter
         && tx.key_repeat()
         && (s.composer.picker.open() || s.composer.picker.selected_command(&s.draft.text).is_some())

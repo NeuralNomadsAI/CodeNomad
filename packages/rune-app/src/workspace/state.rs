@@ -41,6 +41,7 @@ pub(super) struct Entry {
     binding: Option<Backend>,
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
+    live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
 }
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
@@ -156,8 +157,11 @@ impl Ui {
         let Some(store) = &self.persistence.store else {
             return;
         };
-        let bytes = match super::encode(&self.snapshot()) {
-            Ok(bytes) => bytes,
+        let bytes = match super::encode_for_save(&self.snapshot()) {
+            Ok((bytes, partial)) => {
+                self.persistence.partial = partial;
+                bytes
+            }
             Err(_) => {
                 store.stage(&[], &[]);
                 self.persistence.write_error = true;
@@ -213,6 +217,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         binding: None,
         cleared,
         pending_drafts: HashSet::new(),
+        live_drafts: Default::default(),
     }
 }
 fn busy(s: &State) -> bool {
@@ -372,6 +377,7 @@ pub fn opened(s: &mut State, project: &Project) {
     } else {
         let mut drafts = std::collections::BTreeMap::new();
         let mut attachment_drafts = std::collections::BTreeSet::new();
+        let mut attachment_parts = std::collections::BTreeMap::new();
         item.cleared.clear();
         for w in ui.closed.iter().filter(|w| {
             same_folder(&w.folder, &project.path)
@@ -380,6 +386,7 @@ pub fn opened(s: &mut State, project: &Project) {
         }) {
             for (id, text) in &w.drafts {
                 attachment_drafts.remove(id);
+                attachment_parts.remove(id);
                 if text.is_empty() {
                     drafts.remove(id);
                     item.cleared.insert(id.clone());
@@ -389,6 +396,10 @@ pub fn opened(s: &mut State, project: &Project) {
                 }
             }
             attachment_drafts.extend(w.attachment_drafts.iter().cloned());
+            for id in &w.attachment_drafts {
+                attachment_parts.remove(id);
+            }
+            attachment_parts.extend(w.attachment_parts.clone());
         }
         item.pending_drafts = drafts
             .keys()
@@ -409,8 +420,10 @@ pub fn opened(s: &mut State, project: &Project) {
             active_session_id: None,
             drafts,
             attachment_drafts,
+            attachment_parts,
             view: Default::default(),
         });
+        item.live_drafts.clear();
     }
     item.project = Some(project.clone());
     item.binding = l.connection.clone();
@@ -468,11 +481,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             if awaiting_prompt && !s.composer.pending()
                 || uncertain_prompt && s.composer.unconfirmed_id().is_none()
             {
-                drafts_changed |= drafts::capture_draft(
-                    item,
-                    &s.draft.text,
-                    s.composer.attachments_missing || !s.composer.draft.attachments.is_empty(),
-                );
+                drafts_changed |= drafts::capture_draft(item, s);
             }
             changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
             changed |= crate::git::poll(s, now, tx);
@@ -484,10 +493,11 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         ui.changed();
     }
     ui.stage();
-    let previous_error = ui.persistence.read_error || ui.persistence.write_error;
+    let previous_error =
+        ui.persistence.read_error || ui.persistence.write_error || ui.persistence.partial;
     let snapshot = ui.snapshot();
     ui.persistence.poll_save(&snapshot, now, tx, s.wake.clone());
-    let error = ui.persistence.read_error || ui.persistence.write_error;
+    let error = ui.persistence.read_error || ui.persistence.write_error || ui.persistence.partial;
     s.workspace = Some(ui);
     if became_ready {
         resume(s, tx);
@@ -499,7 +509,8 @@ pub fn status(s: &State) -> Option<&'static str> {
     let ui = s.workspace.as_ref()?;
     if ui.persistence.read_error {
         Some("rune.restore_error")
-    } else if ui.persistence.write_error {
+    } else if ui.persistence.write_error || ui.persistence.partial || ui.has_unsaved_large_drafts()
+    {
         Some("rune.save_error")
     } else {
         None

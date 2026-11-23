@@ -40,7 +40,8 @@ pub(super) async fn read(
     let mut url = reqwest::Url::parse(&format!("{}api/events", b.base))?;
     url.query_pairs_mut()
         .append_pair("clientId", &b.client_id)
-        .append_pair("connectionId", &connection);
+        .append_pair("connectionId", &connection)
+        .append_pair("userFiles", crate::attachments::USER_FILES_REFERENCE);
     let options = EventSourceInit::new();
     options.set_with_credentials(true);
     let source = EventSource::new_with_event_source_init_dict(url.as_str(), &options)
