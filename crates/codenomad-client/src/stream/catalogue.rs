@@ -30,6 +30,12 @@ impl Signals {
         (self.wake)();
     }
 
+    pub(super) fn refresh_all(&self) {
+        if self.mark(&self.pending, None) | self.mark(&self.providers, None) {
+            (self.wake)();
+        }
+    }
+
     fn disconnected(&self) {
         if self.generation.load(SeqCst) % 2 == 1 {
             self.generation.fetch_add(1, SeqCst);

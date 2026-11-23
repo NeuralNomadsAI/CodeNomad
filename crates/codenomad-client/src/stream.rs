@@ -268,7 +268,7 @@ pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Re
 }
 async fn reread(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {
     if let Some(signals) = &state.catalogue {
-        signals.invalidate(None);
+        signals.refresh_all();
     } else {
         let version = state.version.fetch_add(1, SeqCst) + 1;
         out.send(Input::Hint(epoch, version)).await?;
