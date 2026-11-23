@@ -10,6 +10,11 @@ use std::{
     sync::atomic::{AtomicU64, Ordering::SeqCst},
 };
 
+mod anchor;
+mod rail;
+pub use anchor::AnchorWindow;
+pub use rail::{Marker, MarkerKind, Resident, project};
+
 const PAGE_ENTRIES: usize = 16_384;
 const PAGE_BYTES: usize = 24 * 1024 * 1024;
 const CACHE_ENTRIES: usize = 200_000;

@@ -106,6 +106,16 @@ fn outline_requires_an_explicit_end_and_limits_resident_structure() {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn http_scan(steps: Vec<(&'static str, Option<Value>, Value, bool)>) -> Result<Outline> {
+    http_probe(steps, async |backend, revision| {
+        backend.outline(&revision).await
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn http_probe<T>(
+    steps: Vec<(&'static str, Option<Value>, Value, bool)>,
+    run: impl AsyncFnOnce(Backend, std::sync::Arc<OutlineRevision>) -> T,
+) -> T {
     use std::{
         io::{BufRead, BufReader, Read, Write},
         net::TcpListener,
@@ -165,10 +175,33 @@ fn http_scan(steps: Vec<(&'static str, Option<Value>, Value, bool)>) -> Result<O
             let mut backend = Backend::unauthenticated(&address).unwrap();
             backend.workspace = "workspace".into();
             backend.session = "session".into();
-            backend.outline(&revision).await
+            run(backend, revision).await
         });
     server.join().unwrap();
     result
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn native_anchor_navigation_fetches_one_around_window_and_never_searches_neighbours() {
+    const ROUTE: &str = "POST /api/workspaces/workspace/session-history/window HTTP/1.1";
+    let steps = ["target","gone"].map(|id| {
+        let target=json!({"kind":"around","messageID":id});
+        (ROUTE,Some(json!({"sessionID":"session","target":target})),
+            json!({"status":"window","messages":[{"id":"target","type":"user","text":"History","time":{"created":1}}],
+                "older":null,"newer":null,"latest":true,"resume":target}),false)
+    });
+    http_probe(Vec::from(steps), async |backend, _| {
+        let AnchorWindow::Loaded(page) = backend.resolve_anchor("target", &[]).await.unwrap()
+        else {
+            panic!("distant target needs a page");
+        };
+        assert!(matches!(
+            backend.resolve_anchor("target", &page.rows).await.unwrap(),
+            AnchorWindow::Resident
+        ));
+        assert!(backend.resolve_anchor("gone", &page.rows).await.is_err());
+    });
 }
 
 #[cfg(not(target_arch = "wasm32"))]
