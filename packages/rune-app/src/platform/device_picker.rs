@@ -9,13 +9,13 @@ use crate::{
 use rune::Tx;
 use std::sync::Arc;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub enum Source {
+    #[cfg(not(target_arch = "wasm32"))]
     Path(std::path::PathBuf),
+    #[cfg(target_arch = "wasm32")]
+    File(web_sys::File),
     Png(rune::clipboard::ClipboardImage),
 }
-#[cfg(target_arch = "wasm32")]
-pub type Source = web_sys::File;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn drop_files(s: &mut State, paths: &[std::path::PathBuf]) {
@@ -31,8 +31,8 @@ pub fn drop_files(s: &mut State, paths: &[std::path::PathBuf]) {
     );
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn paste(s: &mut State, content: &rune::clipboard::ClipboardContent) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
     if !content.files().is_empty() {
         drop_files(s, content.files());
         return true;
@@ -41,7 +41,7 @@ pub fn paste(s: &mut State, content: &rune::clipboard::ClipboardContent) -> bool
         return false;
     };
     if !device::available(s) {
-        return true;
+        return content.text().is_empty();
     }
     let name = "clipboard.png";
     if image.png().len() > MAX_FILE {
@@ -56,7 +56,7 @@ pub fn paste(s: &mut State, content: &rune::clipboard::ClipboardContent) -> bool
             }],
         );
     }
-    true
+    content.text().is_empty()
 }
 
 pub fn choose(s: &mut State, tx: &mut Tx) {
@@ -104,35 +104,35 @@ pub fn choose(s: &mut State, tx: &mut Tx) {
 }
 
 pub async fn read(source: &Source, limit: usize) -> Result<Arc<[u8]>, Error> {
-    #[cfg(not(target_arch = "wasm32"))]
-    return match source {
-        Source::Path(path) => super::device_file::read(path.clone(), limit.min(MAX_FILE)).await,
+    let limit = limit.min(MAX_FILE);
+    match source {
+        #[cfg(not(target_arch = "wasm32"))]
+        Source::Path(path) => super::device_file::read(path.clone(), limit).await,
         Source::Png(image) if image.png().len() <= limit => Ok(image.png().into()),
         Source::Png(_) => Err(Error::Limit),
-    };
-    #[cfg(target_arch = "wasm32")]
-    {
-        let limit = limit.min(MAX_FILE);
-        let over = if limit == MAX_FILE {
-            Error::TooLarge
-        } else {
-            Error::Limit
-        };
-        let length = js_sys::Reflect::get(source, &wasm_bindgen::JsValue::from_str("size"))
-            .ok()
-            .and_then(|value| value.as_f64())
-            .ok_or(Error::Unreadable)?;
-        if length > limit as f64 {
-            return Err(over);
+        #[cfg(target_arch = "wasm32")]
+        Source::File(file) => {
+            let over = if limit == MAX_FILE {
+                Error::TooLarge
+            } else {
+                Error::Limit
+            };
+            let length = js_sys::Reflect::get(file, &wasm_bindgen::JsValue::from_str("size"))
+                .ok()
+                .and_then(|value| value.as_f64())
+                .ok_or(Error::Unreadable)?;
+            if length > limit as f64 {
+                return Err(over);
+            }
+            let buffer = wasm_bindgen_futures::JsFuture::from(file.array_buffer())
+                .await
+                .map_err(|_| Error::Unreadable)?;
+            let bytes = js_sys::Uint8Array::new(&buffer);
+            if bytes.length() as usize > limit {
+                return Err(over);
+            }
+            Ok(bytes.to_vec().into())
         }
-        let buffer = wasm_bindgen_futures::JsFuture::from(source.array_buffer())
-            .await
-            .map_err(|_| Error::Unreadable)?;
-        let bytes = js_sys::Uint8Array::new(&buffer);
-        if bytes.length() as usize > limit {
-            return Err(over);
-        }
-        Ok(bytes.to_vec().into())
     }
 }
 
@@ -188,7 +188,7 @@ impl Choice {
                             } else {
                                 mime
                             },
-                            source,
+                            source: Source::File(source),
                         }
                     })
                     .collect();

@@ -255,7 +255,7 @@ pub fn preferences_save_warning(
 }
 #[cfg(feature = "test-support")]
 pub fn synthetic_scene() -> bool {
-    scene_is("synthetic")
+    scene_is("synthetic") || scene_is("synthetic-paste")
 }
 #[cfg(feature = "test-support")]
 pub fn scene_is(name: &str) -> bool {

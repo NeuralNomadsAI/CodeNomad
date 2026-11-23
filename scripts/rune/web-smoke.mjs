@@ -9,7 +9,7 @@ import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction} from './web-mobile.mjs'
 import {mobileLive, revokedLauncher} from './web-live.mjs'
-import {longPaste} from './web-paste.mjs'
+import {focusRing, longPaste} from './web-paste.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
@@ -18,7 +18,7 @@ const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
 if(values.connected){assert(values.workspace&&values.project&&values['storage-state']);url.searchParams.delete('scene')}
-else url.searchParams.set('scene', 'synthetic')
+else url.searchParams.set('scene', values['paste-only'] ? 'synthetic-paste' : 'synthetic')
 if(values.mobile)assert(values.connected && url.protocol==='https:')
 if(values['paste-only'])assert(!values.connected)
 url.searchParams.set('locale', values.locale)
@@ -214,8 +214,10 @@ try {
         if (touch) await page.touchscreen.tap(x, y)
         else await page.mouse.click(x, y)
         await page.locator('textarea:focus').waitFor({state: 'attached'})
+        const focused = values['paste-only'] ? await page.screenshot({path:path.join(out, `${name}-${colorScheme}-focus.png`),scale:'css'}) : null
         await page.keyboard.press('Tab')
         await page.waitForFunction(() => document.activeElement?.tagName !== 'TEXTAREA')
+        const unfocused = values['paste-only'] ? await page.screenshot({path:path.join(out, `${name}-${colorScheme}-blur.png`),scale:'css'}) : null
         await page.keyboard.press('Shift+Tab')
         await page.locator('textarea:focus').waitFor({state: 'attached'})
         const text = 'Rune web\nDeuxième ligne 🦀'
@@ -223,10 +225,12 @@ try {
          await page.waitForFunction(expected => document.activeElement?.value === expected, text)
          assert.equal(await page.locator('textarea:focus').getAttribute('aria-label'), messages['rune.prompt'])
          if(values['paste-only']) {
+           const {['space-md']: inset} = palette.numbers[colorScheme]
+           const ring = await focusRing(imagePage, [unfocused, focused], group, inset, palette[colorScheme]['focus-ring-color'])
            const paste = await longPaste(page, messages)
            assert.deepEqual(forbiddenRequests, [])
            assert.deepEqual(errors, [])
-           records.push({name, colorScheme, width, height, emulatedTouch: touch, longPaste: paste, pass: true})
+           records.push({name, colorScheme, width, height, emulatedTouch: touch, longPaste: paste, focusRing: ring, pass: true})
            continue
          }
         }

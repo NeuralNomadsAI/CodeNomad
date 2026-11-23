@@ -203,23 +203,41 @@ pub fn view(s: &State, compact: bool) -> El {
 }
 
 fn editor(s: &State, compact: bool) -> El {
+    let editable = !s.composer.pending();
+    #[cfg(not(target_arch = "wasm32"))]
+    let input_key = "input";
+    #[cfg(target_arch = "wasm32")]
+    let input_key = format!("input-{}", s.web_composer_input_epoch);
+    let input = layout::composer_input(&s.draft, t("promptInput.placeholder.default"))
+        .key(input_key)
+        .label(t("rune.prompt"))
+        .disabled(!editable);
+    if !editable {
+        return layout::composer_field(input, compact, false).key("composer");
+    }
     let scope = s.input_scope.clone();
     let key_scope = scope.clone();
     let paste_scope = scope.clone();
-    let input = layout::composer_input(&s.draft, t("promptInput.placeholder.default"))
-        .key("input")
-        .label(t("rune.prompt"))
-        .disabled(s.composer.pending())
+    let input = input
         .on_edit(screen::edit(&scope, screen::Editor::Composer))
         .on_input_change(screen::action_tx(&scope, changed))
         .on_input_key(move |s: &mut State, event, tx| {
             s.current_scope(&key_scope) && key(s, event, tx)
         })
         .on_input_paste(move |s: &mut State, content, tx| {
-            // Clipboard files and captures need an owned, platform-specific gesture.
-            !content.files().is_empty()
-                || content.image().is_some()
-                || s.current_scope(&paste_scope) && super::long_paste::paste(s, content.text(), tx)
+            if !s.current_scope(&paste_scope) || s.composer.pending() {
+                return true;
+            }
+            #[cfg(target_arch = "wasm32")]
+            if platform::device_picker::paste(s, content) {
+                return true;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if !content.files().is_empty() || content.image().is_some() && content.text().is_empty()
+            {
+                return true;
+            }
+            super::long_paste::paste(s, content.text(), tx)
         });
     #[cfg(not(target_arch = "wasm32"))]
     let input = {
@@ -240,7 +258,7 @@ fn editor(s: &State, compact: bool) -> El {
                 }
             })
     };
-    layout::composer_field(input, compact).key("composer")
+    layout::composer_field(input, compact, s.draft.focused).key("composer")
 }
 
 pub fn overlays(s: &State, layer: &mut Vec<El>) {
