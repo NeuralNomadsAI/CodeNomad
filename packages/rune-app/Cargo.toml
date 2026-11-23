@@ -11,10 +11,10 @@ path = "src/main.rs"
 
 [features]
 default = []
-test-support = ["rune-theme-codenomad/test-support", "dep:base64"]
+test-support = ["rune-theme-codenomad/test-support"]
 
 [dependencies]
-base64 = { version = "0.22", optional = true }
+base64 = "0.22"
 async-lock = "3.5.0"
 codenomad-client = { path = "../../crates/codenomad-client" }
 rune = { workspace = true }
@@ -38,4 +38,4 @@ tokio = { version = "1", features = ["io-util"] }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams", "Storage", "EventTarget", "PageTransitionEvent", "Request", "RequestInit", "RequestCredentials"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams", "Storage", "EventTarget", "PageTransitionEvent", "Request", "RequestInit", "RequestCredentials", "Clipboard", "Document", "Navigator", "HtmlElement", "HtmlTextAreaElement", "CssStyleDeclaration"] }

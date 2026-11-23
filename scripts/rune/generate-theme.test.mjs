@@ -5,11 +5,18 @@ import {fileURLToPath} from 'node:url'
 import {test} from 'node:test'
 import {createServer} from 'vite'
 import {chromium} from 'playwright'
-import {applyDefaultPalette,collectTheme} from './generate-theme-browser.mjs'
+import {applyDefaultPalette,collectTheme,collectFileActionColors} from './generate-theme-browser.mjs'
 import {themeFixtureHtml,sourceMenuGutter} from './generate-theme-fixture.mjs'
 import {workspaceRootIcon,workspaceRowContract,workspaceSource} from './parity/workspace-tree-row-source.mjs'
 
+import {overflowSlop} from './file-actions-source.mjs'
+
 const root=fileURLToPath(new URL('../../',import.meta.url))
+test('file action overflow tolerance follows its Source comparison',()=>{
+  assert.equal(overflowSlop('const next = required > available + 0.75'),0.75)
+  assert.throws(()=>overflowSlop('const next = required > available + tolerance'),/numeric tolerance/)
+  assert.throws(()=>overflowSlop('const next = other > available + 0.5'),/one Source/)
+})
 test('workspace geometry follows the actual JSX expressions and rejects unknown indents',async()=>{
   assert.deepEqual(workspaceSource,{base:8,step:14,chevron:12,icon:14,busy:12})
   const source=await readFile(path.join(root,'packages/ui/src/components/instance/shell/right-panel/components/WorkspaceTree.tsx'),'utf8')
@@ -39,6 +46,7 @@ test('generated semantic metrics survive actual font changes and viewport change
     await server.listen()
     browser=await chromium.launch({headless:true})
     const page=await browser.newPage({viewport:{width:1024,height:768}})
+    const collect=async()=>{const value=await page.evaluate(collectTheme,names);Object.assign(value.colors,await collectFileActionColors(page));return value}
     for(const appearance of ['light','dark']){
       await page.emulateMedia({colorScheme:appearance,reducedMotion:'no-preference'})
       await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/theme-contract`,{waitUntil:'networkidle'})
@@ -46,6 +54,7 @@ test('generated semantic metrics survive actual font changes and viewport change
       await page.keyboard.press('Tab')
       assert(await page.locator('.window-icon-button').evaluate(element=>element.matches(':focus-visible')))
       const baseline=await page.evaluate(collectTheme,names)
+      Object.assign(baseline.colors,await collectFileActionColors(page))
       assert.deepEqual(baseline.colors,generated.product[appearance].colors)
       const {workspaceRoot,...generatedMetrics}=generated.metrics[appearance]
       assert.deepEqual(baseline.metrics,generatedMetrics,'Baseline must match the checked-in semantic contract')
@@ -54,7 +63,7 @@ test('generated semantic metrics survive actual font changes and viewport change
       const widths=[]
       for(const family of ['"Segoe UI"','Arial','Helvetica','sans-serif','serif','monospace']){
         await page.evaluate(font=>document.documentElement.style.setProperty('--font-family-sans',font),family)
-        const value=await page.evaluate(collectTheme,names)
+        const value=await collect()
         const intrinsic=await page.evaluate(()=>({title:getComputedStyle(document.querySelector('.window-title')).width,input:getComputedStyle(document.querySelector('.selector-input')).width}))
         widths.push(intrinsic.title)
         assert.deepEqual(value.metrics,baseline.metrics,`${appearance} semantic metrics changed under ${family}`)
@@ -92,6 +101,24 @@ test('generated semantic metrics survive actual font changes and viewport change
       assert.equal(baseline.metrics.workspaceRow.outlineWidth,1)
       assert.equal(baseline.metrics.workspaceRow.outlineOffset,-1)
       assert.deepEqual(baseline.metrics.fileRowAction,{minWidth:24,minHeight:24,paddingLeft:0,opacity:0.7})
+      assert.deepEqual(baseline.metrics.fileRowActions,{gap:2,pinnedGap:2,inlineGap:2,overflowSlop:0.5})
+      assert.deepEqual(baseline.metrics.fileRowActionFocus,{outlineWidth:1,outlineOffset:-1})
+      assert.notEqual(baseline.colors['file-row-active-bg'],baseline.colors['file-row-active-hover-bg'])
+      const inline=page.locator('#file-actions-contract .file-row-inline-actions button')
+      const beforeActionStyles=await page.evaluateHandle(()=>document.activeElement)
+      try{
+      await inline.hover()
+      assert.equal(await inline.evaluate(el=>getComputedStyle(el).backgroundImage),'none','Later file-row background shorthand clears the shared hover image')
+      await inline.focus()
+      assert.equal(await inline.evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)')
+      assert.equal(await inline.evaluate(el=>getComputedStyle(el).backgroundImage),'none')
+      await inline.evaluate(el=>el.disabled=true)
+      assert.equal(await inline.evaluate(el=>getComputedStyle(el).opacity),'0.7','Disabled file actions keep the Source icon opacity')
+      await inline.evaluate(el=>el.disabled=false)
+      }finally{await beforeActionStyles.evaluate(el=>el?.focus());await beforeActionStyles.dispose()}
+      const specificity=await page.addStyleTag({content:'#file-actions-contract .icon-toggle:hover {background-color:rgb(255,0,0)!important} .icon-toggle:hover {background-color:rgb(0,255,0)!important}'})
+      assert.equal((await collectFileActionColors(page))['file-row-active-hover-bg'],'#ff0000ff','Actual hover must preserve specificity over later !important rules')
+      await specificity.evaluate(el=>el.remove())
       await page.locator('.action-overflow-item').first().evaluate(element=>element.style.lineHeight='normal')
       await assert.rejects(page.evaluate(collectTheme,names),/lineHeight requires an explicit numeric CSS value/)
       await page.locator('.action-overflow-item').first().evaluate(element=>element.style.removeProperty('line-height'))
