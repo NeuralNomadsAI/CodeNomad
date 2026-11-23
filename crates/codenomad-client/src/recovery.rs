@@ -202,9 +202,9 @@ pub async fn run(
                         }
                         eprintln!("Rune prompt delivery failed");
                     }
-                    // A non-401 HTTP failure can be ambiguous; do not offer an automatic retry.
-                    publish(&out, &wake, Event::PromptSettled { rejected: false }).await;
-                    if result.is_err() {
+                    let rejected = result.is_err();
+                    publish(&out, &wake, Event::PromptSettled { rejected }).await;
+                    if rejected {
                         publish(&out, &wake, Event::Failed).await;
                     }
                 } else {

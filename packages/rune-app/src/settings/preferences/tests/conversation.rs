@@ -266,15 +266,20 @@ fn settings_sse_401_releases_the_transport_for_explicit_authentication() {
 
 #[test]
 fn settings_direct_authentication_accepts_a_rotated_password_and_keeps_the_draft() {
-    assert_direct_recovery(false);
+    assert_direct_recovery(Some(401));
 }
 
 #[test]
 fn settings_send_during_a_stream_outage_preserves_the_unsubmitted_draft() {
-    assert_direct_recovery(true);
+    assert_direct_recovery(None);
 }
 
-fn assert_direct_recovery(stream_already_closed: bool) {
+#[test]
+fn settings_rotation_conflict_restores_the_draft_without_replaying() {
+    assert_direct_recovery(Some(409));
+}
+
+fn assert_direct_recovery(prompt_reply: Option<u16>) {
     platform::block_on(async {
         let (listener, mut prefs) = fixture().await;
         let mut backend = prefs.backend.take().unwrap();
@@ -296,7 +301,7 @@ fn assert_direct_recovery(stream_already_closed: bool) {
             (1100.0, 760.0),
             rune::Env::new(false, 1.0),
         );
-        let reconnect = if stream_already_closed {
+        let reconnect = if prompt_reply.is_none() {
             drop(stream.take());
             let reconnect = request(&listener).await;
             assert!(reconnect.first.starts_with("GET /api/events?"));
@@ -318,7 +323,21 @@ fn assert_direct_recovery(stream_already_closed: bool) {
                 "POST /workspaces/project/instance/api/session/session/prompt HTTP/1.1"
             );
             assert_eq!(prompt.body["text"], "refused prompt");
-            prompt.reply(401, json!({})).await;
+            prompt.reply(prompt_reply.unwrap(), json!({})).await;
+        }
+        if prompt_reply == Some(409) {
+            wait_until(|| {
+                runtime.update(|s, _| {
+                    crate::poll_chat(s, 8);
+                });
+                runtime.state.phase == crate::Phase::Failed
+            })
+            .await;
+            assert_eq!(runtime.state.draft.text, "refused prompt");
+            drop(stream.take());
+            let reconnect = request(&listener).await;
+            assert!(reconnect.first.starts_with("GET /api/events?"));
+            reconnect.reply(401, json!({})).await;
         }
         wait_until(|| {
             runtime.update(|s, _| {
@@ -396,7 +415,7 @@ fn assert_direct_recovery(stream_already_closed: bool) {
             }
         }
         let mut identity = request(&listener).await;
-        if stream_already_closed {
+        if prompt_reply.is_none() {
             assert_eq!(identity.first, "GET /api/meta HTTP/1.1");
             identity.reply(503, json!({})).await;
             wait_until(|| {
