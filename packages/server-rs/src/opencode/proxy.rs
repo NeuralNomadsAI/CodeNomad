@@ -239,10 +239,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     } else {
         None
     };
-    let session_directory = actual.as_ref().and_then(|r| r["location"]["directory"].as_str());
-    let directory = requested.as_deref().or(session_directory).unwrap_or(opened);
+    let native_directory = actual.as_ref().and_then(|r| r["location"]["directory"].as_str());
+    let directory = requested.as_deref().or(native_directory).unwrap_or(opened);
     let identity_now = || {
-        let path = crate::files::paths::canonical(&app.scope, session_directory?)?;
+        let path = crate::files::paths::canonical(&app.scope, native_directory?)?;
         let identity = crate::files::host_identity(&path).ok()?;
         Some((path, identity))
     };
