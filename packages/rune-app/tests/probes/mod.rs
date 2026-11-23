@@ -1,6 +1,7 @@
 //! Native qualification entry points, enabled exclusively by `test-support`.
 mod composer_attachments;
 mod controls;
+mod e2e_journey;
 mod files_document;
 mod files_reader;
 mod files_state;
@@ -47,6 +48,7 @@ pub fn dispatch() -> bool {
         ("--probe-native-store", native_store::run),
         ("--probe-pending-open", pending_open::run),
         ("--probe-controls", controls::run),
+        ("--probe-e2e-journey", e2e_journey::run),
         ("--probe-files-state", files_state::run),
         ("--probe-git-panel", git_panel::run),
         ("--probe-launcher", launcher::run),
