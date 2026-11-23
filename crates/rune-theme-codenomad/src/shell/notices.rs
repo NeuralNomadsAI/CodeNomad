@@ -8,6 +8,21 @@ use std::rc::Rc;
 
 pub const ANCHOR: &str = "notification-history-toggle";
 
+pub fn action<S: 'static>(
+    label: &str,
+    disabled: bool,
+    invoke: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let invoke = Rc::new(invoke);
+    let press = invoke.clone();
+    let button = layout::button_tx(label, disabled, move |s, tx| press(s, tx));
+    if disabled {
+        button
+    } else {
+        button.on_key(super::enter_action(invoke))
+    }
+}
+
 pub fn bell<S: 'static>(
     label: &'static str,
     unread: Option<(String, String)>,
@@ -30,15 +45,29 @@ pub fn bell<S: 'static>(
         .children(unread.map(|(count, label)| text(count).text_role(TextRole::Small).label(label)))
 }
 
-pub fn record(title: &str, body: &str, toolbar: El, live: bool) -> El {
+pub fn title(title: &str) -> El {
+    text(title)
+        .text_role(TextRole::Button)
+        .wrap_anywhere()
+        .max_lines(2)
+}
+
+pub fn record(title: El, body: &str, toolbar: El, bubble_height: Option<f32>) -> El {
     col()
         .full_width()
         .pad(Space::Sm)
         .separate(Space::Xs)
         .fill(tokens(layout::dark()).color("surface-overlay"))
-        .child(text(title).text_role(TextRole::Button).wrap_anywhere())
-        .child(if live {
-            text(body).wrap_anywhere().max_lines(5).role("status")
+        .child(title)
+        .child(if let Some(height) = bubble_height {
+            col()
+                .key("notification-text")
+                .focusable(true)
+                .max_h((height * 0.15).max(32.0))
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(text(body).wrap_anywhere().role("status"))
         } else {
             text(body).wrap_anywhere()
         })
@@ -56,6 +85,7 @@ pub fn bubbles(cards: impl IntoIterator<Item = El>, viewport: f32) -> El {
 
 pub fn history<S: 'static>(
     label: &str,
+    close_control: El,
     toolbar: El,
     records: impl IntoIterator<Item = El>,
     viewport: (f32, f32),
@@ -71,7 +101,14 @@ pub fn history<S: 'static>(
         .pad(Space::Sm)
         .separate(Space::Sm)
         .w((viewport.0 - inset * 2.0).max(0.0).min(380.0))
-        .child(text(label).text_role(TextRole::Button).role("heading"))
+        .child(
+            row()
+                .full_width()
+                .center_y()
+                .justify_between()
+                .child(text(label).text_role(TextRole::Button).role("heading"))
+                .child(close_control),
+        )
         .child(toolbar)
         .child(
             col()

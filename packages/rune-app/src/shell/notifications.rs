@@ -161,6 +161,7 @@ pub(crate) struct Host {
     focused: bool,
     routes: VecDeque<(u64, Target, Presented)>,
     delivered: VecDeque<(Target, Category, String)>,
+    app_delivered: VecDeque<(Target, Category, String)>,
     deferred: VecDeque<Notice>,
     background_attention: background::Background,
     messages: VecDeque<messages::Message>,
@@ -186,6 +187,7 @@ pub(crate) struct Host {
 struct Click {
     target: Target,
     ticket: u64,
+    system: bool,
 }
 
 struct Notice {
@@ -212,6 +214,7 @@ impl Default for Host {
             focused: true,
             routes: VecDeque::new(),
             delivered: VecDeque::new(),
+            app_delivered: VecDeque::new(),
             deferred: VecDeque::new(),
             background_attention: Default::default(),
             messages: VecDeque::new(),
@@ -369,8 +372,16 @@ impl Host {
 fn activate_notice(s: &mut State, target: Target) {
     s.notifications.supersede_navigation();
     let ticket = s.notifications.navigation_ticket();
-    s.notifications.click_check = crate::workspace::check_notification(s, &target)
-        .map(|check| (Click { target, ticket }, check));
+    s.notifications.click_check = crate::workspace::check_notification(s, &target).map(|check| {
+        (
+            Click {
+                target,
+                ticket,
+                system: false,
+            },
+            check,
+        )
+    });
     (s.wake)();
 }
 
@@ -445,7 +456,7 @@ fn deliver(s: &mut State, notice: Notice) {
     if shelf.already_delivered(target, *category, id) {
         return;
     }
-    let (body, route, allow_focused) =
+    let (body, mut route, allow_focused) =
         match crate::settings::system_notification(s, target, *category, shelf.focused(), label) {
             Delivery::Body(body, route, allow_focused) => (body, route, allow_focused),
             Delivery::Suppressed => return,
@@ -462,11 +473,14 @@ fn deliver(s: &mut State, notice: Notice) {
                 return;
             }
         };
-    let delivered = &mut s.notifications.delivered;
-    if delivered.len() >= RETAINED * 2 {
-        delivered.pop_front();
-    }
-    delivered.push_back((target.clone(), *category, id.clone()));
+    messages::claim_routes(
+        &mut s.notifications,
+        target,
+        *category,
+        id,
+        &mut route,
+        allow_focused,
+    );
     messages::publish(
         s,
         project,
@@ -525,6 +539,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     Click {
                         target: clicked,
                         ticket,
+                        system: true,
                     },
                     check,
                 )
@@ -547,7 +562,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     {
         match check.try_recv() {
             Ok(true) if crate::workspace::can_switch_for_notification(s, &clicked.target) => {
-                s.notifications.focus();
+                if clicked.system {
+                    s.notifications.focus();
+                }
                 target = Some((clicked, false));
             }
             Ok(true) => s.notifications.click_wait = Some(clicked),

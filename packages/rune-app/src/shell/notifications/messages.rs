@@ -133,17 +133,39 @@ pub(super) fn compaction(label: &str) -> String {
         .replace("{label}", &format!("\"{label}\""))
 }
 
-pub(super) fn claim(s: &mut State, target: &Target, category: Category, id: &str) -> bool {
-    let host = &mut s.notifications;
-    if host.already_delivered(target, category, id) {
+fn claim(
+    queue: &mut std::collections::VecDeque<(Target, Category, String)>,
+    target: &Target,
+    category: Category,
+    id: &str,
+) -> bool {
+    if queue.iter().any(|(owner, event, seen)| {
+        owner.same_event_scope(target) && *event == category && seen == id
+    }) {
         return false;
     }
-    if host.delivered.len() >= RETAINED * 2 {
-        host.delivered.pop_front();
+    if queue.len() >= RETAINED * 2 {
+        queue.pop_front();
     }
-    host.delivered
-        .push_back((target.clone(), category, id.into()));
+    queue.push_back((target.clone(), category, id.into()));
     true
+}
+
+pub(super) fn claim_routes(
+    host: &mut super::Host,
+    target: &Target,
+    category: Category,
+    id: &str,
+    route: &mut crate::settings::notification_routing::Route,
+    allow_focused: bool,
+) {
+    route.system = route.system
+        && (allow_focused || !host.focused())
+        && claim(&mut host.delivered, target, category, id);
+    if (route.screen || route.history) && !claim(&mut host.app_delivered, target, category, id) {
+        route.screen = false;
+        route.history = false;
+    }
 }
 
 pub(super) fn poll(s: &mut State) {
@@ -155,35 +177,51 @@ pub(super) fn poll(s: &mut State) {
         {
             continue;
         }
-        match settings::notification_route(s, &message.source, message.category) {
-            ConfirmedRoute::Unavailable => {}
-            ConfirmedRoute::Refreshing => s.notifications.messages.push_back(message),
-            ConfirmedRoute::Ready(mut route, allow_focused) => {
-                route.screen |= message.error;
-                route.history |= message.error;
-                if !route.screen
-                    && !route.history
-                    && (!route.system || !allow_focused && s.notifications.focused())
-                {
+        let (mut route, allow_focused) =
+            match settings::notification_route(s, &message.source, message.category) {
+                ConfirmedRoute::Refreshing => {
+                    s.notifications.messages.push_back(message);
                     continue;
                 }
-                if let (Some(target), Some(id)) = (&message.target, &message.event)
-                    && !claim(s, target, message.category, id)
-                {
-                    continue;
-                }
-                publish(
-                    s,
-                    &message.title,
-                    &message.body,
-                    message.target.filter(|target| {
-                        message.category != Category::Opencode || target.tab.is_some()
-                    }),
-                    route,
-                    allow_focused,
-                );
-            }
+                ConfirmedRoute::Missing if message.error => (
+                    crate::settings::notification_routing::Route {
+                        screen: true,
+                        history: true,
+                        system: false,
+                    },
+                    false,
+                ),
+                ConfirmedRoute::Ready(route, allow_focused) => (route, allow_focused),
+                _ => continue,
+            };
+        route.screen |= message.error;
+        route.history |= message.error;
+        if !route.screen
+            && !route.history
+            && (!route.system || !allow_focused && s.notifications.focused())
+        {
+            continue;
         }
+        if let (Some(target), Some(id)) = (&message.target, &message.event) {
+            claim_routes(
+                &mut s.notifications,
+                target,
+                message.category,
+                id,
+                &mut route,
+                allow_focused,
+            );
+        }
+        publish(
+            s,
+            &message.title,
+            &message.body,
+            message
+                .target
+                .filter(|target| message.category != Category::Opencode || target.tab.is_some()),
+            route,
+            allow_focused,
+        );
     }
 }
 

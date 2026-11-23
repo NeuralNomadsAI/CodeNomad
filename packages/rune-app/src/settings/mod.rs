@@ -187,6 +187,7 @@ pub(crate) enum Delivery {
 pub(crate) enum ConfirmedRoute {
     Unavailable,
     Refreshing,
+    Missing,
     Ready(notification_routing::Route, bool),
 }
 
@@ -207,7 +208,7 @@ pub(crate) fn notification_route(
         return ConfirmedRoute::Refreshing;
     }
     let config = prefs.notification_config();
-    notification_routing::route(config, category).map_or(ConfirmedRoute::Unavailable, |route| {
+    notification_routing::route(config, category).map_or(ConfirmedRoute::Missing, |route| {
         ConfirmedRoute::Ready(route, notification_routing::allow_focused(config))
     })
 }
@@ -262,11 +263,11 @@ pub(crate) fn notification_fixture(s: &State) {
 }
 
 #[cfg(test)]
-pub(crate) fn notification_test_config(s: &State, snapshot: serde_json::Value) {
+pub(crate) fn notification_test_config(s: &State, snapshot: impl Into<Option<serde_json::Value>>) {
     s.settings
         .shared
         .borrow_mut()
-        .notification_test_config(snapshot);
+        .notification_test_config(snapshot.into());
 }
 
 pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {
