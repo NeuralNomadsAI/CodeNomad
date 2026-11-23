@@ -235,6 +235,18 @@ pub(super) fn run() {
                 }
         });
         if !unconfirmed {
+            wait(
+                &mut rt,
+                "placed transcript restores its visible anchor",
+                |rt| {
+                    rt.elements().into_iter().any(|row| {
+                        !row.exiting
+                            && row.visible[3] > 0.0
+                            && row.path.ends_with(&format!("/{}", anchor.0))
+                            && (row.rect[1] - anchor.1).abs() < 0.5
+                    })
+                },
+            );
             super::recovery::check_anchor(&rt, &anchor);
         }
         if unconfirmed {
