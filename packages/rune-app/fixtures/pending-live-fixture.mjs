@@ -19,6 +19,8 @@ const env=await privateEnvironment(root),password=randomUUID(),proof={root,proje
 Object.assign(env,{OPENCODE_TEST_HOME:env.HOME,OPENCODE_DB:path.join(root,'native.db'),OPENCODE_CONFIG_DIR:path.join(root,'native-config'),OPENCODE_SERVER_PASSWORD:password,
   OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_MODELS_FETCH:'1',OPENCODE_DISABLE_FFF:'1',OPENCODE_DISABLE_AUTOUPDATE:'true',OPENCODE_CONFIG_CONTENT:'{}',GIT_CEILING_DIRECTORIES:root})
 await mkdir(env.OPENCODE_CONFIG_DIR)
+const pluginAssets=process.env.CNRS_PLUGIN_ASSETS
+if(pluginAssets)assert(path.isAbsolute(pluginAssets),'CNRS_PLUGIN_ASSETS must be absolute')
 let native,rust,ui,client,observer,watch,session,origin,cookie,nativeLog='',rustLog='',uiLog='',uiLines='',protocolError
 const ids=['once','always','reject'].map(decision=>`per_rune_live_${decision}_${randomUUID().replaceAll('-','')}`),forms=new Map()
 const expected=['once','always','reject','typed-question','cancel-question'];let position=0,awaiting='ready',protocol=Promise.resolve()
@@ -57,7 +59,7 @@ try{
   observer=new AbortController();watch=(async()=>{for await(const event of client.event.subscribe({signal:observer.signal})){proof.events.push({type:event.type,sessionID:event.data?.sessionID,id:event.data?.id});assert(proof.events.length<256)}})();void watch.catch(()=>{})
   await until(()=>proof.events.some(e=>e.type==='server.connected'),'native SSE')
   session=await client.session.create({location:{directory:project},title:'Rune private native pending UI',permissions:[{action:'*',resource:'*',effect:'deny'},{action:'rune_fixture',resource:'*',effect:'ask'}]});assert.equal(path.resolve(session.location.directory),project);proof.session=session.id
-  rust=owned(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{env:{...env,CNRS_FIXTURE_URL:`${base}/`,CNRS_FIXTURE_PASSWORD:password,CNRS_SERVER_PASSWORD:'fixture-rune-native-pending',CNRS_FIXTURE_STDIN_STOP:'1'}},b=>rustLog=(rustLog+b).slice(-1048576))
+  rust=owned(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{env:{...env,...(pluginAssets?{CNRS_PLUGIN_ASSETS:pluginAssets}:{}),CNRS_FIXTURE_URL:`${base}/`,CNRS_FIXTURE_PASSWORD:password,CNRS_SERVER_PASSWORD:'fixture-rune-native-pending',CNRS_FIXTURE_STDIN_STOP:'1'}},b=>rustLog=(rustLog+b).slice(-1048576))
   origin=await until(()=>{assert.equal(rust.exitCode,null);return rustLog.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0]},'private Rust ready')
   const login=await fetch(`${origin}/api/auth/login`,post({username:'codenomad',password:'fixture-rune-native-pending'}));assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await relay('/api/workspaces',post({path:project,requestId:`rune-native-ui-${randomUUID()}`}));assert.equal(opened.status,201);assert.equal(path.resolve(opened.body.path),project);proof.workspace=opened.body.id
