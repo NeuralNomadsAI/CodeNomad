@@ -297,6 +297,10 @@ try {
   if (about) {
     await page.route('https://raw.githubusercontent.com/**',route=>route.abort())
     await page.addInitScript(() => {
+      Object.defineProperty(navigator,'userAgentData',{value:{
+        platform:'Windows',mobile:false,
+        getHighEntropyValues:async()=>({platformVersion:'15.0.0',architecture:'x86',bitness:'64'}),
+      }})
       window.openedInfoLinks = []
       window.open = url => { window.openedInfoLinks.push(String(url)); return null }
       window.diagnosticClipboard = null
@@ -375,7 +379,7 @@ try {
     await page.locator('[aria-live="assertive"]').filter({hasText:'Could not save the update feed.'}).waitFor({state:'attached'})
     assert.deepEqual(feedWrites,[{updateFeed:'preview'},{updateFeed:'stable'}])
     assert.equal(infoReads,before+2)
-    assert.equal(await page.getByRole('radio',{name:'Previews and stable releases',exact:true,checked:true}).count(),1)
+    await page.getByRole('radio',{name:'Previews and stable releases',exact:true,checked:true}).waitFor({state:'attached'})
     const copy = page.getByRole('button',{name:'Copy to clipboard',exact:true})
     await copy.press('Enter')
     await page.locator('[aria-live="assertive"]').filter({hasText:'Could not copy diagnostics.'}).waitFor({state:'attached'})
@@ -398,6 +402,10 @@ try {
     assert.equal(bug.searchParams.get('template'),'bug_report.yml')
     assert.equal(bug.searchParams.get('codenomad-version'),'9.0.1 (UI 9.0.2)')
     assert.equal(bug.searchParams.get('opencode-version'),'2.3.2 (running daemon 2.3.1)')
+    assert.equal(bug.searchParams.get('os-version'),'Windows 11 x64')
+    const context = bug.searchParams.get('extra')
+    assert(context.includes('Web browser (desktop, remote window)') && context.includes('Server OS: Windows x64'))
+    assert(context.includes(`- Browser: ${await page.evaluate(()=>navigator.userAgent)}`))
     assert(!decodeURIComponent(bug.href).includes(directory) && !bug.href.includes('192.0.2.10'))
     invalidOffer = true
     await page.getByRole('button',{name:'Refresh',exact:true}).press('Enter')

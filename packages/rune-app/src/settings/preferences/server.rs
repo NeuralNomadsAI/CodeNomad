@@ -68,7 +68,7 @@ impl Preferences {
 
     pub(in crate::settings) fn retry_log_level(&mut self) {
         if self.show_server && self.can_retry() {
-            self.server.retry();
+            self.server.retry(Some(Choice::LogLevel));
         }
     }
 

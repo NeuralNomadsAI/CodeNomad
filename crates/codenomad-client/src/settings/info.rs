@@ -42,15 +42,16 @@ pub fn release_link(text: &str) -> Option<String> {
         || !parts.next().is_some_and(|owner| !owner.is_empty())
         || !parts.next().is_some_and(|repo| !repo.is_empty())
         || parts.next() != Some("releases")
-        || parts.next() != Some("tag")
-        || !parts.next().is_some_and(|tag| !tag.is_empty())
-        || parts.next().is_some()
         || url.query().is_some()
         || url.fragment().is_some()
     {
         return None;
     }
-    Some(url.into())
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some("latest"), None, None) => Some(url.into()),
+        (Some("tag"), Some(tag), None) if !tag.is_empty() => Some(url.into()),
+        _ => None,
+    }
 }
 
 pub fn listener_origin(text: &str) -> Option<String> {

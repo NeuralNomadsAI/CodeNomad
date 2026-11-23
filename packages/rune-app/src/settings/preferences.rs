@@ -149,8 +149,8 @@ impl Preferences {
     }
 
     pub fn retry(&mut self) {
-        self.config.retry();
-        self.state.retry();
+        self.config.retry(None);
+        self.state.retry(None);
     }
 
     pub fn can_retry(&self) -> bool {

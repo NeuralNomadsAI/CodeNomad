@@ -148,14 +148,9 @@ impl Info {
         let value = self.current(&prefs).unwrap_or(&Value::Null);
         let feed = FEEDS.iter().position(|feed| value["updateFeed"] == *feed);
         let busy = self.flight.is_some() || prefs.update_feed_pending();
-        let offer = value.get("update").filter(|offer| offer.is_object());
-        let latest = offer.and_then(|offer| value_text(&offer["version"]));
+        let (latest, link) = release_offer(value);
         let release = (!busy && !self.failed && latest.is_some())
-            .then(|| {
-                offer
-                    .and_then(|offer| value_text(&offer["url"]))
-                    .and_then(codenomad_client::settings::info::release_link)
-            })
+            .then_some(link)
             .flatten();
         let version =
             value_text(&value["serverVersion"]).or_else(|| value_text(&value["ui"]["version"]));
@@ -177,7 +172,7 @@ impl Info {
             ))
             .child(row(
                 "settings.info.runtime.os",
-                Some(platform::diagnostics::os()),
+                Some(&self.diagnostics.os()),
             ));
 
         let update = shared.clone();
@@ -189,8 +184,7 @@ impl Info {
                     let Some(info) = access(s) else { return; };
                     let prefs = source.borrow();
                     if !info.failed && info.flight.is_none() && !prefs.update_feed_pending()
-                        && info.current(&prefs).and_then(|m| value_text(&m["update"]["url"]))
-                            .and_then(codenomad_client::settings::info::release_link).as_ref() == Some(&release)
+                        && info.current(&prefs).and_then(|m| release_offer(m).1).as_ref() == Some(&release)
                     {
                         info.release_failed = tx.open_url(&release).is_err();
                     }
@@ -302,6 +296,53 @@ fn value_text(value: &Value) -> Option<&str> {
     value.as_str().filter(|value| {
         !value.is_empty() && value.len() <= 4096 && !value.contains(char::is_control)
     })
+}
+
+fn release_offer(meta: &Value) -> (Option<&str>, Option<String>) {
+    use codenomad_client::settings::info::release_link;
+    let support = (meta["updateFeed"] != "preview").then_some(&meta["support"]);
+    let latest = value_text(&meta["update"]["version"])
+        .or_else(|| support.and_then(|s| value_text(&s["latestServerVersion"])));
+    let url = if let Some(url) = value_text(&meta["update"]["url"]) {
+        release_link(url)
+    } else {
+        latest
+            .zip(value_text(&meta["serverVersion"]))
+            .filter(|&(latest, current)| {
+                let numbers = |value: &str| {
+                    value
+                        .trim_start_matches('v')
+                        .split('-')
+                        .next()
+                        .unwrap_or_default()
+                        .split('.')
+                        .take(3)
+                        .map(str::parse::<u64>)
+                        .collect::<Result<Vec<_>, _>>()
+                        .ok()
+                };
+                numbers(latest)
+                    .zip(numbers(current))
+                    .is_none_or(|(latest, current)| latest > current)
+            })
+            .and_then(|_| support.and_then(|s| value_text(&s["latestServerUrl"])))
+            .and_then(release_link)
+    };
+    (latest, url)
+}
+
+#[test]
+fn stable_release_support_is_displayed_even_when_no_update_is_offered() {
+    let url = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
+    let mut meta = serde_json::json!({
+        "updateFeed": "stable", "serverVersion": "2.0.0", "update": null,
+        "support": {"latestServerVersion": "2.1.0", "latestServerUrl": url},
+    });
+    assert_eq!(release_offer(&meta), (Some("2.1.0"), Some(url.to_owned())));
+    meta["serverVersion"] = "2.1.0".into();
+    assert_eq!(release_offer(&meta), (Some("2.1.0"), None));
+    meta["updateFeed"] = "preview".into();
+    assert_eq!(release_offer(&meta), (None, None));
 }
 
 fn connectivity(value: &Value) -> El {
