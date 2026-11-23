@@ -45,8 +45,8 @@ export async function traceSwipe(page,cdp,profile,swipe,presentationOnly=false) 
   }
 }
 
-export function observeRenderer() {
-  globalThis.__runeCpuFrames=[]
+export function observeRenderer(recordCpu) {
+  if(recordCpu)globalThis.__runeCpuFrames=[]
   globalThis.__runeGraphicsContexts=[]
   const getContext=HTMLCanvasElement.prototype.getContext
   HTMLCanvasElement.prototype.getContext=function(...args) {

@@ -12,6 +12,7 @@ path = "src/main.rs"
 [features]
 default = []
 test-support = ["rune-theme-codenomad/test-support"]
+webgl = ["rune/webgl"]
 
 [dependencies]
 async-lock = "3.5.0"

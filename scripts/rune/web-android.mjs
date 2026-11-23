@@ -60,10 +60,14 @@ async function runAndroid() {
     if(url.pathname==='/api/events'&&response.ok()&&
       response.headers()['content-type']?.startsWith('text/event-stream'))events++
   })
-  if((trace&&trace!=='display')||gpuProbe)await page.addInitScript(observeRenderer)
+  const detailedTrace=Boolean(trace&&trace!=='display')
+  if(detailedTrace||gpuProbe)await page.addInitScript(observeRenderer,detailedTrace)
   if(gpuProbe)await page.addInitScript(observeGpu)
   const gpuLog=[]
-  if(gpuProbe)page.on('console',msg=>{if(/gpu|adapter|vulkan|dawn|rune:/i.test(msg.text()))gpuLog.push(msg.text())})
+  if(gpuProbe){
+    evidence.gpuLog=gpuLog
+    page.on('console',msg=>{if(gpuLog.length<50&&/gpu|adapter|vulkan|dawn|webgl|rune:/i.test(msg.text()))gpuLog.push(msg.text())})
+  }
   page.setDefaultTimeout(20000)
   await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.fallback():route.abort())
   cdp=await context.newCDPSession(page)
@@ -84,6 +88,9 @@ async function runAndroid() {
   const paint=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
   await connect.waitFor()
   await paint()
+  evidence.timings.pairingToLauncherMs=performance.now()-start
+  evidence.timings.landingNavigationToLauncherMs=await page.evaluate(()=>performance.now())
+  evidence.timings.moduleReadyMs=await page.evaluate(()=>globalThis.__codenomadRuneBoot?.moduleReadyMs)
   if(gpuProbe==='only'){
     try {
       await page.waitForFunction(()=>performance.getEntriesByType('mark').some(e=>/web\.(gpu\.failed|handover\.(done|failed))$/.test(e.name)),
@@ -94,9 +101,13 @@ async function runAndroid() {
     await writeFile(path.join(profile,'android-gpu.json'),JSON.stringify({...state,chrome,gpuLog},null,2))
     return
   }
-  evidence.timings.pairingToLauncherMs=performance.now()-start
-  evidence.timings.landingNavigationToLauncherMs=await page.evaluate(()=>performance.now())
-  evidence.timings.moduleReadyMs=await page.evaluate(()=>globalThis.__codenomadRuneBoot?.moduleReadyMs)
+  if(gpuProbe==='webgl'){
+    await page.waitForFunction(()=>performance.getEntriesByName('web.handover.done').length||
+      performance.getEntriesByName('web.gpu.failed').length||performance.getEntriesByName('web.handover.failed').length,
+      undefined,{timeout:15000})
+    evidence.gpu=await gpuState(page)
+    assertWebGL(evidence.gpu)
+  }
   evidence.memory.launcher=await chromeMemory(run,cdp)
   const policy=workspacePolicy({origin,project,assets,androidPrompt})
   const forbidden=[], errors=[]
@@ -144,7 +155,7 @@ async function runAndroid() {
   await paint()
   evidence.timings.selectConversationToAnswerMs=performance.now()-opened
   evidence.memory.conversation=await chromeMemory(run,cdp)
-  if(gpuProbe)evidence.gpu=await gpuState(page)
+  if(gpuProbe==='webgl')assertWebGL(await gpuState(page))
   const group=solid?page.locator('textarea.prompt-input:visible').first():page.getByRole('group',{name:messages['rune.prompt'],exact:true})
   const viewport=()=>metrics(page)
   const hierarchy='/data/local/tmp/codenomad-rune-web.xml'
@@ -253,9 +264,20 @@ async function runAndroid() {
   assert.equal(await page.evaluate(()=>performance.timeOrigin),documentStarted,'Recovery must preserve the browser document')
   evidence.memory.recovered=await chromeMemory(run,cdp)
   live.recoveredAfterRustRestart=true
+  if(gpuProbe==='webgl'){
+    evidence.gpuAfterRecovery=await gpuState(page)
+    assertWebGL(evidence.gpuAfterRecovery)
+  }
   assert.deepEqual(forbidden,[])
   assert.deepEqual(errors,[])
   await writeFile(path.join(profile,'android-proof.json'),JSON.stringify({before,keyboard,ime,...evidence},null,2))
+}
+function assertWebGL(state) {
+  assert(state.contexts?.includes('webgl2')&&!state.contexts.includes('webgpu')&&
+    state.marks.some(mark=>mark.name==='web.handover.done')&&
+    !state.marks.some(mark=>['web.gpu.lost','web.gpu.failed','web.handover.failed'].includes(mark.name))&&
+    state.canvases.filter(canvas=>canvas.opacity==='1'&&canvas.width>300).length===1,
+  `Expected a completed WebGL2 handover without CPU fallback: ${JSON.stringify(state)}`)
 }
 try {
   await runAndroid()
