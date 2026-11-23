@@ -10,6 +10,8 @@ use windows_sys::Win32::System::JobObjects::IsProcessInJob;
 
 const LAUNCHER: &str = "windows::launch::tests::fixture_suspended_launch";
 const ECHO: &str = "windows::launch::tests::fixture_argv_and_environment";
+const NESTED: &str = "windows::launch::tests::fixture_nested_job";
+const SLEEPER: &str = "windows::launch::tests::fixture_nested_sleeper";
 const ARGS: &[&str] = &[
     "--exact",
     ECHO,
@@ -158,5 +160,101 @@ fn killing_launcher_before_child_resumes_closes_the_job() {
     assert_eq!(
         stopped, WAIT_OBJECT_0,
         "killing the launcher killed the suspended child"
+    );
+}
+
+#[test]
+fn fixture_nested_sleeper() {
+    if std::env::var_os("CODENOMAD_TEST_NESTED_SLEEPER").is_none() {
+        return;
+    }
+    println!("ready");
+    io::stdout().flush().unwrap();
+    let mut line = String::new();
+    let _ = io::stdin().read_line(&mut line);
+}
+
+#[test]
+fn fixture_nested_job() {
+    if std::env::var_os("CODENOMAD_TEST_NESTED_OUTER").is_none() {
+        return;
+    }
+    let spawn_sleeper = || {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", SLEEPER, "--nocapture"])
+            .env("CODENOMAD_TEST_NESTED_SLEEPER", "1");
+        let mut inner = OwnedProcess::spawn(&mut command).unwrap();
+        let stdout = inner.take_stdout().unwrap();
+        let ready = BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+            .any(|line| line == "ready");
+        assert!(ready, "nested sleeper reported ready");
+        inner
+    };
+    let mut first = spawn_sleeper();
+    first.terminate().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !first.family_is_empty().unwrap() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "inner job emptied after terminate"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _second = spawn_sleeper();
+    println!("nested:{}", _second.id());
+    io::stdout().flush().unwrap();
+    let mut line = String::new();
+    let _ = io::stdin().read_line(&mut line);
+}
+
+#[test]
+fn nested_owned_process_jobs_isolate_inner_and_cascade_from_outer() {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", NESTED, "--nocapture"])
+        .env("CODENOMAD_TEST_NESTED_OUTER", "1");
+    let mut outer = OwnedProcess::spawn(&mut command).unwrap();
+    let stdout = outer.take_stdout().unwrap();
+    let (out, incoming) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some(pid) = line.strip_prefix("nested:") {
+                let _ = out.send(pid.to_owned());
+                break;
+            }
+        }
+    });
+    let nested = incoming
+        .recv_timeout(Duration::from_secs(10))
+        .ok()
+        .and_then(|pid| pid.parse::<u32>().ok())
+        .and_then(|pid| {
+            // SAFETY: hold a handle to the nested grandchild before terminating the outer job.
+            let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, pid) };
+            (!handle.is_null()).then(|| unsafe { OwnedHandle::from_raw_handle(handle) })
+        });
+    outer.terminate().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !outer.family_is_empty().unwrap() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "outer job emptied after terminate"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    reader.join().unwrap();
+    let nested = nested.expect("outer job reported its nested child");
+    let stopped = unsafe { WaitForSingleObject(nested.as_raw_handle(), 5000) };
+    if stopped != WAIT_OBJECT_0 {
+        unsafe {
+            TerminateProcess(nested.as_raw_handle(), 1);
+        }
+    }
+    assert_eq!(
+        stopped, WAIT_OBJECT_0,
+        "terminating the outer job killed the nested OwnedProcess child"
     );
 }

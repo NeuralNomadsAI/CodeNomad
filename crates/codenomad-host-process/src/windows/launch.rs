@@ -3,6 +3,7 @@ use crate::OwnedProcess;
 use std::{
     ffi::{OsStr, c_void},
     io::{self, PipeReader, PipeWriter},
+    marker::PhantomData,
     mem::{size_of, size_of_val, zeroed},
     os::windows::{
         ffi::OsStrExt,
@@ -181,7 +182,7 @@ fn create(
             EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | flags,
             env.as_ref().map_or(null(), |env| env.as_ptr().cast()),
             cwd.as_ref().map_or(null(), |cwd| cwd.as_ptr()),
-            &startup.StartupInfo,
+            (&raw const startup).cast::<STARTUPINFOW>(),
             &mut info,
         ))?;
         let child = Process {
@@ -195,28 +196,34 @@ fn create(
     }
 }
 
-struct Attributes(Vec<usize>);
-impl Attributes {
+struct Attributes<'a> {
+    storage: Vec<usize>,
+    _values: PhantomData<&'a [HANDLE]>,
+}
+impl<'a> Attributes<'a> {
     fn new() -> io::Result<Self> {
         let mut bytes = 0;
         // SAFETY: the null call obtains the required size. usize storage provides native alignment.
         unsafe {
             InitializeProcThreadAttributeList(null_mut(), 2, 0, &mut bytes);
-            let mut buffer = vec![0; bytes.div_ceil(size_of::<usize>())];
+            let mut storage = vec![0; bytes.div_ceil(size_of::<usize>())];
             check(InitializeProcThreadAttributeList(
-                buffer.as_mut_ptr().cast(),
+                storage.as_mut_ptr().cast(),
                 2,
                 0,
                 &mut bytes,
             ))?;
-            Ok(Self(buffer))
+            Ok(Self {
+                storage,
+                _values: PhantomData,
+            })
         }
     }
     fn ptr(&mut self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
-        self.0.as_mut_ptr().cast()
+        self.storage.as_mut_ptr().cast()
     }
-    fn set(&mut self, key: u32, values: &[HANDLE]) -> io::Result<()> {
-        // SAFETY: values remain alive until the list is destroyed; Win32 does not write to them.
+    fn set(&mut self, key: u32, values: &'a [HANDLE]) -> io::Result<()> {
+        // SAFETY: `'a` keeps `values` live for the lifetime of this attribute list; Win32 reads only.
         unsafe {
             check(UpdateProcThreadAttribute(
                 self.ptr(),
@@ -230,7 +237,7 @@ impl Attributes {
         }
     }
 }
-impl Drop for Attributes {
+impl Drop for Attributes<'_> {
     fn drop(&mut self) {
         // SAFETY: successful initialization owns exactly one attribute list in this storage.
         unsafe { DeleteProcThreadAttributeList(self.ptr()) }

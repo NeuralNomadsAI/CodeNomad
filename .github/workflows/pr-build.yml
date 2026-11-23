@@ -971,6 +971,18 @@ jobs:
           node-version-file: .node-version
           cache: npm
 
+      - name: Setup Rust (Windows fixture job)
+        if: runner.os == 'Windows'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.1'
+
+      - name: Restore Cargo downloads (Windows fixture job)
+        if: ${{ runner.os == 'Windows' && hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
+        with:
+          kind: cargo
+
       - name: Install dependencies
         run: npm ci
 

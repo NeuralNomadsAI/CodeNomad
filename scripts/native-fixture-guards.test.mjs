@@ -121,6 +121,35 @@ test("Windows enclosing bench job keeps its daemon across backend exits but kill
   } finally { await stopFixtureChild(root, stopped) }
 })
 
+test("Windows mobile enclosing job kills detached browser descendants when the IPC client times out", windows, async () => {
+  const launcherSource = fs.readFileSync(new URL("../packages/rune-app/fixtures/launcher-fixture.mjs", import.meta.url), "utf8")
+  assert.match(launcherSource, /--owned-mobile-worker/, "launcher-fixture wraps mobile IPC runs in an enclosing Windows job")
+  assert.match(launcherSource, /spawnFixtureChild\(process\.execPath,\[\.\.\.process\.execArgv,\.\.\.process\.argv\.slice\(1\),'--owned-mobile-worker'\]/)
+  const ipcClient = `
+    const {spawn} = require("node:child_process")
+    const browser = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {detached:true,windowsHide:true,stdio:"ignore"})
+    browser.once("spawn", () => process.send({browserPid: browser.pid}))
+    setInterval(() => {}, 1000)
+  `
+  const worker = own(`
+    const {spawn} = require("node:child_process")
+    const client = spawn(process.execPath, ["-e", ${JSON.stringify(ipcClient)}], {windowsHide:true,stdio:["ignore","ignore","ignore","ipc"]})
+    client.once("message", ({browserPid}) => {
+      console.log(JSON.stringify([client.pid, browserPid]))
+      setTimeout(() => { client.kill(); process.exit(1) }, 50)
+    })
+  `)
+  const stopped = once(worker, "close")
+  try {
+    const [data] = await once(worker.stdout, "data")
+    const [clientPid, browserPid] = JSON.parse(String(data))
+    const [code] = await stopped
+    assert.equal(code, 1)
+    assert.equal(alive(clientPid), false)
+    assert.equal(alive(browserPid), false)
+  } finally { await stopFixtureChild(worker, stopped) }
+})
+
 test("Missions native fixtures stop their owned serve with bounded escalation", () => {
   for (const script of ["test-missions-native.mjs", "test-missions-native-family-control.mjs"]) {
     const source = fs.readFileSync(new URL(script, import.meta.url), "utf8")

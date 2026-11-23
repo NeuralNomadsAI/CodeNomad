@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn,execFile} from 'node:child_process'
-import {spawnFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 import {promisify} from 'node:util'
 import {mkdir,readFile,writeFile,rename,unlink,access} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
@@ -20,6 +20,15 @@ import {androidTsServer} from './android-ts-server.mjs'
 import {launchFixture,rustOrigin,signInFixture} from './fixture-host.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
+if(process.platform==='win32'&&webMobile&&!process.argv.includes('--owned-mobile-worker')){
+  const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:'inherit'})
+  const closed=new Promise(resolve=>worker.once('close',resolve))
+  const stop=()=>void stopFixtureChild(worker,closed).catch(error=>console.error(error.message))
+  process.once('SIGINT',stop)
+  process.once('SIGTERM',stop)
+  const code=await closed
+  process.exit(code??1)
+}
 const webMissions=process.argv.includes('--web-missions')
 const solid=webAndroid&&process.env.RUNE_ANDROID_SOLID_DIR
 const compare=webAndroid&&process.env.RUNE_ANDROID_COMPARE
