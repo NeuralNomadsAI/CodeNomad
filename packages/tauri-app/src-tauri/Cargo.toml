@@ -27,6 +27,7 @@ rustls = { version = "0.23", features = ["ring"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 regex = "1"
 parking_lot = "0.12"
+tokio = { version = "1", features = ["sync"] }
 anyhow = "1"
 which = "4"
 libc = "0.2"

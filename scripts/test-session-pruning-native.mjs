@@ -126,7 +126,7 @@ env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
   }, models: { fixture: {} } } },
   plugins: [path.join(root, "plugin")],
   // Runtimes with optional blob storage externalize tool files; others ignore the key.
-  experimental: { media_blob: true, ...(splitParts ? { part_rows: true } : {}) },
+  experimental: { media_blob: true, part_rows: splitParts },
 })
 function start() {
   const child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--log-level", "debug", "--print-logs"], { cwd: root, env, windowsHide: true })

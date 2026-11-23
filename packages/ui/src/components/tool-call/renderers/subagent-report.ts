@@ -1,7 +1,9 @@
 /**
  * Background subagent delivery. A subagent call completes at once with `metadata.status: "running"`;
  * the child's result reaches the parent session later as hidden synthetic reports, one per idle
- * period: `<subagent sessionID="…" state="…" description="…">\n<body>\n</subagent>`.
+ * period: `<subagent sessionID="…" state="…" description="…">\n<body>\n</subagent>`, or
+ * `<background-result kind="subagent" sessionID="…" …>\n<body>\n</background-result>` on runtimes
+ * that report every background job kind through one tag.
  * A report tagged `running` is intermediate: the child still owns background work.
  */
 import type { ClientPart } from "../../../types/message"
@@ -35,12 +37,13 @@ export interface SubagentDeliveries {
 /** Bounded scan of the parent session's newest messages. */
 export const SUBAGENT_REPORT_SCAN_LIMIT = 500
 
-const REPORT = /^<subagent sessionID="([^"]+)" state="(running|completed|error|cancelled)"[^\n]*>\n([\s\S]*)\n<\/subagent>\s*$/
+const REPORT = /^<(subagent|background-result kind="subagent") sessionID="([^"]+)" state="(running|completed|error|cancelled)"[^\n]*>\n([\s\S]*)\n<\/(subagent|background-result)>\s*$/
 const SUBAGENT_TOOLS = new Set(["subagent", "task"])
 
 export function parseSubagentReport(text: string): Pick<SubagentReport, "childId" | "state" | "body"> | null {
   const match = REPORT.exec(text)
-  return match ? { childId: match[1], state: match[2] as SubagentReportState, body: match[3] } : null
+  // The closing tag matches the opening one.
+  return match && match[1].startsWith(match[5]) ? { childId: match[2], state: match[3] as SubagentReportState, body: match[4] } : null
 }
 
 /** A tool state that only acknowledges a background launch. */

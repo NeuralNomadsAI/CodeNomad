@@ -617,6 +617,7 @@ jobs:
           packages/ui/src/components/mission-native-execution.test.ts
           packages/ui/src/components/mission-picker-model.test.ts
           packages/ui/src/components/mission-profile-controls-data.test.ts
+          packages/ui/src/components/catalog-refresh.test.ts
           packages/ui/src/components/mission-profile-summary-data.test.ts
           packages/ui/src/components/mission-progress-model.test.ts
           packages/ui/src/components/mission-reader-locales.test.ts
@@ -731,7 +732,6 @@ jobs:
           packages/ui/src/stores/session-child-transcript-watch.test.ts
           packages/ui/src/stores/opencode-inbox-rebinding.test.ts
           packages/ui/src/stores/opencode-transcript-replay.test.ts
-          packages/ui/src/stores/opencode-compaction.test.ts
           packages/ui/src/lib/message-part-grouping.test.ts
           packages/ui/src/lib/settings/behavior-registry.test.ts
           packages/ui/src/components/instance/shell/right-panel/core-plugin.test.ts
@@ -754,6 +754,9 @@ jobs:
           packages/ui/src/stores/interruption-scope.test.ts
           packages/ui/src/stores/session-workspace-scope.test.ts
           packages/ui/src/stores/session-projection-cost.test.ts
+          packages/ui/src/stores/session-projection.test.ts
+          packages/ui/src/lib/deadline-memo.test.ts
+          packages/ui/src/lib/server-events-lifecycle.test.ts
           packages/ui/src/stores/session-outline.test.ts
           packages/ui/src/stores/runtime-contract.test.ts
           packages/ui/src/stores/session-lifecycle-signals.test.ts
@@ -774,6 +777,10 @@ jobs:
           packages/ui/src/stores/project-names.test.ts
           packages/ui/src/stores/temporary-instances.test.ts
           packages/ui/src/stores/closed-workspace-drafts.test.ts
+
+      - name: Test compaction and verify natural exit
+        timeout-minutes: 1
+        run: node --conditions=browser --import tsx --test packages/ui/src/stores/opencode-compaction.test.ts
 
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"

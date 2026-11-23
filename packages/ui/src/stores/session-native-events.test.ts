@@ -2,14 +2,88 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { sseManager } from "../lib/sse-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
+import { createClientSession } from "../types/session.ts"
 import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, messagesLoaded, sessions, setActiveSession, setMessagesLoaded, setSessions } from "./session-state.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
 describe("native session event reducer", () => {
+  it("projects rename titles and reads only missing metadata, retaining the latest title in flight", async () => {
+    const instanceId = "native-session-rename"
+    let reads = 0
+    let reply!: (info: any) => void
+    const client = { session: { get: () => {
+      reads++
+      return new Promise(resolve => { reply = resolve })
+    } } } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    sseManager.seedStatus(instanceId, "connected")
+    const rename = (sessionID: string, title: string) => {
+      const event = { id: title, type: "session.renamed", created: 2, location: { directory: "/work" },
+        data: { sessionID, title } } as const
+      handleInstanceInvalidation(instanceId, event as any)
+      handleNativeSessionEvent(instanceId, event as any)
+    }
+    try {
+      const info = { id: "known", location: { directory: "/work" }, projectID: "project", title: "Old",
+        time: { created: 1, updated: 1 }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }
+      setSessions(previous => new Map(previous).set(instanceId, new Map([["known", { ...info, parentId: null, instanceId, status: "idle" } as any]])))
+      rename("known", "New")
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(reads, 0)
+      assert.equal(sessions().get(instanceId)?.get("known")?.title, "New")
+      const archive = (sessionID: string, type: "session.archived" | "session.unarchived", created: number) =>
+        handleNativeSessionEvent(instanceId, { id: type, type, created, data: { sessionID } } as any)
+      rename("cold", "First")
+      rename("cold", "Second")
+      archive("cold", "session.archived", 3)
+      assert.equal(reads, 1)
+      reply({ ...info, id: "cold", parentID: "known" })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(sessions().get(instanceId)?.get("cold")?.title, "Second")
+      assert.equal(sessions().get(instanceId)?.get("cold")?.time.archived, 3)
+      rename("cold", "Third")
+      assert.equal(reads, 1)
+      assert.equal(sessions().get(instanceId)?.get("cold")?.title, "Third")
+
+      rename("listed", "Rename before list")
+      const listRow = { ...info, id: "listed", parentId: "known", instanceId, status: "idle" } as any
+      setSessions(previous => new Map(previous).set(instanceId, new Map(previous.get(instanceId)).set(listRow.id, listRow)))
+      archive("listed", "session.archived", 3)
+      archive("listed", "session.unarchived", 4)
+      reply({ ...info, id: "listed", parentID: "known", time: { ...info.time, archived: 1 } })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(reads, 2)
+      assert.equal(sessions().get(instanceId)?.get("listed")?.title, "Rename before list")
+      assert.equal(sessions().get(instanceId)?.get("listed")?.time.archived, undefined)
+
+      rename("newer", "Superseded rename")
+      archive("newer", "session.archived", 3)
+      reply({ ...info, id: "newer", title: "Newer snapshot", time: { ...info.time, updated: 5 } })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(sessions().get(instanceId)?.get("newer")?.title, "Newer snapshot")
+      assert.equal(sessions().get(instanceId)?.get("newer")?.time.archived, undefined)
+
+      rename("newer-list", "Superseded rename")
+      const newerRow = { ...listRow, id: "newer-list", title: "Newer list", time: { ...info.time, updated: 5 } }
+      setSessions(previous => new Map(previous).set(instanceId, new Map(previous.get(instanceId)).set(newerRow.id, newerRow)))
+      rename("newer-list", "Late event")
+      archive("newer-list", "session.archived", 3)
+      reply({ ...info, id: "newer-list", parentID: "known" })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(sessions().get(instanceId)?.get("newer-list")?.title, "Newer list")
+      assert.equal(sessions().get(instanceId)?.get("newer-list")?.time.archived, undefined)
+    } finally {
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
   it("preserves durable session metadata and recognizes the streamed step boundary", () => {
     const instanceId = "native-session-metadata"
     const sessionId = "session"
@@ -33,6 +107,49 @@ describe("native session event reducer", () => {
     } finally {
       setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  for (const retry of [false, true]) it(`drops ${retry ? "backoff after a new attempt" : "compaction after settlement"} from a shared cold read`, async () => {
+    const instanceId = `shared-status-read-${retry}`
+    const sessionId = "cold"
+    let reads = 0
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const info = {
+      id: sessionId, title: "old", projectID: "project", version: "1",
+      location: { directory: "/work" }, time: { created: 1, updated: 1 },
+      cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    }
+    const client = { session: { active: async () => ({}), get: async () => { reads++; await gate; return info } } } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    let seq = 0
+    const emit = (type: string, extra = {}) => handleNativeSessionEvent(instanceId, {
+      id: `event-${++seq}`, type, created: seq + 1, location: info.location,
+      durable: { aggregateID: sessionId, seq, version: 1 }, data: { sessionID: sessionId, ...extra },
+    } as any)
+    const row = () => sessions().get(instanceId)?.get(sessionId)
+    try {
+      emit("session.renamed", { title: "Renamed" })
+      if (retry) emit("session.retry.scheduled", { assistantMessageID: "msg_retry", attempt: 1, at: Date.now() + 5_000,
+        error: { name: "UnknownError", message: "Provider backoff" } })
+      else emit("session.compaction.started")
+      assert.equal(reads, 1)
+      setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, createClientSession(info as any, instanceId)]])))
+      await emit(retry ? "session.execution.started" : "session.execution.succeeded")
+      const expectedStatus = retry ? "working" : "idle"
+      assert.equal(row()?.status, expectedStatus)
+      assert.equal(row()?.retry, null)
+      release()
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(row()?.title, "Renamed")
+      assert.equal(row()?.status, expectedStatus)
+      assert.equal(row()?.retry, null)
+    } finally {
+      release()
       removeInstance(instanceId, { authoritative: false })
       sdkManager.destroyClientsForInstance(instanceId)
     }

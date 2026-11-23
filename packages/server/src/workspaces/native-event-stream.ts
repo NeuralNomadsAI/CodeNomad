@@ -1,4 +1,4 @@
-import { projectInboxUserFiles } from "../opencode/user-file-reference"
+import { projectInboxUserFiles } from "../opencode/session-pruning/user-file-reference"
 
 // A native inbox envelope can contain the four 5 MiB uploads admitted by the composer,
 // encoded in base64. Shrink it before the shared SDK reader's 16 MiB limit.

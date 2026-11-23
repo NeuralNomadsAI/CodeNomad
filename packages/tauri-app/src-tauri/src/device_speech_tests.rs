@@ -619,7 +619,11 @@ fn webkit_permit_consults_the_exact_lease_and_current_engine() {
     let id = Uuid::new_v4().to_string();
     let wrong = Uuid::new_v4().to_string();
     let permit = |owner, id: &str, preferences| {
-        device.authorize_api_microphone(owner, &url, id.to_owned(), preferences)
+        let preflight = device.preflight(
+            device.document_witness(owner),
+            &Request::AuthorizeApiMicrophone { id: id.to_owned() },
+        );
+        device.authorize_api_microphone(owner, &url, id.to_owned(), preferences, preflight)
     };
     assert_eq!(permit("local", &id, false), Err(SpeechError::Unavailable));
     assert_eq!(permit("preferences", &id, true), Ok(Value::Null));
@@ -645,4 +649,57 @@ fn webkit_permit_consults_the_exact_lease_and_current_engine() {
         release_microphone(&device, "local", &id);
         assert!(!device.claim_local_microphone("local", &url));
     }
+}
+
+#[test]
+fn revocation_can_retire_an_engine_selection_while_disk_work_is_pending() {
+    let (_directory, device, _, _) = fixture();
+    let owner = "preferences";
+    let request = Request::Select {
+        engine: Engine::Api,
+    };
+    let preflight = device.preflight(device.document_witness(owner), &request);
+    let Ok(SpeechAdmission::Select(engine, caps, preflight)) =
+        device.admit(owner, request, preflight, false)
+    else {
+        panic!("selection was not reserved");
+    };
+    let (staged, staging) = std::sync::mpsc::channel();
+    let (resume, proceed) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let worker = &device;
+        let select = scope.spawn(move || {
+            worker.finish_selection(owner, engine, caps, preflight, |admit| {
+                staged.send(()).unwrap();
+                proceed.recv_timeout(Duration::from_secs(5)).unwrap();
+                admit()
+            })
+        });
+        staging.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(
+            device.slots.try_lock().is_some(),
+            "publication holds the slots lock"
+        );
+        device.revoke(Some(owner));
+        resume.send(()).unwrap();
+        assert_eq!(select.join().unwrap(), Err(SpeechError::NotOwned));
+    });
+    assert!(!device.store.0.exists());
+    assert!(!device.slots.lock().selecting);
+}
+
+#[test]
+fn preflight_cannot_admit_a_replaced_document() {
+    let (_directory, device, _, _) = fixture();
+    let owner = "preferences";
+    let request = Request::Select {
+        engine: Engine::Api,
+    };
+    let preflight = device.preflight(device.document_witness(owner), &request);
+    device.revoke(Some(owner));
+    let _replacement = device.document_witness(owner);
+    assert!(matches!(
+        device.admit(owner, request, preflight, false),
+        Err(SpeechError::NotOwned)
+    ));
 }

@@ -6,8 +6,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { ClientStateManager, type ClientStateWriter } from "./client-state"
+import { CrossHostRegistration } from "./client-state-cross-host"
 import { deterministicLegacyWindowId, parseClientState } from "./client-state-envelope"
-import { MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES } from "./client-state-partitions"
+import { MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES, syncDirectory } from "./client-state-partitions"
 
 test("legacy migration UUIDs are deterministic from exact envelope bytes", () => {
   const vectors = [
@@ -57,12 +58,13 @@ test("Preferences restoration survives final local-window shutdown and clears on
   assert.equal(await manager.savePreferencesWindow(geometry), true)
   await manager.drainAndReleasePrimary()
   const reopened = h.create()
+  t.mock.getter(CrossHostRegistration.prototype, "isPrimary", () => assert.fail("Preferences used synchronous lease verification"))
   assert.equal(reopened.preferences, undefined)
   assert.deepEqual(reopened.lastPreferences, { section: "providers", scrollTop: 420 })
   assert.deepEqual(reopened.preferencesWindow, geometry)
 })
 
-function harness(t: test.TestContext, initial?: unknown) {
+function harness(t: test.TestContext, initial?: unknown, syncStateDirectory?: typeof syncDirectory) {
   const directory = mkdtempSync(join(tmpdir(), "codenomad-state-"))
   const statePath = join(directory, "client-state.json")
   if (initial !== undefined) writeFileSync(statePath, JSON.stringify(initial))
@@ -74,7 +76,7 @@ function harness(t: test.TestContext, initial?: unknown) {
     if (failing) throw new Error("injected write failure")
     await writeFile(path, value, "utf8")
   }, processOwner?: { pid: number; runToken: string; processStartIdentity: string }) => {
-    const manager = new ClientStateManager(directory, writer, { crossHostElectionDirectory: join(directory, "election"), processOwner })
+    const manager = new ClientStateManager(directory, writer, { crossHostElectionDirectory: join(directory, "election"), processOwner, syncStateDirectory })
     managers.push(manager)
     return manager
   }
@@ -245,7 +247,7 @@ test("unshipped partitioned V2 shared state is not copied over shipped V1 migrat
   await manager.drainAndReleasePrimary()
 })
 
-test("ownership loss immediately disables restore reads and mutations", async (t) => {
+test("ownership loss disables renderer restore reads and mutations", async (t) => {
   const h = harness(t, {
     version: 1,
     restoreEnabled: true,
@@ -253,11 +255,74 @@ test("ownership loss immediately disables restore reads and mutations", async (t
     window: { bounds: { x: 0, y: 0, width: 900, height: 700 }, maximized: false, fullscreen: false, zoomFactor: 1 },
   })
   const manager = h.create()
+  const id = manager.activeWindowId
+  manager.claimClientStateAccess("renderer", id)
   writeFileSync(join(h.directory, "election", "primary.owner.json", "owner.json"), "malformed")
-  assert.equal(manager.isPrimary, false)
-  assert.deepEqual(manager.loadClientState(), { isPrimary: false, restoreEnabled: false, snapshot: null, partitionProtocolVersion: 1 })
-  assert.equal(manager.getWindowState(), undefined)
-  assert.equal(await manager.saveClientState({ ignored: true }), false)
+  assert.deepEqual(await manager.loadClientStateForRenderer(id, "renderer"), {
+    isPrimary: false, restoreEnabled: false, snapshot: null, partitionProtocolVersion: 1,
+  })
+  assert.equal(await manager.saveClientState({ ignored: true }, "renderer", id), false)
+})
+
+test("a published root survives directory sync failure and postpones partition GC", async (t) => {
+  let fail = false
+  const h = harness(t, { version: 1, restoreEnabled: true }, async (directory) => {
+    if (fail) throw new Error("injected directory sync failure")
+    await syncDirectory(directory)
+  })
+  const manager = h.create()
+  manager.claimClientStateAccess("doc")
+  const commit = (content: string) => {
+    const key = partitionKey(content)
+    return {
+      protocolVersion: 1, snapshot: partitionRoot([key]),
+      partitionKeys: [key], partitions: { [key]: content },
+    }
+  }
+  const old = commit("old"), next = commit("next")
+  await manager.commitClientStatePartitions(old, "doc")
+  fail = true
+  await assert.rejects(manager.commitClientStatePartitions(next, "doc"), /durability unconfirmed/)
+  assert.deepEqual(manager.loadClientState().snapshot, next.snapshot)
+  assert.deepEqual(persistedRecord(h.statePath).snapshot, next.snapshot)
+  assert.equal(existsSync(join(h.directory, "partitions", old.partitionKeys[0]!)), true)
+  await assert.rejects(manager.drainAndReleasePrimary(), /injected directory sync failure/)
+  fail = false
+  assert.equal(await manager.commitClientStatePartitions(next, "doc"), true)
+  assert.equal(existsSync(join(h.directory, "partitions", old.partitionKeys[0]!)), false)
+})
+
+test("renderer root load observes earlier publication and never sees a later failed write", async (t) => {
+  const h = harness(t, { version: 1, restoreEnabled: true })
+  const manager = h.create()
+  const id = manager.activeWindowId
+  manager.claimClientStateAccess("renderer", id)
+  let enter!: () => void, resume!: () => void
+  const entered = new Promise<void>((resolve) => { enter = resolve })
+  const gate = new Promise<void>((resolve) => { resume = resolve })
+  let checks = 0
+  t.mock.method(CrossHostRegistration.prototype, "checkPrimary", async () => {
+    // The first save checks at mutation admission and at atomic replacement.
+    if (++checks === 3) { enter(); await gate }
+    return true
+  })
+  const earlier = manager.saveClientState({ revision: 1 }, "renderer", id)
+  const load = manager.loadClientStateForRenderer(id, "renderer")
+  const later = manager.saveClientState({ revision: 2 }, "renderer", id)
+  try {
+    await entered
+    assert.equal(await earlier, true)
+    assert.deepEqual(persistedRecord(h.statePath).snapshot, { revision: 1 })
+    h.fail(true)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(checks, 3)
+  } finally {
+    resume()
+    await Promise.allSettled([earlier, load, later])
+  }
+  assert.deepEqual((await load).snapshot, { revision: 1 })
+  await assert.rejects(later, /injected write failure/)
+  assert.deepEqual(persistedRecord(h.statePath).snapshot, { revision: 1 })
 })
 
 test("failed preference and clear writes roll memory and suppression back", async (t) => {
@@ -334,11 +399,49 @@ test("drain freezes mutations and waits for admitted writes", async (t) => {
   assert.deepEqual(persistedRecord(h.statePath).snapshot, { admitted: true })
 })
 
+test("partition commits leave the event loop free and publish in order before quit", async (t) => {
+  const h = harness(t, { version: 1, restoreEnabled: true })
+  let entered!: () => void
+  let resume!: () => void
+  const firstWrite = new Promise<void>((resolve) => { entered = resolve })
+  const gate = new Promise<void>((resolve) => { resume = resolve })
+  t.after(resume)
+  const manager = h.create(async (path, value) => {
+    if (JSON.parse(value).windows[manager.activeWindowId]?.snapshot?.revision === 1) {
+      entered()
+      await gate
+    }
+    await writeFile(path, value, { flush: true })
+  })
+  const content = "durable partition"
+  const key = createHash("sha256").update(content).digest("hex")
+  const commit = (revision: number, partitions: Record<string, string>) => manager.commitClientStatePartitions({
+    protocolVersion: 1,
+    snapshot: { version: 2, sessionPartition: key, partitionKeys: [key], revision },
+    partitionKeys: [key],
+    partitions,
+  })
+  const first = commit(1, { [key]: content })
+  const second = commit(2, {})
+  let quit = false
+  const drain = manager.drainAndReleasePrimary().then(() => { quit = true })
+  await firstWrite
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(quit, false)
+  resume()
+  assert.deepEqual(await Promise.all([first, second, drain]), [true, true, undefined])
+  const reopened = h.create()
+  assert.equal((reopened.loadClientState().snapshot as { revision: number }).revision, 2)
+  assert.equal(await reopened.loadClientStatePartition(key), content)
+})
+
 test("a failed drain keeps ownership and permits a persisted retry", async (t) => {
   const h = harness(t, { version: 1, restoreEnabled: true })
   const manager = h.create()
+  manager.claimClientStateAccess("renderer")
   h.fail(true)
   await assert.rejects(manager.saveClientState({ failed: true }), /injected write failure/)
+  assert.equal((await manager.loadClientStateForRenderer(manager.activeWindowId, "renderer")).snapshot, null)
   await assert.rejects(manager.drainAndReleasePrimary(), /injected write failure/)
   assert.equal(manager.isPrimary, true)
   assert.equal(existsSync(join(h.directory, "client-state.primary.lock")), true)
