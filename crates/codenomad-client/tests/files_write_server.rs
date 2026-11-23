@@ -47,7 +47,7 @@ fn real_rust_files_write_contract() {
         let initial = backend.preview_file(project, file).await.unwrap();
         assert_eq!(initial.bytes, fs::read(&private).unwrap());
         let first = "Enregistré · été 🦀\n日本語\r\n";
-        assert_eq!(backend.write_file(project, file, first, initial.version.as_deref().unwrap()).await.unwrap(), WriteResult::Saved);
+        let WriteResult::Saved(first_version) = backend.write_file(project, file, first, initial.version.as_deref().unwrap()).await.unwrap() else { panic!("write refused") };
         let saved = backend.preview_file(project, file).await.unwrap();
         assert_eq!(saved.bytes, first.as_bytes());
         assert_eq!(saved.bytes, fs::read(&private).unwrap());
@@ -60,7 +60,8 @@ fn real_rust_files_write_contract() {
         assert_eq!(current.bytes, external.as_bytes());
         assert_ne!(current.version, saved.version);
         let final_text = "Version courante · τέλος 🦀\nseconde sauvegarde";
-        assert_eq!(backend.write_file(project, file, final_text, current.version.as_deref().unwrap()).await.unwrap(), WriteResult::Saved);
+        assert_eq!(first_version, current.version);
+        assert!(matches!(backend.write_file(project, file, final_text, current.version.as_deref().unwrap()).await.unwrap(), WriteResult::Saved(Some(_))));
         let final_read = backend.preview_file(project, file).await.unwrap();
         assert_eq!(final_read.bytes, final_text.as_bytes());
         assert_eq!(fs::read(&private).unwrap(), final_text.as_bytes());

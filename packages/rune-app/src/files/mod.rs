@@ -44,7 +44,7 @@ pub fn bind(s: &mut crate::State, backend: &crate::backend::Backend) {
                     .as_ref()
                     .map_or_else(|| backend.workspace.clone(), |ui| ui.active_key().into()),
             )
-            .with_draft_project(project.path.clone()),
+            .with_draft_project(project.clone()),
         )
     });
 }

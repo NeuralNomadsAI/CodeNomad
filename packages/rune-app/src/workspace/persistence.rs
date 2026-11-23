@@ -3,13 +3,14 @@ use crate::{history::Result, platform::storage::Store};
 use codenomad_client::{Receiver, bounded};
 use std::path::PathBuf;
 
-type Loaded = (Store, Option<Snapshot>, Option<Vec<u8>>);
+type Loaded = (Store, Result<Option<Snapshot>>, Result<Option<Vec<u8>>>);
 
 pub(super) struct Persistence {
     pub loading: bool,
     pub read_error: bool,
     pub write_error: bool,
     pub file_draft_error: bool,
+    pub file_draft_read_error: bool,
     pub partial: bool,
     pub store: Option<Store>,
     loaded: Option<Receiver<Result<Loaded>>>,
@@ -27,6 +28,7 @@ impl Persistence {
             read_error: false,
             write_error: false,
             file_draft_error: false,
+            file_draft_read_error: false,
             partial: false,
             store: None,
             loaded: None,
@@ -57,16 +59,12 @@ impl Persistence {
                 let store = Store::open(directory).await?;
                 #[cfg(target_arch = "wasm32")]
                 let store = Store::open().await?;
-                let snapshot = store
-                    .load()
-                    .await?
-                    .map(|bytes| {
-                        decode(&bytes).map_err(|_| -> crate::history::Error {
-                            "invalid saved workspace".into()
-                        })
-                    })
-                    .transpose()?;
-                let drafts = store.load_file_drafts().await.ok().flatten();
+                let snapshot = store.load().await.and_then(|bytes| {
+                    bytes
+                        .map(|bytes| decode(&bytes).map_err(|_| "invalid saved workspace".into()))
+                        .transpose()
+                });
+                let drafts = store.load_file_drafts().await;
                 Ok((store, snapshot, drafts))
             }
             .await;
@@ -74,12 +72,14 @@ impl Persistence {
             wake();
         });
     }
-    pub fn poll_load(&mut self) -> Option<(Option<Snapshot>, Option<Vec<u8>>)> {
+    pub fn poll_load(&mut self) -> Option<(Option<Snapshot>, Result<Option<Vec<u8>>>)> {
         let result = self.loaded.as_ref()?.try_recv().ok()?;
         self.loaded = None;
         self.loading = false;
         match result {
             Ok((store, snapshot, drafts)) => {
+                self.read_error = snapshot.is_err();
+                let snapshot = snapshot.ok().flatten();
                 self.saved = snapshot.as_ref().map_or(0, |s| s.revision);
                 self.store = Some(store);
                 Some((snapshot, drafts))
@@ -141,7 +141,9 @@ impl Persistence {
         });
     }
     pub fn retry(&mut self) {
-        self.read_error = false;
+        if self.store.is_none() {
+            self.read_error = false;
+        }
         self.write_error = false;
         self.due = 0.0;
         #[cfg(target_arch = "wasm32")]
@@ -187,10 +189,11 @@ impl Persistence {
         {
             self.attempted_file_drafts = revision;
         }
-        if self
-            .store
-            .as_ref()
-            .is_none_or(|store| store.save_file_drafts(&bytes).is_err())
+        if self.file_draft_read_error
+            || self
+                .store
+                .as_ref()
+                .is_none_or(|store| store.save_file_drafts(&bytes).is_err())
         {
             self.file_draft_error = true;
             return false;
@@ -207,6 +210,8 @@ pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
         ui.openings.close();
         let snapshot = ui.snapshot();
         let drafts_saved = ui.persistence.flush_file_drafts(&s.documents);
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::files::document::recovery::show(s.documents.closing_drafts(!drafts_saved));
         if ui.persistence.flush(&snapshot) && drafts_saved && !ui.has_unsaved_large_drafts() {
             ui.release_all();
         } else {
@@ -227,6 +232,31 @@ mod tests {
         },
         time::Duration,
     };
+    #[test]
+    fn corrupt_window_snapshot_does_not_hide_the_file_sidecar() {
+        let parent = std::env::temp_dir().join(codenomad_client::http::client_id().unwrap());
+        fs::create_dir(&parent).unwrap();
+        let root = parent.join("rune");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("state.json"), b"broken window snapshot").unwrap();
+        fs::write(root.join("workspace-file-drafts.json"), b"[]").unwrap();
+        let mut state = Persistence::new();
+        state.start(Some(root), Arc::new(|| {}));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let loaded = loop {
+            if let Some(loaded) = state.poll_load() {
+                break loaded;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        assert!(state.read_error);
+        assert!(loaded.0.is_none());
+        assert_eq!(loaded.1.unwrap().unwrap(), b"[]");
+        drop(state);
+        fs::remove_dir_all(parent).unwrap();
+    }
+
     #[test]
     fn write_failure_stays_dirty_without_automatic_retries() {
         let parent =

@@ -5,8 +5,10 @@ use super::{
 };
 use crate::{files::reader::Reader, platform};
 use codenomad_client::{
-    Wake,
+    Receiver, Wake,
     backend::Backend,
+    bounded,
+    catalog::Project,
     files::{MAX_FILE_BYTES, WriteResult},
 };
 use rune::TextEdit;
@@ -42,7 +44,9 @@ pub struct Editor {
     writes: Writes,
     written: u64,
     instance: String,
-    project: Option<String>,
+    project: Option<Project>,
+    native_project: Option<Option<String>>,
+    project_read: Option<Receiver<crate::history::Result<Option<String>>>>,
     wake: Wake,
     key: Option<Key>,
     saved_key: Option<SavedKey>,
@@ -68,6 +72,8 @@ impl Editor {
             written,
             instance,
             project: None,
+            native_project: None,
+            project_read: None,
             wake,
             key: None,
             saved_key: None,
@@ -86,8 +92,24 @@ impl Editor {
     pub fn key(&self) -> Option<&Key> {
         self.key.as_ref()
     }
-    pub(crate) fn set_project(&mut self, project: String) {
+    pub(crate) fn set_project(&mut self, project: Project) {
         self.project = Some(project);
+    }
+    fn read_project(&mut self) {
+        if self.native_project.is_some() || self.project_read.is_some() {
+            return;
+        }
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+        let (out, input) = bounded(1);
+        self.project_read = Some(input);
+        let backend = self.backend.clone();
+        let wake = self.wake.clone();
+        platform::spawn(async move {
+            let _ = out.send(backend.native_project(&project).await).await;
+            wake();
+        });
     }
     pub(crate) fn not_retained(&self) -> bool {
         self.draft
@@ -143,6 +165,7 @@ impl Editor {
     }
     pub fn editable(&self) -> bool {
         self.active
+            && (self.project.is_none() || self.native_project.is_some())
             && self.draft.as_ref().is_some_and(|draft| {
                 let draft = lock(draft);
                 draft.original.is_some() || draft.recovered
@@ -162,6 +185,7 @@ impl Editor {
         self.rejected = TextEdit::new("");
         if scope != self.scope
             || !self.active
+            || self.project.is_some() && self.native_project.is_none()
             || self.draft.as_ref().is_none_or(|draft| {
                 let draft = lock(draft);
                 draft.original.is_none() && !draft.recovered
@@ -174,6 +198,7 @@ impl Editor {
     }
     pub fn open(&mut self, directory: String, path: String) {
         self.close();
+        self.read_project();
         let key = Key {
             server: self.backend.base.clone(),
             instance: self.instance.clone(),
@@ -185,9 +210,11 @@ impl Editor {
             .client
             .server_identity()
             .zip(self.project.as_ref())
-            .map(|(server, project)| SavedKey {
+            .zip(self.native_project.as_ref())
+            .map(|((server, project), native_project)| SavedKey {
                 server: server.into(),
-                project: project.clone(),
+                project: project.path.clone(),
+                native_project: native_project.clone(),
                 directory: key.directory.clone(),
                 path: key.path.clone(),
             });
@@ -242,10 +269,13 @@ impl Editor {
         }
     }
     fn cancel_check(&mut self) {
-        self.intent = Intent::Idle;
+        let id = match std::mem::replace(&mut self.intent, Intent::Idle) {
+            Intent::Checking { id, .. } | Intent::Overwrite { id, .. } | Intent::Discard(id) => id,
+            _ => return,
+        };
         if let Some(shared) = &self.draft {
             let mut draft = lock(shared);
-            if matches!(draft.pending, Some(Pending::Check(_))) {
+            if draft.pending == Some(Pending::Check(id)) {
                 draft.pending = None;
             }
         }
@@ -299,6 +329,7 @@ impl Editor {
         if scope != self.scope || !self.ready(reader) || self.pending() {
             return;
         }
+        self.read_project();
         let Some(shared) = &self.draft else { return };
         let mut draft = lock(shared);
         if draft.dirty() {
@@ -349,6 +380,15 @@ impl Editor {
         }
     }
     pub fn poll(&mut self, reader: &mut Reader) -> bool {
+        if let Some(Ok(result)) = self.project_read.as_ref().map(Receiver::try_recv) {
+            self.project_read = None;
+            if let Ok(project) = result {
+                self.native_project = Some(project);
+                if let Some(key) = self.key.clone() {
+                    self.open(key.directory, key.path);
+                }
+            }
+        }
         if !self.ready(reader) {
             return false;
         }
@@ -519,7 +559,7 @@ impl Editor {
             let result = backend
                 .write_file(&key.directory, &key.path, &text.wire, &version)
                 .await;
-            let saved = matches!(&result, Ok(WriteResult::Saved));
+            let saved = matches!(&result, Ok(WriteResult::Saved(_)));
             {
                 let mut draft = lock(&shared);
                 if draft.pending != Some(Pending::Write(id)) {
@@ -527,8 +567,9 @@ impl Editor {
                 }
                 draft.pending = None;
                 match result {
-                    Ok(WriteResult::Saved) => {
+                    Ok(WriteResult::Saved(saved_version)) => {
                         draft.original = Some(text);
+                        draft.version = super::store::version(saved_version.as_deref());
                         draft.recovered = false;
                         draft.uncertain = None;
                         draft.error = None;

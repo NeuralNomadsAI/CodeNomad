@@ -394,7 +394,7 @@ impl Ui {
         self.document = Editor::new(self.backend.clone(), store, instance, self.wake.clone());
         self
     }
-    pub(super) fn with_draft_project(mut self, project: String) -> Self {
+    pub(super) fn with_draft_project(mut self, project: crate::catalog::Project) -> Self {
         self.document.set_project(project);
         self
     }

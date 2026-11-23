@@ -19,6 +19,7 @@ const COUNT: usize = 32;
 pub(super) struct SavedKey {
     pub server: String,
     pub project: String,
+    pub native_project: Option<String>,
     pub directory: String,
     pub path: String,
 }
@@ -27,13 +28,17 @@ impl SavedKey {
         [&self.server, &self.project, &self.directory, &self.path]
             .into_iter()
             .all(|part| !part.is_empty() && part.len() <= 16 * 1024)
+            && self
+                .native_project
+                .as_ref()
+                .is_none_or(|id| !id.is_empty() && id.len() <= 1024)
     }
 }
 
 #[derive(Clone, PartialEq, Eq)]
 struct Saved {
     key: SavedKey,
-    version: String,
+    version: Option<String>,
     text: String,
 }
 impl Saved {
@@ -45,25 +50,33 @@ impl Saved {
             key.directory,
             key.path,
             self.version,
-            self.text
+            self.text,
+            key.native_project
         ])
     }
     fn decode(row: &Value) -> Option<Self> {
         let row = row.as_array()?;
-        if row.len() != 6 {
+        if row.len() != 7 {
             return None;
         }
         let field = |index: usize| row.get(index)?.as_str().map(str::to_owned);
         let key = SavedKey {
             server: field(0)?,
             project: field(1)?,
+            native_project: match row.get(6)? {
+                Value::Null => None,
+                value => Some(value.as_str()?.into()),
+            },
             directory: field(2)?,
             path: field(3)?,
         };
         key.valid().then_some(())?;
         Some(Self {
             key,
-            version: version(Some(row.get(4)?.as_str()?))?,
+            version: match row.get(4)? {
+                Value::Null => None,
+                value => Some(version(Some(value.as_str()?))?),
+            },
             text: row.get(5)?.as_str()?.into(),
         })
     }
@@ -193,7 +206,7 @@ impl Store {
             .map(|row| {
                 Arc::new(Mutex::new(Draft {
                     text: row.text.clone(),
-                    version: Some(row.version.clone()),
+                    version: row.version.clone(),
                     recovered: true,
                     ..Draft::default()
                 }))
@@ -204,27 +217,52 @@ impl Store {
             .insert(saved_key.clone(), Arc::downgrade(&shared));
         shared
     }
-    pub(crate) fn hydrate_file_drafts(&self, bytes: &[u8]) {
+    pub(crate) fn hydrate_file_drafts(&self, bytes: &[u8]) -> bool {
         if bytes.len() > LIMIT {
-            return;
+            return false;
         }
         let Ok(rows) = serde_json::from_slice::<Vec<Value>>(bytes) else {
-            return;
+            return false;
         };
-        let mut store = lock(&self.0);
-        for row in rows
-            .into_iter()
-            .take(COUNT)
-            .filter_map(|row| Saved::decode(&row))
-        {
-            if !store.saved.iter().any(|old| old.key == row.key) {
-                store.saved.push(row);
-            }
+        if rows.len() > COUNT {
+            return false;
         }
+        let mut saved: Vec<Saved> = Vec::new();
+        for row in rows {
+            let Some(row) = Saved::decode(&row) else {
+                return false;
+            };
+            if saved.iter().any(|old| old.key == row.key) {
+                return false;
+            }
+            saved.push(row);
+        }
+        lock(&self.0).saved = saved;
+        true
     }
     pub(crate) fn file_draft_snapshot(&self, saved_revision: u64) -> Option<(u64, Vec<u8>)> {
         let store = lock(&self.0);
         (saved_revision != store.revision).then(|| (store.revision, Self::encode(&store.saved)))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn closing_drafts(&self, include_saved: bool) -> Vec<(String, String)> {
+        let retained = lock(&self.0).drafts.clone();
+        let mut seen = std::collections::HashSet::new();
+        let mut warning = Vec::new();
+        for (key, shared) in retained {
+            if !seen.insert(Arc::as_ptr(&shared)) {
+                continue;
+            }
+            let draft = lock(&shared);
+            if draft.dirty() && (include_saved || draft.not_retained) {
+                warning.push((
+                    format!("{} · {}", key.directory, key.path),
+                    draft.text.clone(),
+                ));
+            }
+        }
+        warning.sort_by(|a, b| a.0.cmp(&b.0));
+        warning
     }
     fn encode(rows: &[Saved]) -> Vec<u8> {
         Value::Array(rows.iter().map(Saved::value).collect())
@@ -245,17 +283,13 @@ impl Store {
             draft.not_retained = false;
             return;
         }
-        let Some(version) = &draft.version else {
-            draft.not_retained = true;
-            return;
-        };
         if draft.text.len() > LIMIT || !saved_key.valid() {
             draft.not_retained = true;
             return;
         }
         let row = Saved {
             key: saved_key.clone(),
-            version: version.clone(),
+            version: draft.version.clone(),
             text: draft.text.clone(),
         };
         if previous.is_some_and(|index| store.saved[index] == row) {
@@ -308,6 +342,7 @@ mod tests {
         let scope = SavedKey {
             server: "installation".into(),
             project: "/root".into(),
+            native_project: Some("project-a".into()),
             directory: key.directory.clone(),
             path: key.path.clone(),
         };
@@ -324,8 +359,10 @@ mod tests {
         store.sync_saved(&key, Some(&scope), &draft);
         assert!(lock(&draft).not_retained);
         assert!(store.file_draft_snapshot(revision).is_none());
+        assert_eq!(store.closing_drafts(false)[0].1, "\u{0}".repeat(60_000));
         let reopened = Store::default();
-        reopened.hydrate_file_drafts(&bytes);
+        assert!(reopened.hydrate_file_drafts(&bytes));
+        assert!(!reopened.hydrate_file_drafts(b"invalid sidecar"));
         let shared = reopened.open_saved(&key, Some(&scope));
         assert!(lock(&shared).recovered);
         assert_eq!(lock(&shared).text, "édité");
@@ -336,6 +373,10 @@ mod tests {
             },
             SavedKey {
                 project: "/unrelated".into(),
+                ..scope.clone()
+            },
+            SavedKey {
+                native_project: Some("project-b".into()),
                 ..scope.clone()
             },
             SavedKey {

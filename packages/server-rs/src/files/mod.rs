@@ -327,7 +327,11 @@ pub async fn put(
     file.write_all(body.contents.as_bytes()).map_err(io_error)?;
     file.set_len(body.contents.len() as u64).map_err(io_error)?;
     file.sync_all().map_err(io_error)?;
-    Ok(Status::NO_CONTENT.into_response())
+    Ok((
+        Status::NO_CONTENT,
+        [(axum::http::header::ETAG, version(body.contents.as_bytes()))],
+    )
+        .into_response())
 }
 
 #[cfg(test)]

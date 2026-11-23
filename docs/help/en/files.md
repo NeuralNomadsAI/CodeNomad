@@ -26,6 +26,8 @@ Workspace `.mmd` files open as diagrams. Use **Show source** to edit and **Show 
 1. Open a Workspace text file with its eye action.
 2. For Markdown, choose **Show source** to edit, or **Preview Markdown** to read the rendering.
 3. Edit and choose **Save**, or press **Ctrl/Cmd+S** while the editor has focus.
+
+If the desktop app opens a draft recovery window, use **Copy** to keep each listed edit before closing it.
 4. If the file changed externally, review the overwrite confirmation; choose **Cancel** to keep your draft without overwriting that change.
 
 Save writes the actual file in the browsed checkout, including a linked worktree; it does not send a prompt or stage/commit the edit. The conflict dialog says **File was modified by the agent. Overwrite agent's changes?**; treat any external writer's changes with the same care.

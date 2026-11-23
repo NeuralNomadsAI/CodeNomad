@@ -461,9 +461,11 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     ui.clock = now;
     let loading = ui.persistence.loading;
     if let Some((saved, drafts)) = ui.persistence.poll_load() {
-        if let Some(bytes) = drafts {
-            s.documents.hydrate_file_drafts(&bytes);
-        }
+        ui.persistence.file_draft_read_error = match drafts {
+            Ok(Some(bytes)) => !s.documents.hydrate_file_drafts(&bytes),
+            Ok(None) => false,
+            Err(_) => true,
+        };
         if let Some(saved) = saved {
             ui.hydrate(saved);
             s.shell.restore_widths(ui.panel_widths);
@@ -527,7 +529,7 @@ pub fn status(s: &State) -> Option<&'static str> {
     } else if ui.persistence.write_error || ui.persistence.partial || ui.has_unsaved_large_drafts()
     {
         Some("rune.save_error")
-    } else if ui.persistence.file_draft_error {
+    } else if ui.persistence.file_draft_error || ui.persistence.file_draft_read_error {
         Some("filesPanel.draftLimit")
     } else {
         None

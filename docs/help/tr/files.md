@@ -26,6 +26,8 @@ Workspace `.mmd` dosyaları diyagram olarak açılır. Düzenlemek için **Kayna
 1. Çalışma Alanındaki bir metin dosyasını göz simgesiyle açın.
 2. Markdown için düzenleme yapmak üzere **Kaynağı göster**, işlenmiş görünümü okumak üzere **Markdown'ı önizle** eylemini seçin.
 3. Düzenleyin ve **Kaydet** öğesini seçin veya düzenleyici odaklanmışken **Ctrl/Cmd+S** tuşuna basın.
+
+Masaüstü uygulaması bir taslak kurtarma penceresi açarsa pencereyi kapatmadan önce listedeki değişiklikleri **Kopyala** ile saklayın.
 4. Dosya harici olarak değiştiyse üzerine yazma onayını inceleyin; taslağınızı bu değişikliğin üzerine yazmadan saklamak için **İptal** öğesini seçin.
 
 Kaydetme, bağlantılı çalışma ağacı dahil göz atılan çalışma kopyasındaki gerçek dosyaya yazar; istem göndermez veya düzenlemeyi stage/commit etmez. Çakışma penceresi **Dosya agent tarafından değiştirildi. Agent'ın değişikliklerinin üzerine yazılsın mı?** der; diğer harici yazıcıların değişikliklerine de aynı özeni gösterin.

@@ -26,6 +26,8 @@ Les fichiers `.mmd` du Workspace s’ouvrent en diagramme. **Afficher la source*
 1. Ouvrez un fichier texte du Workspace avec son œil.
 2. Pour Markdown, choisissez **Afficher la source** pour modifier, ou **Aperçu Markdown** pour lire le rendu.
 3. Modifiez et choisissez **Enregistrer**, ou appuyez sur **Ctrl/Cmd+S** lorsque l’éditeur a le focus.
+
+Si l’application de bureau ouvre une fenêtre de récupération des brouillons, utilisez **Copier** pour conserver les modifications listées avant de la fermer.
 4. Si le fichier a changé à l’extérieur, examinez la confirmation d’écrasement ; choisissez **Annuler** pour conserver votre brouillon sans écraser ce changement.
 
 L’enregistrement écrit le fichier réel dans la copie parcourue, y compris un worktree lié ; il n’envoie pas de prompt et n’indexe/ne valide pas la modification. Le dialogue de conflit indique **Le fichier a été modifié par l'agent. Écraser les modifications de l'agent ?** ; traitez les changements de tout auteur externe avec la même prudence.

@@ -26,6 +26,8 @@ Workspace-Dateien mit `.mmd` öffnen sich als Diagramm. Mit **Quelltext anzeigen
 1. Öffnen Sie eine Textdatei im Arbeitsbereich mit ihrer Augenaktion.
 2. Wählen Sie für Markdown **Quellcode anzeigen** zum Bearbeiten oder **Markdown-Vorschau** zum Lesen der Darstellung.
 3. Bearbeiten Sie und wählen Sie **Speichern** oder drücken Sie **Ctrl/Cmd+S**, während der Editor fokussiert ist.
+
+Wenn die Desktop-App ein Wiederherstellungsfenster für Entwürfe öffnet, sichern Sie die aufgeführten Änderungen vor dem Schließen mit **Kopieren**.
 4. Wurde die Datei extern geändert, prüfen Sie die Überschreibbestätigung; wählen Sie **Abbrechen**, um den Entwurf ohne Überschreiben dieser Änderung zu behalten.
 
 Speichern schreibt die tatsächliche Datei im durchsuchten Checkout einschließlich eines verknüpften Worktrees; es sendet keinen Prompt und staged/committet die Änderung nicht. Der Konfliktdialog lautet **Die Datei wurde vom Agenten geändert. Die Änderungen des Agenten überschreiben?**; behandeln Sie Änderungen jedes externen Schreibers mit derselben Sorgfalt.
