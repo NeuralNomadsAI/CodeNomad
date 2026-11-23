@@ -146,51 +146,15 @@ pub(super) fn view(
             palette,
             mode,
             segments,
-            contrast(s, prefs, system_more),
+            super::super::contrast::view(
+                prefs,
+                system_more,
+                s.contrast_help,
+                |s: &mut Window| s.contrast_help = !s.contrast_help,
+                |s: &mut Window, value| s.shared.borrow_mut().set_contrast(value),
+            ),
             palette_picker,
         )))
-}
-
-fn contrast(s: &Window, prefs: &Preferences, system_more: bool) -> El {
-    let value = prefs.contrast();
-    let name = t("settings.appearance.contrast.title");
-    let info = t("settings.appearance.contrast.info");
-    let help = if value == "auto" {
-        let state = t(if system_more {
-            "settings.appearance.contrast.current.on"
-        } else {
-            "settings.appearance.contrast.current.off"
-        });
-        format!("{info} {state}")
-    } else {
-        info.into()
-    };
-    let controls = chrome::segments(
-        name,
-        &[
-            t("settings.appearance.palette.auto"),
-            t("settings.appearance.contrast.on"),
-            t("settings.appearance.contrast.off"),
-        ],
-        ["auto", "on", "off"]
-            .iter()
-            .position(|&choice| choice == value),
-        !prefs.locale_ready() || !prefs.can_retry(),
-        |s: &mut Window, index| {
-            if let Some(choice) = ["auto", "on", "off"].get(index) {
-                s.shared.borrow_mut().set_contrast(choice);
-            }
-        },
-    );
-    chrome::contrast_controls(
-        name,
-        &help,
-        s.contrast_help,
-        controls.key("contrast-mode"),
-        |s: &mut Window| {
-            s.contrast_help = !s.contrast_help;
-        },
-    )
 }
 
 fn select(

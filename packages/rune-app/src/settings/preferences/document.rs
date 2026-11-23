@@ -100,7 +100,6 @@ impl Document {
         self.read.queued = true;
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn retry(&mut self) {
         let operation = self.flight.as_ref().map(|flight| &flight.operation);
         if matches!(operation, Some(Operation::Read { retry: true })) {
@@ -117,6 +116,10 @@ impl Document {
 
     pub(super) fn read_failed(&self) -> bool {
         self.read.failed
+    }
+
+    pub(super) fn awaiting_initial_read(&self) -> bool {
+        self.snapshot.is_none() && !self.read.failed
     }
 
     pub(super) fn write_failed(&self) -> bool {
@@ -163,9 +166,10 @@ impl Document {
     fn settle(&mut self, operation: Operation, snapshot: Option<Value>, current: bool) {
         if let Operation::Write(sent) = &operation {
             for (&choice, &value) in sent {
-                if !snapshot
-                    .as_ref()
-                    .is_some_and(|data| choice.confirmed(value, data))
+                if !self.write.pending.contains(&choice)
+                    && !snapshot
+                        .as_ref()
+                        .is_some_and(|data| choice.confirmed(value, data))
                 {
                     self.write.failed.insert(choice);
                 }

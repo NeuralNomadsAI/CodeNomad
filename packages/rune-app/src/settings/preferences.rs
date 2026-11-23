@@ -90,7 +90,6 @@ impl Preferences {
         self.state.invalidate();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn retry(&mut self) {
         self.config.retry();
         self.state.retry();
@@ -98,6 +97,11 @@ impl Preferences {
 
     pub fn can_retry(&self) -> bool {
         self.backend.is_some() && !self.authentication_required
+    }
+
+    pub(super) fn awaiting_appearance(&self) -> bool {
+        self.can_retry()
+            && (self.config.awaiting_initial_read() || self.state.awaiting_initial_read())
     }
 
     pub fn watch(&mut self, wake: &rune::Waker) {
@@ -251,7 +255,6 @@ impl Preferences {
         self.config.choice_failed(Choice::Contrast)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn set_contrast(&mut self, contrast: &'static str) {
         if self.locale_ready()
             && self.can_retry()

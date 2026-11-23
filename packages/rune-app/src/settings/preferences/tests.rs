@@ -1,4 +1,5 @@
 use super::*;
+mod appearance;
 mod providers;
 
 #[test]
@@ -577,7 +578,10 @@ fn settings_failed_readback_keeps_the_unsent_palette_parked_until_fresh_authorit
             .unwrap();
         assert!(prefs.poll());
         assert!(prefs.state.read_failed());
-        assert!(prefs.state.write_failed());
+        assert!(
+            !prefs.state.write_failed(),
+            "the failed write belongs to the superseded palette"
+        );
         assert!(
             timeout(Duration::from_millis(60), listener.accept())
                 .await

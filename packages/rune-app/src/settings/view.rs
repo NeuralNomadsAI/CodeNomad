@@ -176,6 +176,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         }
     }
     let prefs = s.shared.borrow();
+    if prefs.awaiting_appearance() {
+        return rune::el().key("preferences-bootstrap");
+    }
     let system_dark = cx.system_dark();
     let system_more = cx.system_increased_contrast();
     s.close_palette_on_slot_change(prefs.dark(system_dark));

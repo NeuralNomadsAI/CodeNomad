@@ -54,6 +54,7 @@ fn settings_opencode_focus_refreshes_without_forcing_a_registry_recheck() {
             section: Section::OpenCode,
             ..Window::default()
         };
+        state.shared.borrow_mut().fixture();
         state.shared.borrow_mut().backend = Some(backend);
         state.shared.borrow_mut().window_wake = Some(std::sync::Arc::new(|| {}));
         let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));

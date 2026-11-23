@@ -15,6 +15,10 @@ const unexpected = []
 const reads = []
 const mime = {'.html':'text/html','.js':'text/javascript','.wasm':'application/wasm','.css':'text/css','.json':'application/json','.woff2':'font/woff2'}
 let account = 'First fixture account', detached = false
+let contrast = 'on'
+const writes = []
+let releaseState
+const stateReady = new Promise(resolve => { releaseState = resolve })
 const server = createServer(async (req,res) => {
   const url = new URL(req.url,'http://localhost')
   const p = url.pathname
@@ -39,6 +43,20 @@ const server = createServer(async (req,res) => {
       streams.set(client,res)
       res.on('close',()=>{if(streams.get(client)===res) streams.delete(client)})
       return
+    }
+    if (p === '/api/storage/config/ui') {
+      if (req.method === 'PATCH') {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        const patch = JSON.parse(body)
+        writes.push(patch)
+        contrast = patch.settings.highContrast
+      }
+      return json({settings:{locale:'en',highContrast:contrast}})
+    }
+    if (p === '/api/storage/state/ui') {
+      await stateReady
+      return json({appearancePreferences:{mode:'light',light:{scheme:{id:'light'}}}})
     }
     if (p.startsWith('/api/storage/')) return json({})
     if (p === '/api/workspaces/catalogue/worktrees') return json({repository:'uninitialized',worktrees:[]})
@@ -76,12 +94,29 @@ try {
   browser = await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
   const page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true})
   const click = name => page.getByRole('button',{name,exact:true}).click({force:true,timeout:15000})
+  const radio = name => page.getByRole('radio',{name,exact:true})
   const visible = name => page.getByText(name,{exact:true}).waitFor({state:'attached',timeout:15000})
   await page.goto(`http://127.0.0.1:${server.address().port}/?locale=en`)
-  await click('Connect')
+  await Promise.all([
+    page.waitForResponse(response=>new URL(response.url()).pathname==='/api/storage/config/ui'),
+    page.waitForRequest(request=>new URL(request.url()).pathname==='/api/storage/state/ui'),
+    click('Connect'),
+  ])
+  await page.getByRole('button',{name:'Connect',exact:true}).waitFor({state:'detached'})
+  assert.equal(await page.getByRole('button',{name:directory,exact:true}).count(),0,'No app content while appearance state is pending')
+  releaseState()
   await click(directory)
   await visible('No session selected')
-  await click('Providers')
+  await click('Settings')
+  await radio('On').waitFor({state:'attached'})
+  assert.equal(await radio('On').getAttribute('aria-checked'),'true')
+  const savedOff = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
+  await radio('Off').click({force:true})
+  await savedOff
+  assert.deepEqual(writes,[{settings:{highContrast:'off'}}])
+  assert.equal(await radio('Off').getAttribute('aria-checked'),'true')
+  assert.equal(reads.length,0,'General does not load the provider catalogue')
+  await radio('Providers').click({force:true})
   await visible(account)
   const nonConversation = () => Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
   assert(nonConversation(),'The catalogue has an EventSource without a conversation')
@@ -97,8 +132,9 @@ try {
   await visible(account)
   assert.equal(reads.length-atDisconnect,4,'The reconnected catalogue reloads its four source lists once')
   assert(!unexpected.some(entry=>/\/session-history|\/prompt|\/session\//.test(entry)),unexpected.join('\n'))
-  console.log(JSON.stringify({fixture:'providers-web',updated:true,revokedWhileDisconnected:true,reconnected:true,requests:reads.length}))
+  console.log(JSON.stringify({fixture:'providers-web',contrastSaved:true,initialThemeGated:true,updated:true,revokedWhileDisconnected:true,reconnected:true,requests:reads.length}))
 } finally {
+  releaseState()
   await browser?.close()
   server.closeAllConnections()
   await new Promise(resolve=>server.close(resolve))
