@@ -74,18 +74,15 @@ pub fn rune_asset_path<'a>(method: &Method, path: &'a str) -> Option<&'a str> {
 }
 
 pub async fn serve_rune(dir: &PathBuf, req: Request) -> Response {
-    let method = req.method().clone();
-    let Some(path) = rune_asset_path(&method, req.uri().path()) else { return crate::unavailable() };
-    let path = path.to_owned();
-    let mut response = asset(dir, method, path, req.headers().get(header::IF_NONE_MATCH).cloned())
-        .await
-        .unwrap_or_else(|| Status::NOT_FOUND.into_response());
+    let Some(path) = rune_asset_path(req.method(), req.uri().path()) else { return crate::unavailable() };
+    let mut response =
+        asset(dir, req.method(), path, req.headers()).await.unwrap_or_else(|| Status::NOT_FOUND.into_response());
     response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-cache"));
     response
 }
 
 pub(crate) async fn rune_pair_page(dir: &PathBuf, method: Method) -> Option<Response> {
-    asset(dir, method, "/remote-pair.html".into(), None).await
+    asset(dir, &method, "/remote-pair.html", &HeaderMap::new()).await
 }
 
 /// Paths no route matched: API paths stay unavailable, everything else is the UI.
