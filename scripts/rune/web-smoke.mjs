@@ -168,6 +168,7 @@ try {
           if (values.mobile) {
             tabBar = await mobileTabBar(page, [
               messages['instanceTabs.new.ariaLabel'], messages['settings.title'], messages['settings.nav.chat'],
+              messages['toastHistory.title'],
             ])
             const permission = page.getByRole('button', {
               name: messages['settings.notifications.requestPermission.action'], exact: true,
