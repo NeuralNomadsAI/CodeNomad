@@ -9,6 +9,10 @@ export async function collectTheme(names){
     return '#'+[...context.getImageData(0,0,1,1).data].map(v=>v.toString(16).padStart(2,'0')).join('')
   }
   const colors={},numbers={},strings={},shadows={},unresolved=[]
+  const rail=document.createElement('div')
+  rail.className='message-timeline-sidebar'
+  rail.innerHTML='<section class="message-timeline"><div class="timeline-measure"><button class="message-timeline-segment" tabindex="-1"></button><div style="height:var(--message-timeline-segment-gap)"></div></div><svg class="message-timeline-icon"></svg></section>'
+  document.body.append(rail)
   for(const name of names){
     const raw=root.getPropertyValue('--'+name).trim()
     if(!raw){unresolved.push(name);continue}
@@ -32,6 +36,10 @@ export async function collectTheme(names){
     input:['.selector-input',['fontSize','fontWeight','lineHeight','outlineWidth','outlineOffset']],
     title:['.window-title',['fontSize','fontWeight','lineHeight']],
     disclosure:['.disclosure-chevron',['transitionDuration','transitionTimingFunction']],
+    timelineRail:['.message-timeline-sidebar',['width']],
+    timelineMarker:['.message-timeline-segment',['minHeight','borderTopWidth','opacity']],
+    timelineGap:['.timeline-measure > div',['height']],
+    timelineGlyph:['.message-timeline-icon',['width']],
     transition:['.transition-colors',['transitionDuration','transitionTimingFunction']],
     windowIcon:['.window-icon-button',['width','height','borderRadius']],
     windowIconGlyph:['.window-icon-button svg',['width','height']],
@@ -76,6 +84,17 @@ export async function collectTheme(names){
       metrics[name][key]=numeric?Number.parseFloat(value):value
     }
   }
+  const sample=rail.querySelector('.message-timeline-segment')
+  const edge=/(-?[\d.]+)px 0px 0px 0px inset/.exec(getComputedStyle(rail).boxShadow)
+  if(!edge||!(Number(edge[1])>0))throw Error('Missing timeline rail edge')
+  metrics.timelineRail.edgeWidth=Number(edge[1])
+  sample.style.width='1002px'
+  const separator=getComputedStyle(sample,'::after')
+  metrics.timelineMarker.separatorHeight=parseFloat(separator.height)
+  metrics.timelineMarker.separatorFraction=parseFloat(separator.width)/sample.clientWidth
+  if(!(metrics.timelineMarker.separatorHeight>0)||!(metrics.timelineMarker.separatorFraction>0&&metrics.timelineMarker.separatorFraction<=1))
+    throw Error('Missing timeline marker separator')
+  sample.style.visibility='visible'
   const sourceGutter=document.querySelector('.action-overflow-content').dataset.sourceGutter
   const toggle=document.querySelector('.workspace-file-view [aria-pressed=true]')
   toggle.style.transition='none'
@@ -122,21 +141,23 @@ export async function collectTheme(names){
     return '#'+[...channels,alpha*255].map(n=>Math.round(n).toString(16).padStart(2,'0')).join('')
   }
   try{
-  for(const [name,selector] of [['tabFocus','.tab-base'],['tabCloseFocus','.tab-close']]){
+  for(const [name,selector] of [['tabFocus','.tab-base'],['tabCloseFocus','.tab-close'],['timelineFocus','.message-timeline-segment']]){
     const element=document.querySelector(selector)
     element.focus()
     if(!element.matches(':focus-visible'))throw Error(`${selector} requires actual keyboard focus`)
     await Promise.all(element.getAnimations().map(animation=>animation.finished))
     const shadow=getComputedStyle(element).boxShadow
-    const layers=[...shadow.matchAll(/(rgba?\([^)]+\)) ((?:-?[\d.]+px\s*){4})/g)].map(m=>({color:m[1],lengths:m[2].trim().split(/\s+/).map(parseFloat)}))
+    const layers=[...shadow.matchAll(/((?:rgba?|oklab|oklch|color)\([^)]+\)) ((?:-?[\d.]+px\s*){4})/g)].map(m=>({color:m[1],lengths:m[2].trim().split(/\s+/).map(parseFloat)}))
     if(layers.length<2||layers.slice(0,2).some(l=>l.lengths.slice(0,3).some(n=>n!==0)))throw Error(`Unsupported ${selector} focus shadow ${shadow}`)
     const offset=layers[0].lengths[3],spread=layers[1].lengths[3]
     if(!(spread>offset&&offset>=0))throw Error(`Invalid ${selector} focus ring`)
     metrics[name]={ringWidth:spread-offset,ringOffset:offset,extent:spread}
-    colors[`${name}-ring`]=focusHex(layers[1].color)
-    colors[`${name}-offset`]=focusHex(layers[0].color)
+    if(name!=='timelineFocus'){
+      colors[`${name}-ring`]=focusHex(layers[1].color)
+      colors[`${name}-offset`]=focusHex(layers[0].color)
+    }
   }
-  }finally{focused?.focus()}
+  }finally{focused?.focus();rail.remove()}
   const actions=document.getElementById('file-actions-contract'),button=actions.querySelector('.file-row-inline-actions button')
   const metric=(el,key)=>{const n=parseFloat(getComputedStyle(el)[key]);if(!Number.isFinite(n))throw Error(`Non-numeric file actions ${key}`);return n}
   metrics.fileRowActions={gap:metric(actions,'columnGap'),pinnedGap:metric(actions.firstElementChild,'columnGap'),inlineGap:metric(actions.lastElementChild,'columnGap'),overflowSlop:Number(actions.dataset.slop)}
