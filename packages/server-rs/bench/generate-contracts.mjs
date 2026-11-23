@@ -8,10 +8,14 @@ import { dist, fromDist, repo } from "./fixtures.mjs"
 const z = createRequire(path.join(repo, "packages/server/package.json"))("zod")
 const out = path.resolve(process.argv[2] ?? path.join(import.meta.dirname, "../contracts"))
 const nav = await fromDist("opencode/session-pruning/navigation-contract.js")
+const history = await fromDist("opencode/session-pruning/history-contract.js")
+const ranked = await fromDist("opencode/session-pruning/history-ranked-contract.js")
 const schemas = {
   "outline-input": nav.outlineInputSchema, "outline-output": nav.outlineLayoutResultSchema,
   "outlinePreview-input": nav.outlinePreviewInputSchema, "outlinePreview-output": nav.outlinePreviewResultSchema,
   "window-input": nav.navigationWindowInputSchema, "window-output": nav.navigationWindowResultSchema,
+  "query-input": history.historyQuerySchema, "query-output": history.historyNativeResultSchema,
+  "ranked-input": ranked.historyRankedInputSchema, "ranked-output": ranked.historyRankedResultSchema,
 }
 const pending = await readFile(new URL("server/routes/pending-requests.js", dist), "utf8")
 const first = pending.indexOf("const directorySchema")
@@ -20,7 +24,8 @@ if (first < 0 || last <= first) throw Error("Unexpected pending-request schema s
 schemas.pending = new Function("z", `${pending.slice(first, last)}\nreturn nativeSchema`)(z)
 await mkdir(out, { recursive: true })
 for (const [name, schema] of Object.entries(schemas)) {
-  const encoded = z.toJSONSchema(schema, { io: name === "pending" ? "output" : undefined })
+  const io = name === "query-input" || name === "ranked-input" ? "input" : name === "pending" ? "output" : undefined
+  const encoded = z.toJSONSchema(schema, { io })
   function check(node) {
     if (typeof node === "boolean") return
     for (const [key, value] of Object.entries(node)) {
@@ -29,7 +34,7 @@ for (const [name, schema] of Object.entries(schemas)) {
       else if (["anyOf", "oneOf"].includes(key)) value.forEach(check)
       else if (key === "pattern") {
         if (!["^[a-f0-9]{64}$", "^(?:[RTX]{0,1000}|[RTX]{0,500}-[RTX]{0,500})$"].includes(value)) throw Error(`Unsupported pattern in ${name}`)
-      } else if (!["$schema", "type", "minLength", "maxLength", "minimum", "maximum", "required", "maxItems", "minItems", "const", "enum"].includes(key)) {
+      } else if (!["$schema", "type", "minLength", "maxLength", "minimum", "maximum", "required", "maxItems", "minItems", "const", "enum", "default"].includes(key)) {
         throw Error(`Unsupported keyword ${key} in ${name}`)
       }
     }
