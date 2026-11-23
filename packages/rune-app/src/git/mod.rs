@@ -419,12 +419,20 @@ impl Ui {
         self.accept(Lane::Details, Value::Details(details));
     }
 
-    pub(crate) fn load_empty_scene(&mut self, error: bool) {
+    pub(crate) fn load_empty_scene(&mut self, state: &str) {
         self.close_preview();
+        let error = match state {
+            "no-git" => {
+                Some("Git is missing from the backend PATH. Restart CodeNomad after changing PATH.")
+            }
+            "error" if self.mode == Mode::Changes => Some("fixture status refused"),
+            "error" => Some("fixture history refused"),
+            _ => None,
+        };
         if self.mode == Mode::Changes {
             self.changes = Changes::default();
-            if error {
-                self.read_failed(Lane::Changes, "fixture status refused".into());
+            if let Some(error) = error {
+                self.read_failed(Lane::Changes, error.into());
             } else {
                 self.accept(
                     Lane::Changes,
@@ -433,8 +441,8 @@ impl Ui {
             }
         } else if self.mode == Mode::History {
             self.history = History::default();
-            if error {
-                self.read_failed(Lane::History, "fixture history refused".into());
+            if let Some(error) = error {
+                self.read_failed(Lane::History, error.into());
             } else {
                 self.accept(
                     Lane::History,

@@ -156,7 +156,7 @@ fn setup(s: &mut crate::State, mode: Mode) {
         });
     }
     if let Some(state) = empty {
-        ui.load_empty_scene(state == "error");
+        ui.load_empty_scene(&state);
     }
     s.git.owner = Some(ui);
     s.git.scene = true;

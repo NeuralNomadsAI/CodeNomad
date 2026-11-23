@@ -236,14 +236,14 @@ try {
     assert(failed.some(node => node.role === "alert" && node.name?.includes(failure)))
     assert(!failed.some(node => node.name === empty), "Read failure must not claim the checkout is empty")
   }
-  for (const [state, key] of [
-    ["uninitialized", "filesPanel.gitInit.notRepository"],
-    ["no-git", "filesPanel.gitInit.gitRequired"],
+  for (const [state, diagnostic] of [
+    ["uninitialized", catalogue["filesPanel.gitInit.notRepository"]],
+    ["no-git", "Git is missing from the backend PATH. Restart CodeNomad after changing PATH."],
   ]) {
     const filename = native("git-changes", "dark", state, settle, "end", undefined, "fr", state)
     const tree = JSON.parse(await readFile(filename, "utf8"))
     assert(tree.elements.some(node => node.path.includes("/git-branch/") && node.text === "CodeNomad"))
-    assert(elements(tree).some(node => node.name === catalogue[key]))
+    assert(elements(tree).some(node => node.name === diagnostic))
     assert.equal(elements(tree).some(node => node.key === "git-init"), state === "uninitialized")
   }
   await writeFile(path.join(out, "report.json"), JSON.stringify(report, null, 2) + "\n")
