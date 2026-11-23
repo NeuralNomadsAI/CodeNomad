@@ -109,11 +109,11 @@ import { guardServerPairRequest, isServerPairExchange, SERVER_PAIR_PATH } from "
 import { gateRemoteRequest, isHostOnlyPath, isHtmlBundlePath, isBackendUiRoute, isMemoryRelayRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { createBackendUiAccess } from "../codenomad-servers/ui-caller"
 import { createRelayPrincipalBinding } from "../codenomad-servers/relay-principal"
-import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
+import { isLocalRequest, isRemoteRequest, isRemoteSocket } from "../remote-control/request-origin"
 import type { RemotePreviewCapabilities } from "../codenomad-servers/preview-capabilities"
 import { PreviewBodyBudget, previewBodyKind, previewDocumentStream, rewritePreviewText } from "../codenomad-servers/preview-body"
 import { registerDirectOriginPolicy } from "./direct-origin"
-import { verifiedDirectHttpsOrigin } from "../remote-control/direct-https"
+import { verifiedDirectHttpsOrigin, verifiedDirectServerOrigin } from "../remote-control/direct-https"
 import { createSideCarDirectHttpsAccess, isSideCarContentPath, sidecarsOverDirectHttpsEnabled } from "./sidecar-direct-https"
 import { framesNoBody } from "./bodiless-request"
 import { addProxiedHttpMethods } from "./proxied-http-methods"
@@ -632,7 +632,9 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (deps.uiDevServerUrl) {
     setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
   } else {
-    setupStaticUi(app, deps.uiStaticDir, uiEntry, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
+    setupStaticUi(app, deps.uiStaticDir, uiEntry, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed,
+      request => isRemoteSocket(request.raw.socket) || request.protocol === "https" ? "https"
+        : verifiedDirectServerOrigin(request, remoteGate.directHttpsOrigins?.() ?? []) ? "either" : "http")
   }
 
   return {
@@ -2251,6 +2253,7 @@ function setupStaticUi(
   previewManager: PreviewManager,
   logger: Logger,
   remotePreviewsAllowed: () => boolean,
+  entryScheme: (request: FastifyRequest) => "http" | "https" | "either",
 ) {
   if (!uiDir) {
     app.log.warn("UI static directory not provided; API endpoints only")
@@ -2281,7 +2284,7 @@ function setupStaticUi(
   }
   app.addHook("preHandler", (request, reply, done) => {
     const session = authManager.getSessionFromRequest(request)
-    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed, entryScheme)) {
       return
     }
     if (!("previewCapability" in request.routeOptions.config)
@@ -2331,7 +2334,7 @@ function setupStaticUi(
     }
 
     const session = authManager.getSessionFromRequest(request)
-    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed, entryScheme)) {
       return
     }
 
@@ -2389,12 +2392,14 @@ function proxyPreviewFallbackFromReferer(
   previewManager: PreviewManager,
   logger: Logger,
   remotePreviewsAllowed: () => boolean,
+  entryScheme?: (request: FastifyRequest) => "http" | "https" | "either",
 ): boolean {
   // Remote Control serves preview content only while its host allows it.
   if (isRemoteRequest(request) && !remotePreviewsAllowed()) {
     return false
   }
   const rawUrl = request.raw.url ?? request.url ?? ""
+  const entry = request.method === "GET" || request.method === "HEAD" ? routedPath(rawUrl) : null
   const pathname = rawUrl.split("?")[0] ?? ""
   if (!isPreviewFallbackPath(pathname)) {
     return false
@@ -2405,10 +2410,26 @@ function proxyPreviewFallbackFromReferer(
   if (!referer) {
     return false
   }
-
   const parsed = parsePreviewUpgradePath(referer)
-  if (!parsed) {
-    return false
+  if (!parsed) return false
+
+  if (entryScheme && (entry === "/" || entry === PAIR_PAGE_PATH)) {
+    // A preview's same-origin resource may use this path; an external link is an app navigation.
+    const host = request.headers.host
+    if (!host || /[\s/\\@?#]/.test(host)) return false
+    try {
+      const scheme = entryScheme(request)
+      if (scheme === "either") {
+        // A shared HTTP listener cannot distinguish direct HTTP from a TLS terminator by Host.
+        if (request.headers["sec-fetch-site"] === "cross-site") return false
+        const source = new URL(referer, `https://${host}`)
+        if (!/^https?:$/.test(source.protocol) || source.host !== new URL(`${source.protocol}//${host}`).host
+          || !previewManager.get(parsed.token)) return false
+      } else {
+        const target = new URL(`${scheme}://${host}`)
+        if (new URL(referer, target).origin !== target.origin) return false
+      }
+    } catch { return false }
   }
 
   void proxyPreviewAssetRequest({

@@ -80,7 +80,7 @@ Reordena cualquier sección de Estado arrastrando o con las teclas Arriba/Abajo.
 
 Estado incluye información de tokens, Permisos, Uso del proveedor, shells en segundo plano, MCP y Plugins. Mientras la conversación tiene un [objetivo](conversations.md#goal), una línea de objetivo encima de estas secciones lo muestra; esa línea no es una sección y no se puede ocultar ni mover. Ocultar una sección no desactiva su servicio ni revoca permisos. Las disposiciones estrechas cierran los paneles que ya no caben en lugar de estrechar la conversación; un panel abierto en ellas flota sobre la conversación, y abrir un panel flotante cierra el otro.
 
-La disposición integrada es disposición de ventana, no una modificación del proyecto. Las casillas de extensiones son distintas: activan código en todos los proyectos que usan la configuración. **Restablecer** no cambia el consentimiento de extensiones. Consulta [Extensiones de panel](extensions.md).
+La disposición integrada pertenece a la ventana. La [casilla Misiones](missions.md#activation) también cambia la activación global del plugin y se omite al arrastrar sobre varias casillas. Las casillas de extensiones activan código en todos los proyectos que usan la configuración. **Restablecer** no cambia el consentimiento de extensiones. Consulta [Extensiones de panel](extensions.md).
 
 ## Detalle de la transcripción y tamaño del editor {#transcript-composer}
 

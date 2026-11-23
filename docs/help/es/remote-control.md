@@ -21,7 +21,7 @@ Cuando el túnel está bloqueado pero el backend es accesible por HTTPS de confi
 
 1. En el equipo anfitrión, abre **Configuración → Acceso remoto → Control remoto**.
 2. En **Emparejamiento HTTPS directo**, elige la **Dirección HTTPS** si hay varias y luego **Crear enlace de emparejamiento HTTPS**.
-3. Abre el enlace en el dispositivo, como un enlace del túnel.
+3. Abre el enlace en el dispositivo, como un enlace del túnel. Puedes pulsarlo desde otra página.
 
 El enlace sigue las mismas reglas de cinco minutos y un solo uso, y reemplaza cualquier enlace sin usar; los códigos erróneos repetidos se limitan. Un proxy inverso debe terminar TLS de confianza, pasar las cabeceras `Host` y `Origin` originales y llegar al backend por bucle local o una red protegida.
 

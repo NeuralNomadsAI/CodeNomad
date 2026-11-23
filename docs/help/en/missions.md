@@ -4,6 +4,10 @@ A Mission keeps an objective, a coordinator conversation, tasks and their result
 
 If Missions is unavailable, **OpenCode settings** opens runtime recovery for a missing or failed plugin. **Server diagnostics** opens the diagnostic report in Settings → Info when the server's local Missions bridge is unavailable.
 
+## Show or hide Missions {#activation}
+
+In **Customize right panel**, check **Missions** to show the tab or uncheck it and confirm to hide it. This also writes `codenomad.missions` or `-codenomad.missions` in the connected OpenCode server’s Global configuration. Project rules can override Global. Turning it off deletes and pauses nothing, but scheduled runs can be missed. If the write fails, the tab keeps your visibility choice. **Reset** only resets the layout. **Status → Plugins** skips the warning for the exact Global disable; other disables still offer **Re-enable**.
+
 ## Create a Mission {#create}
 
 Remote connections use the same form and controls. Prefer HTTPS to protect network traffic.

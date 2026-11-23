@@ -178,14 +178,17 @@ async function pair(target: string, code: string): Promise<string> {
 }
 
 test("an unpaired remote browser reaches only the pairing surface", async (t) => {
-  const { target } = await startRemoteSurface(t)
+  const { target, code } = await startRemoteSurface(t)
   assert.equal((await send(target(), "/api/test/echo")).status, 401)
-  const page = await send(target(), "/", { headers: { accept: "text/html" } })
-  assert.equal(page.status, 302)
-  assert.equal(page.headers.location, "/remote-pair")
-  const pairPage = await send(target(), "/remote-pair")
-  assert.equal(pairPage.status, 200)
-  assert.equal(pairPage.headers["cache-control"], "no-store")
+  const headers = { accept: "text/html", referer: "https://outside.invalid/link" }
+  for (const method of ["GET", "HEAD"]) {
+    const page = await send(target(), "/", { method, headers })
+    assert.equal(page.status, 302)
+    assert.equal(page.headers.location, "/remote-pair")
+    const pairPage = await send(target(), "/remote-pair", { method, headers })
+    assert.equal(pairPage.status, 200)
+    assert.equal(pairPage.headers["cache-control"], "no-store")
+  }
   // Password login is a host-only surface, so it cannot be guessed remotely.
   const login = await send(target(), "/api/auth/login", {
     method: "POST",
@@ -195,6 +198,15 @@ test("an unpaired remote browser reaches only the pairing surface", async (t) =>
   assert.equal(login.status, 404)
   // Recovery is told to pair again rather than to offer password login.
   assert.deepEqual(JSON.parse((await send(target(), "/api/auth/status")).body), { authenticated: false, pairingRequired: true })
+  const cookie = await pair(target(), code)
+  for (const method of ["GET", "HEAD"]) {
+    const headers = { cookie, accept: "text/html", referer: "https://outside.invalid/previews/external" }
+    assert.equal((await send(target(), "/remote-pair", { method, headers })).status, 200)
+    const httpReferer = { ...headers, referer: `http://${HOST}/previews/external` }
+    assert.equal((await send(target(), "/remote-pair", { method, headers: httpReferer })).headers["referrer-policy"], "no-referrer")
+    assert.equal((await send(target(), "/?source=external", { method, headers })).status, 200)
+    assert.equal((await send(target(), "/;source=external", { method, headers })).status, 200)
+  }
 })
 
 test("the static UI bundle stays public while HTML entry points require pairing", async (t) => {
@@ -501,6 +513,8 @@ test("web previews reach Remote Control through their capability while the host 
   // A paired device's root-relative asset resolves through the preview named by its Referer.
   const asset = () => send(target(), "/assets/probe.json", { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })
   assert.equal((await asset()).body, "{\"ok\":true}")
+  assert.equal((await send(target(), "/remote-pair", { headers: { cookie, referer: `/previews/${token}/page` } })).body, "{\"ok\":true}")
+  assert.equal((await send(target(), "/;version=1", { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })).body, "{\"ok\":true}")
 
   const live = await upgrade(target(), `/previews/${token}/ws`)
   assert.equal(live.status, 101)
@@ -521,7 +535,34 @@ test("web previews reach Remote Control through their capability while the host 
   assert.equal((await upgrade(target(), `/previews/${token}/ws`)).status, 404)
   assert.notEqual((await asset()).body, "{\"ok\":true}")
   assert.equal(JSON.parse((await send(target(), "/api/meta", { headers: { cookie } })).body).previewsUnavailable, true)
-  assert.deepEqual(upstream.requests, [["GET", "/page", undefined], ["POST", "/form", undefined], ["GET", "/assets/probe.json", undefined]])
+  assert.deepEqual(upstream.requests, [["GET", "/page", undefined], ["POST", "/form", undefined], ["GET", "/assets/probe.json", undefined], ["GET", "/remote-pair", undefined], ["GET", "/;version=1", undefined]])
+})
+
+test("a shared HTTP listener preserves same-origin previews and admits external HTTPS entry links", async t => {
+  const host = "direct.fixture.test"
+  const origin = `https://${host}`
+  const { app, authManager, manager, previewManager } = await startRemoteSurface(t, { allowedOrigins: [origin], configureApp(app) {
+    app.addHook("onRequest", (request, _reply, done) => {
+      const socket = request.raw.socket
+      socket.destroy ??= () => { socket.emit("close"); return socket }
+      done()
+    })
+  } })
+  const upstream = await startPreviewUpstream(t)
+  const { token } = previewManager.create("session", upstream.url)
+  const referer = `http://${host}/previews/${token}/page`
+  const session = `${authManager.getCookieName()}=${authManager.createSession("codenomad").id}`
+  const direct = manager.exchangeDirectPairing(new URL(manager.createDirectPairing(origin).url).hash.slice(1), origin, undefined)
+  assert.ok(direct)
+  for (const url of ["/remote-pair", "/;version=1"]) {
+    const http = await app.inject({ url, headers: { host, referer, cookie: session, "sec-fetch-site": "same-origin" } })
+    assert.deepEqual(http.json(), { ok: true })
+    const entryResponse: { statusCode: number; headers: Record<string, unknown> } = await app.inject({
+      url, headers: { host, referer, cookie: `__Host-codenomad_device=${direct.token}`,
+      accept: "text/html", "sec-fetch-site": "cross-site" } })
+    assert.equal(entryResponse.statusCode, 200)
+    assert.match(String(entryResponse.headers["content-type"]), /^text\/html/)
+  }
 })
 
 test("web previews served through Remote Control stay on the preview origin", async (t) => {

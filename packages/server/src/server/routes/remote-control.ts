@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 import { REMOTE_CONTROL_DISABLED, type RemoteControlManager } from "../../remote-control/manager"
 import { deviceCookie, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../../remote-control/gate"
-import { verifiedDirectHttpsOrigin, verifiedDirectServerOrigin } from "../../remote-control/direct-https"
+import { verifiedDirectEntryOrigin, verifiedDirectHttpsOrigin, verifiedDirectServerOrigin } from "../../remote-control/direct-https"
 import { isLocalRequest, isRemoteRequest, isRemoteSocket } from "../../remote-control/request-origin"
 import { SERVER_PAIR_PATH, validServerPairRequest } from "../../remote-control/server-pairing"
 
@@ -117,7 +117,9 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
   })
 
   app.get(PAIR_PAGE_PATH, async (request, reply) => {
-    if (!isRemoteSocket(request.raw.socket) && !directOrigin(request)) return reply.code(404).send({ error: "Not found" })
+    if (!isRemoteSocket(request.raw.socket) && !verifiedDirectEntryOrigin(request, deps.manager.directHttpsOrigins?.() ?? [])) {
+      return reply.code(404).send({ error: "Not found" })
+    }
     pairTemplate ??= fs.readFileSync(PAIR_TEMPLATE_URL, "utf-8")
     reply.header("Cache-Control", "no-store")
     reply.header("Referrer-Policy", "no-referrer")

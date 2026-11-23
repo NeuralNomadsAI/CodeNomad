@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.activation.disableConfirm": "Missionen in der globalen OpenCode-Konfiguration deaktivieren? Nichts wird gelöscht oder pausiert.",
   "missions.followed.title": "Verfolgte Gespräche",
   "missions.followed.add": "Gespräch hinzufügen",
   "missions.followed.source": "Verfolgtes Gespräch {number}",

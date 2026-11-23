@@ -93,6 +93,7 @@ export class PluginControlsCache {
     pluginId: string,
     scope: PluginControlScope,
     enabled: boolean,
+    managedBy?: "codenomad",
   ): Promise<PluginActivationMutationResponse> {
     const record = this.record(instanceId, location)
     const signal = this.signalForInstance?.(instanceId)
@@ -107,6 +108,7 @@ export class PluginControlsCache {
         pluginId,
         scope,
         enabled,
+        ...(managedBy ? { managedBy } : {}),
       })
       if (signal?.aborted || !this.isActive(record) || !this.adoptCanonicalLocation(record, response.snapshot.location, true)) return response
       // Fence any passive read that started before the mutation became durable.
