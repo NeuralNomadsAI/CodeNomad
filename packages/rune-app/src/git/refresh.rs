@@ -84,8 +84,10 @@ impl Ui {
         let available = self.active && self.online && !self.stopped;
         let shown = available && self.shown;
         let preview = available && self.preview.is_some();
-        let tree_wanted =
-            shown || preview || available && self.requests.slot(Lane::InitSessions).dirty;
+        let tree_wanted = shown
+            || preview
+            || available
+                && (self.workspace_preview || self.requests.slot(Lane::InitSessions).dirty);
         let git = self.repository() != Repository::Uninitialized && self.tree().is_some();
         let changes = shown && git && self.mode == Mode::Changes;
         let history = shown && git && self.mode == Mode::History;
