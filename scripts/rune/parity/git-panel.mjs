@@ -109,7 +109,11 @@ try {
       assert(nodes.some(node => node.name?.includes("src/components/git-panel.tsx")))
       assert(nodes.some(node => node.key === "git-diff-mode" && node.role === "button" && node.name))
       const firstCommit = nodes.find(node => node.role === "button" && node.name?.startsWith("Make Git history"))
-      if (mode === "commits") assert(firstCommit?.key)
+      if (mode === "commits") {
+        assert(firstCommit?.key)
+        const author = await page.locator(".git-history-meta > span").first().textContent()
+        assert(author && firstCommit.name.includes(author), `${name}: use the same localized month and day as Solid`)
+      }
       else {
         assert(nodes.some(node => node.key === "git-section-staged" && node.states.includes("expanded")))
         const bulk = tree.elements.find(node => node.key === "git-bulk-unstaged")

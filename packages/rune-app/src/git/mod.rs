@@ -1,6 +1,7 @@
 mod actions;
 mod binding;
 mod changes;
+mod date;
 mod diff;
 mod menu;
 mod preview;
@@ -60,9 +61,30 @@ impl Mode {
 #[derive(Default)]
 struct History {
     page: Option<Page>,
+    dates: std::cell::RefCell<Option<(&'static str, Vec<String>)>>,
     selected: Option<String>,
     details: Option<Details>,
     file: Option<String>,
+}
+
+impl History {
+    fn dates(&self, locale: &'static str) -> std::cell::Ref<'_, [String]> {
+        let mut cache = self.dates.borrow_mut();
+        if cache.as_ref().is_none_or(|(cached, _)| *cached != locale) {
+            *cache = Some((
+                locale,
+                self.page
+                    .iter()
+                    .flat_map(|page| &page.commits)
+                    .map(|commit| date::display(&commit.date, locale))
+                    .collect(),
+            ));
+        }
+        drop(cache);
+        std::cell::Ref::map(self.dates.borrow(), |cache| {
+            cache.as_ref().map_or(&[][..], |(_, dates)| dates.as_slice())
+        })
+    }
 }
 
 pub(crate) struct Ui {

@@ -663,6 +663,7 @@ name = "codenomad-host-process"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "windows",
  "windows-sys 0.61.2",
 ]
 
