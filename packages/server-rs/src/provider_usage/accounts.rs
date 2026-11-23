@@ -10,10 +10,10 @@ use serde_json::{Map, Value, json};
 use std::time::Duration;
 
 use super::{
-    Endpoint, plans,
+    plans,
     shared::{jwt, num, text},
 };
-use crate::{App, Error, Shared, auth::Principal, error, shared::now_ms};
+use crate::{App, Error, Shared, auth::Principal, error, opencode::Endpoint, shared::now_ms};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
