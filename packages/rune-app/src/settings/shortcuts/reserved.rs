@@ -20,7 +20,7 @@ fn consumed_by_editor(event: &KeyEvent, web: bool, windows: bool) -> bool {
     let v = matches!(event.key, Key::Command(c) if c.eq_ignore_ascii_case(&'v'))
         || matches!(&event.key, Key::Text(text) if text.eq_ignore_ascii_case("v"));
     v && (web && primary && !(mods.ctrl && mods.alt)
-        || windows && mods.ctrl && !mods.shift && !mods.alt && !mods.cmd && !mods.logo)
+        || windows && mods.ctrl && !mods.shift && !mods.alt && !mods.logo)
 }
 
 #[cfg(test)]
@@ -32,6 +32,7 @@ fn only_record_shortcuts_the_focused_editor_can_receive() {
     };
     let ctrl = rune::Mods {
         ctrl: true,
+        cmd: true, // Rune's native Windows key table mirrors Ctrl into cmd.
         ..Default::default()
     };
     let paste = KeyEvent {
