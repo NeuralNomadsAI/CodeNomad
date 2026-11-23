@@ -302,11 +302,11 @@ impl ShutdownCoordinator {
             && state.releasing_local_closes.is_empty()
     }
 
-    fn begin_cleanup(&self, deadline_reached: bool) -> bool {
+    fn begin_cleanup(&self) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if !state.shutdown_started
             || state.cleanup_started
-            || (!deadline_reached && !state.global_pending.is_empty())
+            || !state.global_pending.is_empty()
         {
             return false;
         }
@@ -314,7 +314,6 @@ impl ShutdownCoordinator {
         if state.windows_session_end_owns_shutdown || state.windows_session_end_deadline.is_some() {
             return false;
         }
-        state.global_pending.clear();
         state.cleanup_started = true;
         true
     }
@@ -577,6 +576,14 @@ fn emit_prepare(app: &AppHandle, label: &str, generation: u64) -> bool {
             ShutdownPrepare::Renderer => {}
         }
     }
+    if let Ok(window_id) = crate::identity::local_window_id(label) {
+        // A booting document's claim may itself be queued behind the writer.
+        // The seal drains admitted mutations without depending on a listener
+        // that has not finished setting up yet.
+        if !app.state::<client_state::ClientState>().renderer_has_claimed(&window_id) {
+            return false;
+        }
+    }
     emit_flush(app, label, client_state::RendererFlushRequest { generation, prepare_generation: None })
 }
 
@@ -665,13 +672,11 @@ fn finish_local_close(app: AppHandle, label: String, window_id: String, generati
             return;
         };
         let result = if pending.removes_state {
-            app.try_state::<client_state::ClientState>()
-                .ok_or_else(|| "client state is unavailable".to_string())
-                .and_then(|state| match state.remove_window(&pending.window_id) {
-                    Ok(true) => Ok(()),
-                    Ok(false) => Err("persistent window state was not removed".to_string()),
-                    Err(error) => Err(error),
-                })
+            match client_state::ClientState::remove_window_in_order(&app, pending.window_id) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err("persistent window state was not removed".to_string()),
+                Err(error) => Err(error),
+            }
         } else {
             Ok(())
         };
@@ -795,7 +800,7 @@ pub(crate) fn preferences_renderer_flushed(app: AppHandle, generation: u64) {
 fn start_cleanup(app: AppHandle) {
     if !app
         .state::<ShutdownCoordinator>()
-        .begin_cleanup(false)
+        .begin_cleanup()
     {
         return;
     }
@@ -820,6 +825,12 @@ fn start_cleanup(app: AppHandle) {
         let queue = app.state::<client_state::IpcQueue>();
         if !queue.seal_and_drain_until(Instant::now() + IPC_DRAIN_TIMEOUT) {
             eprintln!("[tauri] shutdown canceled: client state IPC did not drain");
+            let cancellations = coordinator.cleanup_failed(|| queue.reopen());
+            emit_flush_cancellations(&app, cancellations);
+            return;
+        }
+        if let Err(error) = app.state::<client_state::ClientState>().confirm_root_durability() {
+            eprintln!("[tauri] shutdown canceled: {error}");
             let cancellations = coordinator.cleanup_failed(|| queue.reopen());
             emit_flush_cancellations(&app, cancellations);
             return;
@@ -856,8 +867,8 @@ fn start_cleanup(app: AppHandle) {
             // can restore the windows. A newer quit still wins recovery admission.
             let cancellations = coordinator.cleanup_failed(|| queue.reopen());
             emit_flush_cancellations(&app, cancellations);
-            let recovery = app.try_state::<AppState>().and_then(|state| {
-                with_navigation_authority(&app, || state.manager.start(app.clone(), crate::is_dev_mode()))
+            let recovery = app.try_state::<AppState>().map(|state| {
+                state.manager.start(app.clone(), crate::is_dev_mode())
             });
             match recovery {
                 // Recovery reloads every window; the new documents report it.

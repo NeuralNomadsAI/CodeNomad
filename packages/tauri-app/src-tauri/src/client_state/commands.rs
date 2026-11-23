@@ -8,7 +8,22 @@ use url::Url;
 pub(crate) fn with_ordered_ipc(
     fallback: impl Fn(Invoke) -> bool,
 ) -> impl Fn(Invoke) -> bool {
-    let dispatch: fn(Invoke) -> bool = tauri::generate_handler![
+    let shutdown_ack: fn(Invoke) -> bool = tauri::generate_handler![client_state_renderer_flushed];
+    with_client_state_commands(shutdown_ack, move |invoke| {
+        if invoke.message.command() == "preferences_accept_request" {
+            crate::preferences_window::admit_accept_request(invoke);
+            true
+        } else {
+            fallback(invoke)
+        }
+    })
+}
+
+pub(super) fn with_client_state_commands<R: tauri::Runtime>(
+    shutdown_ack: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
+    fallback: impl Fn(tauri::ipc::Invoke<R>) -> bool,
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
+    let dispatch: fn(tauri::ipc::Invoke<R>) -> bool = tauri::generate_handler![
         client_state_claim_access,
         client_state_load,
         client_state_load_file_drafts,
@@ -18,17 +33,23 @@ pub(crate) fn with_ordered_ipc(
         client_state_load_partition,
         client_state_set_restore_enabled,
         client_state_clear,
-        client_state_renderer_flushed,
         client_state_navigation_flushed,
         client_state_startup_command_result,
     ];
-    with_renderer_queue(dispatch, fallback)
+    with_renderer_queue(move |invoke: tauri::ipc::Invoke<R>| {
+        if invoke.message.command() == "client_state_renderer_flushed" {
+            shutdown_ack(invoke)
+        } else {
+            dispatch(invoke)
+        }
+    }, fallback)
 }
 
 fn with_renderer_queue<R: tauri::Runtime>(
-    dispatch: fn(tauri::ipc::Invoke<R>) -> bool,
+    dispatch: impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static,
     fallback: impl Fn(tauri::ipc::Invoke<R>) -> bool,
 ) -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
+    let dispatch = std::sync::Arc::new(dispatch);
     move |invoke| {
         if !invoke.message.command().starts_with("client_state_") {
             return fallback(invoke);
@@ -66,6 +87,7 @@ fn with_renderer_queue<R: tauri::Runtime>(
         // Capture native getters before admission; the worker can drain even
         // while the event thread waits for WM_ENDSESSION.
         let reply = resolver.clone();
+        let dispatch = dispatch.clone();
         if let Err(error) = queue.enqueue(Box::new(move || {
             RENDERER.with(|slot| {
                 slot.replace(Some(renderer));
@@ -119,7 +141,7 @@ fn delayed_first_claim_cannot_claim_a_same_url_successor() {
     let app = mock_builder()
         .manage(state)
         .manage(IpcQueue::new())
-        .invoke_handler(with_renderer_queue(tauri::generate_handler![client_state_claim_access], |_| false))
+        .invoke_handler(with_client_state_commands(|_| false, |_| false))
         .build(mock_context(noop_assets()))
         .unwrap();
     let window = tauri::WebviewWindowBuilder::new(
@@ -130,10 +152,18 @@ fn delayed_first_claim_cannot_claim_a_same_url_successor() {
     let url = window.url().unwrap();
     let state = app.state::<ClientState>();
     state.renderer_page_started(&window_id, Some(&url));
-    let outgoing = state.renderer_access.document_challenge(&window_id, &url).unwrap();
+    let delivered = || {
+        let mut script = None;
+        state.deliver_renderer_challenge(&window_id, &url, |value| { script = Some(value); });
+        let script = script.unwrap();
+        let challenge = script.split('\'').nth(1).unwrap();
+        uuid::Uuid::parse_str(challenge).unwrap()
+    };
+    let outgoing = delivered();
     window.navigate(url.clone()).unwrap();
     state.renderer_page_started(&window_id, Some(&url));
-    let incoming = state.renderer_access.document_challenge(&window_id, &url).unwrap();
+    let incoming = delivered();
+    assert_ne!(outgoing, incoming);
     let claim = |challenge: uuid::Uuid, access_token: &str| {
         test::get_ipc_response(&window, tauri::webview::InvokeRequest {
             cmd: "client_state_claim_access".into(),

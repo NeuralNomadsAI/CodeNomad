@@ -20,15 +20,15 @@ fn update_claim_includes_restart_and_waits_for_every_renderer() {
     let requests = coordinator.begin_update(["one".into(), "two".into()], update).unwrap();
     assert!(coordinator.state.lock().unwrap().restart_requested);
     assert!(coordinator.with_navigation_authority(|| ()).is_none());
-    assert!(!coordinator.begin_cleanup(false));
+    assert!(!coordinator.begin_cleanup());
     assert!(!coordinator.acknowledge_global(&requests[0].0, requests[0].1));
-    assert!(!coordinator.begin_cleanup(false));
+    assert!(!coordinator.begin_cleanup());
     assert_eq!(installed.load(Ordering::SeqCst), 0);
     // An update gives background windows and queued persistence more time than
     // an ordinary close, but still needs the final matching acknowledgement.
     assert!(UPDATE_RENDERER_FLUSH_TIMEOUT > RENDERER_FLUSH_TIMEOUT);
     assert!(coordinator.acknowledge_global(&requests[1].0, requests[1].1));
-    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_cleanup());
     let update = coordinator.state.lock().unwrap().update.take().unwrap();
     update.install().unwrap();
     assert!(coordinator.complete_cleanup());
@@ -46,7 +46,7 @@ fn timeout_and_failed_cleanup_discard_installer_and_permit_a_fresh_check() {
             coordinator.expire_pending_shutdown(&requests);
         } else {
             coordinator.acknowledge_global(&requests[0].0, requests[0].1);
-            assert!(coordinator.begin_cleanup(false));
+            assert!(coordinator.begin_cleanup());
             coordinator.cleanup_failed(|| {});
         }
         assert!(coordinator.with_navigation_authority(|| ()).is_some());

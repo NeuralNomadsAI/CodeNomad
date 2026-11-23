@@ -105,6 +105,8 @@ pub struct AppState {
     pub(crate) developer_mode: developer_mode::DeveloperMode,
     pub(crate) browser_controller: browser_controller::BrowserController,
     pub wake_lock: Mutex<WakeLockState>,
+    #[cfg(not(windows))]
+    wake_lock_worker: client_state::IpcQueue,
     remote_navigation: Mutex<HashMap<String, RemoteWindowMetadata>>,
     remote_navigation_generation: AtomicU64,
     remote_profiles: Mutex<HashMap<String, RemoteProfileIdentity>>,
@@ -355,7 +357,7 @@ fn set_workspace_menu_enabled(
     }
     let config = state
         .manager
-        .local_cli_access()
+        .ready_local_access()
         .ok_or("Local CodeNomad server is unavailable")?;
     let expected = Url::parse(&config.base_url).map_err(|error| error.to_string())?;
     let current = webview.url().map_err(|error| error.to_string())?;
@@ -437,8 +439,8 @@ fn window_control(
             }
         }
         "close" => {
-            if webview.label() == preferences_window::LABEL {
-                preferences_window::approve_close(&app)?;
+            if webview.label() == preferences_window::LABEL && !preferences_window::approve_close(&app)? {
+                return Ok(());
             }
             window.close()
         }
@@ -773,19 +775,13 @@ fn cli_restart(
     // during that wait. Recheck admission before starting a replacement.
     shutdown::with_navigation_authority(&app, || ())
         .ok_or("Application shutdown is in progress")?;
-    state
+    let generation = state
         .manager
-        .stop_until(Instant::now() + Duration::from_secs(2))
+        .stop_until_generation(Instant::now() + Duration::from_secs(2))
         .map_err(|e| e.to_string())?;
-    shutdown::with_navigation_authority(&app, || {
-        let dev_mode = is_dev_mode();
-        state
-            .manager
-            .start(app.clone(), dev_mode)
-            .map_err(|e| e.to_string())?;
-        Ok(state.manager.status())
-    })
-    .unwrap_or_else(|| Err("Application shutdown is in progress".to_string()))
+    state.manager.start_checked(app, is_dev_mode(), Some(generation))
+        .map_err(|e| e.to_string())?;
+    Ok(state.manager.status())
 }
 
 // Windows keepawake uses SetThreadExecutionState: acquire, release and window
@@ -803,7 +799,10 @@ fn wake_lock_start(
         idle: true,
         sleep: false,
     });
+    change_wake_lock(webview.app_handle(), webview.label(), Some(config))
+}
 
+fn acquire_wake_lock(state: &mut WakeLockState, label: &str, config: WakeLockConfig) -> Result<(), String> {
     let mut builder = keepawake::Builder::default();
     builder
         .display(config.display)
@@ -813,11 +812,10 @@ fn wake_lock_start(
         .app_name("CodeNomad")
         .app_reverse_domain("ai.neuralnomads.codenomad.client");
 
-    let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
-    state_lock.labels.insert(webview.label().to_string());
-    if state_lock.handle.is_none() {
-        state_lock.handle = Some(builder.create().map_err(|err| err.to_string())?);
+    if state.handle.is_none() {
+        state.handle = Some(builder.create().map_err(|err| err.to_string())?);
     }
+    state.labels.insert(label.to_string());
     Ok(())
 }
 
@@ -825,12 +823,52 @@ fn wake_lock_start(
 #[cfg_attr(not(windows), tauri::command(async))]
 fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<AppState>) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
-    let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
-    state_lock.labels.remove(webview.label());
-    if state_lock.labels.is_empty() {
-        state_lock.handle.take();
+    change_wake_lock(webview.app_handle(), webview.label(), None)
+}
+
+fn apply_wake_lock(app: &AppHandle, label: &str, config: Option<WakeLockConfig>) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut wake = state.wake_lock.lock().map_err(|err| err.to_string())?;
+    if let Some(config) = config {
+        if app.state::<local_windows::LocalWindows>().record(label).is_none() {
+            return Err("Window is no longer available".into());
+        }
+        return acquire_wake_lock(&mut wake, label, config);
+    }
+    wake.labels.remove(label);
+    if wake.labels.is_empty() {
+        wake.handle.take();
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn change_wake_lock(app: &AppHandle, label: &str, config: Option<WakeLockConfig>) -> Result<(), String> {
+    apply_wake_lock(app, label, config)
+}
+
+#[cfg(not(windows))]
+fn change_wake_lock(app: &AppHandle, label: &str, config: Option<WakeLockConfig>) -> Result<(), String> {
+    let worker = app.clone();
+    let label = label.to_owned();
+    let (done, reply) = std::sync::mpsc::sync_channel(1);
+    app.state::<AppState>().wake_lock_worker.enqueue(Box::new(move || {
+        let _ = done.send(apply_wake_lock(&worker, &label, config));
+    }))?;
+    reply.recv().map_err(|err| err.to_string())?
+}
+
+fn release_destroyed_window_wake_lock(app: &AppHandle, label: &str) {
+    #[cfg(windows)]
+    let _ = apply_wake_lock(app, label, None);
+    #[cfg(not(windows))]
+    {
+        let worker = app.clone();
+        let label = label.to_owned();
+        let _ = app.state::<AppState>().wake_lock_worker.enqueue(Box::new(move || {
+            let _ = apply_wake_lock(&worker, &label, None);
+        }));
+    }
 }
 
 fn is_dev_mode() -> bool {
@@ -2083,6 +2121,8 @@ fn main() {
             developer_mode,
             browser_controller,
             wake_lock: Mutex::new(WakeLockState::default()),
+            #[cfg(not(windows))]
+            wake_lock_worker: client_state::IpcQueue::named("wake-lock"),
             remote_navigation: Mutex::new(HashMap::new()),
             remote_navigation_generation: AtomicU64::new(0),
             remote_profiles: Mutex::new(HashMap::new()),
@@ -2218,7 +2258,6 @@ fn main() {
             preferences_window::open_preferences_window,
             preferences_window::preferences_window_ready,
             preferences_window::preferences_get_request,
-            preferences_window::preferences_accept_request,
             preferences_window::preferences_resolve_transition,
             preferences_window::preferences_opener_startup_state,
             preferences_window::memory_cleanup::preferences_memory_cleanup,
@@ -2554,12 +2593,7 @@ fn main() {
                     }
                 }
                 shutdown::local_window_destroyed(&app_handle, &label);
-                if let Ok(mut wake) = app_handle.state::<AppState>().wake_lock.lock() {
-                    wake.labels.remove(&label);
-                    if wake.labels.is_empty() {
-                        wake.handle.take();
-                    }
-                }
+                release_destroyed_window_wake_lock(&app_handle, &label);
                 if let Ok(mut zoom) = app_handle.state::<AppState>().remote_zoom_levels.lock() {
                     zoom.remove(&label);
                 }
@@ -2853,7 +2887,9 @@ fn emit_menu_action_to(app_handle: &AppHandle, window: &tauri::Webview, action: 
 /// Native loading page and the server's non-application pages; the server
 /// serves the application for every other path.
 fn is_listenerless_document(url: &url::Url) -> bool {
-    matches!(url.path(), "/loading.html" | "/login" | "/remote-pair") || url.path().starts_with("/auth/")
+    url.as_str() == "about:blank"
+        || matches!(url.path(), "/loading.html" | "/login" | "/remote-pair")
+        || url.path().starts_with("/auth/")
 }
 
 /// The latest-release page omits prereleases. Without access to the saved feed,

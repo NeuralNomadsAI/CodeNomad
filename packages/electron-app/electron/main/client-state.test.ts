@@ -8,7 +8,7 @@ import test from "node:test"
 import { ClientStateManager, type ClientStateWriter } from "./client-state"
 import { CrossHostRegistration } from "./client-state-cross-host"
 import { deterministicLegacyWindowId, parseClientState } from "./client-state-envelope"
-import { MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES } from "./client-state-partitions"
+import { MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES, syncDirectory } from "./client-state-partitions"
 
 test("legacy migration UUIDs are deterministic from exact envelope bytes", () => {
   const vectors = [
@@ -64,7 +64,7 @@ test("Preferences restoration survives final local-window shutdown and clears on
   assert.deepEqual(reopened.preferencesWindow, geometry)
 })
 
-function harness(t: test.TestContext, initial?: unknown) {
+function harness(t: test.TestContext, initial?: unknown, syncStateDirectory?: typeof syncDirectory) {
   const directory = mkdtempSync(join(tmpdir(), "codenomad-state-"))
   const statePath = join(directory, "client-state.json")
   if (initial !== undefined) writeFileSync(statePath, JSON.stringify(initial))
@@ -76,7 +76,7 @@ function harness(t: test.TestContext, initial?: unknown) {
     if (failing) throw new Error("injected write failure")
     await writeFile(path, value, "utf8")
   }, processOwner?: { pid: number; runToken: string; processStartIdentity: string }) => {
-    const manager = new ClientStateManager(directory, writer, { crossHostElectionDirectory: join(directory, "election"), processOwner })
+    const manager = new ClientStateManager(directory, writer, { crossHostElectionDirectory: join(directory, "election"), processOwner, syncStateDirectory })
     managers.push(manager)
     return manager
   }
@@ -262,6 +262,34 @@ test("ownership loss disables renderer restore reads and mutations", async (t) =
     isPrimary: false, restoreEnabled: false, snapshot: null, partitionProtocolVersion: 1,
   })
   assert.equal(await manager.saveClientState({ ignored: true }, "renderer", id), false)
+})
+
+test("a published root survives directory sync failure and postpones partition GC", async (t) => {
+  let fail = false
+  const h = harness(t, { version: 1, restoreEnabled: true }, async (directory) => {
+    if (fail) throw new Error("injected directory sync failure")
+    await syncDirectory(directory)
+  })
+  const manager = h.create()
+  manager.claimClientStateAccess("doc")
+  const commit = (content: string) => {
+    const key = partitionKey(content)
+    return {
+      protocolVersion: 1, snapshot: partitionRoot([key]),
+      partitionKeys: [key], partitions: { [key]: content },
+    }
+  }
+  const old = commit("old"), next = commit("next")
+  await manager.commitClientStatePartitions(old, "doc")
+  fail = true
+  await assert.rejects(manager.commitClientStatePartitions(next, "doc"), /durability unconfirmed/)
+  assert.deepEqual(manager.loadClientState().snapshot, next.snapshot)
+  assert.deepEqual(persistedRecord(h.statePath).snapshot, next.snapshot)
+  assert.equal(existsSync(join(h.directory, "partitions", old.partitionKeys[0]!)), true)
+  await assert.rejects(manager.drainAndReleasePrimary(), /injected directory sync failure/)
+  fail = false
+  assert.equal(await manager.commitClientStatePartitions(next, "doc"), true)
+  assert.equal(existsSync(join(h.directory, "partitions", old.partitionKeys[0]!)), false)
 })
 
 test("renderer root load observes earlier publication and never sees a later failed write", async (t) => {

@@ -62,13 +62,13 @@ fn final_shutdown_and_cleanup_start_once() {
     assert!(coordinator.begin_shutdown(std::iter::empty()).is_none());
     assert!(!coordinator.acknowledge_global(&requests[0].0, requests[0].1));
     assert!(coordinator.acknowledge_global(&requests[1].0, requests[1].1));
-    assert!(coordinator.begin_cleanup(false));
-    assert!(!coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_cleanup());
+    assert!(!coordinator.begin_cleanup());
     coordinator.cleanup_failed(|| {});
     assert!(!coordinator.shutdown_started());
     assert!(coordinator.with_navigation_authority(|| ()).is_some());
     assert!(coordinator.begin_shutdown(std::iter::empty()).is_some());
-    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_cleanup());
 }
 
 #[test]
@@ -76,13 +76,13 @@ fn restart_waits_for_cleanup_and_is_cancelled_when_cleanup_fails() {
     let coordinator = ShutdownCoordinator::default();
     coordinator.request_restart();
     coordinator.begin_shutdown(std::iter::empty()).unwrap();
-    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_cleanup());
     assert!(coordinator.complete_cleanup());
 
     let coordinator = ShutdownCoordinator::default();
     coordinator.request_restart();
     coordinator.begin_shutdown(std::iter::empty()).unwrap();
-    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_cleanup());
     coordinator.cleanup_failed(|| {});
     assert!(!coordinator.complete_cleanup());
 }
@@ -106,7 +106,7 @@ fn developer_restart_keeps_the_scoped_plan_through_graceful_shutdown() {
         .unwrap();
     coordinator.request_restart();
     assert!(coordinator.acknowledge_global(label, requests[0].1));
-    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_cleanup());
     assert!(!coordinator.complete_cleanup(), "the generic restart must not run");
     assert_eq!(
         coordinator.state.lock().unwrap().automation_restart.as_ref()
@@ -285,6 +285,7 @@ fn refused_close_never_gains_workspace_release_authority() {
 fn pages_without_the_application_never_hold_a_close_or_quit() {
     // A local window stuck on the sign-in page could neither close nor let CodeNomad quit.
     for url in [
+        "about:blank",
         "http://127.0.0.1:9898/login",
         "http://127.0.0.1:9898/remote-pair",
         "http://127.0.0.1:9898/auth/token",
@@ -404,7 +405,7 @@ fn failed_global_shutdown_cancels_the_exact_renderer_generations() {
     for (label, generation) in &requests {
         coordinator.acknowledge_global(label, *generation);
     }
-    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_cleanup());
 
     let mut cancellations = coordinator.cleanup_failed(|| {});
     requests.sort();
@@ -423,7 +424,7 @@ fn shutdown_release_has_its_own_bounded_wait_after_persistence() {
     for (label, generation) in &requests {
         coordinator.acknowledge_global(label, *generation);
     }
-    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_cleanup());
     let releases = coordinator.begin_workspace_releases();
     assert_eq!(releases.len(), 2);
     for (label, generation) in &requests {
@@ -445,7 +446,7 @@ fn shutdown_joins_an_in_flight_local_release_without_requesting_it_again() {
     let closing = admit_close(&coordinator, label, true);
     let release = release_close(&coordinator, label, closing);
     assert!(coordinator.begin_shutdown([label.into()]).unwrap().is_empty());
-    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_cleanup());
     assert!(coordinator.begin_workspace_releases().is_empty());
     assert!(!coordinator.wait_for_workspace_releases(Duration::ZERO));
     assert!(!coordinator.finish_local_release(label, release.prepare_generation.unwrap()));
@@ -464,7 +465,7 @@ fn quit_defers_only_the_removing_window_without_blocking_admission() {
         assert!(!coordinator.admit_global_prepare(label, requests[0].1));
         assert!(coordinator.admit_global_prepare("local-other", requests[1].1));
         assert!(!coordinator.acknowledge_global("local-other", requests[1].1));
-        assert!(!coordinator.begin_cleanup(false));
+        assert!(!coordinator.begin_cleanup());
         if refused {
             let result = coordinator.complete_local_removal(label, closing, Err("refused".into()));
             assert!(matches!(result, LocalCloseCompletion::Refused {
@@ -472,13 +473,13 @@ fn quit_defers_only_the_removing_window_without_blocking_admission() {
             } if generation == requests[0].1));
             assert!(coordinator.admit_global_prepare(label, requests[0].1));
             assert!(coordinator.acknowledge_global(label, requests[0].1));
-            assert!(coordinator.begin_cleanup(false));
+            assert!(coordinator.begin_cleanup());
             assert_eq!(coordinator.begin_workspace_releases().len(), 2);
         } else {
             let result = coordinator.complete_local_removal(label, closing, Ok(()));
             assert!(matches!(result, LocalCloseCompletion::Release { shutdown_ready: true, .. }));
             assert!(!coordinator.admit_global_prepare(label, requests[0].1));
-            assert!(coordinator.begin_cleanup(false));
+            assert!(coordinator.begin_cleanup());
             let releases = coordinator.begin_workspace_releases();
             assert_eq!(releases.len(), 1);
             assert_eq!(releases[0].0, "local-other");
@@ -520,7 +521,7 @@ fn timed_out_global_shutdown_reopens_navigation_authority() {
 fn confirmed_session_end_takes_over_quit_already_in_native_preflight() {
     let coordinator = ShutdownCoordinator::default();
     coordinator.begin_shutdown(std::iter::empty()).unwrap();
-    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_cleanup());
     assert!(coordinator.begin_windows_session_end(["local-a".to_string()]).is_none());
     let (deadline, start) = coordinator.confirm_windows_session_end();
     assert!(start);
@@ -537,9 +538,9 @@ fn windows_session_end_keeps_normal_quit_from_claiming_cleanup() {
     let coordinator = ShutdownCoordinator::default();
     let requests = coordinator.begin_windows_session_end(["local-a".to_string()]).unwrap();
 
-    assert!(!coordinator.begin_cleanup(false));
+    assert!(!coordinator.begin_cleanup());
     assert!(coordinator.acknowledge_global(&requests[0].0, requests[0].1));
-    assert!(!coordinator.begin_cleanup(false));
+    assert!(!coordinator.begin_cleanup());
     let (deadline, start) = coordinator.confirm_windows_session_end();
     assert!(start);
     assert_eq!(coordinator.confirm_windows_session_end(), (deadline, false));

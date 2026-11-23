@@ -213,7 +213,8 @@ impl ClientState {
                 .lock()
                 .map_err(|error| error.to_string())?;
             if state.unsupported_future_envelope
-                || (pending.latest.is_empty() && pending.active.is_none() && !pending.unpublished)
+                || (pending.latest.is_empty() && pending.active.is_none() && !pending.unpublished
+                    && !self.root_sync_pending.load(std::sync::atomic::Ordering::Relaxed))
             {
                 return Ok(());
             }

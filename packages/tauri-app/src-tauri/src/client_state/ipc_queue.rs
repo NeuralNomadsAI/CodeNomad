@@ -10,15 +10,19 @@ pub(crate) struct IpcQueue {
 
 impl IpcQueue {
     pub(crate) fn new() -> Self {
+        Self::named("client-state-ipc")
+    }
+
+    pub(crate) fn named(name: &str) -> Self {
         let (send, receive) = mpsc::channel::<Job>();
         std::thread::Builder::new()
-            .name("client-state-ipc".into())
+            .name(name.into())
             .spawn(move || receive.into_iter().for_each(|job| job()))
             .expect("start client state IPC worker");
         Self { admission: Mutex::new((send, true)) }
     }
 
-    pub(super) fn enqueue(&self, job: Job) -> Result<(), &'static str> {
+    pub(crate) fn enqueue(&self, job: Job) -> Result<(), &'static str> {
         let admission = self.admission.lock().unwrap_or_else(|err| err.into_inner());
         if !admission.1 {
             return Err("Client state IPC is closed for shutdown");

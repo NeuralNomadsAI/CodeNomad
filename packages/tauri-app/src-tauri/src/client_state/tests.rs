@@ -147,7 +147,7 @@ fn failing_state(initially_failing: bool) -> (TempDir, ClientState, Arc<AtomicBo
         directory.path(),
         Arc::new(move |path, bytes, ownership_valid| {
             if writer_flag.load(Ordering::SeqCst) {
-                Err("injected write failure".to_string())
+                Err("injected write failure".into())
             } else {
                 super::write_atomically(path, bytes, ownership_valid)
             }
@@ -158,13 +158,50 @@ fn failing_state(initially_failing: bool) -> (TempDir, ClientState, Arc<AtomicBo
 }
 
 #[test]
+fn directory_sync_failure_keeps_the_published_root_and_defers_gc() {
+    let directory = tempfile::tempdir().unwrap();
+    let failing = Arc::new(AtomicBool::new(false));
+    let flag = failing.clone();
+    let state = ClientState::initialize_at_with_writer(directory.path(), Arc::new(move |path, bytes, valid| {
+        super::write_atomically_with_sync(path, bytes, valid, |parent| {
+            if flag.load(Ordering::SeqCst) {
+                return Err("injected directory sync failure".into());
+            }
+            super::partitions::sync_directory(parent)
+        })
+    })).unwrap();
+    enable_restore_in_memory(&state);
+    let commit = |content: &str| {
+        let key = partition_key(content);
+        partition_commit(json!({
+            "protocolVersion": 1,
+            "snapshot": partition_root(std::slice::from_ref(&key), json!({ "revision": content })),
+            "partitionKeys": [&key],
+            "partitions": {(&key): content},
+        }))
+    };
+    let old_partition = state.state_path.parent().unwrap().join("partitions").join(partition_key("old"));
+    assert!(state.commit_partitions_guarded(commit("old"), || true).unwrap());
+    failing.store(true, Ordering::SeqCst);
+    let error = state.commit_partitions_guarded(commit("next"), || true).unwrap_err();
+    assert!(error.contains("durability unconfirmed"), "{error}");
+    assert_eq!(state.load().unwrap().snapshot["revision"], "next");
+    assert_eq!(super::read_client_state(&state.state_path).active().snapshot.as_ref().unwrap()["revision"], "next");
+    assert!(old_partition.is_file());
+    failing.store(false, Ordering::SeqCst);
+    assert!(state.commit_partitions_guarded(commit("next"), || true).unwrap());
+    assert!(!old_partition.exists());
+}
+
+#[test]
 fn shutdown_barrier_seals_admission_and_waits_for_publication_clear_and_ack() {
+    use tauri::{Manager, ipc::{InvokeResponse, CallbackFn}, test, webview::InvokeRequest};
     let directory = tempfile::tempdir().unwrap();
     let event_thread = thread::current().id();
     let (entered, writing) = mpsc::channel();
     let (resume, paused) = mpsc::channel();
     let paused = std::sync::Mutex::new(Some(paused));
-    let state = Arc::new(ClientState::initialize_at_with_writer(
+    let state = ClientState::initialize_at_with_writer(
         directory.path(),
         Arc::new(move |path, bytes, valid| {
             assert_ne!(event_thread, thread::current().id());
@@ -174,51 +211,74 @@ fn shutdown_barrier_seals_admission_and_waits_for_publication_clear_and_ack() {
             }
             super::write_atomically(path, bytes, valid)
         }),
-    ).unwrap());
+    ).unwrap();
     enable_restore_in_memory(&state);
     let window_id = state.active_window_id().unwrap();
-    let url = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
-    state.renderer_access.claim_for(&window_id, "renderer", &url).unwrap();
-    let document = super::commands::LocalDocument {
-        document: state.renderer_access.document_for(&window_id),
-        window_id: window_id.clone(), url,
+    let app = test::mock_builder()
+        .manage(state)
+        .manage(super::IpcQueue::new())
+        .invoke_handler(super::commands::with_client_state_commands(|_| false, |_| false))
+        .build(test::mock_context(test::noop_assets())).unwrap();
+    let window = tauri::WebviewWindowBuilder::new(&app, crate::identity::local_window_label(&window_id).unwrap(),
+        tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let state = app.state::<ClientState>();
+    let queue = app.state::<super::IpcQueue>();
+    let url = window.url().unwrap();
+    state.renderer_page_started(&window_id, Some(&url));
+    let challenge = state.renderer_access.document_challenge(&window_id, &url).unwrap();
+    let invoke = |command: &str, body: Value| {
+        let (reply, response) = mpsc::channel();
+        window.as_ref().clone().on_message(InvokeRequest {
+            cmd: command.into(),
+            callback: CallbackFn(0),
+            error: CallbackFn(1),
+            url: url.clone(),
+            body: body.into(),
+            headers: Default::default(),
+            invoke_key: test::INVOKE_KEY.to_string(),
+        }, Box::new(move |_, _, result, _, _| { let _ = reply.send(result); }));
+        response
     };
-    let queue = super::IpcQueue::new();
+    let assert_ok = |response: mpsc::Receiver<InvokeResponse>| {
+        match response.recv_timeout(Duration::from_secs(5)).unwrap() {
+            InvokeResponse::Ok(_) => {}
+            InvokeResponse::Err(error) => panic!("Invoke failed: {:?}", error.0),
+        }
+    };
+    assert_ok(invoke("client_state_claim_access", json!({
+        "accessToken": "renderer", "documentChallenge": challenge.to_string()
+    })));
     let key = partition_key("test partition");
-    let commit = partition_commit(json!({
+    let commit = json!({
         "protocolVersion": 1,
         "snapshot": partition_root(std::slice::from_ref(&key), json!({"revision": 1})),
         "partitionKeys": [&key],
         "partitions": {(&key): "test partition"},
-    }));
-    let writing_state = Arc::clone(&state);
-    let writing_document = document.clone();
-    queue.enqueue(Box::new(move || {
-        assert!(super::commands::commit_partitions(&writing_document, &writing_state, "renderer", commit).unwrap());
-    })).unwrap();
+    });
+    let committed = invoke("client_state_commit_partitions", json!({"accessToken": "renderer", "payload": commit}));
     writing.recv_timeout(Duration::from_secs(5)).unwrap();
-    let clearing_state = Arc::clone(&state);
-    queue.enqueue(Box::new(move || {
-        assert_eq!(clearing_state.load().unwrap().snapshot["revision"], 1);
-        let authority = document.validate(&clearing_state, "renderer").unwrap();
-        assert!(clearing_state.clear_guarded(&document.window_id, || {
-            clearing_state.renderer_access.is_generation_current_for(&document.window_id, authority)
-        }).unwrap());
-    })).unwrap();
+    let loaded = invoke("client_state_load", json!({"accessToken": "renderer"}));
+    let cleared = invoke("client_state_clear", json!({"accessToken": "renderer"}));
+    let loaded_after_clear = invoke("client_state_load", json!({"accessToken": "renderer"}));
     state.renderer_flush.windows.lock().unwrap().insert(window_id.clone(), (1, 0));
-    let acknowledging_state = Arc::clone(&state);
-    let acknowledging_window = window_id.clone();
-    queue.enqueue(Box::new(move || {
-        assert_eq!(acknowledging_state.load().unwrap().snapshot, Value::Null);
-        acknowledging_state.acknowledge_renderer_flush(&acknowledging_window, 1);
-    })).unwrap();
+    let acknowledged = invoke("client_state_navigation_flushed", json!({"accessToken": "renderer", "generation": 1}));
 
     assert!(!queue.seal_and_drain_until(Instant::now() + Duration::from_millis(30)));
-    assert!(queue.enqueue(Box::new(|| panic!("accepted after seal"))).is_err());
+    assert!(matches!(invoke("client_state_clear", json!({"accessToken": "renderer"}))
+        .recv_timeout(Duration::from_secs(5)).unwrap(), InvokeResponse::Err(_)));
     assert_eq!(acknowledged_generation(&state), 0);
     assert!(state.is_primary());
     resume.send(()).unwrap();
     assert!(queue.seal_and_drain_until(Instant::now() + Duration::from_secs(5)));
+    assert_ok(committed);
+    let snapshot = |response: mpsc::Receiver<InvokeResponse>| match response.recv_timeout(Duration::from_secs(5)).unwrap() {
+        InvokeResponse::Ok(body) => body.deserialize::<Value>().unwrap()["snapshot"].clone(),
+        InvokeResponse::Err(error) => panic!("Load failed: {:?}", error.0),
+    };
+    assert_eq!(snapshot(loaded)["revision"], 1);
+    assert_ok(cleared);
+    assert_eq!(snapshot(loaded_after_clear), Value::Null);
+    assert_ok(acknowledged);
     assert_eq!(acknowledged_generation(&state), 1);
     state.release_locks();
     let reopened = ClientState::initialize_at(directory.path()).unwrap();
@@ -838,7 +898,7 @@ fn future_envelope_is_preserved_until_successful_clear() {
         Arc::new(move |path, bytes, ownership_valid| {
             writer_count.fetch_add(1, Ordering::SeqCst);
             if writer_fail.load(Ordering::SeqCst) {
-                Err("injected write failure".to_string())
+                Err("injected write failure".into())
             } else {
                 super::write_atomically(path, bytes, ownership_valid)
             }

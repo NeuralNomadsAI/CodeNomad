@@ -81,6 +81,13 @@ interface ClientStateManagerOptions {
   legacySharedStatePath?: string | null
   legacyTauriDataPath?: string | null
   processOwner?: ProcessOwner
+  syncStateDirectory?: typeof syncDirectory
+}
+
+class DirectorySyncError extends Error {
+  constructor(cause: unknown) {
+    super("Client state published; durability unconfirmed", { cause })
+  }
 }
 
 async function writeClientStateTemporary(temporaryPath: string, serializedState: string): Promise<void> {
@@ -137,6 +144,8 @@ export class ClientStateManager {
   private persistenceSuppressed = new Set<string>()
   private unsupportedFutureEnvelope = false
   private frozen = false
+  private rootSyncPending = false
+  private readonly syncStateDirectory: typeof syncDirectory
   private rendererAccessTokens = new Map<string, string>()
   private readonly fileDrafts: ClientStateFileDrafts
 
@@ -145,6 +154,7 @@ export class ClientStateManager {
     private readonly writeState: ClientStateWriter = writeClientStateTemporary,
     options?: ClientStateManagerOptions,
   ) {
+    this.syncStateDirectory = options?.syncStateDirectory ?? syncDirectory
     this.owner = options?.processOwner ?? {
       pid: process.pid,
       runToken: randomUUID(),
@@ -545,16 +555,20 @@ export class ClientStateManager {
 
     this.frozen = true
     // The primary locks stay held until the queued root publication and GC have both drained.
-    const drain = this.writeQueue.then(
-      async () => {
-        this.primary = false
-        await this.releaseOwnedProcessFiles()
-      },
-      (error) => {
-        this.frozen = false
-        throw error
-      },
-    )
+    const drain = this.writeQueue.catch((error) => {
+      if (!(error instanceof DirectorySyncError && this.rootSyncPending)) throw error
+    }).then(async () => {
+      if (this.rootSyncPending) {
+        await this.assertReplacementAllowed()
+        await this.syncStateDirectory(dirname(this.statePath))
+        this.rootSyncPending = false
+      }
+      this.primary = false
+      await this.releaseOwnedProcessFiles()
+    }).catch((error) => {
+      this.frozen = false
+      throw error
+    })
     this.drainAndReleasePromise = drain
     void drain.catch(() => {
       if (this.drainAndReleasePromise === drain) this.drainAndReleasePromise = undefined
@@ -712,9 +726,11 @@ export class ClientStateManager {
         mutate(this.windowRecord(windowId), this.state)
         await this.writeAtomically(JSON.stringify(this.state), rendererToken, windowId)
       } catch (error) {
-        this.state = previousState
-        this.persistenceSuppressed = previousPersistenceSuppressed
-        this.unsupportedFutureEnvelope = previousUnsupportedFutureEnvelope
+        if (!(error instanceof DirectorySyncError)) {
+          this.state = previousState
+          this.persistenceSuppressed = previousPersistenceSuppressed
+          this.unsupportedFutureEnvelope = previousUnsupportedFutureEnvelope
+        }
         throw error
       }
       await committed?.().catch((error) => console.warn("[client-state] failed to sweep partitions", error))
@@ -737,6 +753,12 @@ export class ClientStateManager {
         if (result !== undefined) return result
         await this.writeAtomically(JSON.stringify(this.state))
       } catch (error) {
+        if (error instanceof DirectorySyncError) {
+          // Native window construction/close follows the published membership.
+          // The shutdown drain retries the sync before releasing ownership.
+          console.warn("[client-state]", error)
+          return true
+        }
         this.state = previousState
         throw error
       }
@@ -756,10 +778,17 @@ export class ClientStateManager {
       await this.writeState(temporaryPath, serializedState)
       await this.assertReplacementAllowed(rendererToken, windowId)
       await rename(temporaryPath, target)
-      await syncDirectory(dirname(this.statePath))
     } catch (error) {
       await rm(temporaryPath, { force: true }).catch(() => {})
       throw error
+    }
+    const isRoot = target === this.statePath
+    try {
+      await this.syncStateDirectory(dirname(this.statePath))
+      if (isRoot) this.rootSyncPending = false
+    } catch (error) {
+      if (isRoot) this.rootSyncPending = true
+      throw new DirectorySyncError(error)
     }
   }
 

@@ -730,7 +730,7 @@ pub(crate) fn create_local_window(
     id: String,
     persisted: bool,
 ) -> Result<LocalWindowRecord, String> {
-    build_local_window(app, id, persisted, false)
+    build_local_window(app, id, persisted, false, false)
 }
 
 /// `connect_only` builds the hidden launch window: it stays hidden unless it is promoted.
@@ -739,6 +739,7 @@ fn build_local_window(
     id: String,
     persisted: bool,
     connect_only: bool,
+    new_record: bool,
 ) -> Result<LocalWindowRecord, String> {
     let record = register(app, id.clone(), persisted, connect_only)?;
     let script = local_window_initialization_script(&id, &record.automation_instance);
@@ -829,6 +830,14 @@ fn build_local_window(
         let _ = window.destroy();
         return Err(error);
     }
+    if new_record && persisted {
+        app.state::<ClientState>().register_ephemeral_window(id.clone());
+        // Admit only after successful construction and before the first
+        // renderer can claim its document. Shutdown drains this publication.
+        if let Err(error) = ClientState::queue_new_window(app, id) {
+            eprintln!("[client-state] failed to admit new window state: {error}");
+        }
+    }
     let backend_target = app.state::<LocalWindows>().backend_target();
     if let Some(target) = &backend_target {
         let result = app
@@ -863,30 +872,18 @@ fn schedule_new_window(
         .lock()
         .map_err(|error| error.to_string())?
         .reserve_new_window(saved)?;
-    let worker = app.clone();
+    let dispatch = app.clone();
     let pending_id = id.clone();
-    let enqueued = crate::shutdown::with_navigation_authority(app, || {
-        ClientState::queue_new_window(app, id.clone(), existing, move |result| {
-            let dispatch = worker.clone();
-            let failed_id = pending_id.clone();
-            if worker.run_on_main_thread(move || {
-                release_new_window(&dispatch, &pending_id);
-                if crate::shutdown::with_navigation_authority(&dispatch, || ()).is_none() {
-                    complete(&dispatch, Err("Application shutdown is in progress".into()));
-                    return;
-                }
-                let persisted = result.unwrap_or_else(|error| {
-                    eprintln!("[client-state] failed to persist a new window; using an ephemeral window: {error}");
-                    false
-                });
-                let result = create_local_window(&dispatch, pending_id, persisted);
-                complete(&dispatch, result);
-            }).is_err() {
-                release_new_window(&worker, &failed_id);
-            }
-        })
-    })
-    .unwrap_or_else(|| Err("Application shutdown is in progress".into()));
+    let enqueued = app.run_on_main_thread(move || {
+        release_new_window(&dispatch, &pending_id);
+        if crate::shutdown::with_navigation_authority(&dispatch, || ()).is_none() {
+            complete(&dispatch, Err("Application shutdown is in progress".into()));
+            return;
+        }
+        let persisted = dispatch.state::<ClientState>().can_register_window();
+        let result = build_local_window(&dispatch, pending_id, persisted, false, !existing);
+        complete(&dispatch, result);
+    }).map_err(|error| error.to_string());
     if enqueued.is_err() {
         release_new_window(app, &id);
     }
@@ -961,7 +958,7 @@ fn handle_intent(app: &AppHandle, intent: LaunchIntent) -> Result<bool, String> 
     let windows = app.state::<LocalWindows>();
     if intent.is_connect_only() && windows.mru_label().is_none() {
         // Nothing to run the connection in: a hidden, unpersisted window runs it and closes once it settles.
-        let record = build_local_window(app, uuid::Uuid::new_v4().to_string(), false, true)?;
+        let record = build_local_window(app, uuid::Uuid::new_v4().to_string(), false, true, false)?;
         windows.queue_connection(
             app,
             &record.label,

@@ -133,11 +133,12 @@ impl ClientState {
             file_draft_readers: file_drafts::Readers::default(),
             startup_commands: startup_command::StartupCommands::default(),
             write_state,
+            root_sync_pending: Default::default(),
         }
     }
 
     #[cfg(test)]
-    pub(super) fn initialize_at(app_data_dir: &Path) -> Result<Self, String> {
+    pub(crate) fn initialize_at(app_data_dir: &Path) -> Result<Self, String> {
         Self::initialize_at_with_writer(app_data_dir, std::sync::Arc::new(write_atomically))
     }
 

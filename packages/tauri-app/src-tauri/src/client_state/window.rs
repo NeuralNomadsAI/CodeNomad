@@ -327,11 +327,9 @@ pub fn setup_local_window(
         if window_id == crate::preferences_window::LABEL {
             state.preferences_window.clone()
         } else {
-            let record = state.record(window_id)?;
-            record
-                .restore_enabled
-                .then(|| record.window.clone())
-                .flatten()
+            state.record(window_id).ok()
+                .filter(|record| record.restore_enabled)
+                .and_then(|record| record.window.clone())
         }
     };
     if let Some(mut saved_window) = saved_window {
@@ -481,16 +479,12 @@ pub fn local_window_zoom(app: &AppHandle, window_label: &str) -> f64 {
         .unwrap_or(DEFAULT_ZOOM_LEVEL)
 }
 
+pub fn capture_preferences_window(app: &AppHandle) {
+    let label = crate::preferences_window::LABEL;
+    capture_window_in_memory(app, label, label, true);
+}
+
 pub fn capture_and_flush_window(app: &AppHandle, window_label: &str) {
-    if window_label == crate::preferences_window::LABEL {
-        capture_window_in_memory(app, window_label, window_label, true);
-        if let Some(state) = app.try_state::<ClientState>() {
-            if let Err(err) = state.flush() {
-                eprintln!("[client-state] failed to flush Preferences window state: {err}");
-            }
-        }
-        return;
-    }
     let Some(record) = app
         .try_state::<crate::local_windows::LocalWindows>()
         .and_then(|windows| windows.record(window_label))
@@ -506,12 +500,7 @@ pub fn capture_and_flush_window(app: &AppHandle, window_label: &str) {
 }
 
 pub fn capture_all_windows(app: &AppHandle) {
-    capture_window_in_memory(
-        app,
-        crate::preferences_window::LABEL,
-        crate::preferences_window::LABEL,
-        true,
-    );
+    capture_preferences_window(app);
     if let Some(windows) = app.try_state::<crate::local_windows::LocalWindows>() {
         for record in windows.records() {
             capture_window_in_memory(app, &record.label, &record.id, record.persisted);
