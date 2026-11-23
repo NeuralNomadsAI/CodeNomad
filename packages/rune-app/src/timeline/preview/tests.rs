@@ -61,7 +61,7 @@ fn runtime(text: String, size: (f32, f32)) -> Runtime<State> {
     let t = owner(&mut s);
     t.width = size.0;
     t.previews.cache_scope = Some(scope);
-    t.outline = Some(super::super::Outline {
+    t.outline = Some(std::sync::Arc::new(super::super::Outline {
         entries: vec![
             serde_json::from_value(serde_json::json!({
                 "id":"message-0","seq":1,"type":"assistant","tools":0,"reasoning":0,"text":1,
@@ -70,7 +70,8 @@ fn runtime(text: String, size: (f32, f32)) -> Runtime<State> {
         ],
         total: 1,
         cacheable: true,
-    });
+        saved: None,
+    }));
     t.index_changed = true;
     t.changed = true;
     let mut rt = Runtime::new(s, view, size, Env::new(false, 1.0));

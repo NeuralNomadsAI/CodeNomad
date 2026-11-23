@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 mod cache;
 pub(crate) mod opening;
+pub(crate) mod outlines;
 mod persistence;
 mod save_snapshot;
 mod snapshot_budget;

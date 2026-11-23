@@ -53,12 +53,18 @@ impl From<timeline::Marker<'_>> for Marker {
     }
 }
 
-type Scan = (Sender<()>, Receiver<crate::history::Result<Outline>>);
+enum ScanUpdate {
+    Seed(Arc<Outline>),
+    Complete(crate::history::Result<Outline>),
+}
+type Scan = (Sender<()>, Receiver<ScanUpdate>);
 
 #[derive(Default)]
 pub(crate) struct Timeline {
     backend: Option<Backend>,
-    outline: Option<Outline>,
+    outline: Option<Arc<Outline>>,
+    provisional: bool,
+    cold_only: bool,
     scan: Option<Scan>,
     revision: Arc<OutlineRevision>,
     refresh: bool,
@@ -103,6 +109,11 @@ pub(crate) fn filters_changed(s: &mut State) {
 fn cancel_scan(t: &mut Timeline) {
     t.revision.invalidate();
     t.scan = None;
+    if std::mem::take(&mut t.provisional) {
+        t.outline = None;
+        t.changed = true;
+        t.index_changed = true;
+    }
 }
 
 pub(crate) fn suspend(s: &mut State) {
@@ -124,6 +135,12 @@ pub(crate) fn suspend(s: &mut State) {
 }
 
 pub(crate) fn observe(s: &mut State, event: &Event) {
+    if matches!(event, Event::HistoryInvalidated)
+        && let Some(backend) = s.transcript_display.timeline.backend.clone()
+        && let Some(project) = project_root(s).map(str::to_owned)
+    {
+        crate::workspace::outlines::invalidate(s, &backend, &project);
+    }
     let t = owner(s);
     match event {
         Event::Connected(backend) => {
@@ -131,6 +148,7 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
                 old.client_id == backend.client_id
                     && old.workspace == backend.workspace
                     && old.session == backend.session
+                    && old.session_directory == backend.session_directory
             });
             if !same {
                 *t = Timeline::default();
@@ -142,6 +160,8 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
             cancel_scan(t);
             t.previews = Default::default();
             t.outline = None;
+            t.provisional = false;
+            t.cold_only = true;
             t.markers.clear();
             t.has_raw_markers = false;
             t.version = t.version.wrapping_add(1);
@@ -176,6 +196,10 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
         Event::Done => t.refresh = true,
         _ => {}
     }
+}
+
+fn project_root(s: &State) -> Option<&str> {
+    Some(s.screen.launcher()?.project.as_ref()?.path.as_str())
 }
 
 pub(crate) fn demanded(s: &State) -> bool {
@@ -288,6 +312,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let wake = s.wake.clone();
     let pending = filters::pending(s);
     let filter_revision = s.rail_filter_revision;
+    let project = project_root(s).map(str::to_owned);
     let t = owner(s);
     if t.pending != pending || t.filter_revision != filter_revision {
         t.pending = pending;
@@ -296,17 +321,41 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         t.changed = true;
     }
     t.visible = true;
-    let complete = t.scan.as_ref().and_then(|(_, in_)| in_.try_recv().ok());
-    let mut changed = complete.is_some();
-    if let Some(result) = complete {
-        t.scan = None;
-        t.outline_error = result.is_err();
-        if let Ok(index) = result {
-            t.outline = Some(index);
-            t.changed = true;
-            t.index_changed = true;
+    let mut changed = false;
+    let mut remember = None;
+    while let Some(update) = t.scan.as_ref().and_then(|(_, in_)| in_.try_recv().ok()) {
+        changed = true;
+        match update {
+            ScanUpdate::Seed(seed) if t.outline.is_none() => {
+                t.outline = Some(seed);
+                t.provisional = true;
+                t.changed = true;
+                t.index_changed = true;
+            }
+            ScanUpdate::Seed(_) => {}
+            ScanUpdate::Complete(result) => {
+                t.scan = None;
+                t.outline_error = result.is_err();
+                match result {
+                    Ok(index) => {
+                        let index = Arc::new(index);
+                        remember = Some(index.clone());
+                        t.outline = Some(index);
+                        t.cold_only = false;
+                    }
+                    Err(_) if t.provisional => t.outline = None,
+                    Err(_) => continue,
+                }
+                t.provisional = false;
+                t.changed = true;
+                t.index_changed = true;
+            }
         }
     }
+    if let Some(index) = remember {
+        crate::workspace::outlines::remember(s, index);
+    }
+    let t = owner(s);
     if t.online
         && t.refresh
         && t.scan.is_none()
@@ -315,18 +364,34 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         t.refresh = false;
         let revision = t.revision.clone();
         let (cancel, cancelled) = bounded(1);
-        let (out, in_) = bounded(1);
+        let prior = t.outline.clone();
+        let (out, in_) = bounded(2);
         t.scan = Some((cancel, in_));
+        let seed = (!t.cold_only)
+            .then_some(project.as_deref())
+            .flatten()
+            .and_then(|root| {
+                prior
+                    .filter(|o| o.saved_for(&backend, root))
+                    .or_else(|| crate::workspace::outlines::seed(s, &backend, root))
+            });
         platform::spawn(async move {
-            if let Some(_permit) = reads.background(&cancelled).await
-                && let Some(result) =
-                    platform::reads::cancellable(&cancelled, backend.read_outline(&revision)).await
-                && out.send(result).await.is_ok()
+            let Some(_permit) = reads.background(&cancelled).await else {
+                return;
+            };
+            let read = backend.read_outline_cached(&revision, project.as_deref(), seed, |index| {
+                if out.try_send(ScanUpdate::Seed(index)).is_ok() {
+                    wake();
+                }
+            });
+            if let Some(result) = platform::reads::cancellable(&cancelled, read).await
+                && out.send(ScanUpdate::Complete(result)).await.is_ok()
             {
                 wake();
             }
         });
     }
+    let t = owner(s);
     if std::mem::take(&mut t.changed) {
         changed |= reproject(s);
     }

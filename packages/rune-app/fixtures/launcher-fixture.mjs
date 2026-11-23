@@ -29,9 +29,10 @@ const sameOriginPairing=process.argv.includes('--same-origin-pairing')
 const webTouchHistory=process.argv.includes('--web-touch-history')
 const webTimeline=process.argv.includes('--web-timeline')||webTouchHistory
 const webSearch=process.argv.includes('--web-history-search')
+const webOutline=process.argv.includes('--web-outline-restore')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
 const webFileWrap=process.argv.includes('--web-file-wrap')
-const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap||webOutline,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
 assert(!webFileWrap||(!webPending&&!webMobile),'File wrap uses the loopback Chromium restoration fixture')
 assert(!webMissions||!webRestore&&!webMobile)
 if(!web)requireTestSupport()
@@ -181,7 +182,7 @@ function add(id,title,directory=project) {
 }
 add('ses_existing','Existing history')
 add('ses_another','Another session',webSearch?linked:gitPanel&&!placeWorktree?review:project)
-seedHistory({stores,webTimeline,webMobile,webAndroid,webSearch})
+seedHistory({stores,webTimeline:webTimeline||webOutline,webMobile,webAndroid,webSearch})
 if(gitPanel)for(let i=0;i<50;i++)stores.get('ses_another').append('assistant',`Reading position ${i}\n\nA second paragraph in the fixture.`)
 if(placeWorktree){
   add('ses_child','Child session').parentID='ses_existing'
@@ -217,7 +218,7 @@ const upstream=createServer(async(req,res)=>{
       if(mobile?.held){res.statusCode=503;return json({})}
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
       streams.add(res)
-      const heartbeat=webSearch||webTimeline?setInterval(()=>res.write(': heartbeat\n\n'),15_000).unref():undefined
+      const heartbeat=webSearch||webTimeline||webOutline?setInterval(()=>res.write(': heartbeat\n\n'),15_000).unref():undefined
       res.once('close',()=>{clearInterval(heartbeat);streams.delete(res)})
       return
     }
@@ -304,7 +305,7 @@ const upstream=createServer(async(req,res)=>{
       return json({data:created})
     }
     if(url.pathname==='/api/plugin')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
-    const history=historyResponse(url.pathname,raw,{stores,records,project,linked,directory:url.searchParams.get('location[directory]'),webSearch,webTouchHistory,compare})
+    const history=historyResponse(url.pathname,raw,{stores,records,project,linked,directory:url.searchParams.get('location[directory]'),webSearch,webTouchHistory,webOutline,compare})
     if(history)return json(history)
     if(url.pathname==='/api/rpc/codenomad.missions/scheduleCarrierRead')return json({output:{owned:false}})
     if(placeWorktree&&url.pathname==='/api/model')return json({data:[]})
@@ -450,7 +451,7 @@ try{
   if(web){
     await signIn(origin)
     await launchWeb({root,profile,project,browserOutput,ui,manifest,solid,ts,env,origin,runLog,http,mobile,restart:restartWeb,
-      webMobile,webAndroid,webMissions,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch},webState)
+      webMobile,webAndroid,webMissions,sameOriginPairing,webPending,webFileWrap,webRestore,webTimeline,webTouchHistory,webSearch,webOutline},webState)
     client=webState.client
   }else if(pendingOpen){
     await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0

@@ -36,7 +36,7 @@ export function seedHistory({stores,webTimeline,webMobile,webAndroid,webSearch})
   }
 }
 
-export function historyResponse(pathname, raw, {stores,records,project,linked,directory,webSearch,webTouchHistory,compare}) {
+export function historyResponse(pathname, raw, {stores,records,project,linked,directory,webSearch,webTouchHistory,webOutline,compare}) {
   const prefix='/api/rpc/codenomad.session-pruning/'
   if(!pathname.startsWith(prefix))return
   const method=pathname.slice(prefix.length)
@@ -93,6 +93,13 @@ export function historyResponse(pathname, raw, {stores,records,project,linked,di
         ...(row.content.some(part=>part.type==='tool')?{toolName:row.content.find(part=>part.type==='tool').name}:{}),
       }:{}),
     }))
+    if(webOutline&&rows.length>24){
+      const head={after:-1,through:23,digest:'a'.repeat(64)}
+      const tail={after:23,through:rows.length-1,digest:'b'.repeat(64),changed:true}
+      const unchanged=input.known?.some(c=>c.after===head.after&&c.through===head.through&&c.digest===head.digest)??false
+      return {output:{status:'outline',entries:unchanged?entries.slice(24):entries,
+        total:entries.length,cursor:null,checkpoints:[{...head,changed:!unchanged},tail]}}
+    }
     const through=Math.max(0,rows.length-1)
     return {output:{status:'outline',entries,total:rows.length,cursor:null,
       checkpoints:rows.length?[{after:-1,through,digest:'a'.repeat(64),changed:true}]:[]}}

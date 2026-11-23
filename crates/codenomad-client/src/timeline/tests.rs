@@ -211,6 +211,98 @@ const OUTLINE: &str = "POST /api/workspaces/workspace/session-history/outline HT
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn saved_outline_revalidates_sparse_ranges_and_refuses_a_different_undo_boundary() {
+    const ROOT: &str = "/owned/project";
+    let session =
+        json!({"data":{"id":"session","projectID":"project","location":{"directory":ROOT}}});
+    let mut reverted = session.clone();
+    reverted["data"]["revert"] = json!({"messageID":"new"});
+    let cold = json!({"sessionID":"session"});
+    let first = page(-1, 40, Some(2000), vec![entry("old", 1)]);
+    let tail = page(40, 2000, None, vec![entry("gone", 1801)]);
+    let known = json!([
+        {"after":-1,"through":40,"digest":"a".repeat(64)},
+        {"after":40,"through":2000,"digest":"a".repeat(64)},
+    ]);
+    let mut unchanged = first.clone();
+    unchanged["entries"] = json!([]);
+    unchanged["checkpoints"][0]["changed"] = false.into();
+    let mut changed = page(40, 2000, None, vec![entry("new", 1802)]);
+    changed["checkpoints"][0]["digest"] = "b".repeat(64).into();
+    let cursor = json!({"after":40,"through":2000});
+    let mut after_undo = page(-1, 40, None, vec![entry("old", 1)]);
+    after_undo["total"] = 1.into();
+    http_probe(
+        vec![
+            (RECORD, None, session.clone(), false),
+            (OUTLINE, Some(cold.clone()), first, false),
+            (RECORD, None, session.clone(), false),
+            (
+                OUTLINE,
+                Some(json!({"sessionID":"session","cursor":cursor})),
+                tail,
+                false,
+            ),
+            (RECORD, None, session.clone(), false),
+            (RECORD, None, session.clone(), false),
+            (
+                OUTLINE,
+                Some(json!({"sessionID":"session","known":known})),
+                unchanged,
+                false,
+            ),
+            (RECORD, None, session.clone(), false),
+            (
+                OUTLINE,
+                Some(json!({"sessionID":"session","cursor":cursor,"known":known})),
+                changed,
+                false,
+            ),
+            (RECORD, None, session, false),
+            (RECORD, None, reverted.clone(), false),
+            (OUTLINE, Some(cold), after_undo, false),
+            (RECORD, None, reverted, false),
+        ],
+        async |mut backend, revision| {
+            assert!(backend.client.verify_server_identity("installation"));
+            backend.session_directory = Some(ROOT.into());
+            let first = backend
+                .read_outline_cached(&revision, Some(ROOT), None, |_| panic!("cold seed"))
+                .await
+                .unwrap();
+            let bytes = encode_saved_outlines(&[Arc::new(first)]);
+            let mut corrupted: Value = serde_json::from_slice(&bytes).unwrap();
+            corrupted[0][0] = "0".repeat(64).into();
+            assert!(decode_saved_outlines(&serde_json::to_vec(&corrupted).unwrap()).is_empty());
+            let saved = decode_saved_outlines(&bytes).pop().unwrap();
+            let current = backend
+                .read_outline_cached(&revision, Some(ROOT), Some(saved.clone()), |seed| {
+                    assert!(Arc::ptr_eq(&seed, &saved));
+                    assert_eq!(seed.entries[1].id, "gone");
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                current
+                    .entries
+                    .iter()
+                    .map(|e| e.id.as_str())
+                    .collect::<Vec<_>>(),
+                ["old", "new"]
+            );
+            let reverted = backend
+                .read_outline_cached(&revision, Some(ROOT), Some(Arc::new(current)), |_| {
+                    panic!("the previous undo boundary cannot be shown")
+                })
+                .await
+                .unwrap();
+            assert_eq!(reverted.entries.len(), 1);
+        },
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn a_proposed_anchor_commits_only_with_a_current_admission() {
     use crate::{bounded, stream, transport::Event};
     use std::sync::{Arc, atomic::Ordering::SeqCst};
