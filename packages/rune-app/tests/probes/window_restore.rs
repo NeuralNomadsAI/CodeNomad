@@ -62,6 +62,7 @@ fn ready(s: &State, id: &str) -> bool {
     workspace::input_ready(s)
         && !s.screen.is_launcher()
         && s.phase == Phase::Ready
+        && s.reader.as_ref().is_none_or(|reader| !reader.blocks_send())
         && active_session(s).as_deref() == Some(id)
 }
 fn select(rt: &mut Runtime<State>, index: usize, id: &str) {
