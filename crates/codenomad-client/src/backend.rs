@@ -72,7 +72,7 @@ impl Backend {
         let response = self
             .client
             .get(format!("{}api/auth/status", self.base))
-            .timeout(Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(5))
             .send()
             .await?
             .error_for_status()?;

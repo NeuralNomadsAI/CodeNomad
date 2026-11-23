@@ -50,8 +50,10 @@ fn inactive_prompt_rejection_is_saved_before_closing_its_tab() {
     out.try_send(Event::PromptAcknowledged {
         attempted: prompt.id.unwrap(),
         outcome: crate::transport::PromptOutcome::Rejected,
-    }).unwrap();
-    out.try_send(Event::authentication_required(backend)).unwrap();
+    })
+    .unwrap();
+    out.try_send(Event::authentication_required(backend))
+        .unwrap();
     runtime.update(|s, tx| {
         poll(s, 0.0, tx);
         close(s, "tab-0", tx);

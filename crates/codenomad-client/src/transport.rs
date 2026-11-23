@@ -92,7 +92,10 @@ pub enum Event {
 
 impl Event {
     pub fn authentication_required(backend: crate::backend::Backend) -> Self {
-        Self::AuthenticationRequired(Authentication { backend, confirmed: false })
+        Self::AuthenticationRequired(Authentication {
+            backend,
+            confirmed: false,
+        })
     }
 }
 

@@ -110,11 +110,13 @@ async fn read_page(
             None => Some(page.await),
         }
     };
-    futures_lite::future::race(content, async {
+    let result = futures_lite::future::race(content, async {
         wire.placement_changed().await;
         None
     })
-    .await
+    .await;
+    result
+        .filter(|_| reading.is_none_or(|reading| reading.demand.current().generation == generation))
 }
 
 async fn reader_event(
@@ -680,7 +682,8 @@ pub(crate) async fn run_with_reading(
                     backend.restore(first.as_deref()).await
                 }
             };
-            let Some(snapshot) = read_page(&backend, reading, generation, &wire, snapshot).await else {
+            let Some(snapshot) = read_page(&backend, reading, generation, &wire, snapshot).await
+            else {
                 continue;
             };
             match snapshot {
@@ -796,10 +799,14 @@ async fn expire_reading(
 ) {
     ReadingLane::invalidate_connection(reading);
     close_for_authentication(wire, out).await;
-    publish(out, wake, Event::AuthenticationRequired(crate::transport::Authentication {
-        backend: backend.clone(),
-        confirmed: true,
-    }))
+    publish(
+        out,
+        wake,
+        Event::AuthenticationRequired(crate::transport::Authentication {
+            backend: backend.clone(),
+            confirmed: true,
+        }),
+    )
     .await;
 }
 
@@ -824,10 +831,15 @@ async fn rejected_by_authentication(
         },
     )
     .await;
-    publish(out, wake, Event::AuthenticationRequired(crate::transport::Authentication {
-        backend: backend.clone(),
-        confirmed: matches!(authenticated, Ok(false)),
-    })).await;
+    publish(
+        out,
+        wake,
+        Event::AuthenticationRequired(crate::transport::Authentication {
+            backend: backend.clone(),
+            confirmed: matches!(authenticated, Ok(false)),
+        }),
+    )
+    .await;
     true
 }
 fn can_restart(row: &crate::Message) -> bool {
