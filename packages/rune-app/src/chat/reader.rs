@@ -179,6 +179,38 @@ pub(crate) fn invalidate(s: &mut State) {
     }
 }
 
+pub(crate) fn settle_bookmark(s: &mut State, attempted: &str, confirmed: Option<&str>) {
+    s.transcript_display
+        .reading_mut()
+        .settle(attempted, confirmed);
+    let Some(reader) = &mut s.reader else { return };
+    let Bookmark::Message { id, offset } = &reader.bookmark else {
+        return;
+    };
+    if id != attempted {
+        return;
+    }
+    let bookmark = confirmed.map_or(Bookmark::Latest, |id| Bookmark::Message {
+        id: id.into(),
+        offset: *offset,
+    });
+    if reader.resume_pending && !reader.hidden {
+        reader.resume(bookmark);
+    } else {
+        reader.bookmark = bookmark;
+    }
+}
+
+pub(crate) fn reconcile_bookmark(s: &mut State, rows: &[crate::history::Row]) {
+    if let Some(reader) = &mut s.reader
+        && reader.resume_pending
+        && let Bookmark::Message { id, .. } = &reader.bookmark
+        && !rows.iter().any(|row| &row.id == id)
+    {
+        reader.bookmark = Bookmark::Latest;
+    }
+}
+
 pub(crate) fn suspend(s: &mut State) {
     if let Some(reader) = &mut s.reader {
         reader.bookmark = reader.bookmark(s.transcript_display.reading_mut());
@@ -237,6 +269,29 @@ mod tests {
     use super::*;
     use crate::{Phase, init, poll_chat};
     use rune::{Env, Runtime};
+
+    #[test]
+    fn receipt_updates_the_bookmark_of_a_hidden_optimistic_row() {
+        let mut state = init();
+        let (mut reader, lane) = Reader::open();
+        reader.resume(Bookmark::Message {
+            id: "attempt".into(),
+            offset: -15.0,
+        });
+        reader.stop_content();
+        state.reader = Some(reader);
+        settle_bookmark(&mut state, "attempt", Some("confirmed"));
+        assert!(lane.demand.current().target.is_none());
+        assert_eq!(
+            state.reader.as_ref().unwrap().bookmark,
+            Bookmark::Message {
+                id: "confirmed".into(),
+                offset: -15.0,
+            }
+        );
+        settle_bookmark(&mut state, "confirmed", None);
+        assert_eq!(state.reader.as_ref().unwrap().bookmark, Bookmark::Latest);
+    }
 
     #[test]
     fn queued_content_cannot_reopen_admission_after_a_disconnect() {

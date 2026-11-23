@@ -385,6 +385,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     ),
                     _ => unreachable!(),
                 };
+                chat::reader::reconcile_bookmark(s, &page.rows);
                 if let Some(reader) = &mut s.reader {
                     reader.install(page.newer.is_some());
                     reader.sync_activity(stale_activity);
@@ -431,6 +432,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                         reader.install(s.history_detached);
                     }
                     s.messages = page.rows;
+                    composer::reconcile(s);
                 }
                 s.can_older = page.older.is_some();
                 s.history_error = false;

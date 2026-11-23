@@ -187,6 +187,9 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
     }
     let row = s.messages.iter().position(|row| row.id == attempted);
     if let PromptOutcome::Confirmed(confirmed) = outcome {
+        if confirmed != attempted {
+            crate::chat::reader::settle_bookmark(s, attempted, Some(&confirmed));
+        }
         if let Some(index) = row {
             if confirmed != attempted && s.messages.iter().any(|row| row.id == confirmed) {
                 s.messages.remove(index);
@@ -207,6 +210,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         }
         return;
     }
+    crate::chat::reader::settle_bookmark(s, attempted, None);
     if let Some(index) = row {
         s.messages.remove(index);
     }

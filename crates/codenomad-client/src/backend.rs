@@ -212,12 +212,15 @@ impl Backend {
             Target::Latest => json!({"kind":"latest"}),
             Target::Around(id) => json!({"kind":"around", "messageID":id}),
         };
-        let mut page = self.page(request).await?;
-        if let Target::Around(id) = target
-            && !page.rows.iter().any(|row| &row.id == id)
-        {
-            return Err("resident anchor missing".into());
-        }
+        let mut page = match (target, self.page(request).await) {
+            (Target::Around(_), Err(error)) if error.is::<history::AnchorMissing>() => {
+                self.page(json!({"kind":"latest"})).await?
+            }
+            (Target::Around(id), Ok(page)) if !page.rows.iter().any(|row| &row.id == id) => {
+                return Err("resident anchor missing".into());
+            }
+            (_, result) => result?,
+        };
         self.read_running(&mut page).await?;
         Ok(page)
     }

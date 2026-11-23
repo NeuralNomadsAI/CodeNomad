@@ -22,6 +22,14 @@ impl Default for Reading {
 }
 
 impl Reading {
+    pub(super) fn settle(&mut self, attempted: &str, confirmed: Option<&str>) {
+        if let Some((id, offset)) = &self.top
+            && id == attempted
+        {
+            self.top = confirmed.map(|id| (id.into(), *offset));
+        }
+    }
+
     pub(crate) fn bookmark(&self, gap: bool) -> Bookmark {
         if (gap || !self.following)
             && let Some((id, offset)) = &self.top

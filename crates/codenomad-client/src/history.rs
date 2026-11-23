@@ -67,7 +67,19 @@ fn cursor(v: &Value, kind: &str) -> Result<Option<Value>> {
     }
     Ok(Some(v.clone()))
 }
+#[derive(Debug)]
+pub(crate) struct AnchorMissing;
+impl std::fmt::Display for AnchorMissing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("history anchor missing")
+    }
+}
+impl std::error::Error for AnchorMissing {}
+
 pub fn decode(v: Value) -> Result<Page> {
+    if v["status"] == "blocked" && v["reason"] == "anchor_missing" {
+        return Err(AnchorMissing.into());
+    }
     if v["status"] != "window" {
         return Err("history unavailable or anchor changed".into());
     }
