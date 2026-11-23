@@ -19,6 +19,7 @@ pub(crate) struct Reader {
     connection: Arc<AtomicU64>,
     generation: u64,
     bookmark: Bookmark,
+    installed: bool,
     hidden: bool,
     resume_pending: bool,
     pending_scroll: bool,
@@ -40,6 +41,7 @@ impl Reader {
                 connection: connection.clone(),
                 generation: 0,
                 bookmark: Bookmark::Latest,
+                installed: false,
                 hidden: false,
                 resume_pending: false,
                 pending_scroll: false,
@@ -83,6 +85,10 @@ impl Reader {
         self.hidden || self.resume_pending || self.gap || self.parked || self.settling
     }
 
+    pub(crate) fn has_visible_window(&self) -> bool {
+        self.installed && !self.hidden && !self.resume_pending
+    }
+
     pub(crate) fn needs_latest(&self) -> bool {
         self.gap || self.resume_pending
     }
@@ -109,6 +115,7 @@ impl Reader {
     }
 
     pub(crate) fn install(&mut self, gap: bool) {
+        self.installed = true;
         self.gap = gap;
         self.parked = false;
         self.pending_scroll |= self.resume_pending;
@@ -269,6 +276,20 @@ mod tests {
     use super::*;
     use crate::{Phase, init, poll_chat};
     use rune::{Env, Runtime};
+
+    #[test]
+    fn recall_hydration_can_follow_only_an_installed_visible_window() {
+        let (mut reader, _) = Reader::open();
+        assert!(!reader.has_visible_window());
+        reader.install(false);
+        assert!(reader.has_visible_window());
+        reader.stop_content();
+        assert!(!reader.has_visible_window());
+        reader.resume(Bookmark::Latest);
+        assert!(!reader.has_visible_window());
+        reader.install(false);
+        assert!(reader.has_visible_window());
+    }
 
     #[test]
     fn receipt_updates_the_bookmark_of_a_hidden_optimistic_row() {

@@ -120,6 +120,8 @@ pub(crate) fn poll(s: &mut State) -> bool {
     if s.draft.focused
         && !s.screen.is_launcher()
         && matches!(s.phase, Phase::Ready | Phase::Streaming)
+        // Activity can make a rebinding conversation Ready before its window arrives.
+        && s.reader.as_ref().is_none_or(|reader| reader.has_visible_window())
     {
         connect(s);
     }

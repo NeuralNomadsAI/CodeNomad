@@ -29,6 +29,7 @@ export async function bundleAssetPaths(directory){
 }
 export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,missions=false}){
   const workspaces=new Set(),claims=new Map(),owners=new Map()
+  const historyKeys=new Set([project,path.join(path.dirname(project),'linked')])
   const claim=body=>typeof body?.requestId==='string'&&body.requestId.length>0&&body.requestId.length<=128&&body.requestId.trim()===body.requestId
   const creation=body=>body?.path===project&&claim(body)&&Object.keys(body).every(key=>['path','requestId'].includes(key))
   return {workspaces,
@@ -44,6 +45,10 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if((method==='GET'||method==='HEAD')&&assets.has(p))return true
       if(method==='GET'&&['/api/workspaces','/api/meta','/api/events','/api/auth/status'].includes(p))return true
       if(method==='GET'&&(p==='/api/storage/config/ui'||p==='/api/storage/state/ui'))return true
+      const history=p.match(/^\/api\/storage\/instances\/([^/]+)$/)
+      if(method==='GET'&&history&&workspaces.size){
+        try{return historyKeys.has(decodeURIComponent(history[1]))||workspaces.has(history[1])}catch{return false}
+      }
       if(method==='POST'&&p==='/api/client-connections/pong')return true
       if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
       if(method==='POST'&&p==='/api/workspaces/creation/cancel')return claim(body)&&claims.has(body.requestId)

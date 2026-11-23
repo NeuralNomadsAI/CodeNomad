@@ -71,6 +71,16 @@ test('command catalogue reads require an authenticated owned workspace',async()=
   assert(!await p.request(req('http://localhost:12345','one','private=fixture')))
   assert(!await p.request(req(origin,'one','private=fixture','POST')))
 })
+test('prompt history reads are limited to the fixture folders and an admitted instance',()=>{
+  const p=workspacePolicy({origin,project}),input=creation('own')
+  const route=key=>`/api/storage/instances/${encodeURIComponent(key)}`
+  assert(!p.allows('GET',route(project)))
+  p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
+  assert(p.allows('GET',route(project)))
+  assert(p.allows('GET',route('one')))
+  assert(!p.allows('GET',route('D:/other')))
+  assert(!p.allows('PUT',route(project),{}))
+})
 test('the fetched creation is validated and admitted before browser delivery',async()=>{
   for(const valid of [true,false]){
     const p=workspacePolicy({origin,project}),input=creation('own');p.allows('POST','/api/workspaces',input)
