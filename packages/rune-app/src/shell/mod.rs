@@ -107,7 +107,7 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         return false;
     }
     if event.mods == Mods::default() {
-        return match event.key {
+        let handled = match event.key {
             Key::Escape if s.shell.close_floating(tx) => true,
             Key::Escape if crate::git::has_preview(s) => {
                 crate::git::close_preview(s);
@@ -131,6 +131,9 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
             }
             _ => false,
         };
+        if handled {
+            return true;
+        }
     }
     if crate::settings::matches_shortcut(s, "new-instance", event, 'n') && workspace::can_new(s) {
         workspace::new_tab(s, tx);
