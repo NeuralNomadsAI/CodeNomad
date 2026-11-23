@@ -4,7 +4,12 @@ use crate::{
     preferences_window, AppState,
 };
 use serde_json::{json, Value};
-use tauri::{Manager, Webview};
+use tauri::{
+    ipc::{Invoke, InvokeBody},
+    Manager, Runtime, Webview,
+};
+
+type DocumentWitness = (std::sync::Arc<()>, u64);
 
 #[cfg(target_os = "linux")]
 #[path = "device_speech_remote_microphone.rs"]
@@ -97,24 +102,48 @@ pub(crate) fn bind_microphone(window: &tauri::WebviewWindow, remote: bool) {
     });
 }
 
-#[tauri::command]
-pub(crate) async fn device_speech_request(
-    webview: Webview,
-    request: Request,
-) -> Result<Value, String> {
-    let witness = webview
-        .app_handle()
-        .state::<DeviceSpeech>()
-        .document_witness(webview.label());
-    tauri::async_runtime::spawn_blocking(move || run_request(webview, request, witness))
-        .await
-        .map_err(|error| error.to_string())?
+pub(crate) fn with_document_ingress(
+    fallback: impl Fn(Invoke<tauri::Wry>) -> bool,
+) -> impl Fn(Invoke<tauri::Wry>) -> bool {
+    with_request_handler(run_request, fallback)
+}
+
+fn with_request_handler<R: Runtime>(
+    run: fn(Webview<R>, Request, DocumentWitness) -> Result<Value, String>,
+    fallback: impl Fn(Invoke<R>) -> bool,
+) -> impl Fn(Invoke<R>) -> bool {
+    move |invoke| {
+        if invoke.message.command() != "device_speech_request" {
+            return fallback(invoke);
+        }
+        let webview = invoke.message.webview_ref().clone();
+        // Bind the request to the sending document before handing it to any worker.
+        let witness = webview.app_handle().state::<DeviceSpeech>().document_witness(webview.label());
+        invoke.resolver.respond_async(async move {
+            tauri::async_runtime::spawn_blocking(move || {
+                #[derive(serde::Deserialize)]
+                struct Arguments {
+                    request: Request,
+                }
+                let InvokeBody::Json(body) = invoke.message.payload() else {
+                    return Err("Invalid device speech request".to_string());
+                };
+                let args: Arguments = serde::Deserialize::deserialize(body)
+                    .map_err(|error| format!("Invalid device speech request: {error}"))?;
+                run(webview, args.request, witness)
+            })
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(Into::into)
+        });
+        true
+    }
 }
 
 fn run_request(
     webview: Webview,
     request: Request,
-    witness: (std::sync::Arc<()>, u64),
+    witness: DocumentWitness,
 ) -> Result<Value, String> {
     let app = webview.app_handle();
     let state = app.state::<AppState>();
@@ -180,10 +209,9 @@ fn run_request(
                     .authorize_api_microphone(label, &current, id, preferences, preflight)
                     .map(SpeechAdmission::Complete),
                 #[cfg(target_os = "linux")]
-                Request::RevokeApiMicrophone { id } => {
-                    speech.revoke_api_microphone(label, &id);
-                    Ok(SpeechAdmission::Complete(Value::Null))
-                }
+                Request::RevokeApiMicrophone { id } => speech
+                    .revoke_api_microphone(label, &id, preflight)
+                    .map(SpeechAdmission::Complete),
                 request => speech.admit(label, request, preflight, false),
             })
         }
@@ -214,6 +242,53 @@ pub(crate) fn speech_response(result: Result<Value, SpeechError>) -> Value {
 mod tests {
     use super::*;
     use crate::device_speech::Engine;
+
+    #[test]
+    fn delayed_ipc_cannot_admit_a_same_origin_successor_document() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tauri::{ipc::CallbackFn, test, webview::InvokeRequest, WebviewUrl, WebviewWindowBuilder};
+
+        let directory = tempfile::tempdir().unwrap();
+        let app = test::mock_builder()
+            .manage(DeviceSpeech::new(directory.path().join("speech.json"), None))
+            .manage(AtomicBool::new(true))
+            .invoke_handler(with_request_handler(|webview, request, witness| {
+                let app = webview.app_handle();
+                let speech = app.state::<DeviceSpeech>();
+                let label = webview.label();
+                // Model the navigation hook after ingress but before any work
+                // on the request, with the same label and trusted origin.
+                let _successor = app.state::<AtomicBool>().swap(false, Ordering::SeqCst).then(|| {
+                    speech.revoke(Some(label));
+                    speech.document_witness(label)
+                });
+                let preflight = speech.preflight(witness, &request);
+                let result = speech.admit(label, request, preflight, false).map(|admission| {
+                    let SpeechAdmission::Complete(value) = admission else { unreachable!() };
+                    value
+                });
+                Ok(speech_response(result))
+            }, |_| false))
+            .build(crate::app_context())
+            .unwrap();
+        let url = url::Url::parse("http://127.0.0.1:8100/").unwrap();
+        let window = WebviewWindowBuilder::new(&app, "dictation-test", WebviewUrl::External(url.clone()))
+            .build()
+            .unwrap();
+        let request = || test::get_ipc_response(&window, InvokeRequest {
+            cmd: "device_speech_request".into(),
+            callback: CallbackFn(0),
+            error: CallbackFn(1),
+            url: url.clone(),
+            body: json!({"request": {
+                "action": "claimMicrophone", "purpose": "dictation", "id": uuid::Uuid::new_v4()
+            }}).into(),
+            headers: Default::default(),
+            invoke_key: test::INVOKE_KEY.to_owned(),
+        }).unwrap().deserialize::<Value>().unwrap();
+        assert_eq!(request(), speech_response(Err(SpeechError::NotOwned)));
+        assert_eq!(request(), speech_response(Ok(json!({ "busy": null }))));
+    }
 
     #[test]
     fn labels_must_identify_the_registered_primary_webview() {

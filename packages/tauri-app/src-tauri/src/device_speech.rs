@@ -533,9 +533,7 @@ impl DeviceSpeech {
         let mut slots = self.slots.lock();
         if check_choice {
             Self::check_preflight(&slots, owner, &preflight)?;
-        } else if !matches!(input, Request::Read {})
-            && !Self::document_current(&slots, owner, &preflight)
-        {
+        } else if !Self::document_current(&slots, owner, &preflight) {
             return Err(SpeechError::NotOwned);
         }
         if let Request::Select { engine } = input {

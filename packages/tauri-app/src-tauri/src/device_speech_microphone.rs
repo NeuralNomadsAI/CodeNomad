@@ -73,8 +73,18 @@ impl DeviceSpeech {
         Ok(Value::Null)
     }
 
-    pub(crate) fn revoke_api_microphone(&self, owner: &str, id: &str) {
+    pub(crate) fn revoke_api_microphone(
+        &self,
+        owner: &str,
+        id: &str,
+        preflight: SpeechPreflight,
+    ) -> Result<Value, SpeechError> {
+        let slots = self.slots.lock();
+        if !Self::document_current(&slots, owner, &preflight) {
+            return Err(SpeechError::NotOwned);
+        }
         self.api_microphone.revoke(Some(owner), Some(id));
+        Ok(Value::Null)
     }
 
     pub(crate) fn claim_local_microphone(&self, owner: &str, url: &Url) -> bool {

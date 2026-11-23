@@ -2262,11 +2262,10 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(remote_dictation::with_relay(client_state::with_ordered_ipc(tauri::generate_handler![
+        .invoke_handler(remote_dictation::with_relay(client_state::with_ordered_ipc(device_speech_ipc::with_document_ingress(tauri::generate_handler![
             clipboard_attachments::read_clipboard_attachments,
             cli_get_status,
             cli_renew_managed_session,
-            device_speech_ipc::device_speech_request,
             cli_restart,
             wake_lock_start,
             wake_lock_stop,
@@ -2311,7 +2310,7 @@ fn main() {
             browser_target_claim_open,
             browser_target_ownership,
             browser_target_release_open
-        ])))
+        ]))))
         .on_menu_event(|app_handle, event| {
             if embedded_view::zoom::focused(app_handle, event.id().0.as_str()) {
                 return;
