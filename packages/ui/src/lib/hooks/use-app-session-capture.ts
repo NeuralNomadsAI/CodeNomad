@@ -242,6 +242,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   }
   let preparedRecords: ReturnType<typeof captureWorkspaceRecords> | undefined
   let unlockInput: (() => void) | undefined
+  let navigationGeneration: number | null = null
   const lockInput = () => {
     if (unlockInput) return
     // Close can keep this document visible while the host saves its snapshot.
@@ -269,7 +270,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     nativeShutdownGeneration = null
     releasing = undefined
     releaseResults = new Map()
-    unlockInput?.()
+    if (navigationGeneration === null) unlockInput?.()
     schedule()
   }
   const capture = () => {
@@ -320,6 +321,19 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
       throw error
     })
   }
+  const cancelNavigation = (generation: number) => {
+    if (navigationGeneration !== generation) return
+    navigationGeneration = null
+    if (nativeShutdownGeneration === null && !releasing) unlockInput?.()
+  }
+  const flushNavigation = async (generation: number) => {
+    navigationGeneration = generation
+    lockInput()
+    try { await flush() } catch (error) {
+      cancelNavigation(generation)
+      throw error
+    }
+  }
   const release = (deleteTabs = true) => {
     if (releasing) return releasing
     // Only occurrences owned at capture can be released by record ID.
@@ -357,7 +371,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   }>(event, ({ payload: { generation, prepareGeneration } }) => {
     // A replacement document can receive release without having seen prepare.
     if (prepareGeneration !== undefined) nativeShutdownGeneration = prepareGeneration
-    void (prepareGeneration !== undefined ? awaitRelease() : flush(nativeShutdown ? generation : undefined))
+    void (prepareGeneration !== undefined ? awaitRelease() : nativeShutdown ? flush(generation) : flushNavigation(generation))
       .then(() => acknowledge(generation)).catch((error) => log.error(`Failed to handle ${event}`, error))
   }).then((unlisten) => {
     if (nativeDisposed) unlisten()
@@ -367,6 +381,12 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     ? Promise.all([
         register("client-state:flush-requested", acknowledgeNativeClientStateRendererFlush, true),
         register("client-state:navigation-flush-requested", acknowledgeNativeClientStateNavigationFlush, false),
+        nativeView.listen<{ generation: number }>("client-state:navigation-flush-cancelled", ({ payload }) => {
+          cancelNavigation(payload.generation)
+        }).then((unlisten) => {
+          if (nativeDisposed) unlisten()
+          else nativeUnlisteners.push(unlisten)
+        }),
         nativeView.listen<{ generation: number }>("client-state:flush-cancelled", ({ payload }) => {
           if (nativeShutdownGeneration !== payload.generation) return
           resumeCapture()
@@ -490,6 +510,8 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     }
     const nativeFlush: NonNullable<Window["__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__"]> = async closing => {
       if (closing === "cancel") resumeCapture()
+      else if (closing === "navigation-cancel") cancelNavigation(0)
+      else if (closing === "navigation") await flushNavigation(0)
       else if (closing === "prepare") await flush(0)
       else if (closing === "release") await awaitRelease()
       else await flush()

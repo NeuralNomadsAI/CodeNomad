@@ -936,17 +936,17 @@ impl ClientState {
         window_label: &str,
         window_id: &str,
         require_claim: bool,
-    ) -> bool {
+    ) -> Result<Option<u64>, ()> {
         let _request = self
             .renderer_flush
             .request_lock
             .lock()
             .unwrap_or_else(|err| err.into_inner());
         if require_claim && !self.renderer_access.is_claimed_for(window_id) {
-            return true;
+            return Ok(None);
         }
         let Some(webview) = app.get_webview(window_label) else {
-            return false;
+            return Err(());
         };
         let generation = {
             let mut windows = self
@@ -964,7 +964,7 @@ impl ClientState {
             RendererFlushRequest { generation, prepare_generation: None },
         ) {
             eprintln!("[client-state] failed to request renderer flush: {err}");
-            return false;
+            return Err(());
         }
 
         let deadline = Instant::now() + RENDERER_FLUSH_TIMEOUT;
@@ -979,12 +979,36 @@ impl ClientState {
         {
             std::thread::sleep(Duration::from_millis(10));
         }
-        self.renderer_flush
+        if self
+            .renderer_flush
             .windows
             .lock()
             .ok()
             .and_then(|windows| windows.get(window_id).copied())
             .is_some_and(|state| state == (generation, generation))
+        {
+            Ok(Some(generation))
+        } else {
+            Self::cancel_navigation_flush(app, window_label, Some(generation));
+            Err(())
+        }
+    }
+
+    pub(crate) fn cancel_navigation_flush(
+        app: &AppHandle,
+        window_label: &str,
+        generation: Option<u64>,
+    ) {
+        if let (Some(webview), Some(generation)) = (app.get_webview(window_label), generation) {
+            let _ = webview.emit_to(
+                window_label,
+                "client-state:navigation-flush-cancelled",
+                RendererFlushRequest {
+                    generation,
+                    prepare_generation: None,
+                },
+            );
+        }
     }
 
     fn acknowledge_renderer_flush(&self, window_id: &str, generation: u64) {

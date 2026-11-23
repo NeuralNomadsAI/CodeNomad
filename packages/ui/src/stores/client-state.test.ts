@@ -138,6 +138,23 @@ describe("client state ownership and persistence", () => {
     await state.flushWorkspaceFileDraftsForClose()
     assert.equal(stored, null)
   })
+  it("protects a recovered draft that remained open when another window discarded it", async () => {
+    const key = "checkout/file", value = { fingerprint: "0".repeat(64), text: "recovered draft" }
+    let stored: typeof value | null = value
+    const state = await boot({
+      loadClientState: async () => loadResult(),
+      loadFileDrafts: async () => stored ? [{ key, ...stored }] : [],
+      saveFileDraft: async (_token, change) => {
+        if (stored?.text !== change.expected?.text) return false
+        stored = change.draft
+        return true
+      },
+    })
+    state.keepRecoveredWorkspaceFileDraft((await state.refreshWorkspaceFileDraft(key))!)
+    stored = null
+    await state.flushWorkspaceFileDraftsForClose()
+    assert.deepEqual(stored, value)
+  })
   for (const localCopy of [false, true]) it(`retains occurrence browser resources when the shared layout is full (${localCopy ? "matching local copy" : "new key"}) and retries on reload`, async () => {
     const browser = { mode: "preview", targetUrl: "https://example.com/saved", viewport: "mobile",
       history: { urls: ["https://example.com/start", "https://example.com/saved"], index: 1 } }

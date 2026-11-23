@@ -313,6 +313,13 @@ export async function refreshWorkspaceFileDraft(key: string) {
   return reading
 }
 
+export function keepRecoveredWorkspaceFileDraft({ key, fingerprint, text }: WorkspaceFileDraft) {
+  const base = nativeDraftBase.get(key)
+  if (!base || keptFileDrafts.has(key) || pendingFileDrafts.has(key) || inflightFileDrafts.has(key)
+    || base.value?.fingerprint !== fingerprint || base.value.text !== text) return
+  keptFileDrafts.set(key, { base, value: { fingerprint, text }, finish: () => {} })
+}
+
 /** Keep admitted drafts intact if a new or larger draft exceeds the storage budget. */
 export function updateWorkspaceFileDraft(key: string, value: DraftValue, finish: (ok: boolean) => void): boolean {
   if (!initialized || !clientStateIsPrimary()) return false
@@ -460,7 +467,7 @@ export async function flushWorkspaceFileDraftsForClose(): Promise<void> {
   await flushWorkspaceFileDrafts()
   if (!restorePreviousStateEnabled()) return
   if (refusedFileDrafts.size) throw new WorkspaceDraftFlushError("Workspace file drafts could not be retained")
-  if (!keptFileDrafts.size) return
+  if (!keptFileDrafts.size && !pendingFileDrafts.size && !inflightFileDrafts.size) return
   const fresh = await loadNativeFileDrafts()?.catch(() => undefined)
   if (!fresh) throw new WorkspaceDraftFlushError("Workspace file drafts could not be checked")
   const latest = new Map(normalizeWorkspaceFileDrafts(fresh).map(draft => [draft.key, draft]))
@@ -472,6 +479,9 @@ export async function flushWorkspaceFileDraftsForClose(): Promise<void> {
       && await saveNativeFileDraft({ key, draft: value, expected: null })?.catch(() => false)) continue
     change.finish(false)
     throw new WorkspaceDraftFlushError("A workspace file draft changed in another window")
+  }
+  if (refusedFileDrafts.size || pendingFileDrafts.size || inflightFileDrafts.size) {
+    throw new WorkspaceDraftFlushError("A newer workspace file draft is not confirmed")
   }
 }
 

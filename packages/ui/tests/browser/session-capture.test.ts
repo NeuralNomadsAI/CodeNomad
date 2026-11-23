@@ -106,19 +106,21 @@ test("capture defers only busy usage through both real-store effects and keeps f
       assert.equal(await count(), initial, `${host}: busy usage must not checkpoint`)
       assert.equal(await page.evaluate(() => (window as any).fixture.hydrated()), hydrated, "busy usage must not rehydrate preserved drafts")
 
-      await t.test(`${host}: a held close write rejects late typing; a cancelled close allows edits again`, async () => {
+      for (const phase of ["close", "navigation"] as const) await t.test(`${host}: a held ${phase} write rejects late typing and unlocks on cancellation`, async () => {
+        const generation = phase === "close" ? 1 : 101
         const input = page.locator("#close-draft")
-        await page.evaluate(host => {
+        await page.evaluate(({ host, phase, generation }) => {
           const w = window as any
           const input = document.querySelector<HTMLTextAreaElement>("#close-draft")!
-          input.value = "typed before prepare"
+          input.value = `typed before ${phase}`
           input.focus()
           input.setSelectionRange(input.value.length, input.value.length)
           input.dispatchEvent(new Event("input"))
+          delete w.finishHeldCommit
           w.holdNextCommit = true
-          if (host === "tauri") w.emit("client-state:flush-requested", 1)
-          else w.preparing = w.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__("prepare")
-        }, host)
+          if (host === "tauri") w.emit(phase === "close" ? "client-state:flush-requested" : "client-state:navigation-flush-requested", generation)
+          else w.preparing = w.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__(phase === "close" ? "prepare" : "navigation")
+        }, { host, phase, generation })
         await page.waitForFunction(() => Boolean((window as any).finishHeldCommit))
         await page.keyboard.type(" typed while saving")
         await page.evaluate(async host => {
@@ -126,21 +128,21 @@ test("capture defers only busy usage through both real-store effects and keeps f
           w.finishHeldCommit()
           if (host === "electron") await w.preparing
         }, host)
-        if (host === "tauri") await page.waitForFunction(() => (window as any).acks.some((ack: any) => ack.generation === 1))
+        if (host === "tauri") await page.waitForFunction(generation => (window as any).acks.some((ack: any) => ack.generation === generation), generation)
         assert.deepEqual(deletes, [], "no records are released before approval")
         const [saved, live] = await page.evaluate(async () => {
           const w = window as any
           const snapshot = await w.fixture.decode(w.persisted)
           return [snapshot.session.tabs[0].drafts.parent, w.fixture.draftValue("first", "parent")]
         })
-        await page.evaluate(async host => {
+        await page.evaluate(async ({ host, phase, generation }) => {
           const w = window as any
-          if (host === "tauri") w.emit("client-state:flush-cancelled", 1)
-          else await w.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__("cancel")
-        }, host)
+          if (host === "tauri") w.emit(phase === "close" ? "client-state:flush-cancelled" : "client-state:navigation-flush-cancelled", generation)
+          else await w.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__(phase === "close" ? "cancel" : "navigation-cancel")
+        }, { host, phase, generation })
         await input.fill("typed after cancellation", { timeout: 5_000 })
         await page.waitForFunction(() => (window as any).fixture.state().tabs[0].drafts.parent === "typed after cancellation")
-        assert.deepEqual([saved, live], ["typed before prepare", "typed before prepare"])
+        assert.deepEqual([saved, live], [`typed before ${phase}`, `typed before ${phase}`])
       })
 
       await page.evaluate(() => (window as any).fixture.draft("edited")); await settle()

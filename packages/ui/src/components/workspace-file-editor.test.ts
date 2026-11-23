@@ -27,6 +27,7 @@ const hooks = registerHooks({
         export const localServerMeta = { meta: () => f.installed ? { serverId: "fixture" } : undefined };
         export const getServerMeta = async () => localServerMeta.meta();`,
       "../stores/client-state": `const f = globalThis.__workspaceEditorFixture;
+        export const keepRecoveredWorkspaceFileDraft = () => {};
         export const restoredWorkspaceFileDraft = () => undefined;
         export const refreshWorkspaceFileDraft = () => new Promise(resolve => f.reads.push(resolve));
         export const updateWorkspaceFileDraft = () => true;`,
@@ -84,6 +85,22 @@ test("a late recovery joins the shared editor instead of replacing newer text", 
     second.editor.change("edit from the second reader")
     assert.equal(first.editor.text(), "edit from the second reader")
     second.editor.discard()
+  } finally { first.close(); second.close(); fixture.durable = false }
+})
+
+test("a recovered draft replaces the clean shared disk view before either reader edits", async () => {
+  fixture.durable = true
+  const first = setup("clean-peer.txt"), second = setup("clean-peer.txt")
+  try {
+    first.editor.reset(); second.editor.reset()
+    const a = first.editor.recover(), b = second.editor.recover()
+    fixture.reads.shift()!(undefined)
+    await a
+    first.editor.adopt("disk contents")
+    fixture.reads.shift()!({ fingerprint: "0".repeat(64), text: "recovered draft" })
+    assert.equal(await b, "recovered draft")
+    assert.equal(first.editor.text(), "recovered draft")
+    first.editor.discard()
   } finally { first.close(); second.close(); fixture.durable = false }
 })
 

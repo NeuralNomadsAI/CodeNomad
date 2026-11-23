@@ -187,15 +187,20 @@ fn run_navigation_queue(window_label: String) {
             continue;
         }
         let window_id = crate::identity::local_window_id(&window_label).ok();
-        if let (Some(state), Some(window_id)) =
-            (app.try_state::<ClientState>(), window_id.as_deref())
-        {
-            if !state.wait_for_renderer_flush(&app, &window_label, window_id, true) {
-                complete_active(&window_label);
-                continue;
+        let generation = match app.try_state::<ClientState>().zip(window_id.as_deref()) {
+            Some((state, window_id)) => {
+                match state.wait_for_renderer_flush(&app, &window_label, window_id, true) {
+                    Ok(generation) => generation,
+                    Err(()) => {
+                        complete_active(&window_label);
+                        continue;
+                    }
+                }
             }
-        }
+            None => None,
+        };
         if !is_current() {
+            ClientState::cancel_navigation_flush(&app, &window_label, generation);
             complete_active(&window_label);
             continue;
         }
@@ -208,8 +213,11 @@ fn run_navigation_queue(window_label: String) {
                 || navigate(app.clone()),
             )
         });
-        if let Some(Err(err)) = result {
-            eprintln!("[client-state] navigation failed: {err}");
+        if !matches!(result, Some(Ok(()))) {
+            ClientState::cancel_navigation_flush(&app, &window_label, generation);
+            if let Some(Err(err)) = result {
+                eprintln!("[client-state] navigation failed: {err}");
+            }
         }
 
         complete_active(&window_label);

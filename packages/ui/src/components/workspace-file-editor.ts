@@ -12,7 +12,7 @@ import { instances } from "../stores/instances"
 import { getInstanceMetadata } from "../stores/instance-metadata"
 import { getServerMeta, localServerMeta } from "../lib/server-meta"
 import { loadInstanceProjectMetadata } from "../lib/hooks/use-instance-metadata"
-import { refreshWorkspaceFileDraft, restoredWorkspaceFileDraft, updateWorkspaceFileDraft } from "../stores/client-state"
+import { keepRecoveredWorkspaceFileDraft, refreshWorkspaceFileDraft, restoredWorkspaceFileDraft, updateWorkspaceFileDraft } from "../stores/client-state"
 
 // Retain unsaved text when the reader closes or another file/session is opened.
 // Readers of the same draft share its baseline and pending-write state, so a
@@ -125,7 +125,11 @@ export function useWorkspaceFileEditor(options: {
     const retained = existing ?? (entry && createDraft(entry.fingerprint, entry.text))
     if (!retained) return
     if (!existing) drafts.set(durable, retained)
+    else if (entry && !existing.value().pending && existing.value().original === existing.value().text) {
+      existing.update({ fingerprint: entry.fingerprint, text: entry.text, pending: false })
+    }
     attach(durable, retained)
+    if (entry) keepRecoveredWorkspaceFileDraft(entry)
     if (!dirty() && !retained.value().pending) return
     setNeedsVerification(dirty())
     return retained.value().text
