@@ -22,6 +22,9 @@ type Access<S> = fn(&mut S) -> Option<&mut Info>;
 #[derive(Default)]
 pub(super) struct Diagnostics {
     probed: bool,
+    #[cfg(target_arch = "wasm32")]
+    os_read: Option<Receiver<Option<String>>>,
+    client_os: Option<String>,
     version_read: Option<(Sender<()>, Receiver<Option<OpenCodeStatus>>)>,
     opencode: Option<OpenCodeStatus>,
     form_read: Option<Receiver<Option<bool>>>,
@@ -33,6 +36,12 @@ pub(super) struct Diagnostics {
 }
 
 impl Diagnostics {
+    pub(super) fn os(&self) -> String {
+        self.client_os
+            .clone()
+            .unwrap_or_else(|| device::Client::snapshot().os)
+    }
+
     #[cfg(target_arch = "wasm32")]
     pub(super) fn feedback(&self) -> Option<&'static str> {
         self.feedback
@@ -43,6 +52,15 @@ impl Diagnostics {
             && let Some(backend) = backend
         {
             self.probed = true;
+            #[cfg(target_arch = "wasm32")]
+            {
+                let (out, reply) = bounded(1);
+                self.os_read = Some(reply);
+                let wake = wake.clone();
+                platform::spawn(async move {
+                    send(out, device::client_os_hint().await, &wake);
+                });
+            }
             let (cancel, cancelled) = bounded(1);
             let (out, reply) = bounded(1);
             self.version_read = Some((cancel, reply));
@@ -76,6 +94,18 @@ impl Diagnostics {
         let copy = self.copy.as_ref().and_then(|reply| reply.try_recv().ok());
         let save = self.save.as_ref().and_then(|reply| reply.try_recv().ok());
         let changed = version.is_some() || form.is_some() || copy.is_some() || save.is_some();
+        #[cfg(target_arch = "wasm32")]
+        let mut changed = changed;
+        #[cfg(target_arch = "wasm32")]
+        if let Some(os) = self
+            .os_read
+            .as_ref()
+            .and_then(|reply| reply.try_recv().ok())
+        {
+            self.os_read = None;
+            self.client_os = os;
+            changed = true;
+        }
         if let Some(version) = version {
             self.version_read = None;
             self.opencode = version;
@@ -126,7 +156,11 @@ impl Diagnostics {
                                 let Some(meta) = info.current(&prefs) else {
                                     return;
                                 };
-                                let report = report(meta, info.diagnostics.opencode.as_ref());
+                                let report = report(
+                                    meta,
+                                    info.diagnostics.opencode.as_ref(),
+                                    &info.diagnostics.os(),
+                                );
                                 info.diagnostics.feedback = None;
                                 copy_report(info, &prefs, tx, access, report);
                             },
@@ -142,7 +176,11 @@ impl Diagnostics {
                                 let Some(meta) = info.current(&prefs) else {
                                     return;
                                 };
-                                let report = report(meta, info.diagnostics.opencode.as_ref());
+                                let report = report(
+                                    meta,
+                                    info.diagnostics.opencode.as_ref(),
+                                    &info.diagnostics.os(),
+                                );
                                 let name = utc_stamp().map_or_else(
                                     || "codenomad-diagnostics.txt".into(),
                                     |stamp| {
@@ -171,6 +209,7 @@ impl Diagnostics {
                                     meta,
                                     info.diagnostics.opencode.as_ref(),
                                     info.diagnostics.form,
+                                    info.diagnostics.client_os.as_deref(),
                                 );
                                 info.diagnostics.feedback = tx
                                     .open_url(&link)
@@ -279,9 +318,8 @@ fn save_report<S: 'static>(
     }
 }
 
-fn report(meta: &Value, opencode: Option<&OpenCodeStatus>) -> String {
+fn report(meta: &Value, opencode: Option<&OpenCodeStatus>, os: &str) -> String {
     let text = |key: &str| value_text(&meta[key]);
-    let os = device::os();
     let date = utc_stamp();
     let local = text("localUrl").and_then(listener_origin);
     let remote = text("remoteUrl").and_then(listener_origin);
@@ -354,7 +392,12 @@ fn public_word(value: Option<&str>) -> &str {
         .unwrap_or("")
 }
 
-fn bug_link(meta: &Value, opencode: Option<&OpenCodeStatus>, form: Option<bool>) -> String {
+fn bug_link(
+    meta: &Value,
+    opencode: Option<&OpenCodeStatus>,
+    form: Option<bool>,
+    client_os: Option<&str>,
+) -> String {
     let server = public_word(meta["serverVersion"].as_str());
     let ui = public_word(meta["ui"]["version"].as_str());
     let version = match (server, ui) {
@@ -371,15 +414,47 @@ fn bug_link(meta: &Value, opencode: Option<&OpenCodeStatus>, form: Option<bool>)
         _ if installed != running => format!("{installed} (running daemon {running})"),
         _ => installed.to_owned(),
     };
-    let os = public_word(meta["system"]["platform"].as_str());
+    let platform = match meta["system"]["platform"].as_str() {
+        Some("win32" | "windows") => "Windows",
+        Some("darwin" | "macos") => "macOS",
+        Some("linux") => "Linux",
+        Some("freebsd") => "FreeBSD",
+        _ => "—",
+    };
+    let os = meta["system"]["name"]
+        .as_str()
+        .filter(|name| {
+            !name.is_empty()
+                && name.len() <= 128
+                && name
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || " ()._-".contains(c))
+                && !name
+                    .split(|c: char| !c.is_ascii_digit() && c != '.')
+                    .any(|word| word.parse::<std::net::Ipv4Addr>().is_ok())
+        })
+        .unwrap_or(platform);
     let arch = public_word(meta["system"]["arch"].as_str());
-    let context = format!(
-        "- Client: {} ({})\n- UI source: {}\n- Server OS: {os} {arch}",
-        device::RUNTIME,
-        device::PLATFORM,
+    let client = device::Client::snapshot();
+    let mut context = format!(
+        "- Client: {} ({}, {} window)\n- UI source: {}\n- Server OS: {os} {arch}",
+        client.runtime,
+        client.platform,
+        client.context,
         public_word(meta["ui"]["source"].as_str())
     );
-    bug_report_link([&version, &opencode, device::os(), &context], form)
+    if let Some(browser) = &client.browser {
+        context.push_str(&format!("\n- Browser: {browser}"));
+    }
+    bug_report_link(
+        [
+            &version,
+            &opencode,
+            client_os.unwrap_or(&client.os),
+            &context,
+        ],
+        form,
+    )
 }
 
 #[cfg(test)]
@@ -395,14 +470,14 @@ fn report_and_public_issue_have_different_data_boundaries() {
             {"ip":"192.0.2.11","family":"ipv4","remoteUrl":"https://192.0.2.11:3457"}
         ]
     });
-    let local = report(&meta, None);
+    let local = report(&meta, None, "Windows x64");
     assert!(local.contains("D:/private/project") && local.contains("192.0.2.10:3457"));
     assert!(
         !local.contains("token=private")
             && !local.contains("192.0.2.11")
             && !local.contains("not-in-either")
     );
-    let issue = bug_link(&meta, None, None);
+    let issue = bug_link(&meta, None, None, None);
     assert!(issue.contains("9.0.1") && issue.contains("9.0.2"));
     assert!(
         !issue.contains("192.0.2") && !issue.contains("127.0.0.1") && !issue.contains("private")

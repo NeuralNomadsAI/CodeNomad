@@ -116,7 +116,7 @@ struct Write {
     requested: Choices,
     pending: BTreeSet<Choice>,
     failed: BTreeSet<Choice>,
-    retry: bool,
+    retry: BTreeSet<Choice>,
 }
 
 #[derive(Default)]
@@ -127,7 +127,7 @@ struct Read {
 }
 
 enum Operation {
-    Read { retry: bool },
+    Read { retry: BTreeSet<Choice> },
     Write(Choices),
 }
 
@@ -170,7 +170,7 @@ impl Document {
         if let Some(flight) = self.flight.take() {
             match flight.operation {
                 Operation::Write(_) => self.barrier = Some(flight),
-                Operation::Read { retry } => self.write.retry |= retry,
+                Operation::Read { retry } => self.write.retry.extend(retry),
             }
         }
         self.read.reattach = true;
@@ -180,16 +180,20 @@ impl Document {
         self.read.queued = true;
     }
 
-    pub(super) fn retry(&mut self) {
+    pub(super) fn retry(&mut self, only: Option<Choice>) {
         let operation = self.flight.as_ref().map(|flight| &flight.operation);
-        if matches!(operation, Some(Operation::Read { retry: true })) {
-            return;
-        }
-        self.write.retry |= self.write.failed.iter().any(|choice| {
-            !self.write.pending.contains(choice)
+        self.write
+            .retry
+            .extend(self.write.failed.iter().copied().filter(|choice| {
+            only.is_none_or(|only| only == *choice)
+                && !self.write.pending.contains(choice)
                 && !matches!(operation, Some(Operation::Write(sent)) if sent.contains_key(choice))
-        });
-        if self.read.failed && !self.write.retry {
+                && !matches!(operation, Some(Operation::Read { retry }) if retry.contains(choice))
+        }));
+        if self.read.failed
+            && self.write.retry.is_empty()
+            && !matches!(operation, Some(Operation::Read { .. }))
+        {
             self.invalidate();
         }
     }
@@ -274,7 +278,7 @@ impl Document {
         self.flight.is_some()
             || self.barrier.is_some()
             || !self.write.pending.is_empty()
-            || self.write.retry
+            || !self.write.retry.is_empty()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -293,7 +297,7 @@ impl Document {
     pub(super) fn draining(&self) -> bool {
         self.has_unconfirmed()
             && (self.flight.is_some()
-                || self.write.retry
+                || !self.write.retry.is_empty()
                 || self.read.queued
                 || !self.read.failed && !self.write.pending.is_empty())
     }
@@ -334,8 +338,10 @@ impl Document {
                     true
                 }
             });
-            if matches!(operation, Operation::Read { retry: true }) {
-                self.write.pending.extend(&self.write.failed);
+            if let Operation::Read { retry } = operation {
+                self.write
+                    .pending
+                    .extend(retry.intersection(&self.write.failed));
             }
             if current {
                 self.snapshot = Some(snapshot);
@@ -369,14 +375,17 @@ impl Document {
                 changed = true;
             }
         }
-        let operation = if self.write.retry {
-            self.write.retry = false;
+        let operation = if !self.write.retry.is_empty() {
             self.read.reattach = false;
             self.read.queued = false;
-            Operation::Read { retry: true }
+            Operation::Read {
+                retry: std::mem::take(&mut self.write.retry),
+            }
         } else if std::mem::take(&mut self.read.reattach) {
             self.read.queued = false;
-            Operation::Read { retry: false }
+            Operation::Read {
+                retry: BTreeSet::new(),
+            }
         } else if !self.read.failed && !self.write.pending.is_empty() {
             Operation::Write(
                 std::mem::take(&mut self.write.pending)
@@ -391,7 +400,9 @@ impl Document {
                     .collect(),
             )
         } else if std::mem::take(&mut self.read.queued) {
-            Operation::Read { retry: false }
+            Operation::Read {
+                retry: BTreeSet::new(),
+            }
         } else {
             return changed;
         };
