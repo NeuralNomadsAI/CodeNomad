@@ -192,6 +192,9 @@ pub fn panel_tabs<S: 'static>(
     chosen: usize,
     activate: impl Fn(&mut S, usize, &mut Tx) + Clone + 'static,
 ) -> El {
+    let dark = layout::dark();
+    // Solid's project and right-panel strips share the same tab height.
+    let height = tokens(dark).metric("tabActive", "height").px();
     row().role("tablist").label(title).focus_group().children(
         labels.iter().copied().enumerate().map(|(index, label)| {
             let activate = activate.clone();
@@ -205,7 +208,8 @@ pub fn panel_tabs<S: 'static>(
                 })
                 .control_size(ControlSize::Small)
                 .on_press_tx(move |s, tx| press(s, tx))
-                .build(kit(layout::dark()))
+                .build(kit(dark))
+                .h(height)
                 .key(format!("right-panel-tab-{index}"))
                 .role("tab")
                 .focus_selected(index == chosen)

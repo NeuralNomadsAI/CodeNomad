@@ -166,6 +166,24 @@ try {
           await press(messages['folderSelection.servers.dialog.connect'])
           await press(values.project)
           if (values.mobile) {
+            const right = messages['window.menu.rightPanel']
+            const drawer = page.getByRole('region', {name:right, exact:true})
+            const toggle = page.getByRole('button', {name:right, exact:true})
+            if (await toggle.getAttribute('aria-expanded') !== 'true') await press(right)
+            await drawer.waitFor()
+            const sourceHeight = palette.metrics[colorScheme].tabActive.height
+            const tabHeights = []
+            for (const key of ['status', 'files']) {
+              const tab = drawer.getByRole('tab', {name:messages[`instanceShell.rightPanel.tabs.${key}`], exact:true})
+              await tab.waitFor()
+              const box = await tab.boundingBox()
+              assert(box && Math.abs(box.height - sourceHeight) <= 1, `${key}: height ${box?.height}, Solid ${sourceHeight}`)
+              tabHeights.push({key, height:box.height})
+            }
+            await page.screenshot({path:path.join(out, `${name}-${colorScheme}-right-panel.png`), scale:'css'})
+            await writeFile(path.join(out, `${name}-${colorScheme}-right-panel.json`),JSON.stringify({sourceHeight,tabHeights}))
+            await press(right)
+            await drawer.waitFor({state:'hidden'})
             tabBar = await mobileTabBar(page, [
               messages['instanceTabs.new.ariaLabel'], messages['settings.title'], messages['settings.nav.chat'],
               messages['toastHistory.title'],
