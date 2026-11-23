@@ -223,3 +223,25 @@ fn bulk_path_batches_preserve_the_exact_order_and_both_server_bounds() {
     );
     assert_eq!(batches.concat(), paths);
 }
+#[test]
+fn a_gateway_timeout_cannot_settle_worktree_placement() {
+    let message = Some("Native worktree operation could not be verified".into());
+    for status in [408, 500, 502, 503, 504] {
+        assert!(
+            !Refusal {
+                status,
+                code: None,
+                message: message.clone()
+            }
+            .placement_answered()
+        );
+    }
+    assert!(
+        Refusal {
+            status: 409,
+            code: None,
+            message
+        }
+        .placement_answered()
+    );
+}

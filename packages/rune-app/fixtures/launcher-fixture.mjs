@@ -264,8 +264,8 @@ const upstream=createServer(async(req,res)=>{
         const directory=JSON.parse(raw).directory
         moves.push(id)
         if(placementAmbiguous&&(id==='ses_child'||directory===project)){
-          res.statusCode=409
-          return json({error:'Synthetic native move refusal'})
+          // Native has answered; verification finds the child and rollback did not move.
+          return json({data:record})
         }
         assert.equal(directory,review)
         const previous=record.location
