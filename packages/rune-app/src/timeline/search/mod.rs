@@ -144,7 +144,7 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             let terms = rune_theme_codenomad::timeline::search::terms(&state(s).text);
             close(s);
             crate::launcher::bind_search(s, backend, title, &slug, message.clone(), tx);
-            s.transcript_display.search_highlight = Some((message, terms));
+            s.transcript_display.search_highlight = Some((message, terms, true));
         } else {
             state(s).open_error = true;
         }
@@ -282,10 +282,14 @@ fn select(s: &mut State, index: usize, tx: &mut Tx) {
             .as_ref()
             .is_some_and(|b| b.session == hit.session)
         {
-            if state(s).ranked {
-                let terms = rune_theme_codenomad::timeline::search::terms(&state(s).text);
-                s.transcript_display.search_highlight = Some((hit.message.clone(), terms));
-            }
+            let model = state(s);
+            let ranked = model.ranked;
+            let terms = if ranked {
+                rune_theme_codenomad::timeline::search::terms(&model.text)
+            } else {
+                vec![model.text.clone()]
+            };
+            s.transcript_display.search_highlight = Some((hit.message.clone(), terms, ranked));
             super::navigation::seek_message(s, &hit.message, tx);
             state(s).preview = Default::default();
         } else {

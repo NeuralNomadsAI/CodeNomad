@@ -17,7 +17,7 @@ pub struct Display {
     live_ansi: RefCell<VecDeque<(String, rune_theme_codenomad::ansi::Stream)>>,
     pub(super) diffs: super::tool_diff::Cache,
     pub(crate) timeline: crate::timeline::Timeline,
-    pub(crate) search_highlight: Option<(String, Vec<String>)>,
+    pub(crate) search_highlight: Option<(String, Vec<String>, bool)>,
 }
 
 #[derive(Default)]

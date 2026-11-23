@@ -28,8 +28,8 @@ pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streami
         .transcript_display
         .search_highlight
         .as_ref()
-        .filter(|(id, _)| id == message)
-        .map_or(&[][..], |(_, terms)| terms.as_slice());
+        .filter(|(id, _, _)| id == message)
+        .map(|(_, terms, ranked)| (terms.as_slice(), *ranked));
     window(s, key, &[source], PROSE_LIMIT, |shown, units| {
         let stamp = (
             version,

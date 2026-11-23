@@ -8,7 +8,7 @@ pub fn prose<S: 'static>(
     source: &str,
     streaming: bool,
     highlight: bool,
-    search_terms: &[String],
+    query: Option<(&[String], bool)>,
     link: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
     wrapped: impl Fn(usize, &str) -> bool + 'static,
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
@@ -19,7 +19,19 @@ pub fn prose<S: 'static>(
         .link(kit.c.text_accent)
         .syntax_highlight(highlight);
     let source = literal_breaks(source).into_owned();
-    let matches = crate::timeline::search::ranges(&source, search_terms);
+    let matches = match query {
+        Some((terms, true)) => crate::timeline::search::ranges(&source, terms)
+            .into_iter()
+            .map(|range| vec![range])
+            .collect(),
+        Some((terms, false)) => terms.first().map_or_else(Vec::new, |phrase| {
+            Markdown::find(&source, phrase, rune_kit::markdown::Case::Insensitive)
+                .into_iter()
+                .take(512)
+                .collect()
+        }),
+        None => Vec::new(),
+    };
     Markdown::new(source)
         .style(style)
         .highlights(matches)

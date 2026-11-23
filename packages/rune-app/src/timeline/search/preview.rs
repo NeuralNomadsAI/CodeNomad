@@ -35,10 +35,13 @@ pub(super) fn start(s: &mut State, hit: Hit) {
             let mut left = 4096;
             let mut blocks = Vec::new();
             let mut add = |text: &str| {
-                if left == 0 || text.is_empty() {
+                if left == 0 || text.is_empty() || blocks.len() == 32 {
                     return;
                 }
                 let cut = text.floor_char_boundary(text.len().min(left));
+                if cut == 0 {
+                    return;
+                }
                 left -= cut;
                 blocks.push(text[..cut].to_owned());
             };

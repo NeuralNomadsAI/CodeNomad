@@ -194,10 +194,12 @@ const upstream=createServer(async(req,res)=>{
         return json({directory,project:{id:'fixture_project',canonical:project,directory}})
       }
       const directory=url.searchParams.get('location[directory]')??project
-      return json(gitCount||linked?{directory,project:{id:'fixture_project',canonical:project,directory}}:{data:{directory:project}})
+      return json(gitCount||linked||webSearch?{directory,project:{id:'fixture_project',canonical:project,directory}}:{data:{directory:project}})
     }
     if(linked&&url.pathname==='/api/worktree')return json([{directory:project},{directory:linked}])
     if(linked&&url.pathname==='/api/worktree/refresh'){res.writeHead(204);res.end();return}
+    if(webSearch&&url.pathname==='/api/worktree')return json([{directory:project}])
+    if(webSearch&&url.pathname==='/api/worktree/refresh')return json({})
     if(gitPanel&&url.pathname==='/api/worktree'&&req.method==='DELETE'){
       const body=JSON.parse(raw);assert.deepEqual(body,{projectID:'fixture_project',directory:review,force:false})
       // Hold physical removal (and its inventory announcement) until Rune acknowledges the move.

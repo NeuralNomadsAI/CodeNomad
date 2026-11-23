@@ -4,12 +4,15 @@ export async function historySearch(page, messages) {
   const press=(root,key)=>root.getByRole('button',{name:messages[key]??key,exact:true}).click({force:true})
   await press(page,'messageSection.search.ariaLabel')
   const search=page.getByRole('region',{name:messages['messageSection.search.ariaLabel']})
-  const input=page.getByRole('textbox',{name:messages['messageSection.search.ariaLabel'],exact:true})
+  const close=await search.getByRole('button',{name:messages['messageSection.search.closeAriaLabel']}).boundingBox()
+  assert(close)
+  await page.mouse.click(close.x-24,close.y+close.height/2)
+  const input=page.locator('textarea:focus')
   await input.waitFor({state:'attached'})
   const read=(route)=>page.waitForResponse(response=>response.url().endsWith(`/session-history/${route}`)
     && (route==='window'||response.request().postDataJSON()?.query==='Existing'))
-  const [literal]=await Promise.all([read('query'),page.keyboard.insertText('Existing')])
-  assert(literal.ok())
+  const [literal]=await Promise.all([read('query'),input.fill('Existing')])
+  assert(literal.ok(),`Literal broker status ${literal.status()}`)
   let windows=0
   const count=request=>{if(request.url().endsWith('/session-history/window'))windows++}
   page.on('request',count)
@@ -17,7 +20,7 @@ export async function historySearch(page, messages) {
     await press(search,'Existing answer')
     assert.equal(windows,0,'A resident result needs no window')
     const [ranked]=await Promise.all([read('ranked'),press(search,'history.workspace')])
-    assert(ranked.ok())
+    assert(ranked.ok(),`Ranked broker status ${ranked.status()}`)
     await search.getByRole('button',{name:'Existing ranked destination',exact:true}).waitFor()
     assert.deepEqual(await search.getByRole('button').filter({hasText:/^Existing /}).allTextContents(),
       ['Existing ranked destination','Existing answer'])
