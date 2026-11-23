@@ -183,7 +183,7 @@ fn shift_enter_resolves_both_mentions_of_the_same_folder() {
         .composer
         .draft
         .prepare(
-            &rt.state.draft.text,
+            &rt.state.draft,
             "msg_folder",
             codenomad_client::prompt::Delivery::Steer,
         )
@@ -492,7 +492,7 @@ fn tab_only_completes_and_shift_enter_records_a_path_without_a_file() {
         .composer
         .draft
         .prepare(
-            &rt.state.draft.text,
+            &rt.state.draft,
             "msg_x",
             codenomad_client::prompt::Delivery::Steer,
         )

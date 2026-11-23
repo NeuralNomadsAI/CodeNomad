@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod cache;
 pub(crate) mod opening;
 mod persistence;
+mod save_snapshot;
 mod state;
 pub(crate) use persistence::finish;
 #[cfg(target_arch = "wasm32")]
@@ -16,6 +17,7 @@ pub(crate) use state::{
 };
 
 use crate::composer::draft_storage::SavedParts;
+use save_snapshot::encode_for_save;
 use serde_json::{Map, Value, json};
 
 pub(crate) const MAX_BYTES: usize = 1024 * 1024;
@@ -195,37 +197,6 @@ pub fn encode(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
         return Err(Error::Limit);
     }
     Ok(bytes)
-}
-
-fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Error> {
-    if let Ok(bytes) = encode(snapshot) {
-        return Ok((bytes, false));
-    }
-    let mut valid = snapshot.clone();
-    valid.tabs = vec![Tab::Blank; snapshot.tabs.len()];
-    // Keep the live tab untouched. Invalid attachment metadata falls back to its missing-parts guard.
-    for (index, tab) in snapshot.tabs.iter().enumerate() {
-        let mut tab = tab.clone();
-        if let Tab::Workspace(saved) = &mut tab {
-            saved
-                .attachment_drafts
-                .extend(saved.attachment_parts.keys().cloned());
-            saved.attachment_parts.retain(|_, parts| parts.valid());
-            saved.drafts.retain(|id, text| {
-                if !draft_id(id) || text.encode_utf16().nth(MAX_DRAFT).is_some() {
-                    saved.attachment_parts.remove(id);
-                    false
-                } else {
-                    true
-                }
-            });
-        }
-        valid.tabs[index] = tab;
-        if encode(&valid).is_err() {
-            valid.tabs[index] = Tab::Blank;
-        }
-    }
-    encode(&valid).map(|bytes| (bytes, true))
 }
 
 fn tab(value: &Value) -> Result<Tab, Error> {

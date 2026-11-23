@@ -3,6 +3,7 @@ use super::draft::Attachment;
 use crate::{State, workspace};
 #[cfg(not(target_arch = "wasm32"))]
 use rune::Tx;
+use rune::edit::TextEdit;
 use std::ops::Range;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
@@ -29,11 +30,27 @@ pub(super) fn tokens(text: &str) -> impl Iterator<Item = (Range<usize>, u64)> + 
     })
 }
 
+pub(super) fn active_tokens(edit: &TextEdit) -> impl Iterator<Item = (Range<usize>, u64)> + '_ {
+    tokens(&edit.text).filter(|(token, _)| {
+        super::literal::ranges(edit).all(|span| token.end <= span.start || span.end <= token.start)
+    })
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn paste(s: &mut State, text: &str, tx: &mut Tx) -> bool {
-    if text.len() > MAX_BYTES
-        || (text.encode_utf16().nth(150).is_none() && text.split('\n').nth(3).is_none())
-    {
+    if text.encode_utf16().nth(150).is_none() && text.split('\n').nth(3).is_none() {
+        return false;
+    }
+    if !compact(s, text) {
+        super::literal::paste(&mut s.draft, text);
+    }
+    super::view::changed(s, tx);
+    true
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn compact(s: &mut State, text: &str) -> bool {
+    if text.len() > MAX_BYTES {
         return false;
     }
     let largest = tokens(&s.draft.text)
@@ -68,7 +85,6 @@ pub(super) fn paste(s: &mut State, text: &str, tx: &mut Tx) -> bool {
         s.composer.draft.attachments.pop();
         return false;
     }
-    super::view::changed(s, tx);
     true
 }
 
@@ -163,13 +179,88 @@ mod tests {
     }
 
     #[test]
+    fn raw_fallback_protects_literals_but_resolves_the_real_mentions_around_it() {
+        use codenomad_client::prompt::Delivery;
+        let mut s = crate::init();
+        assert!(
+            s.composer
+                .draft
+                .attach(Attachment::Path("./project".into()))
+        );
+        assert!(
+            s.composer
+                .draft
+                .attach(Attachment::Agent("reviewer".into()))
+        );
+        assert!(s.composer.draft.attach(Attachment::Pasted {
+            id: 1,
+            text: Arc::from("must stay literal")
+        }));
+        s.draft = rune::TextEdit::new("@./project INSERT @reviewer @project");
+        s.draft.set_selection(11, 17);
+        let raw = format!(
+            "@./project @project @reviewer [pasted #1]\n{}",
+            "x".repeat(MAX_BYTES)
+        );
+        assert!(paste(&mut s, &raw, &mut Tx::default()));
+        assert!(s.draft.text.contains(&raw));
+        assert_eq!(s.composer.draft.attachments.len(), 3);
+        let draft = &s.composer.draft;
+        let (prompt, _) = draft.prepare(&s.draft, "msg-raw", Delivery::Steer).unwrap();
+        let before = format!("./project {raw} ");
+        assert_eq!(prompt.text, format!("{before}@reviewer ./project"));
+        assert_eq!(
+            prompt.agents[0].mention.as_ref().unwrap().start,
+            before.encode_utf16().count()
+        );
+        s.draft.undo();
+        assert_eq!(s.draft.text, "@./project INSERT @reviewer @project");
+        s.draft.redo();
+        assert_eq!(
+            draft
+                .prepare(&s.draft, "msg-raw", Delivery::Steer)
+                .unwrap()
+                .0,
+            prompt
+        );
+    }
+
+    #[test]
+    fn inline_provenance_survives_draft_serialization() {
+        let mut s = crate::init();
+        assert!(s.composer.draft.attach(Attachment::Pasted {
+            id: 1,
+            text: Arc::from("x".repeat(MAX_BYTES))
+        }));
+        let raw = "@./literal\n\n\n[ pasted #1 ]";
+        assert!(paste(&mut s, raw, &mut Tx::default()));
+        let saved = SavedParts::capture(&s.composer.draft, false, &s.draft)
+            .unwrap()
+            .encode();
+        let (draft, missing) = SavedParts::decode(&saved).unwrap().restore();
+        assert!(!missing);
+        let mut reopened = rune::TextEdit::new(&s.draft.text);
+        super::super::literal::restore(&mut reopened, &draft.literal_spans);
+        let (prompt, _) = draft
+            .prepare(
+                &reopened,
+                "msg-raw",
+                codenomad_client::prompt::Delivery::Steer,
+            )
+            .unwrap();
+        assert_eq!(prompt.text, raw);
+    }
+
+    #[test]
     fn saved_pastes_expand_only_as_tokens_and_are_removable() {
         let mut original = Draft::default();
         assert!(original.attach(Attachment::Pasted {
             id: 8,
             text: Arc::from("@./literal @reviewer [pasted #8] 🦀"),
         }));
-        let json = SavedParts::capture(&original, false).unwrap().encode();
+        let json = SavedParts::capture(&original, false, &rune::TextEdit::new("[pasted #8]"))
+            .unwrap()
+            .encode();
         let parts = SavedParts::decode(&json).unwrap();
         assert!(parts.valid());
         let (mut draft, missing) = parts.restore();
@@ -183,7 +274,7 @@ mod tests {
         assert!(draft.attach(Attachment::Agent("reviewer".into())));
         let (prompt, _) = draft
             .prepare(
-                "[pasted #8] @reviewer",
+                &rune::TextEdit::new("[pasted #8] @reviewer"),
                 "msg-test",
                 codenomad_client::prompt::Delivery::Steer,
             )
@@ -195,7 +286,20 @@ mod tests {
         let mut edit = rune::TextEdit::new("left [pasted #8] right");
         draft.remove(&mut edit, 0);
         assert_eq!(edit.text, "left  right");
-        draft.remove(&mut edit, 0);
+        let (saved, _) = SavedParts::capture(&draft, false, &edit).unwrap().restore();
+        assert_eq!(saved.attachments, [Attachment::Agent("reviewer".into())]);
+        edit.undo();
+        assert_eq!(edit.text, "left [pasted #8] right");
+        assert_eq!(
+            draft.resolve_text(&edit.text).as_deref(),
+            Some("left @./literal @reviewer [pasted #8] 🦀 right")
+        );
+        edit.redo();
+        assert_eq!(
+            draft.resolve_text(&edit.text).as_deref(),
+            Some("left  right")
+        );
+        draft.remove(&mut edit, 1);
         assert!(!draft.can_send(&rune::TextEdit::new("")));
     }
 }

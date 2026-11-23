@@ -45,7 +45,8 @@ fn repeats_uncertain_command(s: &State) -> bool {
         .as_ref()
         .is_some_and(|(name, text)| {
             super::picker::command_parts(&s.draft.text).is_some_and(|(candidate, args)| {
-                candidate == name && s.composer.draft.resolve_text(args).as_deref() == Some(text)
+                candidate == name
+                    && s.composer.draft.resolve_args(&s.draft, args).as_deref() == Some(text)
             })
         })
 }
@@ -80,7 +81,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         return;
     };
     if let Some((name, text)) = s.composer.picker.selected_command(&s.draft.text) {
-        let Some(text) = s.composer.draft.resolve_text(text) else {
+        let Some(text) = s.composer.draft.resolve_args(&s.draft, text) else {
             s.composer.send_error = true;
             return;
         };
@@ -116,7 +117,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         Delivery::Steer
     };
     let queued = delivery == Delivery::Queue;
-    let Some((prompt, parts)) = s.composer.draft.prepare(&s.draft.text, &id, delivery) else {
+    let Some((prompt, parts)) = s.composer.draft.prepare(&s.draft, &id, delivery) else {
         s.composer.send_error = true;
         return;
     };

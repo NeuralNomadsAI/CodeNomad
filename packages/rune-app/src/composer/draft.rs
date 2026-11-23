@@ -71,20 +71,24 @@ fn token_ranges<'a>(text: &'a str, token: &'a str) -> impl Iterator<Item = Range
 #[derive(Clone, Default)]
 pub struct Draft {
     pub attachments: Vec<Attachment>,
+    pub(crate) literal_spans: Vec<Range<usize>>,
 }
 impl Draft {
     pub fn remove(&mut self, edit: &mut TextEdit, index: usize) {
-        let item = self.attachments.remove(index);
-        if let Attachment::Pasted { id, .. } = item {
-            let ranges: Vec<_> = super::long_paste::tokens(&edit.text)
-                .filter_map(|(range, token)| (token == id).then_some(range))
+        if let Attachment::Pasted { id, .. } = &self.attachments[index] {
+            let ranges: Vec<_> = super::long_paste::active_tokens(edit)
+                .filter_map(|(range, token)| (token == *id).then_some(range))
                 .collect();
-            for range in ranges.into_iter().rev() {
-                edit.set_selection(range.start, range.end);
-                edit.insert("");
-            }
+            // The (bounded) payload stays available to the field's undo history.
+            edit.undo_group(|edit| {
+                for range in ranges.into_iter().rev() {
+                    edit.set_selection(range.start, range.end);
+                    edit.insert("");
+                }
+            });
             return;
         }
+        let item = self.attachments.remove(index);
         for token in item.tokens() {
             let ranges: Vec<_> = token_ranges(&edit.text, &token).collect();
             for range in ranges.into_iter().rev() {
@@ -191,12 +195,71 @@ impl Draft {
         true
     }
 
+    #[cfg(test)]
     pub fn resolve_text(&self, text: &str) -> Option<String> {
-        super::long_paste::expand(self.resolve_paths(text), &self.attachments).map(|(text, _)| text)
+        self.project(text, std::iter::empty()).map(|(text, _)| text)
+    }
+
+    pub fn resolve_args(&self, edit: &TextEdit, args: &str) -> Option<String> {
+        if args.is_empty() {
+            return Some(String::new());
+        }
+        // Args is a slice of the current editor, after the command name.
+        let offset = args
+            .as_ptr()
+            .addr()
+            .checked_sub(edit.text.as_ptr().addr())?;
+        let end = offset + args.len();
+        let literal = super::literal::ranges(edit).filter_map(|span| {
+            let start = span.start.max(offset);
+            let stop = span.end.min(end);
+            (start < stop).then(|| start - offset..stop - offset)
+        });
+        self.project(args, literal).map(|(text, _)| text)
+    }
+
+    fn project(
+        &self,
+        text: &str,
+        literal: impl Iterator<Item = Range<usize>>,
+    ) -> Option<(String, Vec<Range<usize>>)> {
+        let mut result = String::new();
+        let mut spans = Vec::new();
+        let mut cursor = 0;
+        for literal in literal.chain([text.len()..text.len()]) {
+            let inline = text.get(cursor..literal.start)?;
+            let inline = if cursor == 0 {
+                inline.trim_start_matches(whitespace)
+            } else {
+                inline
+            };
+            let inline = if literal.start == text.len() {
+                inline.trim_end_matches(whitespace)
+            } else {
+                inline
+            };
+            let (inline, expanded) =
+                super::long_paste::expand(self.resolve_paths(inline), &self.attachments)?;
+            spans.extend(
+                expanded
+                    .into_iter()
+                    .map(|span| result.len() + span.start..result.len() + span.end),
+            );
+            result.push_str(&inline);
+            if !literal.is_empty() {
+                spans.push(result.len()..result.len() + literal.len());
+                result.push_str(text.get(literal.clone())?);
+            }
+            cursor = literal.end;
+            if result.len() > prompt::MAX_BODY_BYTES {
+                return None;
+            }
+        }
+        Some((result, spans))
     }
 
     fn resolve_paths(&self, text: &str) -> String {
-        let mut text = resolve_relative_paths(text.trim_matches(whitespace));
+        let mut text = resolve_relative_paths(text);
         for path in self.attachments.iter().filter_map(|item| match item {
             Attachment::Project { path, .. } | Attachment::Path(path) => Some(path),
             _ => None,
@@ -232,9 +295,13 @@ impl Draft {
         text
     }
 
-    pub fn prepare(&self, text: &str, id: &str, delivery: Delivery) -> Option<(Prompt, Vec<Part>)> {
-        let (text, pasted) =
-            super::long_paste::expand(self.resolve_paths(text), &self.attachments)?;
+    pub fn prepare(
+        &self,
+        edit: &TextEdit,
+        id: &str,
+        delivery: Delivery,
+    ) -> Option<(Prompt, Vec<Part>)> {
+        let (text, pasted) = self.project(&edit.text, super::literal::ranges(edit))?;
         let mut parts = Vec::new();
         let mut prompt = Prompt {
             id: Some(id.into()),
@@ -367,7 +434,7 @@ mod tests {
         assert!(draft.attach(device));
         let (prompt, parts) = draft
             .prepare(
-                "  🦀 @reviewer @./a b#%.txt @./doc @..  ",
+                &TextEdit::new("  🦀 @reviewer @./a b#%.txt @./doc @..  "),
                 "msg_test",
                 Delivery::Queue,
             )

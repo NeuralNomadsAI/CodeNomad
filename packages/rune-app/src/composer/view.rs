@@ -109,6 +109,7 @@ pub fn view(s: &State, compact: bool) -> El {
         .pad(Space::Md)
         .separate(Space::Sm)
         .child(col().content_direction().child(editor));
+    let pasted = std::cell::OnceCell::new();
     let mut attachments = s
         .composer
         .draft
@@ -119,7 +120,13 @@ pub fn view(s: &State, compact: bool) -> El {
             let super::draft::Attachment::Pasted { id, .. } = part else {
                 return true;
             };
-            super::long_paste::tokens(&s.draft.text).any(|(_, token)| token == *id)
+            pasted
+                .get_or_init(|| {
+                    super::long_paste::active_tokens(&s.draft)
+                        .map(|(_, id)| id)
+                        .collect::<std::collections::BTreeSet<_>>()
+                })
+                .contains(id)
         })
         .peekable();
     if attachments.peek().is_some() {

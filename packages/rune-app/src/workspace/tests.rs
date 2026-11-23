@@ -46,6 +46,81 @@ fn saving_preserves_valid_siblings_of_an_invalid_tab() {
         matches!(&snapshot.tabs[0], Tab::Workspace(tab) if tab.drafts["ses_bad"].len() > MAX_DRAFT)
     );
 }
+
+#[test]
+fn byte_budget_sheds_one_large_paste_without_erasing_its_tab_or_smaller_drafts() {
+    use crate::composer::draft_storage::SavedParts;
+    let mut tab = workspace();
+    tab.active_session_id = Some("ses_3".into());
+    for (index, size) in [255, 255, 255, 255, 8].into_iter().enumerate() {
+        let id = format!("ses_{index}");
+        tab.drafts.insert(id.clone(), "[pasted #1]".into());
+        tab.attachment_drafts.insert(id.clone());
+        tab.attachment_parts.insert(
+            id,
+            SavedParts::decode(&json!({
+                "complete": true,
+                "parts": [
+                    {"type":"pasted","id":"1","text":"p".repeat(size * 1024)},
+                    {"type":"agent","name":"reviewer"}
+                ]
+            }))
+            .unwrap(),
+        );
+    }
+    tab.drafts
+        .insert("ses_unrelated".into(), "untouched".into());
+    let full = snapshot(tab.clone());
+    assert_eq!(encode(&full).unwrap_err(), Error::Limit);
+    let (bytes, partial) = encode_for_save(&full).unwrap();
+    assert!(partial);
+    let saved = decode(&bytes).unwrap();
+    let [Tab::Workspace(saved_tab)] = saved.tabs.as_slice() else {
+        panic!("one live tab")
+    };
+    assert_eq!(saved.active, full.active);
+    assert_eq!(saved_tab.active_session_id, tab.active_session_id);
+    assert_eq!(saved_tab.drafts, tab.drafts);
+    assert_eq!(saved_tab.attachment_drafts, tab.attachment_drafts);
+    assert_eq!(
+        saved_tab.attachment_parts["ses_4"],
+        tab.attachment_parts["ses_4"]
+    );
+    let degraded = saved_tab
+        .attachment_parts
+        .iter()
+        .filter(|(id, parts)| **parts != tab.attachment_parts[*id])
+        .collect::<Vec<_>>();
+    let [(_, degraded)] = degraded.as_slice() else {
+        panic!("one degraded draft")
+    };
+    let (parts, incomplete) = degraded.restore();
+    assert!(incomplete);
+    assert_eq!(
+        parts.attachments,
+        [crate::composer::draft::Attachment::Agent("reviewer".into())]
+    );
+    assert_eq!(encode(&saved).unwrap(), bytes);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let root = std::env::temp_dir().join(codenomad_client::http::client_id().unwrap());
+        let store =
+            crate::platform::block_on(crate::platform::storage::Store::open(root.clone())).unwrap();
+        let mut persistence = super::persistence::Persistence::new();
+        persistence.store = Some(store.clone());
+        assert!(
+            !persistence.flush(&full),
+            "partial writes are not a complete close"
+        );
+        assert_eq!(
+            crate::platform::block_on(store.load()).unwrap().unwrap(),
+            bytes
+        );
+        drop((persistence, store));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
 fn snapshot(workspace: Workspace) -> Snapshot {
     Snapshot {
         revision: 7,
