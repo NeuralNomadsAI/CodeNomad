@@ -1,6 +1,7 @@
 //! Preferences owns its native window; its confirmed host settings also feed the shell.
 mod behavior;
 mod contrast;
+mod conversation;
 mod memory;
 #[cfg(not(target_arch = "wasm32"))]
 mod opencode;
@@ -31,7 +32,7 @@ pub(crate) struct Host {
     contrast: Option<web_contrast::Watch>,
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
-    last_display: Option<([&'static str; 5], bool)>,
+    last_display: Option<([&'static str; 6], bool)>,
 }
 
 pub(crate) fn poll(s: &mut State) -> bool {
@@ -108,9 +109,13 @@ pub(crate) fn poll(s: &mut State) -> bool {
             shared.palette(false).map_or("", |p| p.id),
             shared.palette(true).map_or("", |p| p.id),
             shared.contrast(),
+            shared.usage_visibility(false),
         ],
         awaiting_appearance(s, &shared),
     ));
+    if s.settings.last_display.map(|last| last.0[5]) != display.map(|next| next.0[5]) {
+        s.revision += 1;
+    }
     #[cfg(target_arch = "wasm32")]
     let changed = {
         let more = s
@@ -139,6 +144,16 @@ pub(crate) fn poll(s: &mut State) -> bool {
         }
     }
     changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))
+}
+
+pub(crate) fn message_usage_visibility(s: &State) -> &'static str {
+    s.settings.shared.borrow().usage_visibility(false)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
+    s.settings.shared.borrow_mut().fixture_usage(mode);
+    s.revision += 1;
 }
 
 pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {

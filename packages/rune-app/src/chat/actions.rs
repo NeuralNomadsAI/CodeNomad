@@ -17,6 +17,9 @@ pub struct Display {
     live_ansi: RefCell<VecDeque<(String, rune_theme_codenomad::ansi::Stream)>>,
     pub(super) diffs: super::tool_diff::Cache,
     pub(super) children: super::tools::children::Children,
+    pub(crate) usage_family: super::usage::family::Totals,
+    pub(super) pictures: super::media::Pictures,
+    pub(crate) receipts: super::receipts::Receipts,
 }
 
 #[derive(Default)]
@@ -40,6 +43,9 @@ impl Display {
         self.stream = StreamRender::default();
         self.live_ansi.get_mut().clear();
         self.children.clear();
+        self.usage_family.close();
+        self.pictures.clear();
+        self.receipts.clear();
     }
     pub(super) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
@@ -65,6 +71,9 @@ impl Display {
             self.stream = StreamRender::default();
             self.live_ansi.get_mut().clear();
             self.children.clear();
+            self.usage_family.close();
+            self.pictures.clear();
+            self.receipts.clear();
             self.diffs = Default::default();
         }
     }

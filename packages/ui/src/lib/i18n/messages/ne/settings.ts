@@ -251,6 +251,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "आउटपुट",
   "contextUsagePanel.labels.cost": "लागत",
   "contextUsagePanel.included": "समावेश",
+  "contextUsagePanel.partialTotal": "कुराकानीको आंशिक जम्मा",
+  "contextUsagePanel.totalUnavailable": "कुराकानीको जम्मा उपलब्ध छैन",
   "contextUsagePanel.labels.totalInput": "कुल इनपुट",
   "contextUsagePanel.labels.totalOutput": "कुल आउटपुट",
   "contextUsagePanel.labels.totalCost": "कुल लागत",

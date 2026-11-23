@@ -245,6 +245,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "Çıktı",
   "contextUsagePanel.labels.cost": "Maliyet",
   "contextUsagePanel.included": "Dahil",
+  "contextUsagePanel.partialTotal": "Konuşmanın kısmi toplamı",
+  "contextUsagePanel.totalUnavailable": "Konuşmanın toplamı kullanılamıyor",
   "contextUsagePanel.labels.totalInput": "Toplam Girdi",
   "contextUsagePanel.labels.totalOutput": "Toplam Çıktı",
   "contextUsagePanel.labels.totalCost": "Toplam Maliyet",

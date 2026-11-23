@@ -49,6 +49,45 @@ use tokio::{
 mod conversation;
 
 #[test]
+fn fresh_profile_can_enable_usage_from_conversation_preferences() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        assert_eq!(prefs.usage_visibility(false), "hidden");
+        prefs.set_usage_visibility("expanded");
+        assert_eq!(prefs.usage_visibility(true), "expanded");
+        assert_eq!(prefs.usage_visibility(false), "hidden");
+        prefs.poll();
+        let patch = request(&listener).await;
+        assert_eq!(patch.first, "PATCH /api/storage/config/ui HTTP/1.1");
+        assert_eq!(
+            patch.body,
+            json!({"settings":{"showUsageMetrics":true,"usageMetricsExpansion":"expanded"}})
+        );
+        patch.reply(200, json!({"settings":{"locale":"en","showUsageMetrics":true,"usageMetricsExpansion":"expanded"}})).await;
+        wait_until(|| {
+            prefs.poll();
+            prefs.usage_visibility(false) == "expanded"
+        })
+        .await;
+        prefs.set_usage_visibility("hidden");
+        prefs.poll();
+        let patch = request(&listener).await;
+        assert_eq!(patch.body, json!({"settings":{"showUsageMetrics":false}}));
+        patch
+            .reply(
+                200,
+                json!({"settings":{"showUsageMetrics":false,"usageMetricsExpansion":"expanded"}}),
+            )
+            .await;
+        wait_until(|| {
+            prefs.poll();
+            prefs.usage_visibility(false) == "hidden"
+        })
+        .await;
+    });
+}
+
+#[test]
 fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
     platform::block_on(async {
         let (listener, mut fixture) = fixture().await;

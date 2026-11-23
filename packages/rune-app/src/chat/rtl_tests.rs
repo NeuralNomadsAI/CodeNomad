@@ -12,6 +12,7 @@ fn runtime(render: fn(&State, &mut Cx<State>) -> El) -> Runtime<State> {
     state.phase = Phase::Ready;
     state.messages = vec![
         Message {
+            usage: None,
             completed: true,
             id: "rtl-code".into(),
             role: "assistant".into(),

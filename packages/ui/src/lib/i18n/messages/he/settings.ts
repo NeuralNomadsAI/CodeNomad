@@ -251,6 +251,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "פלט",
   "contextUsagePanel.labels.cost": "עלות",
   "contextUsagePanel.included": "כלול",
+  "contextUsagePanel.partialTotal": "סכום חלקי של השיחה",
+  "contextUsagePanel.totalUnavailable": "הסכום הכולל של השיחה אינו זמין",
   "contextUsagePanel.labels.totalInput": "קלט כולל",
   "contextUsagePanel.labels.totalOutput": "פלט כולל",
   "contextUsagePanel.labels.totalCost": "עלות כוללת",

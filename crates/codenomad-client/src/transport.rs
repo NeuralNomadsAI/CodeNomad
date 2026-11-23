@@ -27,6 +27,9 @@ pub enum WorkspaceEvent {
     MissionActivityChanged {
         workspace_id: String,
     },
+    PermissionReceiptsChanged {
+        message: Option<String>,
+    },
     NativeFilesystemChanged {
         workspace_id: String,
     },
@@ -75,6 +78,8 @@ pub enum Event {
     Workspace(WorkspaceEvent),
     Preferences(crate::settings::Owner),
     AgentHint(bool),
+    SessionUsage(crate::content::Usage),
+    FamilyUsage(crate::content::FamilyChange),
     ObservedRunning {
         running: bool,
         version: u64,
@@ -93,6 +98,7 @@ pub enum Event {
     },
     Text(String, crate::content::TextEvent),
     Reasoning(String, crate::content::ReasoningEvent),
+    StepUsage(String, crate::content::Usage),
     Tool(String, std::sync::Arc<crate::content::Tool>),
     Done,
     AuthenticationRequired(Authentication),

@@ -251,6 +251,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "出力",
   "contextUsagePanel.labels.cost": "コスト",
   "contextUsagePanel.included": "含まれる",
+  "contextUsagePanel.partialTotal": "会話の一部の合計",
+  "contextUsagePanel.totalUnavailable": "会話の合計を取得できません",
   "contextUsagePanel.labels.totalInput": "合計入力",
   "contextUsagePanel.labels.totalOutput": "合計出力",
   "contextUsagePanel.labels.totalCost": "合計コスト",
