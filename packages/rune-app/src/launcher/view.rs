@@ -16,6 +16,10 @@ pub fn view(s: &State) -> El {
     }
     let scope = s.input_scope.clone();
     let waiting = !crate::workspace::input_ready(s);
+    #[cfg(target_arch = "wasm32")]
+    let password = !crate::platform::pairing::available();
+    #[cfg(not(target_arch = "wasm32"))]
+    let password = true;
     let mut body = col().full_width().separate(Space::Md);
     if l.connection.is_none() {
         body = body
@@ -26,9 +30,9 @@ pub fn view(s: &State) -> El {
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Address))
                     .build(field_kit(layout::dark()))
                     .key("server-address"),
-            )
-            .child(text(t("authRecovery.password")))
-            .child(
+            );
+        if password {
+            body = body.child(text(t("authRecovery.password"))).child(
                 literal_field(&l.password)
                     .label(t("authRecovery.password"))
                     .secure()
@@ -36,13 +40,14 @@ pub fn view(s: &State) -> El {
                     .on_submit(crate::screen::action_tx(&scope, launcher::connect))
                     .build(field_kit(layout::dark()))
                     .key("server-password"),
-            )
-            .child(button_tx(
-                "connect",
-                t("folderSelection.servers.dialog.connect"),
-                l.pending,
-                crate::screen::action_tx(&scope, launcher::connect),
-            ));
+            );
+        }
+        body = body.child(button_tx(
+            "connect",
+            t("folderSelection.servers.dialog.connect"),
+            l.pending,
+            crate::screen::action_tx(&scope, launcher::connect),
+        ));
     } else {
         body = body
             .child(text(t("instanceInfo.labels.folder")).text_role(TextRole::Title))

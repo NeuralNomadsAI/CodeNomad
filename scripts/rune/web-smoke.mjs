@@ -187,6 +187,8 @@ try {
             await row('Another session').waitFor()
             assert(routes.some(row=>row.query.includes('search=Another+session')),'Use the native search before loading the next ordinary page')
             await press(messages['sessionList.filter.ariaLabel'])
+            await row('Existing history').waitFor()
+            await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
           }
           await press(messages['rune.more'])
           if(values.mobile){

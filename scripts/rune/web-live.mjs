@@ -126,12 +126,14 @@ export async function revokedLauncher({context,url,messages}){
     await page.goto(url.href,{waitUntil:'domcontentloaded'})
     const connect=page.getByRole('button',{name:messages['folderSelection.servers.dialog.connect'],exact:true})
     await connect.waitFor()
+    const password=page.getByRole('textbox',{name:messages['authRecovery.password'],exact:true})
+    assert.equal(await password.count(),0,'The paired HTTPS launcher has no password input')
     await command('revoke')
     const box=await connect.boundingBox();assert(box)
     await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
     await page.getByRole('dialog',{name:messages['authRecovery.pairingTitle'],exact:true}).waitFor()
     assert.equal(await page.getByText(messages['authRecovery.password'],{exact:true}).count(),0)
-    assert.equal(await page.getByRole('textbox',{name:messages['authRecovery.password'],exact:true}).count(),0)
+    assert.equal(await password.count(),0)
     assert.equal(await connect.count(),0,'Pairing replaces the launcher form instead of covering it')
     return true
   } finally { await page.close() }

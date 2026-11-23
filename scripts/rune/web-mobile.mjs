@@ -107,21 +107,22 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
     return {x,y,width,height}
   }
   const capture=async clip=>`data:image/png;base64,${(await page.screenshot({clip,scale:'css'})).toString('base64')}`
-  async function glyphMatch(baseline, reference, candidate){
-    return imagePage.evaluate(async ([baseline,reference,candidate])=>{
+  async function glyphMatch(baseline, reference, candidate, startX=0){
+    return imagePage.evaluate(async ([baseline,reference,candidate,startX])=>{
       const [a,b,c]=await globalThis.__codenomadReadPngs([baseline,reference,candidate])
       let referencePixels=0,matched=0,minX=a.width,maxX=0,minY=a.height,maxY=0
       for(let i=0;i<a.pixels.length;i+=4){
+        const x=i/4%a.width,y=Math.floor(i/4/a.width)
+        if(x<startX)continue
         if(![0,1,2].some(k=>Math.abs(a.pixels[i+k]-b.pixels[i+k])>28))continue
         referencePixels++
         if(![0,1,2].every(k=>Math.abs(c.pixels[i+k]-b.pixels[i+k])<=36)||
            ![0,1,2].some(k=>Math.abs(c.pixels[i+k]-a.pixels[i+k])>20))continue
-        const x=i/4%a.width,y=Math.floor(i/4/a.width)
         minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y)
         matched++
       }
-      return {matched,referencePixels,width:maxX-minX+1,height:maxY-minY+1}
-    },[baseline,reference,candidate])
+      return {matched,referencePixels,width:maxX-minX+1,height:maxY-minY+1,lastX:maxX}
+    },[baseline,reference,candidate,startX])
   }
   function looksLikeGlyphs(match){
     return match.matched>=25&&match.matched>=match.referencePixels*0.5&&match.width>=8&&match.height>=4
@@ -178,7 +179,14 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
     })
     await probe('compositionAndReplacement', async () => {
       const clip=await fieldRect()
-      const before=await capture(clip)
+      let before,prefix
+      for(const until=Date.now()+2500;;){
+        before=await capture(clip)
+        prefix=await glyphMatch(blank,before,before)
+        if(looksLikeGlyphs(prefix)&&prefix.width>=30)break
+        assert(Date.now()<until,'The initial text must already be painted before starting preedit')
+      }
+      const startX=prefix.lastX+1
       const composing='かな'
       await cdp.send('Input.imeSetComposition',{text:composing,selectionStart:2,selectionEnd:2})
       await waitValue(text+composing)
@@ -190,12 +198,12 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
       let preedit,reference
       for(const until=Date.now()+2500;;){
         reference=await capture(clip)
-        const matches=await Promise.all(samples.map(sample=>glyphMatch(before,reference,sample)))
+        const matches=await Promise.all(samples.map(sample=>glyphMatch(before,reference,sample,startX)))
         preedit=matches.find(looksLikeGlyphs)
         if(preedit)break
         assert(Date.now()<until,`Rune must paint the committed glyph shapes during preedit: ${JSON.stringify(matches)}`)
       }
-      assert(!looksLikeGlyphs(await glyphMatch(before,reference,before)),'The no-glyph control must fail')
+      assert(!looksLikeGlyphs(await glyphMatch(before,reference,before,startX)),'The no-glyph control must fail')
       // An external text service can replace a range without emitting key strokes.
       await editor.evaluate(el => {
         el.setRangeText('Été',0,3,'end')
