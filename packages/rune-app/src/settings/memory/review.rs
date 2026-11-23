@@ -15,7 +15,7 @@ pub(in crate::settings) enum Action {
     Retry,
     Write(Edit, Option<Fields>),
     Tidy,
-    ConfirmTidy(bool),
+    ConfirmTidy(cleanup::Intent, bool),
 }
 
 #[derive(Clone)]
@@ -25,6 +25,30 @@ pub(in crate::settings) struct Edit {
     namespace: String,
 }
 
+#[cfg(test)]
+impl Edit {
+    pub(in crate::settings) fn fixture() -> Self {
+        Self {
+            entry: Entry {
+                id: "entry".into(),
+                title: "Original title".into(),
+                kind: memory::Kind::Fact,
+                text: "Original text".into(),
+                created: "2026-01-01T00:00:00Z".into(),
+                updated: "2026-01-01T00:00:00Z".into(),
+                revision: "a".repeat(64),
+                flagged: false,
+            },
+            key: Key {
+                connection: "fixture".into(),
+                server: "fixture".into(),
+                scope: Scope::Global,
+                context: None,
+            },
+            namespace: "global".into(),
+        }
+    }
+}
 #[derive(Clone)]
 pub(in crate::settings) struct Fields {
     pub title: String,
@@ -62,6 +86,14 @@ struct Key {
 }
 
 impl Review {
+    pub fn begin_visit(&mut self) {
+        self.seen.begin_visit();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn bind_seen(&mut self, store: Option<crate::platform::storage::Store>) {
+        self.seen.bind(store);
+    }
     fn scope(&self, project: Option<&Target>) -> Scope {
         self.scope.unwrap_or(if project.is_some() {
             Scope::Project
@@ -109,9 +141,10 @@ impl Review {
                 self.pending = Some((edit, fields))
             }
             Action::Tidy => self.tidy = self.cleanup_intent(project),
-            Action::ConfirmTidy(accept) => {
+            Action::ConfirmTidy(expected, accept) if self.tidy.as_ref() == Some(&expected) => {
                 let intent = self.tidy.take();
-                if accept && intent.is_some() && intent == self.cleanup_intent(project) {
+                // Consume consent before publishing; a second activation cannot start this run.
+                if accept && intent == self.cleanup_intent(project) {
                     self.cleanup = intent;
                     self.tidy_attempted = true;
                 }
@@ -173,7 +206,7 @@ impl Review {
         &self,
         apply: impl Fn(&mut S, Action) -> bool + 'static,
     ) -> Option<El> {
-        let intent = self.tidy.as_ref()?;
+        let intent = self.tidy.clone()?;
         let scope = t(if intent.scope == Scope::Global {
             "settings.memory.global"
         } else {
@@ -185,7 +218,7 @@ impl Review {
             t("settings.memory.cancel"),
             t("settings.memory.tidy"),
             move |s, accept, _| {
-                apply(s, Action::ConfirmTidy(accept));
+                apply(s, Action::ConfirmTidy(intent.clone(), accept));
             },
         ))
     }
@@ -208,8 +241,9 @@ impl Review {
             })
     }
 
-    pub fn cleanup_pending(&self) -> bool {
-        self.tidy.is_some()
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn cancel_cleanup_confirmation(&mut self) -> bool {
+        self.tidy.take().is_some()
     }
 
     pub fn writing(&self) -> bool {
@@ -467,7 +501,25 @@ impl Review {
         let count = t("settings.memory.count")
             .replace("{count}", &list.entries.len().to_string())
             .replace("{limit}", &scope.limit().to_string());
-        let label = format!("{} {count}", t("settings.memory.entries"));
+        let mut label = format!("{} {count}", t("settings.memory.entries"));
+        if let Some(key) = &self.key {
+            for badge in [
+                "settings.memory.new",
+                "settings.memory.modified",
+                "settings.memory.flagged",
+            ] {
+                if list.entries.iter().any(|entry| {
+                    if badge == "settings.memory.flagged" {
+                        entry.flagged
+                    } else {
+                        self.seen.badge(&key.server, list, entry) == Some(badge)
+                    }
+                }) {
+                    label.push(' ');
+                    label.push_str(t(badge));
+                }
+            }
+        }
         let mut rows = col().full_width().separate(Space::Xs);
         if self.expanded {
             for entry in &list.entries {

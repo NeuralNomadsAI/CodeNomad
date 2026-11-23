@@ -137,6 +137,34 @@ mod native {
         staged: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
     }
     impl Store {
+        pub(crate) fn memory_seen(&self) -> Result<std::collections::BTreeMap<String, i64>> {
+            let files = self.files.lock().map_err(|_| "state store unavailable")?;
+            memory_seen(&files)
+        }
+
+        pub(crate) async fn mark_memory_seen(&self, key: String, at: i64) -> Result<()> {
+            if key.len() > 1024 {
+                return Err("Invalid memory consultation key".into());
+            }
+            let files = self.files.clone();
+            tokio::task::spawn_blocking(move || {
+                let files = files.lock().map_err(|_| "state store unavailable")?;
+                let mut marks = memory_seen(&files)?;
+                if marks.len() >= 256 && !marks.contains_key(&key) {
+                    if let Some(oldest) = marks
+                        .iter()
+                        .min_by_key(|(_, at)| *at)
+                        .map(|(key, _)| key.clone())
+                    {
+                        marks.remove(&oldest);
+                    }
+                }
+                let mark = marks.entry(key).or_default();
+                *mark = (*mark).max(at);
+                files.save_file("memory-seen.json", 320 * 1024, &serde_json::to_vec(&marks)?)
+            })
+            .await?
+        }
         #[cfg(target_os = "windows")]
         pub(crate) fn preferences_frame(&self) -> Option<Vec<u8>> {
             self.files
@@ -197,6 +225,19 @@ mod native {
                 tokio::time::timeout(std::time::Duration::from_secs(5), self.save(bytes)).await?
             })
         }
+    }
+
+    fn memory_seen(files: &Files) -> Result<std::collections::BTreeMap<String, i64>> {
+        let marks: std::collections::BTreeMap<String, i64> = files
+            .load_file("memory-seen.json", 320 * 1024)?
+            .as_deref()
+            .map(serde_json::from_slice)
+            .transpose()?
+            .unwrap_or_default();
+        if marks.len() > 256 || marks.keys().any(|k| k.len() > 1024) {
+            return Err("Invalid memory consultation state".into());
+        }
+        Ok(marks)
     }
 }
 #[cfg(not(target_arch = "wasm32"))]

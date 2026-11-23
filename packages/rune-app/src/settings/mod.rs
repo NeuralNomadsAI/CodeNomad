@@ -24,7 +24,7 @@ use std::{cell::RefCell, rc::Rc};
 pub(crate) struct Host {
     shared: Rc<RefCell<Preferences>>,
     #[cfg(not(target_arch = "wasm32"))]
-    window: Option<(rune::WindowHandle, Rc<Cell<bool>>)>,
+    window: Option<(rune::WindowHandle, Rc<Cell<bool>>, Rc<view::CloseRequest>)>,
     #[cfg(target_arch = "wasm32")]
     web: web::Panel,
     #[cfg(target_arch = "wasm32")]
@@ -40,6 +40,16 @@ pub(crate) fn poll_memory_cleanup(s: &mut State, tx: &mut rune::Tx) -> bool {
 }
 
 pub(crate) fn poll(s: &mut State) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some((request, editor)) = s.settings.window.as_ref().and_then(|(_, _, request)| {
+        request
+            .reopen
+            .borrow_mut()
+            .take()
+            .map(|editor| (request.clone(), editor))
+    }) {
+        launch_preferences(s, request, Some(editor));
+    }
     let mut shared = s.settings.shared.borrow_mut();
     if shared.main_wake.is_none() {
         shared.main_wake = Some(s.wake.clone());
@@ -424,16 +434,44 @@ pub(crate) fn direct_entry(s: &State) -> El {
 #[cfg(not(target_arch = "wasm32"))]
 fn open(s: &mut State) {
     let host = &s.settings;
-    if let Some((window, token)) = &host.window
+    if let Some((window, token, request)) = &host.window
         && Rc::strong_count(token) > 1
     {
-        window.close();
+        request.requested.set(true);
+        window.focus();
+        if let Some(wake) = &host.shared.borrow().window_wake {
+            wake();
+        }
         return;
     }
-    let token = Rc::new(Cell::new(false));
+    if host
+        .window
+        .as_ref()
+        .is_some_and(|(_, _, request)| request.reopen.borrow().is_some())
+    {
+        return;
+    }
     let target = providers::Target::capture(s);
-    host.shared.borrow_mut().provider_target = target;
-    let state = view::Window::new(host.shared.clone(), token.clone());
+    {
+        let mut prefs = host.shared.borrow_mut();
+        prefs.provider_target = target;
+        prefs
+            .memory
+            .bind_seen(crate::workspace::native_window_store(s));
+    }
+    launch_preferences(s, Rc::new(view::CloseRequest::default()), None);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn launch_preferences(
+    s: &mut State,
+    request: Rc<view::CloseRequest>,
+    editor: Option<memory::editor::Editor>,
+) {
+    let host = &s.settings;
+    let token = Rc::new(Cell::new(false));
+    let state = view::Window::new(host.shared.clone(), token.clone())
+        .with_close_request(request.clone(), editor);
     let locale = host
         .shared
         .borrow()
@@ -441,7 +479,7 @@ fn open(s: &mut State) {
         .unwrap_or_else(strings::locale);
     let spec = strings::with_locale(locale, view::spec);
     let window = crate::platform::preferences_window(s, spec, state, view::closed);
-    s.settings.window = Some((window, token));
+    s.settings.window = Some((window, token, request));
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -465,7 +503,7 @@ pub(crate) fn close(s: &mut State) {
         #[cfg(target_os = "windows")]
         crate::platform::preferences_placement::closed();
         settle_close(&s.settings.shared, warn_save_failed);
-        if let Some((window, token)) = s.settings.window.take() {
+        if let Some((window, token, _)) = s.settings.window.take() {
             token.set(true);
             window.close();
         }

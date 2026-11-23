@@ -23,6 +23,8 @@ use std::{
 pub(super) struct Window {
     shared: Rc<RefCell<Preferences>>,
     token: Option<Rc<Cell<bool>>>,
+    close_request: Option<Rc<CloseRequest>>,
+    confirm_close: bool,
     picker: Cell<Option<Picker>>,
     palette_choice: Cell<Option<&'static palettes::Palette>>,
     contrast_help: bool,
@@ -33,6 +35,12 @@ pub(super) struct Window {
     section: Section,
     pub(super) opencode: opencode::Status,
     pub(super) providers: providers::Catalog,
+}
+
+#[derive(Default)]
+pub(super) struct CloseRequest {
+    pub requested: Cell<bool>,
+    pub reopen: RefCell<Option<super::memory::editor::Editor>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -68,6 +76,44 @@ impl Window {
         }
     }
 
+    pub fn with_close_request(
+        mut self,
+        request: Rc<CloseRequest>,
+        editor: Option<super::memory::editor::Editor>,
+    ) -> Self {
+        self.close_request = Some(request);
+        if let Some(editor) = editor {
+            self.memory_editor = editor;
+            self.confirm_close = true;
+        }
+        self
+    }
+
+    fn request_close(&mut self, tx: &mut rune::Tx) {
+        if self.memory_editor.has_unsaved() {
+            self.confirm_close = true;
+        } else {
+            tx.close_window();
+        }
+    }
+
+    fn retain_editor_on_native_close(&mut self) -> bool {
+        if !self.memory_editor.has_unsaved() || self.token.as_ref().is_some_and(|token| token.get())
+        {
+            return false;
+        }
+        let Some(request) = &self.close_request else {
+            return false;
+        };
+        *request.reopen.borrow_mut() = Some(std::mem::take(&mut self.memory_editor));
+        let mut prefs = self.shared.borrow_mut();
+        prefs.window_wake = None;
+        if let Some(wake) = &prefs.main_wake {
+            wake();
+        }
+        true
+    }
+
     pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
         {
             let mut prefs = self.shared.borrow_mut();
@@ -84,7 +130,9 @@ impl Window {
 pub(super) fn closed(s: &mut Window, _: &mut rune::Tx) {
     #[cfg(target_os = "windows")]
     crate::platform::preferences_placement::closed();
-    s.close(super::warn_save_failed);
+    if !s.retain_editor_on_native_close() {
+        s.close(super::warn_save_failed);
+    }
 }
 
 pub(super) fn save_warning(locale: &&'static str, cx: &mut Cx<&'static str>) -> El {
@@ -121,6 +169,13 @@ pub(super) fn spec() -> AppSpec<Window> {
             }
         }),
         poll: Some(|s, _, tx| {
+            let close_requested = s
+                .close_request
+                .as_ref()
+                .is_some_and(|request| request.requested.replace(false));
+            if close_requested {
+                s.request_close(tx);
+            }
             let mut prefs = s.shared.borrow_mut();
             let changed = prefs.poll();
             if changed && let Some(wake) = &prefs.main_wake {
@@ -146,16 +201,18 @@ pub(super) fn spec() -> AppSpec<Window> {
             } else {
                 false
             };
-            updated | status_changed | providers_changed | editor_changed
+            updated | status_changed | providers_changed | editor_changed | close_requested
         }),
         on_key: Some(|s, event, tx| {
             if event.key != rune::Key::Escape {
                 return false;
             }
-            if s.memory_editor.shown() {
+            if s.confirm_close {
+                s.confirm_close = false;
+            } else if s.memory_editor.shown() {
                 s.memory_editor.dismiss();
             } else if !s.shared.borrow_mut().memory.cancel_cleanup_confirmation() {
-                tx.close_window();
+                s.request_close(tx);
             }
             true
         }),
@@ -288,6 +345,21 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             },
         ) {
             layers.push(editor);
+        }
+        if s.confirm_close {
+            layers.push(rune_theme_codenomad::document_reader::editor::confirmation(
+                layout::dark(),
+                t("settings.memory.discard"),
+                t("settings.memory.cancel"),
+                t("settings.memory.discardConfirm"),
+                |s: &mut Window, accept, tx| {
+                    s.confirm_close = false;
+                    if accept {
+                        s.memory_editor = Default::default();
+                        tx.close_window();
+                    }
+                },
+            ));
         }
         chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers).on_window_focus(
             |s: &mut Window, focused, _| {

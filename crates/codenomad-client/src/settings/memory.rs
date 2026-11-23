@@ -12,6 +12,18 @@ pub fn timestamp(value: &str) -> Option<i64> {
     (time.unix_timestamp_nanos() / 1_000_000).try_into().ok()
 }
 
+pub fn valid_title(title: &str) -> bool {
+    title.chars().count() <= 60
+        && title.chars().any(|c| {
+            !matches!(c,
+            '\u{9}'..='\u{d}' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}'
+            | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')
+        })
+        && !title
+            .chars()
+            .any(|c| matches!(c, '\0'..='\u{1f}' | '\u{7f}'))
+}
+
 pub async fn enabled(backend: &Backend) -> Result<bool> {
     let url = format!("{}api/memory/settings", backend.base);
     let response = backend
@@ -133,7 +145,13 @@ pub async fn list_at(
     scope: Scope,
     context: Option<(&str, Option<&str>)>,
 ) -> Result<List> {
-    let value = operation(backend, scope, context, json!({"action":"list"})).await?;
+    decode_list(
+        scope,
+        operation(backend, scope, context, json!({"action":"list"})).await?,
+    )
+}
+
+fn decode_list(scope: Scope, value: Value) -> Result<List> {
     let list: List = serde_json::from_value(value)?;
     let mut ids = std::collections::HashSet::new();
     if list.entries.len() > scope.limit()
@@ -149,9 +167,7 @@ pub async fn list_at(
             !entry.id.is_empty()
                 && entry.id.len() <= 128
                 && ids.insert(&entry.id)
-                && !entry.title.trim().is_empty()
-                && entry.title.chars().count() <= 60
-                && !entry.title.chars().any(char::is_control)
+                && valid_title(&entry.title)
                 && entry.text.chars().count() <= 2000
                 && entry.revision.len() == 64
                 && entry.revision.bytes().all(|b| b.is_ascii_hexdigit())
@@ -231,15 +247,13 @@ pub async fn create_cleanup_session(
     if !crate::history::valid_id(workspace) || !crate::absolute_server_path(directory) {
         return Err("Invalid cleanup Location".into());
     }
-    let generated = crate::prompt::message_id()?;
-    let requested_id = generated.replacen("msg_", "ses_", 1);
     let response = backend
         .client
         .post(format!(
             "{}workspaces/{workspace}/instance/api/session",
             backend.base
         ))
-        .json(&json!({"id":requested_id,"title":title,"location":{"directory":directory}}))
+        .json(&json!({"title":title,"location":{"directory":directory}}))
         .send()
         .await?
         .error_for_status()?;
@@ -247,7 +261,7 @@ pub async fn create_cleanup_session(
     let session = &value["data"];
     let id = session["id"]
         .as_str()
-        .filter(|id| *id == requested_id)
+        .filter(|id| crate::history::valid_id(id))
         .ok_or("Invalid cleanup session identity")?;
     if session["location"].get("workspaceID").is_some()
         || !session["location"]["directory"]
@@ -261,6 +275,27 @@ pub async fn create_cleanup_session(
     created.session = id.into();
     created.fresh_mode = false;
     Ok(created)
+}
+
+#[cfg(test)]
+#[test]
+fn memory_titles_follow_the_server_control_and_whitespace_contract() {
+    assert!(valid_title("Before\u{85}after"));
+    assert!(valid_title("\u{85}"));
+    assert!(!valid_title("\u{feff}\u{a0}"));
+    assert!(!valid_title("Before\nafter"));
+    let date = "2026-01-01T00:00:00.000Z";
+    let list = decode_list(
+        Scope::Global,
+        json!({
+            "scopeKey":"global","observedAt":date,"entries":[{
+                "id":"fixture","title":"Before\u{85}after","type":"fact","text":"fixture",
+                "createdAt":date,"updatedAt":date,"revision":"a".repeat(64),"flagged":false
+            }]
+        }),
+    )
+    .unwrap();
+    assert_eq!(list.entries[0].title, "Before\u{85}after");
 }
 
 #[cfg(test)]

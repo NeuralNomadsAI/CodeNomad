@@ -3,7 +3,7 @@ use super::{
     review::{Action, Edit, Fields, Review},
     t, text,
 };
-use codenomad_client::settings::memory::Kind;
+use codenomad_client::settings::memory::{Kind, valid_title};
 use rune::edit::TextEdit;
 use rune_theme_codenomad::{Space, field_kit};
 
@@ -40,6 +40,17 @@ impl Editor {
 
     pub fn shown(&self) -> bool {
         self.edit.is_some()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn has_unsaved(&self) -> bool {
+        self.edit.as_ref().is_some_and(|edit| self.dirty(edit))
+    }
+
+    #[cfg(test)]
+    pub(in crate::settings) fn fixture_dirty(&mut self) {
+        self.open(Edit::fixture());
+        self.text = TextEdit::new("Unsaved text");
     }
 
     pub fn dismiss(&mut self) {
@@ -227,14 +238,6 @@ impl Editor {
             move |s| access(s).dismiss(),
         ))
     }
-}
-
-pub(super) fn valid_title(title: &str) -> bool {
-    !title.trim().is_empty()
-        && title.chars().count() <= 60
-        && !title
-            .chars()
-            .any(|c| matches!(c, '\0'..='\u{1f}' | '\u{7f}' | '\u{2028}' | '\u{2029}'))
 }
 
 fn count(value: &str, limit: usize) -> El {

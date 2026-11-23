@@ -111,12 +111,10 @@ const server = createServer(async (req,res) => {
     if (p === `${base}session` && req.method === 'POST') {
       let body = ''
       for await (const chunk of req) body += chunk
-      const {id,...input} = JSON.parse(body)
-      assert.match(id,/^ses_[0-9a-f]{32}$/)
-      assert.deepEqual(input,{title:'Tidy up',location:{directory}})
-      cleanupSession = id
+      assert.deepEqual(JSON.parse(body),{title:'Tidy up',location:{directory}})
+      cleanupSession = 'ses_fixture'
       cleanupCreates++
-      return json({data:{id,title:'Tidy up',location:{directory}}})
+      return json({data:{id:cleanupSession,title:'Tidy up',location:{directory}}})
     }
     if (cleanupSession && p === `${base}session/${cleanupSession}/prompt`) {
       let body = ''
@@ -186,10 +184,13 @@ try {
   await page.locator('[role="switch"][aria-checked="true"]').waitFor({state:'attached'})
   assert.equal(await memory.getAttribute('aria-checked'),'true')
   assert.equal(memoryRequests.filter(method=>method==='PUT').length,1)
-  await page.getByRole('button',{name:'Entries 1/200',exact:true}).waitFor({state:'attached'})
+  await page.getByRole('button',{name:'Entries 1/200 New Needs review',exact:true}).waitFor({state:'attached'})
   assert.equal(await page.getByRole('button',{name:'Project memory',exact:true}).count(),0)
-  await click('Entries 1/200')
-  await visible('Needs review')
+  await click('Entries 1/200 New Needs review')
+  await page.getByText('Needs review',{exact:true}).last().waitFor({state:'attached'})
+  await click('Close settings')
+  await click('Settings')
+  await page.getByRole('button',{name:'Entries 1/200 Needs review',exact:true}).waitFor({state:'attached'})
   await click('Project memory')
   await visible('Excluded from agent context')
   const edit = async (label, value) => {

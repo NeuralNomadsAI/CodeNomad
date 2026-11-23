@@ -29,12 +29,18 @@ pub(super) struct Setting {
 impl Setting {
     pub fn show(&mut self, visible: bool) {
         if visible && !self.visible {
+            self.review.begin_visit();
             self.invalidate();
         }
         self.visible = visible;
         if !visible {
             self.review.suspend();
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn bind_seen(&mut self, store: Option<crate::platform::storage::Store>) {
+        self.review.bind_seen(store);
     }
 
     pub fn bind(&mut self, same: bool) {
@@ -89,11 +95,7 @@ impl Setting {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn cancel_cleanup_confirmation(&mut self) -> bool {
-        if self.review.cleanup_pending() {
-            self.review.action(review::Action::ConfirmTidy(false), None);
-            return true;
-        }
-        false
+        self.review.cancel_cleanup_confirmation()
     }
 
     pub fn take_cleanup(&mut self) -> Option<cleanup::Intent> {
