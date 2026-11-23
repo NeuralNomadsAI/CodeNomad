@@ -250,7 +250,7 @@ try {
         if(values.mobile)measured.android=await mobileInteraction(page,{
           prompt:messages['rune.prompt'], send:messages['promptInput.overlay.send'],
           latest:messages['rune.latest'],
-        },imagePage,palette.numbers[colorScheme])
+        },imagePage,palette.numbers[colorScheme],palette[colorScheme])
         if(values.mobile){
           measured.linkedContinuationRecovered=linkedContinuationRecovered
           measured.linkedAcrossSwitch=linkedAcrossSwitch
