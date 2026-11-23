@@ -38,6 +38,7 @@ node roundtrip.mjs $OpenCode
 |---|---|
 | (native-daemon modes) | Sign-in on both servers, then the Rust local admission surface (device, authority and server-pairing refusals; workspace claims, instance storage, `pending-requests`). |
 | `http` | Linked worktrees: creation, session move, evacuation on deletion, refusal of a modified checkout; owned locations and VCS reads. |
+| `meta-update` | Isolated release listing: preview offers through `/api/meta`, readiness and installed-release lookup, feed changes, and stale-offer suppression. |
 | `files` | Files and Git on a rich repository (rename, gitlink, conflict, CRLF, large and binary files), mutations, refusals, watches. |
 | `contract` | Session placement header, foreign sessions, outline in a worktree, `pending-requests`. |
 | `history-bytes` | Validated history JSON across the HTTP broker with a native RPC response at exactly 24 MiB, including numbers that expand when serialized again. |

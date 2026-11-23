@@ -34,6 +34,7 @@ pub struct App {
     pub scope: PathBuf,
     pub settings: crate::settings::Settings,
     pub meta: Value,
+    pub releases: crate::meta::releases::Monitor,
     pub native: Native,
     pub binary: PathBuf,
     pub inner: Lock<Inventory>,
@@ -113,6 +114,7 @@ impl App {
     ) -> Self {
         let mission_bridge = missions::run::new_token();
         Self {
+            releases: crate::meta::releases::Monitor::new(&settings),
             sidecars: Lock::new(crate::sidecars::load(&settings.owner(crate::settings::Kind::Config, "server"))),
             usage: Default::default(),
             provider_usage: Default::default(),
