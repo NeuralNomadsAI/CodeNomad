@@ -16,23 +16,18 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
             composer::view::overlays(s, &mut layer);
         }
         shell::notifications::app_layers(s, &mut layer);
+        #[cfg(not(target_arch = "wasm32"))]
+        layer.extend(chat::authentication::dialog(s));
         let body = layout::with_overlays(base, layer);
         #[cfg(target_arch = "wasm32")]
-        if platform::pairing::required(s) {
-            return rune::col()
+        {
+            rune::col()
                 .full_width()
                 .full_height()
-                .child(platform::pairing::view(s))
-                .child(body.remaining());
+                .children(platform::pairing::required(s).then(|| platform::pairing::view(s)))
+                .child(body.remaining())
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(dialog) = chat::authentication::dialog(s) {
-            return rune::col()
-                .full_width()
-                .full_height()
-                .child(body)
-                .child(dialog);
-        }
         body
     })
     .on_window_focus(shell::notifications::focus_changed)

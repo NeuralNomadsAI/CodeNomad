@@ -31,6 +31,8 @@ export async function openSessionSearch(page, sidebar, messages, tap) {
     await touch(trigger)
     await field.waitFor()
     assert.equal(await trigger.getAttribute('aria-expanded'),'true')
+    assert(await page.evaluate(()=>performance.getEntriesByName('session-search.activate','mark').length>0),
+      'Opening the search must run its Rust handler')
     // A project without a conversation already shows the creation form.
     assert.equal(await create.count(),before,
       'Opening session search must not open New Session')

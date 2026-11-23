@@ -243,6 +243,37 @@ fn compressed_grip_starts_at_its_presented_width_and_accepts_keyboard() {
 }
 
 #[test]
+fn session_search_keeps_the_pressed_control_when_the_field_mounts() {
+    let mut state = init();
+    fixture(&mut state);
+    let mut rt = Runtime::new(state, english, (600.0, 900.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    click(&mut rt, "sessions-panel-toggle");
+    let key = "session-search-toggle";
+    let path = |rt: &Runtime<State>| {
+        rt.elements()
+            .into_iter()
+            .find(|element| element.key.as_deref() == Some(key))
+            .unwrap()
+            .path
+    };
+    let before = path(&rt);
+    let (x, y) = rt.find(key).unwrap();
+    rt.touch(1, rune::TouchPhase::Started, x, y, 0.0);
+    rt.update(|s, _| s.screen.launcher_mut().unwrap().show_search = true);
+    rt.frame(0.02);
+    assert!(rt.find("session-search").is_some());
+    let after = path(&rt);
+    rt.touch(1, rune::TouchPhase::Ended, x, y, 0.05);
+    settle(&mut rt);
+    assert!(
+        !rt.state.screen.launcher().unwrap().show_search,
+        "touch release was lost after reparenting: {before} → {after}"
+    );
+    assert_eq!(before, after);
+}
+
+#[test]
 fn resizing_out_of_room_returns_focus_from_the_search_editor() {
     let mut state = init();
     fixture(&mut state);

@@ -91,7 +91,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 }
             })
     };
-    let mut header = shell::header(
+    let header = shell::header(
         true,
         floating,
         touch,
@@ -132,19 +132,17 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 .key("session-search-toggle"),
         ],
     );
-    if l.show_search {
+    let search = l.show_search.then(|| {
         let name = t("sessionList.filter.ariaLabel");
-        header = col().full_width().child(header).child(
-            col().full_width().role("group").label(name).child(
-                hinted_field(&l.search, t("sessionList.filter.placeholder"))
-                    .label(name)
-                    .on_edit(screen::edit(scope, Editor::Search))
-                    .on_key(editor_keys.clone())
-                    .build(field_kit(layout::dark()))
-                    .key("session-search"),
-            ),
-        );
-    }
+        col().full_width().role("group").label(name).child(
+            hinted_field(&l.search, t("sessionList.filter.placeholder"))
+                .label(name)
+                .on_edit(screen::edit(scope, Editor::Search))
+                .on_key(editor_keys.clone())
+                .build(field_kit(layout::dark()))
+                .key("session-search"),
+        )
+    });
     let searching = l.show_search && !l.search.text.trim().is_empty();
     let mut seen = std::collections::HashSet::new();
     let remote_search = cfg!(target_arch = "wasm32") && searching;
@@ -231,7 +229,11 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         !workspace::input_ready(s),
         screen::action(scope, |s| launcher::list(s, false)),
     ));
-    let mut pane = col().full_width().full_height().child(header);
+    let mut pane = col()
+        .full_width()
+        .full_height()
+        .child(header.key("sessions-toolbar"))
+        .children(search);
     if l.show_title || s.screen.is_launcher() {
         pane = pane.child(
             col()
