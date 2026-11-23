@@ -49,3 +49,5 @@ cargo +1.99.1 check --locked --target wasm32-unknown-unknown -p codenomad-rune-a
 ```
 
 La compilation des cibles précède la qualification de la coquille servie par le serveur. Celle-ci couvre connexion, liste des sessions et lecture avec le même code d'état et de vues. Le parcours complet sur téléphone ajoute écriture, permissions, questions et arrêt via l'accès distant, puis les notifications push.
+
+`node scripts/rune/web-loopback-links.mjs <bundle>` vérifie les liens sous Chromium mobile avec la scène `transcript-loopback` d'un bundle WASM construit et empaqueté avec `test-support`. Le banc intercepte l'origine distante et les destinations dans le navigateur.

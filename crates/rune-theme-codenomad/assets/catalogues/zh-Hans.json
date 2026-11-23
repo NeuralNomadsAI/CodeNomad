@@ -923,6 +923,7 @@
   "markdown.codeBlock.wrap.enable": "启用自动换行",
   "markdown.copy": "复制",
   "markdown.link.fileOpens": "在文件预览中打开。Ctrl+点击（macOS 上为 ⌘+点击）或鼠标中键点击可在浏览器中打开。",
+  "markdown.link.loopbackOnHost": "此地址会在当前设备上打开。要访问服务器上的服务，请在服务器上打开此地址。",
   "markdown.link.previewOpens": "在网页预览中打开。Ctrl+点击（macOS 上为 ⌘+点击）或鼠标中键点击可在浏览器中打开。",
   "markdown.mermaid.diagram": "Mermaid 图表",
   "markdown.mermaid.failed": "请检查源码及支持的图表格式。",

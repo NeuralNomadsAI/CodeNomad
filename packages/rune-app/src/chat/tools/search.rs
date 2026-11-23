@@ -97,7 +97,7 @@ pub(super) fn view(s: &State, output: &str) -> Option<El> {
                         result.title,
                         false,
                         screen::action_tx(&s.input_scope, move |_, tx| {
-                            let _ = tx.open_url(&result.url);
+                            super::super::links::open_external(&result.url, tx);
                         }),
                     ))
                     .child(text(label).text_role(TextRole::Label))

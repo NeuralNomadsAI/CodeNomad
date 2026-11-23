@@ -1,4 +1,5 @@
 export const markdownMessages = {
+  "markdown.link.loopbackOnHost": "यो ठेगाना तपाईंको उपकरणमा खुल्छ। सर्भरको सेवा चलाउन यसलाई सर्भरमै खोल्नुहोस्।",
   "markdown.mermaid.diagram": "Mermaid चित्र",
   "markdown.mermaid.preview": "चित्र देखाउनुहोस्",
   "markdown.mermaid.source": "स्रोत देखाउनुहोस्",

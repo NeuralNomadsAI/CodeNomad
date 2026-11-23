@@ -923,6 +923,7 @@
   "markdown.codeBlock.wrap.enable": "Activer le retour à la ligne",
   "markdown.copy": "Copier",
   "markdown.link.fileOpens": "S'ouvre dans l'aperçu du fichier. Ctrl+clic (⌘-clic sur macOS) ou clic milieu l'ouvre dans votre navigateur.",
+  "markdown.link.loopbackOnHost": "Cette adresse s’ouvre sur votre appareil. Pour accéder au service du serveur, ouvrez-la sur le serveur.",
   "markdown.link.previewOpens": "S'ouvre dans l'aperçu web. Ctrl+clic (⌘-clic sur macOS) ou clic milieu l'ouvre dans votre navigateur.",
   "markdown.mermaid.diagram": "Diagramme Mermaid",
   "markdown.mermaid.failed": "Vérifiez la source et les formats de diagramme pris en charge.",

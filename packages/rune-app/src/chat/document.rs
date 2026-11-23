@@ -51,11 +51,9 @@ pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, li
                     } else {
                         HIGHLIGHT_LIMIT
                     },
-                move |s: &mut State, url, tx| {
-                    if s.current_scope(&link_scope) {
-                        links::open(s, url, tx);
-                    }
-                },
+                links::on_open(link_scope.clone()),
+                links::on_menu(link_scope),
+                links::help,
                 {
                     let unwrapped = unwrapped.clone();
                     move |index, _| !unwrapped.contains(&index)

@@ -136,6 +136,22 @@ fn init() -> State {
 fn setup(s: &mut State, wake: rune::Waker) {
     s.wake = wake.clone();
     #[cfg(feature = "test-support")]
+    if platform::scene_is("transcript-loopback") {
+        s.messages.push(
+            Message {
+                id: "loopback-fixture".into(),
+                role: "assistant".into(),
+                completed: true,
+                parts: vec![],
+                usage: None,
+                body: chat::LOOPBACK_LINK_SCENE.into(),
+            }
+            .into(),
+        );
+        s.phase = Phase::Ready;
+        return;
+    }
+    #[cfg(feature = "test-support")]
     if platform::scene_is("transcript") {
         #[cfg(target_arch = "wasm32")]
         transcript::load_scene(s);

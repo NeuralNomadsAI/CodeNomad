@@ -10,6 +10,8 @@ pub(crate) mod events;
 mod links;
 mod media;
 pub(crate) mod message_actions;
+#[cfg(feature = "test-support")]
+pub(crate) use links::SAMPLE as LOOPBACK_LINK_SCENE;
 pub(crate) mod reader;
 pub(crate) mod reading;
 mod receipts;

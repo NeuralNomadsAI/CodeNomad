@@ -148,6 +148,15 @@ pub fn client_id() -> Result<String> {
 }
 /// Parse an external link without accepting credentials or active schemes.
 pub fn external_http_url(raw: &str) -> Option<(String, String)> {
+    let url = credential_free_http_url(raw)?;
+    let mut host = url.host_str()?.to_owned();
+    if let Some(port) = url.port() {
+        host.push_str(&format!(":{port}"));
+    }
+    Some((url.into(), host))
+}
+
+fn credential_free_http_url(raw: &str) -> Option<reqwest::Url> {
     let url = reqwest::Url::parse(raw).ok()?;
     if !matches!(url.scheme(), "http" | "https")
         || !url.username().is_empty()
@@ -155,9 +164,44 @@ pub fn external_http_url(raw: &str) -> Option<(String, String)> {
     {
         return None;
     }
-    let mut host = url.host_str()?.to_owned();
-    if let Some(port) = url.port() {
-        host.push_str(&format!(":{port}"));
+    Some(url)
+}
+
+/// Match Solid's explicit HTTP(S) conversation links, using the parsed host.
+pub fn is_loopback_http_url(raw: &str) -> bool {
+    let Some((scheme, _)) = raw.split_once("://") else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return false;
     }
-    Some((url.into(), host))
+    credential_free_http_url(raw).is_some_and(|url| {
+        url.host_str().is_some_and(|host| {
+            matches!(host, "localhost" | "0.0.0.0" | "[::1]")
+                || host
+                    .parse::<std::net::Ipv4Addr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        })
+    })
+}
+
+#[cfg(test)]
+#[test]
+fn loopback_requires_an_explicit_http_scheme_and_literal_host() {
+    for host in ["localhost", "127.0.0.1", "[::1]", "127.1", "0.0.0.0"] {
+        assert!(is_loopback_http_url(&format!(
+            "http://{host}:9200/a%2Fb?mode=1#target"
+        )));
+    }
+    for raw in [
+        "https://127.0.0.1.example.org/",
+        "//localhost:8080/",
+        "mailto:local@example.org",
+        "http://alice:demo@localhost:8123/",
+        "http://alice@127.0.0.1:8123/",
+        "https://:demo@[::1]:8123/",
+    ] {
+        assert!(!is_loopback_http_url(raw));
+    }
+    assert!(external_http_url("http://alice:demo@localhost:8123/").is_none());
 }
