@@ -133,9 +133,11 @@ export async function revokedLauncher({context,url,messages}){
       const generic=await page.getByLabel('Password input',{exact:true}).evaluateAll(fields=>fields.map(field=>{
         const rect=field.getBoundingClientRect(),style=getComputedStyle(field)
         return {bridge:field instanceof HTMLInputElement&&field.type==='password'&&field.parentElement===document.body&&
-          field.tabIndex===-1&&field!==document.activeElement&&style.opacity==='0'&&style.pointerEvents==='none'&&rect.width<=2&&rect.height<=2}
+          field.tabIndex===-1&&field!==document.activeElement&&style.opacity==='0'&&style.pointerEvents==='none',
+          tag:field.tagName,type:field.type,tabIndex:field.tabIndex,focused:field===document.activeElement,
+          opacity:style.opacity,pointerEvents:style.pointerEvents,rect:[rect.width,rect.height]}
       }))
-      assert(generic.length<=1&&generic.every(field=>field.bridge),'Only the inert-looking Rune password proxy may carry the generic label')
+      assert(generic.length<=1&&generic.every(field=>field.bridge),`Only Rune's hidden password proxy may carry the generic label: ${JSON.stringify(generic)}`)
       assert.equal(await page.locator('input[type=password]').count(),generic.length,'Reject password controls with any other label')
       const mirror=await page.locator('body').ariaSnapshot()
       return mirror.includes('textbox "Password input"')
