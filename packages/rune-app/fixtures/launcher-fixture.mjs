@@ -268,7 +268,10 @@ const upstream=createServer(async(req,res)=>{
           return json({error:'Synthetic native move refusal'})
         }
         assert.equal(directory,review)
-        record.location.directory=review
+        const previous=record.location
+        record.location={directory:review}
+        const event={id:randomUUID(),type:'session.moved',created:Date.now(),location:previous,data:{sessionID:id,location:record.location}}
+        for(const stream of streams)stream.write(`data: ${JSON.stringify(event)}\n\n`)
         return json({data:record})
       }
       if(action==='message')return json({data:store.rows.slice(-Number(url.searchParams.get('limit'))),cursor:url.searchParams.get('order')==='asc'?{next:'future-read-anchor'}:{}})

@@ -75,8 +75,8 @@ enum Reply {
     #[cfg(target_arch = "wasm32")]
     Reopened(crate::workspace::opening::Opening, Backend, String, String),
     Placed(Backend, String, String, bool, bool),
-    PlacementUnconfirmed(Vec<String>),
-    PlacementReconciled(Backend, String, String, HashSet<String>),
+    PlacementUnconfirmed(crate::git::PlacementHold),
+    PlacementReconciled(Backend, String, String, crate::git::PlacementHold),
 }
 type Selection = (Backend, String, Option<usize>, Instant, String);
 enum Restored {

@@ -73,7 +73,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 
 ## Workspace and qualification
 
-The composer's worktree selector changes conversation placement through the server's family transaction. Browsing Git checkouts stays independent. The selector reconciles the scoped session read before rebinding the conversation and its Git target; the existing occurrence retains its draft.
+The composer's worktree selector changes conversation placement through the server's family transaction. Browsing Git checkouts stays independent. A settled reply and fresh placement and activity reads precede rebinding; the occurrence retains its draft and reading anchor. A lost reply keeps the family on hold for the life of the window.
 
 Preferences uses the authenticated host connection from the launcher or direct conversation startup. Conversation startup waits for the host-only observer to close before opening its stream. Configuration events invalidate Preferences and Git diff settings outside history recovery; state events invalidate Preferences alone. Native direct startup verifies authentication status after a login, SSE or prompt 401 before presenting the password dialog. Recovery retains the conversation and draft, reattests the original server for an open session and starts a fresh history read. The launcher retains the session and locks the server address during password entry. Browser EventSource recovery uses the web platform's pairing flow.
 

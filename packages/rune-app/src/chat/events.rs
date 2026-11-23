@@ -91,6 +91,17 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Workspace(event) => {
+                if matches!(
+                    event,
+                    codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
+                ) {
+                    chat::reader::suspend(s);
+                    s.composer.picker.set_attachments_supported(false);
+                    s.attachments.cancel();
+                    s.messages.clear();
+                    s.history_detached = false;
+                    s.can_older = false;
+                }
                 git::event(s, &event);
                 if let Some(files) = &mut s.files {
                     files.event(event);

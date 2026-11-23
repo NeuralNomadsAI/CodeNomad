@@ -69,19 +69,27 @@ pub(crate) fn place(s: &mut State, target: String) {
         }
         // A transport failure cannot establish when the server finished the POST.
         // Defer its separate reconciliation to an explicit read gesture.
-        if let Err(error) = &moved
-            && error
+        let answered = match &moved {
+            Ok(_) => true,
+            Err(error) => error
                 .downcast_ref::<codenomad_client::git::Refusal>()
-                .is_none()
-        {
-            return Ok(Reply::PlacementUnconfirmed(affected.into_iter().collect()));
+                .is_some_and(codenomad_client::git::Refusal::placement_answered),
+        };
+        let hold = || {
+            Reply::PlacementUnconfirmed(git::PlacementHold {
+                members: affected.clone(),
+                answered,
+            })
+        };
+        if !answered {
+            return Ok(hold());
         }
         match reconcile(&backend, &project, &id, &native, &affected).await {
             Ok((bound, title, actual)) => {
                 let confirmed = moved.is_ok() && actual == target;
                 Ok(Reply::Placed(bound, title, actual, confirmed, true))
             }
-            Err(_) => Ok(Reply::PlacementUnconfirmed(affected.into_iter().collect())),
+            Err(_) => Ok(hold()),
         }
     });
 }
@@ -145,6 +153,7 @@ async fn reconcile(
     affected: &HashSet<String>,
 ) -> Result<(Backend, String, String)> {
     let rows = inventory(backend, project, native).await?;
+    let current_family = family(&rows, selected)?;
     let (bound, info, actual) = backend
         .bind_session_placed(project, selected, false)
         .await?;
@@ -152,12 +161,10 @@ async fn reconcile(
         .iter()
         .filter(|m| affected.contains(&m.session.id))
         .map(|m| m.directory.as_str())
+        .chain(current_family.into_iter().map(|m| m.directory.as_str()))
         .collect();
     for directory in directories {
-        let mut url = reqwest::Url::parse(&format!("{}session/active", backend.base))?;
-        url.query_pairs_mut().append_pair("directory", directory);
-        let path = format!("session/active?{}", url.query().unwrap_or_default());
-        if !bound.control_get(&path).await?["data"].is_object() {
+        if !bound.placement_activity(directory).await?["data"].is_object() {
             return Err("activity unavailable".into());
         }
     }
@@ -168,7 +175,7 @@ pub(crate) fn retry(s: &mut State) {
     let Some(id) = workspace::active_session(s).map(str::to_owned) else {
         return;
     };
-    let Some(affected) = git::placement_hold(s) else {
+    let Some(hold) = git::placement_hold(s).filter(|hold| hold.answered) else {
         return;
     };
     let Some(l) = s.screen.launcher_mut().filter(|l| !l.pending) else {
@@ -182,7 +189,8 @@ pub(crate) fn retry(s: &mut State) {
             .native_project(&project)
             .await?
             .ok_or("missing project inventory")?;
-        let (bound, title, actual) = reconcile(&backend, &project, &id, &native, &affected).await?;
-        Ok(Reply::PlacementReconciled(bound, title, actual, affected))
+        let (bound, title, actual) =
+            reconcile(&backend, &project, &id, &native, &hold.members).await?;
+        Ok(Reply::PlacementReconciled(bound, title, actual, hold))
     });
 }

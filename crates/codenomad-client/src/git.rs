@@ -130,6 +130,15 @@ impl fmt::Display for Refusal {
 }
 impl std::error::Error for Refusal {}
 
+impl Refusal {
+    pub fn placement_answered(&self) -> bool {
+        ((400..500).contains(&self.status) && self.status != 408 && self.message.is_some())
+            || (self.status == 502
+                && self.message.as_deref()
+                    == Some("Native worktree operation could not be verified"))
+    }
+}
+
 fn placement_members(value: &Value, session: &str) -> Result<Vec<String>> {
     let root = value["rootSessionId"]
         .as_str()
@@ -152,6 +161,16 @@ fn placement_members(value: &Value, session: &str) -> Result<Vec<String>> {
 }
 
 impl Backend {
+    pub async fn placement_activity(&self, directory: &str) -> Result<Value> {
+        let mut query = Url::parse(&self.base)?;
+        query.query_pairs_mut().append_pair("directory", directory);
+        self.control_get(&format!(
+            "session/active?{}",
+            query.query().unwrap_or_default()
+        ))
+        .await
+    }
+
     pub async fn place_session(&self, slug: &str) -> Result<Vec<String>> {
         if !valid_id(&self.session) || !valid_slug(slug) {
             return Err("invalid session placement".into());
