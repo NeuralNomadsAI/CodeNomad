@@ -1078,6 +1078,7 @@
   "messageTimeline.tooltip.compaction.auto": "Otomatik Sıkıştırma",
   "messageTimeline.tooltip.compaction.manual": "Kullanıcı Sıkıştırması",
   "messageTimeline.tooltip.userFallback": "Kullanıcı mesajı",
+  "missions.activation.disableConfirm": "OpenCode’un genel yapılandırmasında Görevler devre dışı bırakılsın mı? Hiçbir şey silinmez veya duraklatılmaz.",
   "missions.briefing.achieved": "Hazır olanlar",
   "missions.briefing.authored": "Koordinatör değerlendirmesi",
   "missions.briefing.changed": "Bu özetten sonra görev haritası değişti.",

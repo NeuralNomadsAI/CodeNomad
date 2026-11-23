@@ -1078,6 +1078,7 @@
   "messageTimeline.tooltip.compaction.auto": "סיכום אוטומטי",
   "messageTimeline.tooltip.compaction.manual": "סיכום ידני",
   "messageTimeline.tooltip.userFallback": "הודעת משתמש",
+  "missions.activation.disableConfirm": "להשבית משימות בתצורה הגלובלית של OpenCode? דבר לא יימחק ולא יושהה.",
   "missions.briefing.achieved": "מה מוכן",
   "missions.briefing.authored": "הערכת המתאם",
   "missions.briefing.changed": "מפת המשימה השתנתה מאז תמונת המצב הזאת.",

@@ -1078,6 +1078,7 @@
   "messageTimeline.tooltip.compaction.auto": "Автокомпактация",
   "messageTimeline.tooltip.compaction.manual": "Компактация пользователем",
   "messageTimeline.tooltip.userFallback": "Сообщение пользователя",
+  "missions.activation.disableConfirm": "Отключить миссии в глобальной конфигурации OpenCode? Ничего не будет удалено или приостановлено.",
   "missions.briefing.achieved": "Что готово",
   "missions.briefing.authored": "Оценка координатора",
   "missions.briefing.changed": "Карта миссии изменилась после этой сводки.",

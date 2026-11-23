@@ -1078,6 +1078,7 @@
   "messageTimeline.tooltip.compaction.auto": "स्वतः संक्षिप्तीकरण",
   "messageTimeline.tooltip.compaction.manual": "प्रयोगकर्ता संक्षिप्तीकरण",
   "messageTimeline.tooltip.userFallback": "प्रयोगकर्ता सन्देश",
+  "missions.activation.disableConfirm": "OpenCode को ग्लोबल कन्फिगरेसनमा मिसनहरू निष्क्रिय गर्ने हो? केही पनि मेटिँदैन वा पज हुँदैन।",
   "missions.briefing.achieved": "तयार भएका कुरा",
   "missions.briefing.authored": "संयोजकको मूल्याङ्कन",
   "missions.briefing.changed": "यस सारांशपछि मिसनको नक्सा बदलिएको छ।",

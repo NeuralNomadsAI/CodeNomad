@@ -1078,6 +1078,7 @@
   "messageTimeline.tooltip.compaction.auto": "Auto Compaction",
   "messageTimeline.tooltip.compaction.manual": "User Compaction",
   "messageTimeline.tooltip.userFallback": "User message",
+  "missions.activation.disableConfirm": "Disable Missions in OpenCode’s Global configuration? Nothing is deleted or paused.",
   "missions.briefing.achieved": "What is ready",
   "missions.briefing.authored": "Coordinator assessment",
   "missions.briefing.changed": "The mission map has changed since this briefing.",

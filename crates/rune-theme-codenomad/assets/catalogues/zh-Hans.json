@@ -1078,6 +1078,7 @@
   "messageTimeline.tooltip.compaction.auto": "自动压缩",
   "messageTimeline.tooltip.compaction.manual": "手动压缩",
   "messageTimeline.tooltip.userFallback": "用户消息",
+  "missions.activation.disableConfirm": "在 OpenCode 全局配置中停用任务？不会删除或暂停任何内容。",
   "missions.briefing.achieved": "已经准备好的内容",
   "missions.briefing.authored": "协调者的评估",
   "missions.briefing.changed": "本简报之后任务计划已有变化。",

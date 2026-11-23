@@ -1078,6 +1078,7 @@
   "messageTimeline.tooltip.compaction.auto": "自動コンパクト化",
   "messageTimeline.tooltip.compaction.manual": "手動コンパクト化",
   "messageTimeline.tooltip.userFallback": "ユーザーのメッセージ",
+  "missions.activation.disableConfirm": "OpenCode のグローバル設定でミッションを無効にしますか？削除や一時停止は行われません。",
   "missions.briefing.achieved": "準備できているもの",
   "missions.briefing.authored": "コーディネーターの評価",
   "missions.briefing.changed": "この状況整理以降にミッションの計画が変更されました。",

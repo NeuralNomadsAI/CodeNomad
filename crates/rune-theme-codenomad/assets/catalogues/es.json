@@ -1078,6 +1078,7 @@
   "messageTimeline.tooltip.compaction.auto": "Compactación automática",
   "messageTimeline.tooltip.compaction.manual": "Compactación manual",
   "messageTimeline.tooltip.userFallback": "Mensaje del usuario",
+  "missions.activation.disableConfirm": "¿Desactivar las Misiones en la configuración global de OpenCode? No se elimina ni se pausa nada.",
   "missions.briefing.achieved": "Lo que está listo",
   "missions.briefing.authored": "Evaluación del coordinador",
   "missions.briefing.changed": "El mapa de la misión cambió desde este balance.",
