@@ -718,7 +718,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // sit between its rows, rather than all belonging to older history. Keep
     // each omitted run after its preceding shared row, using native order.
     const preservedAfter = new Map<string | undefined, string[]>()
+    const trailingArrivals: string[] = []
     let keptArrivals = false
+    let seenSharedId = false
     let precedingId: string | undefined
     const attach = (id: string) => {
       const run = preservedAfter.get(precedingId) ?? []
@@ -727,17 +729,22 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
     for (const id of currentIds) {
       if (serverIdSet.has(id)) {
+        seenSharedId = true
         precedingId = id
         continue
       }
       if (!baselineIds.has(id)) {
         // Arrived after the snapshot was planned. The snapshot never spoke
-        // about this row: a latest-window load keeps the newer content in
-        // place, while a history replacement drops it exactly as the
-        // synchronous path omits rows its page does not hold. The whole
-        // arrival run stays anchored after the last shared id.
+        // about this row: a latest-window load keeps the newer content,
+        // while a history replacement drops it exactly as the synchronous
+        // path omits rows its page does not hold. The whole arrival run
+        // stays anchored after the last shared id - and arrivals that share
+        // no id with the page land at the end, where the newest rows
+        // belong, instead of ahead of older messages the cap would rather
+        // evict.
         if (keepArrivals) {
-          attach(id)
+          if (seenSharedId) attach(id)
+          else trailingArrivals.push(id)
           keptArrivals = true
         } else {
           omittedIds.push(id)
@@ -758,6 +765,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const incomingIds = [
       ...preservedAfter.get(undefined) ?? [],
       ...serverIds.flatMap((id) => [id, ...preservedAfter.get(id) ?? []]),
+      ...trailingArrivals,
       ...pendingOptimisticIds,
     ]
     return { previousMessageIds: currentIds, pendingOptimisticIds, omittedIds, preservedAfter, incomingIds, keptArrivals }
@@ -810,6 +818,18 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return normalized
   }
 
+  /** Whether a fetched info carries usage a resident entry lacks: tokens
+   * or cost the newer writer did not publish. */
+  function snapshotInfoExtends(current: MessageInfo | undefined, fetched: MessageInfo): boolean {
+    if (!current) return true
+    const currentTokens = current.tokens
+    const fetchedTokens = fetched.tokens
+    const currentTotal = (currentTokens?.input ?? 0) + (currentTokens?.output ?? 0) + (currentTokens?.reasoning ?? 0)
+    const fetchedTotal = (fetchedTokens?.input ?? 0) + (fetchedTokens?.output ?? 0) + (fetchedTokens?.reasoning ?? 0)
+    if (fetchedTotal > currentTotal) return true
+    return (fetched.cost ?? 0) > (current.cost ?? 0)
+  }
+
   function isTerminalToolStatus(status: unknown): boolean {
     return status === "completed" || status === "error"
   }
@@ -837,49 +857,139 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       return residentUpdatedAt > snapshotUpdatedAt
     }
     if (resident.type === "text" || resident.type === "reasoning") {
-      if (!isCommittedProsePart(resident)) {
-        const residentText = typeof (resident as { text?: unknown }).text === "string" ? (resident as { text: string }).text : ""
-        const snapshotText = typeof (snapshot as { text?: unknown }).text === "string" ? (snapshot as { text: string }).text : ""
-        return snapshotText.length < residentText.length && residentText.startsWith(snapshotText)
+      // Completion evidence orders before any prefix reasoning: a committed
+      // fetched fragment is the final version even when it is shorter than
+      // what the open stream displayed (`updatedAt` may hold the creation
+      // time and cannot order these).
+      const residentCommitted = isCommittedProsePart(resident)
+      const snapshotCommitted = isCommittedProsePart(snapshot)
+      if (snapshotCommitted && !residentCommitted) return false
+      if (!residentCommitted) {
+        if (!snapshotCommitted) {
+          // Two open fragments: the stream continued past the fetch only
+          // when the fetched text is a strict prefix of the live text.
+          const residentText = typeof (resident as { text?: unknown }).text === "string" ? (resident as { text: string }).text : ""
+          const snapshotText = typeof (snapshot as { text?: unknown }).text === "string" ? (snapshot as { text: string }).text : ""
+          return snapshotText.length < residentText.length && residentText.startsWith(snapshotText)
+        }
+        return false
       }
-      if (!isCommittedProsePart(snapshot)) return true
+      if (!snapshotCommitted) return true
     }
     return residentUpdatedAt > snapshotUpdatedAt
   }
 
-  /** Merges a fetched record into one the store no longer holds as the
-   * chunks diffed it: per part, the winner above decides; parts only one
-   * side holds stay. Returns the resident record when nothing of the
-   * snapshot survives. */
-  function mergeSnapshotRecord(resident: MessageRecord, next: MessageRecord): MessageRecord {
-    const ids = [...next.partIds]
-    const nextIds = new Set(next.partIds)
-    for (const id of resident.partIds) {
-      if (!nextIds.has(id)) ids.push(id)
+  /** A winning prose part still carries the fetched fragment's end
+   * metadata when the fetched side holds it: the resident text with the
+   * snapshot's `time`/`native` completion fields. */
+  function prosePartWithFetchedEnd(winner: ClientPart, fetched: ClientPart): ClientPart {
+    const merged = { ...winner } as Record<string, unknown>
+    let changed = false
+    const winnerTime = (winner as { time?: unknown }).time
+    const fetchedTime = (fetched as { time?: unknown }).time
+    if (fetchedTime !== undefined && winnerTime === undefined) {
+      merged.time = fetchedTime
+      changed = true
     }
+    const winnerNative = (winner as { native?: unknown }).native
+    const fetchedNative = (fetched as { native?: unknown }).native
+    if (fetchedNative !== undefined && winnerNative === undefined) {
+      merged.native = fetchedNative
+      changed = true
+    }
+    return changed ? (merged as unknown as ClientPart) : winner
+  }
+
+  /** Merges a fetched record into one the store no longer holds as the
+   * chunks diffed it. Prose fragments (text, reasoning) pair by kind and
+   * ordinal the way the native merge does - anonymous fragments carry no id
+   * to pair on - and every other part pairs by id. The winner above decides
+   * each pair; parts only one side holds stay. Returns the resident record
+   * when nothing of the snapshot survives. */
+  function mergeSnapshotRecord(resident: MessageRecord, next: MessageRecord): MessageRecord {
+    type ProseSide = { id: string; part: MessageRecord["parts"][string]; ordinal: number }
+    const proseOf = (record: MessageRecord): Map<string, ProseSide[]> => {
+      const byKind = new Map<string, ProseSide[]>()
+      let textOrdinal = 0
+      let reasoningOrdinal = 0
+      for (const id of record.partIds) {
+        const part = record.parts[id]?.data
+        if (!part) continue
+        if (part.type === "text" || part.type === "reasoning") {
+          const ordinal = part.type === "text" ? textOrdinal++ : reasoningOrdinal++
+          const bucket = byKind.get(part.type) ?? []
+          bucket.push({ id, part: record.parts[id]!, ordinal })
+          byKind.set(part.type, bucket)
+        }
+      }
+      return byKind
+    }
+    const residentProse = proseOf(resident)
+    const snapshotProse = proseOf(next)
+    const residentProseUsed = new Set<string>()
+    const snapshotProseUsed = new Set<string>()
+    const mergedParts: MessageRecord["parts"] = {}
+    const mergedIds: string[] = []
     let snapshotSurvives = false
-    const parts: MessageRecord["parts"] = {}
-    for (const id of ids) {
-      const residentPart = resident.parts[id]
+    const resolveProsePair = (snapshotId: string, residentSide: ProseSide | undefined, snapshotSide: ProseSide) => {
+      snapshotProseUsed.add(snapshotId)
+      if (!residentSide) {
+        mergedParts[snapshotId] = snapshotSide.part
+        snapshotSurvives = true
+        return
+      }
+      residentProseUsed.add(residentSide.id)
+      if (residentPartWins(residentSide.part.data, snapshotSide.part.data, resident.updatedAt, next.updatedAt)) {
+        mergedParts[snapshotId] = { ...residentSide.part, data: prosePartWithFetchedEnd(residentSide.part.data, snapshotSide.part.data) }
+      } else {
+        mergedParts[snapshotId] = snapshotSide.part
+        snapshotSurvives = true
+      }
+    }
+    for (const id of next.partIds) {
       const snapshotPart = next.parts[id]
-      if (!snapshotPart) {
-        if (residentPart) parts[id] = residentPart
+      const snapshotKind = snapshotPart?.data.type
+      if (snapshotPart && (snapshotKind === "text" || snapshotKind === "reasoning")) {
+        const ordinal = snapshotProse.get(snapshotKind)?.find((side) => side.id === id)?.ordinal
+        const residentSide = ordinal === undefined ? undefined : residentProse.get(snapshotKind)?.find((side) => side.ordinal === ordinal)
+        resolveProsePair(id, residentSide, { id, part: snapshotPart, ordinal: ordinal ?? 0 })
+        mergedIds.push(id)
         continue
       }
+      mergedIds.push(id)
+      if (!snapshotPart) continue
+      const residentPart = resident.parts[id]
       if (!residentPart) {
-        parts[id] = snapshotPart
+        mergedParts[id] = snapshotPart
         snapshotSurvives = true
         continue
       }
       if (residentPartWins(residentPart.data, snapshotPart.data, resident.updatedAt, next.updatedAt)) {
-        parts[id] = residentPart
+        mergedParts[id] = residentPart
       } else {
-        parts[id] = snapshotPart
+        mergedParts[id] = snapshotPart
         snapshotSurvives = true
       }
     }
+    for (const id of resident.partIds) {
+      if (mergedIds.includes(id) || residentProseUsed.has(id)) continue
+      const residentPart = resident.parts[id]
+      if (!residentPart) continue
+      const kind = residentPart.data.type
+      if (kind === "text" || kind === "reasoning") {
+        // Unpaired resident prose beyond the snapshot's ordinals: kept at
+        // the tail in resident order.
+        mergedIds.push(id)
+        mergedParts[id] = residentPart
+        continue
+      }
+      if (!next.parts[id]) {
+        mergedIds.push(id)
+        mergedParts[id] = residentPart
+      }
+    }
     if (!snapshotSurvives) return resident
-    return { ...next, parts, partIds: ids, revision: resident.revision + 1 }
+    return { ...next, parts: mergedParts, partIds: mergedIds, revision: resident.revision + 1 }
   }
 
   // A chunked hydration computes its chunks across task boundaries but keeps
@@ -960,8 +1070,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
     for (const info of pendingInfos) {
       // A newer writer (SSE-published usage) replaced this id after the
-      // plan: keep the published version.
-      if (messageInfoCache.get(info.id as string) !== plan.previousInfos.get(info.id as string)) continue
+      // plan: keep the published version unless the fetched snapshot is the
+      // richer one - a stale queued projection's infoless entry must not
+      // hold the fetched end time and tokens back.
+      const current = messageInfoCache.get(info.id as string)
+      if (current !== plan.previousInfos.get(info.id as string) && !snapshotInfoExtends(current, info)) continue
       messageInfoCache.set(info.id as string, info)
     }
     for (const entry of pendingRecords) {
