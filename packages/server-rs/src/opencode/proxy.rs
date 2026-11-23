@@ -159,14 +159,12 @@ fn is_json_content_type(headers: &axum::http::HeaderMap) -> bool {
 }
 
 fn defer_message_list(id: &str, session: &str, bytes: Vec<u8>) -> Body {
-    match serde_json::from_slice::<Value>(&bytes) {
-        Ok(mut native)
-            if native.get_mut("data").is_some_and(|data| crate::sessions::media::defer(id, session, data)) =>
-        {
-            Body::from(native.to_string())
-        }
-        _ => Body::from(bytes),
+    if let Ok(mut native) = serde_json::from_slice::<Value>(&bytes)
+        && native.get_mut("data").is_some_and(|data| crate::sessions::media::defer(id, session, data))
+    {
+        return Body::from(native.to_string());
     }
+    Body::from(bytes)
 }
 
 fn one_location(location: &Value, directory: &str) -> Result<(), Error> {
