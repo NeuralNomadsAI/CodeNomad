@@ -27,10 +27,7 @@ pub fn view(
         root = root.child(crate::platform::titlebar::view(s, cx));
     }
     if let Some(ui) = &s.workspace {
-        root = root.child(rune_theme_codenomad::settings::shell_entry(
-            workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside),
-            crate::settings::entry(),
-        ));
+        root = root.child(workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside));
         if let Some(error) = workspace::status(s) {
             root = root.child(
                 layout::action_row()
@@ -47,7 +44,7 @@ pub fn view(
         let body = body(s, cx, conversation).key(format!("tab-body-{}", ui.active_key()));
         root.child(body.remaining())
     } else {
-        root.child(crate::settings::direct_entry(s))
+        root.child(crate::settings::direct_entry(s, cx.touch_controls()))
             .child(body(s, cx, conversation).remaining())
     }
 }

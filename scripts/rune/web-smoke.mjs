@@ -7,7 +7,7 @@ import {parseArgs} from 'node:util'
 import {chromium} from 'playwright'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
-import {mobileClientHints, mobileContext, mobileInteraction} from './web-mobile.mjs'
+import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
 import {mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste} from './web-paste.mjs'
 import {missionsFixture} from './web-missions.mjs'
@@ -59,11 +59,17 @@ try {
         ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
       const page = await context.newPage()
       page.setDefaultTimeout(15000)
+      if (values.mobile) await page.addInitScript(() => {
+        window.Notification = class {
+          static permission = 'default'
+          static requestPermission() { throw Error('Unexpected system permission request in the mobile smoke') }
+        }
+      })
       const missions=values.missions?missionsFixture({page,messages,artifact:path.join(out,`missions-${colorScheme}`),project:values.project}):null
       if(missions)await context.addInitScript(()=>Object.defineProperty(Crypto.prototype,'subtle',{value:undefined}))
       const errors = [], forbiddenRequests = [], routes=[], history=[]
-      let measured
-      const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions})
+      let measured, tabBar
+      const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,mobilePreferences:values.mobile===true})
       let eventSource=0
       let releaseLinked
       const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
@@ -159,6 +165,23 @@ try {
           const reading=async()=>await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history')&&document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing answer'),undefined,{timeout:30000})
           await press(messages['folderSelection.servers.dialog.connect'])
           await press(values.project)
+          if (values.mobile) {
+            tabBar = await mobileTabBar(page, [
+              messages['instanceTabs.new.ariaLabel'], messages['settings.title'], messages['settings.nav.chat'],
+            ])
+            const permission = page.getByRole('button', {
+              name: messages['settings.notifications.requestPermission.action'], exact: true,
+            })
+            assert.equal(await permission.count(), 0, 'Notification permission belongs in Preferences, not the tab bar')
+            await press(messages['settings.title'])
+            await press(messages['settings.nav.notifications'], 'radio')
+            await permission.waitFor({state:'attached'})
+            assert.equal(await permission.count(), 1)
+            await press(messages['settings.close'])
+            await permission.waitFor({state:'detached'})
+            await writeFile(path.join(out, `${name}-${colorScheme}-tab-bar.json`),
+              JSON.stringify({tabBar, permissionOnlyInPreferences:true}, null, 2))
+          }
           await openSessions()
           if(values.mobile){
             await row('Existing history').waitFor()
@@ -168,6 +191,8 @@ try {
               const blank=page.getByRole('tab',{name:messages['instanceTabs.new.ariaLabel'],exact:true})
               await page.waitForFunction(tab=>[...document.querySelectorAll('[role=tab][aria-selected=true]')].some(el=>el.textContent===tab),messages['instanceTabs.new.ariaLabel'])
               assert.equal(await blank.getAttribute('aria-selected'),'true')
+              await writeFile(path.join(out, `${name}-${colorScheme}-tab-bar.json`),
+                JSON.stringify({tabBar, permissionOnlyInPreferences:true, newTabSelected:true}, null, 2))
               const continuation=page.waitForResponse(response=>{
                 const requested=new URL(response.url())
                 return requested.pathname.endsWith('/instance/api/session')&&requested.searchParams.has('cursor')&&
@@ -342,7 +367,7 @@ try {
             assert.equal(forbiddenRequests.length,0,'Launcher recovery may not submit a password')
           }
         }
-        records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,...measured,
+        records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,tabBar,...measured,
           ...(values.mobile?{requiredChecksPassed:true,knownGaps:[
             ...(measured.live.older.status==='known-gap'?['older-button-disabled-state']:[]),
             ...(measured.passwordProxy?.status==='known-gap'?['password-input-bridge-proxy']:[]),

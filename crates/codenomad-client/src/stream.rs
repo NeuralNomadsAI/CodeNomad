@@ -22,6 +22,9 @@ mod browser;
 const FRAME_LIMIT: usize = (32 << 20) + 4096;
 
 fn storage_owner(value: &Value) -> Option<crate::settings::Owner> {
+    if value["type"] == "storage.configChanged" && value["owner"] == "server" {
+        return Some(crate::settings::Owner::Server);
+    }
     if !matches!(value["owner"].as_str(), Some("ui" | "*")) {
         return None;
     }

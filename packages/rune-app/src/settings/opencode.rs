@@ -1,5 +1,6 @@
 use super::Preferences;
 pub(super) mod install;
+pub(super) mod logging;
 use crate::{platform, strings::t};
 use codenomad_client::{
     Receiver, Sender, bounded,

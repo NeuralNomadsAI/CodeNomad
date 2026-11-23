@@ -104,6 +104,47 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
   } finally { await browser.close() }
 }
 
+export async function mobileTabBar(page, labels) {
+  const viewport = page.viewportSize()
+  const buttons = labels.map(name => page.getByRole('button', {name, exact: true}))
+  await Promise.all(buttons.map(button => button.waitFor({state: 'attached'})))
+  const rtl = await page.locator('html').getAttribute('dir') === 'rtl'
+  const rounding = 0.5 // Rune's mirror projects subpixel bounds at fractional DPR.
+  const measure = async width => {
+    await page.setViewportSize({...viewport, width})
+    // The trailing action reaches the new edge only after Rune has updated the mirror.
+    if (!rtl) await buttons.at(-1).evaluate((button, width) => new Promise((resolve, reject) => {
+      const deadline = performance.now() + 3000
+      function frame(now) {
+        if (Math.abs(button.getBoundingClientRect().right - width) < 0.5) resolve()
+        else if (now >= deadline) reject(Error(`Tab bar mirror did not reach the ${width}px viewport edge`))
+        else requestAnimationFrame(frame)
+      }
+      requestAnimationFrame(frame)
+    }), width)
+    const boxes = await Promise.all(buttons.map(button => button.boundingBox()))
+    for (const [i, a] of boxes.entries()) {
+      const name = labels[i]
+      assert(a && a.width >= 43.99 && a.height >= 43.99, `${width}px: ${name} needs a 44px touch target: ${JSON.stringify(a)}`)
+      assert(a.x >= -rounding && a.y >= -rounding && a.x + a.width <= width + rounding && a.y + a.height <= viewport.height + rounding,
+        `${width}px: ${name} is outside the viewport: ${JSON.stringify(a)}`)
+      assert(Math.abs(a.y - boxes[0].y) < 0.5, `${width}px: ${name} must share the tab bar row`)
+      for (const [j, b] of boxes.slice(0, i).entries()) {
+        assert(a.x >= b.x + b.width - rounding || b.x >= a.x + a.width - rounding,
+        `${width}px: ${name} overlaps ${labels[j]}: ${JSON.stringify([a, b])}`)
+      }
+    }
+    const [plus] = boxes
+    assert((rtl ? width - plus.x - plus.width : plus.x) >= 44, `${width}px: the tab list must retain visible space`)
+    return {width, boxes}
+  }
+  const measured = []
+  for (const width of [...[320, 390, 430].filter(width => width !== viewport.width), viewport.width]) {
+    measured.push(await measure(width))
+  }
+  return measured
+}
+
 export async function mobileInteraction(page, labels, imagePage, theme, colors) {
   const cdp = await page.context().newCDPSession(page)
   const evidence = {}
