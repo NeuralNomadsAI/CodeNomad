@@ -65,7 +65,7 @@ fn launch_path(path: &Path) -> PathBuf {
 
 fn confirm_chooser_start(mut child: Child) -> io::Result<()> {
     // Match the desktop hosts: report immediate failure without waiting for the chooser to close.
-    for _ in 0..10 {
+    for attempt in 0..=10 {
         if let Some(status) = child.try_wait()? {
             return if status.success() {
                 Ok(())
@@ -73,7 +73,9 @@ fn confirm_chooser_start(mut child: Child) -> io::Result<()> {
                 Err(io::Error::other(status.to_string()))
             };
         }
-        std::thread::sleep(Duration::from_millis(25));
+        if attempt < 10 {
+            std::thread::sleep(Duration::from_millis(25));
+        }
     }
     std::thread::spawn(move || {
         let _ = child.wait();
@@ -196,17 +198,22 @@ mod tests {
 
     #[test]
     fn chooser_reports_an_immediate_failure_without_opening_a_window() {
-        let system = std::env::var_os("SystemRoot").unwrap();
-        let exited = |code| {
-            let mut child = Command::new(PathBuf::from(&system).join("System32/cmd.exe"))
-                .raw_arg(format!("/D /C exit {code}"))
+        const STATUS: &str = "CODENOMAD_CHOOSER_FIXTURE_EXIT";
+        if let Ok(status) = std::env::var(STATUS) {
+            std::thread::sleep(Duration::from_millis(40));
+            std::process::exit(status.parse().unwrap());
+        }
+        let spawn = |status| {
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "platform::workspace_open::windows::tests::chooser_reports_an_immediate_failure_without_opening_a_window"])
+                .env(STATUS, status)
                 .creation_flags(0x0800_0000)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .spawn()
-                .unwrap();
-            assert_eq!(child.wait().unwrap().code(), Some(code));
-            child
+                .unwrap()
         };
-        assert!(confirm_chooser_start(exited(0)).is_ok());
-        assert!(confirm_chooser_start(exited(7)).is_err());
+        assert!(confirm_chooser_start(spawn("0")).is_ok());
+        assert!(confirm_chooser_start(spawn("7")).is_err());
     }
 }
