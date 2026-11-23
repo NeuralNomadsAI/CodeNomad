@@ -140,21 +140,20 @@ export async function revokedLauncher({context,url,messages}){
       assert(generic.length<=1&&generic.every(field=>field.bridge),`Only Rune's hidden password proxy may carry the generic label: ${JSON.stringify(generic)}`)
       assert.equal(await page.locator('input[type=password]').count(),generic.length,'Reject password controls with any other label')
       const mirror=await page.locator('body').ariaSnapshot()
-      return mirror.includes('textbox "Password input"')
+      assert(!mirror.includes('textbox "Password input"'),'The inactive password proxy must stay out of the accessibility tree')
     }
     for(let i=0;i<4;i++){
       await page.keyboard.press('Tab')
       assert.equal(await page.locator('input[type=password]:focus').count(),0,'No launcher gesture may activate a password field')
     }
-    const beforeRevocation=await observePassword()
+    await observePassword()
     await command('revoke')
     const box=await connect.boundingBox();assert(box)
     await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
     await page.getByRole('dialog',{name:messages['authRecovery.pairingTitle'],exact:true}).waitFor()
-    const afterRevocation=await observePassword()
+    await observePassword()
     assert.equal(await connect.count(),0,'Pairing replaces the launcher form instead of covering it')
-    return {launcherRevokedNoPassword:true,passwordProxy:beforeRevocation||afterRevocation?
-      {status:'known-gap',issue:'https://github.com/anomalyco/rune/issues/594'}:{status:'not-observed'}}
+    return {launcherRevokedNoPassword:true}
   } finally { await page.close() }
 }
 

@@ -478,9 +478,10 @@ fn markdown_links_html_and_mermaid_fallback_use_only_the_loaded_document() {
                         "flowchart LR"
                     }));
                 }
-                "nul.bin" | "broken.png" => {
+                "nul.bin" => {
                     assert!(shown.contains("Preview unavailable for this binary file."))
                 }
+                "broken.png" => assert!(shown.contains("Unable to display this image.")),
                 "reader.rs" => assert!(shown.contains("été 日本語 🦀")),
                 _ => panic!("unknown fixture"),
             }

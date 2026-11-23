@@ -180,7 +180,7 @@ fn reader_content(s: &State) -> El {
             Kind::Binary => text(t("filesPanel.binary")).pad(Space::Md),
             Kind::Image => match ui.presentation.image.as_ref() {
                 Some(image) if image.error().is_some() => {
-                    text(t("filesPanel.binary")).pad(Space::Md)
+                    text(t("toolCall.image.unavailable")).pad(Space::Md)
                 }
                 Some(image) => theme::image(image, &target.path),
                 None => text(t("instanceInfo.loading")).pad(Space::Md),
