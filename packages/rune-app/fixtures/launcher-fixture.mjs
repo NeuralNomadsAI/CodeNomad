@@ -15,9 +15,13 @@ import {pendingOpenFixture} from './pending-open-fixture.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {webLiveFixture} from './web-live-fixture.mjs'
+import {androidTsServer} from './android-ts-server.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
 const solid=webAndroid&&process.env.RUNE_ANDROID_SOLID_DIR
 const compare=webAndroid&&process.env.RUNE_ANDROID_COMPARE
+const probeGpu=webAndroid&&process.env.RUNE_ANDROID_GPU_PROBE==='only'
+const useTs=webAndroid&&process.env.RUNE_ANDROID_TS_SERVER==='1'
+assert(!useTs||solid&&compare,'The TS restart control runs the same Solid build and conversation')
 const sameOriginPairing=process.argv.includes('--same-origin-pairing')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
 const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile,root=path.resolve(import.meta.dirname,'../../..')
@@ -163,6 +167,7 @@ const upstream=createServer(async(req,res)=>{
     assert.equal(req.headers.authorization,`Basic ${Buffer.from('opencode:fixture-native').toString('base64')}`)
     let raw='';for await(const chunk of req){raw+=chunk;assert(raw.length<262144)}
     const json=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data))}
+    if(useTs&&url.pathname==='/api/info')return json({version:'2.3.2',pid:process.pid})
     if(web){
       assert(!(url.pathname.endsWith('/interrupt')||url.pathname.endsWith('/prompt')&&!webAndroid)&&
         !(url.pathname==='/api/session'&&req.method==='POST'),'Web fixture admits one Android prompt only')
@@ -325,25 +330,26 @@ Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http
 if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
 if(solid)env.CNRS_FIXTURE_SOLID_UI='1'
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
+const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
 let server,exited,log='',client,result=1,http,staticProof,diagnostic='',runLog=''
 async function startServer(){
   runLog=''
-  server=spawn(serverBinary,[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
+  server=spawn(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
   server.stdout.on('data',d=>{if(log.length<1048576)log+=d;if(runLog.length<1048576)runLog+=d})
   server.stderr.on('data',d=>{if(log.length<1048576)log+=d})
   server.stdin.on('error',()=>{})
   exited=new Promise(resolve=>{server.once('close',resolve);server.once('error',resolve)})
   for(const until=Date.now()+20000;;){
-    assert(Date.now()<until&&server.exitCode===null,'Rust startup')
-    const origin=runLog.match(/^http:\/\/127\.0\.0\.1:\d+(?=\r?$)/m)?.[0]
+    assert(Date.now()<until&&server.exitCode===null,`${ts?'TypeScript':'Rust'} startup: ${log.slice(-1000)}`)
+    const origin=ts?ts.ready(runLog):runLog.match(/^http:\/\/127\.0\.0\.1:\d+(?=\r?$)/m)?.[0]
     if(origin)return origin
     await new Promise(r=>setTimeout(r,50))
   }
 }
 async function stopServer(){
   if(!server || server.exitCode!==null)return
-  server.stdin.end('shutdown\n')
-  await Promise.race([exited,new Promise(r=>setTimeout(r,3000))])
+  server.stdin.end(ts?'codenomad:shutdown\n':'shutdown\n')
+  await Promise.race([exited,new Promise(r=>setTimeout(r,ts?15000:3000).unref())])
   if(server.exitCode===null){server.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,5000))])}
 }
 async function signIn(origin){
@@ -359,7 +365,7 @@ try{
     const storage=path.join(profile,'browser-storage.json')
     let uiOrigin=origin, paired
     if(webMobile){
-      uiOrigin=runLog.match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1];assert(uiOrigin,'Rust HTTPS fixture missing')
+      uiOrigin=ts?.https??runLog.match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1];assert(uiOrigin,'HTTPS fixture missing')
       if(!webAndroid){
         const issue=await http.post('/api/remote-control/pairings')
         assert.equal(issue.status(),200)
@@ -372,7 +378,7 @@ try{
     const sha256=createHash('sha256').update(await asset.body()).digest('hex')
     assert.equal(sha256,solid?createHash('sha256').update(await readFile(path.join(solid,'index.html'))).digest('hex'):
       manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
-    staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,serverBinary,ui:solid||ui,paired}
+    staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,backend:ts?'ts':'rust',serverBinary:ts?.args[0]??serverBinary,ui:solid||ui,paired}
     const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
     const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()]
     const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
@@ -383,18 +389,18 @@ try{
         if(action==='restart'){
           const {serverId}=await (await http.get('/api/meta')).json()
           const older=(await (await http.get('/api/workspaces')).json()).map(row=>row.id)
-          assert(older.length>=2)
+          assert(older.length>=(ts?1:2))
           mobile.restartHistory()
           await stopServer()
-          assert.equal(server.exitCode,0,'The original Rust listener must actually exit')
-          env.CNRS_HTTPS_BIND=new URL(uiOrigin).host
+          assert.equal(server.exitCode,0,'The original listener must actually exit')
+          if(!ts)env.CNRS_HTTPS_BIND=new URL(uiOrigin).host
           await signIn(await startServer())
-          assert(runLog.includes(`HTTPS ${uiOrigin}`))
+          if(!ts)assert(runLog.includes(`HTTPS ${uiOrigin}`))
           assert.equal((await (await http.get('/api/meta')).json()).serverId,serverId)
           const opened=await http.post('/api/workspaces',{data:{path:project}})
           assert(opened.ok())
           client.send({value:{older,witness:(await opened.json()).id}})
-        }else client.send({value:await mobile.command(action,http)})
+        }else client.send({value:await mobile.command(action,http,ts?.https)})
       }
       catch(error){client.send({error:String(error.message)})}
     })
@@ -425,7 +431,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid?1:0);if(!webRestore)assert(stats.lists>=(webAndroid?1:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid?1:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
     await removeReview
     assert(reviewRemoved)
@@ -459,9 +465,9 @@ try{
   if(client?.exitCode===null)client.kill()
   await stopServer()
   for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
-  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:staticProof,profile,project,forbidden,serverExitCode:server?.exitCode},null,2));await writeFile(path.join(profile,'rust.log'),log)
+  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:staticProof,profile,project,forbidden,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2));await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
   if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
   if(web)await writeFile(path.join(profile,'browser-run.log'),diagnostic)
-  if(result===0)assert.equal(server.exitCode,0,'Owned Rust server must exit cleanly')
+  if(result===0)assert.equal(server.exitCode,0,'Owned server must exit cleanly')
 }
 process.exitCode=result??1

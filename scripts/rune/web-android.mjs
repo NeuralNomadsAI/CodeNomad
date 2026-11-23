@@ -11,18 +11,21 @@ import {command,navigatePair} from './web-live.mjs'
 import {androidLive,androidPrompt} from './web-android-contract.mjs'
 import {chromeMemory,scrollMeasure} from './web-android-metrics.mjs'
 import {observeRenderer,traceSwipe} from './web-android-trace.mjs'
+import {observeGpu,gpuState,chromeGraphicsReport} from './web-android-gpu.mjs'
 
 const [origin,profile,project,bundle]=process.argv.slice(2)
 const {RUNE_ANDROID_ADB:adb,RUNE_ANDROID_SERIAL:serial,RUNE_ANDROID_ADB_PORT:port}=process.env
 assert(adb&&path.isAbsolute(adb)&&/^emulator-\d+$/.test(serial)&&Number(port)>1024)
 assert(Number(port)!==5037,'Use a dedicated ADB server for the disposable emulator')
-assert.match(origin,/^https:\/\/127\.0\.0\.1:\d+$/)
+const useTs=process.env.RUNE_ANDROID_TS_SERVER==='1'
+assert.match(origin,useTs?/^https:\/\/rune-server\.fixture\.test:\d+$/:/^https:\/\/127\.0\.0\.1:\d+$/)
 assert(process.send&&path.basename(profile).startsWith('launcher-'))
 const auth=new X509Certificate(await readFile(path.join(profile,'identity.data/tls/server-cert.pem')))
 const pin=createHash('sha256').update(auth.publicKey.export({type:'spki',format:'der'})).digest('base64')
 const solid=process.env.RUNE_ANDROID_SOLID_DIR
 const comparison=Boolean(process.env.RUNE_ANDROID_COMPARE)
 const trace=process.env.RUNE_ANDROID_TRACE
+const gpuProbe=process.env.RUNE_ANDROID_GPU_PROBE
 const locale=comparison?'en':'fr'
 const messages=JSON.parse(await readFile(new URL(`../../crates/rune-theme-codenomad/assets/catalogues/${locale}.json`,import.meta.url),'utf8'))
 const run=(...args)=>promisify(execFile)(adb,['-P',port,'-s',serial,...args],{timeout:15000,windowsHide:true})
@@ -35,11 +38,13 @@ const metrics=page=>page.evaluate(()=>({height:visualViewport.height,top:visualV
   canvas:document.querySelector('canvas')?.getBoundingClientRect().height,
   dpr:devicePixelRatio,mobile:navigator.userAgentData?.mobile,ua:navigator.userAgent,
   active:document.activeElement?.tagName,inputMode:document.activeElement?.inputMode}))
-try {
+async function runAndroid() {
   await run('reverse',target,target)
   await run('shell','am','set-debug-app','--persistent','com.android.chrome')
   context=await device.launchBrowser({noDefaultViewport:true,serviceWorkers:'block',
-    args:[`--ignore-certificate-errors-spki-list=${pin}`,'--disable-background-networking']})
+    args:[`--ignore-certificate-errors-spki-list=${pin}`,'--disable-background-networking',
+      ...(useTs?['--host-resolver-rules="MAP rune-server.fixture.test 127.0.0.1"']:[]),
+      ...(process.env.RUNE_ANDROID_GPU_CHROME_FLAGS?.split(' ').filter(Boolean)??[])]})
   page=context.pages()[0]??await context.newPage()
   const httpErrors=[]
   let events=0
@@ -55,7 +60,10 @@ try {
     if(url.pathname==='/api/events'&&response.ok()&&
       response.headers()['content-type']?.startsWith('text/event-stream'))events++
   })
-  if(trace&&trace!=='display')await page.addInitScript(observeRenderer)
+  if((trace&&trace!=='display')||gpuProbe)await page.addInitScript(observeRenderer)
+  if(gpuProbe)await page.addInitScript(observeGpu)
+  const gpuLog=[]
+  if(gpuProbe)page.on('console',msg=>{if(/gpu|adapter|vulkan|dawn|rune:/i.test(msg.text()))gpuLog.push(msg.text())})
   page.setDefaultTimeout(20000)
   await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.fallback():route.abort())
   cdp=await context.newCDPSession(page)
@@ -71,11 +79,21 @@ try {
   const assets=solid?new Set((await readdir(path.join(solid,'assets'))).map(file=>`/assets/${file}`)):await bundleAssetPaths(bundle)
   assets.add('/remote-pair')
   const start=performance.now()
-  await navigatePair(page,link,{fromLink:true,assets,waitForRune:!solid,returnLocale:solid?null:locale})
+  await navigatePair(page,link,{fromLink:!useTs,assets,waitForRune:!solid,returnLocale:solid?null:locale})
   const connect=solid?page.locator('.folder-home-root').first():page.getByRole('button',{name:messages['folderSelection.servers.dialog.connect'],exact:true})
   const paint=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
   await connect.waitFor()
   await paint()
+  if(gpuProbe==='only'){
+    try {
+      await page.waitForFunction(()=>performance.getEntriesByType('mark').some(e=>/web\.(gpu\.failed|handover\.(done|failed))$/.test(e.name)),
+        undefined,{timeout:15000})
+    }catch(error){if(error.name!=='TimeoutError')throw error}
+    const state=await gpuState(page,true)
+    const chrome=await chromeGraphicsReport(context,page)
+    await writeFile(path.join(profile,'android-gpu.json'),JSON.stringify({...state,chrome,gpuLog},null,2))
+    return
+  }
   evidence.timings.pairingToLauncherMs=performance.now()-start
   evidence.timings.landingNavigationToLauncherMs=await page.evaluate(()=>performance.now())
   evidence.timings.moduleReadyMs=await page.evaluate(()=>globalThis.__codenomadRuneBoot?.moduleReadyMs)
@@ -126,6 +144,7 @@ try {
   await paint()
   evidence.timings.selectConversationToAnswerMs=performance.now()-opened
   evidence.memory.conversation=await chromeMemory(run,cdp)
+  if(gpuProbe)evidence.gpu=await gpuState(page)
   const group=solid?page.locator('textarea.prompt-input:visible').first():page.getByRole('group',{name:messages['rune.prompt'],exact:true})
   const viewport=()=>metrics(page)
   const hierarchy='/data/local/tmp/codenomad-rune-web.xml'
@@ -221,7 +240,7 @@ try {
   evidence.memory.afterCut=await chromeMemory(run,cdp)
   assert(events>0)
   const previous=[...policy.workspaces],beforeRestart=events,restart=performance.now()
-  await command('restart')
+  evidence.restart=await command('restart')
   try { await page.getByText('Mobile Rust restart history',{exact:true}).waitFor({timeout:45000}) }
   catch(error){evidence.restartWaitMs=performance.now()-restart;throw error}
   await recovering.waitFor({state:'hidden'})
@@ -237,6 +256,9 @@ try {
   assert.deepEqual(forbidden,[])
   assert.deepEqual(errors,[])
   await writeFile(path.join(profile,'android-proof.json'),JSON.stringify({before,keyboard,ime,...evidence},null,2))
+}
+try {
+  await runAndroid()
 } catch(error) {
   if(page&&solid)await writeFile(path.join(profile,'android-failure-aria.txt'),await page.locator('body').ariaSnapshot({timeout:2000}).catch(()=>''),'utf8')
   await page?.screenshot({path:path.join(profile,'android-failure.png'),timeout:3000}).catch(()=>{})
