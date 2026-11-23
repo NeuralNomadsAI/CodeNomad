@@ -8,6 +8,7 @@ pub(crate) mod draft;
 pub(crate) mod draft_storage;
 pub(crate) mod literal;
 mod long_paste;
+pub(crate) mod menu;
 mod picker;
 pub(crate) mod recall;
 mod tokens;

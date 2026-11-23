@@ -1,4 +1,4 @@
-use super::{can_send, device, picker::Item, send};
+use super::{can_send, picker::Item, send};
 use crate::{Phase, State, platform, screen, strings::t};
 use rune::{El, Key, KeyEvent, Tx, col, text};
 use rune_theme_codenomad::{
@@ -6,7 +6,7 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
 };
 
-pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
+pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
     let scope = s.input_scope.clone();
     let stop = s.phase == Phase::Streaming && s.agent.is_some();
     let editor = editor(s, compact);
@@ -55,6 +55,7 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
             false,
             screen::action_tx(&scope, crate::latest),
         ))
+        .child(more)
         .child(
             layout::button_tx(
                 t("promptInput.overlay.send"),
@@ -163,26 +164,6 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
             .key("refresh-command-catalogue"),
         );
     }
-    if !s.composer.picker.attachments_supported() {
-        actions = actions.child(
-            layout::button(
-                t("promptInput.attachFiles.ariaLabel"),
-                true,
-                |_: &mut State| {},
-            )
-            .key("attachments-disabled")
-            .description_static(t("rune.attachments_unavailable")),
-        );
-    } else {
-        actions = actions.child(
-            layout::button_tx(
-                t("promptInput.attachFiles.ariaLabel"),
-                !device::available(s) || s.composer.device.busy(),
-                screen::action_tx(&scope, platform::device_picker::choose),
-            )
-            .key("attach-device-files"),
-        );
-    }
     if s.composer.attachments_missing {
         actions = actions.child(
             layout::button_tx(
@@ -200,28 +181,6 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
             .key("keep-draft-text")
             .description_static(t("rune.attachments_missing")),
         );
-    }
-    if super::recall::available(s) || s.composer.recall.is_some() {
-        actions = actions.children([true, false].map(|older| {
-            layout::button_tx(
-                t(if older {
-                    "promptInput.history.previousAriaLabel"
-                } else {
-                    "promptInput.history.nextAriaLabel"
-                }),
-                !older && s.composer.recall.is_none()
-                    || s.composer.device.busy()
-                    || s.composer.editing_locked(),
-                screen::action_tx(&scope, move |s, tx| {
-                    super::recall::step(s, older, true, tx);
-                }),
-            )
-            .key(if older {
-                "previous-prompt"
-            } else {
-                "next-prompt"
-            })
-        }));
     }
     body.child(actions)
         .children(

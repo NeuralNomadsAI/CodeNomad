@@ -147,6 +147,8 @@ Passive prompt recall loads on composer focus after the visible transcript insta
 
 Leaving a tab ends browsing and retains its fresh draft; only the window history keeps inactive recall payloads. A lost slash-command receipt holds the exact resolved input in its original conversation. Other command receipts cannot settle that hold. A matching recall shows **Delivery unconfirmed** and keeps Send disabled. Native slash commands return an empty acknowledgement and expose no exact attempt lookup.
 
+The composer uses the shared **More actions** menu for queueing a follow-up, choosing files, recalling attempts and clearing text. Queueing uses the same delivery guard as the alternate shortcut. Clear returns focus to the composer and is undoable; the file picker opens in the selecting gesture.
+
 Each project tab owns its server record and live conversation state. Drafts remain scoped to the validated server, folder occurrence and native session. Restoration performs a targeted session read, with identity and location validation. Browser departure writes the snapshot and release marker before issuing keepalive deletion of its owned records; storage failure preserves those records. The last browser store also performs this bounded synchronous handoff when Rune unload drops its listener. A preserved BFCache document retains its state and records.
 
 Active and cached tabs share the same guard for pending replies and edited permission/question forms. Closing an inactive tab preserves the active reader and composer. Closed drafts transfer after validated session binding; independent edits and undelivered sessions retain their ownership. Tab capacity is checked before project creation.

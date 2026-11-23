@@ -65,7 +65,7 @@ try {
       if(missions)await context.addInitScript(()=>Object.defineProperty(Crypto.prototype,'subtle',{value:undefined}))
       const errors = [], forbiddenRequests = [], routes=[], history=[], settlements=[], streamEvents=[], clientDiagnostics=[]
       let measured
-      const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions})
+      const policy=values.connected?workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions}):null
       let eventSource=0
       let releaseLinked
       const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
@@ -100,7 +100,9 @@ try {
         const requested = new URL(route.request().url())
         const req=route.request(),p=requested.pathname
         const protectedRoute=/^\/(api|workspaces)(?:\/|$)/.test(p)
-        if (!await policy.request(req,{allowApi:values.connected===true})) {
+        const allowed=policy?await policy.request(req):requested.origin===url.origin&&
+          ['GET','HEAD'].includes(req.method())&&assets.has(p)
+        if (!allowed) {
           forbiddenRequests.push({origin: requested.origin, path: requested.pathname})
           return route.abort('blockedbyclient')
         }

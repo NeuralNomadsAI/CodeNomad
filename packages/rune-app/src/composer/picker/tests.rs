@@ -40,7 +40,7 @@ fn attachment_support_follows_the_window_marker() {
             s.composer.picker.reset();
         });
         rt.frame(0.0);
-        assert_eq!(rt.find("attachments-disabled").is_none(), supported);
+        assert_eq!(rt.state.composer.picker.attachments_supported(), supported);
         let (x, y) = rt.find("composer").unwrap();
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);

@@ -41,11 +41,19 @@ export async function longPaste(page, messages) {
   await refused.waitFor()
   await sent.waitFor({state:'detached'})
   await expectDraft('nouveau brouillon')
-  const recall = name => page.getByRole('button', {name: messages[`promptInput.history.${name}AriaLabel`], exact:true})
-  const press = async name => {
+  const composer = page.getByRole('group', {name: messages['rune.prompt'], exact:true})
+  const more = composer.getByRole('button', {name: messages['messageItem.actions.more'], exact:true})
+  const click = async locator => {
     await present()
-    const {x, y, width, height} = await recall(name).boundingBox()
+    const {x, y, width, height} = await locator.boundingBox()
     await page.mouse.click(x + width / 2, y + height / 2)
+  }
+  const press = async name => {
+    await click(more)
+    const item = page.getByRole('menuitem', {name: messages[`promptInput.history.${name}AriaLabel`], exact:true})
+    await item.waitFor({state:'attached'})
+    await click(item)
+    await item.waitFor({state:'detached'})
   }
   const expectRecalled = value => page.waitForFunction(text => document.querySelector('textarea')?.value === text, value)
   await press('previous')
@@ -57,13 +65,13 @@ export async function longPaste(page, messages) {
   await press('previous')
   await expectRecalled(token)
   assert.equal(await sent.count(), 0, 'Browsing history must not send a prompt')
-  await page.keyboard.press('Enter')
+  await click(page.getByRole('button', {name: messages['promptInput.overlay.send'], exact:true}))
   await sent.waitFor({state:'attached'})
   assert.equal(await sent.count(), 1)
   await chip.waitFor({state: 'detached'})
   await refused.waitFor({state: 'detached'})
   await present()
-  const group = await page.getByRole('group', {name: messages['rune.prompt'], exact:true}).boundingBox()
+  const group = await composer.boundingBox()
   await page.mouse.click(group.x + group.width / 2, group.y + 24)
   await expectDraft('nouveau brouillon')
   return {insertedAtSelection: true, undo: true, retainedPng: true, recalledAfterRefusal: true,

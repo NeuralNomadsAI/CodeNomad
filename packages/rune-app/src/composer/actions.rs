@@ -12,6 +12,7 @@ pub struct Owner {
     pub device: super::device::Device,
     pub draft: Draft,
     pub picker: super::picker::Picker,
+    pub menu: rune_theme_codenomad::action_menu::State<State>,
     sending: Option<Send>,
     pub send_error: bool,
     unconfirmed: Option<Send>,

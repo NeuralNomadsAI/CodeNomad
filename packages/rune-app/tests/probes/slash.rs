@@ -52,7 +52,7 @@ pub fn run() {
     rt.frame(0.0);
     if stage.as_deref() == Some("read") {
         let until = Instant::now() + Duration::from_secs(15);
-        while rt.find("previous-prompt").is_none() {
+        while !crate::composer::recall::available(&rt.state) {
             assert!(
                 Instant::now() < until,
                 "history did not load on the second launch"
@@ -72,7 +72,6 @@ pub fn run() {
         return;
     }
     let supported = rt.state.composer.picker.attachments_supported();
-    assert_eq!(rt.find("attachments-disabled").is_none(), supported);
     if !supported {
         let files = [std::path::PathBuf::from("not-read.txt")];
         rt.drop_files(files.to_vec(), Some((x, y)));

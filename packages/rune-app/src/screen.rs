@@ -82,6 +82,7 @@ pub fn action_tx(
 impl State {
     pub fn renew_scope(&mut self) {
         self.input_scope = Rc::new(());
+        self.composer.menu = Default::default();
         #[cfg(target_arch = "wasm32")]
         self.rotate_composer_input();
     }

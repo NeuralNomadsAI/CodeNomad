@@ -5,6 +5,8 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let expanded = interruption_expanded(s);
     let mut overlays = Vec::new();
     let worktree = git::session_worktree(s, &mut overlays);
+    let (more, menu) = composer::menu::view(s);
+    overlays.extend(menu);
     let body = rune_theme_codenomad::interruption::session_surface(expanded)
         .child(shell::reader(s, || {
             let history = rune_theme_codenomad::interruption::history(expanded)
@@ -14,7 +16,7 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         }))
         .child(agent_view::view(s, cx))
         .children(chat::attachments::error(s))
-        .child(composer::view::view(s, expanded, Some(worktree)));
+        .child(composer::view::view(s, expanded, Some(worktree), more));
     rune_theme_codenomad::git_panel::with_overlays(body, overlays)
 }
 
