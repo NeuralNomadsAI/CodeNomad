@@ -11,7 +11,7 @@ use axum::{
 use futures_util::StreamExt;
 use regex::Regex;
 use serde_json::json;
-use std::{path::PathBuf, sync::LazyLock};
+use std::sync::LazyLock;
 
 // Intersection of the reviewed TS server-device catalog and Rust's
 // implemented endpoints. Host switches, outbound, account secrets, push,
@@ -129,7 +129,11 @@ fn route_path(uri: &axum::http::Uri) -> Option<String> {
     Some(output)
 }
 
-pub async fn admit(State((app, rune)): State<(Shared, Option<PathBuf>)>, mut req: Request, next: Next) -> Response {
+pub async fn admit(
+    State((app, bundle)): State<(Shared, Option<crate::host::ui::RemoteBundle>)>,
+    mut req: Request,
+    next: Next,
+) -> Response {
     let Some(channel) = tls::https_only(&req).cloned() else { return reply(Status::FORBIDDEN, "TLS required") };
     let Some(path) = route_path(req.uri()) else { return reply(Status::BAD_REQUEST, "Invalid request path") };
     let authority = channel.origin.strip_prefix("https://").unwrap_or_default();
@@ -196,16 +200,17 @@ pub async fn admit(State((app, rune)): State<(Shared, Option<PathBuf>)>, mut req
         );
     }
     let method = req.method().clone();
-    let direct = channel.ingress || devices::direct_origin(&channel.origin);
-    let rune_ui =
-        rune.as_ref().filter(|_| !server && direct && crate::host::ui::rune_asset_path(&method, &path).is_some());
+    let ui = bundle
+        .as_ref()
+        .filter(|_| !server && direct)
+        .and_then(|bundle| bundle.path(&method, &path).map(|asset| (bundle, asset)));
     let form_reply = !server
         && path.strip_prefix("/workspaces/").and_then(|s| s.split_once("/instance")).is_some_and(|(id, route)| {
             !id.is_empty() && !id.contains('/') && crate::missions::human_answer::form_reply(route, &method).is_some()
         });
     let backend_ui = !server && crate::previews::backend::enabled(&app) && preview_control(&path, &method);
     if entry && path == "/remote-pair" {
-        if let Some(dir) = &rune
+        if let Some(crate::host::ui::RemoteBundle::Rune(dir)) = &bundle
             && let Some(page) = crate::host::ui::rune_pair_page(dir, method).await
         {
             return cors(devices::pairing_page(page), supplied);
@@ -233,7 +238,7 @@ pub async fn admit(State((app, rune)): State<(Shared, Option<PathBuf>)>, mut req
     if !entry
         && !backend_ui
         && !form_reply
-        && rune_ui.is_none()
+        && ui.is_none()
         && !CATALOG.iter().any(|(methods, pat)| {
             methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
                 && pat.is_match(&path)
@@ -253,6 +258,18 @@ pub async fn admit(State((app, rune)): State<(Shared, Option<PathBuf>)>, mut req
     });
     if path == "/api/auth/status" && owner.is_none() {
         return cors(status(false), supplied);
+    }
+    if owner.is_none()
+        && let Some((bundle, asset)) = ui
+        && bundle.public(asset)
+    {
+        let response = bundle.serve(req, asset).await;
+        let response = if response.headers().get(header::CACHE_CONTROL).is_some_and(|value| value == "no-store") {
+            reply(Status::UNAUTHORIZED, "This device is not paired")
+        } else {
+            response
+        };
+        return cors(response, supplied);
     }
     if owner.is_none()
         && entry
@@ -304,8 +321,8 @@ pub async fn admit(State((app, rune)): State<(Shared, Option<PathBuf>)>, mut req
         req.extensions_mut().insert(BrowserDevice(id));
     }
     let dispatch = async {
-        match rune_ui {
-            Some(dir) => crate::host::ui::serve_rune(dir, req).await,
+        match ui {
+            Some((bundle, asset)) => bundle.serve(req, asset).await,
             None => next.run(req).await,
         }
     };

@@ -22,6 +22,12 @@ pub enum Source {
     Absent,
 }
 
+#[derive(Clone)]
+pub enum RemoteBundle {
+    Rune(PathBuf),
+    Solid(PathBuf),
+}
+
 impl Source {
     pub fn bundled() -> Self {
         let dir = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("public"))).unwrap_or_default();
@@ -47,9 +53,57 @@ impl Source {
         }
     }
 
-    pub fn remote_rune(&self) -> Option<PathBuf> {
+    pub fn remote_bundle(&self) -> Option<RemoteBundle> {
         let Self::Dir(dir, _) = self else { return None };
-        ["index.html", "boot.js", "app_bg.wasm"].iter().all(|file| dir.join(file).is_file()).then(|| dir.clone())
+        if !dir.join("index.html").is_file() {
+            return None;
+        }
+        Some(if ["boot.js", "app_bg.wasm"].iter().all(|file| dir.join(file).is_file()) {
+            RemoteBundle::Rune(dir.clone())
+        } else {
+            RemoteBundle::Solid(dir.clone())
+        })
+    }
+}
+
+impl RemoteBundle {
+    pub fn path<'a>(&self, method: &Method, path: &'a str) -> Option<&'a str> {
+        if matches!(self, Self::Rune(_)) {
+            return rune_asset_path(method, path);
+        }
+        if !matches!(*method, Method::GET | Method::HEAD) {
+            return None;
+        }
+        if path == "/" {
+            return Some("/index.html");
+        }
+        let decoded = percent_encoding::percent_decode_str(path).decode_utf8().ok()?;
+        let root = decoded.strip_prefix('/')?.split('/').next()?;
+        if matches!(root, "api" | "workspaces" | "auth" | "sidecars" | "previews" | "login" | "remote-pair") {
+            return None;
+        }
+        Path::new(decoded.as_ref())
+            .extension()?
+            .to_str()
+            .filter(|ext| ext.bytes().all(|byte| byte.is_ascii_alphanumeric()))?;
+        Some(path)
+    }
+
+    pub fn public(&self, path: &str) -> bool {
+        matches!(self, Self::Solid(_))
+            && percent_encoding::percent_decode_str(path).decode_utf8().is_ok_and(|path| !is_html_path(&path))
+    }
+
+    pub async fn serve(&self, req: Request, path: &str) -> Response {
+        let dir = match self {
+            Self::Rune(dir) | Self::Solid(dir) => dir,
+        };
+        let mut response =
+            asset(dir, req.method(), path, req.headers()).await.unwrap_or_else(|| Status::NOT_FOUND.into_response());
+        if matches!(self, Self::Rune(_)) {
+            response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-cache"));
+        }
+        response
     }
 }
 
@@ -71,14 +125,6 @@ pub fn rune_asset_path<'a>(method: &Method, path: &'a str) -> Option<&'a str> {
         _ if path.starts_with("/snippets/") && path.ends_with(".js") => Some(path),
         _ => None,
     }
-}
-
-pub async fn serve_rune(dir: &PathBuf, req: Request) -> Response {
-    let Some(path) = rune_asset_path(req.method(), req.uri().path()) else { return crate::unavailable() };
-    let mut response =
-        asset(dir, req.method(), path, req.headers()).await.unwrap_or_else(|| Status::NOT_FOUND.into_response());
-    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-cache"));
-    response
 }
 
 pub(crate) async fn rune_pair_page(dir: &PathBuf, method: Method) -> Option<Response> {
@@ -238,11 +284,16 @@ async fn asset(dir: &Path, method: &Method, path: &str, request_headers: &Header
         headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type(&extension)));
         headers.insert(
             header::CACHE_CONTROL,
-            HeaderValue::from_static(if is_html_path(&decoded) || matches!(extension.as_str(), "html" | "htm") {
-                "no-store"
-            } else {
-                "public, max-age=0"
-            }),
+            HeaderValue::from_static(
+                if is_html_path(&decoded)
+                    || real.to_str().is_some_and(is_html_path)
+                    || matches!(extension.as_str(), "html" | "htm")
+                {
+                    "no-store"
+                } else {
+                    "public, max-age=0"
+                },
+            ),
         );
         let date = date.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
         headers.insert(header::LAST_MODIFIED, HeaderValue::from_str(&date).ok()?);
