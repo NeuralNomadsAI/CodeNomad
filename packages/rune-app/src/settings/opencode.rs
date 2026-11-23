@@ -1,7 +1,7 @@
 use super::view::Window;
 use crate::{backend::Backend, platform, strings::t};
 use codenomad_client::{
-    Receiver, bounded,
+    Receiver, Sender, bounded,
     settings::{OpenCodeStatus, opencode_status},
 };
 use rune::{El, col, text};
@@ -14,8 +14,9 @@ use rune_theme_codenomad::{
 #[derive(Default)]
 pub(super) struct Status {
     value: Option<OpenCodeStatus>,
-    flight: Option<Receiver<Option<OpenCodeStatus>>>,
+    flight: Option<(Sender<()>, Receiver<Option<OpenCodeStatus>>)>,
     authority: Option<String>,
+    trailing: Option<bool>,
     failed: bool,
     pub details_open: bool,
 }
@@ -36,7 +37,12 @@ impl Status {
         });
     }
 
-    pub fn read(&mut self, backend: Option<&Backend>, wake: Option<&rune::Waker>, recheck: bool) {
+    pub fn read(
+        &mut self,
+        backend: Option<&Backend>,
+        wake: Option<&rune::Waker>,
+        refresh: Option<bool>,
+    ) {
         let authority = backend.map(|backend| backend.client_id.as_str());
         if authority != self.authority.as_deref() {
             *self = Self {
@@ -47,14 +53,25 @@ impl Status {
         let (Some(backend), Some(wake)) = (backend.cloned(), wake.cloned()) else {
             return;
         };
-        if self.flight.is_some() || (!recheck && (self.value.is_some() || self.failed)) {
+        if let Some(recheck) = refresh {
+            self.trailing = Some(self.trailing == Some(true) || recheck);
+        }
+        if self.flight.is_some() {
             return;
         }
+        let refresh = self.trailing.take();
+        if refresh.is_none() && (self.value.is_some() || self.failed) {
+            return;
+        }
+        let recheck = refresh == Some(true);
         let (sender, receiver) = bounded(1);
-        self.flight = Some(receiver);
+        let (cancel, cancelled) = bounded(1);
+        self.flight = Some((cancel, receiver));
         platform::spawn(async move {
-            let result = opencode_status(&backend, recheck).await.ok();
-            if sender.send(result).await.is_ok() {
+            if let Some(result) =
+                platform::reads::cancellable(&cancelled, opencode_status(&backend, recheck)).await
+                && sender.send(result.ok()).await.is_ok()
+            {
                 wake();
             }
         });
@@ -64,7 +81,7 @@ impl Status {
         let Some(reply) = self
             .flight
             .as_ref()
-            .and_then(|flight| flight.try_recv().ok())
+            .and_then(|(_, reply)| reply.try_recv().ok())
         else {
             return false;
         };
@@ -86,7 +103,12 @@ pub(super) fn view(s: &Window) -> El {
             .role("heading"),
     );
     if status.failed {
-        card = card.child(text(t("settings.opencode.setup.serviceError")).role("alert"));
+        card = card.child(
+            text(t("settings.opencode.setup.serviceError"))
+                .full_width()
+                .wrap()
+                .role("alert"),
+        );
     }
     if let Some(snapshot) = &status.value {
         let label = if status.failed {
@@ -121,10 +143,22 @@ pub(super) fn view(s: &Window) -> El {
         }
         if !status.failed {
             if let Some(restart) = snapshot.restart {
-                card = card.child(text(t(restart)).role("status"));
+                card = card.child(
+                    text(t(restart))
+                        .full_width()
+                        .wrap()
+                        .role("status")
+                        .key("opencode-restart-status"),
+                );
             }
             if snapshot.check_failed {
-                card = card.child(text(t("settings.opencode.update.checkFailed")).role("status"));
+                card = card.child(
+                    text(t("settings.opencode.update.checkFailed"))
+                        .full_width()
+                        .wrap()
+                        .role("status")
+                        .key("opencode-check-failed"),
+                );
             }
         }
     }
@@ -134,7 +168,7 @@ pub(super) fn view(s: &Window) -> El {
     card = card.child(layout::action_row().child(layout::button(
         t("settings.opencode.setup.check"),
         pending || !s.has_backend(),
-        |s: &mut Window| s.check_opencode(true),
+        |s: &mut Window| s.check_opencode(Some(true)),
     )));
     if let Some(snapshot) = &status.value {
         let mut details = col().full_width().child(version(

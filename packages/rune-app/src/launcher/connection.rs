@@ -1,8 +1,7 @@
 use super::{Backend, Launcher, Reply, State, TextEdit, Tx};
 
 pub(super) fn watch_catalogue(l: &mut Launcher) {
-    if cfg!(target_os = "windows")
-        && l.catalogue_watch.is_none()
+    if l.catalogue_watch.is_none()
         && let Some(backend) = &l.connection
     {
         let (watch, task) =

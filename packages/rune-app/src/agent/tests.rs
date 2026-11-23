@@ -54,9 +54,9 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
     runtime.update(|s, _| {
         let mut foreign = target.clone();
         foreign.server = Some("other-server".into());
-        assert!(crate::settings::system_notification(
+        assert!(matches!(crate::settings::system_notification(
             s, &foreign, crate::settings::notification_routing::Category::NeedsInput, false, "foreign"
-        ).is_none());
+        ), crate::settings::Delivery::Suppressed));
         for _ in 0..2 {
             assert!(out.try_send(super::Result::Read(snapshot(), false)).is_ok());
             assert!(crate::poll_chat(s, 8));

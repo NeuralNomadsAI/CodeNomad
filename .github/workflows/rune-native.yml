@@ -131,6 +131,11 @@ jobs:
           node packages/rune-app/fixtures/files-fixture.mjs --write
           node packages/rune-app/fixtures/recovery-fixture.mjs
           node packages/rune-app/fixtures/recovery-fixture.mjs --suspend
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            node packages/rune-app/fixtures/launcher-fixture.mjs --git-panel --place-worktree
+            node packages/rune-app/fixtures/launcher-fixture.mjs --git-panel --place-worktree --placement-ambiguity
+            node packages/rune-app/fixtures/launcher-fixture.mjs --git-panel --place-worktree --placement-busy
+          fi
       - name: Compare shared controls with Solid on Windows
         if: runner.os == 'Windows'
         run: |

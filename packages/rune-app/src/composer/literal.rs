@@ -1,7 +1,6 @@
 use rune::edit::{Mark, MarkRange, TextEdit};
 use std::ops::Range;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn paste(edit: &mut TextEdit, text: &str) {
     edit.undo_group(|edit| {
         let (start, _) = edit.range();

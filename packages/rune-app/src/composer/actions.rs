@@ -58,6 +58,7 @@ pub fn can_send(s: &State) -> bool {
             .launcher()
             .is_some_and(crate::launcher::Launcher::blocks_prompt)
         && !s.history_detached
+        && !crate::git::placement_unconfirmed(s)
         && s.reader.as_ref().is_none_or(|reader| !reader.blocks_send())
         && s.composer.sending.is_none()
         && !s.composer.picker.open()
@@ -106,6 +107,8 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             });
             s.composer.send_error = false;
             s.composer.command_unconfirmed = None;
+            #[cfg(target_arch = "wasm32")]
+            s.rotate_composer_input();
         } else {
             s.composer.send_error = true;
         }
@@ -132,6 +135,8 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         return;
     }
     s.composer.send_error = false;
+    #[cfg(target_arch = "wasm32")]
+    s.rotate_composer_input();
     s.composer.sending = Some(Send {
         id: id.clone(),
         edit: s.draft.clone(),

@@ -15,6 +15,7 @@ pub(crate) struct Attention {
     directory: Option<String>,
     execution: Option<(String, bool)>,
     pending: Vec<(Category, String)>,
+    updated: [bool; 2],
 }
 
 impl Attention {
@@ -71,6 +72,7 @@ impl Attention {
     }
 
     fn observe_requests(&mut self, kind: usize, ids: impl Iterator<Item = String>) {
+        self.updated[kind] = true;
         let current: HashSet<_> = ids.collect();
         let capacity = RETAINED.saturating_sub(self.pending.len());
         self.pending.extend(
@@ -80,6 +82,14 @@ impl Attention {
                 .map(|id| (Category::NeedsInput, format!("{kind}:{id}"))),
         );
         self.requests[kind] = current;
+    }
+}
+
+fn request_present(key: &str, updated: [bool; 2], requests: &[HashSet<String>; 2]) -> bool {
+    match key.split_once(':') {
+        Some(("0", id)) if updated[0] => requests[0].contains(id),
+        Some(("1", id)) if updated[1] => requests[1].contains(id),
+        _ => true,
     }
 }
 
@@ -97,6 +107,7 @@ pub(crate) struct Host {
     focused: bool,
     routes: VecDeque<(u64, Target, Presented)>,
     delivered: VecDeque<(Target, Category, String)>,
+    deferred: VecDeque<Notice>,
     activation: Option<(Target, std::rc::Rc<()>, bool)>,
     next_id: u64,
     clicks: codenomad_client::Receiver<u64>,
@@ -109,6 +120,14 @@ pub(crate) struct Host {
     pub(crate) background: Option<rune::AppHandle<State>>,
     #[cfg(test)]
     recorded: Option<Vec<(u64, String, String)>>,
+}
+
+struct Notice {
+    target: Target,
+    category: Category,
+    id: String,
+    project: String,
+    label: String,
 }
 
 enum Presented {
@@ -127,6 +146,7 @@ impl Default for Host {
             focused: true,
             routes: VecDeque::new(),
             delivered: VecDeque::new(),
+            deferred: VecDeque::new(),
             activation: None,
             next_id: 0,
             clicks,
@@ -158,6 +178,13 @@ pub(crate) fn native_delivery() -> Option<crate::platform::notifications::Delive
 }
 
 impl Host {
+    pub(crate) fn forget_tab(&mut self, tab: &str) {
+        let keeps = |target: &Target| target.tab.as_deref() != Some(tab);
+        self.routes.retain(|(_, target, _)| keeps(target));
+        self.delivered.retain(|(target, _, _)| keeps(target));
+        self.deferred.retain(|notice| keeps(&notice.target));
+    }
+
     fn focused(&self) -> bool {
         #[cfg(target_arch = "wasm32")]
         return crate::platform::notifications::focused();
@@ -272,10 +299,11 @@ pub(crate) fn with_background_wake(s: &mut State, wake: rune::Waker) -> rune::Wa
 
 pub(crate) fn collect(s: &mut State, target: impl FnOnce(&State) -> Option<(Target, String)>) {
     let Some(agent) = &mut s.agent else { return };
-    if agent.attention.pending.is_empty() {
+    if agent.attention.pending.is_empty() && agent.attention.updated == [false; 2] {
         return;
     }
     let pending = std::mem::take(&mut agent.attention.pending);
+    let updated = std::mem::take(&mut agent.attention.updated);
     if !agent.online {
         return;
     }
@@ -283,49 +311,107 @@ pub(crate) fn collect(s: &mut State, target: impl FnOnce(&State) -> Option<(Targ
     let Some((target, project)) = target(s) else {
         return;
     };
+    if updated != [false; 2] {
+        let requests = &s.agent.as_ref().unwrap().attention.requests;
+        s.notifications.delivered.retain(|(owner, event, key)| {
+            owner != &target
+                || *event != Category::NeedsInput
+                || request_present(key, updated, requests)
+        });
+        s.notifications.deferred.retain(|notice| {
+            notice.target != target
+                || notice.category != Category::NeedsInput
+                || request_present(&notice.id, updated, requests)
+        });
+    }
     let label = if s.chat_title.trim().is_empty() {
-        &target.session
+        target.session.clone()
     } else {
-        &s.chat_title
+        s.chat_title.clone()
     };
-    let focused = s.notifications.focused();
     for (category, id) in pending {
         if running && matches!(category, Category::SessionDone) {
             continue;
         }
-        if s.notifications
-            .delivered
-            .iter()
-            .any(|(owner, event, seen)| owner == &target && *event == category && seen == &id)
-        {
-            continue;
-        }
-        if s.notifications.delivered.len() >= 4096 {
-            // Retain known requests so revisiting a session cannot replay them.
-            let Some(old) = s
-                .notifications
-                .delivered
-                .iter()
-                .position(|(_, category, _)| *category == Category::SessionDone)
-            else {
-                continue;
-            };
-            s.notifications.delivered.remove(old);
-        }
-        s.notifications
-            .delivered
-            .push_back((target.clone(), category, id));
-        let Some(body) = crate::settings::system_notification(s, &target, category, focused, label)
-        else {
-            continue;
-        };
-        s.notifications
-            .present(&project, &body, target.clone(), s.wake.clone());
+        deliver(
+            s,
+            Notice {
+                target: target.clone(),
+                category,
+                id,
+                project: project.clone(),
+                label: label.clone(),
+            },
+        );
     }
+}
+
+fn deliver(s: &mut State, notice: Notice) {
+    use crate::settings::Delivery;
+    let Notice {
+        target,
+        category,
+        id,
+        project,
+        label,
+    } = &notice;
+    let shelf = &s.notifications;
+    if shelf
+        .delivered
+        .iter()
+        .any(|(owner, event, seen)| owner == target && event == category && seen == id)
+    {
+        return;
+    }
+    let body =
+        match crate::settings::system_notification(s, target, *category, shelf.focused(), label) {
+            Delivery::Body(body) => body,
+            Delivery::Suppressed => return,
+            Delivery::WaitingForSettings => {
+                let queue = &mut s.notifications.deferred;
+                if !queue.iter().any(|entry| {
+                    entry.target == *target && entry.category == *category && entry.id == *id
+                }) {
+                    if queue.len() >= RETAINED {
+                        queue.pop_front();
+                    }
+                    queue.push_back(notice);
+                }
+                return;
+            }
+        };
+    let delivered = &mut s.notifications.delivered;
+    let limit = if *category == Category::NeedsInput {
+        4096
+    } else {
+        RETAINED
+    };
+    if delivered
+        .iter()
+        .filter(|(_, event, _)| event == category)
+        .count()
+        >= limit
+    {
+        if *category == Category::NeedsInput {
+            return;
+        }
+        if let Some(old) = delivered.iter().position(|(_, event, _)| event == category) {
+            delivered.remove(old);
+        }
+    }
+    delivered.push_back((target.clone(), *category, id.clone()));
+    s.notifications
+        .present(project, &body, target.clone(), s.wake.clone());
 }
 
 pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     use crate::workspace::Activation;
+    let notices = std::mem::take(&mut s.notifications.deferred);
+    for notice in notices {
+        if crate::workspace::owns_notification(s, &notice.target) {
+            deliver(s, notice);
+        }
+    }
     if s.notifications.routes.is_empty() && s.notifications.activation.is_none() {
         return false;
     }
@@ -375,6 +461,42 @@ pub(crate) fn system_allowed(config: Option<&Value>, category: Category, focused
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn notice_waits_for_the_confirmed_route_instead_of_claiming_delivery_early() {
+        let mut s = crate::init();
+        crate::settings::notification_fixture(&s);
+        s.notifications.record();
+        s.notifications.focused = false;
+        let target = Target {
+            tab: None,
+            backend_url: "http://127.0.0.1:9/".into(),
+            server: None,
+            occurrence: 0,
+            workspace: "workspace".into(),
+            session: "session".into(),
+        };
+        crate::settings::invalidate(&s, codenomad_client::settings::Owner::Config);
+        for _ in 0..2 {
+            deliver(
+                &mut s,
+                Notice {
+                    target: target.clone(),
+                    category: Category::NeedsInput,
+                    id: "1:question".into(),
+                    project: "Private project".into(),
+                    label: "Conversation".into(),
+                },
+            );
+        }
+        assert_eq!(s.notifications.deferred.len(), 1);
+        assert!(s.notifications.delivered.is_empty());
+        assert!(s.notifications.recorded().is_empty());
+        crate::settings::notification_fixture(&s);
+        let notice = s.notifications.deferred.pop_front().unwrap();
+        deliver(&mut s, notice);
+        assert_eq!(s.notifications.recorded().len(), 1);
+    }
 
     #[test]
     fn system_delivery_requires_confirmed_routing_and_the_focus_override() {

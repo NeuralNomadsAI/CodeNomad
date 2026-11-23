@@ -59,6 +59,7 @@ setSessions(previous => new Map(previous).set(instanceId, new Map(Object.keys(me
 } as any]))))
 setActiveSession(instanceId, "reveal-a")
 await applyUiSettings({ toolInputsVisibility: "hidden", toolOutputExpansion: "expanded", diagnosticsExpansion: "collapsed",
+  ...(parity ? { showThinkingBlocks: true } : {}),
   toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: parity
     ? { read: "collapsed", grep: "collapsed", bash: "expanded", edit: "expanded" }
     : { read: "expanded", task: "expanded", other: "expanded" } } })

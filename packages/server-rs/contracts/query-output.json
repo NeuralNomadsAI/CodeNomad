@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "page"
+        },
+        "scanned": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "tools": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "reasoning": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "hits": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "messageID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "role": {
+                "type": "string",
+                "maxLength": 32
+              },
+              "partIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "tool",
+                  "reasoning"
+                ]
+              },
+              "excerpt": {
+                "type": "string",
+                "maxLength": 320
+              }
+            },
+            "required": [
+              "sessionID",
+              "messageID",
+              "role",
+              "partIndex",
+              "kind",
+              "excerpt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "candidates": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "messageID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "toolCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "reasoningCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "messageID",
+              "revision",
+              "toolCount",
+              "reasoningCount"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sessions": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "directory": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "workspaceID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "scanned": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "tools": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "reasoning": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "skipped": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "sessionID",
+              "directory",
+              "scanned",
+              "tools",
+              "reasoning",
+              "skipped"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "status",
+        "scanned",
+        "tools",
+        "reasoning",
+        "skipped",
+        "hits",
+        "candidates",
+        "cursor",
+        "sessions"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "blocked"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "unavailable",
+            "maintenance_required",
+            "conflict",
+            "not_deletable",
+            "unsupported_storage"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

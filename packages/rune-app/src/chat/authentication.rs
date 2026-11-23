@@ -1,11 +1,6 @@
 //! Native direct-launch login recovery. Browser pairing stays in the web platform.
-use crate::{
-    State,
-    backend::{Backend, read_json},
-    platform,
-    strings::t,
-};
-use codenomad_client::{Receiver, bounded};
+use crate::{State, backend::Backend, platform, strings::t};
+use codenomad_client::{Receiver, bounded, transport::Authentication};
 use rune::{El, edit::TextEdit, text};
 use rune_theme_codenomad::{
     field_kit,
@@ -34,7 +29,13 @@ enum Reply {
     Failed(&'static str),
 }
 
-pub(crate) fn expired(s: &mut State, expired: Backend) {
+pub(crate) fn expired(
+    s: &mut State,
+    Authentication {
+        backend: expired,
+        confirmed,
+    }: Authentication,
+) {
     if s.screen.launcher().is_some() {
         return;
     }
@@ -48,7 +49,7 @@ pub(crate) fn expired(s: &mut State, expired: Backend) {
             backend: expired,
             expected_server,
             flight: None,
-            required: false,
+            required: confirmed,
             error: None,
         }),
         username: TextEdit::new("codenomad"),
@@ -109,21 +110,11 @@ fn request(challenge: &mut Challenge, wake: &rune::Waker, credentials: Option<(S
 }
 
 async fn check(backend: Backend, expected: Option<&str>) -> Reply {
-    let response = backend
-        .client
-        .get(format!("{}api/auth/status", backend.base))
-        .send()
-        .await;
-    if let Ok(response) = response.and_then(|r| r.error_for_status())
-        && let Ok(status) = read_json(response).await
-    {
-        match status["authenticated"].as_bool() {
-            Some(true) => return attest(backend, expected).await,
-            Some(false) => return Reply::Required,
-            None => {}
-        }
+    match backend.authentication_status().await {
+        Ok(true) => attest(backend, expected).await,
+        Ok(false) => Reply::Required,
+        Err(_) => Reply::Failed("authRecovery.unavailable"),
     }
-    Reply::Failed("authRecovery.unavailable")
 }
 
 async fn sign_in(

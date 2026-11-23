@@ -65,6 +65,11 @@ fn owned_routes_pin_history_and_submit_each_mutation_once() {
             200,
             json!({"data":[],"cursor":{}}),
         ),
+        (
+            "POST /api/workspaces/w/sessions/child/worktree".into(),
+            200,
+            json!({"rootSessionId":"root-session","sessionIds":["root-session","child"],"worktreeSlug":"link % #"}),
+        ),
     ];
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}/", listener.local_addr().unwrap());
@@ -97,6 +102,8 @@ fn owned_routes_pin_history_and_submit_each_mutation_once() {
                     json!({"directory":"D:/repo"})
                 } else if route.ends_with("git-commit") {
                     json!({"message":"message"})
+                } else if route.ends_with("/worktree") {
+                    json!({"worktreeSlug":"link % #"})
                 } else {
                     json!({"paths":["a + b.rs"]})
                 };
@@ -164,6 +171,12 @@ fn owned_routes_pin_history_and_submit_each_mutation_once() {
                     .rows
                     .is_empty()
             );
+            assert!(backend.place_session(&tree.slug).await.is_err());
+            backend.session = "child".into();
+            assert_eq!(
+                backend.place_session(&tree.slug).await.unwrap(),
+                ["root-session", "child"]
+            );
         });
     server.join().unwrap();
 }
@@ -209,4 +222,26 @@ fn bulk_path_batches_preserve_the_exact_order_and_both_server_bounds() {
             .all(|batch| batch.iter().map(String::len).sum::<usize>() <= 16_000)
     );
     assert_eq!(batches.concat(), paths);
+}
+#[test]
+fn a_gateway_timeout_cannot_settle_worktree_placement() {
+    let message = Some("Native worktree operation could not be verified".into());
+    for status in [408, 500, 502, 503, 504] {
+        assert!(
+            !Refusal {
+                status,
+                code: None,
+                message: message.clone()
+            }
+            .placement_answered()
+        );
+    }
+    assert!(
+        Refusal {
+            status: 409,
+            code: None,
+            message
+        }
+        .placement_answered()
+    );
 }

@@ -12,6 +12,7 @@ use serde_json::json;
 #[derive(Default)]
 pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
+    pub(super) provider_target: Option<super::providers::Target>,
     config: Document,
     state: Document,
     pub(super) window_wake: Option<rune::Waker>,
@@ -95,7 +96,6 @@ impl Preferences {
         self.state.retry();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn can_retry(&self) -> bool {
         self.backend.is_some() && !self.authentication_required
     }
@@ -136,6 +136,9 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
+        if let Some(target) = &mut self.provider_target {
+            target.transport(false);
+        }
         self.unwatch();
         self.revision += 1;
         if let Some(wake) = &self.window_wake {
@@ -178,6 +181,16 @@ impl Preferences {
         self.config.confirmed()
     }
 
+    pub(super) fn notification_config_refreshing(&self) -> bool {
+        self.config.refreshing()
+    }
+
+    #[cfg(test)]
+    pub(super) fn reset_notification_fixture(&mut self) {
+        self.config = Default::default();
+        self.fixture();
+    }
+
     pub fn saved(&self, owner: Owner) -> Option<&Value> {
         self.doc(owner).snapshot.as_ref()
     }
@@ -185,6 +198,8 @@ impl Preferences {
     pub fn error(&self) -> Option<&'static str> {
         if self.authentication_required {
             Some("rune.connect_error")
+        } else if self.contrast_failed() {
+            Some("settings.appearance.contrast.saveError")
         } else if self.config.write_failed() || self.state.write_failed() {
             Some("settings.preferenceSaveFailed")
         } else if self.config.read_failed() || self.state.read_failed() {
@@ -230,6 +245,37 @@ impl Preferences {
     pub fn locale(&self) -> Option<&'static str> {
         let id = self.saved(Owner::Config)?["settings"]["locale"].as_str()?;
         Some(rune_theme_codenomad::catalogue::canonical_locale(id))
+    }
+
+    pub fn contrast(&self) -> &'static str {
+        let confirmed = self
+            .saved(Owner::Config)
+            .and_then(|doc| doc["settings"]["highContrast"].as_str());
+        let proposed = (!self.contrast_failed())
+            .then(|| self.config.requested(Choice::Contrast))
+            .flatten();
+        match proposed.or(confirmed) {
+            Some("on") => "on",
+            Some("off") => "off",
+            _ => "auto",
+        }
+    }
+
+    pub(super) fn contrast_failed(&self) -> bool {
+        self.config.choice_failed(Choice::Contrast)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn set_contrast(&mut self, contrast: &'static str) {
+        if self.locale_ready()
+            && self.can_retry()
+            && (contrast != self.contrast() || self.contrast_failed())
+        {
+            self.config.stage(Choice::Contrast, contrast);
+            if let Some(wake) = &self.main_wake {
+                wake();
+            }
+        }
     }
 
     pub fn locale_display(&self) -> Option<&'static str> {
@@ -392,7 +438,12 @@ impl Preferences {
 
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn fixture(&mut self) {
-        self.config.snapshot = Some(json!({"settings":{"locale":"en"}}));
+        self.fixture_locale("en");
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn fixture_locale(&mut self, locale: &str) {
+        self.config.snapshot = Some(json!({"settings":{"locale":locale}}));
         self.state.snapshot = Some(
             json!({"appearancePreferences":{"mode":"system","light":{"scheme":{"id":"light"}},"dark":{"scheme":{"id":"classic"}}}}),
         );

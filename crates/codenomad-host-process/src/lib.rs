@@ -9,10 +9,14 @@ use std::{
     io,
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus},
 };
+#[cfg(windows)]
+mod date;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+pub use date::local_month_day;
 #[cfg(unix)]
 use unix::Family;
 #[cfg(windows)]

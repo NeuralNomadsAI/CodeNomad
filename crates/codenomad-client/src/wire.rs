@@ -48,6 +48,29 @@ pub fn decode_native(e: &Value) -> Option<Event> {
                 }
             },
         )),
+        "session.reasoning.started" | "session.reasoning.delta" | "session.reasoning.ended" => {
+            use crate::content::ReasoningEvent;
+            let id = data["assistantMessageID"]
+                .as_str()
+                .filter(|id| crate::history::valid_id(id))?;
+            let ordinal = data["ordinal"].as_u64().filter(|ordinal| *ordinal < 1000)? as usize;
+            let event = match e["type"].as_str()? {
+                "session.reasoning.started" => ReasoningEvent::Start {
+                    ordinal,
+                    at: e["created"].as_u64()?,
+                },
+                "session.reasoning.delta" => ReasoningEvent::Delta {
+                    ordinal,
+                    text: data["delta"].as_str()?.into(),
+                },
+                _ => ReasoningEvent::End {
+                    ordinal,
+                    at: e["created"].as_u64()?,
+                    text: data["text"].as_str()?.into(),
+                },
+            };
+            Some(Event::Reasoning(id.into(), event))
+        }
         "session.execution.succeeded" | "session.execution.interrupted" => Some(Event::Done),
         "session.execution.failed" | "session.deleted" | "session.revert.committed" => {
             Some(Event::Failed)

@@ -116,13 +116,13 @@ pub(crate) async fn authenticate_and_run(
     #[cfg(not(target_arch = "wasm32"))]
     if result.is_ok() && target.attest_server().await.is_err() {
         // Keep the admitted cookie for Retry; the startup token was single-use.
-        publish(&out, &wake, Event::AuthenticationRequired(target)).await;
+        publish(&out, &wake, Event::authentication_required(target)).await;
         return;
     }
     match result {
         Ok(()) => run_bound(Ok(target), out, input, wake, None).await,
         Err(error) if codenomad_client::http::authentication_expired(&error) => {
-            publish(&out, &wake, Event::AuthenticationRequired(target)).await;
+            publish(&out, &wake, Event::authentication_required(target)).await;
             drop(out);
             wake();
         }
@@ -160,7 +160,19 @@ async fn run_bound(
 }
 #[cfg(feature = "test-support")]
 async fn run_synthetic(out: Sender<Event>, input: Receiver<Command>, wake: rune::Waker) {
-    publish(&out, &wake, Event::History(synthetic())).await;
+    let mut reject_first = crate::platform::scene_is("synthetic-paste");
+    let history = if reject_first {
+        Event::Sync(crate::history::Page {
+            rows: synthetic(),
+            older: None,
+            newer: None,
+            running: false,
+            user_file_references: true,
+        })
+    } else {
+        Event::History(synthetic())
+    };
+    publish(&out, &wake, history).await;
     let mut turn = 0;
     while let Ok(command) = input.recv().await {
         if matches!(command, Command::Close) {
@@ -169,15 +181,26 @@ async fn run_synthetic(out: Sender<Event>, input: Receiver<Command>, wake: rune:
         match command {
             Command::Prompt(prompt) => {
                 if let Some(attempted) = prompt.id {
+                    let reject = std::mem::take(&mut reject_first);
+                    if reject {
+                        crate::platform::sleep(Duration::from_millis(1500)).await;
+                    }
                     publish(
                         &out,
                         &wake,
                         Event::PromptAcknowledged {
-                            outcome: PromptOutcome::Confirmed(attempted.clone()),
+                            outcome: if reject {
+                                PromptOutcome::Rejected
+                            } else {
+                                PromptOutcome::Confirmed(attempted.clone())
+                            },
                             attempted,
                         },
                     )
                     .await;
+                    if reject {
+                        continue;
+                    }
                 }
             }
             _ => {

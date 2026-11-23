@@ -1,4 +1,5 @@
 //! Host-owned configuration and appearance, independent of any project location.
+mod providers;
 use crate::{
     Wake,
     backend::{Backend, read_json},
@@ -6,6 +7,8 @@ use crate::{
     recovery::Input,
     runtime, stream,
 };
+pub(crate) use providers::provider_change;
+pub use providers::{Provider, providers};
 use serde_json::Value;
 use std::{
     sync::{
@@ -76,6 +79,11 @@ pub async fn opencode_status(backend: &Backend, recheck: bool) -> Result<OpenCod
     let mut request = backend
         .client
         .get(format!("{}api/opencode/update", backend.base));
+    // The host can spend 60 s on the release lookup before probing the daemon.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        request = request.timeout(Duration::from_secs(120));
+    }
     if recheck {
         request = request.query(&[("recheck", "1")]);
     }

@@ -6,59 +6,25 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
 };
 
-pub fn view(s: &State, compact: bool) -> El {
+pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
     let scope = s.input_scope.clone();
-    let edit_scope = scope.clone();
-    #[cfg(not(target_arch = "wasm32"))]
-    let paste_scope = scope.clone();
     let stop = s.phase == Phase::Streaming && s.agent.is_some();
-    #[cfg(target_arch = "wasm32")]
-    let editor = layout::composer_field(&s.draft, t("promptInput.placeholder.default"), compact)
-        .label(t("rune.prompt"))
-        .disabled(s.composer.pending())
-        .on_edit(screen::edit(&scope, screen::Editor::Composer))
-        .on_change(screen::action_tx(&scope, changed))
-        .on_key(move |s: &mut State, event, tx| s.current_scope(&edit_scope) && key(s, event, tx))
-        .build(rune_theme_codenomad::field_kit(layout::dark()))
-        .key("composer");
-    #[cfg(not(target_arch = "wasm32"))]
-    let editor = {
-        let physical_scope = scope.clone();
-        let menu_scope = scope.clone();
-        let drop_scope = scope.clone();
-        let input = layout::native_composer_input(&s.draft, t("promptInput.placeholder.default"))
-            .key("input")
-            .label(t("rune.prompt"))
-            .disabled(s.composer.pending())
-            .on_edit(screen::edit(&scope, screen::Editor::Composer))
-            .on_input_change(screen::action_tx(&scope, changed))
-            .on_input_key(move |s: &mut State, event, tx| {
-                s.current_scope(&edit_scope) && key(s, event, tx)
-            })
-            .on_physical_input(move |s: &mut State, event, tx| {
-                s.current_scope(&physical_scope) && super::clipboard::physical(s, event, tx)
-            })
-            .on_input_paste(move |s: &mut State, content, tx| {
-                // File/image reads must enter through the owned gesture, never by focus at delivery.
-                !content.files().is_empty()
-                    || content.image().is_some()
-                    || s.current_scope(&paste_scope)
-                        && super::long_paste::paste(s, content.text(), tx)
-            })
-            .on_secondary_press(move |s: &mut State, point, tx| {
-                if s.current_scope(&menu_scope) {
-                    super::clipboard::menu(s, (point.x, point.y), tx);
-                }
-            })
-            .on_drop_files(move |s: &mut State, paths, _| {
-                if s.current_scope(&drop_scope) {
-                    platform::device_picker::drop_files(s, paths);
-                }
-            });
-        layout::native_composer_field(input, compact).key("composer")
-    };
+    let editor = editor(s, compact);
     let retry = s.reader.as_ref().is_some_and(|reader| reader.can_retry());
     let mut actions = layout::action_row()
+        .children(worktree)
+        .children(
+            crate::git::placement_hold(s)
+                .is_some_and(|hold| hold.answered)
+                .then(|| {
+                    crate::components::button_tx(
+                        "placement-retry",
+                        t("sessionList.loadError.retry"),
+                        s.screen.launcher().is_some_and(|launcher| launcher.pending),
+                        screen::action_tx(&scope, |s, _| crate::launcher::placement::retry(s)),
+                    )
+                }),
+        )
         .children(
             (s.can_older || retry || s.history_error && s.phase != Phase::Failed).then(|| {
                 rune_theme_codenomad::shell::older_button(
@@ -257,6 +223,65 @@ pub fn view(s: &State, compact: bool) -> El {
             (s.composer.unconfirmed_id().is_some() || s.composer.command_unconfirmed.is_some())
                 .then(|| text(t("missionsPanel.action.requestUpdateUncertain")).role("alert")),
         )
+}
+
+fn editor(s: &State, compact: bool) -> El {
+    let editable = !s.composer.pending();
+    #[cfg(not(target_arch = "wasm32"))]
+    let input_key = "input";
+    #[cfg(target_arch = "wasm32")]
+    let input_key = format!("input-{}", s.web_composer_input_epoch);
+    let input = layout::composer_input(&s.draft, t("promptInput.placeholder.default"))
+        .key(input_key)
+        .label(t("rune.prompt"))
+        .disabled(!editable);
+    if !editable {
+        return layout::composer_field(input, compact, false).key("composer");
+    }
+    let scope = s.input_scope.clone();
+    let key_scope = scope.clone();
+    let paste_scope = scope.clone();
+    let input = input
+        .on_edit(screen::edit(&scope, screen::Editor::Composer))
+        .on_input_change(screen::action_tx(&scope, changed))
+        .on_input_key(move |s: &mut State, event, tx| {
+            s.current_scope(&key_scope) && key(s, event, tx)
+        })
+        .on_input_paste(move |s: &mut State, content, tx| {
+            if !s.current_scope(&paste_scope) || s.composer.pending() {
+                return true;
+            }
+            #[cfg(target_arch = "wasm32")]
+            if platform::device_picker::paste(s, content) {
+                return true;
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if !content.files().is_empty() || content.image().is_some() && content.text().is_empty()
+            {
+                return true;
+            }
+            super::long_paste::paste(s, content.text(), tx)
+        });
+    #[cfg(not(target_arch = "wasm32"))]
+    let input = {
+        let physical_scope = scope.clone();
+        let menu_scope = scope.clone();
+        input
+            .on_physical_input(move |s: &mut State, event, tx| {
+                s.current_scope(&physical_scope) && super::clipboard::physical(s, event, tx)
+            })
+            .on_secondary_press(move |s: &mut State, point, tx| {
+                if s.current_scope(&menu_scope) {
+                    super::clipboard::menu(s, (point.x, point.y), tx);
+                }
+            })
+            .on_drop_files(move |s: &mut State, paths, _| {
+                if s.current_scope(&scope) {
+                    platform::device_picker::drop_files(s, paths);
+                }
+            })
+    };
+    layout::composer_field(input, compact, s.draft.focused).key("composer")
 }
 
 pub fn overlays(s: &State, layer: &mut Vec<El>) {

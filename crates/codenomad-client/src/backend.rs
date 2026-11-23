@@ -68,9 +68,21 @@ impl Backend {
             .error_for_status()?;
         Ok(())
     }
+    pub async fn authentication_status(&self) -> Result<bool> {
+        let response = self
+            .client
+            .get(format!("{}api/auth/status", self.base))
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await?
+            .error_for_status()?;
+        read_json_limited(response, 4096).await?["authenticated"]
+            .as_bool()
+            .ok_or_else(|| "Invalid authentication status".into())
+    }
     pub async fn page(&self, target: Value) -> Result<Page> {
         // Match the broker's window envelope; other endpoints retain their own limits.
-        history::decode(
+        history::decode_target(
             read_json_limited(
                 self.client
                     .post(format!(
@@ -88,6 +100,7 @@ impl Backend {
                 history::WINDOW_BYTES,
             )
             .await?,
+            &target,
         )
     }
     pub async fn empty(&self) -> Result<Page> {
@@ -191,7 +204,14 @@ impl Backend {
                 return Err("history cursor did not advance".into());
             }
             let next = self.page(target).await?;
-            let joined = history::join(&result.rows, &next.rows)?;
+            let joined = match history::join(&result.rows, &next.rows) {
+                Err(error) if error.is::<history::ReasoningLimit>() => {
+                    let mut latest = self.page(json!({"kind":"latest"})).await?;
+                    self.read_running(&mut latest).await?;
+                    return Ok(latest);
+                }
+                result => result?,
+            };
             if joined.len() <= result.rows.len() {
                 return Err("history page did not advance".into());
             }
