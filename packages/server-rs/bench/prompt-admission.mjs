@@ -51,6 +51,7 @@ async function upstream(profile) {
   await git('-C',directory,'worktree','add','--quiet','--detach',tree,'HEAD')
   await writeFile(path.join(tree,'tree.txt'),'synthetic tree\n')
   const treeNested=path.join(tree,'sub'), independent=path.join(tree,'independent')
+  const treeHeadDir=path.join(tree,'head-directory')
   const localTree=path.join(directory,'.codenomad','worktrees','nested')
   const localIndependent=path.join(localTree,'independent')
   await mkdir(path.dirname(localTree),{recursive:true})
@@ -58,14 +59,15 @@ async function upstream(profile) {
   await mkdir(treeNested)
   await mkdir(path.join(treeNested,'.git','objects'),{recursive:true})
   await mkdir(path.join(treeNested,'.git','refs'))
-  await writeFile(path.join(treeNested,'.git','HEAD'),'Not a Git HEAD.\n')
+  await writeFile(path.join(treeNested,'.git','HEAD'),'ref: invalid\n')
+  for(const entry of ['objects','refs','HEAD']) await mkdir(path.join(treeHeadDir,'.git',entry),{recursive:true})
   await git('init','--quiet',independent)
   await git('init','--quiet',localIndependent)
   const calls = [], sessions = new Map(), password = randomUUID(),state={carrier:'absent'}
   for (const [id,dir,metadata] of [['ses_owned',directory,{}],['ses_nested',path.join(directory,'sub'),{}],['ses_tree',tree,{}],['ses_foreign',foreign,{}],['ses_cn_schedule_reserved',directory,{}],['ses_carrier',directory,{'codenomad.schedule-carrier':true}]])
     sessions.set(id,{id,title:'Synthetic',projectID:'project_fixture',location:{directory:dir},metadata,time:{created:1,updated:1}})
   sessions.set('ses_plain',{id:'ses_plain',title:'Synthetic without Git',projectID:'global',location:{directory:plainNested},time:{created:1,updated:1}})
-  for(const [id,dir] of [['ses_tree_nested',treeNested],['ses_independent',independent],['ses_local_independent',localIndependent]])
+  for(const [id,dir] of [['ses_tree_nested',treeNested],['ses_tree_head_dir',treeHeadDir],['ses_independent',independent],['ses_local_independent',localIndependent]])
     sessions.set(id,{id,title:'Synthetic checkout',projectID:'project_fixture',location:{directory:dir},time:{created:1,updated:1}})
   const server = createServer(async(req,res)=>{
     try {
@@ -222,6 +224,7 @@ export async function run(commandOnly=false){
         ['worktree-session','ses_tree',200],
         ['session-subfolder','ses_nested',200],
         ['worktree-subfolder','ses_tree_nested',200],
+        ['worktree-subfolder-head-directory','ses_tree_head_dir',200],
         ['independent-inside-opened-folder','ses_local_independent',200],
         ['nested-independent-repo','ses_independent',403],
       ]) {
@@ -326,6 +329,7 @@ async function commandCases(label, host, native, rows, errors) {
     ['ordinary','ses_owned',command,204,true],
     ['nested-session','ses_nested',command,204,true],
     ['linked-subfolder-incomplete-git','ses_tree_nested',command,204,true],
+    ['linked-subfolder-head-directory','ses_tree_head_dir',command,204,true],
     ['nested-repo-inside-opened-folder','ses_local_independent',command,204,true],
     ['nested-independent-repo','ses_independent',command,403,false],
     ['nested-no-repo','ses_plain',command,204,true],

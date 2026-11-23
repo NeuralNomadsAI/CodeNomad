@@ -66,13 +66,14 @@ fn head_cannot_name_repository(path: &Path) -> bool {
     use std::io::{ErrorKind, Read};
     match std::fs::symlink_metadata(path) {
         Err(error) => error.kind() == ErrorKind::NotFound,
+        Ok(meta) if meta.is_dir() => true,
         // Keep links and ambiguous reads closed; Git resolves the external
         // target's actual common directory during the asynchronous admission.
         Ok(meta) if meta.is_file() && meta.len() <= 4096 => {
             let mut head = Vec::new();
             std::fs::File::open(path).and_then(|file| file.take(4097).read_to_end(&mut head)).is_ok()
                 && head.len() <= 4096
-                && !head.starts_with(b"ref:")
+                && !head.strip_prefix(b"ref:").is_some_and(|target| target.trim_ascii_start().starts_with(b"refs/"))
                 && !head.get(..40).is_some_and(|oid| oid.iter().all(u8::is_ascii_hexdigit))
         }
         _ => false,
