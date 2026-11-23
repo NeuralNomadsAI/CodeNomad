@@ -298,7 +298,8 @@ pub fn connected(s: &mut State) {
         .or_else(platform::storage::configured_directory);
     #[cfg(target_arch = "wasm32")]
     let directory = None;
-    ui.persistence.start(directory, s.wake.clone());
+    ui.persistence
+        .start(directory, &s.documents, s.wake.clone());
     if ui.persistence.loading {
         ui.ready = false;
     }

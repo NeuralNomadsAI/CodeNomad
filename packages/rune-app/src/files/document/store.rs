@@ -157,6 +157,10 @@ impl Store {
     pub(crate) fn block_file_draft_updates(&self, blocked: bool) {
         lock(&self.0).read_blocked = blocked;
     }
+    #[cfg(test)]
+    pub(crate) fn file_draft_updates_blocked(&self) -> bool {
+        lock(&self.0).read_blocked
+    }
 
     pub(crate) fn has_tab_edits(&self, tab_key: &str) -> bool {
         self.has_matching_edits(|key| key.instance == tab_key)
