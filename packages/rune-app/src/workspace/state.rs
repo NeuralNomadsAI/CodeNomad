@@ -288,10 +288,7 @@ pub fn connected(s: &mut State) {
         .screen
         .launcher()
         .and_then(|l| l.state_directory())
-        .or_else(|| {
-            platform::setting("CODENOMAD_PROFILE").filter(|p| p.starts_with("trial-"))?;
-            platform::setting("RUNE_STATE_DIR").map(std::path::PathBuf::from)
-        });
+        .or_else(platform::storage::configured_directory);
     #[cfg(target_arch = "wasm32")]
     let directory = None;
     ui.persistence.start(directory, s.wake.clone());

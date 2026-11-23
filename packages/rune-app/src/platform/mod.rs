@@ -161,7 +161,7 @@ pub fn preferences_window<S: 'static>(
         .state(state)
         .on_close(close);
     #[cfg(target_os = "windows")]
-    return preferences_placement::open(spec, crate::workspace::native_window_store(owner));
+    return preferences_placement::open(spec, owner);
     #[cfg(not(target_os = "windows"))]
     {
         let _ = owner;
