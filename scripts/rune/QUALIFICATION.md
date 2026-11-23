@@ -28,7 +28,7 @@ wasm-bindgen --target web --out-name probe --out-dir "$CARGO_TARGET_DIR/browser-
 node packages/rune-app/fixtures/browser-preference-events.mjs "$CARGO_TARGET_DIR/browser-sse/probe"
 ```
 
-Le client d'index global vérifie l'ordre natif, les curseurs et les réponses refusées sur Windows ; sa sonde Chromium rejoue deux pages avec le cookie de la même origine :
+Les tests Windows vérifient l'ordre natif de l'index, les curseurs et les sauts par fenêtre `around`. La sonde Chromium rejoue les mêmes lectures avec le cookie de la même origine, y compris le saut résident sans requête :
 
 ```sh
 cargo test --locked -p codenomad-client timeline::tests

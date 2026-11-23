@@ -11,18 +11,29 @@ const files=new Map([
   ['/probe_bg.wasm',['application/wasm',await readFile(path.join(bundle,'probe_bg.wasm'))]],
 ])
 const requests=[]
+const jumps=[]
+const read=async req=>{
+  let body=''
+  for await(const chunk of req){body+=chunk;assert(body.length<4096)}
+  return {body:JSON.parse(body),cookie:req.headers.cookie}
+}
 const checkpoint=(after,through)=>({after,through,digest:'a'.repeat(64),changed:true})
 const row=(id,seq)=>({id,seq,type:'user',tools:0,reasoning:0})
 const server=createServer(async(req,res)=>{
   if(req.method==='POST'&&req.url==='/api/workspaces/workspace/session-history/outline'){
-    let body=''
-    for await(const chunk of req){body+=chunk;assert(body.length<4096)}
-    requests.push({body:JSON.parse(body),cookie:req.headers.cookie})
+    requests.push(await read(req))
     const first=requests.length===1
     res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({
       status:'outline',total:2,entries:first?[row('z',0)]:[row('a',1801)],
       checkpoints:first?[checkpoint(-1,40)]:[checkpoint(40,2000)],
       cursor:first?{after:40,through:2000}:null,
+    }))
+  }else if(req.method==='POST'&&req.url==='/api/workspaces/workspace/session-history/window'){
+    const request=await read(req)
+    jumps.push(request)
+    res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({
+      status:'window', messages:[{id:'a',type:'user',text:'Distant message',time:{created:1}}],
+      older:{kind:'before',messageID:'a'},newer:null,latest:true,resume:request.body.target,
     }))
   }else if(req.method==='GET'&&req.url==='/workspaces/workspace/instance/api/session/session'){
     assert.equal(req.headers.cookie,'fixture=outline')
@@ -40,17 +51,21 @@ try {
   browser=await chromium.launch({executablePath:process.env.CODENOMAD_BROWSER_PATH})
   const page=await browser.newPage()
   await page.goto(`http://127.0.0.1:${server.address().port}/`)
-  const ids=await page.evaluate(async()=>{
-    const {default:init,fetch_outline}=await import('/probe.js')
+  const {ids,anchor}=await page.evaluate(async()=>{
+    const {default:init,fetch_outline,resolve_anchors}=await import('/probe.js')
     await init()
-    return fetch_outline()
+    return {ids:await fetch_outline(),anchor:await resolve_anchors()}
   })
   assert.equal(ids,'z,a')
   assert.deepEqual(requests,[
     {body:{sessionID:'session'},cookie:'fixture=outline'},
     {body:{sessionID:'session',cursor:{after:40,through:2000}},cookie:'fixture=outline'},
   ])
-  console.log('Chromium: authenticated outline pages preserve native sequence order.')
+  assert.equal(anchor,'a')
+  assert.deepEqual(jumps,['a','missing'].map(messageID=>({
+    body:{sessionID:'session',target:{kind:'around',messageID}},cookie:'fixture=outline',
+  })))
+  console.log('Chromium: ordered outline pages and one request per distant anchor; no resident read.')
 } finally {
   await browser?.close()
   server.closeAllConnections()
