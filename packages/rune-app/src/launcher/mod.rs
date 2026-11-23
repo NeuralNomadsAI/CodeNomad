@@ -194,9 +194,15 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 connection::watch_catalogue(l);
             }
             crate::workspace::connected(s);
-            if reauthenticated && let Some(id) = selected {
-                s.show_chat();
-                choose(s, id, tx);
+            if reauthenticated {
+                if let Some(id) = selected {
+                    s.show_chat();
+                    choose(s, id, tx);
+                } else {
+                    crate::git::project_opened(s);
+                    crate::workspace::restore_files_mode(s);
+                    crate::workspace::resume(s, tx);
+                }
             } else {
                 crate::workspace::resume(s, tx);
             }

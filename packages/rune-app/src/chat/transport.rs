@@ -98,14 +98,16 @@ pub(crate) async fn authenticate_and_run(
 ) {
     let result = target.authenticate(&password, token.as_deref()).await;
     drop((password, token));
+    #[cfg(not(target_arch = "wasm32"))]
+    if result.is_ok() && target.attest_server().await.is_err() {
+        // Keep the admitted cookie for Retry; the startup token was single-use.
+        publish(&out, &wake, Event::AuthenticationRequired(target, None)).await;
+        return;
+    }
     match result {
-        Ok(()) => {
-            #[cfg(not(target_arch = "wasm32"))]
-            let _ = target.attest_server().await;
-            run_bound(Ok(target), out, input, wake).await;
-        }
+        Ok(()) => run_bound(Ok(target), out, input, wake).await,
         Err(error) if codenomad_client::http::authentication_expired(&error) => {
-            publish(&out, &wake, Event::AuthenticationRequired(target)).await;
+            publish(&out, &wake, Event::AuthenticationRequired(target, None)).await;
             drop(out);
             wake();
         }

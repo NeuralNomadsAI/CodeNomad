@@ -35,9 +35,9 @@ pub fn save_warning_spec<S: 'static>(
 
 pub fn authentication_dialog<S: 'static>(
     title: &str,
-    field: El,
+    fields: [El; 2],
     error: Option<El>,
-    action: El,
+    actions: [El; 2],
 ) -> El {
     let dark = layout::dark();
     let tokens = tokens(dark);
@@ -45,9 +45,9 @@ pub fn authentication_dialog<S: 'static>(
         .full_width()
         .pad(Space::Md)
         .separate(Space::Sm)
-        .child(field)
+        .children(fields)
         .children(error)
-        .child(layout::action_row().child(action));
+        .child(layout::action_row().children(actions));
     el().key("direct-recovery-layer")
         .absolute(0.0, 0.0)
         .full_width()

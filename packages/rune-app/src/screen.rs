@@ -44,6 +44,8 @@ pub enum Editor {
     Address,
     Password,
     #[cfg(not(target_arch = "wasm32"))]
+    DirectUsername,
+    #[cfg(not(target_arch = "wasm32"))]
     DirectPassword,
     Folder,
     Title,
@@ -98,6 +100,8 @@ impl State {
             return &mut self.rejected_edit;
         }
         let edit = match target {
+            #[cfg(not(target_arch = "wasm32"))]
+            Editor::DirectUsername => Some(&mut self.direct_authentication.username),
             #[cfg(not(target_arch = "wasm32"))]
             Editor::DirectPassword => Some(&mut self.direct_authentication.password),
             Editor::Address

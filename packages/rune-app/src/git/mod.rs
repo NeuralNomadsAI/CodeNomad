@@ -186,6 +186,16 @@ impl Ui {
         }
         let placement =
             placement.or_else(|| (self.backend.session != backend.session).then_some("root"));
+        if !self.backend.client.same_connection(&backend.client) {
+            let previous = self.backend.client.server_identity();
+            if previous.is_none() || previous != backend.client.server_identity() {
+                return false;
+            }
+            self.backend.client = backend.client.clone();
+            self.backend.client_id.clone_from(&backend.client_id);
+            self.requests.renew(backend.clone());
+            self.invalidate_index();
+        }
         if self.backend.session != backend.session
             || placement.is_some_and(|slug| self.session_slug != slug)
         {

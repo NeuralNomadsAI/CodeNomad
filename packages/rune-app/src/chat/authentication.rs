@@ -15,6 +15,7 @@ use rune_theme_codenomad::{
 #[derive(Default)]
 pub(crate) struct Recovery {
     challenge: Option<Challenge>,
+    pub(crate) username: TextEdit,
     pub(crate) password: TextEdit,
 }
 
@@ -45,6 +46,7 @@ pub(crate) fn expired(s: &mut State, expired: Backend) {
             required: false,
             error: None,
         }),
+        username: TextEdit::new("codenomad"),
         password: TextEdit::new(""),
     };
     retry(s);
@@ -67,23 +69,31 @@ fn submit(s: &mut State) {
     };
     if !challenge.required
         || challenge.flight.is_some()
+        || s.direct_authentication.username.text.trim().is_empty()
         || s.direct_authentication.password.text.is_empty()
     {
         return;
     }
     let password = std::mem::take(&mut s.direct_authentication.password.text);
     s.direct_authentication.password = TextEdit::new("");
-    request(challenge, &s.wake, Some(password));
+    request(
+        challenge,
+        &s.wake,
+        Some((
+            s.direct_authentication.username.text.trim().to_owned(),
+            password,
+        )),
+    );
 }
 
-fn request(challenge: &mut Challenge, wake: &rune::Waker, password: Option<String>) {
+fn request(challenge: &mut Challenge, wake: &rune::Waker, credentials: Option<(String, String)>) {
     let (output, input) = bounded(1);
     challenge.flight = Some(input);
     challenge.error = None;
     let (expired, initial, wake) = (challenge.expired.clone(), challenge.initial, wake.clone());
     platform::spawn(async move {
-        let reply = match password {
-            Some(password) => sign_in(expired, initial, password).await,
+        let reply = match credentials {
+            Some((username, password)) => sign_in(expired, initial, username, password).await,
             None => check(expired, initial).await,
         };
         if output.send(reply).await.is_ok() {
@@ -122,9 +132,12 @@ async fn check(mut expired: Backend, initial: bool) -> Reply {
     Reply::Failed("authRecovery.unavailable")
 }
 
-async fn sign_in(mut expired: Backend, initial: bool, password: String) -> Reply {
-    match Backend::connect(&expired.base, &password).await {
-        Ok(backend) => {
+async fn sign_in(mut expired: Backend, initial: bool, username: String, password: String) -> Reply {
+    let Ok(backend) = Backend::unauthenticated(&expired.base) else {
+        return Reply::Failed("authRecovery.unavailable");
+    };
+    match backend.sign_in(&username, &password).await {
+        Ok(()) => {
             let Ok(id) = backend.attest_server().await else {
                 return Reply::Failed("authRecovery.unavailable");
             };
@@ -178,7 +191,17 @@ pub(crate) fn dialog(s: &State) -> Option<El> {
     }
     let scope = &s.input_scope;
     let waiting = challenge.flight.is_some();
+    let username = &s.direct_authentication.username;
     let password = &s.direct_authentication.password;
+    let account = literal_field(username)
+        .label(t("authRecovery.username"))
+        .disabled(waiting)
+        .on_edit(crate::screen::edit(
+            scope,
+            crate::screen::Editor::DirectUsername,
+        ))
+        .build(field_kit(layout::dark()))
+        .key("direct-recovery-username");
     let field = literal_field(password)
         .label(t("authRecovery.password"))
         .disabled(waiting)
@@ -200,16 +223,27 @@ pub(crate) fn dialog(s: &State) -> Option<El> {
         } else {
             "authRecovery.signIn"
         }),
-        waiting || password.text.is_empty(),
+        waiting || username.text.trim().is_empty() || password.text.is_empty(),
         crate::screen::action(scope, submit),
     )
     .key("direct-recovery-sign-in");
+    let check = layout::button(
+        t("authRecovery.check"),
+        waiting,
+        crate::screen::action(scope, |s| {
+            if let Some(challenge) = &mut s.direct_authentication.challenge
+                && challenge.flight.is_none()
+            {
+                request(challenge, &s.wake, None);
+            }
+        }),
+    );
     Some(
         rune_theme_codenomad::settings::authentication_dialog::<State>(
             t("authRecovery.title"),
-            field,
+            [account, field],
             error,
-            button,
+            [check, button],
         ),
     )
 }

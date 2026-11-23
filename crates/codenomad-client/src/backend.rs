@@ -55,13 +55,17 @@ impl Backend {
                 .error_for_status()?;
         }
         if !password.is_empty() {
-            client
-                .post(format!("{base}api/auth/login"))
-                .json(&json!({"username":"codenomad","password":password}))
-                .send()
-                .await?
-                .error_for_status()?;
+            self.sign_in("codenomad", password).await?;
         }
+        Ok(())
+    }
+    pub async fn sign_in(&self, username: &str, password: &str) -> Result<()> {
+        self.client
+            .post(format!("{}api/auth/login", self.base))
+            .json(&json!({"username":username,"password":password}))
+            .send()
+            .await?
+            .error_for_status()?;
         Ok(())
     }
     pub async fn page(&self, target: Value) -> Result<Page> {
@@ -108,7 +112,7 @@ impl Backend {
             running: false,
         })
     }
-    pub async fn send(&self, text: String) -> Result<()> {
+    pub async fn send(&self, text: &str) -> Result<()> {
         self.client
             .post(format!(
                 "{}workspaces/{}/instance/api/session/{}/prompt",

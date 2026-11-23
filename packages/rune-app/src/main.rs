@@ -332,14 +332,20 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Done => s.phase = Phase::Ready,
-            Event::AuthenticationRequired(_) | Event::Failed => {
-                if let Event::AuthenticationRequired(expired) = event {
+            Event::AuthenticationRequired(..) | Event::Failed => {
+                if let Event::AuthenticationRequired(expired, rejected) = event {
                     if !settings::authentication_required(s, &expired)
                         && s.screen.launcher().is_none()
                     {
                         continue;
                     }
                     s.commands = None;
+                    if let Some(text) = rejected
+                        && s.draft.text.is_empty()
+                    {
+                        s.draft = TextEdit::new(text);
+                        workspace::capture(s);
+                    }
                     #[cfg(not(target_arch = "wasm32"))]
                     chat::authentication::expired(s, expired);
                 }
