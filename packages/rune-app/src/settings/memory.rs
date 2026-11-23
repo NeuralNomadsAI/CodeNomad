@@ -78,7 +78,9 @@ impl Setting {
             };
             self.flight = None;
             self.failed = failed;
-            self.current = current;
+            if let Some(current) = current {
+                self.current = Some(current);
+            }
             changed = true;
         }
         if self.pending.is_none() && (!self.visible || !self.refresh) {

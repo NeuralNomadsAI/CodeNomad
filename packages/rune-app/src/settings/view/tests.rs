@@ -363,3 +363,69 @@ fn settings_language_picker_opens_with_enter() {
             .contains("Français")
     );
 }
+
+#[test]
+fn pending_permissions_keep_tab_focus_and_refuse_new_selections() {
+    const KEY: &str = "new-conversation-permissions-trigger";
+    let state = Window::default();
+    let mut prefs = state.shared.borrow_mut();
+    prefs.fixture_locale("en");
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    drop(prefs);
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    rt.update(|_, tx| tx.focus(KEY, true));
+    rt.frame(0.02);
+    let focused = |rt: &Runtime<Window>| {
+        let a11y = rt.accessibility_json();
+        node(&a11y, KEY).unwrap()["states"]
+            .to_string()
+            .contains("focused")
+    };
+    assert!(focused(&rt));
+    rt.update(|s, _| {
+        s.shared
+            .borrow_mut()
+            .set_new_conversation_permissions("supervised")
+    });
+    rt.frame(0.02);
+    assert!(focused(&rt));
+    let trigger = rt
+        .elements()
+        .into_iter()
+        .find(|entry| entry.key.as_deref() == Some(KEY))
+        .unwrap();
+    assert!(trigger.focusable);
+
+    let press = |rt: &mut Runtime<Window>, key| {
+        rt.key(rune::KeyEvent {
+            key,
+            mods: Default::default(),
+        });
+        rt.frame(0.02);
+    };
+    press(&mut rt, rune::Key::Tab);
+    assert!(!focused(&rt));
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Tab,
+        mods: rune::Mods {
+            shift: true,
+            ..Default::default()
+        },
+    });
+    rt.frame(0.02);
+    assert!(
+        focused(&rt),
+        "Tab navigation still includes the pending control"
+    );
+    press(&mut rt, rune::Key::Enter);
+    let (x, y) = rt.find(KEY).unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(node(&rt.accessibility_json(), "listbox").is_none());
+    assert_eq!(
+        rt.state.shared.borrow().new_conversation_permissions(),
+        "autonomous"
+    );
+}
