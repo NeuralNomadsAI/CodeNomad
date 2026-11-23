@@ -205,7 +205,13 @@ try {
           await select('Another session','ses_another')
           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
           await select('Existing history','ses_existing');await reading()
-        }else{
+         }else{
+        // The DOM editing proxy is ready before the browser presents the GPU handover.
+        // Start the synthetic interactions on the canvas that will be sampled.
+        const renderer = await page.waitForFunction(() => ['web.handover.done', 'web.gpu.failed', 'web.handover.failed']
+          .find(name => performance.getEntriesByName(name).length))
+        const rendererMark = await renderer.jsonValue()
+        await renderer.dispose()
         // Enter from the field boundary: the transcript has its own variable number of Tab stops.
         const group = await page.getByRole('group', {name: messages['rune.prompt'], exact: true}).boundingBox()
         const action = await page.getByRole('button', {name: messages['promptInput.overlay.send'], exact: true}).boundingBox()
@@ -214,10 +220,15 @@ try {
         if (touch) await page.touchscreen.tap(x, y)
         else await page.mouse.click(x, y)
         await page.locator('textarea:focus').waitFor({state: 'attached'})
-        const focused = values['paste-only'] ? await page.screenshot({path:path.join(out, `${name}-${colorScheme}-focus.png`),scale:'css'}) : null
+        const captureFocus = async state => {
+          // The editing proxy can receive DOM focus before the canvas presents that frame.
+          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+          return page.screenshot({path:path.join(out, `${name}-${colorScheme}-${state}.png`),scale:'css'})
+        }
+        const focused = values['paste-only'] ? await captureFocus('focus') : null
         await page.keyboard.press('Tab')
         await page.waitForFunction(() => document.activeElement?.tagName !== 'TEXTAREA')
-        const unfocused = values['paste-only'] ? await page.screenshot({path:path.join(out, `${name}-${colorScheme}-blur.png`),scale:'css'}) : null
+        const unfocused = values['paste-only'] ? await captureFocus('blur') : null
         await page.keyboard.press('Shift+Tab')
         await page.locator('textarea:focus').waitFor({state: 'attached'})
         const text = 'Rune web\nDeuxième ligne 🦀'
@@ -230,7 +241,7 @@ try {
            const paste = await longPaste(page, messages)
            assert.deepEqual(forbiddenRequests, [])
            assert.deepEqual(errors, [])
-           records.push({name, colorScheme, width, height, emulatedTouch: touch, longPaste: paste, focusRing: ring, pass: true})
+           records.push({name, colorScheme, width, height, emulatedTouch: touch, renderer: rendererMark, longPaste: paste, focusRing: ring, pass: true})
            continue
          }
         }
@@ -332,7 +343,8 @@ try {
           ]}:{pass:true})})
       } catch (error) {
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
-        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot()}, null, 2))
+        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot(),
+          marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))}, null, 2))
         throw error
       } finally {releaseLinked?.();await context.close()}
     }
