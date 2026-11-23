@@ -266,21 +266,25 @@ try {
 
   async function checkNotifications() {
     await click('Settings')
-    await radio('Notifications').click({force:true})
+    await radio('Notifications').press('Enter')
     const switcher = page.getByRole('switch',{name:'Notify when the app is focused',exact:true})
     const checks = page.getByRole('checkbox')
     await page.getByRole('table',{name:'Where each notification appears',exact:true}).waitFor({state:'attached'})
     assert.equal(await checks.count(),27)
     assert.deepEqual(await page.evaluate(()=>window.permissionGestures),[])
-    await page.getByRole('checkbox',{name:'Copy confirmations · History',exact:true}).click({force:true})
-    await page.waitForFunction(()=>document.querySelector('[aria-label="Copy confirmations · History"]')?.getAttribute('aria-checked')==='true')
+    const history = page.getByRole('checkbox',{name:'Copy confirmations · History',exact:true})
+    const historySaved = page.waitForResponse(response=>response.request().method()==='PATCH'
+      && response.request().postDataJSON()?.settings?.notificationRouting?.copy?.history===true)
+    await history.press('Enter')
+    await historySaved
+    await page.getByRole('checkbox',{name:'Copy confirmations · History',exact:true,checked:true}).waitFor({state:'attached'})
     assert.deepEqual(await page.evaluate(()=>window.permissionGestures),[])
-    await page.getByRole('checkbox',{name:'Copy confirmations · System',exact:true}).click({force:true})
+    await page.getByRole('checkbox',{name:'Copy confirmations · System',exact:true}).press('Enter')
     await page.getByRole('button',{name:'Request permission',exact:true}).waitFor({state:'detached'})
     assert.deepEqual(await page.evaluate(()=>window.permissionGestures),[true])
     const patch = page.waitForResponse(response=>response.request().method()==='PATCH'
       && response.request().postDataJSON()?.settings?.osNotificationsAllowWhenVisible===true)
-    await switcher.click({force:true})
+    await switcher.press('Enter')
     await patch
     assert.equal(notificationRouting.copy.history,true)
     assert.equal(notificationRouting.copy.system,true)
