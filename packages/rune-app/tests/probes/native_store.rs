@@ -22,7 +22,7 @@ fn select(rt: &mut Runtime<State>, index: usize, id: &str) {
     tap(rt, &format!("t-tab-{index}"));
     wait(rt, "selected native session", |s| ready(s, id));
 }
-fn open(rt: &mut Runtime<State>, id: &str, title: &str) {
+fn open(rt: &mut Runtime<State>, id: &str) {
     type_text(
         rt,
         "folder-path",
@@ -34,7 +34,6 @@ fn open(rt: &mut Runtime<State>, id: &str, title: &str) {
             .launcher()
             .is_some_and(|l| l.project.is_some() && !l.pending)
     });
-    type_text(rt, "session-search", title);
     while !rt
         .state
         .screen
@@ -58,53 +57,35 @@ fn open(rt: &mut Runtime<State>, id: &str, title: &str) {
     wait(rt, "native session history", |s| ready(s, id));
 }
 fn canonical(rt: &Runtime<State>, rows: &[Value]) {
-    let count = rt.state.messages.len();
-    assert!(matches!(count, 200 | 600));
-    for (actual, expected) in rt.state.messages.iter().zip(&rows[rows.len() - count..]) {
+    assert_eq!(rt.state.messages.len(), rows.len());
+    for (actual, expected) in rt.state.messages.iter().zip(rows) {
         assert_eq!(actual.id, expected["id"]);
         assert_eq!(actual.body, expected["text"]);
         assert_eq!(actual.role, "user");
     }
     let unique: std::collections::HashSet<_> = rt.state.messages.iter().map(|m| &m.id).collect();
-    assert_eq!(unique.len(), count);
+    assert_eq!(unique.len(), rows.len());
 }
 fn paginate(rt: &mut Runtime<State>, rows: &[Value]) -> f32 {
-    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
-    for _ in 0..12 {
-        rt.frame(1.0 / 60.0);
-    }
-    let anchor = rt
-        .elements()
-        .into_iter()
-        .find(|e| {
-            e.visible[3] > 2.0
-                && rt
-                    .state
-                    .messages
-                    .iter()
-                    .any(|m| e.key.as_deref() == Some(&m.id))
-        })
-        .expect("visible native message");
     let mut jump = 0.0f32;
-    let mut pages = 0;
-    while rt.state.messages.len() < rows.len() {
-        let before = rt.state.messages.len();
-        assert!(rt.state.can_older && pages < 8, "bounded native pagination");
+    for (first, end) in [(216, 416), (32, 232), (0, 48)] {
+        assert!(rt.state.can_older, "older native page available");
+        rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
+        for _ in 0..12 {
+            rt.frame(1.0 / 60.0);
+        }
+        let anchor = super::recovery::anchor(rt);
         rt.update(request_older);
-        wait(rt, "older stored native page", |s| {
-            !s.paging && s.messages.len() > before
-        });
-        let retained = rt
-            .elements()
-            .into_iter()
-            .find(|e| e.path == anchor.path)
-            .expect("reading anchor retained");
-        jump = jump.max((retained.rect[1] - anchor.rect[1]).abs());
-        assert!(jump < 0.5, "native reading anchor jumped by {jump}");
-        pages += 1;
+        wait(rt, "older stored native page", |s| !s.paging);
+        canonical(rt, &rows[first..end]);
+        jump = jump.max(super::recovery::check_anchor(rt, &anchor));
     }
     assert!(!rt.state.can_older);
-    canonical(rt, rows);
+    rt.update(crate::latest);
+    wait(rt, "latest stored native page", |s| {
+        s.phase == Phase::Ready && !s.history_detached && s.messages.len() == 200
+    });
+    canonical(rt, &rows[400..]);
     jump
 }
 fn snapshot(rt: &mut Runtime<State>, long: &str, empty: &str, draft: &str) {
@@ -161,12 +142,12 @@ pub fn run() {
     let mut jump = 0.0;
     match stage.as_str() {
         "prepare" => {
-            open(&mut rt, &long, "Rune native stored-history test");
+            open(&mut rt, &long);
             assert_eq!(rt.state.messages.len(), 200);
-            canonical(&rt, &rows);
+            canonical(&rt, &rows[400..]);
             type_text(&mut rt, "composer", LONG);
             tap(&mut rt, "project-tabs-new");
-            open(&mut rt, &empty, "Rune native empty-session test");
+            open(&mut rt, &empty);
             assert!(rt.state.messages.is_empty());
             type_text(&mut rt, "composer", EMPTY);
             select(&mut rt, 0, &long);
@@ -177,7 +158,7 @@ pub fn run() {
             wait(&mut rt, "automatic long session", |s| ready(s, &long));
             assert_eq!(rt.state.draft.text, LONG);
             assert_eq!(rt.state.messages.len(), 200);
-            canonical(&rt, &rows);
+            canonical(&rt, &rows[400..]);
             jump = paginate(&mut rt, &rows);
             type_text(&mut rt, "composer", UPDATED);
             select(&mut rt, 1, &empty);
@@ -192,7 +173,7 @@ pub fn run() {
             select(&mut rt, 0, &long);
             assert_eq!(rt.state.draft.text, UPDATED);
             assert_eq!(rt.state.messages.len(), 200);
-            canonical(&rt, &rows);
+            canonical(&rt, &rows[400..]);
             snapshot(&mut rt, &long, &empty, UPDATED);
         }
         _ => panic!("unknown native restore stage"),
