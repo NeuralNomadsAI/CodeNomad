@@ -27,7 +27,7 @@ fn inactive_prompt_rejection_is_saved_before_closing_its_tab() {
     });
     ui.entries[0].binding = Some(backend.clone());
     ui.entries.push(entry("tab-1".into(), Tab::Blank));
-    let (out, incoming) = codenomad_client::bounded(1);
+    let (out, incoming) = codenomad_client::bounded(2);
     state.incoming = Some(incoming);
     let (commands, sent) = codenomad_client::bounded(1);
     state.commands = Some(commands);
@@ -44,12 +44,14 @@ fn inactive_prompt_rejection_is_saved_before_closing_its_tab() {
         crate::composer::send(s, tx, false);
         select(s, "tab-1", tx);
     });
-    assert!(matches!(
-        sent.try_recv(),
-        Ok(crate::transport::Command::Prompt(_))
-    ));
-    out.try_send(Event::AuthenticationRequired(backend))
-        .unwrap();
+    let Ok(crate::transport::Command::Prompt(prompt)) = sent.try_recv() else {
+        panic!("expected the sent prompt");
+    };
+    out.try_send(Event::PromptAcknowledged {
+        attempted: prompt.id.unwrap(),
+        outcome: crate::transport::PromptOutcome::Rejected,
+    }).unwrap();
+    out.try_send(Event::authentication_required(backend)).unwrap();
     runtime.update(|s, tx| {
         poll(s, 0.0, tx);
         close(s, "tab-0", tx);

@@ -98,7 +98,21 @@ pub(crate) fn stop_before_conversation(s: &State) -> Option<codenomad_client::Re
     s.settings.shared.borrow_mut().stop_before_conversation()
 }
 
-pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::Backend) -> bool {
+pub(crate) fn conversation_authentication(
+    s: &mut State,
+    auth: codenomad_client::transport::Authentication,
+) -> bool {
+    if !authentication_required(s, &auth.backend) {
+        return false;
+    }
+    s.commands = None;
+    s.paging = false;
+    #[cfg(not(target_arch = "wasm32"))]
+    crate::chat::authentication::expired(s, auth);
+    true
+}
+
+fn authentication_required(s: &mut State, expired: &crate::backend::Backend) -> bool {
     let mut prefs = s.settings.shared.borrow_mut();
     let current = match s.screen.launcher() {
         Some(launcher) => launcher.connection.as_ref(),

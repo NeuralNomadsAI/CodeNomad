@@ -240,16 +240,10 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
                 }
-                if let Event::AuthenticationRequired(expired) = event {
-                    if !settings::authentication_required(s, &expired)
-                        && s.screen.launcher().is_none()
-                    {
-                        continue;
-                    }
-                    s.commands = None;
-                    composer::settle_pending(s, transport::PromptOutcome::Rejected);
-                    #[cfg(not(target_arch = "wasm32"))]
-                    chat::authentication::expired(s, expired);
+                if let Event::AuthenticationRequired(auth) = event
+                    && !settings::conversation_authentication(s, auth)
+                {
+                    continue;
                 }
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::suspend(s);
