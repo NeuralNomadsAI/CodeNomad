@@ -59,6 +59,8 @@ export async function longPaste(page, messages) {
   await sent.waitFor({state:'attached'})
   assert.equal(await sent.count(), 1)
   await chip.waitFor({state: 'detached'})
+  await refused.waitFor({state: 'detached'})
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
   const group = await page.getByRole('group', {name: messages['rune.prompt'], exact:true}).boundingBox()
   await page.mouse.click(group.x + group.width / 2, group.y + 24)
   await expectDraft('nouveau brouillon')
