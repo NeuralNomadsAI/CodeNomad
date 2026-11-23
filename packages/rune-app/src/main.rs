@@ -438,7 +438,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                         continue;
                     }
                     s.commands = None;
-                    composer::reject_pending(s);
+                    composer::settle_pending(s, transport::PromptOutcome::Rejected);
                     #[cfg(not(target_arch = "wasm32"))]
                     chat::authentication::expired(s, expired);
                 }
@@ -461,7 +461,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             .as_ref()
             .is_some_and(|receiver| receiver.is_closed() && receiver.is_empty())
     {
-        composer::reject_pending(s);
+        composer::settle_pending(s, transport::PromptOutcome::Unconfirmed);
         s.phase = Phase::Failed;
         changed = true;
     }
@@ -513,7 +513,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         }))
         .child(agent_view::view(s, cx))
         .children(chat::attachments::error(s))
-        .child(composer::view::view(s, expanded.then_some(cx)))
+        .child(composer::view::view(s, expanded))
 }
 
 fn interruption_expanded(s: &State) -> bool {

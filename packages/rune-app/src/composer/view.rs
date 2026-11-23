@@ -6,11 +6,11 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
 };
 
-pub fn view(s: &State, scroll_stack: Option<&rune::Cx<State>>) -> El {
+pub fn view(s: &State, compact: bool) -> El {
     let scope = s.input_scope.clone();
     let edit_scope = scope.clone();
     let stop = s.phase == Phase::Streaming && s.agent.is_some();
-    let editor = layout::composer_field(&s.draft, t("promptInput.placeholder.default"), scroll_stack.is_some())
+    let editor = layout::composer_field(&s.draft, t("promptInput.placeholder.default"), compact)
         .label(t("rune.prompt"))
         .disabled(s.composer.pending())
         .on_edit(screen::edit(&scope, screen::Editor::Composer))
@@ -18,11 +18,6 @@ pub fn view(s: &State, scroll_stack: Option<&rune::Cx<State>>) -> El {
         .on_key(move |s: &mut State, event, tx| s.current_scope(&edit_scope) && key(s, event, tx))
         .build(field_kit(layout::dark()))
         .key("composer");
-    let editor = if scroll_stack.is_some() {
-        layout::compact_composer(editor, scroll_stack)
-    } else {
-        editor
-    };
     let mut actions = layout::action_row()
         .children(
             (s.can_older || s.history_error && s.phase != Phase::Failed).then(|| {

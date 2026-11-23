@@ -332,6 +332,7 @@ fn settings_terminal_transport_close_restores_an_unsettled_prompt_before_retry()
     });
     assert_eq!(runtime.state.draft.text, "keep queued text");
     assert!(!runtime.state.composer.pending());
+    assert!(runtime.state.composer.unconfirmed_id().is_some());
 }
 
 #[test]

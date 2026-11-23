@@ -6,9 +6,9 @@ pub(crate) mod pairing;
 pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;
-pub(crate) mod workspace_open;
 #[cfg(target_arch = "wasm32")]
 mod web_attachment;
+pub(crate) mod workspace_open;
 pub(crate) use connection::configured_target;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod host;

@@ -41,7 +41,9 @@ fn reopening_a_saved_draft_without_its_files_blocks_every_send() {
     rt.update(|s, tx| {
         s.composer
             .draft
-            .attach(crate::composer::draft::Attachment::Path("./other.txt".into()));
+            .attach(crate::composer::draft::Attachment::Path(
+                "./other.txt".into(),
+            ));
         s.draft = TextEdit::new(bound(s, &backend("alpha")));
         s.composer.picker.set_attachments_supported(true);
         crate::send(s, tx);

@@ -617,13 +617,16 @@ fn closing_reader_restores_the_transcript_reading_position() {
         }
         assert!(source_rect(&rt).rect[1] < source.rect[1]);
         rt.update(|state, _| {
-            state.messages.push(crate::Message {
-                id: "while-reading-file".into(),
-                role: "assistant".into(),
-                body: "Arriving message".into(),
-                parts: vec![],
-                completed: true,
-            });
+            state.messages.push(
+                crate::Message {
+                    id: "while-reading-file".into(),
+                    role: "assistant".into(),
+                    body: "Arriving message".into(),
+                    parts: vec![],
+                    completed: true,
+                }
+                .into(),
+            );
             state.revision += 1;
         });
         for _ in 0..30 {

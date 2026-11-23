@@ -218,9 +218,9 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
     }
 }
 
-pub fn reject_pending(s: &mut State) {
+pub fn settle_pending(s: &mut State, outcome: PromptOutcome) {
     if let Some(id) = s.composer.sending.as_ref().map(|send| send.id.clone()) {
-        acknowledge(s, &id, PromptOutcome::Rejected);
+        acknowledge(s, &id, outcome);
         if s.workspace.is_some() && std::mem::take(&mut s.composer.restored) {
             workspace::capture(s);
         }
