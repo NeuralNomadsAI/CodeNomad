@@ -10,6 +10,18 @@ pub(super) fn enforce(s: &mut State) {
     }
 }
 
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(crate) fn evict_for_probe(s: &mut State, tab: &str) -> Option<(usize, usize)> {
+    let ui = s.workspace.as_mut()?;
+    let count = |ui: &Ui| {
+        let entry = ui.entries.iter().find(|entry| entry.key == tab)?;
+        Some(entry.cache.as_ref()?.history_weight().0)
+    };
+    let before = count(ui)?;
+    trim(ui, 0, 0);
+    Some((before, count(ui)?))
+}
+
 fn trim(ui: &mut Ui, max_rows: usize, max_bytes: usize) {
     let mut order = vec![];
     let mut rows = 0usize;

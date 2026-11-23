@@ -354,6 +354,7 @@ pub(crate) async fn run_with_reading(
                     if native["data"]["sessionID"] != backend.session {
                         continue;
                     }
+                    wire.cancelled.store(true, SeqCst);
                     publish(
                         &out,
                         &wake,

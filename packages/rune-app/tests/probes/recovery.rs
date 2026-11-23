@@ -40,7 +40,7 @@ pub(crate) fn control(path: &str) -> Value {
     })
 }
 pub(crate) fn anchor(rt: &Runtime<State>) -> (String, f32) {
-    let prefix = "session-stack/history/rows/";
+    let prefix = "/history/rows/";
     let row = rt
         .elements()
         .into_iter()
@@ -90,6 +90,20 @@ pub fn suspend() {
     wait(&mut rt, "initial observed transcript", |s| {
         s.messages.len() == 200 && s.phase == Phase::Ready
     });
+    let toggle = "toggle-tool-message-00410:6:reveal";
+    rt.update(|_, tx| tx.scroll_key_to("message-00410", 0.0));
+    for _ in 0..12 {
+        rt.frame(0.02);
+    }
+    let (x, y) = rt.find(toggle).expect("fixture tool disclosure");
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(
+        rt.state
+            .transcript_display
+            .toggled("tool-message-00410:6:reveal")
+    );
     rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 1600.0));
     for _ in 0..12 {
         rt.frame(1.0 / 60.0);
@@ -118,6 +132,9 @@ pub fn suspend() {
     rt.update(|s, _| s.draft = rune::TextEdit::new("keep this draft"));
     rt.update(crate::workspace::new_tab);
     assert_ne!(rt.state.workspace.as_ref().unwrap().active_key(), tab);
+    rt.update(|s, _| {
+        assert_eq!(crate::workspace::evict_for_probe(s, &tab), Some((200, 0)));
+    });
     control("step-while-hidden");
     let busy_label = crate::strings::t("instanceTab.status.working");
     let until = Instant::now() + Duration::from_secs(5);
@@ -133,6 +150,20 @@ pub fn suspend() {
         std::thread::sleep(Duration::from_millis(5));
     }
     control("finish-hidden-step");
+    control("question-while-hidden");
+    let question_badge = crate::strings::t("instanceTab.status.permission");
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        rt.frame(0.02);
+        if rt.accessibility_json().to_string().contains(question_badge) {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "hidden tab observes the new question"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let pages = control("permission-while-hidden")["pages"].clone();
     assert!(rt.state.messages.is_empty());
     assert_eq!(control("stats")["pages"], pages);
@@ -202,6 +233,7 @@ pub fn suspend() {
         |s| {
             s.agent.as_ref().is_some_and(|agent| {
                 agent.online
+                    && agent.forms.iter().any(|form| form.id == "form-suspended")
                     && [
                         "permission-suspended",
                         "permission-during-gap",
@@ -218,9 +250,37 @@ pub fn suspend() {
             .contains("synthetic.txt")
     );
     assert_eq!(rt.state.draft.text, "keep this draft");
+    assert!(
+        rt.state
+            .transcript_display
+            .toggled("tool-message-00410:6:reveal")
+    );
+    rt.update(|s, _| {
+        s.agent
+            .as_mut()
+            .unwrap()
+            .select_request("form-suspended".into())
+    });
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("Question received while hidden")
+    );
+    assert!(rt.find("answer-question").is_some());
+    rt.update(|_, tx| tx.scroll_key_to("message-00410", 0.0));
+    for _ in 0..12 {
+        rt.frame(0.02);
+    }
+    assert!(rt.find(toggle).is_some());
+    assert!(
+        rt.accessibility_tree().nodes.into_iter().any(|(_, node)| {
+            node.author_id() == Some(toggle) && node.is_expanded() == Some(true)
+        })
+    );
     println!(
         "{}",
-        json!({"kind":"suspended-reader", "anchor":id, "shift":shift, "permissionVisible":true})
+        json!({"kind":"suspended-reader", "anchor":id, "shift":shift, "permissionVisible":true,
+            "questionVisible":true, "disclosureAfterEviction":true})
     );
 }
 fn canonical(rt: &Runtime<State>, count: usize) {

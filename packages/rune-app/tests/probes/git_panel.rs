@@ -167,9 +167,25 @@ pub(super) fn run() {
     });
     tap_mode(&mut rt, 0);
     wait(&mut rt, "linked Workspace row", |rt| {
-        rt.find(&eye).is_some()
+        rt.find(&eye).is_some() && rt.state.messages.len() == 50
     });
+    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 1600.0));
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    let reading = super::recovery::anchor(&rt);
     let (x, y) = rt.find(&eye).unwrap();
+    rt.pointer_move(x, y);
+    rt.frame(1.0 / 60.0);
+    tap(&mut rt, &eye);
+    wait(&mut rt, "linked file replaces the transcript", |rt| {
+        rt.find("file-editor").is_some() && rt.find("history").is_none()
+    });
+    tap(&mut rt, "file-close");
+    wait(&mut rt, "linked transcript remounted", |rt| {
+        rt.find(&reading.0).is_some()
+    });
+    super::recovery::check_anchor(&rt, &reading);
     rt.pointer_move(x, y);
     rt.frame(1.0 / 60.0);
     tap(&mut rt, &eye);

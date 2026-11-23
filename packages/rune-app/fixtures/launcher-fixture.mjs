@@ -141,6 +141,7 @@ add('ses_existing','Existing history')
 if(webMobile)for(let i=0;i<(webAndroid?70:210);i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
 stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
 add('ses_another','Another session',gitPanel?review:project)
+if(gitPanel)for(let i=0;i<50;i++)stores.get('ses_another').append('assistant',`Reading position ${i}\n\nA second paragraph in the fixture.`)
 if(linked){
   add('ses_linked','Linked checkout session',linked)
   add('ses_linked_next','Linked checkout next page',linked)

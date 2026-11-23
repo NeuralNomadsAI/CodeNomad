@@ -17,10 +17,14 @@ const project=path.join(profile,'projects','synthetic')
 await mkdir(project,{recursive:true})
 const session='ses_recovery_synthetic'
 const store=new FixtureStore(600)
+if(suspend)store.rows[410].content.push({type:'tool',id:'reveal',name:'read',state:{
+  status:'completed',input:{filePath:'reveal.txt'},output:'Output retained after eviction',
+}})
 const nativeStreams=new Set(),proxyStreams=new Set()
 const stats={pages:0,latestReads:0,prompts:0,transportConnections:0,nativeConnections:0,blockedPages:0,stalePages:0}
-let blockOlder=false,staleOlder=false,holdWindow=false,hiddenPermission=false,recoveredPermission=false,afterCutsPermission=false,liveRow,liveText,busy=0,idle=1
+let blockOlder=false,staleOlder=false,holdWindow=false,hiddenPermission=false,recoveredPermission=false,afterCutsPermission=false,hiddenQuestion=false,liveRow,liveText,busy=0,idle=1
 const permission={id:'permission-suspended',sessionID:session,action:'read',resources:['synthetic.txt'],message:'Permission sent while hidden'}
+const form={id:'form-suspended',sessionID:session,title:'Question received while hidden',fields:[{key:'hidden-answer',type:'string'}]}
 if(suspend)Object.assign(stats,{heldReadStarted:0,heldReadCancelled:0,aroundReads:0,gapPermissionReads:0})
 const record=()=>({id:session,projectID:'global',location:{directory:project},time:{created:1,busy,idle}})
 const emit=(type,data)=>{
@@ -46,7 +50,8 @@ const native=createServer(async(req,res)=>{
     return json({data:[...(hiddenPermission?[permission]:[]),...(recoveredPermission?[{...permission,id:'permission-during-gap'}]:[]),
       ...(afterCutsPermission?[{...permission,id:'permission-after-reopens'}]:[])]})
   }
-  if(suspend&&(url.pathname===`/api/session/${session}/form`||url.pathname==='/api/model'))return json({data:[]})
+  if(suspend&&url.pathname===`/api/session/${session}/form`)return json({data:hiddenQuestion?[form]:[]})
+  if(suspend&&url.pathname==='/api/model')return json({data:[]})
   if(url.pathname==='/api/plugin')return json({location:{directory:project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
   if(url.pathname==='/api/rpc/codenomad.session-pruning/window'){
     const {input}=JSON.parse(raw);assert.equal(input.sessionID,session)
@@ -95,6 +100,10 @@ try{
       if(action==='permission-while-hidden'){
         hiddenPermission=true
         emit('permission.asked',{permissionID:permission.id,action:permission.action,resources:permission.resources})
+      }
+      if(action==='question-while-hidden'){
+        hiddenQuestion=true
+        emit('form.created',{form})
       }
       if(action==='permission-during-gap'){
         for(const stream of nativeStreams)stream.destroy()

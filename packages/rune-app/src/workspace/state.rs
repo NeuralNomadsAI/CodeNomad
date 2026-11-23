@@ -502,5 +502,7 @@ pub fn status(s: &State) -> Option<&'static str> {
 mod authentication_tests;
 mod catalogue;
 mod history_budget;
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(crate) use history_budget::evict_for_probe;
 #[cfg(test)]
 mod tests;
