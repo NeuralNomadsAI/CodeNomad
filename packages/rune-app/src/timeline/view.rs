@@ -180,7 +180,9 @@ pub(crate) fn view(s: &State, history: El, expanded: bool) -> El {
                 super::navigation::select(s, id, tx);
             }
         },
-        super::preview::marker,
+        move |s, i, button| {
+            crate::strings::with_locale(locale, || super::preview::marker(s, i, button))
+        },
     ) {
         area = area.child(scroll(s, rail, true));
     }

@@ -46,7 +46,7 @@ wasm-bindgen --target web --out-name rail --out-dir "$CARGO_TARGET_DIR/browser-r
 node packages/rune-app/fixtures/history-rail-web.mjs "$CARGO_TARGET_DIR/browser-rail"
 ```
 
-Le raccord conversation est testé par `cargo test --locked -p codenomad-rune-app timeline::tests` et, avec le bundle produit WASM et le serveur Rust de qualification, par `node packages/rune-app/fixtures/launcher-fixture.mjs --web-timeline`. Ce scénario demande une fenêtre `around` pour un bloc hors fenêtre, puis clique un repère de la fenêtre chargée sans requête.
+Le raccord conversation est couvert par `cargo test --locked -p codenomad-rune-app timeline::` et, avec le bundle produit WASM et le serveur Rust de qualification, par `node packages/rune-app/fixtures/launcher-fixture.mjs --web-timeline`. Le banc vérifie le survol hors fenêtre sans page de transcript, le passage du pointeur à l’infobulle, le focus et la fermeture, puis un saut `around` et un saut résident sans requête.
 
 `node packages/rune-app/fixtures/launcher-fixture.mjs --web-touch-history` envoie le toucher, le glissement et le relâchement par le canal CDP tactile. Le banc retient la réponse du lecteur pendant le retour élastique et vérifie un seul curseur `before` ainsi que la disparition du statut après admission.
 
