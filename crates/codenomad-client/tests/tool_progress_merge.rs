@@ -1,17 +1,18 @@
 use codenomad_client::{
     Message,
     content::{Part, Tool, merge_page},
-    history::decode_message,
+    history::{Row, decode_message},
 };
 use serde_json::{Value, json};
 
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 pub fn reconnect_preserves_running_progress_until_an_authoritative_update() {
-    let row = |state: Value| {
+    let row = |state: Value| -> Row {
         decode_message(&json!({"id":"reply","type":"assistant","content":[
             {"type":"tool","id":"call","name":"bash","state":state}
         ]}))
         .unwrap()
+        .into()
     };
     fn tool(row: &Message) -> &Tool {
         let Part::Tool(tool) = &row.parts[0] else {
