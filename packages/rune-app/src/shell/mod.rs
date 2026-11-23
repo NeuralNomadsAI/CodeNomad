@@ -44,8 +44,12 @@ pub fn view(
         let body = body(s, cx, conversation).key(format!("tab-body-{}", ui.active_key()));
         root.child(body.remaining())
     } else {
-        root.child(crate::settings::direct_entry(s, cx.touch_controls()))
-            .child(body(s, cx, conversation).remaining())
+        root.child(
+            rune::row()
+                .child(crate::settings::direct_entry(s, cx.touch_controls()))
+                .child(notifications::history_entry(s, cx.touch_controls())),
+        )
+        .child(body(s, cx, conversation).remaining())
     }
 }
 

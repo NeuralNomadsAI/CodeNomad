@@ -2,7 +2,7 @@
 //! Layout assembly remains subject to native/browser screenshot qualification.
 use crate::{Space, TextRole, kit, tokens};
 use rune::{El, GrowthSpec, edit::TextEdit};
-use std::{borrow::Cow, cell::Cell};
+use std::{borrow::Cow, cell::Cell, rc::Rc};
 
 thread_local! { static APPEARANCE: Cell<bool> = const { Cell::new(false) }; }
 pub type DrawnRect = rune::Live<[f32; 4]>;
@@ -50,10 +50,31 @@ pub fn button_tx<S: 'static>(
     disabled: bool,
     press: impl Fn(&mut S, &mut rune::Tx) + 'static,
 ) -> El {
-    rune_kit::Button::new(label)
+    let action = Rc::new(press);
+    let press = action.clone();
+    let button = rune_kit::Button::new(label)
         .disabled(disabled)
-        .on_press_tx(press)
-        .build(kit(dark()))
+        .on_press_tx(move |s, tx| press(s, tx))
+        .build(kit(dark()));
+    if disabled {
+        button
+    } else {
+        button.on_key(enter_action(action))
+    }
+}
+
+pub(crate) fn enter_action<S: 'static>(
+    action: Rc<impl Fn(&mut S, &mut rune::Tx) + 'static>,
+) -> impl Fn(&mut S, &rune::KeyEvent, &mut rune::Tx) -> bool + 'static {
+    move |s, key, tx| {
+        if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
+            return false;
+        }
+        if !tx.key_repeat() {
+            action(s, tx);
+        }
+        true
+    }
 }
 pub fn input(edit: &TextEdit) -> El {
     base_editor(edit).fill(tokens(dark()).color("surface-field"))
@@ -116,8 +137,8 @@ pub fn composer_field(editor: El, compact: bool, focused: bool) -> El {
         field
     }
 }
-pub fn announce_selection(tx: &mut rune::Tx, name: &str) {
-    tx.announce(name, rune::LiveRegion::Polite);
+pub fn announce_polite(tx: &mut rune::Tx, text: impl Into<String>) {
+    tx.announce(text, rune::LiveRegion::Polite);
 }
 
 pub fn suggestion_list<S: 'static>(
@@ -314,6 +335,37 @@ mod tests {
                         .collect::<Vec<_>>()
                 };
                 assert_eq!(inspect(false), inspect(true));
+            }
+        }
+    }
+    #[test]
+    fn shared_button_responds_once_to_enter_and_space_when_enabled() {
+        fn view(&(disabled, _): &(bool, usize), _: &mut rune::Cx<(bool, usize)>) -> El {
+            button("Save", disabled, |s: &mut (bool, usize)| s.1 += 1).key("save")
+        }
+        for disabled in [false, true] {
+            let mut rt = rune::Runtime::new(
+                (disabled, 0),
+                view,
+                (320.0, 180.0),
+                rune::Env::new(false, 1.0),
+            );
+            rt.frame(0.0);
+            rt.update(|_, tx| tx.focus("save", true));
+            rt.frame(0.01);
+            for (index, key) in [rune::Key::Enter, rune::Key::Text(" ".into())]
+                .into_iter()
+                .enumerate()
+            {
+                let key = rune::KeyEvent {
+                    key,
+                    mods: rune::Mods::default(),
+                };
+                rt.key(key.clone());
+                rt.repeat_key(key.clone());
+                rt.key_up(key);
+                rt.frame(0.02 + index as f64 * 0.01);
+                assert_eq!(rt.state.1, if disabled { 0 } else { index + 1 });
             }
         }
     }

@@ -39,6 +39,7 @@ pub(super) struct Window {
     pub(super) providers: providers::Catalog,
     remote: remote::Remote,
     notification_permission: notification_settings::Permission,
+    pub(super) focused: Rc<Cell<bool>>,
 }
 
 #[derive(Default)]
@@ -150,7 +151,12 @@ impl Window {
     }
 }
 
+pub(super) fn focus(s: &mut Window, focused: bool, _: &mut rune::Tx) {
+    s.focused.set(focused);
+}
+
 pub(super) fn closed(s: &mut Window, _: &mut rune::Tx) {
+    s.focused.set(false);
     #[cfg(target_os = "windows")]
     crate::platform::preferences_placement::closed();
     s.shared.borrow_mut().hide_opencode();
@@ -193,50 +199,57 @@ pub(super) fn spec() -> AppSpec<Window> {
             }
         }),
         poll: Some(|s, _, tx| {
-            let close_requested = s
-                .close_request
-                .as_ref()
-                .is_some_and(|request| request.requested.replace(false));
-            if close_requested {
-                s.request_close(tx);
-                return true;
-            }
-            let mut prefs = s.shared.borrow_mut();
-            let changed = prefs.poll();
-            if changed && let Some(wake) = &prefs.main_wake {
-                wake();
-            }
-            let updated = prefs.revision != std::mem::replace(&mut s.seen_revision, prefs.revision);
-            let editor_changed = prefs.memory.poll_editor(&mut s.memory_editor);
-            if updated {
-                tx.set_title(crate::strings::with_locale(
-                    prefs.locale().unwrap_or_else(crate::strings::locale),
-                    || t("settings.title"),
-                ));
-            }
-            let status_changed = s.section == Section::OpenCode
-                && !s.confirm_close
-                && !s.closing
-                && prefs
-                    .window_wake
-                    .clone()
-                    .is_some_and(|wake| prefs.show_opencode() | s.opencode.step(&mut prefs, &wake));
-            let remote_changed = s.section == Section::Remote
-                && !s.confirm_close
-                && !s.closing
-                && prefs
-                    .window_wake
+            let locale = s
+                .shared
+                .borrow()
+                .locale()
+                .unwrap_or_else(crate::strings::locale);
+            crate::strings::with_locale(locale, || {
+                let close_requested = s
+                    .close_request
                     .as_ref()
-                    .is_some_and(|wake| s.remote.poll(&prefs, wake));
-            drop(prefs);
-            let providers_changed = if s.section == Section::Providers {
-                let prefs = s.shared.borrow();
-                let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
-                s.providers.poll(target, prefs.window_wake.as_ref())
-            } else {
-                false
-            };
-            updated | status_changed | remote_changed | providers_changed | editor_changed
+                    .is_some_and(|request| request.requested.replace(false));
+                if close_requested {
+                    s.request_close(tx);
+                    return true;
+                }
+                let mut prefs = s.shared.borrow_mut();
+                let changed = prefs.poll();
+                if changed && let Some(wake) = &prefs.main_wake {
+                    wake();
+                }
+                let updated =
+                    prefs.revision != std::mem::replace(&mut s.seen_revision, prefs.revision);
+                let editor_changed = prefs.memory.poll_editor(&mut s.memory_editor);
+                if updated {
+                    tx.set_title(crate::strings::with_locale(
+                        prefs.locale().unwrap_or_else(crate::strings::locale),
+                        || t("settings.title"),
+                    ));
+                }
+                let status_changed = s.section == Section::OpenCode
+                    && !s.confirm_close
+                    && !s.closing
+                    && prefs.window_wake.clone().is_some_and(|wake| {
+                        prefs.show_opencode() | s.opencode.step(&mut prefs, &wake)
+                    });
+                let remote_changed = s.section == Section::Remote
+                    && !s.confirm_close
+                    && !s.closing
+                    && prefs
+                        .window_wake
+                        .as_ref()
+                        .is_some_and(|wake| s.remote.poll(&prefs, wake));
+                drop(prefs);
+                let providers_changed = if s.section == Section::Providers {
+                    let prefs = s.shared.borrow();
+                    let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
+                    s.providers.poll(target, prefs.window_wake.as_ref())
+                } else {
+                    false
+                };
+                updated | status_changed | remote_changed | providers_changed | editor_changed
+            })
         }),
         on_key: Some(|s, event, tx| {
             if event.key != rune::Key::Escape {

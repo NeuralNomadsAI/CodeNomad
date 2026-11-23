@@ -123,7 +123,27 @@ impl Status {
             wake.clone(),
         );
         let changed = self.poll();
-        changed | admitted | self.read(prefs, Some(wake), None)
+        let changed = changed | admitted | self.read(prefs, Some(wake), None);
+        if self.authority.as_deref()
+            == prefs
+                .backend
+                .as_ref()
+                .map(|backend| backend.client_id.as_str())
+            && !self.failed
+            && let Some(version) = self
+                .value
+                .as_ref()
+                .filter(|status| status.update_available)
+                .and_then(|status| status.latest.as_ref())
+            && prefs.announced_update.as_ref() != Some(version)
+        {
+            prefs.announced_update = Some(version.clone());
+            prefs.notification_update = Some(version.clone());
+            if let Some(wake) = &prefs.main_wake {
+                wake();
+            }
+        }
+        changed
     }
 
     pub fn start(&self, prefs: &mut Preferences, wake: Option<rune::Waker>) {

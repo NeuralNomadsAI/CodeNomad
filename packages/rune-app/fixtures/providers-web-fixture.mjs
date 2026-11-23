@@ -265,12 +265,50 @@ try {
   else await checkProviders()
 
   async function checkNotifications() {
+    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
+    assert(stream,'Project catalogue stream must be attached')
+    const message = 'Short announcement from the fixture'
+    const envelope = {type:'instance.event',instanceId:project.id,event:{
+      id:'toast-fixture',type:'tui.toast.show',data:{title:'Fixture toast',message,variant:'info',duration:2000},
+    }}
+    stream.write(`data: ${JSON.stringify(envelope)}\n\n`)
+    const live = page.locator('[role="status"][aria-live="polite"]').filter({hasText:message})
+    await live.waitFor({state:'attached'})
+    assert.equal(await live.textContent(),`Fixture toast\n${message}`)
+    const bubble = page.getByText(message,{exact:true})
+    await bubble.waitFor({state:'attached'})
+    const bell = page.getByRole('button',{name:'Notification History · 1 unread',exact:true})
+    await bell.waitFor({state:'attached'})
+    await bubble.waitFor({state:'detached',timeout:4000})
+    assert.equal(await bell.count(),1,'Expiration leaves the history entry unread')
+
     await click('Settings')
     await radio('Notifications').press('Enter')
     const switcher = page.getByRole('switch',{name:'Notify when the app is focused',exact:true})
-    const checks = page.getByRole('checkbox')
-    await page.getByRole('table',{name:'Where each notification appears',exact:true}).waitFor({state:'attached'})
-    assert.equal(await checks.count(),27)
+    const table = page.getByRole('table',{name:'Where each notification appears',exact:true})
+    await table.waitFor({state:'attached'})
+    for (const heading of ['Notification','On screen','History','System']) {
+      assert.equal(await table.getByRole('columnheader',{name:heading,exact:true}).count(),1)
+    }
+    const rows = table.getByRole('row').filter({has:page.getByRole('rowheader')})
+    assert.equal(await rows.count(),9)
+    for (const row of await rows.all()) {
+      const cells = row.getByRole('cell')
+      assert.equal(await cells.count(),3)
+      for (const cell of await cells.all()) assert.equal(await cell.getByRole('checkbox').count(),1)
+    }
+    const focusedName = () => page.evaluate(() => {
+      const root = document.activeElement
+      const id = root?.getAttribute('aria-activedescendant')
+      return (id ? document.getElementById(id) : root)?.getAttribute('aria-label')
+    })
+    const first = 'A session needs your answer · On screen'
+    for (let i=0;i<45 && await focusedName()!==first;i++) await page.keyboard.press('Tab')
+    assert.equal(await focusedName(),first)
+    for (const name of ['A session needs your answer · History','A session needs your answer · System','A session finished · On screen']) {
+      await page.keyboard.press('Tab')
+      assert.equal(await focusedName(),name)
+    }
     assert.deepEqual(await page.evaluate(()=>window.permissionGestures),[])
     const history = page.getByRole('checkbox',{name:'Copy confirmations · History',exact:true})
     const historySaved = page.waitForResponse(response=>response.request().method()==='PATCH'
@@ -289,7 +327,7 @@ try {
     assert.equal(notificationRouting.copy.history,true)
     assert.equal(notificationRouting.copy.system,true)
     assert.equal(notifyFocused,true)
-    console.log(JSON.stringify({fixture:'notifications-preferences',cells:27,permissionGesture:true,foregroundSaved:true}))
+    console.log(JSON.stringify({fixture:'notifications-preferences',cells:27,permissionGesture:true,foregroundSaved:true,bubbleAnnounced:true,bubbleExpired:true,accessibleUnread:true}))
   }
 
   async function checkRemoteAccess() {

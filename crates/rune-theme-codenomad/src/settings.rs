@@ -265,24 +265,40 @@ pub fn setting_row(label: &str, control: El) -> El {
     setting_row_with_info(label, None, control)
 }
 
-pub fn checkbox_table_row(label: &str, header: bool, cells: [El; 3]) -> El {
+fn table_header(label: &str, role: &'static str) -> El {
+    col()
+        .role(role)
+        .label(label)
+        .child(text(label).wrap().a11y_hidden())
+}
+
+pub fn checkbox_table_header(label: &str, columns: [&str; 3]) -> El {
+    checkbox_row(
+        table_header(label, "columnheader"),
+        columns.map(|column| table_header(column, "columnheader")),
+        false,
+    )
+}
+
+pub fn checkbox_table_row(label: &str, cells: [El; 3]) -> El {
+    checkbox_row(table_header(label, "rowheader"), cells, true)
+}
+
+fn checkbox_row(label: El, cells: [El; 3], body: bool) -> El {
     let tokens = tokens(layout::dark());
     row()
         .role("row")
         .full_width()
         .center_y()
         .separate(Space::Sm)
-        .child(
-            text(label)
-                .grow(1.0)
-                .wrap()
-                .role(if header { "columnheader" } else { "rowheader" }),
-        )
+        .child(label.grow(1.0))
         .children(cells.map(|cell| {
-            col()
-                .w(tokens.space(Space::Lg).px() * 3.0)
-                .center()
-                .child(cell)
+            let column = col().w(tokens.space(Space::Lg).px() * 3.0).center();
+            if body {
+                column.role("cell").child(cell)
+            } else {
+                column.child(cell)
+            }
         }))
 }
 
