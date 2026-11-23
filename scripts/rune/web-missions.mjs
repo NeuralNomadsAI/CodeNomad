@@ -13,9 +13,17 @@ const cleanup=JSON.stringify({
   missionID:'old',deletionID:'cleanup',requestID:'request',expectedRevision:1,
   deleteManagedSessions:false,objective:'Nettoyage vérifié',createdAt:1,removed:0,retained:1,pending:0,reasons:[],documentPending:true,
 })
+const tasks=Array.from({length:52},(_,order)=>({
+  id:`tsk-${order}`,key:`task-${order}`,title:order===0?'Vérifier la fiche 🦀':order===50?'Tâche suivante':'Étape '+order,
+  status:order===50?'blocked':'ready',blockedBy:order===50?['task-0']:[],role:'specialist',
+  order,createdAt:1,updatedAt:1,dependents:order===0?1:0,reportCount:0,outstandingExecution:false,
+}))
+const taskOrder=digest(tasks.map(task=>JSON.stringify(task.key)))
+const taskPage=(offset,end)=>({order:taskOrder,offset,end,total:tasks.length,counts:{ready:51,blocked:1},reports:0})
+const descriptor={digest:digest([]),characters:2,total:0,array:true}
 
 export function missionsFixture({page,messages,artifact,project}){
-  let summaries=initial, corrupt=false, held
+  let summaries=initial, corrupt=false, held, gammaRevision=6
   const reads=[]
   function release(){held?.release()}
   async function route(route,path){
@@ -27,6 +35,32 @@ export function missionsFixture({page,messages,artifact,project}){
     }
     if(!path.endsWith('/missions/panel-page'))return false
     const request=route.request().postDataJSON()
+    if(request.source==='mission'||request.source==='tasks'){
+      const task=request.task
+      const missionID=request.missionID??task.missionID
+      const offset=task?.offset??0
+      reads.push({path,source:request.source,missionID,offset,order:task?.order})
+      const header={root:{
+        version:1,id:missionID,projectID:'fixture-project',projectCanonical:'/fixture',title:`Fiche ${missionID}`,
+        excerpt:'Objectif de la fiche 🦀',template:'custom',status:'active',revision:gammaRevision,createdAt:1,updatedAt:1,
+        coordinatorSessionId:'ses_existing',historyTruncated:false,bodies:{},
+      },collections:{actors:descriptor,history:descriptor,reports:descriptor},
+      tasks:{page:taskPage(0,50),pins:['tsk-51'],reportPins:[],version:taskOrder}}
+      if(missionID!=='gamma'){
+        header.tasks={page:{...taskPage(0,0),total:0,counts:{}},pins:[],reportPins:[],version:digest([])}
+      }
+      const row=request.header?header:task.ids?{taskPage:taskPage(0,0),tasks:[tasks[51]],reports:[]}:
+        {taskPage:taskPage(offset,Math.min(offset+50,tasks.length)),tasks:tasks.slice(offset,offset+50),reports:[]}
+      if(task)assert.equal(task.order,taskOrder)
+      // The first task response races a revision advance; the next header must join that revision.
+      if(task?.offset===0&&gammaRevision===6)gammaRevision++
+      const text=JSON.stringify(row)
+      await route.fulfill({json:{available:true,version:1,projectID:'fixture-project',source:request.source,missionID,revision:gammaRevision,
+        ...(request.header?{header:true}:{}),discardedEvents:0,controlUnavailable:false,notificationUnavailable:false,cleanupUnavailable:false,
+        page:{digest:digest([text]),total:1,pieces:[{index:0,offset:0,characters:text.length,text}]},
+      }})
+      return true
+    }
     const {source,window:{offset,order}}=request
     reads.push({path,source,offset,order})
     const rows=source==='summaries'?summaries:[cleanup]
@@ -87,6 +121,7 @@ export function missionsFixture({page,messages,artifact,project}){
     await page.getByText(messages['missionsPanel.picker.noMatch'],{exact:true}).waitFor()
     await filter('Bêta')
     await row('Bêta').waitFor()
+    assert(!reads.some(read=>read.source==='mission'||read.source==='tasks'),'Directory discovery does not prefetch maps')
     await press('Bêta','listitem')
 
     // A bad digest never overwrites the retained rows. Retry reads the same first window.
@@ -114,6 +149,17 @@ export function missionsFixture({page,messages,artifact,project}){
     await filter('Gamma')
     await row('Gamma').waitFor()
     await press('Gamma','listitem')
+    await page.getByRole('heading',{name:'Fiche gamma',exact:true}).waitFor()
+    assert.equal(await page.getByRole('heading',{name:'Fiche beta',exact:true}).count(),0)
+    await row('Vérifier la fiche 🦀').waitFor()
+    assert.equal(reads.filter(read=>read.source==='mission'&&read.missionID==='gamma').length,2)
+    await row('Étape 51').waitFor()
+    assert.equal(await row('Tâche suivante').count(),0)
+    const detail=page.getByRole('region',{name:messages['missions.control.overview'],exact:true})
+    const moreTasks=detail.getByRole('button',{name:more,exact:true})
+    await moreTasks.dispatchEvent('click') // Activate the offscreen action through Rune's accessibility bridge.
+    await row('Tâche suivante').waitFor()
+    assert.equal(await row('Étape 51').count(),1,'A pinned task is reconciled into its numbered window')
     await page.waitForFunction(folder=>{
       const raw=sessionStorage.getItem('codenomad.rune.alpha.client-state.v1')
       const current=raw&&JSON.parse(raw).session.tabs.find(tab=>tab.folder===folder)

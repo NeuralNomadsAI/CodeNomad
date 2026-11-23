@@ -2,6 +2,22 @@ use super::*;
 use crate::{files::test_http, workspace::RightPanelTab};
 use serde_json::json;
 
+const ORDER: &str = "Z9o1qhx0QOJajoRR0hwuPNcxx5rwfCUjOU-J6kgtbPE";
+const HEADER: &str = r#"{"root":{"version":1,"id":"alpha","projectID":"fixture-project","projectCanonical":"/repo","title":"Owned mission","excerpt":"Owned mission objective 🦀","template":"custom","status":"active","coordinatorSessionId":"ses_fixture","revision":3,"createdAt":1,"updatedAt":3,"historyTruncated":false,"bodies":{}},"collections":{"actors":{"characters":2,"digest":"XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc","total":0,"array":true},"history":{"characters":2,"digest":"XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc","total":0,"array":true},"reports":{"characters":2,"digest":"XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc","total":0,"array":true}},"tasks":{"page":{"order":"Z9o1qhx0QOJajoRR0hwuPNcxx5rwfCUjOU-J6kgtbPE","offset":0,"end":1,"total":1,"reports":0,"counts":{"ready":1}},"pins":[],"reportPins":[],"version":"Z9o1qhx0QOJajoRR0hwuPNcxx5rwfCUjOU-J6kgtbPE"}}"#;
+const TASKS: &str = r#"{"taskPage":{"order":"Z9o1qhx0QOJajoRR0hwuPNcxx5rwfCUjOU-J6kgtbPE","offset":0,"end":1,"total":1,"reports":0,"counts":{"ready":1}},"tasks":[{"id":"task-one","key":"task-one","title":"Owned task","role":"specialist","status":"ready","blockedBy":[],"order":0,"createdAt":1,"updatedAt":3,"dependents":0,"reportCount":0,"outstandingExecution":false}],"reports":[]}"#;
+
+fn detail_page(source: &str, text: &str, digest: &str) -> serde_json::Value {
+    let mut page = json!({
+        "available":true,"version":1,"source":source,"projectID":"fixture-project","missionID":"alpha","revision":3,
+        "discardedEvents":0,"controlUnavailable":false,"notificationUnavailable":false,"cleanupUnavailable":false,
+        "page":{"digest":digest,"total":1,"pieces":[{"index":0,"offset":0,"characters":text.encode_utf16().count(),"text":text}]}
+    });
+    if source == "mission" {
+        page["header"] = json!(true);
+    }
+    page
+}
+
 #[test]
 fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
     crate::platform::block_on(async {
@@ -106,6 +122,45 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
                 .contains(crate::strings::t("missions.cleanup.documentPending"))
         );
         click(&mut rt, "mission-row-alpha");
+        let header = http.accept().await;
+        assert_eq!(
+            header.body,
+            json!({"source":"mission","missionID":"alpha","header":true})
+        );
+        header
+            .reply(
+                200,
+                detail_page(
+                    "mission",
+                    HEADER,
+                    "uDS7g8VEb6PKLiSr2L9qKE-T8fVcL6rd5FuClby5F20",
+                ),
+            )
+            .await;
+        let tasks = http.accept().await;
+        assert_eq!(
+            tasks.body,
+            json!({"source":"tasks","task":{"missionID":"alpha","offset":0,"order":ORDER}})
+        );
+        assert!(
+            !rt.accessibility_json()
+                .to_string()
+                .contains("Owned mission objective")
+        );
+        tasks
+            .reply(
+                200,
+                detail_page(
+                    "tasks",
+                    TASKS,
+                    "L2wfoi8OxmyX4OB8WULLBV48Yr4h1vfWr_f87GB8ek4",
+                ),
+            )
+            .await;
+        test_http::wait(signal.recv()).await.unwrap();
+        tick(&mut rt);
+        let tree = rt.accessibility_json().to_string();
+        assert!(tree.contains("Owned mission objective 🦀") && tree.contains("Owned task"));
         let ui = rt.state.workspace.as_ref().unwrap();
         assert!(
             matches!(&ui.entries[ui.active].saved,Tab::Workspace(w) if w.view.selected_mission.as_deref()==Some("alpha"))

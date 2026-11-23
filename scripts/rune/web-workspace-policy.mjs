@@ -55,7 +55,12 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if(!owned||!workspaces.has(owned[1]))return false
       if(method==='GET'&&owned[2]==='worktrees')return true
       if(method==='POST'&&owned[2]==='session-history/window')return ['ses_existing','ses_another','ses_linked','ses_linked_next'].includes(body?.sessionID)
-      if(missions&&method==='POST'&&owned[2]==='missions/panel-page')return ['summaries','cleanups'].includes(body?.source)&&Number.isSafeInteger(body?.window?.offset)
+      if(missions&&method==='POST'&&owned[2]==='missions/panel-page'){
+        if(body?.source==='mission')return body.header===true&&['alpha','beta','gamma'].includes(body.missionID)
+        if(body?.source==='tasks')return body.task?.missionID==='gamma'&&
+          ([0,50].includes(body.task.offset)||body.task.ids?.length===1&&body.task.ids[0]==='tsk-51')
+        return ['summaries','cleanups'].includes(body?.source)&&Number.isSafeInteger(body?.window?.offset)
+      }
       if(method==='POST'&&owned[2]==='creation/release')return claim(body)&&owners.get(owned[1])===body.requestId
       return method==='DELETE'&&!owned[2]&&!forbidRelease
     },
