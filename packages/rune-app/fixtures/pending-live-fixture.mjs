@@ -78,7 +78,9 @@ try{
   const code=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Rune pending probe exceeded 60 seconds')),60000);ui.once('close',code=>{clearTimeout(timer);resolve(code)});ui.once('error',error=>{clearTimeout(timer);reject(error)})});await protocol;if(protocolError)throw protocolError;assert.equal(code,0);assert.equal(position,5);assert.equal(proof.visible.length,5);assert(proof.complete)
   const receipts=await until(async()=>{const r=await relay(`/api/workspaces/${proof.workspace}/sessions/${session.id}/permission-receipts?unanchored=true`);return r.body?.receipts?.length===3?r.body.receipts:null},'three UI permission receipts')
   proof.receipts=receipts.map(r=>({decision:r.decision,reason:r.reason,origin:r.origin})).sort((a,b)=>a.decision.localeCompare(b.decision));assert.deepEqual(proof.receipts,['always','once','reject'].map(decision=>({decision,reason:`Motif réel Rune ${decision} 🦀`,origin:'codenomad'})))
-  assert.equal((await client.experimental.session.export({sessionID:session.id})).messages.length,0);assert(!proof.events.some(e=>e.type.startsWith('session.tool.')||e.type.startsWith('session.execution.')))
+  const history=await relay(`/api/workspaces/${proof.workspace}/session-history/window`,post({sessionID:session.id,target:{kind:'latest'}}))
+  assert.equal(history.body?.status,'window');assert.deepEqual(history.body.messages,[])
+  assert(!proof.events.some(e=>e.type.startsWith('session.tool.')||e.type.startsWith('session.execution.')))
   assert.equal(proof.events.filter(e=>e.type==='permission.asked').length,3);assert.equal(proof.events.filter(e=>e.type==='form.created').length,2)
   proof.result=0
 }catch(error){proof.error=String(error?.stack??error);process.exitCode=1}
