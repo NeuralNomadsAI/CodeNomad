@@ -2,6 +2,7 @@ use super::*;
 mod appearance;
 mod behavior;
 mod memory;
+mod opencode;
 mod providers;
 
 #[test]

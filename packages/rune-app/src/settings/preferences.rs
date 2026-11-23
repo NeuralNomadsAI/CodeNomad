@@ -15,6 +15,8 @@ pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
     pub(super) provider_target: Option<super::providers::Target>,
     pub(super) memory: super::memory::Setting,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) opencode_install: super::opencode::install::Install,
     config: Document,
     state: Document,
     pub(super) window_wake: Option<rune::Waker>,
@@ -227,11 +229,21 @@ impl Preferences {
     }
 
     fn poll_documents(&mut self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        let install = self.opencode_install.poll(
+            self.backend
+                .as_ref()
+                .filter(|_| !self.authentication_required),
+            self.main_wake.clone(),
+            self.window_wake.clone(),
+        );
+        #[cfg(target_arch = "wasm32")]
+        let install = false;
         if self.authentication_required {
-            return false;
+            return install;
         }
         let Some(backend) = &self.backend else {
-            return false;
+            return install;
         };
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         let changed = self.config.poll(backend, Owner::Config, &main, &window)
@@ -239,7 +251,8 @@ impl Preferences {
             | self.memory.poll(backend, &main, &window)
             | self
                 .memory
-                .poll_review(backend, self.provider_target.as_ref(), &main, &window);
+                .poll_review(backend, self.provider_target.as_ref(), &main, &window)
+            | install;
         if changed {
             self.revision += 1;
         }

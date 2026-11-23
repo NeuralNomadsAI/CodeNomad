@@ -1,5 +1,6 @@
 //! Host-owned configuration and appearance, independent of any project location.
 pub mod memory;
+mod opencode_actions;
 mod providers;
 use crate::{
     Wake,
@@ -8,6 +9,7 @@ use crate::{
     recovery::Input,
     runtime, stream,
 };
+pub use opencode_actions::{install_opencode, local_opencode_offer};
 pub(crate) use providers::provider_change;
 pub use providers::{Provider, providers};
 use serde_json::Value;
@@ -95,6 +97,10 @@ pub struct OpenCodeStatus {
     pub check_failed: bool,
     pub state: &'static str,
     pub restart: Option<&'static str>,
+    pub can_upgrade: bool,
+    pub needs_shared_installation: bool,
+    pub foreign_installation: bool,
+    pub binary_path: Option<String>,
 }
 
 pub async fn opencode_status(backend: &Backend, recheck: bool) -> Result<OpenCodeStatus> {
@@ -146,6 +152,14 @@ fn open_code_status(data: Value) -> Result<OpenCodeStatus> {
         latest: text("latestVersion"),
         update_available: data["updateAvailable"] == true,
         check_failed: data["checkError"] == "update_check_failed",
+        can_upgrade: data["canUpgrade"] == true && data["legacyReplacement"].is_null(),
+        needs_shared_installation: data["needsSharedInstallation"] == true,
+        foreign_installation: data["foreignInstallation"].is_object()
+            && data["installationSource"] != "managed",
+        binary_path: data["binaryPath"]
+            .as_str()
+            .filter(|p| !p.is_empty() && p.len() <= 32768 && !p.contains(char::is_control))
+            .map(str::to_owned),
     })
 }
 

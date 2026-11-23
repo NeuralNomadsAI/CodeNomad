@@ -59,9 +59,36 @@ impl Default for Section {
 impl Window {
     pub(super) fn check_opencode(&mut self, refresh: Option<bool>) {
         let prefs = self.shared.borrow();
+        if prefs.opencode_install.busy() {
+            return;
+        }
+        let revision = prefs.opencode_install.revision();
+        let changed = revision != std::mem::replace(&mut self.opencode.install_revision, revision);
         let backend = prefs.backend.as_ref().filter(|_| prefs.can_retry());
-        self.opencode
-            .read(backend, prefs.window_wake.as_ref(), refresh);
+        self.opencode.read(
+            backend,
+            prefs.window_wake.as_ref(),
+            refresh.or(changed.then_some(false)),
+        );
+    }
+
+    pub(super) fn start_opencode_install(
+        &self,
+        authority: Option<&str>,
+        snapshot: &codenomad_client::settings::OpenCodeStatus,
+    ) {
+        let mut prefs = self.shared.borrow_mut();
+        let Some(backend) = prefs
+            .backend
+            .clone()
+            .filter(|backend| prefs.can_retry() && authority == Some(&backend.client_id))
+        else {
+            return;
+        };
+        let (main, window) = (prefs.main_wake.clone(), prefs.window_wake.clone());
+        prefs
+            .opencode_install
+            .start(&backend, snapshot, main, window);
     }
 
     pub(super) fn has_backend(&self) -> bool {
@@ -118,6 +145,7 @@ impl Window {
         {
             let mut prefs = self.shared.borrow_mut();
             prefs.window_wake = None;
+            prefs.opencode_install.cancel_check();
             prefs.memory.show(false);
             prefs.provider_target = None;
         }
@@ -289,6 +317,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 };
                 if s.section != Section::OpenCode {
                     s.opencode = opencode::Status::default();
+                    s.shared.borrow_mut().opencode_install.cancel_check();
                 }
                 s.shared
                     .borrow_mut()
@@ -320,7 +349,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             rune::el()
         };
         let (key, controls) = match s.section {
-            Section::OpenCode => ("opencode", opencode::view(s)),
+            Section::OpenCode => ("opencode", opencode::view(s, &prefs)),
             Section::General => (
                 "general",
                 general::view(s, &prefs, system_dark, system_more, &mut layers),

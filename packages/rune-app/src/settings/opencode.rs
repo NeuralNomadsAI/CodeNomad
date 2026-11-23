@@ -1,4 +1,5 @@
 use super::view::Window;
+pub(super) mod install;
 use crate::{backend::Backend, platform, strings::t};
 use codenomad_client::{
     Receiver, Sender, bounded,
@@ -19,6 +20,7 @@ pub(super) struct Status {
     trailing: Option<bool>,
     failed: bool,
     pub details_open: bool,
+    pub install_revision: u64,
 }
 
 impl Status {
@@ -34,6 +36,10 @@ impl Status {
             check_failed: true,
             state: "connected",
             restart: Some("settings.opencode.setup.restartAvailable"),
+            can_upgrade: false,
+            needs_shared_installation: false,
+            foreign_installation: false,
+            binary_path: None,
         });
     }
 
@@ -94,9 +100,22 @@ impl Status {
     }
 }
 
-pub(super) fn view(s: &Window) -> El {
+fn install(s: &mut Window) {
+    let Some(snapshot) = s
+        .opencode
+        .value
+        .as_ref()
+        .filter(|_| !s.opencode.failed && s.opencode.flight.is_none())
+    else {
+        return;
+    };
+    s.start_opencode_install(s.opencode.authority.as_deref(), snapshot);
+}
+
+pub(super) fn view(s: &Window, prefs: &super::Preferences) -> El {
     let status = &s.opencode;
-    let pending = status.flight.is_some();
+    let install = &prefs.opencode_install;
+    let pending = status.flight.is_some() || install.busy();
     let mut card = col().full_width().separate(Space::Sm).child(
         text(t("settings.opencode.update.title"))
             .text_role(TextRole::Title)
@@ -109,6 +128,9 @@ pub(super) fn view(s: &Window) -> El {
                 .wrap()
                 .role("alert"),
         );
+    }
+    if let Some(error) = install.error(prefs.backend.as_ref()) {
+        card = card.child(text(t(error)).wrap().role("alert"));
     }
     if let Some(snapshot) = &status.value {
         let label = if status.failed {
@@ -161,8 +183,29 @@ pub(super) fn view(s: &Window) -> El {
                 );
             }
         }
+        if !status.failed && install::Install::offered(snapshot) {
+            let label = if snapshot.foreign_installation {
+                t("settings.opencode.setup.foreign.install").into()
+            } else if snapshot.needs_shared_installation || snapshot.state == "missing" {
+                t("settings.opencode.setup.sharedInstall").into()
+            } else {
+                rune_theme_codenomad::catalogue::format(
+                    crate::strings::locale(),
+                    "settings.opencode.update.action",
+                    &[("version", snapshot.latest.as_deref().unwrap_or(""))],
+                )
+            };
+            card = card.child(
+                layout::action_row().child(
+                    chrome::primary_action(&label, pending || !prefs.can_retry(), self::install)
+                        .key("opencode-install"),
+                ),
+            );
+        }
     }
-    if pending {
+    if let Some(progress) = install.label() {
+        card = card.child(text(t(progress)).role("status"));
+    } else if pending {
         card = card.child(text(t("settings.opencode.update.checking")).role("status"));
     }
     card = card.child(layout::action_row().child(layout::button(
