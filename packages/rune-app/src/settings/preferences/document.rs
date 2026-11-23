@@ -1,4 +1,5 @@
 use super::{Backend, Owner, platform};
+use crate::settings::notification_routing::{self, Category, Destination};
 use codenomad_client::{Receiver, bounded};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -9,6 +10,8 @@ pub(super) enum Choice {
     Contrast,
     NewConversationPermissions,
     LogLevel,
+    NotificationRoute(Category, Destination),
+    NotificationsFocused,
     Mode,
     Palette(bool),
 }
@@ -19,6 +22,13 @@ impl Choice {
             Self::Locale => patch["settings"]["locale"] = json!(value),
             Self::Contrast => patch["settings"]["highContrast"] = json!(value),
             Self::LogLevel => patch["logLevel"] = json!(value),
+            Self::NotificationRoute(category, destination) => {
+                patch["settings"]["notificationRouting"][category.key()][destination.key()] =
+                    json!(value == "true");
+            }
+            Self::NotificationsFocused => {
+                patch["settings"]["osNotificationsAllowWhenVisible"] = json!(value == "true");
+            }
             Self::NewConversationPermissions => {
                 patch["settings"]["newConversationPermissions"] = json!(value)
             }
@@ -38,6 +48,13 @@ impl Choice {
             Self::Locale => snapshot["settings"]["locale"] == value,
             Self::Contrast => snapshot["settings"]["highContrast"] == value,
             Self::LogLevel => snapshot["logLevel"] == value,
+            Self::NotificationRoute(category, destination) => {
+                snapshot["settings"]["notificationRouting"][category.key()][destination.key()]
+                    == (value == "true")
+            }
+            Self::NotificationsFocused => {
+                snapshot["settings"]["osNotificationsAllowWhenVisible"] == (value == "true")
+            }
             Self::NewConversationPermissions => {
                 snapshot["settings"]["newConversationPermissions"] == value
             }
@@ -143,7 +160,11 @@ impl Document {
     pub(super) fn stage(&mut self, choice: Choice, value: &'static str) {
         if matches!(
             choice,
-            Choice::Contrast | Choice::NewConversationPermissions | Choice::LogLevel
+            Choice::Contrast
+                | Choice::NewConversationPermissions
+                | Choice::LogLevel
+                | Choice::NotificationRoute(..)
+                | Choice::NotificationsFocused
         ) {
             self.write.failed.remove(&choice);
         }
@@ -275,6 +296,14 @@ impl Document {
         };
         let patch = if let Operation::Write(sent) = &operation {
             let mut patch = json!({});
+            if sent
+                .keys()
+                .any(|choice| matches!(choice, Choice::NotificationRoute(..)))
+                && let Some(before) = self.snapshot.as_ref()
+                && !before["settings"]["notificationRouting"].is_object()
+            {
+                patch["settings"]["notificationRouting"] = notification_routing::seed(before);
+            }
             for (&choice, &value) in sent {
                 choice.put(&mut patch, value);
             }

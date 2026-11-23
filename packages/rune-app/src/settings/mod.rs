@@ -2,6 +2,9 @@
 mod behavior;
 mod contrast;
 mod memory;
+pub(crate) mod notification_routing;
+#[cfg(test)]
+mod notification_settings;
 mod opencode;
 mod preferences;
 mod providers;
