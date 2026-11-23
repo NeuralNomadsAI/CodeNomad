@@ -6,6 +6,7 @@ import {activateControl,launchOwnedChromium} from '../../../scripts/rune/web-chr
 import {commit, edited, filename, initial, prompt, reply, title, assertPrivateChild} from './journey-host.mjs'
 import {signInFixture,until} from './fixture-host.mjs'
 import {guardJourney} from './journey-web-policy.mjs'
+import {traceJourneyTouch} from './journey-touch-trace.mjs'
 
 export async function journeyBrowser(host, web, report, executablePath){
   const {origin,password,profile,project,env}=host
@@ -24,8 +25,13 @@ export async function journeyBrowser(host, web, report, executablePath){
     const context=await browser.newContext({...mobileContext(browser),storageState,serviceWorkers:'block',colorScheme:'light'})
     const refused=[], errors=[]
     report.refused=refused
-    await guardJourney(context,{origin,project,web,refused})
+    const reads=await guardJourney(context,{origin,project,web,refused})
     const page=await context.newPage()
+    await traceJourneyTouch(page,[
+      labels['instanceShell.rightPanel.tabs.files'],labels['instanceShell.rightPanel.tabs.status'],
+      labels['window.menu.rightPanel'],labels['window.menu.leftPanel'],
+      `${labels['filesPanel.viewer']} · ${filename}`,labels['filesPanel.viewer'],
+    ])
     const boot=async()=>{
       page.setDefaultTimeout(20000)
       page.on('pageerror',error=>errors.push(error.message))
@@ -43,6 +49,9 @@ export async function journeyBrowser(host, web, report, executablePath){
     const button=name=>named('button',name)
     const text=value=>mirror().getByText(value,{exact:true})
     const label=key=>{assert(labels[key],key);return labels[key]}
+    let gesture=0
+    const logTouch=(control,x,y)=>page.evaluate(gesture=>{window.__journeyTouch.gesture=gesture},
+      {id:++gesture,control,x,y})
     async function press(locator){
       const box=await until(async()=>{
         if(await locator.count()!==1||!await locator.isEnabled())return false
@@ -53,7 +62,9 @@ export async function journeyBrowser(host, web, report, executablePath){
         if(next&&['x','y','width','height'].every(key=>Math.abs(first[key]-next[key])<0.5))return next
         return false
       },`stable, enabled ${locator}`,20000)
+      await logTouch(locator.toString(),box.x+box.width/2,box.y+box.height/2)
       await activateControl(page,locator,{touch:true,rect:box})
+      return box
     }
     async function editor(name){
       const field=page.locator('textarea:focus')
@@ -65,6 +76,7 @@ export async function journeyBrowser(host, web, report, executablePath){
     }
     const input=async(name,value)=>(await editor(name)).fill(value)
     async function tapEditor(name,value,x,y){
+      await logTouch(name,x,y)
       await page.touchscreen.tap(x,y)
       const field=page.locator('textarea:focus')
       await field.waitFor({state:'attached'})
@@ -85,6 +97,12 @@ export async function journeyBrowser(host, web, report, executablePath){
         assert.deepEqual(refused,[],'No unadmitted browser request')
         assert.deepEqual(errors,[])
       }catch(error){entry.error=error.message}
+      entry.touch=await page.evaluate(()=>{
+        const trace=window.__journeyTouch
+        if(!trace)return []
+        trace.gesture=null
+        return trace.records.splice(0)
+      }).catch(()=>[])
       const base=path.join(report.output,`web-${name}`)
       const proof=await Promise.allSettled([
         mirror().ariaSnapshot({timeout:3000}).catch(()=>page.locator('body').ariaSnapshot({timeout:3000}))
@@ -100,16 +118,6 @@ export async function journeyBrowser(host, web, report, executablePath){
     const response=(method,pattern)=>page.waitForResponse(r=>r.request().method()===method&&r.ok()&&pattern.test(new URL(r.url()).pathname))
     const left='window.menu.leftPanel', right='window.menu.rightPanel'
     const preview=()=>button(`${label('filesPanel.viewer')} · ${filename}`)
-    async function selectFiles(){
-      const name=label('instanceShell.rightPanel.tabs.files')
-      const selected=mirror().getByRole('tab',{name,exact:true,selected:true})
-      // Opening the mobile drawer animates across the tabs. Confirm selection before continuing.
-      for(let attempt=0;attempt<3&&!await selected.count();attempt++){
-        await press(named('tab',name))
-        try{await selected.waitFor({timeout:1000})}catch(error){if(error.name!=='TimeoutError')throw error}
-      }
-      await selected.waitFor()
-    }
     await step('launch',async()=>{
       await boot()
       await button(label('folderSelection.servers.dialog.connect')).waitFor()
@@ -145,23 +153,32 @@ export async function journeyBrowser(host, web, report, executablePath){
       assert.equal(await readFile(path.join(project,filename),'utf8'),edited)
     })
     await step('files',async()=>{
-      await panel(right)
-      await selectFiles()
-      const loaded=page.waitForResponse(r=>{
-        const url=new URL(r.url())
-        return r.request().method()==='GET'&&url.pathname.endsWith('/files/preview')&&url.searchParams.get('path')===filename
-      })
-      void loaded.catch(()=>{})
-      await press(preview())
-      await panel(right,false)
-      const reader=named('region',label('filesPanel.viewer'))
-      await reader.getByText(filename,{exact:true}).waitFor()
-      await reader.getByRole('button',{name:label('instanceShell.rightPanel.actions.save'),exact:true}).waitFor()
-      const result=await loaded
-      assert.equal(result.status(),200)
-      const file=await result.json()
-      assert.equal(file.relativePath,filename)
-      assert.equal(Buffer.from(file.contents,'base64').toString('utf8'),edited)
+      const proof=report.filesTouch={requests:[]}
+      const isPreview=req=>req.method()==='GET'&&new URL(req.url()).pathname.endsWith('/files/preview')
+      const onRequest=req=>{if(isPreview(req))proof.requests.push('sent')}
+      const onFailed=req=>{if(isPreview(req))proof.requests.push(req.failure()?.errorText??'failed')}
+      page.on('request',onRequest)
+      page.on('requestfailed',onFailed)
+      try{
+        await panel(right)
+        const name=label('instanceShell.rightPanel.tabs.files')
+        proof.tab=await press(named('tab',name))
+        await mirror().getByRole('tab',{name,exact:true,selected:true}).waitFor({timeout:2500})
+        proof.preview=await press(preview())
+        await panel(right,false)
+        const reader=named('region',label('filesPanel.viewer'))
+        await reader.getByText(filename,{exact:true}).waitFor()
+        await reader.getByRole('button',{name:label('instanceShell.rightPanel.actions.save'),exact:true}).waitFor()
+        // Observe the exact response forwarded to Rune; CDP can omit a page-response event.
+        const {status,file}=await until(reads.preview,'real file preview response')
+        assert.equal(status,200)
+        assert.equal(file.relativePath,filename)
+        assert.equal(Buffer.from(file.contents,'base64').toString('utf8'),edited)
+      }finally{
+        page.off('request',onRequest)
+        page.off('requestfailed',onFailed)
+        proof.after=await page.evaluate(()=>window.__journeyTouch.snapshot())
+      }
     })
     const gitMode=async key=>{
       const name=label(key)

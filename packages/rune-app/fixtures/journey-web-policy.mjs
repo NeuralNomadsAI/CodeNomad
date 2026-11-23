@@ -3,7 +3,7 @@ import {bundleAssetPaths,fulfillWorkspaceCreation,workspacePolicy} from '../../.
 import {commit,filename,prompt,title} from './journey-host.mjs'
 
 export async function guardJourney(context,{origin,project,web,refused}){
-  let session
+  let session, preview
   const policy=workspacePolicy({origin,project,assets:await bundleAssetPaths(web),allowOwned({method,path,body,query,native}){
     if(native){
       if(query.has('directory')&&query.get('directory')!==project)return false
@@ -52,6 +52,15 @@ export async function guardJourney(context,{origin,project,web,refused}){
           await route.fulfill({response})
           return
         }
+        if(req.method()==='GET'&&url.pathname.endsWith('/files/preview')){
+          const response=await route.fetch({maxRedirects:0,timeout:15000})
+          assert.equal(new URL(response.url()).origin,origin)
+          const bytes=await response.body()
+          assert(bytes.length<64*1024,'Bounded fixture file preview required')
+          preview={status:response.status(),file:JSON.parse(bytes)}
+          await route.fulfill({response})
+          return
+        }
         await route.continue()
         return
       }
@@ -59,4 +68,5 @@ export async function guardJourney(context,{origin,project,web,refused}){
     refused.push({method:req.method(),origin:url.origin,path:url.pathname})
     await route.abort('blockedbyclient')
   })
+  return {preview:()=>preview}
 }
