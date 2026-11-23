@@ -9,7 +9,7 @@ use crate::{
     recovery::Input,
     runtime, stream,
 };
-pub use opencode_actions::{install_opencode, local_opencode_offer};
+pub use opencode_actions::{install_opencode, local_opencode_offer, opencode_local};
 pub(crate) use providers::provider_change;
 pub use providers::{Provider, providers};
 use serde_json::Value;

@@ -2,7 +2,6 @@
 mod behavior;
 mod contrast;
 mod memory;
-#[cfg(not(target_arch = "wasm32"))]
 mod opencode;
 mod preferences;
 mod providers;
@@ -134,8 +133,9 @@ pub(crate) fn poll(s: &mut State) -> bool {
             .as_ref()
             .is_some_and(web_contrast::Watch::more);
         let contrast_changed = std::mem::replace(&mut s.settings.last_contrast, more) != more;
+        let paired = !crate::platform::pairing::required(s);
         contrast_changed
-            | s.settings.web.poll(&shared, &s.wake)
+            | s.settings.web.poll(&mut shared, &s.wake, paired)
             | (s.settings.web.shown() && preferences_changed)
     };
     #[cfg(not(target_arch = "wasm32"))]
@@ -439,7 +439,9 @@ fn open(s: &mut State) {
     {
         request.requested.set(true);
         window.focus();
-        if let Some(wake) = &host.shared.borrow().window_wake {
+        let mut prefs = host.shared.borrow_mut();
+        prefs.opencode_install.cancel_check();
+        if let Some(wake) = &prefs.window_wake {
             wake();
         }
         return;
@@ -502,6 +504,11 @@ pub(crate) fn close(s: &mut State) {
     {
         #[cfg(target_os = "windows")]
         crate::platform::preferences_placement::closed();
+        s.settings
+            .shared
+            .borrow_mut()
+            .opencode_install
+            .cancel_check();
         settle_close(&s.settings.shared, warn_save_failed);
         if let Some((window, token, _)) = s.settings.window.take() {
             token.set(true);

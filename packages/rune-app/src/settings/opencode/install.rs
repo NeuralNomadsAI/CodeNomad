@@ -1,36 +1,39 @@
 use crate::{backend::Backend, platform};
 use codenomad_client::{
-    Receiver, bounded,
-    settings::{OpenCodeStatus, install_opencode, local_opencode_offer},
+    Receiver, Sender, bounded,
+    settings::{OpenCodeStatus, install_opencode, local_opencode_offer, opencode_status},
 };
 
 const FAILED: &str = "settings.opencode.setup.actionFailed";
 
 #[derive(Default)]
 pub(in crate::settings) struct Install {
-    flight: Option<(String, Receiver<Reply>)>,
-    phase: Option<Phase>,
-    expected: Option<Offer>,
-    error: Option<(&'static str, String)>,
-    revision: u64,
+    check: Option<Check>,
+    write: Option<(String, Receiver<Completion>)>,
+    completion: Option<(String, Option<&'static str>, Option<Diagnostic>)>,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+struct Check {
+    owner: String,
+    _cancel: Sender<()>,
+    reply: Receiver<Option<OpenCodeStatus>>,
+    expected: Offer,
+}
+
+struct Completion {
+    error: Option<&'static str>,
+    status: Option<OpenCodeStatus>,
+}
+
+pub(in crate::settings) struct Diagnostic(pub Option<OpenCodeStatus>);
+
+#[derive(PartialEq, Eq)]
 struct Offer {
     binary: String,
     current: Option<String>,
     latest: Option<String>,
     shared: bool,
     foreign: bool,
-}
-
-enum Phase {
-    Checking,
-    Installing,
-}
-enum Reply {
-    Checked(Option<OpenCodeStatus>),
-    Installed(Result<(), &'static str>),
 }
 
 impl Offer {
@@ -53,116 +56,126 @@ impl Install {
         Offer::read(status).is_some()
     }
 
-    pub fn start(
-        &mut self,
-        backend: &Backend,
-        status: &OpenCodeStatus,
-        main: Option<rune::Waker>,
-        window: Option<rune::Waker>,
-    ) {
+    pub fn start(&mut self, backend: &Backend, status: &OpenCodeStatus, wake: rune::Waker) {
         if self.busy() {
             return;
         }
-        let Some(offer) = Offer::read(status) else {
+        let Some(expected) = Offer::read(status) else {
             return;
         };
-        self.expected = Some(offer);
-        self.error = None;
-        self.phase = Some(Phase::Checking);
-        self.launch(backend, main, window, |backend| async move {
-            Reply::Checked(local_opencode_offer(&backend).await.ok())
+        let (out, reply) = bounded(1);
+        let (cancel, cancelled) = bounded(1);
+        self.completion = None;
+        self.check = Some(Check {
+            owner: backend.client_id.clone(),
+            _cancel: cancel,
+            reply,
+            expected,
+        });
+        let backend = backend.clone();
+        platform::spawn(async move {
+            if let Some(status) =
+                platform::reads::cancellable(&cancelled, local_opencode_offer(&backend)).await
+                && out.send(status.ok()).await.is_ok()
+            {
+                wake();
+            }
         });
     }
 
     pub fn busy(&self) -> bool {
-        self.flight.is_some()
+        self.check.is_some() || self.write.is_some()
     }
 
     pub fn cancel_check(&mut self) {
-        if matches!(self.phase, Some(Phase::Checking)) {
-            self.flight = None;
-            self.phase = None;
-            self.expected = None;
-        }
+        self.check = None;
     }
 
     pub fn label(&self) -> Option<&'static str> {
-        match self.phase {
-            Some(Phase::Checking) => Some("settings.opencode.update.checking"),
-            Some(Phase::Installing) => Some("settings.opencode.update.updating"),
-            None => None,
+        if self.check.is_some() {
+            Some("settings.opencode.update.checking")
+        } else if self.write.is_some() {
+            Some("settings.opencode.update.updating")
+        } else {
+            None
         }
-    }
-
-    pub fn revision(&self) -> u64 {
-        self.revision
     }
 
     pub fn error(&self, backend: Option<&Backend>) -> Option<&'static str> {
-        self.error
-            .as_ref()
-            .filter(|(_, owner)| backend.is_some_and(|b| b.client_id == *owner))
-            .map(|(key, _)| *key)
+        let (owner, error, _) = self.completion.as_ref()?;
+        (backend?.client_id == *owner).then_some(*error).flatten()
     }
 
-    pub fn poll(
+    pub fn take_status(&mut self, backend: Option<&Backend>) -> Option<Diagnostic> {
+        let (owner, _, status) = self.completion.as_mut()?;
+        if backend?.client_id != *owner {
+            return None;
+        }
+        status.take()
+    }
+
+    // Only the live OpenCode view may turn a checked offer into a POST.
+    pub fn admit(
         &mut self,
         backend: Option<&Backend>,
         main: Option<rune::Waker>,
-        window: Option<rune::Waker>,
+        window: rune::Waker,
     ) -> bool {
-        let Some((old, receiver)) = &self.flight else {
+        let Some(check) = &self.check else {
             return false;
         };
-        let reply = match receiver.try_recv() {
-            Ok(reply) => reply,
-            Err(_) if receiver.is_closed() => Reply::Installed(Err(FAILED)),
+        let Some(backend) = backend.filter(|backend| backend.client_id == check.owner) else {
+            self.cancel_check();
+            return true;
+        };
+        let status = match check.reply.try_recv() {
+            Ok(status) => status,
+            Err(_) if check.reply.is_closed() => None,
             Err(_) => return false,
         };
-        let current = backend.filter(|backend| backend.client_id == *old);
-        self.flight = None;
-        self.phase = None;
-        let expected = self.expected.take();
-        match reply {
-            Reply::Checked(Some(status))
-                if current.is_some() && expected.is_some() && Offer::read(&status) == expected =>
-            {
-                if let Some(backend) = current {
-                    self.phase = Some(Phase::Installing);
-                    self.launch(backend, main, window, |backend| async move {
-                        Reply::Installed(install_opencode(&backend).await)
-                    });
-                }
-                return true;
-            }
-            Reply::Checked(_) => {
-                self.error = current.map(|backend| (FAILED, backend.client_id.clone()))
-            }
-            Reply::Installed(result) => {
-                self.error = current
-                    .zip(result.err())
-                    .map(|(backend, error)| (error, backend.client_id.clone()))
-            }
+        let expected = self.check.take().unwrap().expected;
+        if status.as_ref().and_then(Offer::read).as_ref() != Some(&expected) {
+            self.record(
+                backend.client_id.clone(),
+                Completion {
+                    error: Some(FAILED),
+                    status,
+                },
+            );
+            return true;
         }
-        self.revision = self.revision.wrapping_add(1);
-        true
-    }
-
-    fn launch<F: std::future::Future<Output = Reply> + platform::TaskBound + 'static>(
-        &mut self,
-        backend: &Backend,
-        main: Option<rune::Waker>,
-        window: Option<rune::Waker>,
-        task: impl FnOnce(Backend) -> F,
-    ) {
         let (out, input) = bounded(1);
-        let future = task(backend.clone());
-        self.flight = Some((backend.client_id.clone(), input));
+        let backend = backend.clone();
+        self.write = Some((backend.client_id.clone(), input));
         platform::spawn(async move {
-            let _ = out.send(future.await).await;
-            for wake in [main, window].into_iter().flatten() {
+            let error = install_opencode(&backend).await.err();
+            let status = opencode_status(&backend, true).await.ok();
+            let _ = out.send(Completion { error, status }).await;
+            for wake in main.into_iter().chain([window]) {
                 wake();
             }
         });
+        true
+    }
+
+    pub fn poll(&mut self) -> bool {
+        let Some((_, reply)) = &self.write else {
+            return false;
+        };
+        let completion = match reply.try_recv() {
+            Ok(completion) => completion,
+            Err(_) if reply.is_closed() => Completion {
+                error: Some(FAILED),
+                status: None,
+            },
+            Err(_) => return false,
+        };
+        let (owner, _) = self.write.take().unwrap();
+        self.record(owner, completion);
+        true
+    }
+
+    fn record(&mut self, owner: String, completion: Completion) {
+        self.completion = Some((owner, completion.error, Some(Diagnostic(completion.status))));
     }
 }

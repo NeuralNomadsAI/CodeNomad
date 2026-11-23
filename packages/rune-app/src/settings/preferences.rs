@@ -15,7 +15,6 @@ pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
     pub(super) provider_target: Option<super::providers::Target>,
     pub(super) memory: super::memory::Setting,
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) opencode_install: super::opencode::install::Install,
     config: Document,
     state: Document,
@@ -82,6 +81,7 @@ impl Preferences {
         self.config.rebind(same_address);
         self.state.rebind(same_address);
         self.memory.bind(same_address);
+        self.opencode_install.cancel_check();
         self.backend = owner;
         self.authentication_required = false;
         self.unwatch();
@@ -145,6 +145,7 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
+        self.opencode_install.cancel_check();
         if let Some(target) = &mut self.provider_target {
             target.transport(false);
         }
@@ -229,16 +230,7 @@ impl Preferences {
     }
 
     fn poll_documents(&mut self) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        let install = self.opencode_install.poll(
-            self.backend
-                .as_ref()
-                .filter(|_| !self.authentication_required),
-            self.main_wake.clone(),
-            self.window_wake.clone(),
-        );
-        #[cfg(target_arch = "wasm32")]
-        let install = false;
+        let install = self.opencode_install.poll();
         if self.authentication_required {
             return install;
         }

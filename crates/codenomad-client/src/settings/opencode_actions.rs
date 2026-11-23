@@ -6,16 +6,23 @@ const FAILED: &str = "settings.opencode.setup.actionFailed";
 pub async fn local_opencode_offer(
     backend: &Backend,
 ) -> crate::history::Result<super::OpenCodeStatus> {
-    let response = backend
-        .client
-        .get(format!("{}api/meta", backend.base))
-        .send()
-        .await?
-        .error_for_status()?;
-    if read_json_limited(response, 65536).await?["localRequest"] != true {
+    if !opencode_local(backend).await? {
         return Err("OpenCode maintenance requires the local host".into());
     }
     super::opencode_status(backend, false).await
+}
+
+pub async fn opencode_local(backend: &Backend) -> crate::history::Result<bool> {
+    let request = backend.client.get(format!("{}api/meta", backend.base));
+    #[cfg(target_arch = "wasm32")]
+    let request = request.fetch_cache_no_store();
+    let response = request.send().await?.error_for_status()?;
+    let meta = read_json_limited(response, 65536).await?;
+    Ok(meta["localRequest"] == true
+        && backend
+            .client
+            .server_identity()
+            .is_none_or(|id| meta["serverId"] == id))
 }
 
 pub async fn install_opencode(backend: &Backend) -> Result<(), &'static str> {

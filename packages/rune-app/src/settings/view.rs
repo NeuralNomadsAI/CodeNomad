@@ -25,6 +25,7 @@ pub(super) struct Window {
     token: Option<Rc<Cell<bool>>>,
     close_request: Option<Rc<CloseRequest>>,
     confirm_close: bool,
+    closing: bool,
     picker: Cell<Option<Picker>>,
     palette_choice: Cell<Option<&'static palettes::Palette>>,
     contrast_help: bool,
@@ -58,41 +59,17 @@ impl Default for Section {
 
 impl Window {
     pub(super) fn check_opencode(&mut self, refresh: Option<bool>) {
-        let prefs = self.shared.borrow();
-        if prefs.opencode_install.busy() {
-            return;
-        }
-        let revision = prefs.opencode_install.revision();
-        let changed = revision != std::mem::replace(&mut self.opencode.install_revision, revision);
-        let backend = prefs.backend.as_ref().filter(|_| prefs.can_retry());
-        self.opencode.read(
-            backend,
-            prefs.window_wake.as_ref(),
-            refresh.or(changed.then_some(false)),
-        );
-    }
-
-    pub(super) fn start_opencode_install(
-        &self,
-        authority: Option<&str>,
-        snapshot: &codenomad_client::settings::OpenCodeStatus,
-    ) {
         let mut prefs = self.shared.borrow_mut();
-        let Some(backend) = prefs
-            .backend
-            .clone()
-            .filter(|backend| prefs.can_retry() && authority == Some(&backend.client_id))
-        else {
-            return;
-        };
-        let (main, window) = (prefs.main_wake.clone(), prefs.window_wake.clone());
-        prefs
-            .opencode_install
-            .start(&backend, snapshot, main, window);
+        let wake = prefs.window_wake.clone();
+        self.opencode.read(&mut prefs, wake.as_ref(), refresh);
     }
 
-    pub(super) fn has_backend(&self) -> bool {
-        self.shared.borrow().can_retry()
+    fn start_opencode_install(&mut self) {
+        if self.section == Section::OpenCode && !self.confirm_close && !self.closing {
+            let mut prefs = self.shared.borrow_mut();
+            let wake = prefs.window_wake.clone();
+            self.opencode.start(&mut prefs, wake);
+        }
     }
 
     pub fn new(shared: Rc<RefCell<Preferences>>, token: Rc<Cell<bool>>) -> Self {
@@ -117,9 +94,11 @@ impl Window {
     }
 
     fn request_close(&mut self, tx: &mut rune::Tx) {
+        self.shared.borrow_mut().opencode_install.cancel_check();
         if self.memory_editor.has_unsaved() {
             self.confirm_close = true;
         } else {
+            self.closing = true;
             tx.close_window();
         }
     }
@@ -158,6 +137,7 @@ impl Window {
 pub(super) fn closed(s: &mut Window, _: &mut rune::Tx) {
     #[cfg(target_os = "windows")]
     crate::platform::preferences_placement::closed();
+    s.shared.borrow_mut().opencode_install.cancel_check();
     if !s.retain_editor_on_native_close() {
         s.close(super::warn_save_failed);
     }
@@ -203,6 +183,7 @@ pub(super) fn spec() -> AppSpec<Window> {
                 .is_some_and(|request| request.requested.replace(false));
             if close_requested {
                 s.request_close(tx);
+                return true;
             }
             let mut prefs = s.shared.borrow_mut();
             let changed = prefs.poll();
@@ -217,11 +198,14 @@ pub(super) fn spec() -> AppSpec<Window> {
                     || t("settings.title"),
                 ));
             }
+            let status_changed = s.section == Section::OpenCode
+                && !s.confirm_close
+                && !s.closing
+                && prefs
+                    .window_wake
+                    .clone()
+                    .is_some_and(|wake| s.opencode.step(&mut prefs, &wake));
             drop(prefs);
-            let status_changed = s.opencode.poll();
-            if s.section == Section::OpenCode {
-                s.check_opencode(None);
-            }
             let providers_changed = if s.section == Section::Providers {
                 let prefs = s.shared.borrow();
                 let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
@@ -229,7 +213,7 @@ pub(super) fn spec() -> AppSpec<Window> {
             } else {
                 false
             };
-            updated | status_changed | providers_changed | editor_changed | close_requested
+            updated | status_changed | providers_changed | editor_changed
         }),
         on_key: Some(|s, event, tx| {
             if event.key != rune::Key::Escape {
@@ -239,8 +223,11 @@ pub(super) fn spec() -> AppSpec<Window> {
                 s.confirm_close = false;
             } else if s.memory_editor.shown() {
                 s.memory_editor.dismiss();
-            } else if !s.shared.borrow_mut().memory.cancel_cleanup_confirmation() {
-                s.request_close(tx);
+            } else {
+                let cancelled = s.shared.borrow_mut().memory.cancel_cleanup_confirmation();
+                if !cancelled {
+                    s.request_close(tx);
+                }
             }
             true
         }),
@@ -349,7 +336,16 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             rune::el()
         };
         let (key, controls) = match s.section {
-            Section::OpenCode => ("opencode", opencode::view(s, &prefs)),
+            Section::OpenCode => (
+                "opencode",
+                opencode::view(
+                    &s.opencode,
+                    &prefs,
+                    Window::start_opencode_install,
+                    |s: &mut Window| s.check_opencode(Some(true)),
+                    |s| &mut s.opencode,
+                ),
+            ),
             Section::General => (
                 "general",
                 general::view(s, &prefs, system_dark, system_more, &mut layers),
@@ -385,7 +381,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     s.confirm_close = false;
                     if accept {
                         s.memory_editor = Default::default();
-                        tx.close_window();
+                        s.request_close(tx);
                     }
                 },
             ));
