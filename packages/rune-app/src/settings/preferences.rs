@@ -12,6 +12,7 @@ use serde_json::json;
 #[derive(Default)]
 pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
+    pub(super) provider_target: Option<super::providers::Target>,
     config: Document,
     state: Document,
     pub(super) window_wake: Option<rune::Waker>,
@@ -95,7 +96,6 @@ impl Preferences {
         self.state.retry();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn can_retry(&self) -> bool {
         self.backend.is_some() && !self.authentication_required
     }
@@ -136,6 +136,9 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
+        if let Some(target) = &mut self.provider_target {
+            target.transport(false);
+        }
         self.unwatch();
         self.revision += 1;
         if let Some(wake) = &self.window_wake {
@@ -388,7 +391,12 @@ impl Preferences {
 
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn fixture(&mut self) {
-        self.config.snapshot = Some(json!({"settings":{"locale":"en"}}));
+        self.fixture_locale("en");
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn fixture_locale(&mut self, locale: &str) {
+        self.config.snapshot = Some(json!({"settings":{"locale":locale}}));
         self.state.snapshot = Some(
             json!({"appearancePreferences":{"mode":"system","light":{"scheme":{"id":"light"}},"dark":{"scheme":{"id":"classic"}}}}),
         );

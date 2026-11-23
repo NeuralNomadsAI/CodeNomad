@@ -61,6 +61,142 @@ async fn until(events: &Receiver<Event>, accept: impl Fn(&Event) -> bool) -> Eve
 }
 
 #[test]
+fn pagination_401_checks_authentication_without_replaying_the_page() {
+    use codenomad_client::{
+        recovery::{ReadingLane, demand},
+        transport::run_backend_reading,
+    };
+    use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
+
+    platform::block_on(async {
+        for (authenticated, suspend) in [(true, false), (false, false), (false, true)] {
+            let (listener, mut prefs) = fixture().await;
+            let backend = prefs.backend.as_mut().unwrap();
+            backend.workspace = "project".into();
+            backend.session = "session".into();
+            attest(&listener, backend, "fixture-profile").await;
+            let (reader, demand) = demand::open();
+            let generation = reader.publish(Some(demand::Target::Around("recent".into())));
+            let (out, events) = bounded(16);
+            let (commands, input) = bounded(4);
+            let (page_out, pages) = bounded(4);
+            let connection = Arc::new(AtomicU64::new(0));
+            let lane = ReadingLane {
+                demand,
+                events: page_out,
+                connection: connection.clone(),
+            };
+            let backend = backend.clone();
+            platform::spawn(async move {
+                run_backend_reading(backend, out, input, Arc::new(|| {}), lane)
+                    .await
+                    .unwrap();
+            });
+            let mut sse = request(&listener).await;
+            assert!(sse.first.starts_with("GET /api/events?"));
+            sse.socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+            let seed = request(&listener).await;
+            assert_eq!(
+                seed.body["target"],
+                json!({"kind":"around","messageID":"recent"})
+            );
+            seed.reply(200, window(&["recent"], true)).await;
+            request(&listener)
+                .await
+                .reply(200, json!({"data":{}}))
+                .await;
+            let next_page = || async {
+                timeout(Duration::from_secs(2), pages.recv())
+                    .await
+                    .unwrap()
+                    .unwrap()
+            };
+            assert!(
+                matches!(next_page().await, (g, 0, Event::ReaderSync { .. }) if g == generation)
+            );
+            commands.send(Command::Older).await.unwrap();
+            let page = request(&listener).await;
+            assert_eq!(
+                page.body["target"],
+                json!({"kind":"before","messageID":"recent"})
+            );
+            page.reply(401, json!({})).await;
+            let mut status = request(&listener).await;
+            assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
+            if suspend {
+                reader.publish(None);
+                let closed = timeout(Duration::from_secs(2), status.socket.read_u8()).await;
+                assert!(closed.is_ok_and(|read| read.is_err()));
+            } else {
+                status
+                    .reply(200, json!({"authenticated":authenticated}))
+                    .await;
+            }
+            if authenticated || suspend {
+                if suspend {
+                    assert!(pages.is_empty());
+                    assert_eq!(connection.load(SeqCst), 0);
+                } else {
+                    assert!(matches!(
+                        next_page().await,
+                        (g, 0, Event::PagingFailed) if g == generation
+                    ));
+                }
+                sse.socket
+                    .write_all(b"event: codenomad.client.ping\ndata: {}\n\n")
+                    .await
+                    .unwrap();
+                let pong = request(&listener).await;
+                assert_eq!(pong.first, "POST /api/client-connections/pong HTTP/1.1");
+                pong.reply(200, json!({})).await;
+                assert!(
+                    timeout(Duration::from_millis(100), listener.accept())
+                        .await
+                        .is_err()
+                );
+                commands.send(Command::Close).await.unwrap();
+            } else {
+                let auth = until(&events, |event| {
+                    matches!(event, Event::AuthenticationRequired(_))
+                })
+                .await;
+                let auth = match auth {
+                    Event::AuthenticationRequired(auth) => auth,
+                    other => panic!("unexpected pagination event: {other:?}"),
+                };
+                assert!(auth.confirmed && auth.backend.session == "session");
+                assert_eq!(connection.load(SeqCst), 1);
+                assert!(pages.is_empty());
+                let closed = timeout(Duration::from_secs(2), sse.socket.read_u8())
+                    .await
+                    .unwrap()
+                    .unwrap_err();
+                assert!(matches!(
+                    closed.kind(),
+                    std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset
+                ));
+                let mut root = crate::init();
+                root.paging = true;
+                *root.settings.shared.borrow_mut() = prefs;
+                assert!(crate::settings::conversation_authentication(
+                    &mut root, auth
+                ));
+                assert!(!root.paging);
+                assert!(crate::chat::authentication::dialog(&root).is_some());
+                assert!(
+                    timeout(Duration::from_millis(100), listener.accept())
+                        .await
+                        .is_err()
+                );
+            }
+        }
+    });
+}
+
+#[test]
 fn settings_config_invalidation_during_pagination_keeps_the_valid_history_page() {
     platform::block_on(async {
         let (listener, mut prefs) = fixture().await;
@@ -487,9 +623,11 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
                         .is_err_and(|error| error.kind() == std::io::ErrorKind::ConnectionReset)
             );
         }
-        let status = request(&listener).await;
-        assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
-        status.reply(200, json!({"authenticated":false})).await;
+        if prompt_reply != Some(401) {
+            let status = request(&listener).await;
+            assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
+            status.reply(200, json!({"authenticated":false})).await;
+        }
 
         let update = |runtime: &mut rune::Runtime<crate::State>| {
             runtime.update(|s, _| {
@@ -739,7 +877,7 @@ fn settings_stale_401_does_not_displace_the_current_connection() {
         root.phase = crate::Phase::Ready;
         let (out, events) = bounded(1);
         root.incoming = Some(events);
-        out.send(Event::AuthenticationRequired(expired))
+        out.send(Event::authentication_required(expired))
             .await
             .unwrap();
         crate::poll_chat(&mut root, 1);
@@ -830,7 +968,7 @@ fn settings_launcher_retry_accepts_password_with_project_open() {
         };
         let (out, incoming) = bounded(2);
         root.incoming = Some(incoming);
-        out.send(Event::AuthenticationRequired(backend))
+        out.send(Event::authentication_required(backend))
             .await
             .unwrap();
         crate::poll_chat(&mut root, 2);

@@ -16,13 +16,30 @@ pub enum CatalogueChanges {
 
 pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
+    providers: Mutex<CatalogueChanges>,
+    stopped: Mutex<CatalogueChanges>,
     wake: Wake,
+    generation: std::sync::atomic::AtomicU64,
 }
 
 impl Signals {
-    pub(super) fn invalidate(&self, workspace: Option<&str>) {
-        let changed = {
-            let mut pending = self.pending.lock().unwrap();
+    pub(super) fn reconnected(&self) {
+        self.mark(&self.pending, None);
+        self.mark(&self.providers, None);
+        self.generation.fetch_add(1, SeqCst);
+        (self.wake)();
+    }
+
+    fn disconnected(&self) {
+        if self.generation.load(SeqCst) % 2 == 1 {
+            self.generation.fetch_add(1, SeqCst);
+            (self.wake)();
+        }
+    }
+
+    fn mark(&self, lane: &Mutex<CatalogueChanges>, workspace: Option<&str>) -> bool {
+        {
+            let mut pending = lane.lock().unwrap();
             match (&mut *pending, workspace) {
                 (CatalogueChanges::All, _) => false,
                 (_, None) => {
@@ -41,13 +58,12 @@ impl Signals {
                     true
                 }
             }
-        };
-        if changed {
-            (self.wake)();
         }
     }
 
     pub(super) fn observe(&self, frame: &Value) {
+        let provider_changed = crate::settings::provider_change(frame)
+            .is_some_and(|id| self.mark(&self.providers, Some(id)));
         let kind = frame["type"].as_str();
         let workspace = match kind {
             Some("workspace.worktreesChanged" | "workspace.stopped") => &frame["workspaceId"],
@@ -56,6 +72,7 @@ impl Signals {
         let Some(id) = workspace.as_str().filter(|id| valid_id(id)) else {
             return;
         };
+        let stopped = kind == Some("workspace.stopped") && self.mark(&self.stopped, Some(id));
         let invalidates = match kind {
             Some("workspace.worktreesChanged" | "workspace.stopped") => true,
             Some("instance.eventStatus") => frame["status"] == "connected",
@@ -75,8 +92,8 @@ impl Signals {
             ),
             _ => false,
         };
-        if invalidates {
-            self.invalidate(Some(id));
+        if (invalidates && self.mark(&self.pending, Some(id))) | provider_changed | stopped {
+            (self.wake)();
         }
     }
 }
@@ -94,6 +111,9 @@ impl CatalogueWatch {
     ) -> (Self, impl std::future::Future<Output = ()> + 'static) {
         let signals = Arc::new(Signals {
             pending: Mutex::default(),
+            providers: Mutex::default(),
+            stopped: Mutex::default(),
+            generation: Default::default(),
             wake,
         });
         let (stop, cancelled) = bounded(1);
@@ -128,6 +148,7 @@ impl CatalogueWatch {
                 )
                 .await;
                 state.cancelled.store(true, SeqCst);
+                observer.disconnected();
                 if expired {
                     break 'watch;
                 }
@@ -150,6 +171,14 @@ impl CatalogueWatch {
     pub fn take(&self) -> CatalogueChanges {
         std::mem::take(&mut *self.signals.pending.lock().unwrap())
     }
+
+    pub fn take_provider_changes(&self) -> (CatalogueChanges, CatalogueChanges, u64) {
+        (
+            std::mem::take(&mut *self.signals.providers.lock().unwrap()),
+            std::mem::take(&mut *self.signals.stopped.lock().unwrap()),
+            self.signals.generation.load(SeqCst),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -158,9 +187,36 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn provider_updates_and_project_stops_keep_separate_scopes() {
+        let signals = Signals {
+            pending: Mutex::default(),
+            providers: Mutex::default(),
+            stopped: Mutex::default(),
+            generation: Default::default(),
+            wake: Arc::new(|| {}),
+        };
+        for frame in [
+            json!({"type":"instance.event","instanceId":"first","event":{"type":"credential.switched"}}),
+            json!({"type":"instance.event","instanceId":"ignored","event":{"type":"session.text.delta"}}),
+            json!({"type":"workspace.stopped","workspaceId":"second"}),
+        ] {
+            signals.observe(&frame);
+        }
+        assert!(
+            matches!(&*signals.providers.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
+        );
+        assert!(
+            matches!(&*signals.stopped.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["second".into()]))
+        );
+    }
+
+    #[test]
     fn independent_catalogue_signals_coalesce_and_ignore_transcript_frames() {
         let signals = Signals {
             pending: Mutex::default(),
+            providers: Mutex::default(),
+            stopped: Mutex::default(),
+            generation: Default::default(),
             wake: Arc::new(|| {}),
         };
         for (id, kind) in [
@@ -178,7 +234,7 @@ mod tests {
         );
         *pending = CatalogueChanges::None;
         drop(pending);
-        signals.invalidate(None);
+        signals.reconnected();
         assert!(matches!(
             *signals.pending.lock().unwrap(),
             CatalogueChanges::All
