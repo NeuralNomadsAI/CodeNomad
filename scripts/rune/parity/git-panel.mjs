@@ -39,6 +39,7 @@ function native(scene, theme, stem, script, mark = "end", width, locale = "fr", 
   for (const key of Object.keys(env)) if (key.startsWith("RUNE_") && key !== "RUNE_LOCALE") delete env[key]
   if (width) env.RUNE_GIT_PANEL_WIDTH = String(width)
   if (detail === "commit" || detail === "hash") env.RUNE_GIT_COMMIT_DETAIL = detail
+  else if (detail === "subject") env.RUNE_GIT_LONG_SUBJECT = "1"
   else if (detail) env.RUNE_GIT_PANEL_STATE = detail
   const args = ["--scene", scene, "--theme", theme, "--tree", tree, "--snap", png,
     "--size", `${viewport.width}x${viewport.height}`, "--scale", "1"]
@@ -100,11 +101,24 @@ try {
       const tree = JSON.parse(await readFile(native(`git-${mode}`, theme, `rune-${name}`, settle, "end", undefined, locale), "utf8"))
       const nodes = elements(tree)
       assert.equal(tree.dark_system, theme === "dark")
+      const worktree = tree.elements.find(node => node.key === "git-worktree-trigger")
+      const directory = await page.locator(".git-panel-worktree").getAttribute("title")
+      assert(directory)
+      assert.equal(worktree?.help, directory)
+      assert.equal(nodes.find(node => node.key === "git-worktree-trigger")?.description, directory)
       assert(nodes.some(node => node.name?.includes("src/components/git-panel.tsx")))
       assert(nodes.some(node => node.key === "git-diff-mode" && node.role === "button" && node.name))
       const firstCommit = nodes.find(node => node.role === "button" && node.name?.startsWith("Make Git history"))
       if (mode === "commits") assert(firstCommit?.key)
-      else assert(nodes.some(node => node.key === "git-section-staged" && node.states.includes("expanded")))
+      else {
+        assert(nodes.some(node => node.key === "git-section-staged" && node.states.includes("expanded")))
+        const bulk = tree.elements.find(node => node.key === "git-bulk-unstaged")
+        const source = page.locator(".git-change-commit-box button[title]").first()
+        const paths = await source.getAttribute("title")
+        assert(paths)
+        assert.equal(bulk?.help, paths)
+        assert.equal(nodes.find(node => node.key === "git-bulk-unstaged")?.description, paths)
+      }
       const solidPanel = await page.locator(".git-panel").boundingBox()
       const runePanel = tree.elements.find(node => node.key === "git-panel")?.rect
       assert(solidPanel && runePanel)
@@ -223,6 +237,13 @@ try {
   assert(menu.some(node => node.role === "menu-item" && node.key?.endsWith(":item:stage") && node.states.includes("focused")))
   const narrowModes = narrow.elements.find(node => node.key === "git-mode")?.rect
   assert(narrowModes && narrowModes[2] < 180, "The mode selector must fit a compact panel")
+  const long = JSON.parse(await readFile(native("git-commits", "dark", "long-subject-180", settle, "end", 180, "fr", "subject"), "utf8"))
+  const panel = long.elements.find(node => node.key === "git-panel")
+  const firstRow = `/git-commit-${"1".repeat(40)}/`
+  const subject = long.elements.find(node => node.path.includes(firstRow) && /^[0-9a-f]{64}$/.test(node.text))
+  const shortId = long.elements.find(node => node.path.includes(firstRow) && node.text === "1111111")
+  assert(panel && subject && shortId && subject.rect[3] > 2 * shortId.rect[3], "Long commit subjects must wrap at 180 px")
+  assert(subject.rect[0] + subject.rect[2] <= panel.rect[0] + panel.rect[2], "The subject must stay inside the panel")
   const catalogue = JSON.parse(await readFile(path.join(root, "crates/rune-theme-codenomad/assets/catalogues/fr.json"), "utf8"))
   for (const [mode, emptyKey, failure] of [
     ["changes", "instanceShell.gitChanges.empty", "fixture status refused"],

@@ -8,7 +8,7 @@ use crate::{
 };
 use codenomad_client::git::Diff;
 use rune::row;
-use rune_theme_codenomad::git_diff::image as image_view;
+use rune_theme_codenomad::{git_diff::image as image_view, git_panel::ButtonLook::Flat};
 
 pub(crate) fn reader(s: &State) -> El {
     let Some(ui) = &s.git.owner else {

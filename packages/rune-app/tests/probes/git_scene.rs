@@ -108,11 +108,13 @@ fn setup(s: &mut crate::State, mode: Mode) {
             whitespace_only: false,
         },
     ];
+    let subject = if crate::platform::setting("RUNE_GIT_LONG_SUBJECT").as_deref() == Some("1") {
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    } else {
+        "Make Git history the starting point"
+    };
     let commits: Vec<_> = [
-        (
-            "Make Git history the starting point",
-            "HEAD -> feat/git-history",
-        ),
+        (subject, "HEAD -> feat/git-history"),
         (
             "Open file diffs beside the Git navigator",
             "origin/feat/git-history",
