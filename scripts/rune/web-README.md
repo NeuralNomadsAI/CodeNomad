@@ -41,6 +41,8 @@ Le contrôle `--web-mobile --same-origin-pairing` ouvre les liens sans page réf
 
 Pour une comparaison, régler `RUNE_ANDROID_COMPARE=1` dans les deux modes, et `RUNE_ANDROID_SOLID_DIR` sur le répertoire du build Solid uniquement pour Solid. Le serveur Rust de qualification sert les deux builds sur son listener HTTPS. `RUNE_ANDROID_TRACE=display` ajoute un deuxième geste pour mesurer les images présentées par Chrome ; `RUNE_ANDROID_TRACE=1` produit la trace détaillée et les compteurs Rune.
 
+`RUNE_ANDROID_GPU_PROBE=only` s'arrête au lanceur et consigne la demande d'adaptateur de Rune, les appels témoins et la configuration Chrome. `RUNE_ANDROID_TS_SERVER=1`, en mode Solid, utilise le serveur TS compilé du checkout et un nom HTTPS de fixture résolu par Chrome pour comparer la reprise après redémarrage.
+
 Les libellés de démarrage et d'erreur proviennent des dix catalogues générés. `?locale=he` sélectionne par exemple l'hébreu et la direction RTL ; la valeur par défaut est `fr`. Les couleurs, dimensions et polices du démarrage consomment le thème généré et `crates/rune-theme-codenomad/assets/web-shell.css`. Le zoom du navigateur reste disponible.
 
 ### Créer un lien sur l'hôte Rust

@@ -35,10 +35,10 @@ export function webLiveFixture({stores, project, streams, compare}) {
       assert.equal(phase,'reset')
       store.append('assistant','Mobile Rust restart history')
     },
-    async command(action, http) {
+    async command(action, http, directOrigin) {
       if (action === 'pair') {
-        const response = await http.post('/api/remote-control/pairings')
-        assert(response.ok())
+        const response = await http.post('/api/remote-control/pairings',directOrigin?{data:{origin:directOrigin}}:undefined)
+        assert(response.ok(),`Pairing ${response.status()}: ${await response.text()}`)
         return (await response.json()).url
       }
       if (action === 'revoke') {
