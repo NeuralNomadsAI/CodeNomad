@@ -3,7 +3,7 @@ use crate::git::{
     changes::{self, SECTIONS},
     menu,
 };
-use rune_theme_codenomad::git_panel::ButtonLook::{Flat, Submit};
+use rune_theme_codenomad::git_panel::ButtonLook::{FlatWithHelp, Submit};
 
 pub(super) fn view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
     let mut body = theme::saved_scroll::<State>("git-changes-body", &ui.changes_scroll)
@@ -118,16 +118,18 @@ fn commit_box(s: &State, ui: &Ui) -> El {
                     actions.len(),
                 )
             };
+            let help = actions
+                .iter()
+                .map(|row| row.id.path.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
             group = group.child(
-                button(s, name, Flat, !ui.can_change_index(), move |ui, tx| {
-                    ui.move_paths(&target, tx.focused())
-                })
-                .help(
-                    actions
-                        .iter()
-                        .map(|row| row.id.path.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
+                button(
+                    s,
+                    name,
+                    FlatWithHelp(help),
+                    !ui.can_change_index(),
+                    move |ui, tx| ui.move_paths(&target, tx.focused()),
                 )
                 .key(format!("git-bulk-{}", section.key())),
             );

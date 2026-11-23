@@ -102,7 +102,10 @@ try {
       const nodes = elements(tree)
       assert.equal(tree.dark_system, theme === "dark")
       const worktree = tree.elements.find(node => node.key === "git-worktree-trigger")
-      assert.equal(worktree?.help, await page.locator(".git-panel-worktree").getAttribute("title"))
+      const directory = await page.locator(".git-panel-worktree").getAttribute("title")
+      assert(directory)
+      assert.equal(worktree?.help, directory)
+      assert.equal(nodes.find(node => node.key === "git-worktree-trigger")?.description, directory)
       assert(nodes.some(node => node.name?.includes("src/components/git-panel.tsx")))
       assert(nodes.some(node => node.key === "git-diff-mode" && node.role === "button" && node.name))
       const firstCommit = nodes.find(node => node.role === "button" && node.name?.startsWith("Make Git history"))
@@ -111,7 +114,10 @@ try {
         assert(nodes.some(node => node.key === "git-section-staged" && node.states.includes("expanded")))
         const bulk = tree.elements.find(node => node.key === "git-bulk-unstaged")
         const source = page.locator(".git-change-commit-box button[title]").first()
-        assert.equal(bulk?.help, await source.getAttribute("title"))
+        const paths = await source.getAttribute("title")
+        assert(paths)
+        assert.equal(bulk?.help, paths)
+        assert.equal(nodes.find(node => node.key === "git-bulk-unstaged")?.description, paths)
       }
       const solidPanel = await page.locator(".git-panel").boundingBox()
       const runePanel = tree.elements.find(node => node.key === "git-panel")?.rect

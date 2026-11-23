@@ -213,10 +213,11 @@ fn worktree_picker(ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
         }
         super::binding::sync_files(s);
     };
-    let picker = theme::worktree_picker(
+    theme::worktree_picker(
         &labels,
         current.as_deref(),
         t("gitPanel.worktree"),
+        ui.tree().map(|tree| tree.directory.as_str()),
         width,
         ui.picker,
         labels.is_empty() || !ui.online,
@@ -239,11 +240,7 @@ fn worktree_picker(ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
         },
         select,
         overlay,
-    );
-    match ui.tree() {
-        Some(tree) => picker.help(&tree.directory),
-        None => picker,
-    }
+    )
 }
 
 pub(super) fn preview_button(
