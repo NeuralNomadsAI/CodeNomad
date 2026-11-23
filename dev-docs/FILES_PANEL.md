@@ -22,6 +22,9 @@ Changes (Git actions and the compact commit field before its rows) and Changes. 
 selection, reads no status and leaves the header a staging drop target; mode
 switches and refreshes keep both disclosure states.
 
+A commit waits for the user's Git hooks and signing. If they fail, the staged
+changes remain available for another attempt.
+
 ### Large inventories
 
 Large `filesystem.changed` inventories, including nested worktrees, use three rules:

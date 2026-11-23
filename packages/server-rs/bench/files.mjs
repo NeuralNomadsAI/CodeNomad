@@ -6,8 +6,10 @@ import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { promisify } from "node:util"
 import { randomUUID } from "node:crypto"
+import { setTimeout as delay } from "node:timers/promises"
 
 const cli=promisify(execFile)
+export const holdProvider = "BENCH-COMMIT-STOP-HOLD"
 function gitEnv(){
   const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!/^GIT_/i.test(k)))
   return {...env,GIT_CONFIG_NOSYSTEM:"1",GIT_CONFIG_GLOBAL:process.platform==="win32"?"NUL":"/dev/null",
@@ -82,6 +84,7 @@ export async function pair(...hosts){
       host.none=`/api/workspaces/${none.id}`
       host.root=rich.path
       host.nonePath=none.path
+      host.noneProxy=none.proxyPath
       cleanup.push(()=>host.call(host.base,{method:"DELETE"}),()=>host.call(host.none,{method:"DELETE"}))
     }
     async function check(name,route,{init,project="base",codes=[200,200],normalize=x=>x,equal=true}={}){
@@ -125,10 +128,13 @@ export async function pair(...hosts){
     await check("Git init wrong directory",h=>"/git-init",{project:"none",init:json({directory:path.dirname(hosts[0].nonePath)}),codes:[409,409],equal:false})
     await check("stage fixture",g+"stage",{init:json({paths:["untracked.txt"]})})
     await check("unstage fixture",g+"unstage",{init:json({paths:["untracked.txt"]})})
-    await check("commit refuses unmerged index",g+"commit",{init:json({message:"Must not commit a conflict"}),codes:[409,409],equal:false})
+    await check("commit refuses unmerged index",g+"commit",{init:json({message:"Must not commit a conflict"}),codes:[409,409]})
     await check("stage conflict resolution",g+"stage",{init:json({paths:["conflict.txt"]})})
     const commits=await check("commit resolved index",g+"commit",{init:json({message:"Resolve fixture index"}),normalize:({commitSha,...body})=>body})
     for(const {commitSha} of commits)assert.match(commitSha,/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
+    const qualified=await Promise.all(hosts.map(h=>userCommit(h,g)))
+    assert.deepEqual(qualified[0],qualified[1])
+    rows.push({name:"commit honors the hook and signing configuration; a second project can Stop", ...qualified[0]})
     const initStatuses=[]
     for(const h of hosts){
       const ok=await h.call(`${h.none}/git-init`,json({directory:h.nonePath}))
@@ -202,6 +208,93 @@ export async function pair(...hosts){
     report.watch={typescript:true,rust:true}
     return report
   }finally{for(const close of cleanup)await close()}
+}
+
+async function userCommit(host, gitRoute) {
+  const local = name => path.join(host.root, ".git", name)
+  await writeFile(local("hooks/pre-commit"), `#!/bin/sh
+printf 'ran\\n' > .git/cn-hook-ran
+i=0
+while [ "$i" -lt 60 ]; do
+  if [ -f .git/cn-hook-release ]; then exit 0; fi
+  sleep 1
+  i=$((i + 1))
+done
+exit 1
+`, { mode: 0o755 })
+  await git(host.root, "config", "core.hooksPath", ".git/hooks")
+  await mkdir(path.join(host.root, "bulk-commit"))
+  const paths = Array.from({ length: 256 }, (_, i) => `bulk-commit/note-${i}.txt`)
+  for (const file of paths) await writeFile(path.join(host.root, file), `fixture ${file}\n`)
+  const stage = await host.call(host.base + gitRoute + "stage", json({ paths }))
+  assert.equal(stage.status, 200, await stage.text())
+  const commit = host.call(host.base + gitRoute + "commit", {
+    ...json({ message: "Commit with a waiting fixture hook" }), signal: AbortSignal.timeout(65_000),
+  })
+  let settled = false
+  void commit.then(() => { settled = true }, () => { settled = true })
+  try {
+    for (const end = Date.now() + 10_000;; await delay(35)) {
+      if (await readFile(local("cn-hook-ran"), "utf8").catch(() => null) === "ran\n") break
+      assert(!settled && Date.now() < end, "git commit did not run the user's pre-commit hook")
+    }
+    const opened = await host.call(`${host.noneProxy}/api/session`, json({ title: "Independent project" }))
+    assert.equal(opened.status, 200, await opened.clone().text())
+    const { data: session } = await opened.json()
+    const prompt = await host.call(`${host.noneProxy}/api/session/${session.id}/prompt`, json({ text: holdProvider }))
+    assert.equal(prompt.status, 200, await prompt.text())
+    for (const end = Date.now() + 10_000;; await delay(35)) {
+      const active = await host.call(`${host.noneProxy}/api/session/active`)
+      assert.equal(active.status, 200)
+      if ((await active.json()).data[session.id]) break
+      assert(Date.now() < end, "the second session never became active")
+    }
+    const stop = await host.call(`${host.noneProxy}/api/session/${session.id}/interrupt?resume=false`, { method: "POST" })
+    assert.equal(stop.status, 200, await stop.text())
+    for (const end = Date.now() + 10_000;; await delay(35)) {
+      const state = await host.call(`${host.noneProxy}/api/session/${session.id}`)
+      assert.equal(state.status, 200)
+      if ((await state.json()).data.outcome === "interrupted") break
+      assert(Date.now() < end, "the second session was not interrupted")
+    }
+    await delay(15_300)
+    assert(!settled, "the ordinary Git commit must keep waiting for its hook")
+  } finally {
+    await writeFile(local("cn-hook-release"), "")
+    await commit.catch(() => {})
+  }
+  const committed = await commit
+  assert.equal(committed.status, 200, await committed.clone().text())
+  const { commitSha } = await committed.json()
+  assert.equal(commitSha, await git(host.root, "rev-parse", "HEAD"))
+
+  await writeFile(path.join(host.root, paths[0]), "still staged if the hook or signer fails\n")
+  const staged = await host.call(host.base + gitRoute + "stage", json({ paths: [paths[0]] }))
+  assert.equal(staged.status, 200, await staged.text())
+  const stagedBlob = await git(host.root, "rev-parse", `:${paths[0]}`)
+  await writeFile(local("hooks/pre-commit"), "#!/bin/sh\nprintf 'fixture hook rejected\\n' >&2\nexit 1\n", { mode: 0o755 })
+  const refused = await host.call(host.base + gitRoute + "commit", json({ message: "Honor hook refusal" }))
+  assert.equal(refused.status, 409, await refused.clone().text())
+  const hookError = (await refused.json()).error
+  assert.equal(hookError, "fixture hook rejected")
+  assert.equal(await git(host.root, "rev-parse", "HEAD"), commitSha)
+  assert.equal(await git(host.root, "rev-parse", `:${paths[0]}`), stagedBlob)
+  await writeFile(local("hooks/pre-commit"), "#!/bin/sh\nexit 0\n", { mode: 0o755 })
+
+  // The private executable rejects signing and records that Git invoked it.
+  const signer = local("cn-sign-fixture")
+  await writeFile(signer, "#!/bin/sh\nprintf 'called\\n' > .git/cn-sign-ran\nexit 1\n", { mode: 0o755 })
+  await git(host.root, "config", "commit.gpgSign", "true")
+  await git(host.root, "config", "gpg.format", "openpgp")
+  await git(host.root, "config", "gpg.program", signer.replaceAll("\\", "/"))
+  const signed = await host.call(host.base + gitRoute + "commit", json({ message: "Must sign before changing HEAD" }))
+  assert.equal(signed.status, 409, await signed.clone().text())
+  const signerError = (await signed.json()).error
+  assert.match(signerError, /sign/i)
+  assert.equal(await readFile(local("cn-sign-ran"), "utf8"), "called\n")
+  assert.equal(await git(host.root, "rev-parse", "HEAD"), commitSha)
+  assert.equal(await git(host.root, "rev-parse", `:${paths[0]}`), stagedBlob)
+  return { hook: committed.status, stopWhileHookPending: 200, hookError, signerError }
 }
 
 export async function browserFiles(page,capture,project){

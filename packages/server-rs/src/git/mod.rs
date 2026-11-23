@@ -1,10 +1,11 @@
-//! Git display and mutations of an owned checkout, every command under an admitted
-//! configuration (`config_guard`), a bounded output and a shared slot.
+//! Git of an owned checkout. Probes use bounded slots; explicit mutations use
+//! the user's Git configuration.
 mod branches;
 mod config_guard;
 mod history;
 mod repository_source;
 mod status_read;
+mod user_command;
 
 pub fn routes() -> axum::Router<Shared> {
     use axum::routing::{get, post};
@@ -245,10 +246,10 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
     } else {
         vec!["rm", "--cached", "--quiet", "--"]
     };
-    args.extend(validated.iter().map(String::as_str));
     if !tree.contains_live(&w.path) || app.workspace(&id).is_err() {
         return Err(error(Status::CONFLICT, "Worktree changed"));
     }
+    args.extend(validated.iter().map(String::as_str));
     run(&w.path, &args, 64 * 1024).await?.mutation()?;
     notify(&app, &w);
     Ok(Json(json!({"ok":true})))
@@ -267,21 +268,34 @@ pub async fn commit(
         return Err(bad("Invalid commit message"));
     }
     let (w, tree) = repo_target(&app, &id, &slug).await?;
-    let _admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&w.path)])?;
+    let admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&w.path)])?;
     app.workspace(&id)?;
     if !tree.contains_live(&w.path) {
         return Err(error(Status::CONFLICT, "Worktree changed"));
     }
-    run(&w.path, &["commit", "-m", message], 64 * 1024).await?.mutation()?;
-    notify(&app, &w);
-    let mut ack = json!({"ok":true});
-    if let Ok(head) = run(&w.path, &["rev-parse", "HEAD"], 1024).await
-        && head.code == 0
-        && sha(head.text().trim())
-    {
-        ack["commitSha"] = json!(head.text().trim());
-    }
-    Ok(Json(ack))
+    let message = message.to_owned();
+    tokio::spawn(async move {
+        let _admitted = admitted;
+        let root = user_command::run(&w.path, &["rev-parse", "--show-toplevel"]).await?.ok()?;
+        if dunce::canonicalize(root.text().trim()).as_deref().ok() != Some(tree.registered())
+            || !tree.contains_live(&w.path)
+            || app.workspace(&id).is_err()
+        {
+            return Err(conflict("Worktree changed"));
+        }
+        user_command::run(&w.path, &["commit", "-m", &message]).await?.mutation()?;
+        notify(&app, &w);
+        let mut ack = json!({"ok":true});
+        if let Ok(head) = user_command::run(&w.path, &["rev-parse", "HEAD"]).await
+            && head.code == 0
+            && sha(head.text().trim())
+        {
+            ack["commitSha"] = json!(head.text().trim());
+        }
+        Ok(Json(ack))
+    })
+    .await
+    .map_err(|_| conflict("Git outcome unavailable"))?
 }
 #[derive(Deserialize)]
 pub struct Init {
