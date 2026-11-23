@@ -23,19 +23,26 @@ pub(super) fn frame(
     let preview = diagram.is_some();
     let mut header = layout::action_row().child(text("mermaid"));
     if !unfinished && (preview || source_only) {
-        header = header.child(
-            layout::button(
-                t(if preview {
-                    "markdown.mermaid.source"
-                } else {
-                    "markdown.mermaid.preview"
-                }),
-                false,
-                toggle,
-            )
+        let label = t(if preview {
+            "markdown.mermaid.source"
+        } else {
+            "markdown.mermaid.preview"
+        });
+        let button = layout::button(label, false, toggle)
             .key(format!("{key}-diagram-toggle"))
-            .checked(preview),
-        );
+            .checked(preview);
+        // Rune #1359 is fixed upstream; the pinned bridge still needs the state in its name.
+        #[cfg(any(target_arch = "wasm32", test))]
+        let button = button.label(format!(
+            "{}: {} — {label}",
+            t("markdown.mermaid.diagram"),
+            t(if preview {
+                "commands.common.enabled"
+            } else {
+                "commands.common.disabled"
+            }),
+        ));
+        header = header.child(button);
     }
     if !preview {
         header = header.child(wrap);
@@ -63,7 +70,7 @@ pub(super) fn frame(
 mod tests {
     use rune::{Env, Runtime};
 
-    fn render(source: &'static str, streaming: bool) -> Runtime<crate::State> {
+    fn render(source: &str, streaming: bool) -> Runtime<crate::State> {
         let mut s = crate::init();
         s.messages.push(
             crate::Message {
@@ -81,7 +88,7 @@ mod tests {
             |s, _| {
                 crate::strings::with_locale("en", || {
                     let row = &s.messages[0];
-                    super::super::prose(s, "example".into(), &row.body, !row.completed)
+                    super::super::prose_at(s, "example".into(), &row.body, !row.completed, 70_000)
                 })
             },
             (880.0, 520.0),
@@ -96,6 +103,67 @@ mod tests {
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);
         rt.frame(0.02);
+    }
+
+    fn toggle_name(rt: &Runtime<crate::State>) -> String {
+        rt.elements()
+            .into_iter()
+            .find(|node| node.key.as_deref() == Some("example-code-0-diagram-toggle"))
+            .unwrap()
+            .label
+            .unwrap()
+    }
+
+    #[test]
+    fn accessible_toggle_name_reports_the_current_mode_and_the_next_action() {
+        let mut rt = render("```mermaid\nflowchart LR\n  A --> B\n```", false);
+        assert_eq!(toggle_name(&rt), "Mermaid diagram: Enabled — Show source");
+        click(&mut rt, "example-code-0-diagram-toggle");
+        assert_eq!(toggle_name(&rt), "Mermaid diagram: Disabled — Show diagram");
+        click(&mut rt, "example-code-0-diagram-toggle");
+        assert_eq!(toggle_name(&rt), "Mermaid diagram: Enabled — Show source");
+    }
+
+    #[test]
+    fn comma_modifiers_are_copyable_source_instead_of_kit_diagrams() {
+        for source in [
+            "```mermaid,compact\nflowchart LR\n  A --> B\n```",
+            "~~~MMD,compact\nflowchart LR\n  A --> B\n~~~",
+            "> ```mermaid,compact\n> flowchart LR\n>   A --> B\n> ```",
+            "```merm&#97;id,compact\nflowchart LR\n  A --> B\n```",
+        ] {
+            let mut rt = render(source, false);
+            let clipboard = rune::clipboard::memory();
+            rt.use_clipboard(&clipboard);
+            let tree = rt.accessibility_json().to_string();
+            assert!(!tree.contains("Mermaid diagram"), "{source}");
+            assert!(
+                rt.find("example-code-0-diagram-toggle").is_none(),
+                "{source}"
+            );
+            click(&mut rt, "example-code-0-copy");
+            assert_eq!(
+                clipboard.text().unwrap().trim_end(),
+                "flowchart LR\n  A --> B",
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_complete_diagram_over_the_utf16_limit_stays_copyable_source() {
+        let source = format!(
+            "```mermaid\nflowchart LR\n  A --> B\n%% {}\n```",
+            "🦀".repeat(25_000)
+        );
+        let rt = render(&source, false);
+        assert!(rt.find("example-code-0-diagram").is_none());
+        assert!(rt.find("example-code-0-copy").is_some());
+        assert!(
+            rt.accessibility_json()
+                .to_string()
+                .contains("supported diagram formats")
+        );
     }
 
     #[test]

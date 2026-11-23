@@ -41,17 +41,12 @@ fn literal_breaks(source: &str) -> Cow<'_, str> {
     let mut result = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
         if let Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) = &event
-            && let Some(language) = info.split_whitespace().next()
-            && language.eq_ignore_ascii_case("mermaid")
-            && let Some(offset) = source[range.clone()]
-                .lines()
-                .next()
-                .and_then(|line| line.find(language))
+            && let Some((word, replacement)) = diagram_fence(info, &source[range.clone()])
         {
-            let start = range.start + offset;
+            let start = range.start + word.start;
             result.push_str(&source[last..start]);
-            result.push_str("mmd");
-            last = start + language.len();
+            result.push_str(replacement);
+            last = range.start + word.end;
             continue;
         }
         match event {
@@ -82,6 +77,27 @@ fn literal_breaks(source: &str) -> Cow<'_, str> {
     }
     result.push_str(&source[last..]);
     Cow::Owned(result)
+}
+
+fn diagram_fence(info: &str, block: &str) -> Option<(std::ops::Range<usize>, &'static str)> {
+    let kit_word = info.split(|c: char| c.is_whitespace() || c == ',').next()?;
+    if !(kit_word.eq_ignore_ascii_case("mermaid") || kit_word.eq_ignore_ascii_case("mmd")) {
+        return None;
+    }
+    let line = block.lines().next()?;
+    let opening = line.trim_start();
+    let marker = opening.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let language = opening.trim_start_matches(marker).trim_start();
+    let word = language.split_whitespace().next()?;
+    let start = line.len() - language.len();
+    // Kit recognizes comma modifiers; Solid only admits a whitespace-delimited language.
+    // Route both forms through the ordinary code frame, retaining Copy even for plain source.
+    let replacement = if word.eq_ignore_ascii_case("mermaid") || word.eq_ignore_ascii_case("mmd") {
+        "mmd"
+    } else {
+        "text"
+    };
+    Some((start..start + word.len(), replacement))
 }
 
 pub fn language_for_path(path: &str) -> &str {

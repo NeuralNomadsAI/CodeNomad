@@ -132,10 +132,14 @@ pub(super) fn sync_files(s: &mut State) {
                 || inventory.is_some_and(|list| {
                     !list.trees.iter().any(|tree| {
                         !tree.missing
-                            && codenomad_client::same_server_path(
+                            && (codenomad_client::same_server_path(
                                 &tree.directory,
                                 &target.directory,
-                            )
+                            ) || files.session_preview()
+                                && tree.slug == owner.session_slug
+                                && tree.service_directory.as_deref().is_some_and(|alias| {
+                                    codenomad_client::same_server_path(alias, &target.directory)
+                                }))
                     })
                 })
         }) {

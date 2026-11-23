@@ -135,10 +135,16 @@ impl Ui {
         if self.tree.directory() != directory {
             self.actions.revoke();
             self.tree_scroll = Default::default();
-            self.close_reader();
+            if !self.session_preview() {
+                self.close_reader();
+            }
             self.tree.switch(directory);
             self.demand();
         }
+    }
+
+    pub(crate) fn session_preview(&self) -> bool {
+        self.session_preview && self.reader.target().is_some()
     }
     pub fn drawer(&self) -> super::layout::Drawer {
         super::layout::resolve(self.host_width.unwrap_or(0.0), self.panel)
@@ -389,6 +395,7 @@ impl Ui {
         }
     }
     pub fn close_reader(&mut self) {
+        self.session_preview = false;
         self.pictures.suspend();
         self.presentation.reset();
         self.document.close();
