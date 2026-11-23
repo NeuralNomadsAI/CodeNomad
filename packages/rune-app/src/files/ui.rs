@@ -335,15 +335,22 @@ impl Ui {
             .target()
             .is_some_and(|target| target.directory == self.tree.directory() && target.path == path)
     }
-    pub(super) fn toggle_preview(&mut self, directory: &str, path: &str, tx: &mut rune::Tx) {
+    pub(super) fn toggle_preview(
+        &mut self,
+        directory: &str,
+        path: &str,
+        tx: &mut rune::Tx,
+    ) -> bool {
         if self.stopped || self.tree.directory() != directory {
-            return;
+            return false;
         }
         if self.previews(path) {
             self.close_reader();
             self.reading.restore(tx);
+            false
         } else {
             self.open(path.into());
+            true
         }
     }
     pub fn open(&mut self, path: String) {

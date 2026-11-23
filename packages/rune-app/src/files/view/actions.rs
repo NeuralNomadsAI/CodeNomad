@@ -136,9 +136,12 @@ pub(super) fn row(s: &State, ui: &Ui, row: &Row, width: f32, touch: bool) -> (El
             let (directory, path) = (directory.to_owned(), path.clone());
             move |s, tx| {
                 if has_session(s)
-                    && let Some(ui) = s.files.as_mut().filter(|ui| owns(ui, &directory, &path))
+                    && s.files
+                        .as_mut()
+                        .filter(|ui| owns(ui, &directory, &path))
+                        .is_some_and(|ui| ui.toggle_preview(&directory, &path, tx))
                 {
-                    ui.toggle_preview(&directory, &path, tx);
+                    crate::git::close_preview(s);
                 }
             }
         });
