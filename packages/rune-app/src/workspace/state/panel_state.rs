@@ -1,5 +1,6 @@
 use super::{State, Tab, Ui};
 use crate::{missions, workspace::RightPanelTab};
+use codenomad_client::transport::WorkspaceEvent;
 use rune::{El, edit::TextEdit};
 
 pub fn panel_width(s: &mut State, index: usize, width: u16) {
@@ -85,7 +86,7 @@ fn mission_edit(s: &mut State) -> (Option<&mut missions::Panel>, &mut TextEdit) 
     (panel, &mut s.rejected_edit)
 }
 
-pub(super) fn poll_missions(ui: &mut Ui, s: &State) -> bool {
+pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
     let mut changed = false;
     let mut selection_changed = false;
     let mounted = crate::shell::right_panel_visible(s);
@@ -134,6 +135,9 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State) -> bool {
             } else {
                 panel.cancel_probe();
             }
+            if visible {
+                panel.refresh_when_due(ui.clock, tx);
+            }
             changed |= panel.poll();
             panel.show(panel.supported() && visible);
             if saved.view.selected_mission != panel.selected {
@@ -154,6 +158,34 @@ pub(crate) fn suspend_missions(s: &mut State) {
     {
         panel.show(false);
         panel.cancel_probe();
+    }
+}
+
+pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
+    // No observer may grant demand; the real mounted occurrence owns it.
+    if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
+        return;
+    }
+    let Some(ui) = &mut s.workspace else { return };
+    let entry = &mut ui.entries[ui.active];
+    let Some((panel, project)) = entry.missions.as_mut().zip(entry.project.as_ref()) else {
+        return;
+    };
+    match event {
+        Some(WorkspaceEvent::MissionChanged {
+            workspace_id,
+            mission_id,
+            revision,
+        }) if workspace_id == &project.id => {
+            panel.invalidate(Some((mission_id, *revision)), ui.clock);
+        }
+        Some(WorkspaceEvent::MissionsReconnected { workspace_id })
+            if workspace_id == &project.id =>
+        {
+            panel.invalidate(None, ui.clock);
+        }
+        None => panel.invalidate(None, ui.clock),
+        _ => {}
     }
 }
 

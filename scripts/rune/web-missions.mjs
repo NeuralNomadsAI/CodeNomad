@@ -153,11 +153,22 @@ export function missionsFixture({page,messages,artifact,project}){
     assert.equal(await page.getByRole('heading',{name:'Fiche beta',exact:true}).count(),0)
     await row('Vérifier la fiche 🦀').waitFor()
     assert.equal(reads.filter(read=>read.source==='mission'&&read.missionID==='gamma').length,2)
-    await row('Étape 51').waitFor()
+    assert.equal(await row('Étape 51').count(),0,'The far task is outside the virtual viewport')
+    const box=await row('Vérifier la fiche 🦀').boundingBox()
+    await page.mouse.move(box.x+box.width/2,box.y+box.height/2)
+    const scrollTail=async()=>{
+      for(let step=0;step<12&&await row('Étape 51').count()===0;step++){
+        await page.mouse.wheel(0,700)
+        await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+      }
+      await row('Étape 51').waitFor()
+    }
+    await scrollTail()
     assert.equal(await row('Tâche suivante').count(),0)
     const detail=page.getByRole('region',{name:messages['missions.control.overview'],exact:true})
     const moreTasks=detail.getByRole('button',{name:more,exact:true})
     await moreTasks.dispatchEvent('click') // Activate the offscreen action through Rune's accessibility bridge.
+    await scrollTail()
     await row('Tâche suivante').waitFor()
     assert.equal(await row('Étape 51').count(),1,'A pinned task is reconciled into its numbered window')
     await page.waitForFunction(folder=>{

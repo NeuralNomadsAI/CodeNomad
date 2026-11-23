@@ -10,6 +10,7 @@ use std::{
     time::Duration,
 };
 mod catalogue;
+mod mission_events;
 pub use catalogue::{CatalogueChanges, CatalogueWatch};
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_browser.rs"]
@@ -321,6 +322,9 @@ pub(super) async fn dispatch(
     }
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
+    if let Some(event) = mission_events::decode(&b.workspace, &value) {
+        out.send(Input::Workspace(epoch, event)).await?;
+    }
     let catalogues = (own && value["type"] == "instance.event")
         .then(|| match native["type"].as_str() {
             Some("command.updated") => Some(WorkspaceEvent::CommandsChanged),

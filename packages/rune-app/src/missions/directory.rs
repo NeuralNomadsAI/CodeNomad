@@ -47,6 +47,8 @@ pub(crate) struct Panel {
     project: Option<String>,
     serial: u64,
     visible: bool,
+    refresh_due: Option<f64>,
+    last_passive: Option<f64>,
     pub(super) scope: std::rc::Rc<()>,
     supported: Option<bool>,
     capability: Option<Receiver<Option<bool>>>,
@@ -73,6 +75,8 @@ impl Panel {
             incoming,
             serial: 0,
             visible: false,
+            refresh_due: None,
+            last_passive: None,
             scope: std::rc::Rc::new(()),
             supported: None,
             capability: None,
@@ -94,6 +98,7 @@ impl Panel {
         if show {
             self.refresh();
         } else {
+            self.refresh_due = None;
             self.detail.cancel();
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
@@ -113,6 +118,38 @@ impl Panel {
                 } else {
                     self.start(kind, Read::Refresh);
                 }
+            }
+        }
+    }
+
+    pub(crate) fn invalidate(&mut self, change: Option<(&str, u64)>, now: f64) {
+        if let Some((id, revision)) = change {
+            if self.selected.as_deref() == Some(id) {
+                self.detail.observe(id, revision);
+            }
+        } else {
+            // A reconnect retires publication authority while keeping the display.
+            self.detail.cancel();
+            for lane in &mut self.lanes {
+                if let Some((_, cancel)) = lane.active.take() {
+                    cancel.close();
+                }
+            }
+        }
+        if self.visible && self.refresh_due.is_none() {
+            self.refresh_due = Some(self.last_passive.map_or(now, |last| now.max(last + 1.5)));
+            (self.wake)();
+        }
+    }
+
+    pub(crate) fn refresh_when_due(&mut self, now: f64, tx: &mut rune::Tx) {
+        if let Some(due) = self.refresh_due {
+            if due > now {
+                tx.wake_at(due);
+            } else {
+                self.refresh_due = None;
+                self.last_passive = Some(now);
+                self.refresh();
             }
         }
     }

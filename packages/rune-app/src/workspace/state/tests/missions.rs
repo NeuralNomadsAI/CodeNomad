@@ -42,7 +42,7 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         fn tick(rt: &mut rune::Runtime<State>) {
             rt.update(|s, tx| {
                 let mut ui = s.workspace.take().unwrap();
-                panel_state::poll_missions(&mut ui, s);
+                panel_state::poll_missions(&mut ui, s, tx);
                 s.workspace = Some(ui);
                 tx.instant();
             });
@@ -166,8 +166,49 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
             matches!(&ui.entries[ui.active].saved,Tab::Workspace(w) if w.view.selected_mission.as_deref()==Some("alpha"))
         );
 
+        let changed = codenomad_client::transport::WorkspaceEvent::MissionChanged {
+            workspace_id: "header-windows".into(),
+            mission_id: "alpha".into(),
+            revision: 4,
+        };
+        rt.update(|s, _| mission_event(s, Some(&changed)));
+        tick(&mut rt);
+        let mut detail = false;
+        for _ in 0..3 {
+            let req = http.accept().await;
+            detail |= req.body == json!({"source":"mission","missionID":"alpha","header":true});
+            req.reply(
+                503,
+                json!({"available":false,"reason":"plugin-unavailable","missions":[]}),
+            )
+            .await;
+        }
+        assert!(detail, "Journal changes reread the selected header");
+        tick(&mut rt);
+        rt.update(|s, _| {
+            s.workspace.as_mut().unwrap().clock = 2.0;
+            mission_event(s, None);
+        });
+        tick(&mut rt);
+        let mut detail = false;
+        for _ in 0..3 {
+            let req = http.accept().await;
+            detail |= req.body["source"] == "mission";
+            req.reply(
+                503,
+                json!({"available":false,"reason":"plugin-unavailable","missions":[]}),
+            )
+            .await;
+        }
+        assert!(detail, "Reconnection rereads the selected header");
+        tick(&mut rt);
         click(&mut rt, "right-panel-tab-0");
         assert!(rt.find("missions-panel").is_none());
+        rt.update(|s, _| {
+            mission_event(s, Some(&changed));
+            mission_event(s, None);
+        });
+        tick(&mut rt);
         http.quiet().await;
         click(&mut rt, "right-panel-tab-2");
         let summaries = http.accept().await;

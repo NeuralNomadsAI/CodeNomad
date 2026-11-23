@@ -46,6 +46,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    workspace::mission_event(s, None);
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
                     git::online(s, true);
@@ -105,6 +106,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     s.history_detached = false;
                     s.can_older = false;
                 }
+                workspace::mission_event(s, Some(&event));
                 git::event(s, &event);
                 if let Some(files) = &mut s.files {
                     files.event(event);

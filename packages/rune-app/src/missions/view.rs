@@ -1,6 +1,6 @@
 use super::directory::{Kind, Panel, title};
 use crate::strings::{locale, t};
-use codenomad_client::missions::{RunState, Status, TaskStatus};
+use codenomad_client::missions::{RunState, Status};
 use rune::{El, col, edit::TextEdit, text};
 use rune_theme_codenomad::{
     Space, TextRole, catalogue, field_kit, git_panel as theme,
@@ -205,53 +205,8 @@ fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>) -> El {
         result = result
             .child(text(name).role("heading").wrap_anywhere())
             .child(text(status(header.status, header.run_state)).text_role(TextRole::Small))
-            .child(text(&header.excerpt).wrap_anywhere());
-        if !snapshot.tasks.is_empty() {
-            let list = col()
-                .full_width()
-                .role("list")
-                .label(t("missions.control.profiles.role.specialist"));
-            result = result.child(list.children(snapshot.tasks.iter().map(|task| {
-                let state = task_status(task.status);
-                let title = if task.title.is_empty() {
-                    &task.key
-                } else {
-                    &task.title
-                };
-                let mut row = col()
-                    .full_width()
-                    .pad(Space::Sm)
-                    .role("listitem")
-                    .label(title)
-                    .key(format!("mission-task-{}", task.id))
-                    .child(text(title).wrap_anywhere())
-                    .child(text(state).text_role(TextRole::Small));
-                if !task.blocked_by.is_empty() {
-                    let dependencies = task
-                        .blocked_by
-                        .iter()
-                        .map(|key| {
-                            snapshot
-                                .tasks
-                                .iter()
-                                .find(|task| task.key == *key)
-                                .map_or(key.as_str(), |task| task.title.as_str())
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    row = row.child(
-                        text(catalogue::format(
-                            locale(),
-                            "missions.control.task.blockedBy",
-                            &[("tasks", &dependencies)],
-                        ))
-                        .text_role(TextRole::Small)
-                        .wrap_anywhere(),
-                    );
-                }
-                row
-            })));
-        }
+            .child(text(&header.excerpt).wrap_anywhere())
+            .child(snapshot.tasks.view::<S>());
     }
     if detail.busy() || detail.snapshot.is_none() && !detail.failed {
         result = result.child(theme::note(t("missions.control.loading"), "status"));
@@ -281,19 +236,6 @@ fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>) -> El {
         );
     }
     result
-}
-
-fn task_status(status: TaskStatus) -> &'static str {
-    t(match status {
-        TaskStatus::Blocked => "missions.control.task.status.blocked",
-        TaskStatus::Ready => "missions.control.task.status.ready",
-        TaskStatus::Dispatching => "missions.control.task.status.dispatching",
-        TaskStatus::Queued => "missions.control.task.status.queued",
-        TaskStatus::Completed => "missions.control.task.status.completed",
-        TaskStatus::NeedsInput => "missions.control.task.status.needs-input",
-        TaskStatus::Failed => "missions.control.task.status.failed",
-        TaskStatus::Withdrawn => "missions.control.task.status.superseded",
-    })
 }
 
 fn status(status: Status, run_state: Option<RunState>) -> &'static str {

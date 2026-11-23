@@ -11,7 +11,8 @@ pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
 pub(crate) use panel_state::set_files_tab;
 pub use panel_state::{capture_files_mode, files_tab, panel_width, restore_files_mode};
 pub(crate) use panel_state::{
-    mission_panel, mission_supported, right_panel_tab, set_right_panel_tab, suspend_missions,
+    mission_event, mission_panel, mission_supported, right_panel_tab, set_right_panel_tab,
+    suspend_missions,
 };
 pub use strip::strip;
 
@@ -507,7 +508,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
     }
     active.apply(s);
-    changed |= panel_state::poll_missions(&mut ui, s);
+    changed |= panel_state::poll_missions(&mut ui, s, tx);
     if drafts_changed {
         ui.changed();
     }

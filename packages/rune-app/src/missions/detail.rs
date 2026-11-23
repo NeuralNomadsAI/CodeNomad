@@ -1,3 +1,4 @@
+use super::task_rows::TaskRows;
 use crate::platform::{
     self,
     reads::{self, Reads},
@@ -10,7 +11,7 @@ use codenomad_client::{
     missions::{DetailRead, DirectoryChanged, MapHeader, Task, TaskWindow},
     runtime::{Instant, timeout},
 };
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
 const BUDGET: Duration = Duration::from_secs(30);
 
@@ -33,14 +34,24 @@ enum Demand {
 
 pub(super) struct Snapshot {
     pub header: MapHeader,
-    pub tasks: Vec<Task>,
+    pub tasks: Rc<TaskRows>,
     pub end: u64,
 }
 
 enum Answer {
-    New(Snapshot),
+    New(MapHeader, Vec<Task>, u64),
     Same(MapHeader),
-    More(TaskWindow),
+    More(TaskWindow, u64),
+}
+
+impl Answer {
+    fn revision(&self) -> u64 {
+        match self {
+            Self::New(header, _, _) => header.root.revision,
+            Self::Same(header) => header.root.revision,
+            Self::More(_, revision) => *revision,
+        }
+    }
 }
 
 impl Detail {
@@ -56,6 +67,14 @@ impl Detail {
     }
     pub fn refresh(&mut self) {
         self.pending = Some(Demand::Refresh);
+    }
+
+    pub fn observe(&mut self, id: &str, revision: u64) {
+        if self.id != id {
+            self.clear();
+            self.id = id.into();
+        }
+        self.observed = self.observed.max(Some(revision));
     }
     pub fn retry(&mut self) {
         self.pending = self.retry;
@@ -99,20 +118,33 @@ impl Detail {
             self.active = None;
             self.retry = None;
             self.failed = match result {
-                Ok(Answer::New(snapshot)) => {
-                    self.snapshot = Some(snapshot);
-                    false
+                Ok(answer) if Some(answer.revision()) < self.observed => {
+                    self.retry = Some(Demand::Refresh);
+                    true
                 }
-                Ok(Answer::Same(header)) => {
-                    if let Some(old) = &mut self.snapshot {
-                        old.header = header;
+                Ok(answer) => {
+                    self.observed = self.observed.max(Some(answer.revision()));
+                    match answer {
+                        Answer::New(header, tasks, end) => {
+                            self.snapshot = Some(Snapshot {
+                                header,
+                                tasks: Rc::new(TaskRows::new(tasks)),
+                                end,
+                            });
+                            false
+                        }
+                        Answer::Same(header) => {
+                            if let Some(old) = &mut self.snapshot {
+                                old.header = header;
+                            }
+                            false
+                        }
+                        Answer::More(window, _) => self
+                            .snapshot
+                            .as_mut()
+                            .is_none_or(|snapshot| !snapshot.extend(window)),
                     }
-                    false
                 }
-                Ok(Answer::More(window)) => self
-                    .snapshot
-                    .as_mut()
-                    .is_none_or(|snapshot| !snapshot.extend(window)),
                 Err(error) => {
                     self.retry = Some(if error.is::<DirectoryChanged>() {
                         Demand::Refresh
@@ -148,21 +180,23 @@ impl Detail {
                 source.report_pins.clone(),
             )
         });
-        let more = self
-            .snapshot
-            .as_ref()
-            .map(|s| backend.mission_task_window(&project, &s.header, s.end));
+        let more = self.snapshot.as_ref().map(|s| {
+            (
+                backend.mission_task_window(&project, &s.header, s.end),
+                s.header.root.revision,
+            )
+        });
         let started = Instant::now();
         self.active = Some((demand, inbox));
         platform::spawn(async move {
             let (_cancel, alive) = bounded(1);
             let operation = async {
                 match (demand, more) {
-                    (Demand::More, Some(read)) => {
+                    (Demand::More, Some((read, revision))) => {
                         let window = read_window(read?, &reads, &alive)
                             .await
                             .ok_or("cancelled Mission task read")??;
-                        Ok(Answer::More(window))
+                        Ok(Answer::More(window, revision))
                     }
                     _ => refresh(&backend, &project, &id, previous, &reads, &alive).await,
                 }
@@ -190,20 +224,11 @@ impl Detail {
 impl Snapshot {
     fn extend(&mut self, page: TaskWindow) -> bool {
         if page.task_page.offset != self.end
-            || page.tasks.iter().any(|task| {
-                self.tasks.iter().any(|old| {
-                    old.order != task.order && (old.id == task.id || old.key == task.key)
-                        || old.order == task.order && (old.id != task.id || old.key != task.key)
-                })
-            })
+            || !Rc::make_mut(&mut self.tasks).extend(page.tasks, self.end, page.task_page.end)
         {
             return false;
         }
         self.end = page.task_page.end;
-        self.tasks
-            .retain(|task| !(page.task_page.offset..self.end).contains(&task.order));
-        self.tasks.extend(page.tasks);
-        self.tasks.sort_by_key(|task| task.order);
         true
     }
 }
@@ -278,8 +303,7 @@ async fn read_map(
             tasks.push(pin);
         }
     }
-    tasks.sort_by_key(|task| task.order);
-    Ok(Answer::New(Snapshot { header, tasks, end }))
+    Ok(Answer::New(header, tasks, end))
 }
 
 pub(super) async fn read_window<T>(
@@ -295,6 +319,48 @@ pub(super) async fn read_window<T>(
             Ok(None) => {}
             Ok(Some(page)) => return Some(Ok(page)),
             Err(error) => return Some(Err(error)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn never_publishes_a_header_below_an_observed_revision() {
+        let mut detail = Detail::default();
+        detail.observe("mission", 8);
+        detail.observe("mission", 7);
+        let descriptor = json!({"characters":0,"digest":"","total":0,"array":true});
+        let header = |revision| {
+            serde_json::from_value(json!({
+            "root":{"version":1,"id":"mission","projectID":"project","projectCanonical":"/fixture",
+                "excerpt":"Fixture","template":"custom","status":"active","coordinatorSessionId":"session",
+                "revision":revision,"createdAt":1,"updatedAt":1,"historyTruncated":false,"bodies":{}},
+            "collections":{"actors":descriptor,"history":descriptor,"reports":descriptor},
+            "tasks":{"page":{"order":"","offset":0,"end":0,"total":0,"counts":{},"reports":0},
+                "pins":[],"reportPins":[],"version":""}
+        })).unwrap()
+        };
+        let backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+        let reads = Reads::default();
+        let wake: Wake = std::sync::Arc::new(|| {});
+        for revision in [7, 8] {
+            let (send, inbox) = bounded(1);
+            send.try_send(Ok(Answer::New(header(revision), vec![], 0)))
+                .ok()
+                .unwrap();
+            detail.active = Some((Demand::Refresh, inbox));
+            assert!(detail.poll(&backend, "project", "mission", None, &reads, &wake));
+            assert_eq!(
+                detail
+                    .snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.header.root.revision),
+                (revision == 8).then_some(8)
+            );
         }
     }
 }

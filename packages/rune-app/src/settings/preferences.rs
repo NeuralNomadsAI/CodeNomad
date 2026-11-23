@@ -159,6 +159,14 @@ impl Preferences {
         }
     }
 
+    pub(super) fn mission_changes(
+        &self,
+    ) -> (bool, Vec<codenomad_client::transport::WorkspaceEvent>) {
+        self.stream
+            .as_ref()
+            .map_or_else(Default::default, PreferencesWatch::take_missions)
+    }
+
     pub fn invalidate(&mut self, owner: Owner) {
         self.doc_mut(owner).invalidate();
     }
