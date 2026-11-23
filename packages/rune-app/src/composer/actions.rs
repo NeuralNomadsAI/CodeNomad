@@ -140,11 +140,11 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         return;
     }
     let was_running = s.phase == Phase::Streaming;
-    let delivery = if was_running && alternate {
-        Delivery::Queue
-    } else {
-        Delivery::Steer
-    };
+    let delivery = follow_up_delivery(
+        was_running,
+        crate::settings::queues_follow_ups(s),
+        alternate,
+    );
     let queued = delivery == Delivery::Queue;
     let Some((prompt, parts)) = s.composer.draft.prepare(&s.draft, &id, delivery) else {
         s.composer.send_error = true;
@@ -189,6 +189,30 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         s.phase = Phase::Streaming;
     }
     workspace::capture(s);
+}
+
+fn follow_up_delivery(running: bool, prefer_queue: bool, alternate: bool) -> Delivery {
+    if running && (prefer_queue != alternate) {
+        Delivery::Queue
+    } else {
+        Delivery::Steer
+    }
+}
+
+#[test]
+fn alternate_inverts_the_confirmed_follow_up_only_while_running() {
+    for (preferred, alternate, expected) in [
+        (false, false, Delivery::Steer),
+        (false, true, Delivery::Queue),
+        (true, false, Delivery::Queue),
+        (true, true, Delivery::Steer),
+    ] {
+        assert_eq!(follow_up_delivery(true, preferred, alternate), expected);
+        assert_eq!(
+            follow_up_delivery(false, preferred, alternate),
+            Delivery::Steer
+        );
+    }
 }
 
 pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {

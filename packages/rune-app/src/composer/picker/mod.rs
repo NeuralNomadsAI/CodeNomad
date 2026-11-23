@@ -63,7 +63,7 @@ impl Item {
 }
 
 impl Picker {
-    pub(super) fn backend(&self) -> Option<&Backend> {
+    pub(crate) fn backend(&self) -> Option<&Backend> {
         self.backend.as_ref()
     }
 

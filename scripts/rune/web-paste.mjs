@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import {installPngReader} from './png-pixels.mjs'
+import {command} from './web-live.mjs'
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aN0AAAAASUVORK5CYII='
+export const menuPrompt = 'Mobile menu queued prompt'
 
 export async function mobileMoreActions(page, messages, press) {
   const name = messages['messageItem.actions.more']
@@ -28,22 +30,44 @@ export async function mobileMoreActions(page, messages, press) {
   const queueName = messages['promptInput.send.queueAriaLabel']
   const queue = page.getByText(queueName,{exact:true})
   await queue.waitFor({state:'attached'})
-  // The current Rune browser mirror exposes a disabled menu row as text.
-  assert.equal(await page.getByRole('menuitem',{name:queueName,exact:true}).count(),0)
+  const a11y = {menu:await page.getByRole('menu',{name,exact:true}).count(),
+    disabledRow:await page.getByRole('menuitem',{name:queueName,exact:true,disabled:true}).count()}
+  const focusState = async (text, caret) => {
+    await queue.waitFor({state:'detached'})
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+    return page.evaluate(({text,caret})=>{
+      const field=[...document.querySelectorAll('textarea')].find(el=>el.value===text)
+      return {focused:field!==undefined&&field===document.activeElement,
+        caret:field!==undefined&&field.selectionStart===caret&&field.selectionEnd===caret}
+    },{text,caret})
+  }
+  await press(messages['promptInput.history.previousAriaLabel'],'menuitem')
+  const recallFocus=await focusState(menuPrompt,menuPrompt.length)
+  await toggle()
   await press(messages['promptInput.clear.title'],'menuitem')
-  await queue.waitFor({state:'detached'})
-  await focus()
+  const clearFocus=await focusState('',0)
+  assert.deepEqual(recallFocus,{focused:true,caret:true},'Recall must focus the real textarea and place its caret at the end')
+  assert.deepEqual(clearFocus,{focused:true,caret:true},'Clear must focus the real textarea without a second touch')
   await value('')
   await page.keyboard.press('Control+z')
-  await value(draft)
+  await value(menuPrompt)
   await toggle()
   const chooser = page.waitForEvent('filechooser',{timeout:15000})
   void chooser.catch(()=>{})
   const attach = messages['promptInput.attachFiles.title'].replace(/[.…]+$/u,'')
   await press(new RegExp(`^${RegExp.escape(attach)}[.…]*$`,'u'),'menuitem')
-  await chooser
+  await (await chooser).setFiles({name:'mobile-menu.txt',mimeType:'text/plain',buffer:Buffer.from('menu file')})
   await queue.waitFor({state:'detached'})
-  return {idleQueueDisabled:true,clearUndo:true,devicePicker:true}
+  await page.getByText('mobile-menu.txt',{exact:true}).waitFor({state:'attached'})
+  await command('menu-live')
+  await page.getByText('Mobile menu live reply',{exact:true}).waitFor({state:'attached'})
+  await toggle()
+  const sent=page.waitForResponse(res=>res.ok()&&res.url().endsWith('/session/ses_existing/prompt')&&
+    res.request().postDataJSON()?.delivery==='queue')
+  void sent.catch(()=>{})
+  await press(queueName,'menuitem')
+  await sent
+  return {a11y,recallFocus,clearFocus,clearUndo:true,devicePicker:true,activeQueue:true}
 }
 
 export async function longPaste(page, messages) {

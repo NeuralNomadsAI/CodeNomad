@@ -348,6 +348,15 @@ const upstream=createServer(async(req,res)=>{
       if(compare&&action==='inbox')return json({data:[]})
       if(compare&&['agent','model'].includes(action)&&req.method==='POST'){res.statusCode=204;res.end();return}
       if(action==='prompt'){
+        if(webMoreActions){
+          const body=JSON.parse(raw)
+          assert.equal(id,'ses_existing')
+          assert.equal(++stats.prompts,1)
+          assert.equal(body.delivery,'queue')
+          assert.equal(body.resume,false)
+          assert.equal(body.files?.[0]?.name,'mobile-menu.txt')
+          return json({data:{id:'inbox-mobile-menu'}})
+        }
         if(webAndroid){
           assert.equal(++stats.prompts,1)
           mobile.androidTurn(record,JSON.parse(raw))
@@ -463,6 +472,10 @@ try{
     if(webAndroid)clientClosed=new Promise(resolve=>client.once('close',resolve))
     const handleMobileAction=async action=>{
       try{
+        if(webMoreActions&&action==='menu-live'){
+          mobile.menuLive(records.get('ses_existing'))
+          return {value:true}
+        }
         if(action==='restart'){
           const {serverId}=await (await http.get('/api/meta')).json()
           const older=(await (await http.get('/api/workspaces')).json()).map(row=>row.id)
@@ -523,7 +536,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||historyReturnOnly||webMoreActions?1:webMissions?2:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webMoreActions||webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||historyReturnOnly||webMoreActions?1:webMissions?2:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
     if(!placeWorktree){
       await removeReview

@@ -340,6 +340,18 @@ pub(crate) fn entry() -> El {
     web::entry()
 }
 
+pub(crate) fn queues_follow_ups(s: &State) -> bool {
+    s.settings.shared.borrow().queues_follow_ups()
+}
+
+pub(crate) fn with_shortcut<T>(
+    s: &State,
+    action: &str,
+    read: impl FnOnce(Option<&[serde_json::Value]>) -> T,
+) -> T {
+    read(s.settings.shared.borrow().shortcut(action))
+}
+
 pub(crate) fn matches_shortcut(
     s: &State,
     action: &str,

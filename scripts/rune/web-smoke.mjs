@@ -9,7 +9,7 @@ import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction} from './web-mobile.mjs'
 import {mobileLive, revokedLauncher} from './web-live.mjs'
-import {focusRing, longPaste, mobileMoreActions} from './web-paste.mjs'
+import {focusRing, longPaste, mobileMoreActions, menuPrompt} from './web-paste.mjs'
 import {missionsFixture} from './web-missions.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
@@ -67,7 +67,8 @@ try {
       if(missions)await context.addInitScript(()=>Object.defineProperty(Crypto.prototype,'subtle',{value:undefined}))
       const errors = [], forbiddenRequests = [], routes=[], history=[], settlements=[], streamEvents=[], clientDiagnostics=[]
       let measured
-      const policy=values.connected?workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions}):null
+      const policy=values.connected?workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,
+        menuPrompt:moreActionsOnly?menuPrompt:undefined}):null
       let eventSource=0
       let releaseLinked
       const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
@@ -125,7 +126,9 @@ try {
           const response = await route.fetch({maxRedirects:0})
           markRecall(response.status())
           await recallGate
-          return route.fulfill({response})
+          return moreActionsOnly&&response.ok()
+            ? route.fulfill({response,json:{messageHistory:[menuPrompt],agentModelSelections:{}}})
+            : route.fulfill({response})
         }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/instance/api/session')&&
           requested.searchParams.get('directory')===path.join(path.dirname(values.project),'linked')){

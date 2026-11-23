@@ -8,13 +8,15 @@ use rune_theme_codenomad::{
 use std::rc::Rc;
 
 const KEY: &str = "composer-more";
+// The native menu tree carries the role and disabled rows. Rune's web projection
+// tracks these missing semantics in https://github.com/anomalyco/rune/issues/1677.
 
 fn state(s: &mut State) -> Option<&mut action_menu::State<State>> {
     (!s.screen.is_launcher()).then_some(&mut s.composer.menu)
 }
 
 pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
-    action_menu::poll(s, state, tx)
+    action_menu::poll(s, state, tx) | crate::chat::reading::poll_jump(s, tx)
 }
 
 fn can_queue(s: &State) -> bool {
@@ -27,11 +29,11 @@ fn can_clear(s: &State) -> bool {
     !s.draft.text.is_empty() && !s.composer.editing_locked() && !s.composer.device.busy()
 }
 
-fn clear(s: &mut State, tx: &mut Tx) {
+pub(super) fn clear(s: &mut State, tx: &mut Tx) {
     if !can_clear(s) {
         return;
     }
-    recall::restore(s);
+    s.composer.recall = None;
     s.draft.undo_group(|edit| {
         edit.set_selection(0, edit.text.len());
         edit.insert("");
@@ -41,11 +43,24 @@ fn clear(s: &mut State, tx: &mut Tx) {
     tx.focus("composer", false);
 }
 
+pub(crate) fn jump_key(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
+    use super::shortcuts::Action;
+    [(Action::PreviousUser, true), (Action::NextUser, false)]
+        .into_iter()
+        .any(|(action, previous)| {
+            action.matches(s, event, tx) && crate::chat::reading::jump_user(s, previous, tx)
+        })
+}
+
 pub(crate) fn view(s: &State) -> (El, Option<El>) {
     let scope = &s.input_scope;
     let mut queue = Item::new(
         "queue",
-        t("promptInput.send.queueAriaLabel"),
+        t(if crate::settings::queues_follow_ups(s) {
+            "promptQueue.actions.steer"
+        } else {
+            "promptInput.send.queueAriaLabel"
+        }),
         screen::action_tx(scope, |s, tx| {
             if can_queue(s) {
                 send(s, tx, true);
@@ -53,6 +68,7 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
         }),
     );
     queue.disabled = !can_queue(s);
+    queue.description = super::shortcuts::Action::Alternate.label(s);
     let mut attach = Item::new(
         "attach",
         t(if s.composer.device.busy() {
@@ -69,6 +85,29 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
     // Browser file selection must run in the original input gesture.
     attach.select_before_close = true;
     let mut items = vec![Rc::new(queue), Rc::new(attach)];
+    for (previous, action, label) in [
+        (
+            true,
+            super::shortcuts::Action::PreviousUser,
+            "commands.previousUserMessage.label",
+        ),
+        (
+            false,
+            super::shortcuts::Action::NextUser,
+            "commands.nextUserMessage.label",
+        ),
+    ] {
+        let mut item = Item::new(
+            action.id(),
+            t(label),
+            screen::action_tx(scope, move |s, tx| {
+                crate::chat::reading::jump_user(s, previous, tx);
+            }),
+        );
+        item.disabled = !crate::chat::reading::can_jump_user(s, previous);
+        item.description = action.label(s);
+        items.push(Rc::new(item));
+    }
     if recall::available(s) || s.composer.recall.is_some() {
         items.extend([true, false].map(|older| {
             let (key, label) = if older {
@@ -84,6 +123,13 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
                 }),
             );
             item.disabled = !recall::can_browse(s, older);
+            item.description = if older {
+                super::shortcuts::Action::PreviousPrompt
+            } else {
+                super::shortcuts::Action::NextPrompt
+            }
+            .label(s);
+            item.select_before_close = true;
             Rc::new(item)
         }));
     }
@@ -93,6 +139,8 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
         screen::action_tx(scope, clear),
     );
     clear.disabled = !can_clear(s);
+    clear.description = super::shortcuts::Action::Clear.label(s);
+    clear.select_before_close = true;
     items.push(Rc::new(clear));
     let label = t("messageItem.actions.more");
     action_menu::view(
@@ -187,5 +235,31 @@ mod tests {
             s.draft.undo();
         });
         assert_eq!(rt.state.draft.text, "keep on undo");
+    }
+
+    #[test]
+    fn clear_during_recall_undoes_to_the_displayed_prompt_not_the_fresh_draft() {
+        let mut s = crate::init();
+        s.phase = Phase::Ready;
+        s.draft = rune::edit::TextEdit::new("A");
+        assert!(recall::record(&mut s, "A".into(), false));
+        s.draft = rune::edit::TextEdit::new("B");
+        let mut rt = Runtime::new(s, crate::view, (960.0, 640.0), Env::new(false, 1.0));
+        rt.poll = Some(crate::poll);
+        rt.frame(0.0);
+        click(&mut rt, "composer-more:trigger");
+        click(&mut rt, "composer-more:item:previous");
+        assert_eq!(rt.state.draft.text, "A");
+        assert_eq!(rt.state.draft.range(), (1, 1));
+        assert_eq!(focused(&rt).as_deref(), Some("composer"));
+        click(&mut rt, "composer-more:trigger");
+        click(&mut rt, "composer-more:item:clear");
+        assert!(rt.state.draft.text.is_empty());
+        assert!(rt.state.composer.recall.is_none());
+        assert_eq!(focused(&rt).as_deref(), Some("composer"));
+        rt.update(|s, _| {
+            s.draft.undo();
+        });
+        assert_eq!(rt.state.draft.text, "A");
     }
 }

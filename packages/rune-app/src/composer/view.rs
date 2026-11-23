@@ -356,6 +356,7 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
 }
 
 fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    use super::shortcuts::Action;
     #[cfg(not(target_arch = "wasm32"))]
     if event.edit_command() == Some('v') {
         super::clipboard::request(s, tx);
@@ -402,26 +403,22 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             s.composer.picker.reset();
             return true;
         }
-        if matches!(event.key, Key::Up | Key::Down)
-            && super::recall::step(s, event.key == Key::Up, false, tx)
-        {
+    }
+    for (action, older) in [(Action::PreviousPrompt, true), (Action::NextPrompt, false)] {
+        if action.matches(s, event, tx) && super::recall::step(s, older, false, tx) {
             return true;
         }
     }
-    if event.key == Key::Enter && event.mods == rune::Mods::default() {
-        send(s, tx, false);
+    if Action::Clear.matches(s, event, tx) {
+        super::menu::clear(s, tx);
         true
-    } else if event.key == Key::Enter
-        && (!cfg!(target_os = "macos")
-            && event.mods.alt
-            && !event.mods.ctrl
-            && !event.mods.cmd
-            && !event.mods.logo
-            || event.mods.shift && event.mods.cmd && !event.mods.alt)
-    {
+    } else if Action::Alternate.matches(s, event, tx) {
         send(s, tx, true);
         true
+    } else if event.key == Key::Enter && event.mods == rune::Mods::default() {
+        send(s, tx, false);
+        true
     } else {
-        false
+        super::menu::jump_key(s, event, tx)
     }
 }
