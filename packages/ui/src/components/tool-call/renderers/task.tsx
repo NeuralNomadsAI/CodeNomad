@@ -491,13 +491,16 @@ export const taskRenderer: ToolRenderer = {
       for (const node of [doc.activeElement, doc.getSelection()?.anchorNode ?? null]) {
         for (let element = node; element && element !== container; element = element.parentElement) {
           if (element instanceof HTMLElement && element.matches(".tool-call, .tool-call-task-item")) {
-            if (!boundaryRow || rows.indexOf(element) < rows.indexOf(boundaryRow)) boundaryRow = element
+            // Only rows of this pane count: a focus elsewhere in the parent
+            // card resolves to no row here, never to a negative index.
+            const index = rows.indexOf(element)
+            if (index >= 0 && (!boundaryRow || index < rows.indexOf(boundaryRow))) boundaryRow = element
             break
           }
         }
       }
       if (!boundaryRow) return Number.POSITIVE_INFINITY
-      return rowIndexOf(boundaryRow)
+      return Math.max(rowIndexOf(boundaryRow), 0)
     }
     const stepsRevealTarget = () => textRevealTarget("task:steps")
     const revealSteps = () => revealHiddenRecordText(stepsRevealTarget())

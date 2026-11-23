@@ -272,6 +272,23 @@ test("a selection survives steps past the revealed window's edge", { timeout: 90
     "the released row leaves the window")
 }, "steps=160"))
 
+test("a focused parent-card button never collapses the steps window", { timeout: 60_000 }, async () => withPage(async page => {
+  const steps = sectionByTitle(page, /^Steps$/)
+  await steps.waitFor()
+  const rows = steps.locator(".tool-call-task-summary > .tool-call")
+  await rows.first().waitFor()
+
+  // The parent card's own header button is outside the steps pane; focusing
+  // it must not resolve a boundary of -1 and collapse the window.
+  await page.locator('.tool-call[data-part-id="parent-task"] > .tool-call-header > .tool-call-header-toggle').focus()
+  await page.evaluate(() => (window as any).fixture.pushChildSteps(1))
+  await steps.locator(".tool-call-task-section-meta").filter({ hasText: "91 steps" }).waitFor()
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+
+  assert.equal(await rows.count(), TASK_STEP_MOUNT_LIMIT, "the window keeps its mounted bound")
+  assert.match(await steps.locator(".message-hidden-parts").textContent() ?? "", new RegExp(`${91 - TASK_STEP_MOUNT_LIMIT} items hidden`))
+}))
+
 test("a selection survives the scan bound dropping the old anchor", { timeout: 90_000 }, async () => withPage(async page => {
   const steps = sectionByTitle(page, /^Steps$/)
   await steps.waitFor()
