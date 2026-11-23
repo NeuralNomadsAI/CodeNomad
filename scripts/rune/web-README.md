@@ -47,6 +47,8 @@ Pour une comparaison, régler `RUNE_ANDROID_COMPARE=1` dans les deux modes, et `
 
 Le build WASM avec `--features webgl` ajoute le repli WebGL2 de Rune. Pour le qualifier, `RUNE_ANDROID_GPU_PROBE=webgl` exige la fin de la bascule vers WebGL2 et vérifie qu'il reste actif pendant la conversation et après la reprise. WebGPU conserve la priorité.
 
+`RUNE_ANDROID_SAMPLE=scroll` limite une répétition au premier historique et au geste. `RUNE_ANDROID_TRACE=stutter` ajoute les événements GPU/GC et marque les demandes WebGL2 de compilation et de liaison de shaders. Les sondes du lanceur enregistrent l'affichage initial séparément du résultat de la bascule.
+
 Les libellés de démarrage et d'erreur proviennent des dix catalogues générés. `?locale=he` sélectionne par exemple l'hébreu et la direction RTL ; la valeur par défaut est `fr`. Les couleurs, dimensions et polices du démarrage consomment le thème généré et `crates/rune-theme-codenomad/assets/web-shell.css`. Le zoom du navigateur reste disponible.
 
 ### Créer un lien sur l'hôte Rust

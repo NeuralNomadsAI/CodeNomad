@@ -4,10 +4,11 @@ import {once} from 'node:events'
 import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
 
-export async function traceSwipe(page,cdp,profile,swipe,presentationOnly=false) {
+export async function traceSwipe(page,cdp,profile,swipe,mode) {
   const complete=once(cdp,'Tracing.tracingComplete')
   await cdp.send('Tracing.start',{transferMode:'ReturnAsStream',
-    categories:presentationOnly?'blink.user_timing,cc,viz':
+    categories:mode==='display'?'blink.user_timing,cc,viz':
+      mode==='stutter'?'blink.user_timing,cc,viz,gpu,disabled-by-default-gpu.service,devtools.timeline,v8,disabled-by-default-v8.gc':
       'devtools.timeline,disabled-by-default-devtools.timeline,blink.user_timing,input,latencyInfo,cc,viz,gpu,v8,disabled-by-default-v8.cpu_profiler'})
   try {
     await page.evaluate(()=>{
@@ -45,7 +46,7 @@ export async function traceSwipe(page,cdp,profile,swipe,presentationOnly=false) 
   }
 }
 
-export function observeRenderer(recordCpu) {
+export function observeRenderer({recordCpu,shaderMarks}={}) {
   if(recordCpu)globalThis.__runeCpuFrames=[]
   globalThis.__runeGraphicsContexts=[]
   const getContext=HTMLCanvasElement.prototype.getContext
@@ -53,5 +54,16 @@ export function observeRenderer(recordCpu) {
     const value=Reflect.apply(getContext,this,args)
     if(this.isConnected&&value&&!globalThis.__runeGraphicsContexts.includes(args[0]))globalThis.__runeGraphicsContexts.push(args[0])
     return value
+  }
+  if(shaderMarks&&globalThis.WebGL2RenderingContext){
+    const gl=WebGL2RenderingContext.prototype
+    for(const name of ['compileShader','linkProgram']){
+      const call=gl[name]
+      gl[name]=function(...args){
+        const start=performance.now()
+        try{return Reflect.apply(call,this,args)}
+        finally{performance.measure(`android.gl.${name}`,{start,end:performance.now()})}
+      }
+    }
   }
 }
