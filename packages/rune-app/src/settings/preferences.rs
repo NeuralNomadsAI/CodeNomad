@@ -24,6 +24,7 @@ pub(super) struct Preferences {
     state: Document,
     server: Document,
     show_server: bool,
+    show_environment: bool,
     pub(super) window_wake: Option<rune::Waker>,
     pub(super) main_wake: Option<rune::Waker>,
     pub(super) revision: u64,
@@ -204,9 +205,45 @@ impl Preferences {
         self.state.invalidate();
     }
 
-    pub fn retry(&mut self) {
-        self.config.retry(None);
-        self.state.retry(None);
+    pub(super) fn retry_general(&mut self) {
+        self.config.retry(general_config);
+        self.state.retry(general_state);
+    }
+
+    pub(super) fn retry_advanced(&mut self) {
+        self.config.retry(is_advanced);
+    }
+
+    pub(super) fn advanced_failed(&self) -> bool {
+        self.config.any_failure(is_advanced)
+    }
+
+    pub(super) fn notifications_failed(&self) -> bool {
+        self.config.any_failure(is_notification)
+    }
+
+    pub(super) fn retry_notifications(&mut self) {
+        self.config.retry(is_notification);
+    }
+
+    pub(super) fn retry_shortcuts(&mut self) {
+        self.config.retry(is_shortcut);
+    }
+
+    pub(super) fn shortcuts_failed(&self) -> bool {
+        self.config.any_failure(is_shortcut)
+    }
+
+    pub(super) fn general_error(&self) -> Option<&'static str> {
+        if self.authentication_required || self.config.read_failed() || self.state.read_failed() {
+            Some("rune.connect_error")
+        } else if self.contrast_failed() {
+            Some("settings.appearance.contrast.saveError")
+        } else if self.config.any_failure(general_config) || self.state.any_failure(general_state) {
+            Some("settings.preferenceSaveFailed")
+        } else {
+            None
+        }
     }
 
     pub fn can_retry(&self) -> bool {
@@ -329,6 +366,7 @@ impl Preferences {
         self.doc(owner).snapshot.as_ref()
     }
 
+    #[cfg(test)]
     pub fn error(&self) -> Option<&'static str> {
         if self.authentication_required {
             Some("rune.connect_error")
@@ -358,7 +396,9 @@ impl Preferences {
             if config {
                 self.config.invalidate();
             }
-            if (config | stream.take_server_changed()) && self.show_server {
+            if (config | stream.take_server_changed())
+                && (self.show_server || self.show_environment)
+            {
                 self.server.invalidate();
             }
             if state {
@@ -381,7 +421,7 @@ impl Preferences {
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         let changed = self.config.poll(backend, Owner::Config, &main, &window)
             | self.state.poll(backend, Owner::State, &main, &window)
-            | ((self.show_server || self.server.unsettled())
+            | ((self.show_server || self.show_environment || self.server.unsettled())
                 && self.server.poll(backend, Owner::Server, &main, &window))
             | self.memory.poll(backend, &main, &window)
             | self
@@ -617,6 +657,29 @@ impl Preferences {
         config["settings"]["showUsageMetrics"] = json!(mode != "hidden");
         config["settings"]["usageMetricsExpansion"] = json!(mode);
     }
+}
+
+fn general_config(choice: Choice) -> bool {
+    matches!(choice, Choice::Locale | Choice::Contrast)
+}
+
+fn general_state(choice: Choice) -> bool {
+    matches!(choice, Choice::Mode | Choice::Palette(_))
+}
+
+fn is_advanced(choice: Choice) -> bool {
+    matches!(choice, Choice::Advanced(toggle) if toggle.supported())
+}
+
+fn is_notification(choice: Choice) -> bool {
+    matches!(
+        choice,
+        Choice::NotificationRoute(..) | Choice::NotificationsFocused
+    )
+}
+
+fn is_shortcut(choice: Choice) -> bool {
+    matches!(choice, Choice::Shortcut(_) | Choice::ShortcutReset)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

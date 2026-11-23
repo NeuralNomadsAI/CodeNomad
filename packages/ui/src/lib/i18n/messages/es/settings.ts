@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "Error de sintaxis en la línea {line}",
   "settings.nav.servers": "Servidores",
   "settings.servers.open": "Abrir",
   "settings.servers.dialog.name": "Nombre",

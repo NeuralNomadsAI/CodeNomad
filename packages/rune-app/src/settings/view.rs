@@ -1,4 +1,6 @@
 mod general;
+mod lifecycle;
+pub(super) use lifecycle::{closed, focus, save_warning, spec};
 #[cfg(test)]
 mod tests;
 
@@ -9,7 +11,7 @@ use super::{
 };
 use crate::strings::t;
 use general::Picker;
-use rune::{AppSpec, Cx, El, col, text};
+use rune::{Cx, El, col, text};
 use rune_theme_codenomad::{
     layout::{self, Layout},
     palettes, settings as chrome,
@@ -42,6 +44,10 @@ pub(super) struct Window {
     pub(super) providers: providers::Catalog,
     remote: remote::Remote,
     info: info::Info,
+    host_support: super::host_support::HostSupport,
+    config_files: super::config_files::Editor,
+    environment: super::advanced::environment::Editor,
+    advanced_help: Option<super::advanced::Toggle>,
     notification_permission: notification_settings::Permission,
     pub(super) focused: Rc<Cell<bool>>,
 }
@@ -50,6 +56,7 @@ pub(super) struct Window {
 pub(super) struct CloseRequest {
     pub requested: Cell<bool>,
     pub reopen: RefCell<Option<super::memory::editor::Editor>>,
+    pub config_reopen: RefCell<Option<super::config_files::Editor>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -61,6 +68,8 @@ enum Section {
     Providers,
     Shortcuts,
     Remote,
+    ConfigFiles,
+    Advanced,
     Info,
 }
 
@@ -111,15 +120,31 @@ impl Window {
             self.memory_editor = editor;
             self.confirm_close = true;
         }
+        if let Some(editor) = self
+            .close_request
+            .as_ref()
+            .and_then(|request| request.config_reopen.borrow_mut().take())
+        {
+            self.config_files = editor;
+            self.section = Section::ConfigFiles;
+            self.confirm_close = self.config_files.dirty() && !self.config_files.busy();
+        }
         self
     }
 
     fn request_close(&mut self, tx: &mut rune::Tx) {
+        if self.config_files.busy() {
+            return;
+        }
         self.info.close();
-        self.shared.borrow_mut().hide_opencode();
+        {
+            let mut prefs = self.shared.borrow_mut();
+            prefs.hide_opencode();
+            prefs.show_environment(false);
+        }
         self.logging.close();
         self.remote.close();
-        if self.memory_editor.has_unsaved() {
+        if self.memory_editor.has_unsaved() || self.config_files.dirty() {
             self.confirm_close = true;
         } else {
             self.closing = true;
@@ -128,14 +153,23 @@ impl Window {
     }
 
     fn retain_editor_on_native_close(&mut self) -> bool {
-        if !self.memory_editor.has_unsaved() || self.token.as_ref().is_some_and(|token| token.get())
+        if (!self.memory_editor.has_unsaved()
+            && !self.config_files.dirty()
+            && !self.config_files.busy())
+            || self.token.as_ref().is_some_and(|token| token.get())
         {
             return false;
         }
         let Some(request) = &self.close_request else {
             return false;
         };
-        *request.reopen.borrow_mut() = Some(std::mem::take(&mut self.memory_editor));
+        if self.memory_editor.has_unsaved() {
+            *request.reopen.borrow_mut() = Some(std::mem::take(&mut self.memory_editor));
+        }
+        if self.config_files.dirty() || self.config_files.busy() {
+            self.config_files.suspend();
+            *request.config_reopen.borrow_mut() = Some(std::mem::take(&mut self.config_files));
+        }
         let mut prefs = self.shared.borrow_mut();
         prefs.window_wake = None;
         if let Some(wake) = &prefs.main_wake {
@@ -149,159 +183,13 @@ impl Window {
             let mut prefs = self.shared.borrow_mut();
             prefs.window_wake = None;
             prefs.hide_opencode();
+            prefs.show_environment(false);
             prefs.memory.show(false);
             prefs.provider_target = None;
         }
         if !self.token.take().is_some_and(|token| token.get()) {
             super::settle_close(&self.shared, warn);
         }
-    }
-}
-
-pub(super) fn focus(s: &mut Window, focused: bool, _: &mut rune::Tx) {
-    s.focused.set(focused);
-}
-
-pub(super) fn closed(s: &mut Window, _: &mut rune::Tx) {
-    s.focused.set(false);
-    #[cfg(target_os = "windows")]
-    crate::platform::preferences_placement::closed();
-    s.shared.borrow_mut().hide_opencode();
-    if !s.retain_editor_on_native_close() {
-        s.close(super::warn_save_failed);
-    }
-}
-
-pub(super) fn save_warning(locale: &&'static str, cx: &mut Cx<&'static str>) -> El {
-    use rune_theme_codenomad::Space;
-    crate::strings::with_locale(locale, || {
-        layout::render(cx, |_| {
-            col()
-                .full_width()
-                .full_height()
-                .reading_surface()
-                .pad(Space::Lg)
-                .separate(Space::Md)
-                .child(text(t("settings.preferenceSaveFailed")).role("alert"))
-                .child(layout::button_tx(
-                    t("alertDialog.actions.ok"),
-                    false,
-                    |_: &mut &str, tx| {
-                        tx.close_window();
-                    },
-                ))
-        })
-        .locale_direction(locale)
-    })
-}
-
-pub(super) fn spec() -> AppSpec<Window> {
-    AppSpec {
-        setup: Some(|s, wake| {
-            let mut prefs = s.shared.borrow_mut();
-            prefs.window_wake = Some(wake);
-            prefs.memory.show(s.section == Section::General);
-            if prefs.backend.is_some() {
-                prefs.refresh();
-            }
-        }),
-        poll: Some(|s, _, tx| {
-            let locale = s
-                .shared
-                .borrow()
-                .locale()
-                .unwrap_or_else(crate::strings::locale);
-            crate::strings::with_locale(locale, || {
-                let close_requested = s
-                    .close_request
-                    .as_ref()
-                    .is_some_and(|request| request.requested.replace(false));
-                if close_requested {
-                    s.request_close(tx);
-                    return true;
-                }
-                let mut prefs = s.shared.borrow_mut();
-                let changed = prefs.poll();
-                let recording_ended = s.section == Section::Shortcuts
-                    && s.shortcut_capture
-                        .poll(&mut s.recording_shortcut, &prefs, tx);
-                if changed && let Some(wake) = &prefs.main_wake {
-                    wake();
-                }
-                let updated =
-                    prefs.revision != std::mem::replace(&mut s.seen_revision, prefs.revision);
-                let editor_changed = prefs.memory.poll_editor(&mut s.memory_editor);
-                if updated {
-                    tx.set_title(crate::strings::with_locale(
-                        prefs.locale().unwrap_or_else(crate::strings::locale),
-                        || t("settings.title"),
-                    ));
-                }
-                let status_changed = s.section == Section::OpenCode
-                    && !s.confirm_close
-                    && !s.closing
-                    && prefs.window_wake.clone().is_some_and(|wake| {
-                        prefs.show_opencode() | s.opencode.step(&mut prefs, &wake)
-                    });
-                let remote_changed = s.section == Section::Remote
-                    && !s.confirm_close
-                    && !s.closing
-                    && prefs
-                        .window_wake
-                        .as_ref()
-                        .is_some_and(|wake| s.remote.poll(&prefs, wake));
-                let info_changed = s.section == Section::Info
-                    && !s.confirm_close
-                    && !s.closing
-                    && prefs
-                        .window_wake
-                        .as_ref()
-                        .is_some_and(|wake| s.info.poll(&prefs, wake));
-                drop(prefs);
-                let providers_changed = if s.section == Section::Providers {
-                    let prefs = s.shared.borrow();
-                    let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
-                    s.providers.poll(target, prefs.window_wake.as_ref())
-                } else {
-                    false
-                };
-                updated
-                    | status_changed
-                    | remote_changed
-                    | info_changed
-                    | providers_changed
-                    | editor_changed
-                    | recording_ended
-            })
-        }),
-        on_key: Some(|s, event, tx| {
-            if event.key != rune::Key::Escape {
-                return false;
-            }
-            if s.confirm_close {
-                s.confirm_close = false;
-            } else if s.memory_editor.shown() {
-                s.memory_editor.dismiss();
-            } else {
-                let cancelled = s.shared.borrow_mut().memory.cancel_cleanup_confirmation();
-                if !cancelled {
-                    s.request_close(tx);
-                }
-            }
-            true
-        }),
-        #[cfg(any(test, feature = "test-support"))]
-        scenes: &[
-            ("settings", |s| s.shared.borrow_mut().fixture()),
-            ("opencode", |s| {
-                s.shared
-                    .borrow_mut()
-                    .fixture_locale(crate::strings::locale());
-                s.section = Section::OpenCode;
-                s.opencode.fixture();
-            }),
-        ],
-        ..chrome::spec(t("settings.title"), Window::default, view)
     }
 }
 
@@ -331,6 +219,8 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let conversation_label = t("settings.nav.chat");
         let shortcuts_label = t("settings.nav.hotkeys");
         let remote_label = t("settings.nav.remote");
+        let config_label = t("settings.nav.configFiles");
+        let advanced_label = t("settings.nav.advanced");
         let info_label = t("settings.nav.info");
         let section = match s.section {
             Section::General => general_label,
@@ -340,6 +230,8 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::Providers => providers_label,
             Section::Shortcuts => shortcuts_label,
             Section::Remote => remote_label,
+            Section::ConfigFiles => config_label,
+            Section::Advanced => advanced_label,
             Section::Info => info_label,
         };
         let nav = chrome::nav(
@@ -381,11 +273,31 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     remote_label,
                     s.section == Section::Remote,
                 ),
-                ("settings-info", info_label, s.section == Section::Info),
-            ],
+                (
+                    "settings-advanced",
+                    advanced_label,
+                    s.section == Section::Advanced,
+                ),
+            ]
+            .into_iter()
+            .chain(s.host_support.config_files(&prefs).then_some((
+                "settings-config-files",
+                config_label,
+                s.section == Section::ConfigFiles,
+            )))
+            .chain([("settings-info", info_label, s.section == Section::Info)]),
             |s: &mut Window, key| {
+                if key == "settings-config-files"
+                    && !s.host_support.config_files(&s.shared.borrow())
+                {
+                    return;
+                }
+                if s.config_files.busy() {
+                    return;
+                }
                 s.picker.set(None);
                 s.contrast_help = false;
+                s.advanced_help = None;
                 s.recording_shortcut = false;
                 s.shortcut_capture = Default::default();
                 s.permissions.close();
@@ -396,6 +308,8 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-providers" => Section::Providers,
                     "settings-hotkeys" => Section::Shortcuts,
                     "settings-remote" => Section::Remote,
+                    "settings-config-files" => Section::ConfigFiles,
+                    "settings-advanced" => Section::Advanced,
                     "settings-info" => Section::Info,
                     _ => Section::General,
                 };
@@ -421,17 +335,20 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             },
         );
         let mut layers = Vec::new();
-        let status = if let Some(error) = prefs.error().or_else(|| {
-            (prefs.backend.is_none() && prefs.saved(Owner::Config).is_none())
-                .then_some("rune.connect_error")
-        }) {
+        let status = if let Some(error) = (s.section == Section::General)
+            .then(|| prefs.general_error())
+            .flatten()
+            .or_else(|| {
+                (prefs.backend.is_none() && prefs.saved(Owner::Config).is_none())
+                    .then_some("rune.connect_error")
+            }) {
             layout::action_row()
                 .child(text(t(error)).role("alert"))
                 .child(layout::button(
                     t("sessionList.loadError.retry"),
                     !prefs.can_retry(),
                     |s: &mut Window| {
-                        s.shared.borrow_mut().retry();
+                        s.shared.borrow_mut().retry_general();
                     },
                 ))
         } else if prefs.saved(Owner::Config).is_none() {
@@ -510,6 +427,36 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                         .then_some(&mut s.remote)
                 }),
             ),
+            Section::ConfigFiles => (
+                "config-files",
+                if s.host_support.config_files(&prefs) {
+                    s.config_files
+                        .view(&mut layers, &s.shared, |s: &mut Window| &mut s.config_files)
+                } else {
+                    text(t("rune.loading")).role("status")
+                },
+            ),
+            Section::Advanced => (
+                "advanced",
+                col()
+                    .full_width()
+                    .child(super::advanced::view(
+                        &prefs,
+                        true,
+                        s.advanced_help,
+                        |s: &mut Window, choice| {
+                            s.advanced_help = (s.advanced_help != Some(choice)).then_some(choice);
+                        },
+                        |s: &mut Window, toggle, checked| {
+                            s.shared.borrow_mut().set_advanced_toggle(toggle, checked);
+                        },
+                        |s: &mut Window| s.shared.borrow_mut().retry_advanced(),
+                    ))
+                    .child(
+                        s.environment
+                            .view(&prefs, &s.shared, |s: &mut Window| &mut s.environment),
+                    ),
+            ),
             Section::Info => (
                 "info",
                 s.info.view(
@@ -536,7 +483,17 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         ) {
             layers.push(editor);
         }
-        if s.confirm_close {
+        if s.confirm_close && s.config_files.dirty() {
+            layers.push(super::config_files::confirm_discard(
+                |s: &mut Window, accept, tx| {
+                    s.confirm_close = false;
+                    if accept {
+                        s.config_files = Default::default();
+                        s.request_close(tx);
+                    }
+                },
+            ));
+        } else if s.confirm_close {
             layers.push(rune_theme_codenomad::document_reader::editor::confirmation(
                 layout::dark(),
                 t("settings.memory.discard"),

@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "{line} 行目に構文エラーがあります",
   "settings.nav.servers": "サーバー",
   "settings.servers.open": "開く",
   "settings.servers.dialog.name": "名前",

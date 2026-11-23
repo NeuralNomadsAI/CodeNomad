@@ -13,6 +13,7 @@ const remoteReceipts = process.argv.includes('--remote-receipts')
 const notifications = process.argv.includes('--notifications')
 const shortcuts = process.argv.includes('--shortcuts')
 const about = process.argv.includes('--info')
+const configFiles = process.argv.includes('--config-files')
 const releasePage = 'https://github.com/NeuralNomadsAI/CodeNomad/releases/tag/v9.1.0-dev'
 const noDeviceRegistry = process.argv.includes('--no-device-registry')
 const local = opencodeMode === '--local-opencode' || remoteAccess
@@ -25,6 +26,11 @@ const unexpected = []
 const reads = []
 const mime = {'.html':'text/html','.js':'text/javascript','.wasm':'application/wasm','.css':'text/css','.json':'application/json','.woff2':'font/woff2'}
 let account = 'First fixture account', detached = false
+const configPath = '/api/config-files'
+const configFile = `${configPath}/opencode-global-config-jsonc/content`
+const configOther = `${configPath}/opencode-global-config/content`
+let configContent = '{\r\n  // comment\r\n}\r\n', configWrites = 0, hideWhitespace = true
+let environmentVariables = {}, secureEnvVars = []
 let contrast = 'on', permissions = 'autonomous'
 let notificationRouting, notifyFocused
 let hotkeyOverrides = { 'new-instance': [{key:'n',mod:true}], 'file-save': [{key:'n',mod:true}] }
@@ -58,7 +64,7 @@ const server = createServer(async (req,res) => {
   const json = value => res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(value))
   try {
     if (p === '/api/meta') {
-      const meta = {apiContract:1,serverId:'fixture-settings',capabilities:['integrations'],localRequest:local}
+      const meta = {apiContract:1,serverId:'fixture-settings',capabilities:configFiles?['integrations','config-files']:['integrations'],localRequest:local}
       if (!about) return json(meta)
       infoReads++
       return json({...meta,updateFeed,serverVersion:'9.0.1',ui:{version:'9.0.2',source:'fixture'},
@@ -69,6 +75,22 @@ const server = createServer(async (req,res) => {
         update:updateFeed!=='preview'?null:invalidOffer?
           {version:'9.2.0-dev',tag:'v9.2.0-dev',channel:'preview',url:'https://example.test/release'}:
           {version:'9.1.0-dev',tag:'v9.1.0-dev',channel:'preview',url:releasePage}})
+    }
+    if (p.startsWith(configPath)) {
+      assert(configFiles)
+      if (p === configPath) return json([
+        {id:'opencode-global-config-jsonc',label:'OpenCode Global Config (JSONC)',path:'~/.config/opencode/opencode.jsonc',language:'jsonc'},
+        {id:'opencode-global-config',label:'OpenCode Global Config',path:'~/.config/opencode/opencode.json',language:'json'},
+      ])
+      if (p === configFile && req.method === 'PUT') {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        configWrites++
+        configContent = JSON.parse(body).contents
+        return res.writeHead(204).end()
+      }
+      if (p === configFile) return json({id:'opencode-global-config-jsonc',contents:configContent,exists:true})
+      if (p === configOther) return json({id:'opencode-global-config',contents:'',exists:false})
     }
     if (p === '/api/opencode/update') {
       opencodeRequests.push(`${req.method}${url.search}`)
@@ -152,6 +174,7 @@ const server = createServer(async (req,res) => {
         for await (const chunk of req) body += chunk
         const patch = JSON.parse(body)
         writes.push(patch)
+        hideWhitespace = patch.settings.hideDiffWhitespaceChanges ?? hideWhitespace
         if (shortcuts && Array.isArray(patch.settings.hotkeyOverrides?.['close-instance'])) {
           return res.writeHead(503).end()
         }
@@ -171,7 +194,8 @@ const server = createServer(async (req,res) => {
         }
       }
       return json({settings:{locale:'en',highContrast:contrast,newConversationPermissions:permissions,
-        notificationRouting,osNotificationsAllowWhenVisible:notifyFocused,hotkeyOverrides}})
+        notificationRouting,osNotificationsAllowWhenVisible:notifyFocused,hotkeyOverrides,
+        hideDiffWhitespaceChanges:hideWhitespace,holdLongAssistantReplies:true}})
     }
     if (p === '/api/storage/state/ui') {
       await stateReady
@@ -211,6 +235,17 @@ const server = createServer(async (req,res) => {
       return json({deleted:true})
     }
     if (p === '/api/storage/config/server') {
+      if (configFiles) {
+        if (req.method === 'PATCH') {
+          let body = ''
+          for await (const chunk of req) body += chunk
+          const patch = JSON.parse(body)
+          assert.deepEqual(patch,{environmentVariables:{CN_FIXTURE:'fixture'},secureEnvVars:['CN_FIXTURE']})
+          environmentVariables = {...environmentVariables,...patch.environmentVariables}
+          secureEnvVars = patch.secureEnvVars
+        }
+        return json({environmentVariables,secureEnvVars})
+      }
       if (about) {
         if (req.method === 'PATCH') {
           let body = ''
@@ -294,6 +329,16 @@ let browser, page
 try {
   browser = await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
   page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true})
+  if (configFiles) {
+    // Drop the page's receipt after the PUT settles. A socket reset on a reused
+    // connection would instead make Chromium retry the idempotent PUT itself.
+    await page.route(`**${configFile}`, async route => {
+      if (route.request().method() !== 'PUT') return route.continue()
+      const response = await route.fetch({maxRetries:0})
+      assert.equal(response.status(),204)
+      await route.abort('failed')
+    })
+  }
   if (about) {
     await page.route('https://raw.githubusercontent.com/**',route=>route.abort())
     await page.addInitScript(() => {
@@ -345,12 +390,65 @@ try {
   releaseState()
   await click(directory)
   await visible('No session selected')
-  if (about) await checkInfo()
+  if (configFiles) await checkConfigFiles()
+  else if (about) await checkInfo()
   else if (shortcuts) await checkShortcuts()
   else if (notifications) await checkNotifications()
   else if (remoteAccess) await checkRemoteAccess()
   else if (opencodeMode) await checkOpenCode()
   else await checkProviders()
+
+  async function checkConfigFiles() {
+    await click('Settings')
+    await radio('Config Files').press('Enter')
+    await visible('~/.config/opencode/opencode.jsonc')
+    const focused = page.getByRole('textbox',{name:'Config Files',exact:true})
+    for (let i=0;i<24 && !await focused.count();i++) await page.keyboard.press('Tab')
+    await focused.fill('{\n  // edited\n  "key": invalid\n}\n')
+    await visible('Unsaved changes')
+    await visible('Syntax error on line 3')
+    await radio('OpenCode Global Config').press('Enter')
+    await visible('Discard unsaved changes before continuing?')
+    await page.getByRole('button',{name:'Keep editing',exact:true}).press('Enter')
+    await visible('Unsaved changes')
+    await page.getByRole('button',{name:'Save',exact:true}).press('Enter')
+    await visible('Config file saved.')
+    assert.equal(configWrites,1)
+    assert.equal(configContent,'{\r\n  // edited\r\n  "key": invalid\r\n}\r\n')
+    await radio('OpenCode Global Config').press('Enter')
+    await visible('File will be created on save')
+    await radio('Advanced').press('Enter')
+    const whitespace = page.getByRole('switch',{name:'Hide whitespace-only changes',exact:true})
+    assert.equal(await whitespace.getAttribute('aria-checked'),'true')
+    await whitespace.press('Enter')
+    await page.getByRole('switch',{name:'Hide whitespace-only changes',checked:false,exact:true}).waitFor({state:'attached'})
+    assert.deepEqual(writes,[{settings:{hideDiffWhitespaceChanges:false}}])
+    // Rune's current mirror omits disabled switches; their keyboard help stays available.
+    assert.equal(await page.getByRole('button',{name:'Focus existing window on second launch',exact:true}).count(),0)
+    assert.deepEqual(await page.getByRole('switch').allTextContents(),['Hide whitespace-only changes'])
+    const info = page.getByRole('button',{name:'Hold long assistant replies',exact:true})
+    assert.equal(await info.getAttribute('aria-description'),'Rune does not apply this setting yet.')
+    await info.press('Enter')
+    assert.deepEqual(writes,[{settings:{hideDiffWhitespaceChanges:false}}])
+    await page.getByRole('button',{name:'Environment Variables (0 variables)',exact:true}).press('Enter')
+    const focusField = async (label, value) => {
+      const field = page.locator(`[aria-label="${label}"]:focus`)
+      for (let i=0;i<24 && !await field.count();i++) await page.keyboard.press('Tab')
+      await field.fill(value)
+    }
+    await page.getByRole('button',{name:'Show value',exact:true}).press('Enter')
+    await focusField('Variable name','CN_FIXTURE')
+    // Move directly from the name to the value on Rune's input bridge.
+    await page.keyboard.press('Tab')
+    // Rune uses one private password input for secure editors, also when revealed.
+    await page.locator('input[type=password]:focus').waitFor({state:'attached'})
+    await page.keyboard.insertText('fixture')
+    await page.getByRole('button',{name:'Add variable',exact:true}).press('Enter')
+    await page.getByRole('button',{name:'Environment Variables (1 variable)',exact:true}).waitFor({state:'attached'})
+    assert.deepEqual(secureEnvVars,['CN_FIXTURE'])
+    assert.deepEqual(writes,[{settings:{hideDiffWhitespaceChanges:false}}])
+    console.log(JSON.stringify({fixture:'config-files',configWrites,hideWhitespace,environmentStored:true}))
+  }
 
   async function checkInfo() {
     await click('Settings')

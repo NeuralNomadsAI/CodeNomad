@@ -333,6 +333,19 @@ pub fn info_link<S: 'static>(help: &str, open: impl Fn(&mut S, &mut rune::Tx) + 
     layout::button_tx("ⓘ", false, open).label(help).help(help)
 }
 
+pub fn info_tip<S: 'static>(
+    label: &str,
+    help: &str,
+    open: bool,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    layout::button("ⓘ", false, toggle)
+        .label(label)
+        .description(help)
+        .help(help)
+        .help_open(open)
+}
+
 pub fn setting_switch<S: 'static>(
     label: &str,
     checked: bool,

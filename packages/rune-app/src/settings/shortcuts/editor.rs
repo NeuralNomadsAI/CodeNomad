@@ -71,6 +71,7 @@ pub(in crate::settings) fn view<S: 'static>(
     let mut rows = catalog::rows(&prefs, &filter.text);
     rows.sort_by_key(|row| !row.active);
     let reset = shared.clone();
+    let retry = shared.clone();
     let mut view = col()
         .full_width()
         .separate(Space::Sm)
@@ -105,7 +106,14 @@ pub(in crate::settings) fn view<S: 'static>(
             prefs
                 .shortcut_failed(None)
                 .then(|| text(t("hotkeys.saveFailed")).role("alert")),
-        );
+        )
+        .children(prefs.shortcuts_failed().then(|| {
+            layout::button(
+                t("sessionList.loadError.retry"),
+                locked,
+                move |_: &mut S| retry.borrow_mut().retry_shortcuts(),
+            )
+        }));
     if rows.is_empty() {
         view = view.child(text(t("hotkeys.noResults")));
     }

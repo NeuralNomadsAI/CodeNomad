@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "हरफ {line} मा वाक्यविन्यास त्रुटि",
   "settings.nav.servers": "सर्भरहरू",
   "settings.servers.open": "खोल्नुहोस्",
   "settings.servers.dialog.name": "नाम",

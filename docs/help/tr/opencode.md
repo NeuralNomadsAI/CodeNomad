@@ -57,7 +57,7 @@ Kaydedilmiş bir yapılandırma veya yüklü eklenti kullanılamadığında, ça
 ## Oturum ortamı {#session-environment}
 
 1. **Ayarlar → Gelişmiş** öğesini açın ve **Ortam Değişkenleri** bölümünü genişletin.
-2. Geçersiz kılmalar ekleyin, değerlerini düzenleyin veya kaldırın; kaydedilmiş adlar salt okunurdur ve her değişiklik hemen kaydedilir.
+2. Değer ekleyin, düzenleyin veya kaldırın. Kaydedilmiş adlar salt okunurdur. Rune’da değişkeni seçin, değerini düzenleyin ve **Kaydet** seçeneğini kullanın.
 3. Geçerli ortamı söz konusu konuşmaya uygulamak için sonraki istemi, özel komutu veya oturum kabuğu isteğini CodeNomad aracılığıyla gönderin.
 
 Bu bir yapılandırma profili ayarıdır. Yalnızca bir görüşmeyi açmak/okumak veya ayarları kaydetmek yerel oturumu değiştirmez. Bir geçersiz kılmayı kaldırmak, yürütme ana bilgisayarının devralınan değerini geri yükler veya orada yoksa kaldırır.

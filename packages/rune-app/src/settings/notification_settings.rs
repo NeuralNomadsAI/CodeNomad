@@ -107,8 +107,20 @@ pub(super) fn view<S: 'static>(
     let title = t("settings.notifications.allowVisible.title");
     let focused = prefs.notifications_focused();
     let owner = shared.clone();
+    let retry = shared.clone();
     col()
         .full_width()
+        .children(prefs.notifications_failed().then(|| {
+            layout::action_row()
+                .child(text(t("settings.preferenceSaveFailed")).role("alert"))
+                .child(layout::button(
+                    t("sessionList.loadError.retry"),
+                    !prefs.can_retry(),
+                    move |_: &mut S| {
+                        retry.borrow_mut().retry_notifications();
+                    },
+                ))
+        }))
         .child(chrome::card(table))
         .child(chrome::card(
             col()

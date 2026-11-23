@@ -1,7 +1,10 @@
 //! Preferences owns its native window; its confirmed host settings also feed the shell.
+mod advanced;
 mod behavior;
+mod config_files;
 mod contrast;
 mod conversation;
+mod host_support;
 mod info;
 mod memory;
 pub(crate) mod notification_routing;
@@ -92,13 +95,11 @@ pub(crate) fn poll_window_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
 pub(crate) fn poll(s: &mut State) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some((request, editor)) = s.settings.window.as_ref().and_then(|(_, _, request)| {
-        request
-            .reopen
-            .borrow_mut()
-            .take()
-            .map(|editor| (request.clone(), editor))
+        let editor = request.reopen.borrow_mut().take();
+        (editor.is_some() || request.config_reopen.borrow().is_some())
+            .then(|| (request.clone(), editor))
     }) {
-        launch_preferences(s, request, Some(editor));
+        launch_preferences(s, request, editor);
     }
     let mut shared = s.settings.shared.borrow_mut();
     if shared.main_wake.is_none() {

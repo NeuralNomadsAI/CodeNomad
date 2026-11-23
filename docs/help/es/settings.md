@@ -113,6 +113,8 @@ Si el sistema admite acciones de notificación, al hacer clic en una notificaci�
 
 ## Opciones avanzadas {#advanced}
 
+En Rune, enfoca la **i** junto a un interruptor desactivado para saber por qué no está disponible. El editor de configuración indica la línea de los errores de sintaxis JSON/JSONC y permite guardar.
+
 1. Abre **Avanzado**.
 2. Marca o desmarca solo las opciones que necesites; cada cambio se guarda mediante las preferencias de CodeNomad. Para cambiar el entorno de ejecución de las sesiones, expande el grupo plegado **Variables de entorno** al final.
 
