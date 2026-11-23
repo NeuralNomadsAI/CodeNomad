@@ -12,6 +12,8 @@ const remoteAccess = process.argv.includes('--remote-access')
 const remoteReceipts = process.argv.includes('--remote-receipts')
 const notifications = process.argv.includes('--notifications')
 const shortcuts = process.argv.includes('--shortcuts')
+const about = process.argv.includes('--info')
+const releasePage = 'https://github.com/NeuralNomadsAI/CodeNomad/releases/tag/v9.1.0-dev'
 const noDeviceRegistry = process.argv.includes('--no-device-registry')
 const local = opencodeMode === '--local-opencode' || remoteAccess
 const files = await bundleAssetPaths(bundle)
@@ -26,6 +28,8 @@ let account = 'First fixture account', detached = false
 let contrast = 'on', permissions = 'autonomous'
 let notificationRouting, notifyFocused
 let hotkeyOverrides = { 'new-instance': [{key:'n',mod:true}], 'file-save': [{key:'n',mod:true}] }
+let updateFeed = 'stable', infoReads = 0, invalidOffer = false, failFeed = false
+const feedWrites = []
 const writes = []
 const memoryRequests = []
 const opencodeRequests = []
@@ -53,9 +57,25 @@ const server = createServer(async (req,res) => {
   const p = url.pathname
   const json = value => res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(value))
   try {
-    if (p === '/api/meta') return json({apiContract:1,serverId:'fixture-settings',capabilities:['integrations'],localRequest:local})
+    if (p === '/api/meta') {
+      const meta = {apiContract:1,serverId:'fixture-settings',capabilities:['integrations'],localRequest:local}
+      if (!about) return json(meta)
+      infoReads++
+      return json({...meta,updateFeed,serverVersion:'9.0.1',ui:{version:'9.0.2',source:'fixture'},
+        listeningMode:'all',host:'192.0.2.10',localUrl:'http://127.0.0.1:3456',
+        remoteUrl:'https://192.0.2.10:3457',workspaceRoot:directory,system:{platform:'win32',arch:'x64'},
+        addresses:[{ip:'192.0.2.10',family:'ipv4',scope:'internal',remoteUrl:'https://192.0.2.10:3457'},
+          {ip:'192.0.2.11',family:'ipv4',scope:'internal',remoteUrl:'https://192.0.2.11:3457'}],
+        update:updateFeed!=='preview'?null:invalidOffer?
+          {version:'9.2.0-dev',tag:'v9.2.0-dev',channel:'preview',url:'https://example.test/release'}:
+          {version:'9.1.0-dev',tag:'v9.1.0-dev',channel:'preview',url:releasePage}})
+    }
     if (p === '/api/opencode/update') {
       opencodeRequests.push(`${req.method}${url.search}`)
+      if (about) {
+        assert.equal(req.method,'GET')
+        return json({state:'ready',serviceState:'ready',currentVersion:'2.3.2',daemonVersion:'2.3.1'})
+      }
       assert(local,'The remote pane must not try to read or mutate OpenCode')
       if (req.method === 'POST') {
         let body = ''
@@ -191,6 +211,18 @@ const server = createServer(async (req,res) => {
       return json({deleted:true})
     }
     if (p === '/api/storage/config/server') {
+      if (about) {
+        if (req.method === 'PATCH') {
+          let body = ''
+          for await (const chunk of req) body += chunk
+          const patch = JSON.parse(body)
+          assert.deepEqual(patch,{updateFeed:failFeed?'stable':'preview'})
+          feedWrites.push(patch)
+          if (failFeed) return res.writeHead(503).end()
+          updateFeed = patch.updateFeed
+        }
+        return json({updateFeed})
+      }
       assert(local,'Only the local OpenCode pane reads server configuration')
       if (req.method === 'PATCH') {
         let body = ''
@@ -262,6 +294,24 @@ let browser, page
 try {
   browser = await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
   page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true})
+  if (about) {
+    await page.route('https://raw.githubusercontent.com/**',route=>route.abort())
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator,'userAgentData',{value:{
+        platform:'Windows',mobile:false,
+        getHighEntropyValues:async()=>({platformVersion:'15.0.0',architecture:'x86',bitness:'64'}),
+      }})
+      window.openedInfoLinks = []
+      window.open = url => { window.openedInfoLinks.push(String(url)); return null }
+      window.diagnosticClipboard = null
+      window.rejectDiagnosticClipboard = true
+      Clipboard.prototype.writeText = function(text) {
+        if (window.rejectDiagnosticClipboard) return Promise.reject(new DOMException('Fixture refusal','NotAllowedError'))
+        window.diagnosticClipboard = text
+        return Promise.resolve()
+      }
+    })
+  }
   if (notifications) await page.addInitScript(() => {
     window.permissionGestures = []
     window.Notification = class {
@@ -295,11 +345,76 @@ try {
   releaseState()
   await click(directory)
   await visible('No session selected')
-  if (shortcuts) await checkShortcuts()
+  if (about) await checkInfo()
+  else if (shortcuts) await checkShortcuts()
   else if (notifications) await checkNotifications()
   else if (remoteAccess) await checkRemoteAccess()
   else if (opencodeMode) await checkOpenCode()
   else await checkProviders()
+
+  async function checkInfo() {
+    await click('Settings')
+    await radio('Info').press('Enter')
+    await visible('9.0.1')
+    await visible('9.0.2')
+    await visible('WebAssembly')
+    await visible('Firewall, router or certificate settings may prevent connections.')
+    assert.equal(await page.getByText('https://192.0.2.10:3457',{exact:true}).count(),2)
+    assert.equal(await page.getByText('https://192.0.2.11:3457',{exact:true}).count(),0)
+    await visible('Specific network interface')
+    const downloadRelease = page.getByRole('button',{name:'Download update',exact:true})
+    assert.equal(await downloadRelease.count(),0)
+    await page.getByRole('group',{name:'Update feed',exact:true}).waitFor({state:'attached'})
+    const before = infoReads
+    const preview = radio('Previews and stable releases')
+    await preview.press('Enter')
+    await page.getByRole('radio',{name:'Previews and stable releases',exact:true,checked:true}).waitFor({state:'attached'})
+    assert.deepEqual(feedWrites,[{updateFeed:'preview'}])
+    assert.equal(infoReads,before+1)
+    await visible('9.1.0-dev')
+    await downloadRelease.press('Enter')
+    await page.waitForFunction(url=>window.openedInfoLinks.includes(url),releasePage)
+    failFeed = true
+    const reread = page.waitForResponse(response=>new URL(response.url()).pathname==='/api/meta')
+    await radio('Stable releases').press('Enter')
+    await reread
+    await page.locator('[aria-live="assertive"]').filter({hasText:'Could not save the update feed.'}).waitFor({state:'attached'})
+    assert.deepEqual(feedWrites,[{updateFeed:'preview'},{updateFeed:'stable'}])
+    assert.equal(infoReads,before+2)
+    await page.getByRole('radio',{name:'Previews and stable releases',exact:true,checked:true}).waitFor({state:'attached'})
+    const copy = page.getByRole('button',{name:'Copy to clipboard',exact:true})
+    await copy.press('Enter')
+    await page.locator('[aria-live="assertive"]').filter({hasText:'Could not copy diagnostics.'}).waitFor({state:'attached'})
+    assert.equal(await page.evaluate(()=>window.diagnosticClipboard),null)
+    await page.evaluate(()=>{window.rejectDiagnosticClipboard=false})
+    await copy.press('Enter')
+    await page.locator('[aria-live="polite"]').filter({hasText:'Diagnostics copied.'}).waitFor({state:'attached'})
+    const report = await page.evaluate(()=>window.diagnosticClipboard)
+    assert(report.includes(directory) && report.includes('2.3.2') && report.includes('2.3.1'))
+    assert(!report.includes('192.0.2.11'))
+    const file = page.waitForEvent('download')
+    await page.getByRole('button',{name:'Download .txt',exact:true}).press('Enter')
+    const exported = await file
+    assert.match(exported.suggestedFilename(),/^codenomad-diagnostics.*\.txt$/)
+    const exportedText = await readFile(await exported.path(),'utf8')
+    assert(exportedText.includes(directory) && !exportedText.includes('192.0.2.11'))
+    await page.getByRole('button',{name:'Report a bug',exact:true}).press('Enter')
+    await page.waitForFunction(()=>window.openedInfoLinks.some(url=>url.includes('/issues/new?')))
+    const bug = new URL(await page.evaluate(()=>window.openedInfoLinks.find(url=>url.includes('/issues/new?'))))
+    assert.equal(bug.searchParams.get('template'),'bug_report.yml')
+    assert.equal(bug.searchParams.get('codenomad-version'),'9.0.1 (UI 9.0.2)')
+    assert.equal(bug.searchParams.get('opencode-version'),'2.3.2 (running daemon 2.3.1)')
+    assert.equal(bug.searchParams.get('os-version'),'Windows 11 x64')
+    const context = bug.searchParams.get('extra')
+    assert(context.includes('Web browser (desktop, remote window)') && context.includes('Server OS: Windows x64'))
+    assert(context.includes(`- Browser: ${await page.evaluate(()=>navigator.userAgent)}`))
+    assert(!decodeURIComponent(bug.href).includes(directory) && !bug.href.includes('192.0.2.10'))
+    invalidOffer = true
+    await page.getByRole('button',{name:'Refresh',exact:true}).press('Enter')
+    await visible('9.2.0-dev')
+    assert.equal(await downloadRelease.count(),0)
+    console.log(JSON.stringify({fixture:'info-preferences',feedWrites,confirmedRead:true,release:true,diagnostics:true}))
+  }
 
   async function checkShortcuts() {
     await page.evaluate(() => {

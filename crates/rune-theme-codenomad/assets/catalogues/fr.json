@@ -2577,6 +2577,7 @@
   "settings.images.storage.title": "Stocker les images une seule fois",
   "settings.images.title": "Images",
   "settings.images.unsupported": "La version d'OpenCode connectée n'a pas de réglages d'images.",
+  "settings.info.actions.failed": "Impossible de terminer l’action. Réessayez.",
   "settings.info.connectivity.disclaimer": "Les paramètres du pare-feu, du routeur ou des certificats peuvent empêcher les connexions.",
   "settings.info.connectivity.host": "Hôte d’écoute",
   "settings.info.connectivity.loadFailed": "Impossible de charger les informations de connexion. Actualisez pour réessayer.",

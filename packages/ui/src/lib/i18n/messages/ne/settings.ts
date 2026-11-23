@@ -750,5 +750,6 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": ".txt डाउनलोड गर्नुहोस्",
   "settings.info.diagnostics.reportBug": "बग रिपोर्ट गर्नुहोस्",
   "settings.info.diagnostics.copied": "निदान जानकारी प्रतिलिपि गरियो।",
+  "settings.info.actions.failed": "कार्य पूरा हुन सकेन। फेरि प्रयास गर्नुहोस्।",
   "providerUsage.openaiTokenSharingUnsupported": "ChatGPT मा साइन इन गर्ने यस विधिका लागि OpenAI ले प्रयोग विवरण उपलब्ध गराउँदैन। कुराकानी जारी राख्न सकिन्छ।",
 } as const

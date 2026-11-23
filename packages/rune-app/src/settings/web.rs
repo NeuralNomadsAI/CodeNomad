@@ -1,5 +1,5 @@
 use super::{
-    Preferences, notification_settings, opencode,
+    Preferences, info, notification_settings, opencode,
     providers::{self, Catalog, Target},
     remote,
 };
@@ -21,6 +21,7 @@ enum Section {
     Shortcuts,
     Providers,
     Remote,
+    Info,
 }
 
 impl Section {
@@ -32,6 +33,7 @@ impl Section {
             Self::Shortcuts => "settings.nav.hotkeys",
             Self::Providers => "settings.nav.providers",
             Self::Remote => "settings.nav.remote",
+            Self::Info => "settings.nav.info",
         })
     }
 }
@@ -55,6 +57,7 @@ pub(super) struct Panel {
     opencode: opencode::Status,
     logging: opencode::logging::Logging,
     remote: remote::Remote,
+    info: info::Info,
     recording_shortcut: bool,
     shortcut_capture: super::shortcuts::editor::Capture,
     shortcut_filter: rune::TextEdit,
@@ -82,7 +85,10 @@ struct HostScope {
 }
 
 impl Panel {
-    pub(super) fn poll_shortcuts(&mut self, prefs: &Preferences, tx: &mut rune::Tx) -> bool {
+    pub(super) fn poll_window_actions(&mut self, prefs: &Preferences, tx: &mut rune::Tx) -> bool {
+        if self.shown && self.section == Section::Info {
+            self.info.announce(prefs, tx);
+        }
         self.shown
             && self.section == Section::Shortcuts
             && self
@@ -106,6 +112,7 @@ impl Panel {
             | scope_changed
             | opencode
             | self.poll_notification_permission()
+            | (self.shown && paired && self.section == Section::Info && self.info.poll(prefs, wake))
             | (self.section == Section::Remote
                 && self.local(prefs)
                 && self.remote.poll(prefs, wake))
@@ -217,6 +224,7 @@ fn close(s: &mut State) {
     prefs.hide_opencode();
     panel.logging.close();
     panel.remote.close();
+    panel.info.close();
     panel.recording_shortcut = false;
     panel.shortcut_capture = Default::default();
     if panel.notification_permission.get() != PermissionRequest::Pending {
@@ -270,6 +278,7 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             Section::Shortcuts,
             Section::Providers,
             Section::Remote,
+            Section::Info,
         ][..]
     } else {
         &[
@@ -277,6 +286,7 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             Section::Notifications,
             Section::Shortcuts,
             Section::Providers,
+            Section::Info,
         ][..]
     };
     let labels: Vec<_> = sections.iter().map(|section| section.label()).collect();
@@ -309,6 +319,9 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             }
             if panel.section != Section::Remote {
                 panel.remote.close();
+            }
+            if panel.section != Section::Info {
+                panel.info.close();
             }
             panel.contrast_help = false;
             panel.permissions.close();
@@ -416,6 +429,14 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 && panel.local(&s.settings.shared.borrow()))
             .then_some(&mut panel.remote)
         }),
+        Section::Info => panel.info.view(
+            &s.settings.shared,
+            |s: &mut State| {
+                let panel = &mut s.settings.web;
+                (panel.shown && panel.section == Section::Info).then_some(&mut panel.info)
+            },
+            local.then_some(open_remote),
+        ),
         Section::OpenCode | Section::Remote => rune::el(),
     };
     if let Some(editor) = prefs.memory.editor_view(
@@ -445,6 +466,15 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
         )
         .children(layers),
     )
+}
+
+fn open_remote(s: &mut State) {
+    let prefs = s.settings.shared.borrow();
+    let panel = &mut s.settings.web;
+    if panel.shown && panel.section == Section::Info && panel.local(&prefs) {
+        panel.info.close();
+        panel.section = Section::Remote;
+    }
 }
 
 fn general(panel: &Panel, prefs: &Preferences, system_more: bool) -> El {

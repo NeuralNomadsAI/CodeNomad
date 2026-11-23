@@ -751,5 +751,6 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": ".txt をダウンロード",
   "settings.info.diagnostics.reportBug": "バグを報告",
   "settings.info.diagnostics.copied": "診断情報をコピーしました。",
+  "settings.info.actions.failed": "操作を完了できませんでした。もう一度お試しください。",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI は、この ChatGPT のログイン方法では使用状況を提供していません。チャットは引き続き利用できます。",
 } as const

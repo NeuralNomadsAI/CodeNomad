@@ -2,6 +2,7 @@
 mod behavior;
 mod contrast;
 mod conversation;
+mod info;
 mod memory;
 pub(crate) mod notification_routing;
 mod notification_settings;
@@ -83,7 +84,7 @@ pub(crate) fn poll_window_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
     return changed
         | s.settings
             .web
-            .poll_shortcuts(&s.settings.shared.borrow(), tx);
+            .poll_window_actions(&s.settings.shared.borrow(), tx);
     #[cfg(not(target_arch = "wasm32"))]
     changed
 }

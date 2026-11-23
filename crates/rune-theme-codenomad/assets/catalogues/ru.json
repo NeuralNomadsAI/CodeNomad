@@ -2577,6 +2577,7 @@
   "settings.images.storage.title": "Хранить изображения один раз",
   "settings.images.title": "Изображения",
   "settings.images.unsupported": "В подключённой версии OpenCode нет настроек изображений.",
+  "settings.info.actions.failed": "Не удалось завершить действие. Попробуйте ещё раз.",
   "settings.info.connectivity.disclaimer": "Настройки брандмауэра, маршрутизатора или сертификата могут препятствовать подключению.",
   "settings.info.connectivity.host": "Адрес привязки",
   "settings.info.connectivity.loadFailed": "Не удалось загрузить сведения о подключении. Обновите, чтобы повторить попытку.",

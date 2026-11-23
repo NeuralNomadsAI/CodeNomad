@@ -352,10 +352,18 @@ pub fn primary_action<S: 'static>(
     disabled: bool,
     press: impl Fn(&mut S) + 'static,
 ) -> El {
+    primary_action_tx(label, disabled, move |s, _| press(s))
+}
+
+pub fn primary_action_tx<S: 'static>(
+    label: &str,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
     rune_kit::Button::new(label)
         .variant(rune_kit::ButtonVariant::Submit)
         .disabled(disabled)
-        .on_press(press)
+        .on_press_tx(press)
         .build(crate::kit(layout::dark()))
 }
 
