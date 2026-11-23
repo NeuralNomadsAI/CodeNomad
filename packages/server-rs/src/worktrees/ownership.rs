@@ -19,6 +19,35 @@ pub struct Owned {
     pub checkout: PathBuf,
 }
 
+pub(crate) struct DirectoryProof(Option<super::inventory::Tree>);
+
+impl DirectoryProof {
+    pub(crate) fn live(&self, physical: &Path) -> bool {
+        self.0.as_ref().is_none_or(|tree| tree.contains_live(physical))
+    }
+}
+
+/// Capture the checkout that authorizes an existing folder, for a final
+/// synchronous check alongside the folder's own identity.
+pub(crate) async fn capture_directory(app: &App, workspace: &Workspace, physical: &Path) -> Option<DirectoryProof> {
+    if !physical.starts_with(&app.scope) {
+        return None;
+    }
+    if physical == workspace.path {
+        return Some(DirectoryProof(None));
+    }
+    if physical.starts_with(&workspace.path) && matches!(super::root_only(workspace).await, Ok(Some(true))) {
+        return Some(DirectoryProof(None));
+    }
+    let catalogue = super::linked::catalogue(app, workspace, false).await.ok()?;
+    let tree = catalogue
+        .trees
+        .into_iter()
+        .filter(|tree| tree.contains_live(physical))
+        .max_by_key(|tree| tree.path.as_os_str().len())?;
+    Some(DirectoryProof(Some(tree)))
+}
+
 /// `resolveDirectoryPath`: the real path, or the real nearest ancestor joined with the
 /// missing components; `None` when an existing entry cannot be resolved.
 pub fn resolve_directory(directory: &str) -> Option<PathBuf> {

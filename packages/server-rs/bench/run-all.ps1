@@ -5,6 +5,7 @@ Set-Location $PSScriptRoot
 New-Item -ItemType Directory -Force out | Out-Null
 $runs = 'http', 'files', 'contract', 'history-bytes', 'workspace-claims', 'remote-session-controls', 'depth', 'worktree-gone', 'links', 'search', 'memory', 'design', 'automation', 'missions', 'missions-family', 'missions-calendar', 'missions-wayfinder', 'mission-permissions', 'host', 'sidecars', 'usage', 'providers', 'previews', 'remote-previews', 'solid', 'security', 'hardening', 'launch', 'service', 'roundtrip', 'opencode-install'
 if ('static-assets' -in $Only) { $runs += 'static-assets' }
+if ('attachment-history' -in $Only) { $runs += 'attachment-history' }
 $summary = foreach ($name in $runs) {
   if ($Only -and $name -notin $Only) { continue }
   $cpu = (Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average

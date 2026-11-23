@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
+import { mkdir } from "node:fs/promises"
 import path from "node:path"
 
 const MiB = 1024 * 1024
@@ -64,8 +65,10 @@ export async function run({ call, fixture, folder, other }) {
   try {
     const insert = database.prepare("INSERT INTO session_message(id,session_id,type,seq,data,time_created,time_updated) VALUES (?,?,'user',?,?,1,1)")
     const moveUndo = database.prepare("UPDATE session_v2 SET revert=? WHERE id=?")
+    const nested = { directory: path.join(location.directory, "sub") }
+    await mkdir(nested.directory, { recursive: true })
     for (const [rows, perRow] of [[1, 3], [4, 1]]) {
-      const session = await client.session.create({ location, title: "Attachment projection fixture" })
+      const session = await client.session.create({ location: rows === 4 ? nested : location, title: "Attachment projection fixture" })
       const bytes = Buffer.alloc(5 * MiB, rows)
       const sha = digest(bytes)
       const file = { name: "attachment.bin", mime: "application/octet-stream", data: bytes.toString("base64"), source: { type: "inline" } }

@@ -261,12 +261,19 @@ pub async fn bridge(app: Shared) {
                 if matches!(kind.as_str(), "integration.updated" | "rpc") {
                     continue;
                 }
-                let mut bytes = event.to_string().len();
-                if bytes > 16 * 1024 * 1024 {
+                const SDK_FRAME_UNITS: usize = 16 * 1024 * 1024;
+                let wire = event.to_string();
+                let mut bytes = wire.len();
+                if bytes > ROUTING_BYTES {
+                    break;
+                }
+                if bytes > SDK_FRAME_UNITS && wire.encode_utf16().count() > SDK_FRAME_UNITS {
+                    drop(wire);
                     let Some(files) = crate::sessions::user_files::projected_inbox_files(&event) else { break };
                     event["data"]["item"]["payload"]["files"] = files;
-                    bytes = event.to_string().len();
-                    if bytes > 16 * 1024 * 1024 {
+                    let projected = event.to_string();
+                    bytes = projected.len();
+                    if bytes > SDK_FRAME_UNITS && projected.encode_utf16().count() > SDK_FRAME_UNITS {
                         break;
                     }
                 }

@@ -23,38 +23,38 @@ struct Placement {
     /// Physical checkout of the session's owned location (root or linked worktree).
     path: std::path::PathBuf,
     physical: same_file::Handle,
+    checkout: Option<crate::worktrees::ownership::DirectoryProof>,
 }
 
 impl Placement {
-    async fn admit(app: &App, id: &str, session: &str) -> Result<Self, Error> {
-        Self::capture(app, id, session, false).await
-    }
-
-    async fn capture(app: &App, id: &str, session: &str, attachment: bool) -> Result<Self, Error> {
+    async fn capture(app: &App, id: &str, session: &str, references: bool) -> Result<Self, Error> {
         let workspace = app.workspace(id)?;
         let endpoint = app.native.endpoint().ok_or_else(crate::opencode::upstream_error)?;
         let source = crate::opencode::session_record_at(app, &endpoint, session).await?;
         // Reference: `ownsLocation(id, session.location)`, linked worktrees included.
         let unavailable = || error(Status::SERVICE_UNAVAILABLE, "History placement unavailable");
+        let forbidden = || error(Status::FORBIDDEN, "Session does not belong to workspace");
         let location = &source["location"];
-        if attachment {
-            let directory = location["directory"].as_str().ok_or_else(unavailable)?;
-            if location.get("workspaceID").is_some() || !attachment_owned(app, &workspace, directory).await {
-                return Err(error(Status::FORBIDDEN, "Session does not belong to workspace"));
+        let directory = location["directory"]
+            .as_str()
+            .filter(|d| crate::files::paths::local_absolute(d))
+            .ok_or_else(unavailable)?;
+        let path = dunce::canonicalize(directory).map_err(|_| unavailable())?;
+        let physical = same_file::Handle::from_path(&path).map_err(|_| unavailable())?;
+        let checkout = if references {
+            if location.get("workspaceID").is_some() {
+                return Err(forbidden());
             }
+            Some(crate::worktrees::ownership::capture_directory(app, &workspace, &path).await.ok_or_else(forbidden)?)
         } else {
             match crate::worktrees::placement(app, &workspace, location).await {
                 Ok(_) => {}
-                Err(true) => return Err(error(Status::FORBIDDEN, "Session does not belong to workspace")),
+                Err(true) => return Err(forbidden()),
                 Err(false) => return Err(unavailable()),
             }
-        }
-        let path = source["location"]["directory"]
-            .as_str()
-            .and_then(|d| dunce::canonicalize(d).ok())
-            .ok_or_else(unavailable)?;
-        let physical = same_file::Handle::from_path(&path).map_err(|_| unavailable())?;
-        Ok(Self { workspace, endpoint, source, path, physical })
+            None
+        };
+        Ok(Self { workspace, endpoint, source, path, physical, checkout })
     }
     async fn current(&self, app: &App, id: &str, session: &str) -> bool {
         let Ok(newest) = crate::opencode::session_record_at(app, &self.endpoint, session).await else { return false };
@@ -74,6 +74,7 @@ impl Placement {
                 .as_ref()
                 == Some(&self.path)
             && same_file::Handle::from_path(&self.path).is_ok_and(|physical| physical == self.physical)
+            && self.checkout.as_ref().is_none_or(|checkout| checkout.live(&self.path))
     }
 
     async fn ready(&self, app: &App, id: &str, session: &str) -> Option<&str> {
@@ -90,17 +91,6 @@ impl Placement {
         crate::extensions::lifecycle::ready(directory, deadline).await.ok()?;
         self.current(app, id, session).await.then_some(directory)
     }
-}
-
-async fn attachment_owned(app: &App, workspace: &crate::Workspace, directory: &str) -> bool {
-    if !crate::files::paths::local_absolute(directory) {
-        return false;
-    }
-    if crate::worktrees::ownership::resolve(app, workspace, directory).await.is_some() {
-        return true;
-    }
-    matches!(crate::worktrees::root_only(workspace).await, Ok(Some(true)))
-        && crate::files::paths::canonical(&app.scope, directory).is_some_and(|path| path.starts_with(&workspace.path))
 }
 
 async fn rpc(
@@ -163,7 +153,7 @@ pub async fn handle(
     let input = input.filter(|i| crate::sessions::contracts::valid(schema, i)).ok_or_else(invalid)?;
     let session = input["sessionID"].as_str().ok_or_else(invalid)?;
     let request = async {
-        let placement = match Placement::admit(&app, &id, session).await {
+        let placement = match Placement::capture(&app, &id, session, reference).await {
             Ok(placement) => placement,
             Err((Status::FORBIDDEN, body)) => return (Status::FORBIDDEN, body).into_response(),
             Err(_) => return blocked("unavailable"),
@@ -260,9 +250,7 @@ pub async fn attachment(
         }
         let output: Value = serde_json::from_slice(&body).map_err(|_| missing())?;
         let output = &output["output"];
-        if !attachment_owned(&app, &placement.workspace, directory).await
-            || !placement.current(&app, &id, &session).await
-        {
+        if !placement.current(&app, &id, &session).await {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
         if output["status"] == "too_large" {
@@ -281,7 +269,7 @@ pub async fn attachment(
             return Err(missing());
         }
         principal.live()?;
-        if !placement.current(&app, &id, &session).await || !fence.load(Relaxed) {
+        if !placement.live(&app, &id) || !fence.load(Relaxed) {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
         Ok((
