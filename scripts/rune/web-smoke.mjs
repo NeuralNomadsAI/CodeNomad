@@ -235,6 +235,8 @@ try {
             assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1,'A resident jump uses no window')
             await press(messages['rune.latest'])
             await reading()
+            // The text mirror updates before the newly mounted glyphs finish fading in.
+            await page.waitForTimeout(250)
           }
         }else{
         // Keyboard input is scoped to this headless page and goes through Rune's DOM bridge.
