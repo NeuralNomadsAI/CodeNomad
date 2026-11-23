@@ -75,10 +75,10 @@ for (const mode of ["desktop", "web", "phone"]) {
       }
       const browse = (await blank.getByRole("region", { name: "Browse", exact: true }).boundingBox())!
       const recent = (await blank.getByRole("region", { name: "Recent tabs", exact: true }).boundingBox())!
-      assert.ok(browse.height >= 256)
-      assert.equal(browse.height, recent.height)
       if (mode === "phone") assert.ok(browse.y + browse.height < recent.y)
       else {
+        assert.ok(browse.height >= 256)
+        assert.equal(browse.height, recent.height)
         assert.equal(browse.y, recent.y)
         assert.ok(browse.x + browse.width < recent.x)
       }
@@ -126,7 +126,7 @@ for (const mode of ["desktop", "web", "phone"]) {
   })
 }
 
-test("long recent lists stay bounded while panels switch between columns and stacked rows", async () => {
+test("a short stacked Browse panel leaves room for long recents without expanding with them", async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 850 } })
   try {
     const recents = Array.from({ length: 20 }, (_, index) => ({ path: `/project-${index}`, lastAccessed: 20 - index }))
@@ -136,19 +136,24 @@ test("long recent lists stay bounded while panels switch between columns and sta
     const recent = root.getByRole("region", { name: "Recent tabs", exact: true })
     await recent.getByRole("listitem").nth(19).waitFor()
     let narrowHeight = 0
+    let compactBrowseHeight = 0
     for (const [width, height] of [[1280, 850], [390, 850], [390, 1319], [390, 620], [639, 620], [640, 620], [1280, 850]]) {
       await page.setViewportSize({ width, height })
       const first = (await browse.boundingBox())!
       const second = (await recent.boundingBox())!
-      assert.ok(first.height >= 256, JSON.stringify({ width, height, first }))
-      assert.equal(first.height, second.height)
+      assert.ok(second.height >= 256, JSON.stringify({ width, height, second }))
       if (width <= 639) {
         assert.ok(first.y + first.height < second.y)
-        assert.ok(second.height <= Math.max(256, height / 2), JSON.stringify({ width, height, second }))
-        if (height === 850) narrowHeight = second.height
+        assert.ok(first.height < 256, JSON.stringify({ width, height, first }))
+        assert.ok(second.height <= height - first.height, JSON.stringify({ width, height, second }))
+        if (height === 850) {
+          narrowHeight = second.height
+          compactBrowseHeight = first.height
+        }
+        assert.equal(first.height, compactBrowseHeight)
         if (height === 1319) assert.ok(second.height > narrowHeight, "stacked panels still grow with available height")
-        if (height === 620) assert.equal(second.height, 256)
       } else {
+        assert.equal(first.height, second.height)
         assert.equal(first.y, second.y)
         assert.ok(first.x + first.width < second.x)
       }
@@ -159,6 +164,23 @@ test("long recent lists stay bounded while panels switch between columns and sta
       assert.ok(await root.evaluate(el => el.scrollWidth <= el.clientWidth), "the page fits horizontally")
     }
   } finally { await page.close() }
+})
+
+test("stacked recents collapse to their empty state or one or two rows", async () => {
+  let previousHeight = 0
+  for (const count of [0, 1, 2]) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 850 } })
+    try {
+      const recents = Array.from({ length: count }, (_, index) => ({ path: `/project-${index}`, lastAccessed: 20 - index }))
+      await openApp(page, profiles, recents)
+      const recent = page.getByRole("region", { name: "Recent tabs", exact: true })
+      if (count) await recent.getByRole("listitem").nth(count - 1).waitFor()
+      else await recent.getByRole("status").waitFor()
+      const { height } = (await recent.boundingBox())!
+      assert.ok(height > previousHeight && height < 256, JSON.stringify({ count, height, previousHeight }))
+      previousHeight = height
+    } finally { await page.close() }
+  }
 })
 
 for (const width of [1280, 390]) {

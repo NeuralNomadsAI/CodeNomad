@@ -73,7 +73,8 @@
   .folder-home-shell { padding-block-start: 1rem; }
   .folder-home-main {
     grid-template-columns: minmax(0, 1fr);
-    /* Two 16rem panels and the 1rem gap. */
+    grid-auto-rows: minmax(0, max-content);
+    /* Leave room for two full panels; short rows give their space to longer ones. */
     min-height: 33rem;
   }
 }
