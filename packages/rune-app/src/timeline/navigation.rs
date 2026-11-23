@@ -71,6 +71,15 @@ pub(super) fn seek_message(s: &mut State, message: &str, tx: &mut Tx) {
     );
 }
 
+#[cfg(test)]
+pub(super) fn pending_search(s: &mut State) -> bool {
+    owner(s)
+        .jump
+        .flight
+        .as_ref()
+        .is_some_and(|(_, marker)| marker.id.is_empty())
+}
+
 fn start(s: &mut State, target: Marker, tx: &mut Tx) {
     gesture(s);
     reader::cancel_older(s);
@@ -116,7 +125,13 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
 
 fn locate(s: &State, row: &crate::history::Row, m: &Marker) -> Option<(String, usize)> {
     if m.id.is_empty() {
-        return Some((row.id.clone(), 0));
+        return s
+            .transcript_display
+            .search_highlight
+            .as_ref()
+            .filter(|hit| hit.message == row.id)
+            .and_then(|hit| hit.block(row, anchors::steps(s, &row.id)))
+            .or_else(|| Some((row.id.clone(), 0)));
     }
     let steps = anchors::steps(s, &row.id);
     let block = anchors::blocks(row, steps, true).into_iter().find(|b| {
@@ -204,7 +219,26 @@ pub(super) fn hand_scrolled(s: &mut State, rail: bool) {
     }
 }
 
-fn apply_alignment(s: &mut State, tx: &mut Tx) -> bool {
+pub(crate) fn restore_search(s: &mut State) {
+    let Some(hit) = s.transcript_display.search_highlight.as_mut() else {
+        return;
+    };
+    if !std::mem::take(&mut hit.restore_pending) {
+        return;
+    }
+    let hit = hit.clone();
+    if let Some((key, steps)) = s
+        .messages
+        .iter()
+        .find(|row| row.id == hit.message)
+        .and_then(|row| hit.block(row, anchors::steps(s, &row.id)))
+    {
+        anchors::reveal_parts(s, &hit.message, steps);
+        owner(s).jump.align = Some((hit.message, key));
+    }
+}
+
+pub(super) fn apply_alignment(s: &mut State, tx: &mut Tx) -> bool {
     let Some((message, key)) = owner(s).jump.align.take() else {
         return false;
     };
@@ -217,6 +251,13 @@ fn apply_alignment(s: &mut State, tx: &mut Tx) -> bool {
         },
         0.0,
     );
+    if s.transcript_display
+        .search_highlight
+        .as_ref()
+        .is_some_and(|hit| hit.message == message)
+    {
+        tx.scroll_center_in_instant(&message, "history-search-match");
+    }
     reader::set_timeline_position(s, message);
     true
 }

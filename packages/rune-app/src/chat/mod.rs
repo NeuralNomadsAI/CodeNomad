@@ -11,6 +11,7 @@ pub(crate) mod events;
 mod links;
 pub(crate) mod reader;
 pub(crate) mod reading;
+pub(crate) mod search_hit;
 pub(crate) use reader::{resume, suspend};
 pub(crate) mod reasoning;
 #[cfg(test)]

@@ -76,6 +76,9 @@ try {
         if(pathname.endsWith('/session-history/window')&&response.ok())history.push({input:request.postDataJSON(),body:await response.json().catch(()=>null)})
       })
       page.on('pageerror', error => errors.push({name: error.name, message: error.message}))
+      if(values['history-search'])page.on('console', message=>{
+        if(message.type()==='error'&&/panic|token|panicked/i.test(message.text()))errors.push({name:'Rune',message:message.text()})
+      })
       // Connected scenes admit only their private creations; synthetic scenes refuse all API access.
       await context.route('**/*', async route => {
         const requested = new URL(route.request().url())
@@ -343,7 +346,7 @@ try {
           for(const row of existing){
             if((values.mobile||values.timeline)&&(row.body.status!=='window'||!row.body.latest))continue
             const bodies=row.body.messages.map(message=>message.text??message.content?.[0]?.text)
-            if(values.mobile||values.timeline)assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
+            if(values.mobile||values.timeline||values['history-search'])assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
             else assert.deepEqual(bodies,['Existing project history','Existing answer'])
           }
           assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===(values['history-search']?1:0)))

@@ -138,7 +138,10 @@
     "text-secondary": "#999999ff",
     "text-tertiary": "#999999ff",
     "timeline-segment-active-bg": "#0f5b44ff",
-    "timeline-segment-active-text": "#ffffffff"
+    "timeline-segment-active-text": "#ffffffff",
+    "transcript-search-active": "#facc15ff",
+    "transcript-search-active-ink": "#111827ff",
+    "transcript-search-mark": "#fde04794"
   },
   "gaps": [
     "Rune-kit control geometry includes internal constants; CodeNomad shared adapters require visual qualification.",
@@ -285,7 +288,10 @@
     "text-secondary": "#334155ff",
     "text-tertiary": "#475569ff",
     "timeline-segment-active-bg": "#b7e6d6ff",
-    "timeline-segment-active-text": "#032f23ff"
+    "timeline-segment-active-text": "#032f23ff",
+    "transcript-search-active": "#facc15ff",
+    "transcript-search-active-ink": "#111827ff",
+    "transcript-search-mark": "#fde04794"
   },
   "metrics": {
     "dark": {
@@ -1093,7 +1099,10 @@
         "text-secondary": "#adb5c3ff",
         "text-tertiary": "#adb5c3ff",
         "timeline-segment-active-bg": "#0f5b44ff",
-        "timeline-segment-active-text": "#ffffffff"
+        "timeline-segment-active-text": "#ffffffff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "palette": "mist",
       "shadows": {
@@ -1240,7 +1249,10 @@
         "text-secondary": "#484e58ff",
         "text-tertiary": "#484e58ff",
         "timeline-segment-active-bg": "#b7e6d6ff",
-        "timeline-segment-active-text": "#032f23ff"
+        "timeline-segment-active-text": "#032f23ff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "palette": "porcelain",
       "shadows": {

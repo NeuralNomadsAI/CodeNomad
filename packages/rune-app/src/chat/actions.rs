@@ -17,7 +17,7 @@ pub struct Display {
     live_ansi: RefCell<VecDeque<(String, rune_theme_codenomad::ansi::Stream)>>,
     pub(super) diffs: super::tool_diff::Cache,
     pub(crate) timeline: crate::timeline::Timeline,
-    pub(crate) search_highlight: Option<(String, Vec<String>, bool)>,
+    pub(crate) search_highlight: Option<super::search_hit::SearchHit>,
 }
 
 #[derive(Default)]
@@ -105,17 +105,23 @@ impl Display {
         self.active.revealed.get(key).copied().unwrap_or_default()
     }
 
-    pub(super) fn live_ansi(&self, key: &str, source: &str, wrap: bool) -> rune::El {
+    pub(super) fn live_ansi(
+        &self,
+        key: &str,
+        source: &str,
+        wrap: bool,
+        query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
+    ) -> rune::El {
         let mut cache = self.live_ansi.borrow_mut();
         let prior = cache
             .iter()
             .position(|(id, _)| id == key)
             .and_then(|index| cache.remove(index));
         if source.len() > 256 * 1024 {
-            return rune_theme_codenomad::ansi::code(source, wrap);
+            return rune_theme_codenomad::ansi::search_code(source, wrap, query);
         }
         let (id, mut stream) = prior.unwrap_or_else(|| (key.into(), Default::default()));
-        let output = stream.code(source, wrap);
+        let output = stream.code(source, wrap, query);
         if cache.len() == 4 {
             cache.pop_front();
         }

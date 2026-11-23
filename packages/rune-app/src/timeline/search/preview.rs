@@ -8,6 +8,14 @@ pub(super) struct Preview {
     flight: Option<(Sender<()>, Receiver<Result<Vec<String>>>)>,
 }
 
+pub(super) fn blocks<'a>(hit: &'a Hit, body: &'a [String]) -> impl Iterator<Item = &'a str> {
+    std::iter::once(hit.excerpt.as_str()).chain(
+        body.iter()
+            .map(String::as_str)
+            .filter(|text| *text != hit.excerpt),
+    )
+}
+
 pub(super) fn start(s: &mut State, hit: Hit) {
     let Some(backend) = s.transcript_display.timeline.backend.clone() else {
         return;

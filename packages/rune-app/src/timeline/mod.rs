@@ -5,7 +5,7 @@ pub(crate) mod search;
 #[cfg(test)]
 mod tests;
 mod view;
-pub(crate) use navigation::{admit, cancel_jump, failed};
+pub(crate) use navigation::{admit, cancel_jump, failed, restore_search};
 pub(crate) use reading_line::watch as watch_block;
 pub(crate) use view::{view, watch};
 
@@ -233,7 +233,11 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 suspend(s);
             }
         }
-        return search::is_open(s) && navigation::poll(s, tx);
+        return if search::is_open(s) {
+            navigation::poll(s, tx)
+        } else {
+            navigation::apply_alignment(s, tx)
+        };
     }
     let reads = s.reads.clone();
     let wake = s.wake.clone();

@@ -60,7 +60,16 @@ pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> 
     let first = reasoning.next()?;
     let last = reasoning.clone().next_back().unwrap_or(first);
     let key = block_key(message, first.ordinal);
-    let expanded = s.transcript_display.toggled(&key);
+    let expanded = s.transcript_display.toggled(&key)
+        || std::iter::once(first).chain(reasoning.clone()).any(|part| {
+            super::search_hit::query(
+                s,
+                message,
+                codenomad_client::search::Kind::Reasoning,
+                part.part_index,
+            )
+            .is_some_and(|q| q.active)
+        });
     let title = last.text.trim().strip_prefix("**").and_then(|source| {
         let (title, rest) = source.split_once("**")?;
         (!title.is_empty()
@@ -116,7 +125,7 @@ pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> 
     if expanded {
         group = group.children(std::iter::once(first).chain(reasoning).map(|part| {
             let fragment = block_key(message, part.ordinal);
-            let pane = body(s, &fragment, part);
+            let pane = body(s, message, &fragment, part);
             if part.ordinal == first.ordinal {
                 pane
             } else {
@@ -127,17 +136,23 @@ pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> 
     Some(group)
 }
 
-fn body(s: &State, key: &str, part: &Reasoning) -> El {
+fn body(s: &State, message: &str, key: &str, part: &Reasoning) -> El {
+    let query = super::search_hit::query(
+        s,
+        message,
+        codenomad_client::search::Kind::Reasoning,
+        part.part_index,
+    );
     markdown::tool_pane(
         document::window_with_total(
             s,
             format!("{key}-body"),
             &[&part.text],
-            document::TOOL_LIMIT,
+            document::search_limit(query),
             Some((part.retained_units, part.units)),
             |shown, units| {
                 let build = || {
-                    text(shown)
+                    rune_theme_codenomad::timeline::search::ink(text(shown), shown, query)
                         .full_width()
                         .wrap()
                         .content_direction()
@@ -150,6 +165,10 @@ fn body(s: &State, key: &str, part: &Reasoning) -> El {
                             s.transcript_display.stream_version(),
                             s.transcript_display.steps(&format!("{key}-body")),
                             std::rc::Rc::as_ptr(&s.input_scope) as usize,
+                            s.transcript_display
+                                .search_highlight
+                                .as_ref()
+                                .filter(|hit| hit.message == message),
                         ),
                         build,
                     )

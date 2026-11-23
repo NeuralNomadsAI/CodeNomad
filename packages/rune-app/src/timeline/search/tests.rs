@@ -1,5 +1,61 @@
 use super::*;
+use codenomad_client::search::{Hit, Kind};
 use rune::{Cx, El, Env, Mods, Runtime};
+
+fn hit(session: &str, message: &str, kind: Kind, part: u64) -> Hit {
+    Hit {
+        session: session.into(),
+        message: message.into(),
+        role: "assistant".into(),
+        kind,
+        part,
+        excerpt: "Technical needle".into(),
+    }
+}
+
+#[test]
+fn preview_selection_revokes_a_previous_distant_jump_and_keeps_the_broker_excerpt() {
+    let mut s = crate::init();
+    let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    backend.session = "here".into();
+    super::super::observe(&mut s, &crate::transport::Event::Connected(backend));
+    s.transcript_display.timeline.online = true;
+    let (out, commands) = bounded(1);
+    s.commands = Some(out);
+    let mut rt = Runtime::new(s, view, (900.0, 600.0), Env::new(false, 1.0));
+    rt.update(|s, tx| {
+        let m = state(s);
+        m.open = true;
+        m.results = Some(Ranked::Ranked {
+            version: 1,
+            capped: false,
+            examined_before: 0,
+            exclusions: vec![],
+            page: Page {
+                hits: vec![
+                    hit("here", "old", Kind::Tool, 1),
+                    hit("elsewhere", "other", Kind::Reasoning, 4),
+                ],
+                ..Page::default()
+            },
+        });
+        select(s, 0, tx);
+        let crate::transport::Command::Anchor(jump) = commands.try_recv().unwrap() else {
+            panic!("expected jump")
+        };
+        select(s, 1, tx);
+        assert!(jump.cancelled.is_closed() && !super::super::navigation::pending_search(s));
+        assert!(s.transcript_display.search_highlight.is_none());
+        assert_eq!(
+            preview::blocks(
+                &hit("elsewhere", "other", Kind::Tool, 1),
+                &["Earlier preview prefix".into()]
+            )
+            .collect::<Vec<_>>(),
+            ["Technical needle", "Earlier preview prefix"]
+        );
+    });
+}
 
 fn view(s: &State, cx: &mut Cx<State>) -> El {
     rune_theme_codenomad::layout::render(cx, |_| {

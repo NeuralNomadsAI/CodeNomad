@@ -9,6 +9,12 @@ export async function collectTheme(names){
     return '#'+[...context.getImageData(0,0,1,1).data].map(v=>v.toString(16).padStart(2,'0')).join('')
   }
   const colors={},numbers={},strings={},shadows={},unresolved=[]
+  probe.className='session-search-match'
+  colors['transcript-search-mark']=hex(getComputedStyle(probe).backgroundColor)
+  probe.classList.add('session-search-match-active')
+  colors['transcript-search-active']=hex(getComputedStyle(probe).backgroundColor)
+  colors['transcript-search-active-ink']=hex(getComputedStyle(probe).color)
+  probe.removeAttribute('class')
   const rail=document.createElement('div')
   rail.className='message-timeline-sidebar'
   rail.innerHTML='<section class="message-timeline"><div class="timeline-measure"><button class="message-timeline-segment" tabindex="-1"></button><div style="height:var(--message-timeline-segment-gap)"></div></div><svg class="message-timeline-icon"></svg></section>'

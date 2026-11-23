@@ -109,6 +109,8 @@ An inactive tab keeps its conversation observer for execution status, pending in
 
 The rail follows the first mounted block crossing the transcript reading line. System updates and compaction summaries have their own anchors. A marker click revokes a pending older-window read before alignment; the reader admits older windows before replacing the visible transcript. Mounted resident markers expose a bounded excerpt and the current marker carries a localized accessible description.
 
+Search previews retain the broker excerpt beside the bounded message preview. Selecting another result revokes the previous search jump. The technical match uses the broker's native part index, opens the corresponding tool or reasoning group, and gives that text one bounded reveal step. Marks are applied to rendered input, output, errors, reasoning and decoded ANSI text. A selected diff uses the raw patch renderer for the search marks.
+
 Live tool input appends native deltas until its full input arrives. Progress replaces the running tool's metadata. Tool identity and phase fence late updates; bounded history reads repair missing transitions and supply terminal output. A running shell's ANSI preview retains parsed state while its visible prefix grows and starts from a clean state when the prefix changes.
 
 Reasoning fragments retain a separate native ordinal, including empty fragments, in history and on the scoped live stream. Completed fragments keep their authoritative text and timestamps. The transcript groups adjacent visible reasoning, with a disclosure, latest summary and completed duration. Group placement uses the first displayed fragment's native key; expanded fragments retain their own keys and text windows.

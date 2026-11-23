@@ -18,7 +18,7 @@ const MAX_SAFE: u64 = (1 << 53) - 1;
 const RESPONSE_BYTES: usize = 256 * 1024;
 pub const MIN_QUERY_UNITS: usize = 3;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     Text,

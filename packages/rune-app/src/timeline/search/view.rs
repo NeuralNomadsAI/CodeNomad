@@ -308,13 +308,8 @@ pub(crate) fn panel(s: &State) -> Option<El> {
                 frame = frame
                     .child(
                         search::results().children(
-                            (if model.preview.blocks.is_empty() {
-                                std::slice::from_ref(&hit.excerpt)
-                            } else {
-                                &model.preview.blocks
-                            })
-                            .iter()
-                            .map(|block| search::excerpt(block, &terms)),
+                            super::preview::blocks(hit, &model.preview.blocks)
+                                .map(|block| search::excerpt(block, &terms)),
                         ),
                     )
                     .children(

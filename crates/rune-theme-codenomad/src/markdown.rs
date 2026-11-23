@@ -125,6 +125,16 @@ fn tool_lines(lines: usize) -> f32 {
 }
 
 pub fn code(source: &str, language: &str, highlight: bool, wrap: bool) -> El {
+    search_code(source, language, highlight, wrap, None)
+}
+
+pub fn search_code(
+    source: &str,
+    language: &str,
+    highlight: bool,
+    wrap: bool,
+    query: Option<crate::timeline::search::Query<'_>>,
+) -> El {
     let dark = dark();
     let spans = if highlight {
         syntax::SyntaxTheme::from_kit(kit(dark))
@@ -132,7 +142,10 @@ pub fn code(source: &str, language: &str, highlight: bool, wrap: bool) -> El {
     } else {
         Vec::new()
     };
-    code_body(rich(source, spans), wrap)
+    code_body(
+        crate::timeline::search::ink(rich(source, spans), source, query),
+        wrap,
+    )
 }
 
 pub(crate) fn code_body(body: El, wrap: bool) -> El {

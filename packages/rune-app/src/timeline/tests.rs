@@ -2,6 +2,68 @@ use super::*;
 use rune::{Cx, El, Env, Runtime};
 use serde_json::json;
 
+#[test]
+fn technical_search_uses_native_part_indexes_and_reveals_the_match() {
+    use codenomad_client::search::{Hit, Kind};
+    for (part, kind) in [
+        (1, Kind::Tool),
+        (2, Kind::Reasoning),
+        (3, Kind::Tool),
+        (4, Kind::Tool),
+    ] {
+        let tail = format!("{}Technical néedle", "x".repeat(11_000));
+        let ansi = "\u{1b}[31mTechnical néedle\u{1b}[0m";
+        let row=crate::history::decode_message(&json!({
+            "id":"tech","type":"assistant","time":{"completed":1},"content":[
+                {"type":"unsupported"},
+                {"type":"tool","id":"grep","name":"grep","state":{"status":"completed","content":[{"type":"text","text":tail}]}},
+                {"type":"reasoning","text":tail},
+                    {"type":"tool","id":"shell","name":"bash","state":{"status":"completed","content":[{"type":"text","text":ansi}]}},
+                    {"type":"tool","id":"edit","name":"edit","state":{"status":"completed","input":{"filePath":"notes.txt"},
+                        "metadata":{"diff":"--- a/notes.txt\n+++ b/notes.txt\n@@ -1 +1 @@\n-old\n+Technical néedle"}}}
+            ]
+        })).unwrap();
+        let mut s = crate::init();
+        s.messages = vec![row.into()];
+        owner(&mut s).width = 800.0;
+        let highlight = crate::chat::search_hit::SearchHit::new(
+            &Hit {
+                session: "s".into(),
+                message: "tech".into(),
+                role: "assistant".into(),
+                part,
+                kind,
+                excerpt: "Technical néedle".into(),
+            },
+            "technical NÉEDLE",
+            false,
+        );
+        assert_eq!(
+            highlight.block(&s.messages[0], 0).unwrap().0,
+            match part {
+                1 => "tool-tech:4:grep",
+                2 => "reasoning-tech:0",
+                3 => "tool-tech:5:shell",
+                _ => "tool-tech:4:edit",
+            }
+        );
+        s.transcript_display.search_highlight = Some(highlight);
+        let mut rt = Runtime::new(s, view, (800.0, 600.0), Env::new(false, 1.0));
+        rt.frame(0.016);
+        rt.update(|s, tx| navigation::seek_message(s, "tech", tx));
+        for _ in 0..5 {
+            rt.frame(0.016);
+        }
+        assert!(
+            rt.find("history-search-match").is_some(),
+            "match in native part {part}"
+        );
+        rt.update(|s, _| s.transcript_display.search_highlight = None);
+        rt.frame(0.016);
+        assert!(rt.find("history-search-match").is_none());
+    }
+}
+
 fn assistant(id: &str) -> crate::history::Row {
     crate::history::decode_message(&json!({
         "id":id,"type":"assistant","time":{"completed":1},

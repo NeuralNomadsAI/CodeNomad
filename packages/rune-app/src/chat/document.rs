@@ -16,6 +16,17 @@ pub(super) const TOOL_LIMIT: usize = 10_000;
 pub(super) const HIGHLIGHT_LIMIT: usize = 100_000;
 const STEP: usize = 250_000;
 
+pub(super) fn search_limit(
+    query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
+) -> usize {
+    TOOL_LIMIT
+        + if query.is_some_and(|query| query.active) {
+            STEP
+        } else {
+            0
+        }
+}
+
 pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streaming: bool) -> El {
     let group = key.clone();
     let scope = s.input_scope.clone();
@@ -28,8 +39,11 @@ pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streami
         .transcript_display
         .search_highlight
         .as_ref()
-        .filter(|(id, _, _)| id == message)
-        .map(|(_, terms, ranked)| (terms.as_slice(), *ranked));
+        .filter(|hit| hit.message == message)
+        .map(|hit| {
+            let q = hit.query(None);
+            (q.terms, q.ranked)
+        });
     window(s, key, &[source], PROSE_LIMIT, |shown, units| {
         let stamp = (
             version,

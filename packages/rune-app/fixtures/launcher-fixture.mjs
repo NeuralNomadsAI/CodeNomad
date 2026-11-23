@@ -157,6 +157,14 @@ if(webTimeline){
 }
 if(webMobile)for(let i=0;i<(webAndroid?70:210);i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
 stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
+if(webSearch){
+  stores.get('ses_existing').append('assistant','Technical search fixture').content.push(
+    {type:'tool',id:'search-tool',name:'grep',state:{status:'completed',content:[{type:'text',text:'Found Existing technical tool match'}]}},
+  )
+  stores.get('ses_existing').append('assistant','Reasoning search fixture').content.push(
+    {type:'reasoning',text:'Existing reasoning match in the opened card'},
+  )
+}
 add('ses_another','Another session',gitPanel?review:project)
 if(webSearch)stores.get('ses_another').append('user','Existing ranked destination')
 if(gitPanel)for(let i=0;i<50;i++)stores.get('ses_another').append('assistant',`Reading position ${i}\n\nA second paragraph in the fixture.`)
@@ -246,15 +254,20 @@ const upstream=createServer(async(req,res)=>{
     if(url.pathname==='/api/plugin')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
     if(webSearch&&url.pathname==='/api/rpc/codenomad.session-pruning/history'){
       const {input}=JSON.parse(raw)
-      assert.deepEqual(input,{sessionID:'ses_existing',query:'Existing',purpose:'search',includeTechnical:false})
-      const hit={sessionID:input.sessionID,messageID:stores.get(input.sessionID).rows.at(-1).id,role:'assistant',partIndex:0,kind:'text',excerpt:'Existing answer'}
-      return json({output:{status:'page',scanned:2,tools:0,reasoning:0,skipped:0,hits:[hit],candidates:[],cursor:null,
-        sessions:[{sessionID:input.sessionID,directory:project,scanned:2,tools:0,reasoning:0,skipped:0}]}})
+      assert.deepEqual(input,{sessionID:'ses_existing',query:'Existing',purpose:'search',includeTechnical:input.includeTechnical})
+      const hits=[{messageID:'message-00001',partIndex:0,kind:'text',excerpt:'Existing answer'}]
+      if(input.includeTechnical)hits.push(
+        {messageID:'message-00002',partIndex:1,kind:'tool',excerpt:'Existing technical tool match'},
+        {messageID:'message-00003',partIndex:1,kind:'reasoning',excerpt:'Existing reasoning match'},
+      )
+      return json({output:{status:'page',scanned:4,tools:0,reasoning:0,skipped:0,
+        hits:hits.map(hit=>({sessionID:input.sessionID,role:'assistant',...hit})),candidates:[],cursor:null,
+        sessions:[{sessionID:input.sessionID,directory:project,scanned:4,tools:0,reasoning:0,skipped:0}]}})
     }
     if(webSearch&&url.pathname==='/api/rpc/codenomad.session-pruning/historyRanked'){
       const {input}=JSON.parse(raw)
       assert.equal(input.query,'Existing')
-      const shape=(sessionID,excerpt)=>({sessionID,messageID:stores.get(sessionID).rows.at(-1).id,
+      const shape=(sessionID,excerpt)=>({sessionID,messageID:stores.get(sessionID).rows[sessionID==='ses_another'?0:1].id,
         role:'assistant',partIndex:0,kind:'text',excerpt,createdAt:100})
       const hits=[shape('ses_another','Existing ranked destination'),shape('ses_existing','Existing answer')]
       const sessions=hits.map(({sessionID})=>({sessionID,directory:project,title:records.get(sessionID).title,

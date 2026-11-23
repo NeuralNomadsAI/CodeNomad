@@ -15,7 +15,12 @@ use rune::{Key, KeyEvent, Tx, edit::TextEdit};
 const DEBOUNCE: f64 = 0.250;
 const FIELD: &str = "history-search-query";
 const FOCUS: &str = "history-search-query/value/input";
-type Destination = (crate::backend::Backend, String, String, String);
+type Destination = (
+    crate::backend::Backend,
+    String,
+    String,
+    crate::chat::search_hit::SearchHit,
+);
 
 enum Message {
     Progress(Page),
@@ -138,13 +143,13 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         .and_then(|(_, inbox)| inbox.try_recv().ok());
     if let Some(destination) = destination {
         state(s).destination = None;
-        if let Ok((backend, title, slug, message)) = destination
+        if let Ok((backend, title, slug, mut hit)) = destination
             && crate::launcher::can_change_session(s)
         {
-            let terms = rune_theme_codenomad::timeline::search::terms(&state(s).text);
             close(s);
-            crate::launcher::bind_search(s, backend, title, &slug, message.clone(), tx);
-            s.transcript_display.search_highlight = Some((message, terms, true));
+            crate::launcher::bind_search(s, backend, title, &slug, hit.message.clone(), tx);
+            hit.restore_pending = true;
+            s.transcript_display.search_highlight = Some(hit);
         } else {
             state(s).open_error = true;
         }
@@ -273,6 +278,8 @@ fn select(s: &mut State, index: usize, tx: &mut Tx) {
     let model = state(s);
     let hit = model.page().and_then(|page| page.hits.get(index)).cloned();
     if let Some(hit) = hit {
+        clear_selection(s);
+        let model = state(s);
         model.destination = None;
         model.open_error = false;
         model.selected = Some(index);
@@ -283,13 +290,11 @@ fn select(s: &mut State, index: usize, tx: &mut Tx) {
             .is_some_and(|b| b.session == hit.session)
         {
             let model = state(s);
-            let ranked = model.ranked;
-            let terms = if ranked {
-                rune_theme_codenomad::timeline::search::terms(&model.text)
-            } else {
-                vec![model.text.clone()]
-            };
-            s.transcript_display.search_highlight = Some((hit.message.clone(), terms, ranked));
+            s.transcript_display.search_highlight = Some(crate::chat::search_hit::SearchHit::new(
+                &hit,
+                &model.text,
+                model.ranked,
+            ));
             super::navigation::seek_message(s, &hit.message, tx);
             state(s).preview = Default::default();
         } else {
@@ -308,6 +313,7 @@ fn open_result(s: &mut State, _: &mut Tx) {
         .and_then(|i| model.page()?.hits.get(i))
         .cloned();
     let Some(hit) = hit else { return };
+    let target = crate::chat::search_hit::SearchHit::new(&hit, &model.text, true);
     let Some(backend) = s.transcript_display.timeline.backend.clone() else {
         return;
     };
@@ -329,7 +335,7 @@ fn open_result(s: &mut State, _: &mut Tx) {
             let (backend, session, slug) = backend
                 .bind_session_placed(&project, &hit.session, false)
                 .await?;
-            Ok((backend, session.title, slug, hit.message))
+            Ok((backend, session.title, slug, target))
         };
         if let Some(result) = platform::reads::cancellable(&cancelled, bind).await
             && out.send(result).await.is_ok()

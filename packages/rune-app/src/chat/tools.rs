@@ -211,6 +211,10 @@ pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
         Arc::as_ptr(tool) as usize,
         std::rc::Rc::as_ptr(&s.input_scope) as usize,
         locale(),
+        display
+            .search_highlight
+            .as_ref()
+            .filter(|hit| hit.message == message),
         ["", "-tool_input", "-tool_output", "-wrap", "-error"].map(|suffix| {
             let section = format!("{key}{suffix}");
             (display.toggled(&section), display.steps(&section))
@@ -220,8 +224,21 @@ pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
 }
 
 fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
-    let expanded = s.transcript_display.toggled(&key)
-        ^ matches!(tool.name.as_str(), "bash" | "shell" | "edit");
+    let claimed = std::cell::Cell::new(false);
+    let query = super::search_hit::query(
+        s,
+        message,
+        codenomad_client::search::Kind::Tool,
+        tool.part_index,
+    )
+    .map(|query| rune_theme_codenomad::timeline::search::Query {
+        claimed: Some(&claimed),
+        ..query
+    });
+    let active = query.is_some_and(|q| q.active);
+    let expanded = active
+        || (s.transcript_display.toggled(&key)
+            ^ matches!(tool.name.as_str(), "bash" | "shell" | "edit"));
     let status = match tool.status.as_str() {
         "completed" => "toolCall.status.completed",
         "error" => "toolCall.status.error",
@@ -267,6 +284,19 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     if !tool.input.is_null() {
         let input_key = format!("{key}-tool_input");
         let show = s.transcript_display.toggled(&input_key);
+        let input = (show || active)
+            .then(|| {
+                tool.input
+                    .as_str()
+                    .map(std::borrow::Cow::Borrowed)
+                    .or_else(|| input_json(&tool.input).map(std::borrow::Cow::Owned))
+            })
+            .flatten();
+        let show = show
+            || active
+                && input
+                    .as_deref()
+                    .is_some_and(|text| query.is_some_and(|q| q.matches(text)));
         let toggle = input_key.clone();
         block = block.child(
             layout::button(
@@ -283,16 +313,23 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         );
         if show {
             block = block.child(copy(s, message, &tool.id, Section::Input));
-            let input = tool
-                .input
-                .as_str()
-                .map(std::borrow::Cow::Borrowed)
-                .or_else(|| input_json(&tool.input).map(std::borrow::Cow::Owned));
             if let Some(input) = input {
                 block = block.child(markdown::tool_pane(
-                    window(s, input_key, &[&input], TOOL_LIMIT, |shown, _| {
-                        markdown::code(shown, "json", true, true)
-                    }),
+                    window(
+                        s,
+                        input_key,
+                        &[&input],
+                        super::document::search_limit(query),
+                        |shown, units| {
+                            markdown::search_code(
+                                shown,
+                                "json",
+                                units <= HIGHLIGHT_LIMIT,
+                                true,
+                                query,
+                            )
+                        },
+                    ),
                     false,
                 ));
             } else {
@@ -340,19 +377,33 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                         .child(text(lang).text_role(TextRole::Label)),
                 )
                 .child(markdown::tool_pane(
-                    window(s, output_key, &parts, TOOL_LIMIT, |shown, units| {
-                        if tool.status == "running" && shell(tool) {
-                            s.transcript_display.live_ansi(key, shown, wrap)
-                        } else if terminal {
-                            ansi::code(shown, wrap)
-                        } else {
-                            markdown::code(shown, lang, highlight && units <= HIGHLIGHT_LIMIT, wrap)
-                        }
-                    }),
+                    window(
+                        s,
+                        output_key,
+                        &parts,
+                        super::document::search_limit(query),
+                        |shown, units| {
+                            if tool.status == "running" && shell(tool) {
+                                s.transcript_display.live_ansi(key, shown, wrap, query)
+                            } else if terminal {
+                                ansi::search_code(shown, wrap, query)
+                            } else {
+                                markdown::search_code(
+                                    shown,
+                                    lang,
+                                    highlight && units <= HIGHLIGHT_LIMIT,
+                                    wrap,
+                                    query,
+                                )
+                            }
+                        },
+                    ),
                     tool.name == "edit",
                 ))
         };
-        block = block.child(if tool_diff::candidate(tool, parts[0]) {
+        // The pinned diff renderer has no text-highlight seam. Use the existing raw view
+        // for the selected patch, preserving its stored split/unified mode for normal reading.
+        block = block.child(if !active && tool_diff::candidate(tool, parts[0]) {
             tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
         } else {
             fallback()
@@ -371,9 +422,9 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                     s,
                     format!("{key}-error"),
                     &[error],
-                    TOOL_LIMIT,
+                    super::document::search_limit(query),
                     |shown, _| {
-                        text(shown)
+                        rune_theme_codenomad::timeline::search::ink(text(shown), shown, query)
                             .full_width()
                             .wrap()
                             .content_direction()
