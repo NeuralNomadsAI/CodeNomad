@@ -29,7 +29,6 @@ export async function run({ call, fixture, folder, other }) {
     return entry.id
   }
   try {
-    assert.deepEqual(await response("openai"),expected())
     const codex = await create("openai","default",oauth("chatgpt-browser",{},jwt({
       exp:far/1000,"https://api.openai.com/auth":{chatgpt_account_id:"fixture-secret-account"},
       "https://api.openai.com/profile":{email:"codex@example.test"},

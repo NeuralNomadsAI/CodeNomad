@@ -68,11 +68,15 @@ async fn native(app: &App, endpoint: &Endpoint, url: reqwest::Url) -> Result<Val
 
 async fn snapshot(app: &App, workspace: &str, integration: &str, directory: &str) -> Result<Value, Error> {
     let workspace = app.workspace(workspace).map_err(|_| error(Status::NOT_FOUND, "Workspace not found"))?;
-    let endpoint = app.native.endpoint().ok_or_else(unavailable)?;
+    let endpoint =
+        app.native.acquire(tokio::time::Instant::now() + Duration::from_secs(15)).await.map_err(|_| unavailable())?;
     let foreign = || error(Status::FORBIDDEN, "Location does not belong to workspace");
     let owned = crate::worktrees::ownership::resolve(app, &workspace, directory).await.ok_or_else(foreign)?;
     let checkout = owned.checkout;
     let directory = owned.directory;
+    if !crate::sessions::permission_mode::workspace_current(app, &workspace) {
+        return Err(foreign());
+    }
     if !app.native.current(&endpoint) {
         return Err(unavailable());
     }
@@ -148,10 +152,14 @@ fn login(integration: &str, methods: &[&str], value: &Value) -> Option<Option<St
         return None;
     }
     if kind == "key" {
-        return text(&value["key"]).filter(|key| key.encode_utf16().count() <= 16_384).map(|_| None);
+        return value["key"]
+            .as_str()
+            .filter(|key| key.encode_utf16().count() <= 16_384)
+            .and_then(|_| text(&value["key"]))
+            .map(|_| None);
     }
     let access = text(&value["access"])?;
-    if (integration != "openai" && access.encode_utf16().count() > 16_384)
+    if (integration != "openai" && value["access"].as_str()?.encode_utf16().count() > 16_384)
         || (integration == "opencode" && value["methodID"] != "device")
     {
         return None;
@@ -162,7 +170,12 @@ fn login(integration: &str, methods: &[&str], value: &Value) -> Option<Option<St
         let limit = (now_ms() + 120_000) as f64;
         if !matches!(value["methodID"].as_str(), Some("chatgpt-browser" | "chatgpt-headless"))
             || value["expires"].as_f64().is_none_or(|exp| exp <= limit)
-            || num(&claims["exp"]).is_some_and(|exp| exp * 1000. <= limit)
+            || claims.get("exp").is_some_and(|value| {
+                value.is_null()
+                    || value.is_boolean()
+                    || value.as_str().is_some_and(|text| crate::shared::js_trim(text).is_empty())
+                    || num(value).is_some_and(|exp| exp * 1000. <= limit)
+            })
             || text(&metadata["accountID"])
                 .or_else(|| text(&claims["https://api.openai.com/auth"]["chatgpt_account_id"]))
                 .is_none()
@@ -190,4 +203,21 @@ fn display_email(email: &str) -> bool {
             && !domain.contains('@')
             && domain.rsplit_once('.').is_some_and(|(name, suffix)| !name.is_empty() && !suffix.is_empty())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn login_display_keeps_only_a_bounded_email() {
+        assert!(display_email("fixture@example.test"));
+        for invalid in ["fixture", "a@@example.test", "a@domain", "a\u{7f}@example.test", "a @example.test"] {
+            assert!(!display_email(invalid), "{invalid:?}");
+        }
+        assert!(!display_email(&format!("{}@example.test", "a".repeat(250))));
+        let credential = json!({"type":"oauth","access":"fixture","metadata":{"email":"  claude@example.test  "}});
+        assert_eq!(login("anthropic", &["oauth"], &credential), Some(Some("claude@example.test".into())));
+        assert_eq!(login("opencode", &["oauth"], &credential), None);
+    }
 }
