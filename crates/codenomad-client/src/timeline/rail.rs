@@ -32,8 +32,28 @@ pub struct Resident<'a> {
     pub markers: &'a [Marker<'a>],
 }
 
+/// The transcript supplies this from the window's authoritative navigation state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowPosition {
+    Latest,
+    Historical,
+}
+
+#[derive(Debug)]
+pub struct UnplacedWindow;
+impl std::fmt::Display for UnplacedWindow {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str("refresh the timeline to place a disjoint historical window")
+    }
+}
+impl std::error::Error for UnplacedWindow {}
+
 /// Indexed rows follow native sequence; resident markers use transcript order.
-pub fn project<'a>(index: &'a [Entry], resident: &[Resident<'a>]) -> Result<Vec<Marker<'a>>> {
+pub fn project<'a>(
+    index: &'a [Entry],
+    resident: &[Resident<'a>],
+    window: WindowPosition,
+) -> Result<Vec<Marker<'a>>> {
     let positions: HashMap<_, _> = index
         .iter()
         .enumerate()
@@ -42,6 +62,19 @@ pub fn project<'a>(index: &'a [Entry], resident: &[Resident<'a>]) -> Result<Vec<
     let owned: HashSet<_> = resident.iter().map(|row| row.message).collect();
     let mut result = Vec::new();
     let mut next = 0;
+    if !index.is_empty()
+        && !resident.is_empty()
+        && resident
+            .iter()
+            .all(|row| !positions.contains_key(row.message))
+    {
+        if window != WindowPosition::Latest {
+            return Err(UnplacedWindow.into());
+        }
+        // The latest window has rolled entirely past the index's sequence horizon.
+        append_indexed(index, &owned, &mut result)?;
+        next = index.len();
+    }
     for row in resident {
         if let Some(&at) = positions.get(row.message).filter(|&&at| at >= next) {
             append_indexed(&index[next..at], &owned, &mut result)?;

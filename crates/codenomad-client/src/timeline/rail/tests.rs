@@ -50,7 +50,7 @@ fn projection_keeps_resident_order_and_never_reinstates_a_hidden_row() {
             markers: &b,
         },
     ];
-    let rail = project(&index, &resident).unwrap();
+    let rail = project(&index, &resident, WindowPosition::Historical).unwrap();
     assert_eq!(
         rail.iter()
             .map(|x| (x.message, x.ordinal))
@@ -76,7 +76,7 @@ fn omitted_runs_keep_the_native_anchor_ordinals() {
         }))
         .unwrap();
         let index = [record];
-        let rail = project(&index, &[]).unwrap();
+        let rail = project(&index, &[], WindowPosition::Latest).unwrap();
         assert_eq!(
             rail.iter()
                 .map(|x| (x.kind, x.ordinal, x.continued, x.omitted_before))
@@ -100,9 +100,41 @@ fn counts_only_keep_unknown_text_and_bound_the_tool_fallback() {
         text: None,
         ..row("old", 1, Kind::Assistant)
     }];
-    let rail = project(&index, &[]).unwrap();
+    let rail = project(&index, &[], WindowPosition::Latest).unwrap();
     assert_eq!(rail.len(), 1002);
     assert_eq!(rail[0].kind, Reasoning);
     assert_eq!(rail[1].kind, Assistant);
     assert_eq!(rail[1001].ordinal, 999);
+}
+
+#[test]
+fn a_complete_latest_roll_keeps_the_old_outline_before_the_new_rows() {
+    let index = [row("z2", 20, Kind::User), row("z1", 30, Kind::User)];
+    let ids: Vec<_> = (0..200).rev().map(|i| format!("a{i:03}")).collect();
+    let markers: Vec<_> = ids
+        .iter()
+        .map(|id| Marker {
+            message: id,
+            kind: User,
+            ordinal: 0,
+            continued: false,
+            omitted_before: false,
+            tool_name: None,
+        })
+        .collect();
+    let resident: Vec<_> = markers
+        .iter()
+        .map(|marker| Resident {
+            message: marker.message,
+            markers: std::slice::from_ref(marker),
+        })
+        .collect();
+    let rail = project(&index, &resident, WindowPosition::Latest).unwrap();
+    assert_eq!(
+        rail[..2].iter().map(|m| m.message).collect::<Vec<_>>(),
+        ["z2", "z1"]
+    );
+    assert_eq!(rail[2..], markers);
+    let error = project(&index, &resident, WindowPosition::Historical).unwrap_err();
+    assert!(error.is::<UnplacedWindow>());
 }
