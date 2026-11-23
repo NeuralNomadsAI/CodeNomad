@@ -19,6 +19,7 @@ fn direct_compaction_waits_for_the_first_root_snapshot() {
                 root_directory: directory.clone(),
                 permissions: None,
                 forms: None,
+                usage: None,
             },
             true,
         );
