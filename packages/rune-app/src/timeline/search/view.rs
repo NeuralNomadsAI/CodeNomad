@@ -445,16 +445,32 @@ fn preview(
             super::preview::blocks(hit, data.map_or(&[], |data| data.blocks.as_slice()))
                 .map(|block| search::excerpt(block, terms)),
         );
+    let disabled = model.destination.is_some();
+    let keyboard = screen::action_tx(&s.input_scope, super::open_result);
+    let open = layout::button_tx(
+        t("history.openSession"),
+        disabled,
+        screen::action_tx(&s.input_scope, super::open_result),
+    )
+    .key("history-search-open");
+    let open = if disabled {
+        open
+    } else {
+        open.on_key(move |s, event, tx| {
+            if event.key != rune::Key::Enter || event.mods != rune::Mods::default() {
+                return false;
+            }
+            if !tx.key_repeat() {
+                keyboard(s, tx);
+            }
+            true
+        })
+    };
     search::preview(
         title,
         worktree.as_deref(),
         age,
-        layout::button_tx(
-            t("history.openSession"),
-            model.destination.is_some(),
-            screen::action_tx(&s.input_scope, super::open_result),
-        )
-        .key("history-search-open"),
+        open,
         body,
     )
     .key("history-inter-session-preview")

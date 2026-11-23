@@ -79,16 +79,16 @@ if(gitPanel){
   await writeFile(path.join(project,'git-panel.txt'),'git-panel edited\n')
 }
 if(gitCount)await promisify(execFile)('git',['init','--quiet',project],{windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL'}})
-const linked=webMobile&&!webAndroid?path.join(path.dirname(project),'linked'):null
+const linked=(webMobile&&!webAndroid||webSearch)?path.join(path.dirname(project),'linked'):null
 if(linked){
   const hooks=path.join(profile,'empty-hooks')
   await mkdir(hooks)
   const git=(...args)=>promisify(execFile)('git',['-c',`core.hooksPath=${hooks}`,'-C',project,...args],{
     windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig')},
   })
-  await git('init','--quiet')
+   await git('init','--quiet',...(webSearch?['-b','history-fixture']:[]))
   await git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','--quiet','--allow-empty','-m','synthetic')
-  await git('worktree','add','--quiet','--detach',linked,'HEAD')
+   await git('worktree','add','--quiet',...(webSearch?['-b','history-linked']:['--detach']),linked,'HEAD')
 }
 const records=new Map(),stores=new Map(),streams=new Set(),requests=[]
 const stats={created:0,prompts:0,lists:0}
@@ -180,7 +180,7 @@ function add(id,title,directory=project) {
   return row
 }
 add('ses_existing','Existing history')
-add('ses_another','Another session',gitPanel&&!placeWorktree?review:project)
+add('ses_another','Another session',webSearch?linked:gitPanel&&!placeWorktree?review:project)
 seedHistory({stores,webTimeline,webMobile,webAndroid,webSearch})
 if(gitPanel)for(let i=0;i<50;i++)stores.get('ses_another').append('assistant',`Reading position ${i}\n\nA second paragraph in the fixture.`)
 if(placeWorktree){
@@ -188,7 +188,7 @@ if(placeWorktree){
   for(const row of records.values())row.projectID='fixture_project'
   for(let i=0;i<32;i++)stores.get('ses_existing').append('assistant',`Placement history ${i}`)
 }
-if(linked){
+if(linked&&!webSearch){
   add('ses_linked','Linked checkout session',linked)
   add('ses_linked_next','Linked checkout next page',linked)
   stores.get('ses_linked_next').append('assistant','Linked checkout answer')
@@ -304,7 +304,7 @@ const upstream=createServer(async(req,res)=>{
       return json({data:created})
     }
     if(url.pathname==='/api/plugin')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
-    const history=historyResponse(url.pathname,raw,{stores,records,project,webSearch,webTouchHistory,compare})
+    const history=historyResponse(url.pathname,raw,{stores,records,project,linked,directory:url.searchParams.get('location[directory]'),webSearch,webTouchHistory,compare})
     if(history)return json(history)
     if(url.pathname==='/api/rpc/codenomad.missions/scheduleCarrierRead')return json({output:{owned:false}})
     if(placeWorktree&&url.pathname==='/api/model')return json({data:[]})
@@ -399,14 +399,6 @@ await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
 if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
-if(webSearch){
-  delete env.GIT_CEILING_DIRECTORIES
-  const git=(...args)=>promisify(execFile)('git',['-C',project,...args],{
-    windowsHide:true,env:{...env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig')},
-  })
-  await git('init','-q','-b','history-fixture')
-  await git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','-q','--allow-empty','-m','History fixture')
-}
 if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null

@@ -36,7 +36,7 @@ export function seedHistory({stores,webTimeline,webMobile,webAndroid,webSearch})
   }
 }
 
-export function historyResponse(pathname, raw, {stores,records,project,webSearch,webTouchHistory,compare}) {
+export function historyResponse(pathname, raw, {stores,records,project,linked,directory,webSearch,webTouchHistory,compare}) {
   const prefix='/api/rpc/codenomad.session-pruning/'
   if(!pathname.startsWith(prefix))return
   const method=pathname.slice(prefix.length)
@@ -60,16 +60,17 @@ export function historyResponse(pathname, raw, {stores,records,project,webSearch
       role:'assistant',partIndex,kind,excerpt,createdAt:100})
     const continued=input.cursor!==undefined
     if(continued)assert.equal(input.cursor,'fixture-ranked-continuation')
-    const hits=continued?[shape('ses_existing',1,'Existing older result')]:
-      [shape('ses_another',0,'Existing ranked destination'),shape('ses_existing',1,'Existing answer')]
-    if(input.includeTechnical&&!continued)hits.splice(1,0,shape('ses_another',1,'Existing remote tool match','tool',1))
+    assert(directory===project||directory===linked)
+    const hits=directory===linked?[shape('ses_another',0,'Existing ranked destination')]:
+      [shape('ses_existing',1,continued?'Existing older result':'Existing answer')]
+    if(input.includeTechnical&&directory===linked)hits.push(shape('ses_another',1,'Existing remote tool match','tool',1))
     const sessions=hits.filter(({sessionID},i)=>i===hits.findIndex(hit=>hit.sessionID===sessionID)).map(({sessionID})=>{
       const count=hits.filter(hit=>hit.sessionID===sessionID).length
-      return {sessionID,directory:project,title:records.get(sessionID).title,scanned:count,candidates:count,
+      return {sessionID,directory,title:records.get(sessionID).title,scanned:count,candidates:count,
         judged:count,matchedMessages:count,tools:0,reasoning:0,skipped:0,prefilterBypassed:0}
     })
     return {output:{version:1,status:'ranked',scanned:hits.length,candidates:hits.length,judged:hits.length,skipped:0,prefilterBypassed:0,
-      matchedSessions:sessions.length,capped:false,examinedBefore:0,cursor:continued?null:'fixture-ranked-continuation',exclusions:[],caps:[],hits,sessions}}
+      matchedSessions:sessions.length,capped:false,examinedBefore:0,cursor:continued||directory===linked?null:'fixture-ranked-continuation',exclusions:[],caps:[],hits,sessions}}
   }
   if(method==='outlinePreview'){
     const {input}=JSON.parse(raw), rows=stores.get(input.sessionID).rows

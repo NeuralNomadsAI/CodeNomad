@@ -35,6 +35,20 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
     return (id?document.getElementById(id):active)?.getAttribute('aria-label')===expected
   },label)
   const scopeLabel=`${messages['history.scope']}: ${messages['history.session']}`
+  const focusOpen=async()=>{
+    await page.keyboard.press('Control+f')
+    await focusLabel(messages['messageSection.search.ariaLabel'])
+    for(let i=0;i<9;i++){
+      await page.keyboard.press('Tab')
+      await page.evaluate(()=>new Promise(requestAnimationFrame))
+      const label=await page.evaluate(()=>{
+        const id=document.activeElement?.getAttribute('aria-activedescendant')
+        return (id?document.getElementById(id):document.activeElement)?.getAttribute('aria-label')
+      })
+      if(label===messages['history.openSession'])return
+    }
+    assert.fail('Tab must reach Open in session')
+  }
   for(const label of [messages['messageSection.search.closeAriaLabel'],messages['history.technical'],scopeLabel]){
     await page.keyboard.press('Shift+Tab')
     await focusLabel(label)
@@ -123,6 +137,16 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
     await grep.waitFor()
     assert.equal(await toolBody.count(),0,'Showing the tool must leave its group collapsed')
     await installPngReader(page)
+    const activeInk=async box=>{
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+      return page.evaluate(async png=>{
+        const [{pixels}]=await globalThis.__codenomadReadPngs([`data:image/png;base64,${png}`])
+        for(let i=0;i<pixels.length;i+=4){
+          if(pixels[i]===250&&pixels[i+1]===204&&pixels[i+2]===21)return true
+        }
+        return false
+      },(await page.screenshot(box?{clip:box}:{})).toString('base64'))
+    }
     for(const [hit,body] of [
       ['Existing technical tool match','Found Existing technical tool match'],
       ['Existing reasoning match','Existing reasoning match in the opened card'],
@@ -131,16 +155,7 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
       await filtered.waitFor({state:'detached'})
       await page.getByText(body,{exact:true}).and(page.locator('p, pre, code')).first().waitFor()
       if(touch)continue
-      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
-      const screenshot=await page.screenshot()
-      const active=await page.evaluate(async png=>{
-        const [{pixels}]=await globalThis.__codenomadReadPngs([`data:image/png;base64,${png}`])
-        for(let i=0;i<pixels.length;i+=4){
-          if(pixels[i]===250&&pixels[i+1]===204&&pixels[i+2]===21)return true
-        }
-        return false
-      },screenshot.toString('base64'))
-      assert(active,`The active occurrence is painted for ${hit}`)
+      assert(await activeInk(),`The active occurrence is painted for ${hit}`)
     }
     assert.equal(windows,0,'Revealing technical matches must also stay local')
     await press(search,'Existing arguments only')
@@ -154,10 +169,10 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
     if(!ranked.ok())assert.fail(`Ranked broker status ${ranked.status()}: ${await ranked.text()}`)
     await search.getByRole('button',{name:'Existing ranked destination',exact:true}).waitFor()
     const first=search.getByRole('button',{name:'Existing ranked destination',exact:true})
-    await search.locator('[aria-description="Another session · history-fixture"]').and(first).waitFor()
+    await search.locator('[aria-description="Another session · history-linked"]').and(first).waitFor()
     const rankedNames=await search.getByRole('button').filter({hasText:/^Existing /}).allTextContents()
-    assert.equal(rankedNames[0],'Existing ranked destination')
-    assert.deepEqual(rankedNames.slice(1).sort(),['Existing answer','Existing remote tool match'])
+    assert.deepEqual(rankedNames.slice(0,2).sort(),['Existing answer','Existing ranked destination'])
+    assert.equal(rankedNames[2],'Existing remote tool match')
     const remotePreview=page.waitForResponse(response=>response.url().endsWith('/session/ses_another/message/message-00001'))
     await press(search,'Existing remote tool match')
     assert((await remotePreview).ok())
@@ -165,13 +180,18 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
     try{
       const proposed=page.waitForRequest(request=>request.url().endsWith('/session-history/window')
         && request.postDataJSON()?.target?.messageID==='message-00001')
-      await search.getByRole('button',{name:messages['history.openSession'],exact:true}).focus()
-      await page.keyboard.press('Enter')
+      if(touch){
+        await activate(search.getByRole('button',{name:messages['history.openSession'],exact:true}))
+      }else{
+        await focusOpen()
+        await page.keyboard.press('Enter')
+      }
       assert.equal((await proposed).postDataJSON().sessionID,'ses_another')
       await setTool('hidden')
       await grep.waitFor({state:'detached'})
     }finally{release()}
     await rejected()
+    await search.getByRole('group',{name:'Another session',exact:true}).waitFor()
     assert.equal(windows,1,'Only the destination preflight may read a window on refusal')
     await setTool('collapsed')
     await grep.waitFor()
@@ -235,7 +255,7 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
       await page.unroute(route,hold)
     }
     assert((await preview).ok())
-    await details.getByText('history-fixture',{exact:true}).waitFor()
+    await details.getByText('history-linked',{exact:true}).waitFor()
     await details.getByText(messages['time.relative.hoursAgoShort'].replace('{count}','2'),{exact:true}).waitFor()
     await details.getByText(/Stored preview detail/).waitFor()
     assert.equal(windows,1,'Preview must not read a transcript window')
@@ -280,13 +300,17 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
         page.off('request',observe)
       }
     }
-    const [destination]=await Promise.all([read('window'),activate(open)])
+    if(!touch)await focusOpen()
+    const [destination]=await Promise.all([read('window'),touch?activate(open):page.keyboard.press('Enter')])
     const requested=destination.request().postDataJSON()
     assert.deepEqual(requested,{sessionID:'ses_another',target:{kind:'around',messageID:'message-00000'}})
     assert.equal(excerpts,1,'Opening reads the destination window, not a second excerpt')
     await page.getByRole('heading',{name:'Another session',exact:true}).waitFor()
-    await page.getByRole('paragraph').filter({hasText:'Existing ranked destination'}).waitFor()
     assert.equal(await search.count(),0,'The previous search belongs to its source view')
+    const arrival=page.getByRole('paragraph').filter({hasText:'Existing ranked destination'})
+    await arrival.waitFor()
+    const box=await arrival.boundingBox()
+    assert(box&&await activeInk(box),'The destination passage has the active search highlight')
   }finally{
     page.off('request',count)
     if(touch)await resize(viewport)
