@@ -69,6 +69,37 @@ async fn open(rt: &mut Runtime<State>, http: &http::Http, path: &str, contents: 
         .await;
     settle(rt).await;
 }
+
+#[test]
+fn an_open_project_displays_a_file_preview_without_a_conversation() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        state.show_launcher();
+        state.screen.launcher_mut().unwrap().project = Some(crate::catalog::Project {
+            id: http.backend.workspace.clone(),
+            path: "/private".into(),
+        });
+        let mut backend = http.backend.clone();
+        backend.session.clear();
+        crate::files::bind(&mut state, &backend);
+        state.files.as_mut().unwrap().online(true);
+        let mut rt = Runtime::new(state, english, (1000.0, 700.0), Env::new(false, 1.0));
+        rt.frame(0.02);
+        open(&mut rt, &http, "note.txt", "aGVsbG8=").await;
+        assert!(rt.state.screen.is_launcher());
+        assert!(rt.state.commands.is_none());
+        assert!(rt.find("file-refresh").is_some());
+        assert_eq!(
+            rt.state.files.as_ref().unwrap().document.edit().text,
+            "hello"
+        );
+        click(&mut rt, "file-close");
+        assert!(rt.find("file-refresh").is_none());
+    });
+}
+
 #[test]
 fn eye_opens_real_reader_and_return_preserves_chat_draft_without_prompt() {
     crate::platform::block_on(async {
