@@ -28,7 +28,7 @@ let account = 'First fixture account', detached = false
 let contrast = 'on', permissions = 'autonomous'
 let notificationRouting, notifyFocused
 let hotkeyOverrides = { 'new-instance': [{key:'n',mod:true}], 'file-save': [{key:'n',mod:true}] }
-let updateFeed = 'stable', infoReads = 0
+let updateFeed = 'stable', infoReads = 0, invalidOffer = false
 const feedWrites = []
 const writes = []
 const memoryRequests = []
@@ -66,7 +66,9 @@ const server = createServer(async (req,res) => {
         remoteUrl:'https://192.0.2.10:3457',workspaceRoot:directory,system:{platform:'win32',arch:'x64'},
         addresses:[{ip:'192.0.2.10',family:'ipv4',scope:'internal',remoteUrl:'https://192.0.2.10:3457'},
           {ip:'192.0.2.11',family:'ipv4',scope:'internal',remoteUrl:'https://192.0.2.11:3457'}],
-        update:updateFeed==='preview'?{version:'9.1.0-dev',tag:'v9.1.0-dev',channel:'preview',url:releasePage}:null})
+        update:updateFeed!=='preview'?null:invalidOffer?
+          {version:'9.2.0-dev',tag:'v9.2.0-dev',channel:'preview',url:'https://example.test/release'}:
+          {version:'9.1.0-dev',tag:'v9.1.0-dev',channel:'preview',url:releasePage}})
     }
     if (p === '/api/opencode/update') {
       opencodeRequests.push(`${req.method}${url.search}`)
@@ -293,10 +295,16 @@ try {
   page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true})
   if (about) {
     await page.route('https://raw.githubusercontent.com/**',route=>route.abort())
-    await page.context().grantPermissions(['clipboard-read','clipboard-write'])
     await page.addInitScript(() => {
       window.openedInfoLinks = []
       window.open = url => { window.openedInfoLinks.push(String(url)); return null }
+      window.diagnosticClipboard = null
+      window.rejectDiagnosticClipboard = true
+      Clipboard.prototype.writeText = function(text) {
+        if (window.rejectDiagnosticClipboard) return Promise.reject(new DOMException('Fixture refusal','NotAllowedError'))
+        window.diagnosticClipboard = text
+        return Promise.resolve()
+      }
     })
   }
   if (notifications) await page.addInitScript(() => {
@@ -342,6 +350,8 @@ try {
     await radio('Info').press('Enter')
     await visible('9.0.1')
     await visible('9.0.2')
+    await visible('WebAssembly')
+    await visible('Firewall, router or certificate settings may prevent connections.')
     assert.equal(await page.getByText('https://192.0.2.10:3457',{exact:true}).count(),2)
     assert.equal(await page.getByText('https://192.0.2.11:3457',{exact:true}).count(),0)
     await visible('Specific network interface')
@@ -357,9 +367,14 @@ try {
     await visible('9.1.0-dev')
     await downloadRelease.press('Enter')
     await page.waitForFunction(url=>window.openedInfoLinks.includes(url),releasePage)
-    await page.getByRole('button',{name:'Copy to clipboard',exact:true}).press('Enter')
+    const copy = page.getByRole('button',{name:'Copy to clipboard',exact:true})
+    await copy.press('Enter')
+    await page.locator('[aria-live="assertive"]').filter({hasText:'Could not copy diagnostics.'}).waitFor({state:'attached'})
+    assert.equal(await page.evaluate(()=>window.diagnosticClipboard),null)
+    await page.evaluate(()=>{window.rejectDiagnosticClipboard=false})
+    await copy.press('Enter')
     await page.locator('[aria-live="polite"]').filter({hasText:'Diagnostics copied.'}).waitFor({state:'attached'})
-    const report = await page.evaluate(()=>navigator.clipboard.readText())
+    const report = await page.evaluate(()=>window.diagnosticClipboard)
     assert(report.includes(directory) && report.includes('2.3.2') && report.includes('2.3.1'))
     assert(!report.includes('192.0.2.11'))
     const file = page.waitForEvent('download')
@@ -375,6 +390,10 @@ try {
     assert.equal(bug.searchParams.get('codenomad-version'),'9.0.1 (UI 9.0.2)')
     assert.equal(bug.searchParams.get('opencode-version'),'2.3.2 (running daemon 2.3.1)')
     assert(!decodeURIComponent(bug.href).includes(directory) && !bug.href.includes('192.0.2.10'))
+    invalidOffer = true
+    await page.getByRole('button',{name:'Refresh',exact:true}).press('Enter')
+    await visible('9.2.0-dev')
+    assert.equal(await downloadRelease.count(),0)
     console.log(JSON.stringify({fixture:'info-preferences',feedWrites,confirmedRead:true,release:true,diagnostics:true}))
   }
 

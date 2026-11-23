@@ -196,7 +196,7 @@ impl Info {
             ))
             .children(feed.map(|feed| {
                 col().full_width().role("group").label(t("settings.info.updates.feed"))
-                    .child(chrome::info_link(t("settings.info.updates.feed.help"), |s: &mut S, tx| {
+                    .child(chrome::info_link(t("settings.info.updates.feed.help"), move |s: &mut S, tx| {
                         if let Some(info) = access(s) {
                             info.release_failed = tx.open_url(&format!(
                                 "https://neuralnomadsai.github.io/CodeNomad/{}/updates.html#feed", locale()

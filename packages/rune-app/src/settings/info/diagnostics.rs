@@ -13,10 +13,7 @@ use codenomad_client::{
     },
 };
 use rune::{El, Tx, Waker, text};
-use rune_theme_codenomad::{
-    layout::{self, Layout},
-    settings as chrome,
-};
+use rune_theme_codenomad::{layout, settings as chrome};
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
 

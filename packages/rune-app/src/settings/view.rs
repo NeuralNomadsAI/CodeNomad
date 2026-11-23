@@ -486,7 +486,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                         (s.section == Section::Info && !s.confirm_close && !s.closing)
                             .then_some(&mut s.info)
                     },
-                    Some(|s| {
+                    Some(|s: &mut Window| {
                         if s.section == Section::Info && !s.confirm_close && !s.closing {
                             s.info.close();
                             s.section = Section::Remote;
