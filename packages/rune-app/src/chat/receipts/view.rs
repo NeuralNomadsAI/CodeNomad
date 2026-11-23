@@ -69,9 +69,13 @@ fn action(s: &State, key: Option<String>, more: bool, disabled: bool) -> El {
         label,
         disabled,
         screen::action(&s.input_scope, move |s| {
-            s.transcript_display
-                .receipts
-                .start(&key, more, &s.reads, &s.wake);
+            let receipts = &mut s.transcript_display.receipts;
+            let more = more
+                || receipts
+                    .entries
+                    .get(&key)
+                    .is_some_and(|entry| entry.failed && entry.retry_more && !entry.dirty);
+            receipts.start(&key, more, &s.reads, &s.wake);
         }),
     )
     .key(if more {

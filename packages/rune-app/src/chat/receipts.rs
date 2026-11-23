@@ -23,6 +23,8 @@ mod tests;
 mod view;
 pub(super) use view::{for_message, session};
 
+const MAX_PAGES: usize = 8;
+
 #[derive(Default)]
 pub(crate) struct Receipts {
     backend: Option<Backend>,
@@ -35,14 +37,17 @@ struct Entry {
     next: Option<String>,
     visible: Option<Weak<()>>,
     on_screen: bool,
+    suspended: bool,
     job: Option<Job>,
     dirty: bool,
     failed: bool,
+    pages: usize,
+    retry_more: bool,
 }
 
 struct Job {
     _cancel: Sender<()>,
-    result: Receiver<Option<ReceiptPage>>,
+    result: Receiver<Option<(ReceiptPage, usize)>>,
     more: bool,
 }
 
@@ -61,6 +66,14 @@ impl Receipts {
 
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
+    }
+
+    pub(super) fn suspend(&mut self) {
+        for (message, entry) in &mut self.entries {
+            entry.on_screen = message.is_none();
+            entry.suspended = message.is_some();
+            entry.dirty |= entry.job.take().is_some();
+        }
     }
 
     pub(crate) fn invalidate(&mut self, message: Option<String>) {
@@ -90,11 +103,23 @@ impl Receipts {
         let receipts = &mut s.transcript_display.receipts;
         if let Some(entry) = receipts.entries.get_mut(&key) {
             entry.on_screen = visible;
+            entry.visible = Some(Rc::downgrade(lease));
+            entry.suspended = false;
             if !visible {
                 entry.dirty |= entry.job.take().is_some();
             }
             visible && entry.dirty
-        } else if visible && receipts.backend.is_some() && receipts.entries.len() < 24 {
+        } else if visible && receipts.backend.is_some() {
+            if receipts.entries.len() >= 24
+                && let Some(victim) = receipts.entries.iter().find_map(|(key, entry)| {
+                    (key.is_some() && !entry.on_screen && entry.suspended).then(|| key.clone())
+                })
+            {
+                receipts.entries.remove(&victim);
+            }
+            if receipts.entries.len() >= 24 {
+                return false;
+            }
             receipts.entries.entry(key).or_insert_with(|| Entry {
                 visible: Some(Rc::downgrade(lease)),
                 on_screen: true,
@@ -125,6 +150,9 @@ impl Receipts {
             return;
         };
         let cursor = if more {
+            if entry.dirty || entry.pages >= MAX_PAGES {
+                return;
+            }
             let Some(next) = entry.next.clone() else {
                 return;
             };
@@ -132,8 +160,10 @@ impl Receipts {
         } else {
             None
         };
+        let pages = if more { 1 } else { entry.pages.max(1) };
         entry.dirty = false;
         entry.failed = false;
+        entry.retry_more = more;
         let (cancel, cancelled) = bounded(1);
         let (out, result) = bounded(1);
         entry.job = Some(Job {
@@ -148,7 +178,7 @@ impl Receipts {
             };
             let Some(result) = crate::platform::reads::cancellable(
                 &cancelled,
-                backend.permission_receipts(key.as_deref(), cursor.as_deref()),
+                read_pages(&backend, key.as_deref(), cursor, pages),
             )
             .await
             else {
@@ -160,12 +190,17 @@ impl Receipts {
         });
     }
 
-    pub(crate) fn poll(s: &mut State) -> bool {
-        let active = s.screen.launcher().is_none()
+    pub(crate) fn poll(s: &mut State, visible: bool) -> bool {
+        let active = visible
+            && s.screen.launcher().is_none()
             && !crate::git::has_preview(s)
             && !crate::files::has_preview(s)
             && matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming);
         let receipts = &mut s.transcript_display.receipts;
+        if !visible {
+            receipts.suspend();
+            return false;
+        }
         if !active || receipts.backend.is_none() {
             for entry in receipts.entries.values_mut() {
                 entry.dirty |= entry.job.take().is_some();
@@ -178,10 +213,11 @@ impl Receipts {
             ..Entry::default()
         });
         receipts.entries.retain(|_, entry| {
-            entry
-                .visible
-                .as_ref()
-                .is_none_or(|lease| lease.strong_count() != 0)
+            entry.suspended
+                || entry
+                    .visible
+                    .as_ref()
+                    .is_none_or(|lease| lease.strong_count() != 0)
         });
         let mut changed = false;
         let mut load = Vec::new();
@@ -193,10 +229,11 @@ impl Receipts {
             {
                 entry.job = None;
                 if !entry.dirty {
-                    if let Some(page) = result {
+                    if let Some((page, pages)) = result {
                         if !more {
                             entry.receipt.clear();
                         }
+                        entry.pages = if more { entry.pages + pages } else { pages };
                         for row in page.receipts {
                             if !entry
                                 .receipt
@@ -207,7 +244,7 @@ impl Receipts {
                                 entry.receipt.push(row);
                             }
                         }
-                        entry.next = (entry.receipt.len() < 128).then_some(page.next).flatten();
+                        entry.next = (entry.pages < MAX_PAGES).then_some(page.next).flatten();
                     } else {
                         entry.failed = true;
                     }
@@ -223,4 +260,39 @@ impl Receipts {
         }
         changed
     }
+}
+
+async fn read_pages(
+    backend: &Backend,
+    message: Option<&str>,
+    mut cursor: Option<String>,
+    pages: usize,
+) -> crate::history::Result<(ReceiptPage, usize)> {
+    let mut receipts = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    if let Some(cursor) = &cursor {
+        seen.insert(cursor.clone());
+    }
+    for fetched in 1..=pages {
+        let page = backend
+            .permission_receipts(message, cursor.as_deref())
+            .await?;
+        receipts.extend(page.receipts);
+        cursor = page.next;
+        if let Some(next) = &cursor
+            && !seen.insert(next.clone())
+        {
+            return Err("permission receipt cursor repeated".into());
+        }
+        if cursor.is_none() || fetched == pages {
+            return Ok((
+                ReceiptPage {
+                    receipts,
+                    next: cursor,
+                },
+                fetched,
+            ));
+        }
+    }
+    Err("no permission receipt pages requested".into())
 }

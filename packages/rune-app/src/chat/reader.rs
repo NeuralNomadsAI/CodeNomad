@@ -219,8 +219,8 @@ pub(crate) fn suspend(s: &mut State) {
             s.phase = crate::Phase::Ready;
         }
         s.paging = false;
-        s.transcript_display.evict_rendered();
     }
+    s.transcript_display.suspend_rendered();
 }
 
 pub(crate) fn resume(s: &mut State, tx: &mut Tx) {

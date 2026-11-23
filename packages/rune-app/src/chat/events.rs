@@ -7,6 +7,14 @@ use crate::{
 };
 
 pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
+    drain_chat(s, limit, true)
+}
+
+pub(crate) fn poll_hidden_chat(s: &mut State, limit: usize) -> bool {
+    drain_chat(s, limit, false)
+}
+
+fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
     if changed
         && s.reader
@@ -332,7 +340,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
     }
     if s.transcript_display.children.poll()
         | s.transcript_display.pictures.poll(&s.reads, &s.wake)
-        | super::receipts::Receipts::poll(s)
+        | super::receipts::Receipts::poll(s, visible)
     {
         s.revision += 1;
         changed = true;

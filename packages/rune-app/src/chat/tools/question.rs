@@ -1,4 +1,4 @@
-use super::{Display, Tool, string};
+use super::{Display, TOOL_LIMIT, Tool, string, window};
 use crate::{
     State, screen,
     strings::{locale, t},
@@ -73,13 +73,24 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
             .filter_map(|v| v.as_str())
             .filter(|label| !label.trim().is_empty())
             .take(MAX_ITEMS)
-            .map(|label| {
+            .enumerate()
+            .map(|(answer, label)| {
                 let mut matches = options.iter().filter(|(option, _)| *option == label);
                 let description = matches
                     .next()
                     .filter(|_| matches.next().is_none())
                     .map_or("", |v| v.1);
-                choice(label, description)
+                col()
+                    .full_width()
+                    .role("listitem")
+                    .child(window(
+                        s,
+                        format!("{key}-question-{i}-answer-{answer}"),
+                        &[label],
+                        TOOL_LIMIT,
+                        |shown, _| answer_line(shown),
+                    ))
+                    .children((!description.trim().is_empty()).then(|| line(description)))
             })
             .collect();
         item = if answers.is_empty() {
@@ -139,7 +150,11 @@ fn choice(label: &str, description: &str) -> El {
 }
 
 fn line(value: &str) -> El {
-    text(value.chars().take(4096).collect::<String>())
+    answer_line(&value.chars().take(4096).collect::<String>())
+}
+
+fn answer_line(value: &str) -> El {
+    text(value)
         .wrap_anywhere()
         .selectable(true)
         .content_direction()
@@ -182,4 +197,46 @@ fn question_receipt_uses_native_answers_and_reveals_other_choices() {
     assert!(tree.contains("Primary route") && tree.contains("Answer unavailable"));
     assert!(!tree.contains("Route B"));
     assert!(click("tool-answer:3:ask-question-0-choices").contains("Route B"));
+}
+
+#[cfg(test)]
+#[test]
+fn free_answer_keeps_whitespace_and_reveals_the_verbatim_tail() {
+    use crate::history;
+    use rune::{Env, Runtime};
+    use serde_json::json;
+    let answer = format!("  Première ligne 🦀\n  {}  FIN\r\n", "x".repeat(10_020));
+    let row = history::decode_message(&json!({
+        "id":"answer","type":"assistant","time":{"completed":1},"content":[{
+          "type":"tool","name":"question","id":"ask","state":{
+            "status":"completed","input":{"questions":[{"question":"Free answer?"}]},
+            "metadata":{"answers":[[answer]]}}}]
+    }))
+    .unwrap();
+    let mut s = crate::init();
+    s.messages.push(row.into());
+    let mut rt = Runtime::new(
+        s,
+        |s, _| {
+            crate::strings::with_locale("en", || {
+                let crate::content::Part::Tool(tool) = &s.messages[0].parts[0] else {
+                    panic!("question tool")
+                };
+                view(s, "ask", tool).unwrap()
+            })
+        },
+        (1600.0, 4000.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let before = rt.accessibility_json().to_string();
+    assert!(before.contains("  Première ligne 🦀\\n  ") && !before.contains("  FIN"));
+    let (x, y) = rt.find("reveal-ask-question-0-answer-0").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    for _ in 0..8 {
+        rt.frame(0.02);
+    }
+    let after = rt.accessibility_json().to_string();
+    assert!(after.contains(&serde_json::to_string(&answer).unwrap()));
 }

@@ -39,13 +39,17 @@ struct SessionDisplay {
 }
 impl Display {
     pub(crate) fn evict_rendered(&mut self) {
+        self.suspend_rendered();
+        self.receipts.clear();
+    }
+    pub(super) fn suspend_rendered(&mut self) {
         self.diffs = Default::default();
         self.stream = StreamRender::default();
         self.live_ansi.get_mut().clear();
         self.children.clear();
         self.usage_family.close();
         self.pictures.clear();
-        self.receipts.clear();
+        self.receipts.suspend();
     }
     pub(super) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
