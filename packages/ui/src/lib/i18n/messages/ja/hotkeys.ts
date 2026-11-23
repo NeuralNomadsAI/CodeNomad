@@ -1,5 +1,6 @@
 export const hotkeyMessages = {
   "hotkeys.unavailable": "この操作のショートカットは Rune ではまだ設定できません。",
+  "hotkeys.reserved": "このショートカットはエディター専用です。別の組み合わせを選んでください。",
   "settings.nav.hotkeys": "キーボードショートカット",
   "hotkeys.filter": "ショートカットを絞り込む",
   "hotkeys.resetAll": "すべてリセット",

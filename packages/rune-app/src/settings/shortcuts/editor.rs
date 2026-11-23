@@ -1,4 +1,4 @@
-use super::{FILE_SAVE, Preferences, catalog, record};
+use super::{FILE_SAVE, Preferences, catalog, record, reserved};
 use crate::strings::t;
 use rune::{El, Key, TextEdit, col, text};
 use rune_theme_codenomad::{
@@ -9,13 +9,56 @@ use rune_theme_codenomad::{
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
 
-type Access<S> = fn(&mut S) -> Option<(&mut bool, &mut Option<&'static str>)>;
+type Access<S> = fn(&mut S) -> Option<(&mut bool, &mut Capture)>;
+
+#[derive(Default)]
+pub(in crate::settings) struct Capture {
+    target: Option<&'static str>,
+    refused: bool,
+    announced: Option<&'static str>,
+}
+
+impl Capture {
+    pub fn target(&self, recording: bool) -> Option<&'static str> {
+        self.target.filter(|_| recording)
+    }
+
+    pub fn poll(&mut self, recording: &mut bool, prefs: &Preferences, tx: &mut rune::Tx) -> bool {
+        let ended = *recording && tx.focused() != self.target;
+        if ended {
+            *recording = false;
+            self.refused = false;
+        }
+        if !prefs.shortcuts_pending()
+            && let Some(id) = self.announced.take()
+        {
+            #[cfg(target_arch = "wasm32")]
+            if !prefs.shortcuts_failed()
+                && let Some(row) = catalog::rows(prefs, "")
+                    .into_iter()
+                    .find(|row| row.id == id)
+                && !row.conflicts.is_empty()
+            {
+                let warnings: Vec<_> = row
+                    .conflicts
+                    .iter()
+                    .map(|(key, names)| conflict(key, names))
+                    .collect();
+                layout::announce_selection(tx, &warnings.join(" · "));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            let _ = id;
+        }
+        ended
+    }
+}
 
 pub(in crate::settings) fn view<S: 'static>(
     shared: &Rc<RefCell<Preferences>>,
     filter: &TextEdit,
     filter_edit: fn(&mut S) -> &mut TextEdit,
-    recording: Option<&str>,
+    recording: bool,
+    capture: &Capture,
     access: Access<S>,
 ) -> El {
     let prefs = shared.borrow();
@@ -38,14 +81,21 @@ pub(in crate::settings) fn view<S: 'static>(
                         .label(t("hotkeys.filter"))
                         .on_edit(filter_edit)
                         .build(field_kit(layout::dark()))
+                        .on_input_change(move |s: &mut S, _| {
+                            if let Some((recording, capture)) = access(s) {
+                                *recording = false;
+                                capture.refused = false;
+                            }
+                        })
                         .key("hotkey-filter"),
                 )
                 .child(layout::button(
                     t("hotkeys.resetAll"),
                     locked,
                     move |s: &mut S| {
-                        if let Some((recording, _)) = access(s) {
+                        if let Some((recording, capture)) = access(s) {
                             *recording = false;
+                            capture.refused = false;
                             reset.borrow_mut().reset_shortcuts();
                         }
                     },
@@ -59,16 +109,23 @@ pub(in crate::settings) fn view<S: 'static>(
     if rows.is_empty() {
         view = view.child(text(t("hotkeys.noResults")));
     }
-    view.children(
-        rows.into_iter()
-            .map(|row| row_view(row, shared, recording, row_locked, access)),
-    )
+    view.children(rows.into_iter().map(|row| {
+        row_view(
+            row,
+            shared,
+            capture.target(recording),
+            capture.refused,
+            row_locked,
+            access,
+        )
+    }))
 }
 
 fn row_view<S: 'static>(
     row: catalog::Row,
     shared: &Rc<RefCell<Preferences>>,
     recording: Option<&str>,
+    refused: bool,
     locked: bool,
     access: Access<S>,
 ) -> El {
@@ -90,9 +147,10 @@ fn row_view<S: 'static>(
         }),
         disabled,
         move |s: &mut S, tx| {
-            if let Some((recording, target)) = access(s) {
-                *recording = !*recording || *target != Some(edit_key);
-                *target = Some(edit_key);
+            if let Some((recording, capture)) = access(s) {
+                *recording = !*recording || capture.target != Some(edit_key);
+                capture.target = Some(edit_key);
+                capture.refused = false;
                 if *recording {
                     tx.focus(edit_key, true);
                 }
@@ -101,10 +159,14 @@ fn row_view<S: 'static>(
     )
     .key(edit_key)
     .on_key(move |s: &mut S, event, tx| {
-        let Some((recording, target)) = access(s) else {
+        let Some((recording, capture)) = access(s) else {
             return false;
         };
-        if disabled || !*recording || *target != Some(edit_key) || tx.focused() != Some(edit_key) {
+        if disabled
+            || !*recording
+            || capture.target != Some(edit_key)
+            || tx.focused() != Some(edit_key)
+        {
             return false;
         }
         if tx.key_repeat() {
@@ -112,6 +174,7 @@ fn row_view<S: 'static>(
         }
         if event.key == Key::Escape {
             *recording = false;
+            capture.refused = false;
         } else if event.key == Key::Tab
             && !event.mods.ctrl
             && !event.mods.alt
@@ -119,9 +182,16 @@ fn row_view<S: 'static>(
             && !event.mods.cmd
         {
             *recording = false;
+            capture.refused = false;
             return false;
+        } else if reserved::blocks_recording(event) {
+            capture.refused = true;
+            #[cfg(target_arch = "wasm32")]
+            layout::announce_alert(tx, t("hotkeys.reserved"));
         } else if let Some(binding) = record(event, tx) {
             *recording = false;
+            capture.refused = false;
+            capture.announced = Some(id);
             prefs.borrow_mut().stage_shortcut(id, binding);
         }
         true
@@ -129,12 +199,19 @@ fn row_view<S: 'static>(
     let mutate = |value: Value| {
         let prefs = shared.clone();
         move |s: &mut S| {
-            if let Some((recording, _)) = access(s) {
+            if let Some((recording, capture)) = access(s) {
                 *recording = false;
+                capture.refused = false;
+                capture.announced = Some(id);
                 prefs.borrow_mut().stage_shortcut(id, value.clone());
             }
         }
     };
+    let warnings: Vec<_> = row
+        .conflicts
+        .iter()
+        .map(|(key, names)| conflict(key, names))
+        .collect();
     let mut group = col()
         .full_width()
         .role("group")
@@ -169,18 +246,29 @@ fn row_view<S: 'static>(
                         .flatten(),
                 ),
         )
-        .children(row.conflicts.into_iter().map(|(binding, others)| {
-            text(
-                t("hotkeys.conflict")
-                    .replace("{shortcut}", &binding)
-                    .replace("{actions}", &others),
-            )
-            .role("status")
-            .wrap()
-        }));
+        .children(
+            warnings
+                .iter()
+                .map(|message| text(message).role("status").wrap()),
+        )
+        .children((editing && refused).then(|| text(t("hotkeys.reserved")).role("alert").wrap()));
+    if !warnings.is_empty() {
+        group = group.description(warnings.join(" · "));
+    }
     if !row.active {
         let why = t("hotkeys.unavailable");
-        group = group.help(why).description(why);
+        let description = if warnings.is_empty() {
+            why.to_owned()
+        } else {
+            format!("{why} · {}", warnings.join(" · "))
+        };
+        group = group.help(why).description(description);
     }
     chrome::card(group)
+}
+
+fn conflict(key: &str, names: &str) -> String {
+    t("hotkeys.conflict")
+        .replace("{shortcut}", key)
+        .replace("{actions}", names)
 }

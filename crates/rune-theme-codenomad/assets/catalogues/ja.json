@@ -474,6 +474,7 @@
   "hotkeys.empty": "ショートカットなし",
   "hotkeys.filter": "ショートカットを絞り込む",
   "hotkeys.noResults": "ショートカットが見つかりません。",
+  "hotkeys.reserved": "このショートカットはエディター専用です。別の組み合わせを選んでください。",
   "hotkeys.reset": "リセット",
   "hotkeys.resetAll": "すべてリセット",
   "hotkeys.saveFailed": "ショートカットを保存できませんでした。もう一度お試しください。",

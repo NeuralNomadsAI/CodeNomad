@@ -5,6 +5,7 @@ use serde_json::Value;
 pub(crate) const FILE_SAVE: &str = "file-save";
 pub(super) mod catalog;
 pub(super) mod editor;
+mod reserved;
 const fn primary(key: char) -> Chord {
     Chord::new(ChordKey::Char(key)).with(ChordMod::Primary)
 }

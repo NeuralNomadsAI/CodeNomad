@@ -13,6 +13,7 @@ export const hotkeyMessages = {
   "hotkeys.saveFailed": "Could not save keyboard shortcuts. Try again.",
   "hotkeys.noResults": "No shortcuts found.",
   "hotkeys.unavailable": "This action has no configurable shortcut in Rune yet.",
+  "hotkeys.reserved": "The editor reserves this shortcut. Choose another combination.",
   "hotkeys.action.session-new": "New session",
   "hotkeys.action.instance-prev": "Previous app tab",
   "hotkeys.action.instance-next": "Next app tab",

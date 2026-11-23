@@ -35,7 +35,7 @@ pub(super) struct Window {
     seen_revision: u64,
     section: Section,
     recording_shortcut: bool,
-    recording_target: Option<&'static str>,
+    shortcut_capture: super::shortcuts::editor::Capture,
     shortcut_filter: rune::TextEdit,
     pub(super) opencode: opencode::Status,
     logging: opencode::logging::Logging,
@@ -207,12 +207,11 @@ pub(super) fn spec() -> AppSpec<Window> {
                 s.request_close(tx);
                 return true;
             }
-            let recording_ended = s.recording_shortcut && tx.focused() != s.recording_target;
-            if recording_ended {
-                s.recording_shortcut = false;
-            }
             let mut prefs = s.shared.borrow_mut();
             let changed = prefs.poll();
+            let recording_ended = s.section == Section::Shortcuts
+                && s.shortcut_capture
+                    .poll(&mut s.recording_shortcut, &prefs, tx);
             if changed && let Some(wake) = &prefs.main_wake {
                 wake();
             }
@@ -367,6 +366,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 s.picker.set(None);
                 s.contrast_help = false;
                 s.recording_shortcut = false;
+                s.shortcut_capture = Default::default();
                 s.permissions.close();
                 s.section = match key {
                     "settings-opencode" => Section::OpenCode,
@@ -424,10 +424,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     &s.shared,
                     &s.shortcut_filter,
                     |s: &mut Window| &mut s.shortcut_filter,
-                    s.recording_target.filter(|_| s.recording_shortcut),
+                    s.recording_shortcut,
+                    &s.shortcut_capture,
                     |s| {
                         (s.section == Section::Shortcuts && !s.closing && !s.confirm_close)
-                            .then_some((&mut s.recording_shortcut, &mut s.recording_target))
+                            .then_some((&mut s.recording_shortcut, &mut s.shortcut_capture))
                     },
                 ),
             ),

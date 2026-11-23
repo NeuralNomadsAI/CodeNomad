@@ -474,6 +474,7 @@
   "hotkeys.empty": "Kısayol yok",
   "hotkeys.filter": "Kısayolları filtrele",
   "hotkeys.noResults": "Kısayol bulunamadı.",
+  "hotkeys.reserved": "Bu kısayol düzenleyiciye ayrılmıştır. Başka bir birleşim seçin.",
   "hotkeys.reset": "Sıfırla",
   "hotkeys.resetAll": "Tümünü sıfırla",
   "hotkeys.saveFailed": "Klavye kısayolları kaydedilemedi. Tekrar deneyin.",

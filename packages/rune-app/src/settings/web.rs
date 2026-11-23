@@ -59,7 +59,7 @@ pub(super) struct Panel {
     remote: remote::Remote,
     info: info::Info,
     recording_shortcut: bool,
-    recording_target: Option<&'static str>,
+    shortcut_capture: super::shortcuts::editor::Capture,
     shortcut_filter: rune::TextEdit,
     notification_permission: Rc<Cell<PermissionRequest>>,
 }
@@ -85,6 +85,14 @@ struct HostScope {
 }
 
 impl Panel {
+    pub(super) fn poll_shortcuts(&mut self, prefs: &Preferences, tx: &mut rune::Tx) -> bool {
+        self.shown
+            && self.section == Section::Shortcuts
+            && self
+                .shortcut_capture
+                .poll(&mut self.recording_shortcut, prefs, tx)
+    }
+
     pub fn shown(&self) -> bool {
         self.shown
     }
@@ -214,6 +222,7 @@ fn close(s: &mut State) {
     panel.remote.close();
     panel.info.close();
     panel.recording_shortcut = false;
+    panel.shortcut_capture = Default::default();
     if panel.notification_permission.get() != PermissionRequest::Pending {
         panel.notification_permission.set(PermissionRequest::Idle);
     }
@@ -295,6 +304,7 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             }
             panel.section = section;
             panel.recording_shortcut = false;
+            panel.shortcut_capture = Default::default();
             if section != Section::OpenCode {
                 prefs.hide_opencode();
                 panel.logging.close();
@@ -350,11 +360,12 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             &s.settings.shared,
             &panel.shortcut_filter,
             |s: &mut State| &mut s.settings.web.shortcut_filter,
-            panel.recording_target.filter(|_| panel.recording_shortcut),
+            panel.recording_shortcut,
+            &panel.shortcut_capture,
             |s| {
                 let panel = &mut s.settings.web;
                 (panel.shown && panel.section == Section::Shortcuts)
-                    .then_some((&mut panel.recording_shortcut, &mut panel.recording_target))
+                    .then_some((&mut panel.recording_shortcut, &mut panel.shortcut_capture))
             },
         )
         .on_window_focus(|s: &mut State, focused, _| {

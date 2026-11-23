@@ -474,6 +474,7 @@
   "hotkeys.empty": "Kein Tastenkürzel",
   "hotkeys.filter": "Tastenkürzel filtern",
   "hotkeys.noResults": "Keine Tastenkürzel gefunden.",
+  "hotkeys.reserved": "Dieses Tastenkürzel ist für den Editor reserviert. Wählen Sie eine andere Kombination.",
   "hotkeys.reset": "Zurücksetzen",
   "hotkeys.resetAll": "Alle zurücksetzen",
   "hotkeys.saveFailed": "Tastenkürzel konnten nicht gespeichert werden. Erneut versuchen.",
