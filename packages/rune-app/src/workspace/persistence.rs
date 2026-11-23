@@ -180,6 +180,7 @@ impl Persistence {
             Ok(None) => false,
             Err(_) => true,
         };
+        documents.block_file_draft_updates(self.file_draft_read_error);
         #[cfg(target_arch = "wasm32")]
         {
             self.attempted_file_drafts = self.saved_file_drafts;

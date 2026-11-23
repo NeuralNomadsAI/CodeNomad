@@ -469,6 +469,8 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             Ok(None) => false,
             Err(_) => true,
         };
+        s.documents
+            .block_file_draft_updates(ui.persistence.file_draft_read_error);
         if let Some(saved) = saved {
             ui.hydrate(saved);
             s.shell.restore_widths(ui.panel_widths);

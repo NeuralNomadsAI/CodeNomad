@@ -119,6 +119,7 @@ pub(super) struct Draft {
     pub version: Option<String>,
     pub recovered: bool,
     pub not_retained: bool,
+    owns_saved: bool,
 }
 impl Draft {
     pub fn dirty(&self) -> bool {
@@ -142,6 +143,7 @@ struct Stored {
     saved: Vec<Saved>,
     live: HashMap<SavedKey, Weak<Mutex<Draft>>>,
     revision: u64,
+    read_blocked: bool,
 }
 #[derive(Clone, Default)]
 pub struct Store(Arc<Mutex<Stored>>);
@@ -152,6 +154,10 @@ pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     }
 }
 impl Store {
+    pub(crate) fn block_file_draft_updates(&self, blocked: bool) {
+        lock(&self.0).read_blocked = blocked;
+    }
+
     pub(crate) fn has_tab_edits(&self, tab_key: &str) -> bool {
         self.has_matching_edits(|key| key.instance == tab_key)
     }
@@ -209,6 +215,7 @@ impl Store {
                     text: row.text.clone(),
                     version: row.version.clone(),
                     recovered: true,
+                    owns_saved: true,
                     ..Draft::default()
                 }))
             })
@@ -243,6 +250,15 @@ impl Store {
         saved.extend(store.saved.iter().cloned());
         if saved.len() > COUNT || Self::encode(&saved).len() > LIMIT {
             return false;
+        }
+        // A clean reader opened while storage was unavailable never saw imported rows.
+        let imported: Vec<_> = saved
+            .iter()
+            .filter(|row| !store.saved.iter().any(|local| local.key == row.key))
+            .map(|row| row.key.clone())
+            .collect();
+        for key in imported {
+            store.live.remove(&key);
         }
         store.saved = saved;
         true
@@ -285,13 +301,22 @@ impl Store {
         let mut draft = lock(shared);
         let Some(saved_key) = saved_key else { return };
         let mut store = lock(&self.0);
+        if store.read_blocked {
+            draft.not_retained = draft.dirty();
+            return;
+        }
         let previous = store.saved.iter().position(|row| &row.key == saved_key);
         if !draft.retained() {
-            if let Some(previous) = previous {
+            if let Some(previous) = previous.filter(|_| draft.owns_saved) {
                 store.saved.remove(previous);
                 store.revision += 1;
             }
+            draft.owns_saved = false;
             draft.not_retained = false;
+            return;
+        }
+        if previous.is_some() && !draft.owns_saved {
+            draft.not_retained = true;
             return;
         }
         if draft.text.len() > LIMIT || !saved_key.valid() {
@@ -317,6 +342,7 @@ impl Store {
         if !draft.not_retained {
             store.saved = next;
             store.revision += 1;
+            draft.owns_saved = true;
         }
     }
     pub(super) fn next(&self) -> u64 {
@@ -340,6 +366,52 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_keeps_unseen_saved_text_when_the_open_reader_is_clean_or_edited() {
+        let key = Key {
+            server: "transport".into(),
+            instance: "tab".into(),
+            native_project: None,
+            directory: "/project".into(),
+            path: "file".into(),
+        };
+        let scope = SavedKey {
+            server: "installation".into(),
+            project: "/project".into(),
+            native_project: None,
+            directory: key.directory.clone(),
+            path: key.path.clone(),
+        };
+        let bytes = Store::encode(&[Saved {
+            key: scope.clone(),
+            version: None,
+            text: "unseen saved draft".into(),
+        }]);
+        for text in ["disk", "new live edit"] {
+            let store = Store::default();
+            store.block_file_draft_updates(true);
+            let opened = store.open_saved(&key, Some(&scope));
+            {
+                let mut draft = lock(&opened);
+                draft.original = Some(Snapshot::loaded("disk"));
+                draft.text = text.into();
+            }
+            store.sync_saved(&key, Some(&scope), &opened);
+            assert!(store.file_draft_snapshot(0).is_none());
+
+            assert!(store.hydrate_file_drafts(&bytes));
+            store.block_file_draft_updates(false);
+            store.sync_saved(&key, Some(&scope), &opened);
+            assert!(store.file_draft_snapshot(0).is_none());
+            assert_eq!(lock(&opened).not_retained, text != "disk");
+            assert_eq!(lock(&opened).text, text);
+            let mut other = key.clone();
+            other.instance = "reopened-tab".into();
+            let reopened = store.open_saved(&other, Some(&scope));
+            assert_eq!(lock(&reopened).text, "unseen saved draft");
+        }
+    }
 
     #[test]
     fn saved_drafts_are_bounded_and_isolated_across_a_new_store() {
