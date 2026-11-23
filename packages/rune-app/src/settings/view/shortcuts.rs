@@ -1,17 +1,31 @@
 use super::{Preferences, Window, layout, t, text};
-use crate::settings::shortcuts::{FILE_SAVE, binding_label, conflict_label, record};
+use crate::settings::shortcuts::{ACTIONS, FILE_SAVE, conflict_label, label_for, record};
 use rune::{El, Key};
 use serde_json::{Value, json};
 
-pub(super) const EDIT: &str = "settings-file-save-edit";
-
 pub(super) fn view(window: &Window, prefs: &Preferences) -> El {
-    let overrides = prefs.shortcut(FILE_SAVE);
-    let binding = binding_label(overrides);
+    rune::col().children(ACTIONS.map(|(id, default, label)| row(window, prefs, id, default, label)))
+}
+
+fn row(
+    window: &Window,
+    prefs: &Preferences,
+    id: &'static str,
+    default: char,
+    label: &'static str,
+) -> El {
+    let edit_key = match id {
+        FILE_SAVE => "settings-file-save-edit",
+        "new-instance" => "settings-new-instance-edit",
+        _ => "settings-close-instance-edit",
+    };
+    let overrides = prefs.shortcut(id);
+    let binding = label_for(overrides, default);
     let disabled = !prefs.can_retry()
         || prefs.saved(super::Owner::Config).is_none()
-        || prefs.file_save_pending();
-    let recording = window.recording_shortcut && !disabled;
+        || prefs.shortcut_pending(id);
+    let recording =
+        window.recording_shortcut && window.recording_target == Some(edit_key) && !disabled;
     let edit = layout::button(
         t(if recording {
             "hotkeys.capture"
@@ -19,11 +33,17 @@ pub(super) fn view(window: &Window, prefs: &Preferences) -> El {
             "hotkeys.edit"
         }),
         disabled,
-        |s: &mut Window| s.recording_shortcut = !s.recording_shortcut,
+        move |s: &mut Window| {
+            s.recording_shortcut = !s.recording_shortcut || s.recording_target != Some(edit_key);
+            s.recording_target = Some(edit_key);
+        },
     )
-    .key(EDIT)
+    .key(edit_key)
     .on_key(move |s: &mut Window, event, tx| {
-        if !recording || tx.focused() != Some(EDIT) {
+        if !s.recording_shortcut
+            || s.recording_target != Some(edit_key)
+            || tx.focused() != Some(edit_key)
+        {
             return false;
         }
         if tx.key_repeat() {
@@ -36,12 +56,12 @@ pub(super) fn view(window: &Window, prefs: &Preferences) -> El {
             return false;
         } else if let Some(binding) = record(event, tx) {
             s.recording_shortcut = false;
-            s.shared.borrow_mut().stage_file_save(binding);
+            s.shared.borrow_mut().stage_shortcut(id, binding);
         }
         true
     });
     let controls = layout::action_row()
-        .child(text(t("hotkeys.action.file-save")))
+        .child(text(t(label)))
         .child(text(if binding.is_empty() {
             t("hotkeys.empty")
         } else {
@@ -51,20 +71,20 @@ pub(super) fn view(window: &Window, prefs: &Preferences) -> El {
         .child(layout::button(
             t("hotkeys.clear"),
             disabled || binding.is_empty(),
-            |s: &mut Window| {
+            move |s: &mut Window| {
                 s.recording_shortcut = false;
-                s.shared.borrow_mut().stage_file_save(json!([]));
+                s.shared.borrow_mut().stage_shortcut(id, json!([]));
             },
         ))
         .child(layout::button(
             t("hotkeys.reset"),
             disabled || overrides.is_none(),
-            |s: &mut Window| {
+            move |s: &mut Window| {
                 s.recording_shortcut = false;
-                s.shared.borrow_mut().stage_file_save(Value::Null);
+                s.shared.borrow_mut().stage_shortcut(id, Value::Null);
             },
         ));
-    let conflicts = conflict_label(prefs);
+    let conflicts = conflict_label(prefs, id, default);
     if conflicts.is_empty() {
         controls
     } else {

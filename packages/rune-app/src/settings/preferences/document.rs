@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) enum Choice {
     Locale,
     Contrast,
-    FileSave,
+    Shortcut(&'static str),
     NewConversationPermissions,
     LogLevel,
     NotificationRoute(Category, Destination),
@@ -19,10 +19,9 @@ pub(super) enum Choice {
 
 impl Choice {
     fn put(self, patch: &mut Value, value: &ChoiceValue) {
-        if self == Self::FileSave {
+        if let Self::Shortcut(id) = self {
             if let ChoiceValue::Shortcut(binding) = value {
-                patch["settings"]["hotkeyOverrides"][super::super::shortcuts::FILE_SAVE] =
-                    binding.clone();
+                patch["settings"]["hotkeyOverrides"][id] = binding.clone();
             }
             return;
         }
@@ -44,7 +43,7 @@ impl Choice {
                 patch["settings"]["newConversationPermissions"] = json!(value)
             }
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
-            Self::FileSave => (),
+            Self::Shortcut(_) => (),
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 patch["appearancePreferences"][mode] = json!({
@@ -55,9 +54,9 @@ impl Choice {
     }
 
     fn confirmed(self, value: &ChoiceValue, snapshot: &Value) -> bool {
-        if self == Self::FileSave {
+        if let Self::Shortcut(id) = self {
             return matches!(value, ChoiceValue::Shortcut(binding)
-                if &snapshot["settings"]["hotkeyOverrides"][super::super::shortcuts::FILE_SAVE] == binding);
+                if &snapshot["settings"]["hotkeyOverrides"][id] == binding);
         }
         let ChoiceValue::Text(value) = *value else {
             return false;
@@ -78,7 +77,7 @@ impl Choice {
                 snapshot["settings"]["newConversationPermissions"] == value
             }
             Self::Mode => appearance["mode"] == value,
-            Self::FileSave => false,
+            Self::Shortcut(_) => false,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 let slot = &appearance[mode];
@@ -204,8 +203,8 @@ impl Document {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn stage_file_save(&mut self, binding: Value) {
-        self.stage_value(Choice::FileSave, ChoiceValue::Shortcut(binding));
+    pub(super) fn stage_shortcut(&mut self, id: &'static str, binding: Value) {
+        self.stage_value(Choice::Shortcut(id), ChoiceValue::Shortcut(binding));
     }
 
     fn stage_value(&mut self, choice: Choice, value: ChoiceValue) {
@@ -216,6 +215,7 @@ impl Document {
                 | Choice::LogLevel
                 | Choice::NotificationRoute(..)
                 | Choice::NotificationsFocused
+                | Choice::Shortcut(_)
         ) {
             self.write.failed.remove(&choice);
         }
@@ -231,9 +231,9 @@ impl Document {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn file_save_pending(&self) -> bool {
-        self.write.requested.contains_key(&Choice::FileSave)
-            && !self.choice_failed(Choice::FileSave)
+    pub(super) fn shortcut_pending(&self, id: &'static str) -> bool {
+        self.write.requested.contains_key(&Choice::Shortcut(id))
+            && !self.choice_failed(Choice::Shortcut(id))
     }
 
     pub(super) fn choice_failed(&self, choice: Choice) -> bool {

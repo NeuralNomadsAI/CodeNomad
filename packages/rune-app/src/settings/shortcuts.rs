@@ -3,6 +3,12 @@ use rune::{Chord, ChordKey, ChordMod, Key, KeyEvent, Keybind, PhysicalKeyCode, T
 use serde_json::Value;
 
 pub(crate) const FILE_SAVE: &str = "file-save";
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) const ACTIONS: [(&str, char, &str); 3] = [
+    (FILE_SAVE, 's', "hotkeys.action.file-save"),
+    ("new-instance", 'n', "hotkeys.action.new-instance"),
+    ("close-instance", 'w', "hotkeys.action.close-instance"),
+];
 const fn primary(key: char) -> Chord {
     Chord::new(ChordKey::Char(key)).with(ChordMod::Primary)
 }
@@ -62,8 +68,12 @@ pub(crate) fn save_label(s: &State) -> String {
 }
 
 pub(super) fn binding_label(overrides: Option<&[Value]>) -> String {
+    label_for(overrides, 's')
+}
+
+pub(super) fn label_for(overrides: Option<&[Value]>, default: char) -> String {
     let platform = rune::KeyPlatform::current();
-    bindings(overrides, 's')
+    bindings(overrides, default)
         .iter()
         .map(|chord| Keybind::from(*chord).label_on(platform))
         .collect::<Vec<_>>()
@@ -71,23 +81,25 @@ pub(super) fn binding_label(overrides: Option<&[Value]>) -> String {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn conflict_label(preferences: &super::Preferences) -> Vec<&'static str> {
+pub(super) fn conflict_label(
+    preferences: &super::Preferences,
+    action: &str,
+    default: char,
+) -> Vec<&'static str> {
     let platform = rune::KeyPlatform::current();
-    let save = bindings(preferences.shortcut(FILE_SAVE), 's');
-    [
-        ("new-instance", 'n', "hotkeys.action.new-instance"),
-        ("close-instance", 'w', "hotkeys.action.close-instance"),
-    ]
-    .into_iter()
-    .filter_map(|(id, default, label)| {
-        bindings_conflict(
-            &save,
-            &bindings(preferences.shortcut(id), default),
-            platform,
-        )
-        .then_some(label)
-    })
-    .collect()
+    let current = bindings(preferences.shortcut(action), default);
+    ACTIONS
+        .into_iter()
+        .filter_map(|(id, default, label)| {
+            (id != action
+                && bindings_conflict(
+                    &current,
+                    &bindings(preferences.shortcut(id), default),
+                    platform,
+                ))
+            .then_some(label)
+        })
+        .collect()
 }
 
 #[cfg(not(target_arch = "wasm32"))]

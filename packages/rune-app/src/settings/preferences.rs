@@ -37,17 +37,27 @@ impl Preferences {
             .map(Vec::as_slice)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn stage_file_save(&mut self, binding: Value) {
+        self.stage_shortcut(super::shortcuts::FILE_SAVE, binding);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn stage_shortcut(&mut self, id: &'static str, binding: Value) {
         if self.can_retry() && self.saved(Owner::Config).is_some() {
-            self.config.stage_file_save(binding);
+            self.config.stage_shortcut(id, binding);
             self.revision += 1;
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn file_save_pending(&self) -> bool {
-        self.config.file_save_pending()
+        self.shortcut_pending(super::shortcuts::FILE_SAVE)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn shortcut_pending(&self, id: &'static str) -> bool {
+        self.config.shortcut_pending(id)
     }
 
     #[cfg(test)]

@@ -36,6 +36,7 @@ pub(super) struct Window {
     seen_revision: u64,
     section: Section,
     recording_shortcut: bool,
+    recording_target: Option<&'static str>,
     pub(super) opencode: opencode::Status,
     logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
@@ -203,7 +204,7 @@ pub(super) fn spec() -> AppSpec<Window> {
                 s.request_close(tx);
                 return true;
             }
-            let recording_ended = s.recording_shortcut && tx.focused() != Some(shortcuts::EDIT);
+            let recording_ended = s.recording_shortcut && tx.focused() != s.recording_target;
             if recording_ended {
                 s.recording_shortcut = false;
             }

@@ -7,6 +7,7 @@ mod notifications;
 mod opencode;
 mod providers;
 mod shortcuts;
+mod tab_shortcuts;
 use codenomad_client::bounded;
 use std::time::Duration;
 use tokio::{
