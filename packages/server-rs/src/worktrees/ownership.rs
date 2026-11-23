@@ -27,18 +27,20 @@ pub(crate) struct DirectoryProof {
 impl DirectoryProof {
     pub(crate) fn live(&self, physical: &Path) -> bool {
         let no_nested_git = |path: &Path, root: &Path| {
+            let absent = |path: &Path| {
+                std::fs::symlink_metadata(path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            };
             path.starts_with(root)
                 && path.ancestors().take_while(|ancestor| *ancestor != root).all(|ancestor| {
                     let marker = ancestor.join(".git");
                     let marker_clear = match std::fs::symlink_metadata(&marker) {
                         Err(error) => error.kind() == std::io::ErrorKind::NotFound,
-                        Ok(meta) if meta.is_dir() => {
-                            std::fs::read_dir(marker).is_ok_and(|mut dir| dir.next().is_none())
-                        }
+                        // Git skips an incomplete .git directory without a HEAD.
+                        Ok(meta) if meta.is_dir() => absent(&marker.join("HEAD")),
                         _ => false,
                     };
                     marker_clear
-                        && !(ancestor.join("HEAD").exists()
+                        && !(!absent(&ancestor.join("HEAD"))
                             && (ancestor.join("commondir").exists()
                                 || ancestor.join("objects").is_dir() && ancestor.join("refs").is_dir()))
                 })
@@ -64,7 +66,7 @@ pub(crate) async fn capture_directory_with_refresh(
     physical: &Path,
     refresh_on_miss: bool,
 ) -> Option<DirectoryProof> {
-    if !physical.starts_with(&app.scope) {
+    if !physical.starts_with(&app.scope) || !physical.is_dir() {
         return None;
     }
     let external = !physical.starts_with(&workspace.path);

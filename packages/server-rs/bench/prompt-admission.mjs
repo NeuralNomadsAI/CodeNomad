@@ -47,14 +47,17 @@ async function upstream(profile) {
   await git('-C',directory,'worktree','add','--quiet','--detach',tree,'HEAD')
   await writeFile(path.join(tree,'tree.txt'),'synthetic tree\n')
   const treeNested=path.join(tree,'sub'), independent=path.join(tree,'independent')
+  const localIndependent=path.join(directory,'independent')
   await mkdir(treeNested)
   await mkdir(path.join(treeNested,'.git'))
+  await writeFile(path.join(treeNested,'.git','README'),'Not a Git directory.\n')
   await git('init','--quiet',independent)
+  await git('init','--quiet',localIndependent)
   const calls = [], sessions = new Map(), password = randomUUID(),state={carrier:'absent'}
   for (const [id,dir,metadata] of [['ses_owned',directory,{}],['ses_nested',path.join(directory,'sub'),{}],['ses_tree',tree,{}],['ses_foreign',foreign,{}],['ses_cn_schedule_reserved',directory,{}],['ses_carrier',directory,{'codenomad.schedule-carrier':true}]])
     sessions.set(id,{id,title:'Synthetic',projectID:'project_fixture',location:{directory:dir},metadata,time:{created:1,updated:1}})
   sessions.set('ses_plain',{id:'ses_plain',title:'Synthetic without Git',projectID:'global',location:{directory:plainNested},time:{created:1,updated:1}})
-  for(const [id,dir] of [['ses_tree_nested',treeNested],['ses_independent',independent]])
+  for(const [id,dir] of [['ses_tree_nested',treeNested],['ses_independent',independent],['ses_local_independent',localIndependent]])
     sessions.set(id,{id,title:'Synthetic checkout',projectID:'project_fixture',location:{directory:dir},time:{created:1,updated:1}})
   const server = createServer(async(req,res)=>{
     try {
@@ -211,6 +214,7 @@ export async function run(commandOnly=false){
         ['worktree-session','ses_tree',200],
         ['session-subfolder','ses_nested',200],
         ['worktree-subfolder','ses_tree_nested',200],
+        ['independent-inside-opened-folder','ses_local_independent',200],
         ['nested-independent-repo','ses_independent',403],
       ]) {
         const before=native.calls.length,response=await host.call(`${host.base}/session/${session}/prompt`,post({text:'owned folder',id:'inbox_tree'}))
