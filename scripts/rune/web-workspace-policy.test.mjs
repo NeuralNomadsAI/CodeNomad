@@ -24,6 +24,15 @@ test('UI preferences are read-only and require the private origin and cookie',as
     assert(!await p.request(req(origin,'private=fixture'),{allowApi:false}))
   }
 })
+test('only the timeline scenario may save the exact reasoning filter',()=>{
+  const p=workspacePolicy({origin,project,markerFilters:true})
+  const route='/api/storage/config/ui'
+  const settings={showThinkingBlocks:false,toolCallExpansionDefaults:{preset:'custom',thinking:'collapsed',tools:{bash:'hidden'}}}
+  assert(p.allows('PATCH',route,{settings}))
+  assert(!p.allows('PATCH',route,{settings:{...settings,locale:'en'}}))
+  assert(!p.allows('PATCH',route,{settings:{...settings,showThinkingBlocks:true}}))
+  assert(!workspacePolicy({origin,project}).allows('PATCH',route,{settings}))
+})
 test('only the exact private project and bounded creation claims enter the owned policy',()=>{
   const p=workspacePolicy({origin,project})
   for(const input of [{path:project},creation(''),creation(' '),creation('x'.repeat(129)),{...creation('valid'),path:project+'/other'},{...creation('valid'),location:{directory:'/foreign'}}])assert(!p.allows('POST','/api/workspaces',input))

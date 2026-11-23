@@ -96,6 +96,10 @@ export async function markerFilters(page, messages, url, project, {touch, pages}
     await update(true)
     if(touch){
       await page.setViewportSize(before)
+      await page.waitForFunction(({width,height})=>{
+        const canvas=document.querySelector('canvas')?.getBoundingClientRect()
+        return canvas&&Math.abs(canvas.width-width)<=1&&Math.abs(canvas.height-height)<=1
+      },before)
       for(const toggle of closed)await press(toggle)
     }
   }

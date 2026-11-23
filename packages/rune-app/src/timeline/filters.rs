@@ -188,12 +188,18 @@ mod tests {
             Marker::from(marker(Assistant, 0)),
             Marker::from(marker(Assistant, 1)),
         ];
-        t.jump.active = Some(Marker::from(marker(Tool, 0)).id);
+        let tool = Marker::from(marker(Tool, 0));
+        t.jump.requested_active = Some(tool.id.clone());
         reselect(&mut s);
         assert_eq!(
             owner(&mut s).jump.active.as_deref(),
             Some("step:Assistant:0:false")
         );
+        let t = owner(&mut s);
+        t.markers.push(tool);
+        reselect(&mut s);
+        let jump = &owner(&mut s).jump;
+        assert_eq!(jump.active, jump.requested_active);
     }
 
     #[test]
@@ -239,20 +245,19 @@ mod tests {
 
 pub(super) fn reselect(s: &mut State) {
     let t = owner(s);
-    if let Some(active) = t.jump.active.take() {
-        t.jump.active = visible_id(t, active);
-        if t.jump.active.is_none() {
-            t.jump.unlock();
-        }
-    }
+    t.jump.active = t
+        .jump
+        .requested_active
+        .as_deref()
+        .and_then(|id| visible_id(t, id));
 }
 
-pub(super) fn visible_id(t: &super::Timeline, active: String) -> Option<String> {
-    if let Some(first) = t.folded.get(&active) {
+pub(super) fn visible_id(t: &super::Timeline, active: &str) -> Option<String> {
+    if let Some(first) = t.folded.get(active) {
         return Some(first.clone());
     }
     if t.markers.iter().any(|marker| marker.id == active) {
-        return Some(active);
+        return Some(active.to_owned());
     }
     let (message, _) = active.split_once(':')?;
     t.markers

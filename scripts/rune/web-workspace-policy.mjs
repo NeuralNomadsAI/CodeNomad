@@ -27,7 +27,21 @@ export async function bundleAssetPaths(directory){
   }
   return paths
 }
-export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,missions=false}){
+function hidesFixtureThinking(body){
+  const settings=body?.settings, defaults=settings?.toolCallExpansionDefaults
+  const expanded=mode=>mode==='expanded'||mode==='collapsed'
+  const visibility=mode=>expanded(mode)||mode==='hidden'
+  return settings?.showThinkingBlocks===false&&Object.keys(body).length===1&&
+    Object.keys(settings).every(key=>['showThinkingBlocks','toolCallExpansionDefaults',
+      'toolGroupVisibility','usageMetricsExpansion'].includes(key))&&
+    (!Object.hasOwn(settings,'toolGroupVisibility')||visibility(settings.toolGroupVisibility))&&
+    (!Object.hasOwn(settings,'usageMetricsExpansion')||expanded(settings.usageMetricsExpansion))&&
+    defaults?.preset==='custom'&&expanded(defaults.thinking)&&Object.keys(defaults).length===3&&
+    defaults.tools&&Object.entries(defaults.tools).every(([key,mode])=>
+      /^(bash|read|write|edit|patch|webfetch|websearch|glob|grep|task|execute|skill|question|invalid|other)$/.test(key)&&visibility(mode))
+}
+
+export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,missions=false,markerFilters=false}){
   const workspaces=new Set(),claims=new Map(),owners=new Map()
   const claim=body=>typeof body?.requestId==='string'&&body.requestId.length>0&&body.requestId.length<=128&&body.requestId.trim()===body.requestId
   const creation=body=>body?.path===project&&claim(body)&&Object.keys(body).every(key=>['path','requestId'].includes(key))
@@ -44,6 +58,8 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if((method==='GET'||method==='HEAD')&&assets.has(p))return true
       if(method==='GET'&&['/api/workspaces','/api/meta','/api/events','/api/auth/status'].includes(p))return true
       if(method==='GET'&&(p==='/api/storage/config/ui'||p==='/api/storage/state/ui'))return true
+      if(markerFilters&&method==='PATCH'&&p==='/api/storage/config/ui')
+        return !!hidesFixtureThinking(body)
       if(method==='POST'&&p==='/api/client-connections/pong')return true
       if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
       if(method==='POST'&&p==='/api/workspaces/creation/cancel')return claim(body)&&claims.has(body.requestId)

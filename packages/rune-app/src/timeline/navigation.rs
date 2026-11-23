@@ -17,16 +17,11 @@ pub(super) struct Navigation {
     flight: Option<(Sender<()>, Marker)>,
     align: Option<(String, String)>,
     pub(super) retry: Option<Marker>,
+    pub(super) requested_active: Option<String>,
     pub(super) active: Option<String>,
     locked: bool,
     last: super::view::Scroll,
     browse: bool,
-}
-
-impl Navigation {
-    pub(super) fn unlock(&mut self) {
-        self.locked = false;
-    }
 }
 
 pub(crate) fn cancel_jump(s: &mut State) {
@@ -144,8 +139,9 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
         }
     }
     let j = &mut owner(s).jump;
-    j.active = Some(target.id.clone());
+    j.requested_active = (!target.id.is_empty()).then(|| target.id.clone());
     j.flight = Some((cancel, target));
+    super::filters::reselect(s);
 }
 
 fn locate(s: &State, row: &crate::history::Row, m: &Marker) -> Option<(String, usize)> {
@@ -183,8 +179,9 @@ fn settle(s: &mut State, m: &Marker, (key, steps): (String, usize)) {
     let t = owner(s);
     t.changed = true;
     t.jump.align = Some((m.message.clone(), key));
-    t.jump.active = (!m.id.is_empty()).then(|| m.id.clone());
+    t.jump.requested_active = (!m.id.is_empty()).then(|| m.id.clone());
     t.jump.locked = true;
+    super::filters::reselect(s);
 }
 
 pub(crate) fn admit(s: &mut State, serial: u64, page: Page, admit: Admission) {
@@ -299,9 +296,11 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }
     let bounds = s.tool_diff_preferences.history_bounds.get();
     let t = owner(s);
+    t.jump.requested_active = t.reading_line.first(bounds);
     let marker = t
-        .reading_line
-        .first(bounds)
+        .jump
+        .requested_active
+        .as_deref()
         .and_then(|id| super::filters::visible_id(t, id));
     if t.jump.active == marker {
         return moved || aligned;
