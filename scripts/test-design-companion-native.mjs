@@ -53,7 +53,6 @@ await writeFile(path.join(project, "README.md"), "Design companion fixture\n")
 const childEnv = await fixtureEnvironment(root)
 clearFixtureGitEnvironment(process.env)
 const version = spawnSync(cli, ["--version"], { env: childEnv, encoding: "utf8" }).stdout.trim()
-const imageTool = /\b2\.3\./.test(version) ? "experimental_image_generate" : "generate_image"
 const git = args => spawnSync("git", args, { cwd: project, env: childEnv, encoding: "utf8" })
 assert.equal(git(["init", "-q", project]).status, 0)
 const samePath = value => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value)
@@ -83,6 +82,7 @@ const sha = bytes => createHash("sha256").update(bytes).digest("hex")
 // Markdown image of it.
 const PAD = 34
 const state = { readBack: true, imageCalls: [], chat: 0, providerError: undefined }
+let imageTool
 const text = content => typeof content === "string" ? content : Array.isArray(content) ? content.map(part => part.text ?? "").join("\n") : ""
 const carriesImage = message => message.role === "user" && Array.isArray(message.content) && message.content.some(part => part.type === "image_url")
 const sse = (res, delta, finish) => {
@@ -108,7 +108,16 @@ function respond(res, body) {
   const instruction = text(messages[trigger]?.content)
   const calls = messages.flatMap(message => message.tool_calls ?? []).map(entry => ({ name: entry.function?.name, args: JSON.parse(entry.function?.arguments || "{}") }))
   const run = /RUN (\[.*\])/s.exec(instruction)
-  if (run) return steps ? say(res, "Started.") : call(res, JSON.parse(run[1]))
+  if (run) {
+    if (steps) return say(res, "Started.")
+    return call(res, JSON.parse(run[1]).map(entry => {
+      if (entry.tool !== "generate_image") return entry
+      const offered = body.tools.map(tool => tool.function?.name)
+      imageTool = offered.find(name => name === "generate_image" || name === "experimental_image_generate")
+      assert(imageTool, "Design offers a native image tool")
+      return { ...entry, tool: imageTool }
+    }))
+  }
   // Reads name the absolute file, as the notice does; answers cite it as relative Markdown.
   const markdown = file => `![${path.posix.basename(relative(file))}](${relative(file)})`
   const show = /Read the generated image `([^`]+)`/.exec(instruction)
@@ -237,7 +246,7 @@ try {
   }
   const design = path.join(project, ".codenomad", "design", "icon")
   const file = name => path.join(design, name)
-  const gen = (prompt, name, extra = {}) => ({ tool: imageTool, args: { prompt, path: `.codenomad/design/icon/${name}`, ...extra } })
+  const gen = (prompt, name, extra = {}) => ({ tool: "generate_image", args: { prompt, path: `.codenomad/design/icon/${name}`, ...extra } })
 
   // AC-16, series 1: two generations, both read back in one answer once both are saved.
   await turn(`RUN ${JSON.stringify([gen("Flat blue app icon", "icon-minimal-a.png"), gen("Bold orange app icon", "icon-bold-a.png")])}`,
