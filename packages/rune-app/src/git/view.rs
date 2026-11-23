@@ -86,14 +86,6 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
             panel = panel.child(theme::note(error, "alert"));
         }
     }
-    if ui.repository() == Repository::NoGit
-        && ui.mode != Mode::Workspace
-        && mode_lanes
-            .iter()
-            .all(|lane| ui.requests.slot(*lane).error.is_none())
-    {
-        panel = panel.child(theme::note(t("filesPanel.gitInit.gitRequired"), "alert"));
-    }
     if ui.mode != Mode::Workspace
         && let Some((ok, message)) = &ui.mutation_message
     {
