@@ -101,9 +101,20 @@ pub(crate) fn poll(s: &mut State) -> bool {
     if preferences_changed && let Some(wake) = &shared.window_wake {
         wake();
     }
+    let locale = shared.locale().unwrap_or_else(strings::locale);
+    #[cfg(target_arch = "wasm32")]
+    if s.settings
+        .last_display
+        .is_none_or(|(last, _)| last[0] != locale)
+        && let Some(root) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.document_element())
+    {
+        let _ = root.set_attribute("lang", locale);
+    }
     let display = Some((
         [
-            shared.locale().unwrap_or_else(strings::locale),
+            locale,
             shared.mode(),
             shared.palette(false).map_or("", |p| p.id),
             shared.palette(true).map_or("", |p| p.id),
