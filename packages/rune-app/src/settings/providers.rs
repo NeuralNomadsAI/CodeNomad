@@ -98,6 +98,10 @@ impl Target {
         self.online
     }
 
+    pub(super) fn location(&self) -> (&str, Option<&str>) {
+        (&self.workspace, self.session.as_deref())
+    }
+
     pub fn revision(&self) -> u64 {
         self.authority.wrapping_add(self.revision)
     }

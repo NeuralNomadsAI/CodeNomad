@@ -1,5 +1,7 @@
-use super::view::Window;
-use crate::{backend::Backend, platform, strings::t};
+use super::Preferences;
+pub(super) mod install;
+pub(super) mod logging;
+use crate::{platform, strings::t};
 use codenomad_client::{
     Receiver, Sender, bounded,
     settings::{OpenCodeStatus, opencode_status},
@@ -18,7 +20,8 @@ pub(super) struct Status {
     authority: Option<String>,
     trailing: Option<bool>,
     failed: bool,
-    pub details_open: bool,
+    details_open: bool,
+    announced_update: Option<String>,
 }
 
 impl Status {
@@ -34,34 +37,49 @@ impl Status {
             check_failed: true,
             state: "connected",
             restart: Some("settings.opencode.setup.restartAvailable"),
+            can_upgrade: false,
+            needs_shared_installation: false,
+            foreign_installation: false,
+            binary_path: None,
         });
     }
 
     pub fn read(
         &mut self,
-        backend: Option<&Backend>,
+        prefs: &mut Preferences,
         wake: Option<&rune::Waker>,
         refresh: Option<bool>,
-    ) {
+    ) -> bool {
+        let backend = prefs.backend.as_ref().filter(|_| prefs.can_retry());
         let authority = backend.map(|backend| backend.client_id.as_str());
-        if authority != self.authority.as_deref() {
+        let mut changed = authority != self.authority.as_deref();
+        if changed {
             *self = Self {
                 authority: authority.map(str::to_owned),
                 ..Self::default()
             };
         }
+        if prefs.opencode_install.busy() {
+            return changed;
+        }
+        if let Some(install::Diagnostic(status)) = prefs.opencode_install.take_status(backend) {
+            self.flight = None;
+            self.trailing = None;
+            self.set_status(status);
+            changed = true;
+        }
         let (Some(backend), Some(wake)) = (backend.cloned(), wake.cloned()) else {
-            return;
+            return changed;
         };
         if let Some(recheck) = refresh {
             self.trailing = Some(self.trailing == Some(true) || recheck);
         }
         if self.flight.is_some() {
-            return;
+            return changed;
         }
         let refresh = self.trailing.take();
         if refresh.is_none() && (self.value.is_some() || self.failed) {
-            return;
+            return changed;
         }
         let recheck = refresh == Some(true);
         let (sender, receiver) = bounded(1);
@@ -75,6 +93,7 @@ impl Status {
                 wake();
             }
         });
+        true
     }
 
     pub fn poll(&mut self) -> bool {
@@ -86,17 +105,69 @@ impl Status {
             return false;
         };
         self.flight = None;
+        self.set_status(reply);
+        true
+    }
+
+    fn set_status(&mut self, reply: Option<OpenCodeStatus>) {
         self.failed = reply.is_none();
         if let Some(reply) = reply {
             self.value = Some(reply);
         }
-        true
+    }
+
+    pub fn step(&mut self, prefs: &mut Preferences, wake: &rune::Waker) -> bool {
+        let allowed = prefs.can_retry();
+        let admitted = prefs.opencode_install.admit(
+            prefs.backend.as_ref().filter(|_| allowed),
+            prefs.main_wake.clone(),
+            wake.clone(),
+        );
+        let changed = self.poll();
+        let changed = changed | admitted | self.read(prefs, Some(wake), None);
+        if self.authority.as_deref()
+            == prefs
+                .backend
+                .as_ref()
+                .map(|backend| backend.client_id.as_str())
+            && !self.failed
+            && let Some(version) = self
+                .value
+                .as_ref()
+                .filter(|status| status.update_available)
+                .and_then(|status| status.latest.as_ref())
+            && self.announced_update.as_ref() != Some(version)
+        {
+            self.announced_update = Some(version.clone());
+            prefs.notification_update = Some(version.clone());
+            if let Some(wake) = &prefs.main_wake {
+                wake();
+            }
+        }
+        changed
+    }
+
+    pub fn start(&self, prefs: &mut Preferences, wake: Option<rune::Waker>) {
+        if let (Some(snapshot), Some(backend), Some(wake)) = (&self.value, &prefs.backend, wake)
+            && !self.failed
+            && self.flight.is_none()
+            && prefs.can_retry()
+            && self.authority.as_deref() == Some(&backend.client_id)
+        {
+            prefs.opencode_install.start(backend, snapshot, wake);
+        }
     }
 }
 
-pub(super) fn view(s: &Window) -> El {
-    let status = &s.opencode;
-    let pending = status.flight.is_some();
+pub(super) fn view<S: 'static>(
+    status: &Status,
+    prefs: &Preferences,
+    start: impl Fn(&mut S) + 'static,
+    check: impl Fn(&mut S) + 'static,
+    status_mut: impl Fn(&mut S) -> &mut Status + 'static,
+) -> El {
+    let install = &prefs.opencode_install;
+    let pending = status.flight.is_some() || install.busy();
     let mut card = col().full_width().separate(Space::Sm).child(
         text(t("settings.opencode.update.title"))
             .text_role(TextRole::Title)
@@ -109,6 +180,9 @@ pub(super) fn view(s: &Window) -> El {
                 .wrap()
                 .role("alert"),
         );
+    }
+    if let Some(error) = install.error(prefs.backend.as_ref()) {
+        card = card.child(text(t(error)).wrap().role("alert"));
     }
     if let Some(snapshot) = &status.value {
         let label = if status.failed {
@@ -161,14 +235,37 @@ pub(super) fn view(s: &Window) -> El {
                 );
             }
         }
+        if !status.failed && install::Install::offered(snapshot) {
+            let label = if snapshot.foreign_installation {
+                t("settings.opencode.setup.foreign.install").into()
+            } else if snapshot.needs_shared_installation {
+                t("settings.opencode.setup.sharedInstall").into()
+            } else if snapshot.state == "missing" {
+                t("settings.opencode.setup.install").into()
+            } else {
+                rune_theme_codenomad::catalogue::format(
+                    crate::strings::locale(),
+                    "settings.opencode.update.action",
+                    &[("version", snapshot.latest.as_deref().unwrap_or(""))],
+                )
+            };
+            card = card.child(
+                layout::action_row().child(
+                    chrome::primary_action(&label, pending || !prefs.can_retry(), start)
+                        .key("opencode-install"),
+                ),
+            );
+        }
     }
-    if pending {
+    if let Some(progress) = install.label() {
+        card = card.child(text(t(progress)).role("status"));
+    } else if pending {
         card = card.child(text(t("settings.opencode.update.checking")).role("status"));
     }
     card = card.child(layout::action_row().child(layout::button(
         t("settings.opencode.setup.check"),
-        pending || !s.has_backend(),
-        |s: &mut Window| s.check_opencode(Some(true)),
+        pending || !prefs.can_retry(),
+        check,
     )));
     if let Some(snapshot) = &status.value {
         let mut details = col().full_width().child(version(
@@ -185,7 +282,10 @@ pub(super) fn view(s: &Window) -> El {
             t("settings.opencode.setup.diagnostics"),
             status.details_open,
             details,
-            |s: &mut Window| s.opencode.details_open = !s.opencode.details_open,
+            move |s: &mut S| {
+                let status = status_mut(s);
+                status.details_open = !status.details_open;
+            },
         ));
     }
     chrome::card(card)

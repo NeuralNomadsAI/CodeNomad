@@ -14,6 +14,7 @@ async-channel = "2.5"
 futures-lite = "2.6"
 imagesize = "0.13"
 web-time = "1.1"
+time = { version = "0.3", default-features = false, features = ["parsing"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 getrandom = "0.4"

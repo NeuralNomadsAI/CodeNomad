@@ -33,6 +33,7 @@ impl Cue {
         let (out, reply) = bounded(1);
         let (cancel, cancelled) = bounded(1);
         let backend = self.backend.clone();
+        let self_category = self.category;
         let kind = self
             .request
             .zip(self.id.split_once(':').map(|(_, id)| id.to_owned()));
@@ -40,9 +41,13 @@ impl Cue {
         crate::platform::spawn(async move {
             let work = async {
                 let _slot = reads.background(&cancelled).await?;
-                backend
-                    .notification_session(kind.as_ref().map(|(form, id)| (*form, id.as_str())))
-                    .await
+                if self_category == Category::Sessions {
+                    backend.notification_label().await
+                } else {
+                    backend
+                        .notification_session(kind.as_ref().map(|(form, id)| (*form, id.as_str())))
+                        .await
+                }
             };
             let label = codenomad_client::runtime::until_closed(&out, work).await;
             drop(cancel);
@@ -60,13 +65,18 @@ impl Cue {
 }
 
 impl Background {
-    fn observe(&mut self, s: &State, hint: AttentionHint) {
+    fn observe(&mut self, s: &mut State, hint: AttentionHint) {
         let Some((target, project, backend)) =
             crate::workspace::workspace_notification(s, &hint.workspace, &hint.session)
         else {
             return;
         };
         let (category, id, request) = match hint.event {
+            WorkspaceEvent::SessionCompacted { id } => (Category::Sessions, id, None),
+            event @ WorkspaceEvent::OpenCodeNotice { .. } => {
+                super::messages::native(s, backend, target, project, event);
+                return;
+            }
             WorkspaceEvent::SessionRequest { form, id } => (
                 Category::NeedsInput,
                 format!("{}:{id}", usize::from(form)),
@@ -137,6 +147,17 @@ pub(super) fn poll(s: &mut State) {
         return;
     }
     let policy = |s: &State, cue: &Cue| {
+        if cue.category == Category::Sessions {
+            return match crate::settings::notification_route(s, &cue.backend, cue.category) {
+                crate::settings::ConfirmedRoute::Refreshing => Delivery::WaitingForSettings,
+                crate::settings::ConfirmedRoute::Ready(route, allow_focused)
+                    if route.system && (allow_focused || !s.notifications.focused()) =>
+                {
+                    Delivery::Body(String::new())
+                }
+                _ => Delivery::Suppressed,
+            };
+        }
         crate::settings::system_notification(
             s,
             &cue.target,
@@ -161,6 +182,18 @@ pub(super) fn poll(s: &mut State) {
                     pending.waiting.push_back(cue);
                 }
                 Delivery::Suppressed => {}
+                Delivery::Body(_) if cue.category == Category::Sessions => {
+                    if super::messages::claim(s, &cue.target, cue.category, &cue.id) {
+                        super::messages::enqueue(
+                            s,
+                            cue.backend,
+                            cue.category,
+                            Some(cue.project),
+                            super::messages::compaction(&label),
+                            Some(cue.target),
+                        );
+                    }
+                }
                 Delivery::Body(_) => deliver(
                     s,
                     Notice {

@@ -1,8 +1,5 @@
-use crate::{
-    State,
-    agent_api::Snapshot,
-    settings::notification_routing::{self, Category},
-};
+use crate::{State, agent_api::Snapshot, settings::notification_routing};
+pub(crate) use notification_routing::Category;
 use rune::Tx;
 use serde_json::Value;
 use std::collections::{HashSet, VecDeque};
@@ -10,6 +7,15 @@ use std::collections::{HashSet, VecDeque};
 const RETAINED: usize = 128;
 
 mod background;
+mod messages;
+pub(crate) use messages::emit;
+pub(crate) fn relay_notice(s: &mut State, event: codenomad_client::transport::WorkspaceEvent) {
+    if let Some((target, project)) = crate::workspace::notification_target(s)
+        && let Some(source) = crate::settings::bound_backend(s)
+    {
+        messages::native(s, source, target, project, event);
+    }
+}
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(target_arch = "wasm32")]
@@ -151,6 +157,8 @@ pub(crate) struct Host {
     delivered: VecDeque<(Target, Category, String)>,
     deferred: VecDeque<Notice>,
     background_attention: background::Background,
+    messages: VecDeque<messages::Message>,
+    system_messages: VecDeque<Presented>,
     activation: Option<(Click, bool)>,
     click_check: Option<(Click, codenomad_client::Receiver<bool>)>,
     click_wait: Option<Click>,
@@ -199,6 +207,8 @@ impl Default for Host {
             delivered: VecDeque::new(),
             deferred: VecDeque::new(),
             background_attention: Default::default(),
+            messages: VecDeque::new(),
+            system_messages: VecDeque::new(),
             activation: None,
             click_check: None,
             click_wait: None,
@@ -276,6 +286,23 @@ impl Host {
                 wake();
             }
         };
+        if let Some(presented) = self.show_system(id, title, body, action) {
+            self.routes.push_back((id, target, presented));
+            if self.routes.len() > RETAINED {
+                self.routes.pop_front();
+            }
+        }
+    }
+
+    fn show_system(
+        &mut self,
+        id: u64,
+        title: &str,
+        body: &str,
+        action: impl FnOnce() + Clone + Send + 'static,
+    ) -> Option<Presented> {
+        #[cfg(not(test))]
+        let _ = id;
         #[cfg(test)]
         let fake = self.recorded.as_mut().map(|recorded| {
             recorded.push((id, title.into(), body.into()));
@@ -283,7 +310,7 @@ impl Host {
         });
         #[cfg(not(test))]
         let fake = None;
-        let presented = fake.or_else(|| {
+        fake.or_else(|| {
             #[cfg(target_os = "windows")]
             return self
                 .native
@@ -299,13 +326,7 @@ impl Host {
                 let _ = (title, body, action);
                 None
             }
-        });
-        if let Some(presented) = presented {
-            self.routes.push_back((id, target, presented));
-            if self.routes.len() > RETAINED {
-                self.routes.pop_front();
-            }
-        }
+        })
     }
 
     fn focus(&self) {
@@ -436,6 +457,7 @@ fn deliver(s: &mut State, notice: Notice) {
 pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     use crate::workspace::Activation;
     background::poll(s);
+    messages::poll(s);
     let notices = std::mem::take(&mut s.notifications.deferred);
     for notice in notices {
         if crate::workspace::observes_notification(

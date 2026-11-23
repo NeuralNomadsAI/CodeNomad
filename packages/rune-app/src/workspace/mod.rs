@@ -9,7 +9,7 @@ pub(crate) use persistence::finish;
 pub(crate) use state::contains_project;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use state::evict_for_probe;
-#[cfg(target_os = "windows")]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use state::native_window_store;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use state::set_files_tab;

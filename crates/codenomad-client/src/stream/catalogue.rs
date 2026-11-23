@@ -124,7 +124,12 @@ impl Signals {
         } else {
             &data["sessionID"]
         };
-        let Some(session) = session.as_str().filter(|id| valid_id(id)) else {
+        let other = super::notifications::other_notice(event);
+        let Some(session) = session
+            .as_str()
+            .filter(|id| valid_id(id))
+            .or_else(|| matches!(other, Some(WorkspaceEvent::OpenCodeNotice { .. })).then_some(""))
+        else {
             return false;
         };
         let terminal = match event["type"].as_str() {
@@ -140,7 +145,7 @@ impl Signals {
                     id: id.into(),
                 })
         } else {
-            super::session_attention(event, session)
+            other.or_else(|| super::session_attention(event, session))
         };
         let Some(event) = mapped else { return false };
         let mut pending = self.attention.lock().unwrap();

@@ -3,10 +3,11 @@ mod behavior;
 mod contrast;
 mod memory;
 pub(crate) mod notification_routing;
-#[cfg(not(target_arch = "wasm32"))]
+mod notification_settings;
 mod opencode;
 mod preferences;
 mod providers;
+mod remote;
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -24,9 +25,7 @@ use std::{cell::RefCell, rc::Rc};
 pub(crate) struct Host {
     shared: Rc<RefCell<Preferences>>,
     #[cfg(not(target_arch = "wasm32"))]
-    window: Option<(rune::WindowHandle, Rc<Cell<bool>>)>,
-    #[cfg(target_arch = "wasm32")]
-    notification_permission_changed: Rc<Cell<bool>>,
+    window: Option<(rune::WindowHandle, Rc<Cell<bool>>, Rc<view::CloseRequest>)>,
     #[cfg(target_arch = "wasm32")]
     web: web::Panel,
     #[cfg(target_arch = "wasm32")]
@@ -34,9 +33,25 @@ pub(crate) struct Host {
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
     last_display: Option<([&'static str; 5], bool)>,
+    notification_error: bool,
+    memory_cleanup: Option<memory::cleanup::Run>,
+}
+
+pub(crate) fn poll_memory_cleanup(s: &mut State, tx: &mut rune::Tx) -> bool {
+    memory::cleanup::poll(s, tx)
 }
 
 pub(crate) fn poll(s: &mut State) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some((request, editor)) = s.settings.window.as_ref().and_then(|(_, _, request)| {
+        request
+            .reopen
+            .borrow_mut()
+            .take()
+            .map(|editor| (request.clone(), editor))
+    }) {
+        launch_preferences(s, request, Some(editor));
+    }
     let mut shared = s.settings.shared.borrow_mut();
     if shared.main_wake.is_none() {
         shared.main_wake = Some(s.wake.clone());
@@ -121,15 +136,36 @@ pub(crate) fn poll(s: &mut State) -> bool {
             .as_ref()
             .is_some_and(web_contrast::Watch::more);
         let contrast_changed = std::mem::replace(&mut s.settings.last_contrast, more) != more;
+        let paired = !crate::platform::pairing::required(s);
         contrast_changed
-            | s.settings.notification_permission_changed.replace(false)
-            | s.settings.web.poll(&shared, &s.wake)
+            | s.settings.web.poll(&mut shared, &s.wake, paired)
             | (s.settings.web.shown() && preferences_changed)
     };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
     let (reconnected, missions) = shared.mission_changes();
+    let failed = shared.error() == Some("settings.preferenceSaveFailed");
+    let previous_failed = std::mem::replace(&mut s.settings.notification_error, failed);
+    let notify_failure = failed && !previous_failed;
+    let update = shared.notification_update.take();
     drop(shared);
+    use crate::shell::notifications::{Category, emit};
+    if notify_failure {
+        emit(
+            s,
+            Category::Settings,
+            None,
+            strings::t("settings.preferenceSaveFailed"),
+        );
+    }
+    if let Some(version) = update {
+        emit(
+            s,
+            Category::Updates,
+            Some(strings::t("releases.devUpdateAvailable.title").into()),
+            strings::t("settings.opencode.update.available").replace("{version}", &version),
+        );
+    }
     if expired {
         s.show_launcher();
         crate::workspace::suspend_missions(s);
@@ -148,6 +184,32 @@ pub(crate) enum Delivery {
     Suppressed,
     WaitingForSettings,
     Body(String),
+}
+
+pub(crate) enum ConfirmedRoute {
+    Unavailable,
+    Refreshing,
+    Ready(notification_routing::Route, bool),
+}
+
+pub(crate) fn notification_route(
+    s: &State,
+    source: &crate::backend::Backend,
+    category: notification_routing::Category,
+) -> ConfirmedRoute {
+    let prefs = s.settings.shared.borrow();
+    if !prefs.backend.as_ref().is_some_and(|backend| {
+        backend.base == source.base && backend.client.same_connection(&source.client)
+    }) {
+        return ConfirmedRoute::Unavailable;
+    }
+    if prefs.notification_config_refreshing() {
+        return ConfirmedRoute::Refreshing;
+    }
+    let config = prefs.notification_config();
+    notification_routing::route(config, category).map_or(ConfirmedRoute::Unavailable, |route| {
+        ConfirmedRoute::Ready(route, notification_routing::allow_focused(config))
+    })
 }
 
 pub(crate) fn system_notification(
@@ -172,6 +234,7 @@ pub(crate) fn system_notification(
         let key = match category {
             notification_routing::Category::NeedsInput => "sessionEvents.notify.needsInput",
             notification_routing::Category::SessionDone => "sessionEvents.notify.done",
+            _ => return Delivery::Suppressed,
         };
         Delivery::Body(strings::with_locale(
             prefs.locale().unwrap_or_else(strings::locale),
@@ -187,6 +250,14 @@ pub(crate) fn notification_fixture(s: &State) {
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
     prefs.reset_notification_fixture();
+}
+
+#[cfg(test)]
+pub(crate) fn notification_test_config(s: &State, snapshot: Value) {
+    s.settings
+        .shared
+        .borrow_mut()
+        .notification_test_config(snapshot);
 }
 
 pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {
@@ -385,35 +456,7 @@ pub(crate) fn entry() -> El {
     return rune_theme_codenomad::layout::button(strings::t("settings.title"), false, open)
         .key("open-preferences");
     #[cfg(target_arch = "wasm32")]
-    return rune_theme_codenomad::layout::action_row()
-        .child(web::entry())
-        .child(notification_permission_entry());
-}
-
-#[cfg(target_arch = "wasm32")]
-fn notification_permission_entry() -> El {
-    {
-        use web_sys::NotificationPermission;
-        if crate::platform::notifications::permission() != Some(NotificationPermission::Default) {
-            return rune::el();
-        }
-        rune_theme_codenomad::layout::button(
-            strings::t("settings.notifications.requestPermission.action"),
-            false,
-            |s: &mut State| {
-                if let Some(permission) = crate::platform::notifications::request_permission() {
-                    let changed = s.settings.notification_permission_changed.clone();
-                    let wake = s.wake.clone();
-                    wasm_bindgen_futures::spawn_local(async move {
-                        let _ = wasm_bindgen_futures::JsFuture::from(permission).await;
-                        changed.set(true);
-                        wake();
-                    });
-                }
-            },
-        )
-        .key("notification-permission")
-    }
+    web::entry()
 }
 
 pub(crate) fn matches_shortcut(
@@ -511,16 +554,47 @@ pub(crate) fn direct_entry(s: &State) -> El {
 #[cfg(not(target_arch = "wasm32"))]
 fn open(s: &mut State) {
     let host = &s.settings;
-    if let Some((window, token)) = &host.window
+    if let Some((window, token, request)) = &host.window
         && Rc::strong_count(token) > 1
     {
-        window.close();
+        request.requested.set(true);
+        window.focus();
+        let mut prefs = host.shared.borrow_mut();
+        prefs.hide_opencode();
+        if let Some(wake) = &prefs.window_wake {
+            wake();
+        }
         return;
     }
-    let token = Rc::new(Cell::new(false));
+    if host
+        .window
+        .as_ref()
+        .is_some_and(|(_, _, request)| request.reopen.borrow().is_some())
+    {
+        return;
+    }
     let target = providers::Target::capture(s);
-    host.shared.borrow_mut().provider_target = target;
-    let state = view::Window::new(host.shared.clone(), token.clone());
+    {
+        let mut prefs = host.shared.borrow_mut();
+        prefs.provider_target = target;
+        prefs
+            .memory
+            .bind_seen(crate::workspace::native_window_store(s));
+    }
+    launch_preferences(s, Rc::new(view::CloseRequest::default()), None);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn launch_preferences(
+    s: &mut State,
+    request: Rc<view::CloseRequest>,
+    editor: Option<memory::editor::Editor>,
+) {
+    let host = &s.settings;
+    let token = Rc::new(Cell::new(false));
+    let state = view::Window::new(host.shared.clone(), token.clone())
+        .with_close_request(request.clone(), editor)
+        .with_notification_permission(notification_settings::native_permission(s));
     let locale = host
         .shared
         .borrow()
@@ -528,7 +602,7 @@ fn open(s: &mut State) {
         .unwrap_or_else(strings::locale);
     let spec = strings::with_locale(locale, view::spec);
     let window = crate::platform::preferences_window(s, spec, state, view::closed);
-    s.settings.window = Some((window, token));
+    s.settings.window = Some((window, token, request));
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -551,8 +625,9 @@ pub(crate) fn close(s: &mut State) {
     {
         #[cfg(target_os = "windows")]
         crate::platform::preferences_placement::closed();
+        s.settings.shared.borrow_mut().hide_opencode();
         settle_close(&s.settings.shared, warn_save_failed);
-        if let Some((window, token)) = s.settings.window.take() {
+        if let Some((window, token, _)) = s.settings.window.take() {
             token.set(true);
             window.close();
         }

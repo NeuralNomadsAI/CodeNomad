@@ -69,7 +69,7 @@ impl Permissions {
                 }),
             layers,
         )
-        .disabled(unavailable || pending);
+        .busy(pending);
         // The browser mirror exposes the select trigger as a button without its native value.
         #[cfg(target_arch = "wasm32")]
         let trigger = trigger.description(current.map_or("", |index| labels[index]));

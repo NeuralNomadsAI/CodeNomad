@@ -15,7 +15,8 @@ use rune_theme_codenomad::{
 };
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
-type Notice = (bool, String);
+use crate::shell::notifications::{Category, emit};
+type Notice = (Category, bool, String);
 
 pub(in crate::files) struct Actions {
     rows: HashMap<String, controls::State>,
@@ -25,7 +26,7 @@ pub(in crate::files) struct Actions {
     owner: Arc<()>,
     incoming: codenomad_client::Receiver<Notice>,
     out: codenomad_client::Sender<Notice>,
-    pub(super) notice: Option<Notice>,
+    pub(super) notice: Option<(bool, String)>,
 }
 
 impl Default for Actions {
@@ -87,8 +88,10 @@ pub(in crate::files) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         })
         .cloned();
     let mut changed = false;
-    while let Ok(notice) = ui.actions.incoming.try_recv() {
-        ui.actions.notice = Some(notice);
+    let mut notices = Vec::new();
+    while let Ok((category, success, message)) = ui.actions.incoming.try_recv() {
+        ui.actions.notice = Some((success, message.clone()));
+        notices.push((category, message));
         changed = true;
     }
     let focused = visible
@@ -98,6 +101,9 @@ pub(in crate::files) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if ui.actions.focus != focused {
         ui.actions.focus = focused;
         changed = true;
+    }
+    for (category, message) in notices {
+        emit(s, category, None, message);
     }
     if let Some(gone) = gone {
         action_menu::clear(s, menu_at, &gone, tx);
@@ -357,7 +363,7 @@ fn launch(s: &mut State, directory: &str, path: &str, slug: &str, target: Target
                 "instanceShell.filesShell.toast.openError",
                 &[("message", &error)],
             );
-            if out.try_send((false, message)).is_ok() {
+            if out.try_send((Category::Files, false, message)).is_ok() {
                 wake();
             }
         }

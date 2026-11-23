@@ -380,6 +380,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.creation_uncertain = true;
             }
             l.error = Some(key);
+            if matches!(key, "rune.restore_error" | "rune.open_error") {
+                use crate::shell::notifications::{Category, emit};
+                emit(s, Category::Projects, None, crate::strings::t(key));
+            }
             #[cfg(target_arch = "wasm32")]
             {
                 if key == "rune.restore_error" && !s.screen.is_launcher() {

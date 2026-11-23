@@ -4,6 +4,34 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 
+pub(super) fn other_notice(event: &Value) -> Option<WorkspaceEvent> {
+    let id = || {
+        event["id"]
+            .as_str()
+            .filter(|id| crate::history::valid_id(id))
+            .map(str::to_owned)
+    };
+    match event["type"].as_str()? {
+        "session.compaction.ended" => Some(WorkspaceEvent::SessionCompacted { id: id()? }),
+        "tui.toast.show" => {
+            let data = &event["data"];
+            data["variant"].as_str()?;
+            let body = data["message"].as_str()?.trim();
+            if body.is_empty() {
+                return None;
+            }
+            Some(WorkspaceEvent::OpenCodeNotice {
+                id: id()?,
+                title: data["title"]
+                    .as_str()
+                    .map(|title| title.chars().take(256).collect()),
+                body: body.chars().take(4096).collect(),
+            })
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn session_attention(event: &Value, session: &str) -> Option<WorkspaceEvent> {
     let data = &event["data"];
     let kind = event["type"].as_str()?;

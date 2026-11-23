@@ -118,6 +118,14 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
             }
+            Event::Workspace(
+                event @ (codenomad_client::transport::WorkspaceEvent::SessionCompacted { .. }
+                | codenomad_client::transport::WorkspaceEvent::OpenCodeNotice { .. }),
+            ) => {
+                if !uses_workspace_attention(s) {
+                    crate::shell::notifications::relay_notice(s, event);
+                }
+            }
             Event::Workspace(event) => {
                 if matches!(
                     event,

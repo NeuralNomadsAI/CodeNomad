@@ -14,6 +14,11 @@ pub(super) async fn relay(
     let native = &value["event"];
     if own && value["type"] == "instance.event" {
         children::observe(b, native);
+        if (native["data"]["sessionID"] == b.session || native["type"] == "tui.toast.show")
+            && let Some(event) = super::notifications::other_notice(native)
+        {
+            out.send(Input::Workspace(epoch, event)).await?;
+        }
     } else if own && value["type"] == "instance.eventStatus" && value["status"] == "connected" {
         b.client.children().invalidate(b, None);
     }

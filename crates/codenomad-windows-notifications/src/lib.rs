@@ -76,7 +76,8 @@ impl Delivery {
         Self::new(&identity)
     }
 
-    fn enabled(&self) -> Result<bool> {
+    /// Current Windows notification setting for this registered delivery identity.
+    pub fn enabled(&self) -> Result<bool> {
         Ok(self.notifier.Setting()? == NotificationSetting::Enabled)
     }
 

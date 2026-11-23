@@ -2,6 +2,44 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn every_generic_category_uses_its_own_confirmed_system_route() {
+    let categories = [
+        Category::Updates,
+        Category::Files,
+        Category::Projects,
+        Category::Sessions,
+        Category::Opencode,
+        Category::Copy,
+        Category::Settings,
+    ];
+    let mut s = crate::init();
+    crate::settings::notification_fixture(&s);
+    s.notifications.record();
+    s.notifications.focused = false;
+    for enabled in categories {
+        let mut routing = serde_json::Map::new();
+        for category in categories {
+            routing.insert(category.key().into(), json!({"system":category == enabled}));
+        }
+        crate::settings::notification_test_config(
+            &s,
+            json!({"settings":{"notificationRouting":routing}}),
+        );
+        let prior = s.notifications.recorded().len();
+        for category in categories {
+            emit(&mut s, category, None, category.key());
+        }
+        messages::poll(&mut s);
+        assert_eq!(s.notifications.recorded().len(), prior + 1);
+        assert_eq!(s.notifications.recorded()[prior].2, enabled.key());
+    }
+    s.notifications.focused = true;
+    emit(&mut s, Category::Settings, None, "Focused");
+    messages::poll(&mut s);
+    assert_eq!(s.notifications.recorded().len(), categories.len());
+}
+
+#[test]
 fn the_same_native_event_notifies_once_per_window_even_after_its_first_tab_closes() {
     let mut s = crate::init();
     crate::settings::notification_fixture(&s);

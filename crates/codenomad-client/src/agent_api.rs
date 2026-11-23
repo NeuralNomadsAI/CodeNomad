@@ -54,6 +54,27 @@ pub enum Action {
     Cancel(String),
 }
 impl Backend {
+    pub async fn notification_label(&self) -> Option<String> {
+        if !valid_id(&self.session) || self.session.starts_with("ses_cn_schedule_") {
+            return None;
+        }
+        let record = self
+            .control_get(&format!("session/{}", self.session))
+            .await
+            .ok()?;
+        let row = &record["data"];
+        (row["id"] == self.session).then(|| {
+            row["title"]
+                .as_str()
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+                .unwrap_or(&self.session)
+                .chars()
+                .take(256)
+                .collect()
+        })
+    }
+
     pub async fn notification_session(&self, pending: Option<(bool, &str)>) -> Option<String> {
         if !valid_id(&self.session) || self.session.starts_with("ses_cn_schedule_") {
             return None;
