@@ -1,6 +1,7 @@
 //! Linked worktrees: creation, removal with session evacuation and session placement.
 pub use super::inventory::{
-    Catalogue, EventCache, Tree, catalogue, event_catalogue, forget, invalidate, readable_checkout, scope,
+    Catalogue, EventCache, Tree, catalogue, event_catalogue, forget, invalidate, invalidate_project, readable_checkout,
+    scope,
 };
 use crate::{App, Error, Shared, Workspace, error, files, git, opencode::proxy};
 use axum::{

@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use futures_util::{StreamExt, stream};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -58,15 +59,13 @@ impl Recovery {
                 let result = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => None,
-                    _ = scan.stopped.cancelled() => Some(false),
-                    result = scan.snapshot(&app, &endpoint, &workspaces) => Some(matches!(result, Ok(true)))
+                    _ = scan.stopped.cancelled() => Some(()),
+                    _ = scan.snapshot(&app, &endpoint, workspaces, &mut seen) => Some(())
                 };
                 scan.stopped.cancel();
                 *self.active.lock().unwrap() = None;
-                match result {
-                    None => return,
-                    Some(true) => seen.extend(workspaces.iter().map(|w| w.id)),
-                    Some(false) => eprintln!("Permission receipt recovery incomplete"),
+                if result.is_none() {
+                    return;
                 }
             }
         }
@@ -103,40 +102,80 @@ impl Scan {
         self: &Arc<Self>,
         app: &Shared,
         endpoint: &Arc<Endpoint>,
-        workspaces: &[Workspace],
-    ) -> Result<bool, Error> {
+        workspaces: Vec<Workspace>,
+        seen: &mut HashSet<uuid::Uuid>,
+    ) {
+        let source = self.source(app, endpoint).await;
+        let Ok((scope, locations)) = source else {
+            eprintln!("Permission receipt recovery incomplete");
+            return;
+        };
+        let mut projects = stream::iter(workspaces)
+            .map(|workspace| {
+                let scope = &scope;
+                let locations = &locations;
+                async move {
+                    let id = workspace.id;
+                    let mut covered = self.project(app, endpoint, workspace.clone(), scope, locations).await;
+                    if !covered && current(app, endpoint, &workspace) {
+                        // Retry only this project; no completed peer waits for it.
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        covered = self.project(app, endpoint, workspace, scope, locations).await;
+                    }
+                    (id, covered)
+                }
+            })
+            .buffer_unordered(4);
+        while let Some((id, covered)) = projects.next().await {
+            if covered {
+                seen.insert(id);
+            } else {
+                eprintln!("Permission receipt recovery incomplete");
+            }
+        }
+    }
+
+    async fn source(&self, app: &Shared, endpoint: &Arc<Endpoint>) -> Result<(String, Vec<String>), Error> {
         if !app.native.current(endpoint) {
             return Err(upstream_error());
         }
         let scope = super::scope(app, endpoint).await?;
         let locations = get(app, endpoint, "/api/debug/location", None, 256 * 1024).await?;
-        let workspaces_all = app.inner.lock().unwrap().workspaces.clone();
-        let mut inventories = Vec::with_capacity(workspaces_all.len());
-        let mut complete = true;
-        for workspace in workspaces_all {
-            if current(app, endpoint, &workspace) {
-                match tokio::time::timeout(Duration::from_secs(6), LoadedOwnership::load(app, &workspace, endpoint))
-                    .await
-                {
-                    Ok(inventory) => inventories.push((workspace, Arc::new(inventory))),
-                    Err(_) => complete = false,
-                }
+        let mut distinct = HashSet::new();
+        let locations = locations
+            .as_array()
+            .ok_or_else(upstream_error)?
+            .iter()
+            .filter_map(directory)
+            .filter(|d| distinct.insert(*d))
+            .map(str::to_owned)
+            .collect();
+        Ok((scope, locations))
+    }
+
+    async fn project(
+        self: &Arc<Self>,
+        app: &Shared,
+        endpoint: &Arc<Endpoint>,
+        workspace: Workspace,
+        scope: &str,
+        locations: &[String],
+    ) -> bool {
+        let inventory = tokio::time::timeout(Duration::from_secs(6), LoadedOwnership::load(app, &workspace, endpoint))
+            .await
+            .unwrap_or_else(|_| LoadedOwnership::opened_only(app));
+        let mut complete = inventory.complete();
+        let inventory = Arc::new(inventory);
+        let valid = || current(app, endpoint, &workspace) && inventory.valid(app);
+        for directory in locations.iter().map(String::as_str) {
+            if !valid() {
+                return false;
             }
-        }
-        let mut locations_seen = HashSet::new();
-        for location in locations.as_array().ok_or_else(upstream_error)? {
-            let Some(directory) = directory(location).filter(|d| locations_seen.insert(*d)) else { continue };
-            let mut owners = Vec::new();
-            for (workspace, inventory) in &inventories {
-                if workspaces.iter().any(|w| w.id == workspace.id)
-                    && current(app, endpoint, workspace)
-                    && inventory.owns(app, workspace, directory)
-                {
-                    owners.push((workspace, inventory));
-                }
-            }
-            if owners.is_empty() {
+            if !inventory.owns(app, &workspace, directory) {
                 continue;
+            }
+            if !valid() {
+                return false;
             }
             let Ok(body) = get(app, endpoint, "/api/permission/request", Some(directory), 2 * 1024 * 1024).await else {
                 complete = false;
@@ -151,8 +190,8 @@ impl Scan {
                 // One stalled capture must not starve later permissions in the same queue.
                 let limit = tokio::time::Instant::now() + Duration::from_secs(20);
                 let Some(request) = super::snapshot(row) else { continue };
-                if !owners.iter().any(|(w, _)| current(app, endpoint, w)) {
-                    break;
+                if !valid() {
+                    return false;
                 }
                 let session = match crate::opencode::session_record_at(app, endpoint, &request.session_id).await {
                     Ok(session) => session,
@@ -163,17 +202,15 @@ impl Scan {
                     }
                 };
                 let Some(location) = self::directory(&session["location"]) else { continue };
-                let Some((workspace, inventory)) =
-                    owners.iter().find(|(w, inventory)| current(app, endpoint, w) && inventory.owns(app, w, location))
-                else {
+                if !inventory.owns(app, &workspace, location) {
                     continue;
-                };
-                let (owner, connection, workspace) = (app.clone(), endpoint.clone(), (**workspace).clone());
-                let (scan, session, inventory) = (self.clone(), request.session_id.clone(), Arc::clone(inventory));
+                }
+                let (owner, connection, captured) = (app.clone(), endpoint.clone(), workspace.clone());
+                let (scan, session, proof) = (self.clone(), request.session_id.clone(), inventory.clone());
                 let source = request.source.as_ref().map(|source| source.message_id.clone());
                 let capture = super::capture(
                     app,
-                    &scope,
+                    scope,
                     request,
                     {
                         let (session, location) = (session.clone(), location.to_owned());
@@ -181,18 +218,26 @@ impl Scan {
                             tokio::time::Instant::now() < limit
                                 && !scan.stopped.is_cancelled()
                                 && !scan.deleted.lock().unwrap().contains(&session)
-                                && current(&owner, &connection, &workspace)
-                                && inventory.owns(&owner, &workspace, &location)
+                                && current(&owner, &connection, &captured)
+                                && proof.owns(&owner, &captured, &location)
+                                && proof.valid(&owner)
                         }
                     },
                     {
                         let (app, endpoint, location) = (app.clone(), endpoint.clone(), location.to_owned());
-                        let watchers = inventories
-                            .iter()
-                            .filter(|(w, inventory)| inventory.owns(&app, w, &location))
-                            .cloned()
-                            .collect::<Vec<_>>();
-                        move || publish_recovered(&app, &endpoint, &location, &session, source.as_deref(), &watchers)
+                        let (workspace, inventory) = (workspace.clone(), inventory.clone());
+                        move |previous| {
+                            super::invalidate_fallbacks(&app, &endpoint, &session, source.as_deref(), previous);
+                            publish_recovered(
+                                &app,
+                                &endpoint,
+                                &location,
+                                &session,
+                                source.as_deref(),
+                                &workspace,
+                                &inventory,
+                            )
+                        }
                     },
                 );
                 if !matches!(tokio::time::timeout_at(limit, capture).await, Ok(Ok(()))) {
@@ -200,7 +245,7 @@ impl Scan {
                 }
             }
         }
-        Ok(complete)
+        complete && valid()
     }
 }
 
@@ -210,19 +255,26 @@ fn publish_recovered(
     location: &str,
     session: &str,
     source: Option<&str>,
-    watchers: &[(Workspace, Arc<LoadedOwnership>)],
+    workspace: &Workspace,
+    inventory: &LoadedOwnership,
 ) {
-    for (workspace, inventory) in watchers {
-        if current(app, endpoint, workspace)
-            && inventory.owns(app, workspace, location)
-            && current(app, endpoint, workspace)
-        {
-            let mut event = json!({"type":"permission.receiptsChanged","instanceId":workspace.id,"sessionId":session});
-            app.emit(event.clone());
-            if let Some(message) = source {
-                event["messageId"] = json!(message);
-                app.emit(event);
-            }
+    let open = app.inner.lock().unwrap().workspaces.clone();
+    for w in open {
+        let cached;
+        let proof = if w.id == workspace.id {
+            inventory
+        } else {
+            cached = LoadedOwnership::cached(app, &w, endpoint);
+            &cached
+        };
+        if !current(app, endpoint, &w) || !proof.owns(app, &w, location) || !proof.valid(app) {
+            continue;
+        }
+        let mut event = json!({"type":"permission.receiptsChanged","instanceId":w.id,"sessionId":session});
+        app.emit(event.clone());
+        if let Some(message) = source {
+            event["messageId"] = json!(message);
+            app.emit(event);
         }
     }
 }

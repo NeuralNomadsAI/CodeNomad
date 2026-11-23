@@ -263,9 +263,14 @@ pub async fn bridge(app: Shared) {
                 }
                 // Integration events can contain backend-only data and need the TS sanitizer.
                 if kind.starts_with("worktree.") || kind == "server.connected" {
-                    crate::worktrees::linked::invalidate(&app);
-                }
-                if kind == "server.connected" {
+                    if kind == "worktree.updated"
+                        && let Some(project) =
+                            event["data"]["projectID"].as_str().filter(|p| crate::opencode::valid_id(p))
+                    {
+                        crate::worktrees::linked::invalidate_project(&app, project);
+                    } else {
+                        crate::worktrees::linked::invalidate(&app);
+                    }
                     lanes.receipts.schedule();
                 }
                 if kind == "session.deleted"

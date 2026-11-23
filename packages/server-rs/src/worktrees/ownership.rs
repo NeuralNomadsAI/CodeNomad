@@ -80,7 +80,7 @@ pub(crate) struct ReceiptLocation {
     path: PathBuf,
     anchor: PathBuf,
     identity: same_file::Handle,
-    inventory: Option<u64>,
+    inventory: Option<(u64, String)>,
 }
 
 impl ReceiptLocation {
@@ -89,7 +89,10 @@ impl ReceiptLocation {
             && existing_directory(&self.path) == Some(self.anchor.as_path())
             && same_file::Handle::from_path(&self.anchor).is_ok_and(|handle| handle == self.identity)
             && self.proof.live_at(&self.path, self.proof.external.then_some(workspace.path.as_path()), true)
-            && self.inventory.is_none_or(|at| app.linked_events.lock().unwrap().0 == at)
+            && self
+                .inventory
+                .as_ref()
+                .is_none_or(|(at, project)| app.linked_events.lock().unwrap().valid(*at, Some(project)))
     }
 }
 
@@ -110,9 +113,12 @@ pub(crate) async fn receipt_location(
     let proof = if path == w.path {
         DirectoryProof { tree: None, source: None, external }
     } else {
-        revision = Some(app.linked_events.lock().unwrap().0);
+        let stamp = app.linked_events.lock().unwrap().stamp();
         match super::inventory::receipt_catalogue(app, w, endpoint).await {
-            Some(inventory) => registered_proof(&inventory, &path, external)?,
+            Some(inventory) => {
+                revision = Some((stamp, inventory.project.clone()));
+                registered_proof(&inventory, &path, external)?
+            }
             None if !external && matches!(super::root_only(w).await, Ok(Some(true))) => {
                 DirectoryProof { tree: None, source: None, external }
             }
@@ -221,10 +227,31 @@ impl LoadedOwnership {
         w: &Workspace,
         endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
     ) -> Self {
-        let revision = app.linked_events.lock().unwrap().0;
+        let revision = app.linked_events.lock().unwrap().stamp();
         let inventory = super::inventory::receipt_catalogue(app, w, endpoint).await;
         let directory_only = inventory.is_none() && matches!(super::root_only(w).await, Ok(Some(true)));
         Self { inventory, directory_only, revision }
+    }
+
+    pub(crate) fn opened_only(app: &App) -> Self {
+        Self { inventory: None, directory_only: false, revision: app.linked_events.lock().unwrap().stamp() }
+    }
+
+    pub(crate) fn cached(
+        app: &App,
+        workspace: &Workspace,
+        endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    ) -> Self {
+        let cache = app.linked_events.lock().unwrap();
+        Self { inventory: cache.cached(workspace.id, endpoint), directory_only: false, revision: cache.stamp() }
+    }
+
+    pub(crate) fn complete(&self) -> bool {
+        self.inventory.is_some() || self.directory_only
+    }
+
+    pub(crate) fn valid(&self, app: &App) -> bool {
+        app.linked_events.lock().unwrap().valid(self.revision, self.inventory.as_ref().map(|c| c.project.as_str()))
     }
 
     pub(crate) fn owns(&self, app: &App, w: &Workspace, directory: &str) -> bool {
@@ -243,7 +270,7 @@ impl LoadedOwnership {
             .as_ref()
             .and_then(|inventory| registered_proof(inventory, &path, external))
             .is_some_and(|proof| proof.live_at(&path, None, true))
-            && app.linked_events.lock().unwrap().0 == self.revision
+            && self.valid(app)
     }
 }
 
@@ -253,8 +280,7 @@ pub(crate) async fn owns_loaded(
     endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
     directory: &str,
 ) -> bool {
-    let proof = LoadedOwnership::load(app, w, endpoint).await;
-    proof.owns(app, w, directory) && app.native.current(endpoint)
+    LoadedOwnership::load(app, w, endpoint).await.owns(app, w, directory) && app.native.current(endpoint)
 }
 
 /// Request-local validated checkout inventory for history fan-out and provenance.

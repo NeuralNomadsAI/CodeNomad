@@ -1,4 +1,6 @@
 //! Permission receipts: a session's asked and replied permissions, recorded from native events.
+mod locks;
+mod observers;
 mod recovery;
 use axum::{
     Json,
@@ -60,7 +62,6 @@ struct Record {
     #[serde(skip_serializing_if = "Option::is_none")]
     receipt: Option<Receipt>,
 }
-static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn hash(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
@@ -159,18 +160,16 @@ async fn capture(
     scope: &str,
     request: Snapshot,
     current: impl FnOnce() -> bool + Send + 'static,
-    reanchored: impl FnOnce() + Send + 'static,
+    reanchored: impl FnOnce(Vec<Workspace>) + Send + 'static,
 ) -> Result<(), Error> {
     let file = dir(app, scope, &request.session_id).join(format!("{}.json", hash(&request.request_id)));
-    let serial = SERIAL.lock().await;
-    tokio::task::spawn_blocking(move || {
-        let _serial = serial;
+    locks::receipt(file, move |file| {
         if !current() {
-            return Ok(());
+            return Err(upstream_error());
         }
-        match read(&file)? {
+        match read(file)? {
             None => {
-                persist(&file, &Record { request, receipt: None })?;
+                persist(file, &Record { request, receipt: None })?;
                 Ok(())
             }
             // A native settlement can persist before its already-read snapshot.
@@ -181,15 +180,22 @@ async fn capture(
             {
                 entry.request = request;
                 entry.receipt.as_mut().unwrap().request = entry.request.clone();
-                persist(&file, &entry)?;
-                reanchored();
+                persist(file, &entry)?;
+                reanchored(observers::take(file));
+                Ok(())
+            }
+            Some(entry)
+                if entry.request.source.as_ref().is_some_and(|source| {
+                    request.source.as_ref().is_some_and(|request| request.message_id == source.message_id)
+                }) && entry.receipt.as_ref().is_some_and(|receipt| receipt.origin == "native") =>
+            {
+                reanchored(Vec::new());
                 Ok(())
             }
             Some(_) => Ok(()),
         }
     })
     .await
-    .map_err(|_| upstream_error())?
 }
 
 pub async fn observe(
@@ -211,52 +217,81 @@ pub async fn observe(
     if kind == "permission.asked" {
         if let Some(request) = snapshot(data) {
             let (owner, endpoint) = (app.clone(), endpoint.clone());
-            capture(app, &scope, request, move || owner.native.current(&endpoint), || {}).await?;
+            let (dispatch, pinned) = (app.clone(), endpoint.clone());
+            let session = request.session_id.clone();
+            let message = request.source.as_ref().map(|source| source.message_id.clone());
+            capture(
+                app,
+                &scope,
+                request,
+                move || owner.native.current(&endpoint),
+                move |previous| {
+                    invalidate_fallbacks(&dispatch, &pinned, &session, message.as_deref(), previous);
+                },
+            )
+            .await?;
         }
         return Ok(());
     }
-    let _serial = SERIAL.lock().await;
-    if !app.native.current(endpoint) {
-        return Err(upstream_error());
-    }
     let folder = dir(app, &scope, session);
+    let (owner, pinned) = (app.clone(), endpoint.clone());
     if kind == "session.deleted" {
-        return match fs::remove_dir_all(folder) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(_) => Err(error(Status::SERVICE_UNAVAILABLE, "Permission receipt unavailable")),
-        };
+        return locks::session(folder, move |folder| {
+            if !owner.native.current(&pinned) {
+                return Err(upstream_error());
+            }
+            match fs::remove_dir_all(folder) {
+                Ok(()) => {
+                    observers::forget(folder);
+                    Ok(())
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(_) => Err(error(Status::SERVICE_UNAVAILABLE, "Permission receipt unavailable")),
+            }
+        })
+        .await;
     }
     if let (Some(request), Some(decision @ ("once" | "always" | "reject"))) =
         (id(&data["requestID"]), data["reply"].as_str())
     {
         let file = folder.join(format!("{}.json", hash(request)));
-        let mut saved = read(&file)?.unwrap_or_else(|| Record {
-            request: Snapshot {
-                request_id: request.into(),
-                session_id: session.into(),
-                resources: Vec::new(),
-                action: None,
-                request_message: None,
-                source: None,
-            },
-            receipt: None,
-        });
-        if saved.receipt.is_none() {
-            saved.receipt = Some(Receipt {
-                request: saved.request.clone(),
-                decision: decision.into(),
-                origin: "native".into(),
-                reason: None,
-                resolved_at: event["created"].as_u64().unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as u64),
-            });
-            persist(&file, &saved)?;
-        }
+        let decision = decision.to_owned();
+        let observed = recipients.to_vec();
+        let resolved_at = event["created"].as_u64().unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as u64);
+        let fallback = Snapshot {
+            request_id: request.into(),
+            session_id: session.into(),
+            resources: Vec::new(),
+            action: None,
+            request_message: None,
+            source: None,
+        };
+        let source = locks::receipt(file, move |file| {
+            if !owner.native.current(&pinned) {
+                return Err(upstream_error());
+            }
+            let mut saved = read(file)?.unwrap_or(Record { request: fallback, receipt: None });
+            if saved.receipt.is_none() {
+                saved.receipt = Some(Receipt {
+                    request: saved.request.clone(),
+                    decision,
+                    origin: "native".into(),
+                    reason: None,
+                    resolved_at,
+                });
+                persist(file, &saved)?;
+            }
+            if saved.request.action.is_none() {
+                observers::remember(file, observed);
+            }
+            Ok(saved.request.source)
+        })
+        .await?;
         for workspace in recipients {
             if app.workspace(&workspace.id.to_string()).is_ok() {
                 let mut changed =
                     json!({"type":"permission.receiptsChanged","instanceId":workspace.id,"sessionId":session});
-                if let Some(source) = &saved.request.source {
+                if let Some(source) = &source {
                     changed["messageId"] = json!(source.message_id);
                 }
                 app.emit(changed);
@@ -264,6 +299,26 @@ pub async fn observe(
         }
     }
     Ok(())
+}
+
+fn invalidate_fallbacks(
+    app: &Shared,
+    endpoint: &std::sync::Arc<Endpoint>,
+    session: &str,
+    message: Option<&str>,
+    previous: Vec<Workspace>,
+) {
+    for workspace in previous {
+        if !app.native.current(endpoint) || !super::permission_mode::workspace_current(app, &workspace) {
+            continue;
+        }
+        let mut change = json!({"type":"permission.receiptsChanged","instanceId":workspace.id,"sessionId":session});
+        app.emit(change.clone());
+        if let Some(message) = message {
+            change["messageId"] = json!(message);
+            app.emit(change);
+        }
+    }
 }
 
 pub struct Prepared {
@@ -278,37 +333,45 @@ pub async fn prepare(app: &App, endpoint: &Endpoint, request: &Value, input: &Va
     let decision = input["decision"].as_str().ok_or_else(upstream_error)?.to_owned();
     let reason = text(&input["message"]);
     let scope = scope(app, endpoint).await?;
-    let _serial = SERIAL.lock().await;
     let file = dir(app, &scope, &request.session_id).join(format!("{}.json", hash(&request.request_id)));
-    if read(&file)?.is_none() {
-        persist(&file, &Record { request, receipt: None })?;
-    }
+    locks::receipt(file.clone(), move |file| {
+        if read(file)?.is_none() {
+            persist(file, &Record { request, receipt: None })?;
+        }
+        Ok(())
+    })
+    .await?;
     Ok(Prepared { file, decision, reason })
 }
 impl Prepared {
     /// Upgrade only the same native decision; a removed snapshot stays removed.
     pub async fn confirm(self, app: &App, workspace: &Workspace) -> Result<(), Error> {
-        let _serial = SERIAL.lock().await;
-        let Some(mut saved) = read(&self.file)? else { return Ok(()) };
-        if saved.receipt.as_ref().is_some_and(|r| r.origin != "native" || r.decision != self.decision) {
-            return Ok(());
-        }
-        let at = saved
-            .receipt
-            .as_ref()
-            .map(|r| r.resolved_at)
-            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as u64);
-        saved.receipt = Some(Receipt {
-            request: saved.request.clone(),
-            decision: self.decision,
-            origin: "codenomad".into(),
-            resolved_at: at,
-            reason: self.reason,
-        });
-        persist(&self.file, &saved)?;
+        let saved = locks::receipt(self.file, move |file| {
+            let Some(mut saved) = read(file)? else { return Ok(None) };
+            if saved.receipt.as_ref().is_some_and(|r| r.origin != "native" || r.decision != self.decision) {
+                return Ok(None);
+            }
+            let at = saved
+                .receipt
+                .as_ref()
+                .map(|r| r.resolved_at)
+                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as u64);
+            saved.receipt = Some(Receipt {
+                request: saved.request.clone(),
+                decision: self.decision,
+                origin: "codenomad".into(),
+                resolved_at: at,
+                reason: self.reason,
+            });
+            persist(file, &saved)?;
+            Ok(Some(saved.request))
+        })
+        .await?;
+        let Some(saved) = saved else { return Ok(()) };
         if crate::sessions::permission_mode::workspace_current(app, workspace) {
-            let mut change = json!({"type":"permission.receiptsChanged","instanceId":workspace.id,"sessionId":saved.request.session_id});
-            if let Some(source) = &saved.request.source {
+            let mut change =
+                json!({"type":"permission.receiptsChanged","instanceId":workspace.id,"sessionId":saved.session_id});
+            if let Some(source) = &saved.source {
                 change["messageId"] = json!(source.message_id);
             }
             app.emit(change);

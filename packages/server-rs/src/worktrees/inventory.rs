@@ -242,7 +242,47 @@ pub struct EventEntry {
     loading: Option<(Uuid, InventoryRead)>,
 }
 type InventoryRead = Shared<BoxFuture<'static, Option<Arc<Catalogue>>>>;
-pub type EventCache = std::sync::Mutex<(u64, HashMap<Uuid, EventEntry>)>;
+pub type EventCache = std::sync::Mutex<InventoryCache>;
+
+#[derive(Default)]
+pub struct InventoryCache {
+    serial: u64,
+    reset: u64,
+    changed: HashMap<String, u64>,
+    entries: HashMap<Uuid, EventEntry>,
+}
+
+impl InventoryCache {
+    pub(super) fn stamp(&self) -> u64 {
+        self.serial
+    }
+
+    pub(super) fn valid(&self, stamp: u64, project: Option<&str>) -> bool {
+        stamp >= self.reset
+            && project.is_none_or(|project| self.changed.get(project).is_none_or(|&changed| stamp >= changed))
+    }
+
+    pub(super) fn cached(&self, id: Uuid, endpoint: &Arc<crate::opencode::Endpoint>) -> Option<Arc<Catalogue>> {
+        self.entries
+            .get(&id)
+            .filter(|e| Arc::ptr_eq(&e.endpoint, endpoint) && e.at.elapsed() < EVENT_STALE_LIMIT)?
+            .value
+            .clone()
+    }
+
+    fn invalidate_project(&mut self, project: &str) {
+        self.serial += 1;
+        self.changed.insert(project.into(), self.serial);
+        self.entries
+            .retain(|_, entry| entry.value.as_ref().is_some_and(|v| v.project != project) || entry.loading.is_some());
+        // Keep a pending flight for its waiters, without serving a superseded value.
+        for entry in self.entries.values_mut() {
+            if entry.value.as_ref().is_some_and(|v| v.project == project) {
+                entry.value = None;
+            }
+        }
+    }
+}
 /// Event routing reuses an inventory for 4 s, then refreshes it in the
 /// background while still serving it, up to the TS worktree cache TTL
 /// (`WORKTREE_CACHE_TTL_MS`). A blocking refresh stalled the ordered event
@@ -255,15 +295,25 @@ const EVENT_ENTRIES: usize = 64;
 fn drop_entries(app: &App, id: Option<Uuid>) {
     let mut cache = app.linked_events.lock().unwrap();
     match id {
-        Some(id) => _ = cache.1.remove(&id),
+        Some(id) => _ = cache.entries.remove(&id),
         None => {
-            cache.0 = cache.0.wrapping_add(1);
-            cache.1.clear();
+            cache.serial += 1;
+            cache.reset = cache.serial;
+            cache.changed.clear();
+            cache.entries.clear();
         }
     }
 }
 pub fn invalidate(app: &App) {
     drop_entries(app, None)
+}
+pub fn invalidate_project(app: &App, project: &str) {
+    let mut cache = app.linked_events.lock().unwrap();
+    if cache.changed.len() >= 1024 && !cache.changed.contains_key(project) {
+        drop(cache);
+        return invalidate(app);
+    }
+    cache.invalidate_project(project);
 }
 pub fn forget(app: &App, id: Uuid) {
     drop_entries(app, Some(id))
@@ -291,12 +341,12 @@ async fn cached_catalogue(
         if !app.native.current(endpoint) {
             return None;
         }
-        let epoch = cache.0;
-        if cache.1.get(&w.id).is_some_and(|e| !Arc::ptr_eq(&e.endpoint, endpoint)) {
-            cache.1.remove(&w.id);
+        let epoch = cache.stamp();
+        if cache.entries.get(&w.id).is_some_and(|e| !Arc::ptr_eq(&e.endpoint, endpoint)) {
+            cache.entries.remove(&w.id);
         }
         let mut background = None;
-        if let Some(entry) = cache.1.get_mut(&w.id) {
+        if let Some(entry) = cache.entries.get_mut(&w.id) {
             let age = entry.at.elapsed();
             if age < if for_event { EVENT_FRESH } else { EVENT_STALE_LIMIT }
                 && (entry.value.is_some() || entry.loading.is_none())
@@ -307,57 +357,66 @@ async fn cached_catalogue(
                 background = entry.value.clone();
             }
         }
-        if cache.1.len() >= EVENT_ENTRIES {
-            cache.1.retain(|_, e| e.loading.is_some() || e.at.elapsed() < EVENT_STALE_LIMIT);
+        if cache.entries.len() >= EVENT_ENTRIES {
+            cache.entries.retain(|_, e| e.loading.is_some() || e.at.elapsed() < EVENT_STALE_LIMIT);
         }
-        let admitted = cache.1.len() < EVENT_ENTRIES || cache.1.contains_key(&w.id);
-        let loading =
-            cache.1.get(&w.id).and_then(|entry| entry.loading.as_ref().map(|(_, read)| read.clone())).unwrap_or_else(
-                || {
-                    let (done, receive) = tokio::sync::oneshot::channel();
-                    let loading = async move { receive.await.ok().flatten() }.boxed().shared();
-                    let flight = Uuid::new_v4();
-                    if admitted {
-                        let entry = cache.1.entry(w.id).or_insert_with(|| EventEntry {
-                            at: Instant::now(),
-                            value: None,
-                            endpoint: endpoint.clone(),
-                            loading: None,
-                        });
-                        entry.loading = Some((flight, loading.clone()));
-                    }
-                    let (app, w, endpoint) = (app.clone(), w.clone(), endpoint.clone());
-                    tokio::spawn(async move {
-                        let started = Instant::now();
-                        let result = catalogue_in(&app, &w, false, false).await.ok().map(Arc::new);
-                        crate::bench::trace_elapsed("registered-catalogue", started);
-                        let mut cache = app.linked_events.lock().unwrap();
-                        let owns_flight =
-                            cache.1.get(&w.id).and_then(|e| e.loading.as_ref()).is_some_and(|(id, _)| *id == flight);
-                        if cache.0 != epoch || !app.native.current(&endpoint) || admitted && !owns_flight {
-                            if owns_flight {
-                                cache.1.remove(&w.id);
-                            }
-                            return;
+        let admitted = cache.entries.len() < EVENT_ENTRIES || cache.entries.contains_key(&w.id);
+        let loading = cache
+            .entries
+            .get(&w.id)
+            .and_then(|entry| entry.loading.as_ref().map(|(_, read)| read.clone()))
+            .unwrap_or_else(|| {
+                let (done, receive) = tokio::sync::oneshot::channel();
+                let loading = async move { receive.await.ok().flatten() }.boxed().shared();
+                let flight = Uuid::new_v4();
+                if admitted {
+                    let entry = cache.entries.entry(w.id).or_insert_with(|| EventEntry {
+                        at: Instant::now(),
+                        value: None,
+                        endpoint: endpoint.clone(),
+                        loading: None,
+                    });
+                    entry.loading = Some((flight, loading.clone()));
+                }
+                let (app, w, endpoint) = (app.clone(), w.clone(), endpoint.clone());
+                tokio::spawn(async move {
+                    let started = Instant::now();
+                    let result = catalogue_in(&app, &w, false, false).await.ok().map(Arc::new);
+                    crate::bench::trace_elapsed("registered-catalogue", started);
+                    let mut cache = app.linked_events.lock().unwrap();
+                    let owns_flight =
+                        cache.entries.get(&w.id).and_then(|e| e.loading.as_ref()).is_some_and(|(id, _)| *id == flight);
+                    if !cache.valid(epoch, result.as_ref().map(|c| c.project.as_str()))
+                        || !app.native.current(&endpoint)
+                        || admitted && !owns_flight
+                    {
+                        if owns_flight {
+                            cache.entries.remove(&w.id);
                         }
-                        if admitted {
-                            cache.1.insert(
+                        return;
+                    }
+                    if admitted {
+                        if result.is_some() {
+                            cache.entries.insert(
                                 w.id,
                                 EventEntry { at: Instant::now(), value: result.clone(), endpoint, loading: None },
                             );
+                        } else {
+                            cache.entries.remove(&w.id);
                         }
-                        let _ = done.send(result);
-                    });
-                    loading
-                },
-            );
+                    }
+                    let _ = done.send(result);
+                });
+                loading
+            });
         if background.is_some() {
             return background;
         }
         (epoch, loading)
     };
     let result = loading.await?;
-    (app.native.current(endpoint) && app.linked_events.lock().unwrap().0 == epoch).then_some(result)
+    (app.native.current(endpoint) && app.linked_events.lock().unwrap().valid(epoch, Some(&result.project)))
+        .then_some(result)
 }
 struct Root {
     project: String,
@@ -494,6 +553,16 @@ async fn catalogue_in(app: &App, w: &Workspace, refresh: bool, scoped: bool) -> 
 #[cfg(test)]
 mod layout_tests {
     use super::{checkout, git_layout_gone, linked_markers};
+
+    #[test]
+    fn invalidation_retires_only_the_project_read() {
+        let mut cache = super::InventoryCache::default();
+        let captured = cache.stamp();
+        cache.invalidate_project("project_a");
+        assert!(!cache.valid(captured, Some("project_a")));
+        assert!(cache.valid(captured, Some("project_b")));
+        assert!(cache.valid(cache.stamp(), Some("project_a")));
+    }
 
     #[test]
     fn a_registration_without_git_layout_is_gone() {
