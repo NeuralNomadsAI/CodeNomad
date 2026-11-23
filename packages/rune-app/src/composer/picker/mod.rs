@@ -64,10 +64,12 @@ impl Item {
 
 impl Picker {
     pub fn bind(&mut self, backend: Backend) {
+        let intent = self.commands.intent.take();
         *self = Self {
             backend: Some(backend),
             ..Self::default()
         };
+        self.commands.intent = intent;
     }
 
     pub fn open(&self) -> bool {

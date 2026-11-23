@@ -63,7 +63,7 @@ fn token_ranges<'a>(text: &'a str, token: &'a str) -> impl Iterator<Item = Range
     })
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Draft {
     pub attachments: Vec<Attachment>,
 }

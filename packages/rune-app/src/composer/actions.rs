@@ -13,7 +13,7 @@ pub struct Owner {
     pub picker: super::picker::Picker,
     sending: Option<Send>,
     pub send_error: bool,
-    pub unconfirmed: Option<String>,
+    unconfirmed: Option<Send>,
     pub command_unconfirmed: Option<(String, String)>,
     pub restored: bool,
     pub attachments_missing: bool,
@@ -21,6 +21,9 @@ pub struct Owner {
 impl Owner {
     pub fn pending(&self) -> bool {
         self.sending.is_some()
+    }
+    pub fn unconfirmed_id(&self) -> Option<&str> {
+        self.unconfirmed.as_ref().map(|send| send.id.as_str())
     }
     #[cfg(test)]
     pub fn pending_text(&self) -> Option<&str> {
@@ -84,6 +87,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             .as_ref()
             .is_some_and(|pipe| pipe.try_send(command).is_ok())
         {
+            s.composer.picker.remember_command(&slash.0);
             s.composer.sending = Some(Send {
                 id,
                 edit: s.draft.clone(),
@@ -170,7 +174,12 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         return;
     }
     if matches!(outcome, PromptOutcome::Unconfirmed) {
-        s.composer.unconfirmed = Some(send.id);
+        if s.draft.text.is_empty() && s.composer.draft.attachments.is_empty() {
+            s.draft = send.edit.clone();
+            s.composer.draft = send.draft.clone();
+            s.composer.restored = true;
+        }
+        s.composer.unconfirmed = Some(send);
         return;
     }
     let row = s.messages.iter().position(|row| row.id == attempted);
@@ -219,12 +228,19 @@ pub fn reject_pending(s: &mut State) {
 }
 
 pub fn reconcile(s: &mut State) {
-    if s.composer
-        .unconfirmed
-        .as_ref()
-        .is_some_and(|id| s.messages.iter().any(|row| &row.id == id))
+    if s.composer.unconfirmed.as_ref().is_some_and(|send| {
+        s.messages
+            .iter()
+            .any(|row| row.id == send.id && row.role == "user")
+    }) && let Some(send) = s.composer.unconfirmed.take()
+        && s.draft.text == send.edit.text
+        && s.composer.draft.attachments == send.draft.attachments
     {
-        s.composer.unconfirmed = None;
+        s.draft.clear();
+        s.composer.draft = Draft::default();
+        if s.workspace.is_some() {
+            workspace::capture(s);
+        }
     }
 }
 
@@ -320,7 +336,7 @@ mod tests {
         let row = rt.state.messages.pop().unwrap();
         acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
         assert!(rt.state.draft.text.is_empty());
-        assert_eq!(rt.state.composer.unconfirmed.as_deref(), Some(id.as_str()));
+        assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
         rt.state.draft = TextEdit::new("new draft");
         rt.state.messages.push(
             Message {

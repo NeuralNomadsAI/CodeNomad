@@ -340,6 +340,39 @@ fn settings_direct_authentication_accepts_a_rotated_password_and_keeps_the_draft
 }
 
 #[test]
+fn a_native_command_401_with_a_live_backend_session_has_one_rejection_and_no_relogin() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let (_sse, commands, events) = start(&listener, prefs.backend.take().unwrap()).await;
+        commands
+            .send(Command::Slash {
+                attempt: "fixture-attempt".into(),
+                name: "review".into(),
+                text: "fixture".into(),
+            })
+            .await
+            .unwrap();
+        let command = request(&listener).await;
+        assert!(command.first.ends_with("/session/command HTTP/1.1"));
+        command.reply(401, json!({})).await;
+        let status = request(&listener).await;
+        assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
+        status.reply(200, json!({"authenticated":true})).await;
+        assert!(
+            matches!(until(&events, |_| true).await, Event::PromptAcknowledged {
+            attempted, outcome: crate::transport::PromptOutcome::Rejected,
+        } if attempted == "fixture-attempt")
+        );
+        assert!(
+            timeout(Duration::from_millis(100), events.recv())
+                .await
+                .is_err()
+        );
+        commands.send(Command::Close).await.unwrap();
+    });
+}
+
+#[test]
 fn settings_send_during_a_stream_outage_preserves_the_unsubmitted_draft() {
     assert_direct_recovery(None);
 }
@@ -394,6 +427,11 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
             );
             assert_eq!(prompt.body["text"], "refused prompt");
             prompt.reply(prompt_reply.unwrap(), json!({})).await;
+            if prompt_reply == Some(401) {
+                let status = request(&listener).await;
+                assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
+                status.reply(200, json!({"authenticated":false})).await;
+            }
         }
         if prompt_reply == Some(409) {
             wait_until(|| {

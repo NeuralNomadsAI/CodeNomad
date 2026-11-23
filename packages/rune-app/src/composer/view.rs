@@ -160,7 +160,7 @@ pub fn view(s: &State) -> El {
                 .then(|| text(t("promptInput.send.errorTitle")).role("alert")),
         )
         .children(
-            (s.composer.unconfirmed.is_some() || s.composer.command_unconfirmed.is_some())
+            (s.composer.unconfirmed_id().is_some() || s.composer.command_unconfirmed.is_some())
                 .then(|| text(t("missionsPanel.action.requestUpdateUncertain")).role("alert")),
         )
 }

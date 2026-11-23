@@ -461,8 +461,11 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         if let Some(cache) = item.cache.take() {
             cache.apply(s);
             let awaiting_prompt = s.composer.pending();
+            let uncertain_prompt = s.composer.unconfirmed_id().is_some();
             changed |= crate::poll_chat(s, 8);
-            if awaiting_prompt && !s.composer.pending() {
+            if awaiting_prompt && !s.composer.pending()
+                || uncertain_prompt && s.composer.unconfirmed_id().is_none()
+            {
                 drafts_changed |= drafts::capture_draft(
                     item,
                     &s.draft.text,

@@ -13,7 +13,7 @@ pub(super) struct Commands {
     pub(super) read: Option<Read>,
     pub(super) dirty: bool,
     failed: bool,
-    intent: Option<String>,
+    pub(super) intent: Option<String>,
 }
 
 impl Commands {
@@ -65,6 +65,10 @@ impl Commands {
 }
 
 impl Picker {
+    pub fn remember_command(&mut self, name: &str) {
+        self.commands.intent = Some(name.into());
+    }
+
     pub fn selected_command<'a>(&self, text: &'a str) -> Option<(&'a str, &'a str)> {
         let (name, args) = parts(text)?;
         self.commands

@@ -35,6 +35,7 @@ pub struct State {
     pub cancelled: AtomicBool,
     pub version: AtomicU64,
     pub alive: AtomicBool,
+    pub running: AtomicBool,
     pub upstream: AtomicBool,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     catalogue: Option<Arc<catalogue::Signals>>,
@@ -155,9 +156,11 @@ impl State {
 }
 
 pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>) {
+    state.running.store(true, SeqCst);
     runtime::spawn(async move {
         let result = read(&backend, epoch, &out, &state).await;
         state.alive.store(false, SeqCst);
+        state.running.store(false, SeqCst);
         state.version.fetch_add(1, SeqCst);
         let expired = result
             .as_ref()

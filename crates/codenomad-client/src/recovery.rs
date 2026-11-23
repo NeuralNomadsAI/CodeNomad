@@ -83,6 +83,7 @@ pub async fn run(
     let mut historical = false;
     let mut parked = false;
     let mut connection_lost = false;
+    let mut connection_closed = false;
     let mut seen = Seen {
         entries: VecDeque::new(),
         bytes: 0,
@@ -95,7 +96,9 @@ pub async fn run(
     loop {
         if retry.is_some_and(|at| Instant::now() >= at) {
             retry = None;
+            connection_closed = false;
             epoch += 1;
+            fence = 0;
             repairs = 0;
             settlement_reads = 0;
             wire = make_wire();
@@ -121,6 +124,7 @@ pub async fn run(
             }
             Some(Input::Closed(e)) if e == epoch => {
                 opened = false;
+                connection_closed = true;
                 connection_lost = true;
                 dirty = true;
                 publish(&out, &wake, Event::ConnectionLost).await;
@@ -156,7 +160,7 @@ pub async fn run(
                 dirty = true;
                 parked = false;
                 quiet = Instant::now();
-                if !wire.alive.load(SeqCst) {
+                if connection_closed {
                     retry = Some(Instant::now());
                 }
                 publish(&out, &wake, Event::Reconnecting).await;
@@ -205,7 +209,7 @@ pub async fn run(
                 dirty = true;
                 parked = false;
                 quiet = Instant::now();
-                if !wire.alive.load(SeqCst) {
+                if connection_closed {
                     retry = Some(Instant::now());
                 }
                 publish(&out, &wake, Event::Reconnecting).await;
@@ -222,8 +226,12 @@ pub async fn run(
                         Err(PromptError::Rejected) => PromptOutcome::Rejected,
                         Err(PromptError::Unconfirmed) => PromptOutcome::Unconfirmed,
                         Err(PromptError::AuthenticationRequired) => {
-                            authentication_required(&backend, &out, &wake, &wire).await;
-                            return Ok(());
+                            if rejected_by_authentication(&backend, &attempt, &out, &wake, &wire)
+                                .await
+                            {
+                                return Ok(());
+                            }
+                            PromptOutcome::Rejected
                         }
                     }
                 } else {
@@ -249,8 +257,10 @@ pub async fn run(
                             if error.downcast_ref()
                                 == Some(&crate::prompt::PromptError::AuthenticationRequired) =>
                         {
-                            authentication_required(&backend, &out, &wake, &wire).await;
-                            return Ok(());
+                            if rejected_by_authentication(&backend, id, &out, &wake, &wire).await {
+                                return Ok(());
+                            }
+                            PromptOutcome::Rejected
                         }
                         Err(error)
                             if error.downcast_ref()
@@ -495,17 +505,42 @@ pub async fn run(
     }
 }
 
-async fn authentication_required(
+async fn rejected_by_authentication(
     backend: &Backend,
+    attempted: &str,
     out: &Sender<Event>,
     wake: &crate::Wake,
     wire: &stream::State,
-) {
+) -> bool {
+    let authenticated = async {
+        let response = backend
+            .client
+            .get(format!("{}api/auth/status", backend.base))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok::<_, history::Error>(crate::backend::read_json_limited(response, 4096).await?)
+    }
+    .await;
+    if authenticated.is_ok_and(|status| status["authenticated"] == true) {
+        return false;
+    }
     wire.cancelled.store(true, SeqCst);
-    while wire.alive.load(SeqCst) {
+    while wire.running.load(SeqCst) && !out.is_closed() {
         runtime::sleep(Duration::from_millis(25)).await;
     }
+    publish(
+        out,
+        wake,
+        Event::PromptAcknowledged {
+            attempted: attempted.into(),
+            outcome: PromptOutcome::Rejected,
+        },
+    )
+    .await;
     publish(out, wake, Event::AuthenticationRequired(backend.clone())).await;
+    true
 }
 fn can_restart(row: &crate::Message) -> bool {
     !row.completed && row.body.is_empty() && row.parts.iter().all(|part|
