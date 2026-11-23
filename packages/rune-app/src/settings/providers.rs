@@ -1,3 +1,4 @@
+#[cfg(not(target_arch = "wasm32"))]
 use super::view::Window;
 use crate::{State, backend::Backend, platform, strings::t};
 use codenomad_client::{
@@ -14,6 +15,9 @@ pub(super) struct Target {
     session: Option<String>,
     owned_tab: bool,
     revision: u64,
+    observed: Option<u64>,
+    authority: u64,
+    online: bool,
 }
 
 impl Target {
@@ -39,6 +43,9 @@ impl Target {
             session,
             owned_tab,
             revision: 0,
+            observed: None,
+            authority: 0,
+            online: true,
         })
     }
 
@@ -48,6 +55,7 @@ impl Target {
         current: Option<&Backend>,
         changes: &CatalogueChanges,
         stopped: &CatalogueChanges,
+        generation: Option<u64>,
     ) -> bool {
         let exists = (!self.owned_tab || crate::workspace::contains_project(s, &self.workspace))
             && !self.matches(stopped);
@@ -63,11 +71,35 @@ impl Target {
         };
         if !self.backend.client.same_connection(&current.client) {
             self.backend = current.clone();
-            self.invalidate();
+            self.observed = None;
+            self.authority = self.authority.wrapping_add(1);
         } else if self.matches(changes) {
             self.invalidate();
         }
+        if let Some(generation) = generation
+            && self.observed != Some(generation)
+        {
+            self.observed = Some(generation);
+            self.transport(generation % 2 == 1);
+            self.authority = self.authority.wrapping_add(1);
+        }
         true
+    }
+
+    pub fn transport(&mut self, online: bool) {
+        if self.online != online {
+            self.online = online;
+            self.authority = self.authority.wrapping_add(1);
+            self.invalidate();
+        }
+    }
+
+    pub fn online(&self) -> bool {
+        self.online
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.authority.wrapping_add(self.revision)
     }
 
     fn matches(&self, changes: &CatalogueChanges) -> bool {
@@ -97,19 +129,36 @@ impl Target {
 
 type Flight = (Sender<()>, Receiver<Option<Vec<Provider>>>);
 
-#[derive(Default)]
 pub(super) struct Catalog {
-    expanded: bool,
+    pub expanded: bool,
     client_id: Option<String>,
+    authority: u64,
     seen: Option<u64>,
     flight: Option<Flight>,
     rows: Option<Vec<Provider>>,
     failed: bool,
 }
 
+impl Default for Catalog {
+    fn default() -> Self {
+        Self {
+            expanded: true,
+            client_id: None,
+            authority: 0,
+            seen: None,
+            flight: None,
+            rows: None,
+            failed: false,
+        }
+    }
+}
+
 impl Catalog {
     pub fn poll(&mut self, target: Option<&Target>, wake: Option<&rune::Waker>) -> bool {
-        let Some((target, wake)) = target.zip(wake).filter(|_| self.expanded) else {
+        let Some((target, wake)) = target
+            .zip(wake)
+            .filter(|(target, _)| self.expanded && target.online)
+        else {
             let changed = self.seen.is_some();
             *self = Self {
                 expanded: self.expanded,
@@ -118,10 +167,13 @@ impl Catalog {
             return changed;
         };
         let mut changed = false;
-        if self.client_id.as_deref() != Some(&target.backend.client_id) {
+        if self.client_id.as_deref() != Some(&target.backend.client_id)
+            || self.authority != target.authority
+        {
             *self = Self {
                 expanded: true,
                 client_id: Some(target.backend.client_id.clone()),
+                authority: target.authority,
                 ..Self::default()
             };
             changed = true;
@@ -169,8 +221,34 @@ impl Catalog {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn view(s: &Window, available: bool) -> El {
-    let catalog = &s.providers;
+    content(&s.providers, available, |s: &mut Window| {
+        s.providers.toggle()
+    })
+}
+
+impl Catalog {
+    pub fn toggle(&mut self) {
+        *self = Self {
+            expanded: !self.expanded,
+            ..Self::default()
+        };
+    }
+
+    pub fn suspend(&mut self) {
+        *self = Self {
+            expanded: self.expanded,
+            ..Self::default()
+        };
+    }
+}
+
+pub(super) fn content<S: 'static>(
+    catalog: &Catalog,
+    available: bool,
+    toggle: impl Fn(&mut S) + Clone + 'static,
+) -> El {
     let mut body = col().full_width().separate(Space::Sm);
     if catalog.expanded {
         if !available {
@@ -219,11 +297,6 @@ pub(super) fn view(s: &Window, available: bool) -> El {
         t("settings.providers.models.title"),
         catalog.expanded,
         body,
-        |s: &mut Window| {
-            s.providers = Catalog {
-                expanded: !s.providers.expanded,
-                ..Catalog::default()
-            };
-        },
+        toggle,
     ))
 }
