@@ -68,7 +68,7 @@ fn connect(s: &mut State) {
 }
 
 pub(super) fn append(s: &mut State, text: &str) {
-    if text.is_empty() || text.len() > prompt_history::MAX_ENTRY_BYTES {
+    if text.is_empty() || text.len() > prompt_history::MAX_WRITE_BYTES {
         return;
     }
     connect(s);

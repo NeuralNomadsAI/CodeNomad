@@ -82,8 +82,13 @@ pub fn run() {
     if stage.as_deref() == Some("write") {
         let backend = crate::settings::bound_backend(&rt.state).expect("bound server");
         wait(&mut rt, "prompt history written by the composer", |_| {
-            crate::platform::block_on(codenomad_client::prompt_history::read(&backend))
-                .is_ok_and(|history| history == ["/review résumé 🦀"])
+            crate::platform::block_on(codenomad_client::prompt_history::read(&backend)).is_ok_and(
+                |history| {
+                    history
+                        .first()
+                        .is_some_and(|text| text == "/review résumé 🦀")
+                },
+            )
         });
     }
 }

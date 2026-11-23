@@ -4,10 +4,6 @@ pub fn routes() -> axum::Router<Shared> {
     axum::Router::new().route("/api/storage/instances/{id}", axum::routing::any(instance))
 }
 
-const INSTANCE_BYTES: usize = 8 * 1024 * 1024;
-const HISTORY_BYTES: usize = 128 * 1024;
-const HISTORY_ENTRIES: usize = 100;
-
 use axum::{
     Json,
     extract::{FromRequest, Path as Param, Request, State},
@@ -29,7 +25,7 @@ fn failed() -> Error {
 }
 
 pub fn read(file: &Path, default: Value) -> Result<Value, Error> {
-    read_bounded(file, default, INSTANCE_BYTES)
+    read_bounded(file, default, 8 * 1024 * 1024)
 }
 
 pub fn read_bounded(file: &Path, default: Value, max: usize) -> Result<Value, Error> {
@@ -72,38 +68,6 @@ struct Model {
 struct Instance {
     message_history: Vec<String>,
     agent_model_selections: std::collections::BTreeMap<String, Model>,
-}
-
-#[derive(Deserialize)]
-struct HistoryAppend {
-    text: String,
-}
-
-fn append_history(file: &Path, text: String) -> Result<Value, Error> {
-    if text.is_empty() || text.len() > HISTORY_BYTES {
-        return Err(error(Status::BAD_REQUEST, "Invalid prompt history entry"));
-    }
-    let mut data = read(file, json!(Instance::default()))?;
-    let fields = data.as_object_mut().ok_or_else(failed)?;
-    fields.entry("agentModelSelections").or_insert_with(|| json!({}));
-    let history = fields.entry("messageHistory").or_insert_with(|| json!([]));
-    let history = history.as_array_mut().ok_or_else(failed)?;
-    if !history.iter().all(Value::is_string) {
-        return Err(failed());
-    }
-    history.insert(0, Value::String(text));
-    history.truncate(HISTORY_ENTRIES);
-    let mut size = data.to_string().len();
-    let history = data["messageHistory"].as_array_mut().ok_or_else(failed)?;
-    while size > INSTANCE_BYTES {
-        if history.len() == 1 {
-            return Err(failed());
-        }
-        let tail = history.pop().ok_or_else(failed)?;
-        size -= tail.to_string().len() + 1;
-    }
-    write(file, &data)?;
-    Ok(data)
 }
 
 /// `InstanceStore.sanitizeId`: the file name the reference derives from the storage key.
@@ -161,15 +125,6 @@ pub async fn instance(
             write(&file, &value)?;
             value
         }
-        Method::POST => {
-            let Json(entry) = Json::<HistoryAppend>::from_request(request, &app).await.map_err(
-                |_: axum::extract::rejection::JsonRejection| error(Status::BAD_REQUEST, "Invalid prompt history entry"),
-            )?;
-            // Resolve the live occurrence again after reading the body. The shared
-            // current-thread router does not yield between the read and replacement.
-            app.workspace(&id)?;
-            append_history(&instance_file(&app, &id)?, entry.text)?
-        }
         Method::DELETE => {
             match fs::remove_file(file) {
                 Ok(()) => {}
@@ -193,28 +148,5 @@ mod tests {
         assert_eq!(file_name(r"C:\Users\Ana\Mon Projet"), "c_users_ana_mon_projet");
         assert_eq!(file_name("/home/ana/étude__x/"), "home_ana_tude_x");
         assert_eq!(file_name("a.b-c"), "a.b-c");
-    }
-
-    #[test]
-    fn append_keeps_other_fields_and_the_latest_hundred_entries_on_disk() {
-        let dir = crate::shared::test_dir("history-append");
-        let file = dir.join("project.json");
-        let model = json!({"build": {"providerId": "provider", "modelId": "model"}});
-        let original = json!({
-            "messageHistory": (0..100).map(|i| i.to_string()).collect::<Vec<_>>(),
-            "agentModelSelections": model,
-            "other": true,
-        });
-        write(&file, &original).unwrap();
-        append_history(&file, "essai 🦀".into()).unwrap();
-        let reopened = read(&file, Value::Null).unwrap();
-        assert_eq!(reopened["messageHistory"].as_array().unwrap().len(), 100);
-        assert_eq!(reopened["messageHistory"][0], "essai 🦀");
-        assert_eq!(reopened["messageHistory"][99], "98");
-        assert_eq!(reopened["agentModelSelections"], model);
-        assert_eq!(reopened["other"], true);
-        assert!(append_history(&file, "x".repeat(HISTORY_BYTES + 1)).is_err());
-        assert_eq!(read(&file, Value::Null).unwrap(), reopened);
-        fs::remove_dir_all(dir).unwrap();
     }
 }
