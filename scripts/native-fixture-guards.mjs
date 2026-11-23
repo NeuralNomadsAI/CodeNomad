@@ -1,16 +1,46 @@
 // Guards for isolated fixture-owned children and native acceptance pagination.
 import { execFile, spawn } from "node:child_process"
+import { accessSync, constants } from "node:fs"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 
-const lifetimes = new WeakMap()
-// Capture the spawn interval before the OS can lose the root's process row.
+const jobs = new WeakMap()
 export function spawnFixtureChild(command, args, options) {
-  const beforeSpawn = Date.now()
-  const child = spawn(command, args, options)
-  const lifetime = { beforeSpawn, afterSpawn: Date.now() }
-  lifetimes.set(child, lifetime)
-  child.once("exit", () => { lifetime.exitedBy = Date.now() })
+  if (process.platform !== "win32") return spawn(command, args, options)
+  if (options?.stdio && options.stdio !== "pipe" && options.stdio[2] !== "pipe") {
+    throw new Error("Windows fixture ownership requires piped stderr for the child identity")
+  }
+  const root = fileURLToPath(new URL("../", import.meta.url))
+  const exe = process.env.CODENOMAD_FIXTURE_JOB_EXE
+    ?? path.resolve(root, process.env.CARGO_TARGET_DIR || "target", "debug", "codenomad-fixture-job.exe")
+  try {
+    if (!path.isAbsolute(exe)) throw new Error("Expected an absolute path")
+    accessSync(exe, constants.X_OK)
+  } catch (cause) {
+    throw new Error("Build `cargo build -p codenomad-host-process --bin codenomad-fixture-job` or set CODENOMAD_FIXTURE_JOB_EXE", { cause })
+  }
+  const child = spawn(exe, [command, ...args], options)
+  jobs.set(child, new Promise(resolve => {
+    let line = ""
+    const finish = pid => {
+      child.stderr.off("data", accept)
+      resolve(pid)
+    }
+    const accept = chunk => {
+      line = (line + chunk).slice(-16384)
+      const match = /^CODENOMAD_FIXTURE_PID=(\d+)\r?\n/m.exec(line)
+      if (match) finish(Number(match[1]))
+    }
+    child.stderr.on("data", accept)
+    child.once("close", () => finish(undefined))
+    child.once("error", () => finish(undefined))
+  }))
   return child
+}
+
+export async function fixtureChildPid(child) {
+  return jobs.has(child) ? jobs.get(child) : child.pid
 }
 
 export function clearFixtureGitEnvironment(environment = process.env) {
@@ -36,31 +66,13 @@ async function stopOwnedTree(child, stopped, graceMs, { close, group, startedBy 
   const { captureWindowsProcessTree, stopCapturedWindowsProcesses, processTreeRows } =
     await import("../packages/server/src/process-tree.ts")
   if (process.platform === "win32") {
-    const lifetime = lifetimes.get(child)
-    const wasAlive = child.exitCode === null && child.signalCode === null
-    if (!lifetime && !wasAlive) return
-    let targets = await captureWindowsProcessTree(child.pid, process.pid, observed, lifetime)
+    const targets = await captureWindowsProcessTree(child.pid, process.pid, observed)
     const alive = child.exitCode === null && child.signalCode === null
-    if (!lifetime && !alive) return
-    if (!targets.length && alive) {
+    if (!alive) return
+    if (!targets.length) {
       throw new Error(`Could not attest fixture-owned Windows process ${child.pid}`)
     }
-    if (alive) {
-      await graceful()
-      if (lifetime) {
-        const captured = new Map(targets.map(row => [`${row.pid}:${row.startedAt}`, row]))
-        let snapshotError
-        const latest = await captureWindowsProcessTree(child.pid, process.pid, observed, lifetime)
-          .catch(error => { snapshotError = error; return [] })
-        for (const row of latest) {
-          captured.set(`${row.pid}:${row.startedAt}`, row)
-        }
-        targets = [...captured.values()]
-        await stopCapturedWindowsProcesses(targets)
-        if (snapshotError) throw snapshotError
-        return
-      }
-    }
+    await graceful()
     await stopCapturedWindowsProcesses(targets)
     return
   }
@@ -93,7 +105,13 @@ async function stopOwnedTree(child, stopped, graceMs, { close, group, startedBy 
 
 export async function stopFixtureChild(child, stopped, graceMs = 1_000, forceMs = 2_000, options = {}) {
   let treeError
-  if (child.pid && child.spawnfile && (process.platform === "win32" || options.group || (child.exitCode === null && child.signalCode === null))) {
+  if (jobs.has(child)) {
+    if (options.close && child.exitCode === null && child.signalCode === null) {
+      await completesWithin(Promise.resolve().then(options.close).catch(() => {}), graceMs)
+      if (await completesWithin(stopped, graceMs)) return
+    }
+    // Node holds the wrapper handle; terminating it closes the kernel job.
+  } else if (child.pid && child.spawnfile && (options.group || (child.exitCode === null && child.signalCode === null))) {
     try { await stopOwnedTree(child, stopped, graceMs, options) } catch (error) { treeError = error }
   }
   if (child.exitCode != null || child.signalCode != null) {

@@ -124,35 +124,10 @@ export async function stopWindowsProcessTree(rootPid: number, rootStartedBy: Dat
   return targets.length
 }
 
-export interface FixtureProcessLifetime {
-  beforeSpawn: number
-  afterSpawn: number
-  exitedBy?: number
-}
-
-/** A dead parent's numeric ID identifies only children born during its witnessed lifetime. */
-export function fixtureWindowsTreeTargets(rootPid: number, rootParent: number, rows: ProcessTreeRow[], lifetime: FixtureProcessLifetime): ProcessTreeRow[] {
-  const before = dotNetTicks(lifetime.beforeSpawn)
-  const after = dotNetTicks(lifetime.afterSpawn + 1)
-  const holder = rows.find(row => row.pid === rootPid)
-  if (holder?.parentPid === rootParent && holder.startedAt !== undefined && holder.startedAt >= before && holder.startedAt < after) {
-    return processTreeRows(rootPid, rows)
-  }
-  if (lifetime.exitedBy === undefined) return []
-  const exited = dotNetTicks(lifetime.exitedBy + 1)
-  const upper = holder?.startedAt !== undefined && holder.startedAt < exited ? holder.startedAt : exited
-  // Exclude the ambiguous spawn interval when CIM has lost the exact root.
-  const orphans = rows.filter(row => row.pid !== rootPid && (row.parentPid !== rootPid
-    || row.startedAt !== undefined && row.startedAt >= after && row.startedAt < upper))
-  const root = { pid: rootPid, parentPid: rootParent, startedAt: after }
-  return processTreeRows(rootPid, [root, ...orphans]).filter(row => row !== root)
-}
-
-export async function captureWindowsProcessTree(rootPid: number, rootParent: number, observed: Date, lifetime?: FixtureProcessLifetime): Promise<ProcessTreeRow[]> {
+export async function captureWindowsProcessTree(rootPid: number, rootParent: number, observed: Date): Promise<ProcessTreeRow[]> {
   const listing = await powershell(WINDOWS_PROCESS_ROWS, 30_000, true)
   if (listing === undefined) throw new Error("Cannot enumerate fixture-owned Windows processes")
   const rows = parseWindowsProcessRows(listing)
-  if (lifetime) return fixtureWindowsTreeTargets(rootPid, rootParent, rows, lifetime)
   if (!rows.some(row => row.pid === rootPid && row.parentPid === rootParent)) return []
   return windowsTreeStopTargets(rootPid, rows, observed)
 }

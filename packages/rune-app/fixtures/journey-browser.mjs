@@ -100,6 +100,16 @@ export async function journeyBrowser(host, web, report, executablePath){
     const response=(method,pattern)=>page.waitForResponse(r=>r.request().method()===method&&r.ok()&&pattern.test(new URL(r.url()).pathname))
     const left='window.menu.leftPanel', right='window.menu.rightPanel'
     const preview=()=>button(`${label('filesPanel.viewer')} · ${filename}`)
+    async function selectFiles(){
+      const name=label('instanceShell.rightPanel.tabs.files')
+      const selected=mirror().getByRole('tab',{name,exact:true,selected:true})
+      // Opening the mobile drawer animates across the tabs. Confirm selection before continuing.
+      for(let attempt=0;attempt<3&&!await selected.count();attempt++){
+        await press(named('tab',name))
+        try{await selected.waitFor({timeout:1000})}catch(error){if(error.name!=='TimeoutError')throw error}
+      }
+      await selected.waitFor()
+    }
     await step('launch',async()=>{
       await boot()
       await button(label('folderSelection.servers.dialog.connect')).waitFor()
@@ -136,7 +146,7 @@ export async function journeyBrowser(host, web, report, executablePath){
     })
     await step('files',async()=>{
       await panel(right)
-      await press(named('tab',label('instanceShell.rightPanel.tabs.files')))
+      await selectFiles()
       const loaded=page.waitForResponse(r=>{
         const url=new URL(r.url())
         return r.request().method()==='GET'&&url.pathname.endsWith('/files/preview')&&url.searchParams.get('path')===filename

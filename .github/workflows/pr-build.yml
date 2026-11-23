@@ -1012,7 +1012,12 @@ jobs:
             node scripts/test-opencode-install-native.mjs
 
       - name: Test migration failure guards
-        run: node --test scripts/native-fixture-guards.test.mjs "scripts/fixtures/wsl-*.test.mjs"
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
+          fi
+          node --test scripts/native-fixture-guards.test.mjs "scripts/fixtures/wsl-*.test.mjs"
 
       - name: Certify native migration and Git-degraded conversations at the minimum and latest stable
         timeout-minutes: 20

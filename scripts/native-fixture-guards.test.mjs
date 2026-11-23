@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { fixturePaginationGuard, spawnFixtureChild, stopFixtureChild, clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, fixturePaginationGuard, spawnFixtureChild, stopFixtureChild, clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
 import { execFileSync, spawn } from "node:child_process"
 import { once } from "node:events"
 import fs from "node:fs"
@@ -44,28 +44,71 @@ test("Windows fixture cleanup stops a descendant even after graceful parent exit
   assert.throws(() => process.kill(descendant, 0), { code: "ESRCH" })
 })
 
-test("Windows cleanup finds a grandchild after the root has already exited", { skip: process.platform !== "win32", timeout: 75_000 }, async () => {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(path|systemroot|windir)$/i.test(key)))
+const windows = { skip: process.platform !== "win32", timeout: 30_000 }
+const isolated = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(path|systemroot|windir)$/i.test(key)))
+const own = (source, ...args) => spawnFixtureChild(process.execPath, ["-e", source, ...args], {
+  env: isolated, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+})
+const alive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
+
+test("Windows job still owns a grandchild after both ancestors exit", windows, async () => {
   const middleScript = `
     const {spawn} = require("node:child_process")
     const leaf = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {detached:true,windowsHide:true,stdio:"ignore"})
-    leaf.once("spawn", () => console.log(JSON.stringify([process.pid,leaf.pid])))
-    setInterval(() => {}, 1000)
+    leaf.once("spawn", () => process.stdout.write(JSON.stringify([process.pid,leaf.pid]), () => process.exit(0)))
   `
-  const root = spawnFixtureChild(process.execPath, ["-e", `
+  const root = own(`
     const {spawn} = require("node:child_process")
-    const middle = spawn(process.execPath, ["-e", ${JSON.stringify(middleScript)}], {detached:true,windowsHide:true,stdio:["ignore","pipe","ignore"]})
-    middle.stdout.once("data", data => process.stdout.write(data, () => process.exit(0)))
-  `], { env, windowsHide: true, stdio: ["ignore", "pipe", "inherit"] })
+    const middle = spawn(process.execPath, ["-e", ${JSON.stringify(middleScript)}], {windowsHide:true,stdio:["ignore","pipe","inherit"]})
+    let result = ""
+    middle.stdout.on("data", data => result += data)
+    middle.once("close", code => {
+      if (code !== 0) return process.exit(2)
+      process.stdout.write(result)
+      process.stdin.resume()
+      process.stdin.once("end", () => process.exit(0))
+    })
+  `)
   const stopped = once(root, "close")
-  const [data] = await once(root.stdout, "data")
-  const descendants = JSON.parse(data.toString())
-  await stopped
-  assert.equal(root.exitCode, 0)
   try {
-    for (const pid of descendants) assert.doesNotThrow(() => process.kill(pid, 0), `orphan ${pid} must outlive root ${root.pid}`)
+    const [data] = await once(root.stdout, "data")
+    const [middle, leaf] = JSON.parse(data.toString())
+    const inner = await fixtureChildPid(root)
+    assert.equal(alive(middle), false)
+    assert.equal(alive(leaf), true)
+    root.stdin.end()
+    await stopped
+    assert.equal(root.exitCode, 0)
+    assert.equal(alive(inner), false)
+    assert.equal(alive(leaf), false)
   } finally { await stopFixtureChild(root, stopped) }
-  for (const pid of descendants) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" })
+})
+
+test("Windows job teardown leaves a foreign PID alone even when the fixture advertises it as a descendant", windows, async () => {
+  const foreign = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    env: isolated, windowsHide: true, stdio: "ignore",
+  })
+  const foreignStopped = once(foreign, "close")
+  try {
+    const root = own(`console.log(process.argv[1]); setInterval(() => {}, 1000)`, String(foreign.pid))
+    const stopped = once(root, "close")
+    try {
+      const [data] = await once(root.stdout, "data")
+      assert.equal(Number(String(data).trim()), foreign.pid)
+      await stopFixtureChild(root, stopped)
+      assert.equal(alive(foreign.pid), true)
+    } finally { await stopFixtureChild(root, stopped) }
+  } finally {
+    foreign.kill()
+    await foreignStopped
+  }
+})
+
+test("Windows job permits immediate graceful shutdown over stdin", windows, async () => {
+  const root = own(`process.stdin.resume(); process.stdin.once("end", () => process.exit(0))`)
+  const stopped = once(root, "close")
+  await stopFixtureChild(root, stopped, 5000, 2000, { close: () => root.stdin.end() })
+  assert.equal(root.exitCode, 0)
 })
 
 test("Missions native fixtures stop their owned serve with bounded escalation", () => {

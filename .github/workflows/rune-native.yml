@@ -120,7 +120,10 @@ jobs:
         run: |
           cargo build --locked --manifest-path packages/server-rs/Cargo.toml
           suffix=''
-          if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
+            suffix='.exe'
+          fi
           export RUNE_CLIENT_EXE="$CARGO_TARGET_DIR/debug/codenomad-rune$suffix"
           export RUNE_SERVER_EXE="$CARGO_TARGET_DIR/debug/codenomad-rs$suffix"
           node packages/rune-app/fixtures/launcher-fixture.mjs --workspace-claims
