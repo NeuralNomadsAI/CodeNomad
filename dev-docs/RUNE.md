@@ -169,6 +169,8 @@ Tests use isolated `trial-*` profiles, owned processes and existing Cargo caches
 
 Browser/mobile risks and physical-device gates are in [RUNE_WEB.md](RUNE_WEB.md). The latency guard reuses `scripts/perf/` markers and TUI budgets. Webview and PTY capabilities require a short decision before implementation.
 
+Under browser load, a delayed touch release can trigger Rune’s 500 ms long-press path instead of the primary tap ([Rune #1716](https://github.com/anomalyco/rune/issues/1716)). Mobile journey traces record DOM delivery time and any secondary menu; each gesture is attempted once.
+
 The WASM build starts on Canvas 2D, prefers WebGPU and falls back to WebGL2 when no WebGPU device is available. On Chrome Android 35 with the host GPU, five alternating transcript swipes per client put the median presentation p95 at 18.37 ms for Rune WebGL2 and 18.52 ms for Solid. In SwiftShader, the CPU launcher is visible before the WebGL2 handover times out: median 1.04 s from client navigation, versus 0.77 s in the matching build without WebGL2.
 
 The Rune web bridge exposes its hidden `Password input` editing proxy in the accessibility tree ([Rune #594](https://github.com/anomalyco/rune/issues/594)). The paired-browser smoke records the proxy as a known gap and requires the HTTPS launcher and pairing recovery to remain free of an application password field.

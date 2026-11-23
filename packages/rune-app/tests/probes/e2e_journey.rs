@@ -158,7 +158,33 @@ pub(super) fn run() {
     });
     step(&mut rt, &path, "permission", |rt| {
         type_text(rt, "composer", PROMPT);
-        tap(rt, "send");
+        let send_ready = |rt: &Runtime<State>| {
+            crate::composer::can_send(&rt.state)
+                && nodes(&rt.accessibility_json()).any(|node| {
+                    node["key"] == "send"
+                        && node["actions"]
+                            .as_array()
+                            .is_some_and(|actions| actions.iter().any(|action| action == "click"))
+                })
+        };
+        let s = &rt.state;
+        println!(
+            "{}",
+            json!({"sendReadyOnFirstFrame":send_ready(rt),
+                "readerSettling":s.reader.as_ref().is_some_and(|reader| reader.blocks_send()),
+                "launcherBusy":s.screen.launcher().is_some_and(|launcher| launcher.blocks_prompt()),
+                "commandChannelReady":s.commands.as_ref().is_some_and(|commands| !commands.is_closed())})
+        );
+        rt.update(|_, tx| {
+            tx.scroll_into_view("send");
+            tx.instant();
+        });
+        rt.frame(1.0 / 60.0);
+        // Check after scrolling and dispatch from that frame, with no second click.
+        ui(rt, "enabled Send button", send_ready);
+        let (x, y) = rt.find("send").expect("laid-out Send button");
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
         ui(rt, "permission button", |rt| a11y(rt, "allow_once"));
         assert_eq!(
             std::fs::read_to_string(Path::new(&folder).join("journey.txt")).unwrap(),
