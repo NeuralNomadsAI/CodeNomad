@@ -2,6 +2,7 @@ export const runeMessages = {
   "rune.attachments_unavailable": "Dieser Server unterstützt keinen Anhangsverlauf.",
   "rune.attachments_missing": "Die Anhänge des Entwurfs wurden nicht wiederhergestellt.",
   "rune.attachments_keep_text": "Nur Text behalten",
+  "rune.pairing_guide": "Erstellen Sie auf dem CodeNomad-Host mit admin.sh oder admin.ps1 einen Kopplungslink. Öffnen Sie den Link in einem anderen Tab auf diesem Gerät.",
   "rune.loading": "Laden",
   "rune.ready": "Bereit",
   "rune.streaming": "Antwort läuft",

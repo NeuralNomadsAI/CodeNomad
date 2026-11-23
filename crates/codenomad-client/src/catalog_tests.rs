@@ -446,6 +446,100 @@ fn binding_returns_the_validated_native_session_without_a_list_or_second_read() 
 }
 
 #[test]
+fn server_search_follows_scoped_worktree_cursors_and_binds_the_exact_match() {
+    run(async {
+        let inventory = json!({"worktrees":[
+            {"directory":"/trial"},
+            {"directory":"/alias", "serviceDirectory":"/linked"},
+            {"directory":"/missing","nestedFolderMissing":true}
+        ]});
+        let session = json!({"id":"later","title":"Off page","location":{"directory":"/linked"}});
+        let server = Server::start(vec![
+            reply(
+                "GET /api/workspaces/workspace/worktrees",
+                None,
+                200,
+                inventory.clone(),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session?directory=%2Ftrial&limit=200&search=Off+page",
+                None,
+                200,
+                json!({"data":[],"cursor":{}}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session?directory=%2Flinked&limit=200&search=Off+page",
+                None,
+                200,
+                json!({"data":[],"cursor":{"next":"private-scope"}}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session?directory=%2Flinked&cursor=private-scope",
+                None,
+                200,
+                json!({"data":[session.clone()],"cursor":{}}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/later",
+                None,
+                200,
+                json!({"data":session}),
+            ),
+            reply(
+                "GET /api/workspaces/workspace/worktrees",
+                None,
+                200,
+                inventory,
+            ),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        let project = crate::catalog::Project {
+            id: "workspace".into(),
+            path: "/trial".into(),
+        };
+        let results = backend.search_sessions(&project, "Off page").await.unwrap();
+        assert_eq!(results.len(), 1);
+        let found = &results[0];
+        assert_eq!(found.id, "later");
+        let (bound, info) = backend
+            .bind_at(&project, &found.id, None, false)
+            .await
+            .unwrap();
+        assert_eq!(bound.session, info.id);
+    });
+}
+
+#[test]
+fn workspace_absence_requires_a_successful_inventory_and_uses_occurrence_identity() {
+    run(async {
+        let server = Server::start(vec![
+            reply(
+                "GET /api/workspaces",
+                None,
+                401,
+                json!({"pairingRequired":true}),
+            ),
+            reply(
+                "GET /api/workspaces",
+                None,
+                200,
+                json!([project("old", "fixture")]),
+            ),
+            reply(
+                "GET /api/workspaces",
+                None,
+                200,
+                json!([project("another", "fixture")]),
+            ),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        assert!(backend.workspace_missing("old").await.is_err());
+        assert!(!backend.workspace_missing("old").await.unwrap());
+        assert!(backend.workspace_missing("old").await.unwrap());
+    });
+}
+
+#[test]
 fn only_confirmed_absence_or_departure_retires_a_session_visit() {
     run(async {
         let server = Server::start(vec![

@@ -128,7 +128,13 @@ pub fn list(s: &mut State, more: bool) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
-    if l.pending || more && !l.can_page() {
+    if !more && l.show_search && !l.search.text.trim().is_empty() {
+        l.search_results = Default::default();
+    }
+    if l.pending {
+        return;
+    }
+    if more && !l.can_page() {
         return;
     }
     l.listing = true;
@@ -280,7 +286,9 @@ pub(super) fn bind(
 ) {
     let same_session =
         !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
+    let mut reauthenticated = false;
     if let Some(l) = s.screen.launcher_mut() {
+        reauthenticated = l.reauthenticated_session.take().as_deref() == Some(b.session.as_str());
         l.visits
             .record(&b.session, visit, l.listed_sessions.contains(&b.session));
         if let Some(row) = l.sessions.iter_mut().find(|row| row.id == b.session) {
@@ -305,9 +313,17 @@ pub(super) fn bind(
         s.messages.clear();
         s.can_older = false;
     } else if let Some(agent) = &mut s.agent {
-        // This is the same owned occurrence and session; the in-flight reply guard stays live.
-        agent.online = false;
-        agent.pending_known = false;
+        if reauthenticated {
+            let mut next = crate::agent::Ui::new(crate::agent::start(b.clone(), s.wake.clone()));
+            next.drafts = std::mem::take(&mut agent.drafts);
+            next.reasons = std::mem::take(&mut agent.reasons);
+            *agent = next;
+            crate::files::bind(s, &b);
+        } else {
+            // The same owned occurrence and session retain their in-flight reply guard.
+            agent.online = false;
+            agent.pending_known = false;
+        }
     }
     s.draft = TextEdit::new(draft);
     s.phase = Phase::Loading;
@@ -318,24 +334,16 @@ pub(super) fn bind(
     s.history_error = false;
     s.history_detached = false;
     s.revision += 1;
-    let (out, incoming) = bounded(64);
-    let (commands, input) = bounded(1);
-    s.incoming = Some(incoming);
-    s.commands = Some(commands);
-    let wake = s.wake.clone();
-    crate::platform::spawn(async move {
-        if crate::transport::run_backend(b, out.clone(), input, wake.clone())
-            .await
-            .is_err()
-        {
-            crate::transport::publish(&out, &wake, crate::transport::Event::Failed).await;
-        }
-    });
+    attach(s, b);
     s.show_chat();
     crate::workspace::capture(s);
     if !same_session {
         tx.scroll_to_bottom_instant("history");
     }
+}
+
+pub(super) fn attach(s: &mut State, b: Backend) {
+    crate::transport::start_bound(s, b);
 }
 #[cfg(feature = "test-support")]
 pub fn back(s: &mut State) {

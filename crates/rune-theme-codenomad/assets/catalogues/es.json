@@ -2187,6 +2187,7 @@
   "rune.older": "Mensajes anteriores",
   "rune.open_error": "Error al abrir · Revisa carpeta o sesión",
   "rune.other_values": "Otros valores",
+  "rune.pairing_guide": "En el equipo que ejecuta CodeNomad, usa admin.sh o admin.ps1 para crear un enlace de emparejamiento. Ábrelo en otra pestaña de este dispositivo.",
   "rune.prompt": "Mensaje",
   "rune.ready": "Listo",
   "rune.reason": "Motivo",

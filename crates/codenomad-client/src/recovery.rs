@@ -20,8 +20,10 @@ pub enum Input {
     Opened(u64),
     Native(u64, u64, Value),
     Workspace(u64, crate::transport::WorkspaceEvent),
+    Preferences(crate::settings::Owner),
     Hint(u64, u64),
     Unavailable(u64),
+    AuthenticationRequired(u64),
     Closed(u64),
 }
 struct Seen {
@@ -59,7 +61,13 @@ pub async fn run(
         let _ = forward.send(Input::Command(Command::Close)).await;
     });
     let mut epoch = 1;
-    let mut wire = Arc::new(stream::State::default());
+    let make_wire = || {
+        Arc::new(stream::State::observing_preferences(
+            out.clone(),
+            wake.clone(),
+        ))
+    };
+    let mut wire = make_wire();
     stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
     let mut opened = false;
     let mut dirty = true;
@@ -74,6 +82,7 @@ pub async fn run(
     let mut resident = Vec::<history::Row>::new();
     let mut historical = false;
     let mut parked = false;
+    let mut connection_lost = false;
     let mut seen = Seen {
         entries: VecDeque::new(),
         bytes: 0,
@@ -89,7 +98,7 @@ pub async fn run(
             epoch += 1;
             repairs = 0;
             settlement_reads = 0;
-            wire = Arc::new(stream::State::default());
+            wire = make_wire();
             stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
         }
         match runtime::recv_timeout(&rx, Duration::from_millis(25)).await {
@@ -112,16 +121,22 @@ pub async fn run(
             }
             Some(Input::Closed(e)) if e == epoch => {
                 opened = false;
+                connection_lost = true;
                 dirty = true;
-                publish(&out, &wake, Event::Reconnecting).await;
-                attempts += 1;
+                publish(&out, &wake, Event::ConnectionLost).await;
+                attempts = attempts.saturating_add(1);
+                retry =
+                    Some(Instant::now() + Duration::from_millis(250 * (1u64 << attempts.min(4))));
                 if attempts <= 6 {
-                    retry = Some(
-                        Instant::now() + Duration::from_millis(250 * (1u64 << attempts.min(4))),
-                    );
-                } else {
+                    publish(&out, &wake, Event::Reconnecting).await;
+                } else if attempts == 7 {
+                    // Keep the same subscription owner after showing the outage.
                     publish(&out, &wake, Event::Failed).await;
                 }
+            }
+            Some(Input::AuthenticationRequired(e)) if e == epoch => {
+                publish(&out, &wake, Event::AuthenticationRequired(backend.clone())).await;
+                return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {
                 dirty = true;
@@ -418,6 +433,7 @@ pub async fn run(
                     });
                     fence = stamp;
                     attempts = 0;
+                    connection_lost = false;
                     dirty = false;
                     initial = false;
                     first = page.rows.first().map(|r| r.id.clone());
@@ -447,6 +463,17 @@ pub async fn run(
                     quiet = Instant::now() + Duration::from_millis(200);
                 }
                 Err(error) => {
+                    if cfg!(target_arch = "wasm32")
+                        && connection_lost
+                        && matches!(
+                            backend.workspace_missing(&backend.workspace).await,
+                            Ok(true)
+                        )
+                    {
+                        wire.cancelled.store(true, SeqCst);
+                        publish(&out, &wake, Event::WorkspaceMissing).await;
+                        return Ok(());
+                    }
                     eprintln!("Rune history refresh failed: {}", read_diagnostic(&error));
                     dirty = false;
                     parked = true;

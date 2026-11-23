@@ -2187,6 +2187,7 @@
   "rune.older": "Ältere Nachrichten",
   "rune.open_error": "Öffnen fehlgeschlagen · Ordner oder Sitzung prüfen",
   "rune.other_values": "Andere Werte",
+  "rune.pairing_guide": "Erstellen Sie auf dem CodeNomad-Host mit admin.sh oder admin.ps1 einen Kopplungslink. Öffnen Sie den Link in einem anderen Tab auf diesem Gerät.",
   "rune.prompt": "Nachricht",
   "rune.ready": "Bereit",
   "rune.reason": "Grund",

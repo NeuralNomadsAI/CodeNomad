@@ -49,6 +49,7 @@ pub enum PromptOutcome {
 pub enum Event {
     Connected(crate::backend::Backend),
     Workspace(WorkspaceEvent),
+    Preferences(crate::settings::Owner),
     AgentHint(bool),
     History(Vec<crate::history::Row>),
     Sync(Page),
@@ -60,7 +61,10 @@ pub enum Event {
     },
     Text(String, crate::content::TextEvent),
     Done,
+    AuthenticationRequired(crate::backend::Backend),
     Failed,
+    ConnectionLost,
+    WorkspaceMissing,
     Reconnecting,
     HistoryInvalidated,
     PagingFailed,

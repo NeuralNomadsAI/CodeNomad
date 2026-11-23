@@ -46,15 +46,9 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
             .child(if refs.is_empty() {
                 el()
             } else {
-                theme::clipped(refs, TextRole::Label)
+                theme::history_refs(refs)
             })
-            .child(
-                row()
-                    .full_width()
-                    .separate(Space::Sm)
-                    .child(theme::clipped(author, TextRole::Label).remaining())
-                    .child(text(short).text_role(TextRole::Mono)),
-            );
+            .child(theme::history_meta(author, short));
         body = body.child(
             theme::history_row(
                 name,
@@ -93,27 +87,27 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
 
 fn details(s: &State, ui: &Ui) -> El {
     let mut body = theme::saved_scroll::<State>("git-history-detail", &ui.detail_scroll).child(
-        button(
-            s,
+        theme::history_back(
             t("filesPanel.commits"),
-            WithIcon(&theme::ARROW_LEFT),
-            false,
-            |ui, tx| {
+            handler(s, |ui, tx| {
                 let id = ui.history.selected.clone();
                 ui.back_to_history();
                 if let Some(id) = id {
                     tx.focus(format!("git-commit-{id}"), tx.focus_visible());
                 }
-            },
+            }),
         )
         .key("git-history-back"),
     );
     if let Some(details) = &ui.history.details {
-        let summary = theme::header()
-            .child(text(details.id.chars().take(8).collect::<String>()).text_role(TextRole::Mono))
-            .child(text(&details.message).wrap().content_direction())
-            .child(text(file_count(details.files.len())).text_role(TextRole::Label));
-        body = body.child(summary);
+        body = body.child(
+            theme::history_summary(
+                &details.id,
+                &details.message,
+                file_count(details.files.len()),
+            )
+            .key("git-commit-summary"),
+        );
         let subject = details
             .message
             .lines()

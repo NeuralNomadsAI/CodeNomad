@@ -271,6 +271,7 @@ async fn the_shared_connection_is_kept_rechecked_and_replaced_after_a_restart() 
     let connected = native.acquire(soon()).await.unwrap();
     assert_eq!(connected.pid, 1);
     assert_eq!(native.url(), connected.url);
+    assert!(native.current(&connected));
 
     // Confirmed less than 30 s ago: no discovery at all.
     fs::write(dir.join("status.txt"), format!("{second}\n")).unwrap();
@@ -280,7 +281,10 @@ async fn the_shared_connection_is_kept_rechecked_and_replaced_after_a_restart() 
 
     // The stream ended (daemon restarted elsewhere): the next acquisition follows it.
     native.invalidate(&connected);
+    assert!(!native.current(&connected));
     let replaced = native.acquire(soon()).await.unwrap();
+    assert!(!native.current(&connected));
+    assert!(native.current(&replaced));
     assert_eq!((replaced.pid, native.password()), (2, "secret".to_owned()));
     fs::remove_dir_all(dir).unwrap();
 }

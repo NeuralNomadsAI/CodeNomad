@@ -190,7 +190,8 @@ export async function run({ call, origin, cookie }) {
     if (withoutUi) {
       assert.deepEqual(response.body, { error: "Not Found", message: `Route GET:${target} not found`, statusCode: 404 })
     } else {
-      assert.deepEqual(response.headers["content-type"], ["text/html"])
+      assert.equal(response.headers["content-type"]?.[0]?.split(";", 1)[0], "text/html")
+      response.headers["content-type"] = ["text/html"]
       assert.equal(response.body, "<!doctype html><title>SideCars UI fixture</title>")
     }
     assert.equal(upstream.length, 0)

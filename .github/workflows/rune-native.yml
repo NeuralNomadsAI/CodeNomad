@@ -69,6 +69,7 @@ jobs:
       - name: Check generated source and component inventory
         run: |
           node scripts/rune/generate-theme.mjs --check
+          node scripts/rune/generate-palettes.mjs --check
           node scripts/rune/generate-catalogues.mjs --check
           node scripts/rune/component-inventory.mjs --check
           node --test scripts/rune/*.test.mjs
@@ -121,6 +122,7 @@ jobs:
           node scripts/rune/component-inventory.mjs
           node --import tsx scripts/rune/parity/window-close.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune.exe"
           node scripts/rune/parity/compare-window-close.mjs
+          node --import tsx scripts/rune/parity/preferences.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune.exe"
           node scripts/rune/parity/action-menu.mjs
           cp target/rune-inventory/components__action-overflow-menu.json target/rune-parity/action-menu/source-sheet.json
           node scripts/rune/parity/compare-action-menu.mjs --thresholds scripts/rune/parity/action-menu-thresholds.json
@@ -141,6 +143,7 @@ jobs:
           path: |
             target/rune-evidence/${{ runner.os }}/
             target/rune-parity/window-close/
+            target/rune-parity/preferences/
             target/rune-parity/action-menu/
             target/rune-parity/workspace-tree-row/
             target/rune-action-menu/

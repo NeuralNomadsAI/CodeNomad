@@ -358,8 +358,13 @@ async fn patch_config(
     Ok(Json(sanitized(&name, saved)).into_response())
 }
 
-async fn read_state(State(app): State<Shared>) -> Json<Doc> {
-    Json(app.settings.owner(Kind::State, "ui"))
+async fn read_state(State(app): State<Shared>, Query(query): Query<Vec<(String, String)>>) -> Result<Json<Doc>, Error> {
+    let authoritative = query.iter().any(|(key, value)| key == "authoritative" && value == "1");
+    Ok(Json(if authoritative {
+        app.settings.private_state_owner("ui").map_err(|e| Failure::from(e).response())?
+    } else {
+        app.settings.owner(Kind::State, "ui")
+    }))
 }
 async fn patch_state(State(app): State<Shared>, request: axum::extract::Request) -> Result<Response, Error> {
     let allow_profiles = crate::previews::backend::enabled(&app)

@@ -1,5 +1,13 @@
-use super::{Reply, Restored, State, TextEdit, Tx};
-use crate::catalog::SessionMissing;
+use super::{Launcher, Reply, Restored, State, TextEdit, Tx};
+use crate::catalog::{Project, SessionMissing};
+
+pub(crate) fn set_project(l: &mut Launcher, project: Option<Project>) {
+    if l.project.as_ref().map(|p| &p.id) != project.as_ref().map(|p| &p.id) {
+        l.search_results = Default::default();
+        l.linked = Default::default();
+    }
+    l.project = project;
+}
 
 pub fn choose_project(s: &mut State, path: &str, tx: &mut Tx) {
     let Some(l) = s.screen.launcher_mut() else {

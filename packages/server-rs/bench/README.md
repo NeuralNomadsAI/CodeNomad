@@ -18,6 +18,8 @@ Only the `solid` mode uses that UI. It hides the features of route families a ba
 
 Rust binary: `CODENOMAD_RS_BINARY` or `CNRS_RUST_BINARY`, else `$CARGO_TARGET_DIR/release/codenomad-rs.exe`, else `packages/server-rs/target/release/`. OpenCode: absolute path of a native OpenCode 2 executable (not an npm shim), passed as an argument.
 
+For `static-assets`, build the TypeScript checkout with precompression support instead of building the local TypeScript checkout in step 2. In the Rust checkout, where `packages/server/dist` is absent, run `New-Item -ItemType Junction -Path packages/server/dist -Target <absolute-reference-dist>` and then `node compare.mjs static-assets $OpenCode` from `bench/`.
+
 ```powershell
 $OpenCode = "<absolute path>\opencode.exe"
 cd packages/server-rs/bench
@@ -39,9 +41,11 @@ node roundtrip.mjs $OpenCode
 | `files` | Files and Git on a rich repository (rename, gitlink, conflict, CRLF, large and binary files), mutations, refusals, watches. |
 | `contract` | Session placement header, foreign sessions, outline in a worktree, `pending-requests`. |
 | `prompt-admission` | Real TS/Rust HTTP servers, each on its own recording OpenCode substitute and `trial-*` profile. Two distinct prompt receipts, native fields forwarded intact, project file paths versus inline and remote URI, data validation, 5 MiB/file, 10 inline files, 20 MiB total and 32 MiB JSON boundaries, foreign Location/session and Mission-carrier refusals, environment-before-send, interruption controls and the ordinary 1 MiB mutation bound. Reports lengths and canonical JSON hash checks; no provider, native CLI, UI or account data. |
+| `command-admission` | The same recording fixture for slash commands: transparent native fields and validation, environment before dispatch, owned attachments, Mission/foreign-session refusals and the ordinary 1 MiB body limit. |
 | `workspace-claims` | Cancellation before creation, JavaScript-trimmed request IDs capped at 128 Unicode scalars across create/cancel/release, independent occurrences, released ownership and exact record cleanup; no model request. |
 | `agent-controls` | Native permission decisions and durable reasons, typed stale and cross-session refusals, Form reply/cancellation, and interrupt query options against a held synthetic response and an idle session. |
 | `remote-session-controls` | Local and directly paired permission/Form reads and session interruption, including native settlement and the cookie and Origin requirements. Rust terminates TLS with its fixture CA; TypeScript's direct listener verifies the configured origin behind TLS termination. |
+| `static-assets` | HTML, JavaScript, style sheets, manifest and WASM served from an isolated static bundle. Negotiation, lengths, decoded bytes, HEAD and cache revalidation on the original URLs. Run explicitly with a TypeScript reference that supports static precompression. |
 | `depth` | `subagent-depth` on subfolders, linked worktree, junctions, written documents, worktree deletion fence. |
 | `mission-permissions` | Supervised creation and exact receipt recovery; direct child and fork provenance, additive background refresh, owned fork removal and unowned fork refusal. |
 | `worktree-gone` | Registered worktree whose `.git` or administrative folder is gone. |

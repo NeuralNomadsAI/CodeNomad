@@ -87,16 +87,25 @@ pub fn hold_frame(key: String, stamp: impl std::hash::Hash, build: impl FnOnce()
 }
 
 pub fn tool_pane(content: El, large: bool) -> El {
-    let metrics = tokens(dark()).text(TextRole::Mono);
-    // tool-call.css: --tool-call-line-unit and --tool-call-lines-{compact,large}.
-    let max = if large { 30.0 } else { 15.0 } * 1.4 * metrics.size;
     rune::col()
         .w_full()
-        .max_h(max)
+        .max_h(tool_lines(if large { 30 } else { 15 }))
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
         .child(content)
+}
+
+pub fn diff_pane(content: El, lines: usize) -> El {
+    rune::col()
+        .w_full()
+        .h(tool_lines(lines.clamp(2, 30)))
+        .child(content)
+}
+
+fn tool_lines(lines: usize) -> f32 {
+    // tool-call.css: --tool-call-line-unit and --tool-call-lines-{compact,large}.
+    lines as f32 * 1.4 * tokens(dark()).text(TextRole::Mono).size
 }
 
 pub fn code(source: &str, language: &str, highlight: bool, wrap: bool) -> El {

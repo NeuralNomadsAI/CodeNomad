@@ -6,12 +6,16 @@ use rune_kit::{Elevation, Kit, Motion, Palette, Radius, StateColors, Type, css, 
 use std::sync::OnceLock;
 
 pub fn kit(dark: bool) -> &'static Kit {
+    if let Some(palette) = crate::palettes::active(dark) {
+        return palette.kit.get_or_init(|| build(dark));
+    }
     static KITS: [OnceLock<Kit>; 2] = [const { OnceLock::new() }; 2];
     KITS[dark as usize].get_or_init(|| build(dark))
 }
 pub fn field_kit(dark: bool) -> &'static Kit {
     static FIELDS: [OnceLock<Kit>; 2] = [const { OnceLock::new() }; 2];
-    FIELDS[dark as usize].get_or_init(|| {
+    let cache = crate::palettes::active(dark).map_or(&FIELDS[dark as usize], |p| &p.field);
+    cache.get_or_init(|| {
         let mut kit = kit(dark).clone();
         kit.c.bg_base = kit.c.surface_base;
         kit
@@ -99,9 +103,14 @@ fn build(dark: bool) -> Kit {
     };
     let shadow = |name| {
         css::box_shadows(
-            document()["shadows"][t.mode()][name]
-                .as_str()
-                .expect("generated CSS shadow"),
+            crate::palettes::active(dark).map_or_else(
+                || {
+                    document()["shadows"][t.mode()][name]
+                        .as_str()
+                        .expect("generated CSS shadow")
+                },
+                |p| p.shadow(name),
+            ),
             |color| color,
         )
     };

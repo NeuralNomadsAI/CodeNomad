@@ -4,6 +4,19 @@ pub const SUPPORTED_LOCALES: &[&str] = &[
     "en", "es", "fr", "ru", "ja", "zh-Hans", "he", "de", "ne", "tr",
 ];
 #[rustfmt::skip]
+pub const LANGUAGE_NAMES: &[(&str, &str)] = &[
+    ("en", "English"),
+    ("es", "Español"),
+    ("fr", "Français"),
+    ("ru", "Русский"),
+    ("ja", "日本語"),
+    ("zh-Hans", "简体中文"),
+    ("he", "עברית"),
+    ("de", "Deutsch"),
+    ("ne", "नेपाली"),
+    ("tr", "Türkçe"),
+];
+#[rustfmt::skip]
 pub(super) const SOURCES: &[(&str, &str, bool)] = &[
     ("en", include_str!("../assets/catalogues/en.json"), false),
     ("es", include_str!("../assets/catalogues/es.json"), false),

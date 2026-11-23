@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 
 use super::{
     NativeBody, SESSION_LOCATED_ELSEWHERE, SESSION_PLACEMENT_HEADER, controls, native_rpc_absent, read_json,
-    session_directory, session_record, upstream_error,
+    session_directory, upstream_error,
 };
 use crate::missions::human_answer;
 use crate::{App, Error, Shared, error, not_found, unavailable};
@@ -59,7 +59,7 @@ fn guarded(route: &str, method: &Method) -> bool {
     (*method == Method::POST && route == "/api/session")
         || (*method == Method::POST
             && route.starts_with("/api/session/")
-            && ["/prompt", "/agent", "/model", "/fork"].iter().any(|suffix| route.ends_with(suffix)))
+            && ["/prompt", "/command", "/agent", "/model", "/fork"].iter().any(|suffix| route.ends_with(suffix)))
         || (*method == Method::PATCH && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/')))
         || (matches!(*method, Method::PUT | Method::DELETE)
             && route.starts_with("/api/experimental/session/")
@@ -76,19 +76,39 @@ fn carrier_denied() -> Error {
 fn marker(record: &Value) -> bool {
     record["metadata"].get("codenomad.schedule-carrier").is_some()
 }
+fn same_target(initial: &Value, current: &Value) -> bool {
+    ["id", "location", "projectID", "parentID", "fork"].iter().all(|key| current[*key] == initial[*key])
+        && current["time"]["created"] == initial["time"]["created"]
+}
 fn schedule_input(data: &serde_json::Map<String, Value>) -> bool {
     data.get("metadata").and_then(Value::as_object).is_some_and(|metadata| {
         ["schedule", "automation", "codenomad.schedule-carrier"].iter().any(|key| metadata.contains_key(*key))
     })
 }
 pub async fn verify_mutation(app: &App, id: &str, directory: &str, record: &Value) -> Result<(), Error> {
+    let endpoint = app.native.endpoint().ok_or_else(upstream_error)?;
+    verify_mutation_at(app, &endpoint, id, directory, record).await
+}
+
+async fn verify_mutation_at(
+    app: &App,
+    endpoint: &std::sync::Arc<super::Endpoint>,
+    id: &str,
+    directory: &str,
+    record: &Value,
+) -> Result<(), Error> {
     if id.starts_with("ses_cn_schedule_") || marker(record) {
         return Err(carrier_denied());
     }
     let uncertain = || error(Status::SERVICE_UNAVAILABLE, "Mission schedule carrier ownership could not be verified");
+    let route = endpoint.url.join("/api/rpc/codenomad.missions/scheduleCarrierRead").map_err(|_| uncertain())?;
     let response = app
         .native
-        .rpc("codenomad.missions/scheduleCarrierRead", directory, &json!({"sessionID": id}))
+        .client
+        .post(route)
+        .basic_auth("opencode", Some(&endpoint.password))
+        .query(&[("location[directory]", directory)])
+        .json(&json!({"input":{"sessionID":id}}))
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -107,7 +127,7 @@ pub async fn verify_mutation(app: &App, id: &str, directory: &str, record: &Valu
     {
         return Err(uncertain());
     }
-    let fresh = session_record(app, id).await?;
+    let fresh = super::session_record_at(app, endpoint, id).await?;
     if fresh["id"] != id
         || fresh["location"]["directory"] != directory
         || fresh["location"].get("workspaceID").is_some()
@@ -116,6 +136,17 @@ pub async fn verify_mutation(app: &App, id: &str, directory: &str, record: &Valu
         return Err(carrier_denied());
     }
     Ok(())
+}
+
+async fn command_owns(app: &App, workspace: &crate::Workspace, directory: &str) -> bool {
+    if crate::worktrees::ownership::resolve(app, workspace, directory).await.is_some() {
+        return true;
+    }
+    // With Git present, a folder without a checkout still owns ordinary subfolders.
+    matches!(crate::worktrees::root_only(workspace).await, Ok(Some(true)))
+        && crate::files::paths::canonical(&app.scope, directory).is_some_and(|path| {
+            path.starts_with(&workspace.path) && crate::worktrees::ownership::within(&workspace.path, &path)
+        })
 }
 
 /// The native status and the cache headers a relayed body keeps.
@@ -147,6 +178,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let route = safe_route(suffix).ok_or_else(invalid)?;
     let route = route.trim_end_matches('/');
     let prompt = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/prompt");
+    let command = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/command");
+    let send_input = prompt || command;
     let body_limit = if prompt { super::prompt::BODY_LIMIT } else { 1024 * 1024 };
     let control = controls::classify(route, &head.method);
     if !ALLOWED.iter().any(|(m, pat)| *m == head.method.as_str() && pat.is_match(route)) {
@@ -165,7 +198,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     let mut pending_body = Some(body);
     let mut prompt_directories = Vec::new();
-    let mut prompt_input = if prompt {
+    let mut prompt_input = if send_input {
         let bytes =
             super::proxy_body::read(pending_body.take().ok_or_else(upstream_error)?, body_limit, declared).await?;
         let data = super::prompt::parse(&head.headers, &bytes)?;
@@ -217,26 +250,44 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     } else {
         None
     };
-    // TS checks the session's own location first and names a proven
-    // departure, so the UI can drop a conversation moved out of the project.
-    let list_slug = match &actual {
-        Some(record) => match crate::worktrees::placement(&app, &workspace, &record["location"]).await {
-            Ok(slug) => Some(slug),
-            Err(elsewhere) => {
-                let mut body = json!({"error":"Session does not belong to workspace"});
-                if elsewhere {
-                    body["reason"] = json!(SESSION_LOCATED_ELSEWHERE);
-                }
-                return Err((Status::FORBIDDEN, Json(body)));
-            }
-        },
-        None => None,
-    };
     let directory = requested
         .as_deref()
         .or_else(|| actual.as_ref().and_then(|r| r["location"]["directory"].as_str()))
         .unwrap_or(opened);
-    if !crate::worktrees::owns(&app, &workspace, directory).await {
+    let identity_now = || {
+        let path = crate::files::paths::canonical(&app.scope, directory)?;
+        let identity = crate::files::host_identity(&path).ok()?;
+        Some((path, identity))
+    };
+    let initial_identity = send_input.then(&identity_now).flatten();
+    // TS checks the session's own location first and names a proven
+    // departure, so the UI can drop a conversation moved out of the project.
+    let mut command_owned = false;
+    let list_slug = match &actual {
+        Some(record) => match crate::worktrees::placement(&app, &workspace, &record["location"]).await {
+            Ok(slug) => Some(slug),
+            Err(elsewhere) => {
+                if command
+                    && record["location"].get("workspaceID").is_none()
+                    && let Some(directory) = record["location"]["directory"].as_str()
+                    && command_owns(&app, &workspace, directory).await
+                {
+                    command_owned = true;
+                    None
+                } else {
+                    let mut body = json!({"error":"Session does not belong to workspace"});
+                    if elsewhere {
+                        body["reason"] = json!(SESSION_LOCATED_ELSEWHERE);
+                    }
+                    return Err((Status::FORBIDDEN, Json(body)));
+                }
+            }
+        },
+        None => None,
+    };
+    if !(command_owned && actual.as_ref().is_some_and(|record| record["location"]["directory"] == directory))
+        && !crate::worktrees::owns(&app, &workspace, directory).await
+    {
         return Err(foreign());
     }
     target.path_segments_mut().map_err(|_| invalid())?.clear().extend(route.trim_start_matches('/').split('/'));
@@ -249,7 +300,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             .to_str()
             .ok()
             .and_then(|value| {
-                if prompt {
+                if send_input {
                     if value.len() > 16_384 { None } else { crate::shared::decode_component(value) }
                 } else {
                     decode(value)
@@ -257,7 +308,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             })
             .and_then(|s| serde_json::from_str(&s).ok())
             .ok_or_else(|| error(Status::BAD_REQUEST, "Invalid location context"))?;
-        if prompt {
+        if send_input {
             let context = super::prompt::directory(&app, &workspace, super::prompt::context(&context)?).await?;
             if prompt_directories.iter().any(|directory| directory != &context)
                 || target.query_pairs().any(|(key, value)| {
@@ -330,7 +381,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
                 return Ok(unavailable());
             }
-            verify_mutation(&app, session, directory, record).await?;
+            verify_mutation_at(&app, &endpoint, session, directory, record).await?;
         } else if route.strip_prefix("/api/session/").is_some_and(|rest| !rest.contains('/'))
             && head.headers.get(SESSION_PLACEMENT_HEADER).is_some_and(|v| v == "1")
         {
@@ -383,17 +434,17 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             let Value::Object(mut data) = data else {
                 return Err(error(
                     Status::BAD_REQUEST,
-                    if prompt {
+                    if send_input {
                         "Session input requires a JSON object"
                     } else {
                         "Session request requires a JSON object"
                     },
                 ));
             };
-            if !prompt && data.contains_key("parentID") {
+            if !send_input && data.contains_key("parentID") {
                 return Err(error(Status::FORBIDDEN, "Parent session creation is not available through a workspace"));
             }
-            if !prompt && let Some(location) = data.get("location") {
+            if !send_input && let Some(location) = data.get("location") {
                 one_location(location, directory)?;
             }
             if schedule_input(&data) {
@@ -414,10 +465,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             } else {
                 &["text", "delivery", "id"]
             };
-            if !prompt && data.keys().any(|key| !fields.contains(&key.as_str())) {
+            if !send_input && data.keys().any(|key| !fields.contains(&key.as_str())) {
                 return Ok(unavailable());
             }
-            if prompt {
+            if send_input {
                 super::prompt::validate(&app, &workspace, &data).await?;
             }
             if create {
@@ -447,19 +498,47 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     } else {
         None
     };
-    if head.method == Method::POST && route.ends_with("/prompt") {
+    let input_owned = || async {
+        if command_owned {
+            command_owns(&app, &workspace, directory).await
+        } else {
+            crate::worktrees::owns(&app, &workspace, directory).await
+        }
+    };
+    let input_location_live = || {
+        initial_identity.is_some()
+            && initial_identity == identity_now()
+            && crate::sessions::permission_mode::workspace_current(&app, &workspace)
+    };
+    let recheck_input = || async {
+        if !input_owned().await {
+            return Err(foreign());
+        }
+        let fresh = super::session_record_at(&app, &endpoint, session.ok_or_else(upstream_error)?).await?;
+        if !actual.as_ref().is_some_and(|initial| same_target(initial, &fresh))
+            || fresh["location"]["directory"] != directory
+            || !input_location_live()
+        {
+            return Err(foreign());
+        }
+        if marker(&fresh) {
+            return Err(carrier_denied());
+        }
+        principal.live()?;
+        if !app.native.current(&endpoint) {
+            return Err(super::session_environment::unavailable());
+        }
+        Ok(fresh)
+    };
+    if send_input {
         let session = session.ok_or_else(upstream_error)?;
         let url = endpoint.url.join(&format!("/api/session/{session}/environment")).map_err(|_| upstream_error())?;
-        // Backend secrets and private daemon state never reach a session's environment.
-        const PRIVATE: &str = "OPENCODE_PASSWORD OPENCODE_SERVER_PASSWORD CODENOMAD_SERVER_PASSWORD \
-            CODENOMAD_AUTOMATION_BRIDGE_TOKEN CODENOMAD_BOOTSTRAP_TOKEN OPENCODE_DB XDG_STATE_HOME OPENCODE_CONFIG_CONTENT";
-        let shared = |key: &String| {
-            let name = key.to_ascii_uppercase();
-            !name.starts_with("CNRS_") && !PRIVATE.split(' ').any(|p| p == name)
-        };
-        let variables: std::collections::BTreeMap<_, _> = std::env::vars().filter(|(key, _)| shared(key)).collect();
-        app.workspace(id)?;
-        principal.live()?;
+        let unavailable = super::session_environment::unavailable;
+        let variables = super::session_environment::snapshot(app.settings.location.config.clone()).await?;
+        if command && let Some(Value::Object(input)) = &input {
+            super::prompt::validate(&app, &workspace, input).await?;
+        }
+        recheck_input().await?;
         let response = app
             .native
             .client
@@ -469,25 +548,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             .timeout(Duration::from_secs(15))
             .send()
             .await
-            .map_err(|_| upstream_error())?;
+            .map_err(|_| unavailable())?;
         if !response.status().is_success() {
-            return Err(error(Status::BAD_GATEWAY, "Failed to apply session environment"));
-        }
-        let fresh = super::session_record_at(&app, &endpoint, session).await?;
-        if fresh["location"]["directory"] != directory
-            || fresh["location"].get("workspaceID").is_some()
-            || marker(&fresh)
-        {
-            return Err(carrier_denied());
+            return Err(unavailable());
         }
         // `syncSessionMemoryContext`: advisory, bounded to its own 2 s budget.
-        crate::memory::sync(&app, session).await;
-        principal.live()?;
-        let identity = crate::files::host_identity(std::path::Path::new(directory)).map_err(|_| foreign())?;
+        crate::memory::sync(&app, &endpoint, session, || async { recheck_input().await.is_ok() }).await;
+        let fresh = recheck_input().await?;
         crate::sessions::permission_mode::refresh_before_send(&app, &endpoint, &fresh, || {
-            principal.live().is_ok()
-                && crate::sessions::permission_mode::workspace_current(&app, &workspace)
-                && crate::files::host_identity(std::path::Path::new(directory)).as_ref().ok() == Some(&identity)
+            principal.live().is_ok() && app.native.current(&endpoint) && input_location_live()
         })
         .await?;
     }
@@ -498,7 +567,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if !app.inner.lock().unwrap().workspaces.iter().any(|w| w.id == workspace.id) {
         return Err(not_found());
     }
-    if !app.native.endpoint().is_some_and(|current| std::sync::Arc::ptr_eq(&current, &endpoint)) {
+    if !app.native.current(&endpoint) {
         return Err(upstream_error());
     }
     let permission_snapshot = if let Some(control) = control {
@@ -555,10 +624,16 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if let Some(accept) = head.headers.get(header::ACCEPT) {
         upstream = upstream.header(header::ACCEPT, accept);
     }
-    if let Some(input) = input {
-        upstream = upstream.json(&input);
+    if let Some(input) = &input {
+        upstream = upstream.json(input);
     }
     principal.live()?;
+    if send_input {
+        if command && let Some(Value::Object(input)) = &input {
+            super::prompt::validate(&app, &workspace, input).await?;
+        }
+        recheck_input().await?;
+    }
     let response = upstream.send().await.map_err(|_| upstream_error())?;
     if response.status().is_success() {
         if let Some(receipt) = receipt {

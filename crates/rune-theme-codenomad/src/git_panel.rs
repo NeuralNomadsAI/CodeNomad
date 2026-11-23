@@ -47,6 +47,28 @@ pub fn header() -> El {
     col().full_width().pad(Space::Md).separate(Space::Sm)
 }
 
+pub fn context() -> El {
+    band("gitContext")
+}
+
+pub fn tools() -> El {
+    band("gitTools").items_start()
+}
+
+fn band(component: &str) -> El {
+    let t = tokens(dark());
+    let px = t.metric(component, "paddingLeft").px();
+    let py = t.metric(component, "paddingTop").px();
+    let border = t.metric(component, "borderBottomWidth").px();
+    col()
+        .full_width()
+        .px(px)
+        .py(py)
+        .separate(Space::Sm)
+        .border_sides([0.0, 0.0, border, 0.0], t.color("border-base"))
+        .border_layout()
+}
+
 pub fn scroll() -> El {
     col().full_width().remaining().scroll(ScrollSpec {
         stick_bottom: false,
@@ -100,17 +122,50 @@ pub fn history_row<S: 'static>(
     disabled: bool,
     press: impl Fn(&mut S, &mut Tx) + Clone + 'static,
 ) -> El {
+    history_action(name, &COMMIT, content, disabled, press)
+}
+
+pub fn history_back<S: 'static>(
+    name: &str,
+    press: impl Fn(&mut S, &mut Tx) + Clone + 'static,
+) -> El {
+    history_action(
+        name.into(),
+        &ARROW_LEFT,
+        text(name).text_role(TextRole::Small),
+        false,
+        press,
+    )
+}
+
+fn history_action<S: 'static>(
+    name: String,
+    glyph: &'static rune::Icon,
+    content: El,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut Tx) + Clone + 'static,
+) -> El {
     let t = tokens(dark());
+    let metric = |name| t.metric("gitHistoryRow", name).px();
+    let focus_width = t.metric("windowIconFocus", "outlineWidth").px();
     let body = row()
         .full_width()
-        .pad(Space::Sm)
-        .separate(Space::Sm)
+        .px(metric("paddingLeft"))
+        .py(metric("paddingTop"))
+        .gap(metric("columnGap"))
+        .border_sides(
+            [0.0, 0.0, metric("borderBottomWidth"), 0.0],
+            t.color("border-base"),
+        )
+        .border_layout()
+        .hover(t.color("surface-hover"))
+        .focus_ring(focus_width, -focus_width, t.color("focus-ring-color"))
         .role("button")
         .label(name)
         .focusable(!disabled)
         .disabled(disabled)
         .child(
-            icon(&COMMIT, t.length(crate::Length::Icon).px())
+            icon(glyph, t.length(crate::Length::Icon).px())
                 .color(t.color("text-muted"))
                 .a11y_hidden(),
         )
@@ -128,6 +183,42 @@ pub fn history_row<S: 'static>(
                 true
             })
     }
+}
+
+pub fn history_summary(id: &str, message: &str, count: String) -> El {
+    let t = tokens(dark());
+    let small = t.text(TextRole::Small);
+    let muted = t.color("text-muted");
+    band("gitCommitSummary")
+        .child(
+            text(id.chars().take(8).collect::<String>())
+                .font(small.mono())
+                .color(muted),
+        )
+        .child(text(message).wrap_anywhere().content_direction())
+        .child(text(count).font(small).color(muted))
+}
+
+pub fn history_refs(refs: String) -> El {
+    clipped(refs, TextRole::Small).color(tokens(dark()).color("accent-primary"))
+}
+
+pub fn history_meta(author: String, short: String) -> El {
+    let t = tokens(dark());
+    let ink = t.color("text-muted");
+    row()
+        .full_width()
+        .separate(Space::Sm)
+        .child(clipped(author, TextRole::Small).color(ink).remaining())
+        .child(text(short).font(t.text(TextRole::Small).mono()).color(ink))
+}
+
+pub fn count(label: String) -> El {
+    let t = tokens(dark());
+    text(label)
+        .text_role(TextRole::Small)
+        .color(t.color("text-muted"))
+        .opacity(t.metric("gitCount", "opacity").px())
 }
 
 pub fn branch(name: String) -> El {

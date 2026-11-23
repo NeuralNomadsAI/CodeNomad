@@ -1,5 +1,6 @@
 use super::*;
 use codenomad_client::git::{Change, Commit, Status};
+use codenomad_client::{git::Section, transport::WorkspaceEvent};
 
 fn change(path: impl Into<String>, staged: bool, whitespace: bool, score: u64) -> Status {
     let counts = Change {
@@ -90,6 +91,7 @@ fn ui() -> Ui {
                     slug: "root".into(),
                     directory: "D:/repo".into(),
                     branch: Some("main".into()),
+                    head: Some("a".repeat(40)),
                     service_directory: Some("/mnt/d/repo".into()),
                     missing: false,
                 },
@@ -97,6 +99,7 @@ fn ui() -> Ui {
                     slug: "other".into(),
                     directory: "D:/other".into(),
                     branch: None,
+                    head: None,
                     service_directory: None,
                     missing: false,
                 },
@@ -238,6 +241,52 @@ fn history_refresh_retains_pinned_pages_until_head_changes() {
         ui.history.page.as_ref().unwrap(),
         &page("new", &["new", "a"], true)
     );
+}
+
+#[test]
+fn only_live_history_with_a_different_head_revokes_index_authority() {
+    let mut ui = ui();
+    ui.mode = Mode::Changes;
+    ui.shown = true;
+    ui.online = true;
+    let rows = vec![change("a", true, false, 1)];
+    statuses(&mut ui, rows.clone());
+    ui.changes.draft = TextEdit::new("draft");
+    assert!(ui.can_commit());
+    let checked = ui.index_revision;
+    let page = |head| Page {
+        head,
+        commits: vec![],
+        has_more: true,
+    };
+
+    ui.mode = Mode::History;
+    let current = ui.tree().unwrap().head.clone();
+    ui.accept(Lane::History, Value::History(page(current), false));
+    assert_eq!(ui.index_revision, checked);
+    assert!(!ui.requests.slot(Lane::Worktrees).dirty);
+
+    let previous = Some("b".repeat(40));
+    ui.history.page = Some(page(previous.clone()));
+    ui.accept(Lane::History, Value::History(page(previous.clone()), true));
+    assert_eq!(ui.index_revision, checked);
+    assert!(!ui.requests.slot(Lane::Worktrees).dirty);
+
+    ui.accept(Lane::History, Value::History(page(previous.clone()), false));
+    assert_eq!(ui.history.page.as_ref().unwrap().head, previous);
+    assert!(ui.requests.slot(Lane::Worktrees).dirty);
+    assert!(ui.requests.slot(Lane::Changes).dirty);
+
+    ui.mode = Mode::Changes;
+    let mut inventory = ui.inventory.clone().unwrap();
+    inventory.trees[0].head = previous;
+    ui.requests.slot_mut(Lane::Worktrees).dirty = false;
+    ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
+    ui.accept(Lane::Changes, Value::Changes(rows.clone(), None, checked));
+    assert!(!ui.can_commit());
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
+    statuses(&mut ui, rows);
+    assert!(ui.can_commit());
 }
 
 #[test]
@@ -495,6 +544,123 @@ fn branch_hint_holds_index_actions_until_the_new_label_is_read() {
     assert!(!ui.can_commit());
     ui.requests.slot_mut(Lane::Changes).dirty = false;
     statuses(&mut ui, vec![change("a", true, false, 1)]);
+    assert!(ui.can_commit());
+}
+
+#[test]
+fn refresh_revalidates_the_checkout_even_when_the_inventory_was_cached() {
+    let mut ui = ui();
+    ui.select_tree("other".into());
+    ui.replace_preview(Preview {
+        path: "a".into(),
+        source: Source::Commit {
+            id: "a".into(),
+            subject: "a".into(),
+        },
+        original_path: None,
+    });
+    let mut inventory = ui.inventory.clone().unwrap();
+    inventory.trees.retain(|tree| tree.slug == "root");
+    ui.mode = Mode::History;
+    ui.refresh();
+    assert!(ui.requests.slot(Lane::Worktrees).dirty);
+    ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
+    assert_eq!(ui.tree().unwrap().slug, "root");
+    assert!(!ui.has_preview());
+}
+
+#[test]
+fn refresh_in_every_mode_requires_status_even_when_the_checkout_is_unchanged() {
+    for mode in [Mode::Workspace, Mode::History, Mode::Changes] {
+        let mut ui = ui();
+        ui.mode = Mode::Changes;
+        let before = vec![change("a", true, false, 1)];
+        statuses(&mut ui, before.clone());
+        ui.changes.draft = TextEdit::new("draft");
+        ui.shown = true;
+        ui.online = true;
+        assert!(ui.can_commit());
+
+        let old_revision = ui.index_revision;
+        let inventory = ui.inventory.clone().unwrap();
+        // Manually settle the reads without dispatching HTTP.
+        ui.online = false;
+        ui.set_mode(mode);
+        ui.refresh();
+        ui.requests.slot_mut(Lane::Worktrees).dirty = false;
+        ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
+        ui.set_mode(Mode::Changes);
+        ui.online = true;
+        assert!(ui.requests.slot(Lane::Changes).dirty);
+        assert!(!ui.can_commit());
+        ui.accept(Lane::Changes, Value::Changes(before, None, old_revision));
+        assert!(!ui.can_commit());
+
+        ui.requests.slot_mut(Lane::Changes).dirty = false;
+        statuses(&mut ui, vec![change("b", true, false, 1)]);
+        assert_eq!(
+            ui.changes.section(Section::Staged).next().unwrap().id.path,
+            "b"
+        );
+        assert!(ui.can_commit());
+    }
+}
+
+#[test]
+fn refreshed_inventory_detects_a_branch_switch_without_a_stream_hint() {
+    let mut ui = ui();
+    ui.mode = Mode::Changes;
+    ui.online = true;
+    ui.shown = true;
+    statuses(&mut ui, vec![change("a", true, false, 1)]);
+    ui.changes.draft = TextEdit::new("a");
+    assert!(ui.can_commit());
+    let row = ui
+        .changes
+        .find(ui.changes.current.as_ref().unwrap())
+        .unwrap();
+    ui.replace_preview(Preview::local(row));
+    let mut inventory = ui.inventory.clone().unwrap();
+    inventory.trees[0].branch = Some("new".into());
+    ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
+    assert!(ui.has_preview());
+    assert!(ui.requests.slot(Lane::Preview).dirty);
+    assert!(!ui.can_commit());
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
+    statuses(&mut ui, vec![change("a", true, false, 1)]);
+    assert!(ui.can_commit());
+}
+
+#[test]
+fn inventory_head_change_on_the_same_branch_invalidates_checkout_content() {
+    let mut ui = ui();
+    ui.mode = Mode::Changes;
+    ui.shown = true;
+    ui.online = true;
+    let rows = vec![change("a", true, false, 1)];
+    statuses(&mut ui, rows.clone());
+    ui.changes.draft = TextEdit::new("draft");
+    assert!(ui.can_commit());
+    let row = ui.changes.section(Section::Staged).next().unwrap();
+    ui.replace_preview(Preview::local(row));
+
+    let old_revision = ui.index_revision;
+    let mut inventory = ui.inventory.clone().unwrap();
+    let head = "b".repeat(40);
+    inventory.trees[0].head = Some(head.clone());
+    ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
+    assert_eq!(ui.tree().unwrap().head.as_deref(), Some(head.as_str()));
+    assert_eq!(ui.tree().unwrap().branch.as_deref(), Some("main"));
+    assert!(ui.has_preview());
+    assert!(ui.requests.slot(Lane::Preview).dirty);
+    assert!(ui.requests.slot(Lane::History).dirty);
+    ui.accept(
+        Lane::Changes,
+        Value::Changes(rows.clone(), None, old_revision),
+    );
+    assert!(!ui.can_commit());
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
+    statuses(&mut ui, rows);
     assert!(ui.can_commit());
 }
 

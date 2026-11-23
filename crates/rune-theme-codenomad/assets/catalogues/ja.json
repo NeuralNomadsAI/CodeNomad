@@ -2187,6 +2187,7 @@
   "rune.older": "以前のメッセージ",
   "rune.open_error": "開けません · フォルダーまたはセッションを確認",
   "rune.other_values": "その他の値",
+  "rune.pairing_guide": "CodeNomad のホストで admin.sh または admin.ps1 を使い、ペアリングリンクを作成してください。この端末の別のタブでリンクを開いてください。",
   "rune.prompt": "メッセージ",
   "rune.ready": "準備完了",
   "rune.reason": "理由",

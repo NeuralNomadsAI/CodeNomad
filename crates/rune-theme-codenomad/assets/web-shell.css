@@ -4,3 +4,9 @@ body{background:var(--surface-canvas);color:var(--text-primary);font-family:var(
 #rune-boot[hidden],#rune-retry[hidden]{display:none}
 #rune-retry{background:var(--surface-control);color:var(--text-primary);font:inherit;border:var(--web-button-border-width) solid var(--border-base);border-radius:var(--button-radius);padding:var(--button-padding-y) var(--button-padding-x);min-height:var(--control-height)}
 #rune-retry:focus-visible{outline:var(--web-outline-width) solid var(--focus-ring-color);outline-offset:var(--web-outline-offset)}
+.rune-pair{display:grid;place-items:center;overflow:auto}
+.rune-pair main{margin:var(--space-xl);padding:var(--space-xl);background:var(--surface-overlay);border:var(--web-button-border-width) solid var(--border-base)}
+.rune-pair h1,.rune-pair p{margin:0}
+.rune-pair h1{font-size:var(--font-size-lg)}
+.rune-pair p{margin-block-start:var(--space-sm)}
+.rune-pair #pair-status:empty{display:none}

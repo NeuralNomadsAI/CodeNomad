@@ -200,7 +200,7 @@ fn a_renamed_active_session_does_not_invalidate_an_inflight_history_read() {
 fn git_hints_follow_the_owned_stream_without_a_native_session_id() {
     run(async {
         let backend = backend().await;
-        let (out, inbox) = bounded(4);
+        let (out, inbox) = bounded(5);
         let state = State::default();
         deliver(&backend, &out, &state, json!({"type":"instance.event","instanceId":"foreign","event":{"type":"filesystem.changed","data":{}}})).await;
         assert!(inbox.is_empty());
@@ -231,8 +231,13 @@ fn git_hints_follow_the_owned_stream_without_a_native_session_id() {
         );
         assert!(matches!(
             inbox.recv().await.unwrap(),
+            Input::Preferences(crate::settings::Owner::Config)
+        ));
+        assert!(matches!(
+            inbox.recv().await.unwrap(),
             Input::Workspace(7, WorkspaceEvent::UiPreferencesChanged)
         ));
+        assert!(inbox.is_empty());
         assert_eq!(state.version.load(SeqCst), 0);
     });
 }

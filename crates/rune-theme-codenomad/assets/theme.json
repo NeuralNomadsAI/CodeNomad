@@ -327,6 +327,59 @@
         "height": 14,
         "width": 14
       },
+      "gitCommitSummary": {
+        "borderBottomWidth": 1,
+        "paddingLeft": 12,
+        "paddingTop": 12
+      },
+      "gitContext": {
+        "borderBottomWidth": 1,
+        "paddingLeft": 12,
+        "paddingTop": 12
+      },
+      "gitCount": {
+        "opacity": 0.65
+      },
+      "gitHistoryRow": {
+        "borderBottomWidth": 1,
+        "columnGap": 8,
+        "paddingLeft": 12,
+        "paddingTop": 8
+      },
+      "gitModeButton": {
+        "fontSize": 11,
+        "fontWeight": 400,
+        "lineHeight": 16.5,
+        "paddingLeft": 8,
+        "paddingTop": 4
+      },
+      "gitModeDivider": {
+        "borderInlineStartWidth": 1
+      },
+      "gitModes": {
+        "borderTopWidth": 1
+      },
+      "gitSection": {
+        "columnGap": 8
+      },
+      "gitSectionCount": {
+        "borderTopWidth": 1,
+        "fontSize": 10,
+        "lineHeight": 15,
+        "opacity": 0.65,
+        "paddingLeft": 6,
+        "paddingTop": 2
+      },
+      "gitSectionTitle": {
+        "fontSize": 11,
+        "fontWeight": 600,
+        "lineHeight": 16.5
+      },
+      "gitTools": {
+        "borderBottomWidth": 1,
+        "paddingLeft": 12,
+        "paddingTop": 8
+      },
       "input": {
         "fontSize": 12,
         "fontWeight": 400,
@@ -474,6 +527,59 @@
       "fileRowActionGlyph": {
         "height": 14,
         "width": 14
+      },
+      "gitCommitSummary": {
+        "borderBottomWidth": 1,
+        "paddingLeft": 12,
+        "paddingTop": 12
+      },
+      "gitContext": {
+        "borderBottomWidth": 1,
+        "paddingLeft": 12,
+        "paddingTop": 12
+      },
+      "gitCount": {
+        "opacity": 0.65
+      },
+      "gitHistoryRow": {
+        "borderBottomWidth": 1,
+        "columnGap": 8,
+        "paddingLeft": 12,
+        "paddingTop": 8
+      },
+      "gitModeButton": {
+        "fontSize": 11,
+        "fontWeight": 400,
+        "lineHeight": 16.5,
+        "paddingLeft": 8,
+        "paddingTop": 4
+      },
+      "gitModeDivider": {
+        "borderInlineStartWidth": 1
+      },
+      "gitModes": {
+        "borderTopWidth": 1
+      },
+      "gitSection": {
+        "columnGap": 8
+      },
+      "gitSectionCount": {
+        "borderTopWidth": 1,
+        "fontSize": 10,
+        "lineHeight": 15,
+        "opacity": 0.65,
+        "paddingLeft": 6,
+        "paddingTop": 2
+      },
+      "gitSectionTitle": {
+        "fontSize": 11,
+        "fontWeight": 600,
+        "lineHeight": 16.5
+      },
+      "gitTools": {
+        "borderBottomWidth": 1,
+        "paddingLeft": 12,
+        "paddingTop": 8
       },
       "input": {
         "fontSize": 12,
@@ -781,8 +887,8 @@
     "packages/ui/src/styles/messaging/message-usage.css": "273a1e53f86e2e8f739e1c95412dacbb9b7e6f51f8e9dff2be2d7980d8e4bb2d",
     "packages/ui/src/styles/messaging/part-duration.css": "ce1bf207754c9068be6f0299d503fd234a2e7776fbd25a8bfc499a3680bede5f",
     "packages/ui/src/styles/messaging/permission-receipts.css": "22d70fc29394a88dce362776fbeafbc1a179eab0fc902f7240eb9c27a6a128df",
-    "packages/ui/src/styles/messaging/prompt-input-footer.css": "f882eb9c073a381b1fc3ba59417cfe44283736e0fac51cff9d637fca8f99b9af",
-    "packages/ui/src/styles/messaging/prompt-input.css": "69b50fc8132ec5955d2edb641aa9fe31d5e7f9aa8e3d8772dbd8b565a4c4d016",
+    "packages/ui/src/styles/messaging/prompt-input-footer.css": "a9fd22bca2e4c1f5b113bc1e7ad7856ae7c969039d7af3005885e90afafbd196",
+    "packages/ui/src/styles/messaging/prompt-input.css": "f3f5e061ae48d1771ff68b10e0c84f311c96ffccdeaeb0249d2bc802c452a1a5",
     "packages/ui/src/styles/messaging/search-highlights.css": "f22dd26ecef73b9c8461ffbeebe324fe37e89fa5f0289743753d9637a0b30491",
     "packages/ui/src/styles/messaging/session-timeline-rail.css": "170460acccd968d00c6cd5a2a75e9c52fec6556394a77a5952c279e9d4f967ec",
     "packages/ui/src/styles/messaging/technical-groups.css": "38713e17e4207f29b9a45160839cf9ad3c74157530b794efe8b132b2337d171f",

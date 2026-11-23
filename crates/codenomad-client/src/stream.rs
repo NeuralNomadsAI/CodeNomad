@@ -15,15 +15,137 @@ pub use catalogue::{CatalogueChanges, CatalogueWatch};
 #[path = "stream_browser.rs"]
 mod browser;
 
+const NATIVE_EVENT_LIMIT: usize = 256 * 1024;
+// A storage event includes the UI state owner, which can hold 1 MiB of Stats.
+const OWNER_EVENT_LIMIT: usize = 2 * 1024 * 1024;
+
+fn storage_owner(value: &Value) -> Option<crate::settings::Owner> {
+    if !matches!(value["owner"].as_str(), Some("ui" | "*")) {
+        return None;
+    }
+    match value["type"].as_str()? {
+        "storage.configChanged" => Some(crate::settings::Owner::Config),
+        "storage.stateChanged" => Some(crate::settings::Owner::State),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 pub struct State {
     pub cancelled: AtomicBool,
     pub version: AtomicU64,
     pub alive: AtomicBool,
     pub upstream: AtomicBool,
+    preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     catalogue: Option<Arc<catalogue::Signals>>,
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn owner_changes_invalidate_the_intended_consumers_without_recovering_history() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let backend = Backend::connect("http://127.0.0.1:9/", "").await.unwrap();
+            let (out, recovery) = crate::bounded(4);
+            let (send, events) = crate::bounded(4);
+            let state = State::observing_preferences(send, Arc::new(|| {}));
+            opened(1, &out, &state).await.unwrap();
+            assert!(matches!(recovery.try_recv().unwrap(), Input::Opened(1)));
+            assert!(matches!(
+                events.try_recv().unwrap(),
+                crate::transport::Event::Preferences(crate::settings::Owner::Config)
+            ));
+            assert!(matches!(
+                events.try_recv().unwrap(),
+                crate::transport::Event::Preferences(crate::settings::Owner::State)
+            ));
+            let stamp = state.version.load(SeqCst);
+            dispatch(
+                &backend,
+                1,
+                &out,
+                &state,
+                "integration-test",
+                "message",
+                r#"{"owner":"ui","type":"storage.stateChanged","value":{}}"#,
+            )
+            .await
+            .unwrap();
+            assert!(recovery.is_empty() && state.valid(stamp));
+            assert!(matches!(
+                events.try_recv().unwrap(),
+                crate::transport::Event::Preferences(crate::settings::Owner::State)
+            ));
+            let data = json!({"owner":"ui","type":"storage.configChanged",
+                              "value":{"padding":"x".repeat(NATIVE_EVENT_LIMIT)}});
+            dispatch(
+                &backend,
+                1,
+                &out,
+                &state,
+                "integration-test",
+                "message",
+                &data.to_string(),
+            )
+            .await
+            .unwrap();
+            assert!(matches!(
+                events.try_recv().unwrap(),
+                crate::transport::Event::Preferences(crate::settings::Owner::Config)
+            ));
+            assert!(matches!(
+                events.try_recv().unwrap(),
+                crate::transport::Event::Workspace(WorkspaceEvent::UiPreferencesChanged)
+            ));
+            assert!(events.is_empty() && recovery.is_empty() && state.valid(stamp));
+        });
+}
 impl State {
+    pub(crate) fn observing_preferences(
+        out: Sender<crate::transport::Event>,
+        wake: crate::Wake,
+    ) -> Self {
+        Self {
+            preferences: Some((out, wake)),
+            ..Self::default()
+        }
+    }
+
+    async fn notify_preferences(
+        &self,
+        owner: crate::settings::Owner,
+        out: &Sender<Input>,
+    ) -> Result<()> {
+        if let Some((events, wake)) = &self.preferences {
+            crate::transport::publish(events, wake, crate::transport::Event::Preferences(owner))
+                .await;
+        } else {
+            out.send(Input::Preferences(owner)).await?;
+        }
+        Ok(())
+    }
+
+    async fn storage_changed(
+        &self,
+        epoch: u64,
+        owner: crate::settings::Owner,
+        out: &Sender<Input>,
+    ) -> Result<()> {
+        self.notify_preferences(owner, out).await?;
+        if owner == crate::settings::Owner::Config {
+            let event = WorkspaceEvent::UiPreferencesChanged;
+            if let Some((events, wake)) = &self.preferences {
+                crate::transport::publish(events, wake, crate::transport::Event::Workspace(event))
+                    .await;
+            } else {
+                out.send(Input::Workspace(epoch, event)).await?;
+            }
+        }
+        Ok(())
+    }
     pub fn valid(&self, version: u64) -> bool {
         self.version.load(SeqCst) == version
             && self.alive.load(SeqCst)
@@ -31,26 +153,48 @@ impl State {
             && !self.cancelled.load(SeqCst)
     }
 }
+
 pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>) {
     runtime::spawn(async move {
-        #[cfg(not(target_arch = "wasm32"))]
-        let result =
-            futures_lite::future::race(read_native(&backend, epoch, &out, &state), async {
-                while !state.cancelled.load(SeqCst) && !out.is_closed() {
-                    runtime::sleep(Duration::from_millis(25)).await;
-                }
-                Ok(())
-            })
-            .await;
-        #[cfg(target_arch = "wasm32")]
-        let result = browser::read(&backend, epoch, &out, &state).await;
+        let result = read(&backend, epoch, &out, &state).await;
         state.alive.store(false, SeqCst);
         state.version.fetch_add(1, SeqCst);
+        let expired = result
+            .as_ref()
+            .is_err_and(crate::http::authentication_expired);
         if result.is_err() {
             eprintln!("Rune event stream unavailable");
         }
-        let _ = out.send(Input::Closed(epoch)).await;
+        let _ = out
+            .send(if expired {
+                Input::AuthenticationRequired(epoch)
+            } else {
+                Input::Closed(epoch)
+            })
+            .await;
+        if let Some(wake) = state.preferences.as_ref().map(|(_, wake)| wake.clone()) {
+            drop(state);
+            wake();
+        }
     });
+}
+
+pub(crate) async fn read(
+    backend: &Backend,
+    epoch: u64,
+    out: &Sender<Input>,
+    state: &State,
+) -> Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return futures_lite::future::race(read_native(backend, epoch, out, state), async {
+        while !state.cancelled.load(SeqCst) && !out.is_closed() {
+            runtime::sleep(Duration::from_millis(25)).await;
+        }
+        Ok(())
+    })
+    .await;
+    #[cfg(target_arch = "wasm32")]
+    browser::read(backend, epoch, out, state).await
 }
 
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {
@@ -60,6 +204,14 @@ pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Re
     state.alive.store(true, SeqCst);
     state.upstream.store(true, SeqCst);
     out.send(Input::Opened(epoch)).await?;
+    if state.preferences.is_some() {
+        state
+            .notify_preferences(crate::settings::Owner::Config, out)
+            .await?;
+        state
+            .notify_preferences(crate::settings::Owner::State, out)
+            .await?;
+    }
     Ok(())
 }
 pub(super) async fn dispatch(
@@ -71,7 +223,7 @@ pub(super) async fn dispatch(
     kind: &str,
     data: &str,
 ) -> Result<()> {
-    if data.len() > 262144 {
+    if data.len() > OWNER_EVENT_LIMIT {
         return Err("oversized SSE event".into());
     }
     if kind == "codenomad.client.ping" {
@@ -88,8 +240,17 @@ pub(super) async fn dispatch(
     }
     let value: Value = serde_json::from_str(data.trim())?;
     if let Some(signals) = &state.catalogue {
+        if data.len() > NATIVE_EVENT_LIMIT && storage_owner(&value).is_none() {
+            return Err("oversized SSE event".into());
+        }
         signals.observe(&value);
         return Ok(());
+    }
+    if let Some(owner) = storage_owner(&value) {
+        return state.storage_changed(epoch, owner, out).await;
+    }
+    if data.len() > NATIVE_EVENT_LIMIT {
+        return Err("oversized SSE event".into());
     }
     if let Some(event) = workspace_event(b, &value) {
         out.send(Input::Workspace(epoch, event)).await?;
@@ -170,9 +331,6 @@ pub(super) async fn dispatch(
 }
 
 fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {
-    if value["type"] == "storage.configChanged" && value["owner"] == "ui" {
-        return Some(WorkspaceEvent::UiPreferencesChanged);
-    }
     let id = value["workspaceId"].as_str()?;
     if id != b.workspace || !crate::history::valid_id(id) {
         return None;
@@ -255,7 +413,7 @@ struct Parser {
 impl Parser {
     fn byte(&mut self, byte: u8) -> Result<Option<(String, String)>> {
         if byte != b'\n' {
-            if self.line.len() >= 262144 {
+            if self.line.len() >= OWNER_EVENT_LIMIT + b"data: ".len() {
                 return Err("oversized SSE line".into());
             }
             self.line.push(byte);
@@ -272,10 +430,11 @@ impl Parser {
         if let Some(kind) = line.strip_prefix("event:") {
             self.kind = kind.trim().into();
         } else if let Some(data) = line.strip_prefix("data:") {
-            if self.data.len() + data.len() + 1 > 262144 {
+            let data = data.strip_prefix(' ').unwrap_or(data);
+            if self.data.len() + data.len() + 1 > OWNER_EVENT_LIMIT {
                 return Err("oversized SSE event".into());
             }
-            self.data.push_str(data.strip_prefix(' ').unwrap_or(data));
+            self.data.push_str(data);
             self.data.push('\n');
         }
         Ok(None)
@@ -301,18 +460,38 @@ mod tests {
     #[test]
     fn oversized_line_and_event_fail_before_unbounded_growth() {
         let mut parser = Parser::default();
-        for _ in 0..262144 {
+        for _ in 0..OWNER_EVENT_LIMIT + b"data: ".len() {
             parser.byte(b'x').unwrap();
         }
         assert!(parser.byte(b'x').is_err());
         let mut parser = Parser {
-            data: "x".repeat(262144),
+            data: "x".repeat(OWNER_EVENT_LIMIT),
             ..Default::default()
         };
         for b in b"data: x" {
             parser.byte(*b).unwrap();
         }
         assert!(parser.byte(b'\n').is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn large_owner_invalidation_does_not_close_the_conversation_stream() {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let backend = Backend::connect("http://127.0.0.1:9/", "").await.unwrap();
+            let (out, recovery) = crate::bounded(4);
+            let state = State::default();
+            let body = json!({"owner":"ui","type":"storage.stateChanged","value":{"serviceUsage":"x".repeat(1024*1024)}}).to_string();
+            let mut parser = Parser::default();
+            let wire = format!("data: {body}\n\ndata: {{\"type\":\"ignored\"}}\n\n");
+            for (kind, data) in wire.bytes().filter_map(|byte| parser.byte(byte).unwrap()) {
+                dispatch(&backend, 1, &out, &state, "test", &kind, &data).await.unwrap();
+            }
+            assert!(matches!(recovery.try_recv(), Ok(Input::Preferences(crate::settings::Owner::State))));
+            assert!(recovery.is_empty());
+            let foreign = json!({"type":"instance.event","value":"x".repeat(NATIVE_EVENT_LIMIT)}).to_string();
+            assert!(dispatch(&backend, 1, &out, &state, "test", "", &foreign).await.is_err());
+        });
     }
 }
 

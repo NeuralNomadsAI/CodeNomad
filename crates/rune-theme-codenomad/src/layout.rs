@@ -5,6 +5,8 @@ use rune::{El, GrowthSpec, edit::TextEdit};
 use std::{borrow::Cow, cell::Cell};
 
 thread_local! { static APPEARANCE: Cell<bool> = const { Cell::new(false) }; }
+pub type DrawnRect = rune::Live<[f32; 4]>;
+
 pub fn dark() -> bool {
     APPEARANCE.get()
 }
@@ -133,6 +135,7 @@ pub fn transcript_rows<S: 'static>(
     // Solid virtual-follow-measurements.ts uses a 40px first-row fallback;
     // the matching CSS touch-target token keeps this estimate in the shared scale.
     let appearance = dark();
+    let palette = crate::palettes::current();
     rune::col()
         .w_full()
         .growth(GrowthSpec::default())
@@ -140,13 +143,27 @@ pub fn transcript_rows<S: 'static>(
             count,
             tokens(dark()).length(crate::Length::TouchTarget).px(),
             key,
-            move |state, index| with_appearance(appearance, || build(state, index)),
+            move |state, index| {
+                crate::palettes::with_palette(palette, || {
+                    with_appearance(appearance, || build(state, index))
+                })
+            },
         )
 }
 pub fn composer(editor: El) -> El {
-    // Current prompt-input.css editor bounds. A dedicated shared variant preserves them.
-    rune::auto_grow(editor, 1, usize::MAX)
-        .min_h(104.0)
+    composer_bounds(editor, 104.0)
+}
+pub fn compact_composer(editor: El) -> El {
+    let t = tokens(dark());
+    composer_bounds(
+        editor,
+        t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0,
+    )
+}
+fn composer_bounds(editor: El, minimum: f32) -> El {
+    // The editor owns the whole painted space, including blank lines above the minimum.
+    rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
+        .min_h(minimum)
         .max_h(320.0)
 }
 pub trait Layout {

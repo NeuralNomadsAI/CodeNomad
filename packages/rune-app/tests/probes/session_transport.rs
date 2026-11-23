@@ -129,15 +129,18 @@ pub fn contract() {
                 chunks = 0;
                 commands.send(prompt(prompts[completed])).unwrap();
             }
-            Event::Failed => panic!("adapter failed"),
+            Event::AuthenticationRequired(_) | Event::Failed => panic!("adapter failed"),
             Event::Sync(_)
             | Event::History(_)
             | Event::Older(_)
             | Event::Reconnecting
             | Event::HistoryInvalidated
+            | Event::ConnectionLost
+            | Event::WorkspaceMissing
             | Event::Connected(_)
             | Event::AgentHint(_)
             | Event::Workspace(_)
+            | Event::Preferences(_)
             | Event::PromptAcknowledged { .. }
             | Event::PagingFailed => {}
             Event::Message(message) => {

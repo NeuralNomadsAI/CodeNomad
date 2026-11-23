@@ -4,11 +4,13 @@ pub(crate) mod opening;
 mod persistence;
 mod state;
 pub(crate) use persistence::finish;
-pub(crate) use state::panel_width;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use state::active_workspace;
 pub(crate) use state::{
-    Ui, active_session, attachment_draft_admissible, bound, can_new, capture, close, connected,
-    draft_changed, input_ready, new_tab, opened, poll, prepare_open, resume, retry,
-    schedule_catalogue, select, status, strip, unselect_missing,
+    Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode, close, connected,
+    draft_changed, files_tab, has_conversation_stream, input_ready, new_tab, opened, panel_width,
+    poll, prepare_open, restore_files_mode, resume, retry, schedule_catalogue, select,
+    set_files_tab, status, strip, unselect_missing,
 };
 
 use serde_json::{Map, Value, json};
@@ -457,4 +459,3 @@ fn integer(value: Option<&Value>) -> Result<u64, Error> {
 
 #[cfg(test)]
 mod tests;
-pub(crate) use state::{capture_files_mode, files_tab, restore_files_mode, set_files_tab};

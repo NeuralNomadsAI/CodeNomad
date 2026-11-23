@@ -7,6 +7,7 @@ use crate::{
     git::{Source, diff::Hidden},
 };
 use codenomad_client::git::Diff;
+use rune::row;
 use rune_theme_codenomad::git_diff::image as image_view;
 
 pub(crate) fn reader(s: &State) -> El {

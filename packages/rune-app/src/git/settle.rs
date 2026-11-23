@@ -61,6 +61,12 @@ impl Ui {
                     if !replaced {
                         self.mutation_message = notice;
                     }
+                } else if previous
+                    .as_ref()
+                    .zip(self.tree())
+                    .is_some_and(|(a, b)| a.branch != b.branch || a.head != b.head)
+                {
+                    self.invalidate_checkout_content();
                 }
             }
             Value::Changes(mut statuses, revision, index_revision) => {
@@ -83,6 +89,11 @@ impl Ui {
                 }
             }
             Value::History(mut page, more) => {
+                // Continuation pages echo their pinned cursor, not the live HEAD.
+                if !more && self.tree().is_some_and(|tree| page.head != tree.head) {
+                    self.invalidate_index();
+                    self.dirty(&[Lane::Worktrees]);
+                }
                 if let Some(previous) = &self.history.page {
                     if more {
                         let existing: HashSet<_> =

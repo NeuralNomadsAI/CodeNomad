@@ -3,6 +3,7 @@ mod controls;
 mod files_document;
 mod files_reader;
 mod files_state;
+mod git_panel;
 pub(crate) mod git_scene;
 mod latency;
 mod launcher;
@@ -46,6 +47,7 @@ pub fn dispatch() -> bool {
         ("--probe-pending-open", pending_open::run),
         ("--probe-controls", controls::run),
         ("--probe-files-state", files_state::run),
+        ("--probe-git-panel", git_panel::run),
         ("--probe-launcher", launcher::run),
         ("--probe-workspace-claims", workspaces::run),
         ("--probe-window-restore", window_restore::run),

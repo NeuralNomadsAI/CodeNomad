@@ -1,10 +1,15 @@
 //! Interchangeable native HTTP and browser fetch adapters; cookies stay in their owner.
 use crate::history::Result;
 use reqwest::{Client, RequestBuilder};
-use std::time::Duration;
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
+
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
-pub struct Http(Client);
+pub struct Http(Client, Arc<OnceLock<String>>);
 impl Http {
     pub fn new() -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -12,14 +17,23 @@ impl Http {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .cookie_store(true)
-            .timeout(Duration::from_secs(30))
+            .timeout(REQUEST_TIMEOUT)
             .build()?;
         #[cfg(target_arch = "wasm32")]
         let client = Client::new();
-        Ok(Self(client))
+        Ok(Self(client, Arc::new(OnceLock::new())))
+    }
+    pub fn same_connection(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.1, &other.1)
+    }
+    pub fn server_identity(&self) -> Option<&str> {
+        self.1.get().map(String::as_str)
+    }
+    pub(crate) fn verify_server_identity(&self, id: &str) -> bool {
+        self.1.get_or_init(|| id.to_owned()) == id
     }
     fn request(&self, method: reqwest::Method, url: impl reqwest::IntoUrl) -> RequestBuilder {
-        let request = self.0.request(method, url).timeout(Duration::from_secs(30));
+        let request = self.0.request(method, url).timeout(REQUEST_TIMEOUT);
         #[cfg(target_arch = "wasm32")]
         let request = request.fetch_credentials_same_origin();
         request
@@ -33,9 +47,38 @@ impl Http {
     pub fn put(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::PUT, url)
     }
+    pub fn patch(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.request(reqwest::Method::PATCH, url)
+    }
     pub fn delete(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::DELETE, url)
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn pairing_required() -> Result<Option<bool>> {
+    let base = endpoint("/")?;
+    let response = Http::new()?
+        .get(format!("{base}api/auth/status"))
+        .fetch_cache_no_store()
+        .timeout(Duration::from_secs(8))
+        .send()
+        .await?
+        .error_for_status()?;
+    let status = crate::backend::read_json_limited(response, 4096).await?;
+    Ok(match status["authenticated"].as_bool() {
+        Some(true) => Some(false),
+        Some(false) if status["pairingRequired"].as_bool() == Some(true) => Some(true),
+        _ => None,
+    })
+}
+
+pub(crate) fn authentication_expired(error: &crate::history::Error) -> bool {
+    cfg!(not(target_arch = "wasm32"))
+        && error
+            .downcast_ref::<reqwest::Error>()
+            .and_then(reqwest::Error::status)
+            == Some(reqwest::StatusCode::UNAUTHORIZED)
 }
 
 pub fn endpoint(address: &str) -> Result<String> {

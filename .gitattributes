@@ -1,3 +1,11 @@
 # Vendored-crate patches apply to the published LF crates; keep them byte-exact on every checkout.
 packages/tauri-app/vendor/patches/*.patch -text
 packages/tauri-app/tests/webkit-capabilities/*.sh text eol=lf
+
+# Rune generators write LF; preserve their output when Git checks out on Windows.
+crates/rune-theme-codenomad/assets/*.json text eol=lf
+crates/rune-theme-codenomad/assets/catalogues/*.json text eol=lf
+crates/rune-theme-codenomad/src/generated_*.rs text eol=lf
+crates/rune-theme-codenomad/src/git_panel_icons.rs text eol=lf
+crates/rune-theme-codenomad/src/workspace_tree_icons.rs text eol=lf
+dev-docs/rune-components.generated.json text eol=lf

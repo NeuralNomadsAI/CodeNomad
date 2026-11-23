@@ -25,7 +25,10 @@ pub fn view(
         root = root.child(crate::platform::titlebar::view(s, cx));
     }
     if let Some(ui) = &s.workspace {
-        root = root.child(workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside));
+        root = root.child(rune_theme_codenomad::settings::shell_entry(
+            workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside),
+            crate::settings::entry(),
+        ));
         if let Some(error) = workspace::status(s) {
             root = root.child(
                 layout::action_row()
@@ -42,7 +45,8 @@ pub fn view(
         let body = body(s, cx, conversation).key(format!("tab-body-{}", ui.active_key()));
         root.child(body.remaining())
     } else {
-        root.child(body(s, cx, conversation).remaining())
+        root.child(crate::settings::direct_entry(s))
+            .child(body(s, cx, conversation).remaining())
     }
 }
 
@@ -53,7 +57,9 @@ fn body(
 ) -> El {
     let has_project = s.screen.launcher().is_some_and(|l| l.project.is_some());
     let body = match &s.screen {
-        Screen::Launcher(_) if !has_project => return launcher_view::view(s),
+        Screen::Launcher(l) if !has_project || l.authentication_required => {
+            return launcher_view::view(s);
+        }
         Screen::Launcher(_) if crate::git::has_preview(s) => crate::git::reader(s),
         Screen::Launcher(_) => {
             rune_theme_codenomad::shell::empty_conversation(t("instanceShell.empty.title"))
@@ -80,6 +86,10 @@ fn connection(s: &State) -> &'static str {
         Phase::Loading | Phase::Reconnecting => "instanceShell.connection.connecting",
         Phase::Ready | Phase::Streaming => "instanceShell.connection.connected",
         Phase::Failed => "instanceShell.connection.disconnected",
+        #[cfg(target_arch = "wasm32")]
+        Phase::WorkspaceMissing => "instanceShell.connection.connecting",
+        #[cfg(target_arch = "wasm32")]
+        Phase::RestoreFailed => "rune.restore_error",
     })
 }
 

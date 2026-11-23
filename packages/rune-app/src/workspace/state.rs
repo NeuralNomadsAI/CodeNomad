@@ -32,6 +32,7 @@ pub(super) struct Entry {
     listed_sessions: HashSet<String>,
     creation_uncertain: bool,
     next: Option<String>,
+    linked: Option<crate::launcher::linked::Pages>,
     consumed_cursors: HashSet<u64>,
     visits: crate::launcher::Visits,
     catalogue: catalogue::Refresh,
@@ -168,6 +169,15 @@ impl Ui {
         self.staged_revision = Some(self.revision);
     }
 }
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
+    let ui = s.workspace.as_ref()?;
+    let entry = &ui.entries[ui.active];
+    let Tab::Workspace(saved) = &entry.saved else {
+        return None;
+    };
+    Some((&entry.key, saved))
+}
 fn same_project(a: &Workspace, b: &Workspace) -> bool {
     same_folder(&a.folder, &b.folder)
         && a.backend_id == b.backend_id
@@ -194,6 +204,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         listed_sessions: HashSet::new(),
         creation_uncertain: false,
         next: None,
+        linked: None,
         consumed_cursors: HashSet::new(),
         visits: Default::default(),
         catalogue: Default::default(),
@@ -397,6 +408,20 @@ pub fn schedule_catalogue(s: &mut State) {
         ui.entries[ui.active].catalogue.schedule(ui.clock);
     }
 }
+pub fn has_conversation_stream(s: &State) -> bool {
+    s.incoming
+        .as_ref()
+        .is_some_and(|incoming| !incoming.is_closed())
+        || s.workspace.as_ref().is_some_and(|ui| {
+            ui.entries.iter().any(|entry| {
+                entry
+                    .cache
+                    .as_ref()
+                    .is_some_and(Cache::has_conversation_stream)
+            })
+        })
+}
+
 pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let Some(mut ui) = s.workspace.take() else {
         return false;

@@ -2187,6 +2187,7 @@
   "rune.older": "पुराना सन्देशहरू",
   "rune.open_error": "खोल्न असफल · फोल्डर वा सत्र जाँच्नुहोस्",
   "rune.other_values": "अन्य मानहरू",
+  "rune.pairing_guide": "जोड्ने लिङ्क बनाउन CodeNomad होस्टमा admin.sh वा admin.ps1 चलाउनुहोस्। यस उपकरणको अर्को ट्याबमा लिङ्क खोल्नुहोस्।",
   "rune.prompt": "सन्देश",
   "rune.ready": "तयार",
   "rune.reason": "कारण",

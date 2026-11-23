@@ -11,6 +11,7 @@ pub struct Display {
     active: SessionDisplay,
     saved: HashMap<String, SessionDisplay>,
     stream: StreamRender,
+    pub(super) diffs: super::tool_diff::Cache,
 }
 
 #[derive(Default)]
@@ -25,6 +26,7 @@ struct SessionDisplay {
     toggled: HashSet<String>,
     revealed: HashMap<String, usize>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
+    compact_diffs: (u64, HashSet<String>),
 }
 impl Display {
     pub fn bind(&mut self, server: &str, workspace: &str, session: &str) {
@@ -45,11 +47,39 @@ impl Display {
                 std::mem::replace(&mut self.active, next),
             );
             self.stream = StreamRender::default();
+            self.diffs = Default::default();
         }
     }
 
     pub fn toggled(&self, key: &str) -> bool {
         self.active.toggled.contains(key)
+    }
+
+    pub(super) fn compact_split(&self, epoch: u64, key: &str) -> bool {
+        self.active.compact_diffs.0 == epoch && self.active.compact_diffs.1.contains(key)
+    }
+
+    pub(super) fn set_compact_split(&mut self, epoch: u64, key: &str, split: bool) {
+        let (current, cards) = &mut self.active.compact_diffs;
+        if *current != epoch {
+            cards.clear();
+            *current = epoch;
+        }
+        if split {
+            cards.insert(key.into());
+        } else {
+            cards.remove(key);
+        }
+    }
+
+    pub(super) fn sync_diff_modes(
+        &mut self,
+        epoch: u64,
+        mode: impl Fn(bool) -> crate::components::diff::DiffMode,
+    ) {
+        let (current, cards) = &self.active.compact_diffs;
+        self.diffs
+            .sync(|key| mode(*current == epoch && cards.contains(key)));
     }
 
     pub fn steps(&self, key: &str) -> usize {

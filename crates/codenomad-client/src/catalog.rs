@@ -85,6 +85,15 @@ impl Backend {
             .await?,
         )
     }
+
+    pub async fn attest_server(&self) -> Result<String> {
+        let id = self.server_id().await?;
+        if self.client.verify_server_identity(&id) {
+            Ok(id)
+        } else {
+            Err("Server identity changed".into())
+        }
+    }
     /// Creates an independent occurrence; the request retains cleanup ownership until released.
     pub async fn create_project(&self, path: &str, request_id: &str) -> Result<Project> {
         if !crate::server_path::absolute(path) {
@@ -188,19 +197,59 @@ impl Backend {
         )
     }
     pub async fn sessions(&self, project: &Project, cursor: Option<&str>) -> Result<Sessions> {
+        self.session_page(project, &project.path, None, cursor)
+            .await
+    }
+    pub async fn linked_session_directories(&self, project: &Project) -> Result<Vec<String>> {
+        Ok(self
+            .session_directories(project)
+            .await?
+            .into_iter()
+            .skip(1)
+            .collect())
+    }
+    pub async fn linked_session_page(
+        &self,
+        project: &Project,
+        directory: &str,
+        cursor: Option<&str>,
+    ) -> Result<Sessions> {
+        self.session_page(project, directory, None, cursor).await
+    }
+    pub async fn workspace_missing(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .projects()
+            .await?
+            .into_iter()
+            .all(|workspace| workspace.id != id))
+    }
+    async fn session_page(
+        &self,
+        project: &Project,
+        directory: &str,
+        search: Option<&str>,
+        cursor: Option<&str>,
+    ) -> Result<Sessions> {
         let request = self.client.get(format!(
             "{}workspaces/{}/instance/api/session",
             self.base, project.id
         ));
+        let request = request.query(&[("directory", directory)]);
         let request = match cursor {
             Some(cursor) => request.query(&[("cursor", cursor)]),
-            None => request.query(&[("directory", project.path.as_str()), ("limit", "200")]),
+            None => {
+                let request = request.query(&[("limit", "200")]);
+                match search {
+                    Some(search) => request.query(&[("search", search)]),
+                    None => request,
+                }
+            }
         };
         let data = read_json(request.send().await?.error_for_status()?).await?;
         let page = inventory::decode_page(&data)?;
         let mut sessions = vec![];
         for member in page.members {
-            if !crate::server_path::same(&member.directory, &project.path) {
+            if !crate::server_path::same(&member.directory, directory) {
                 return Err("foreign session location".into());
             }
             if member.parent.is_none() && !member.session.id.starts_with("ses_cn_schedule_") {
@@ -211,6 +260,68 @@ impl Backend {
             rows: sessions,
             next: page.next,
         })
+    }
+    async fn session_directories(&self, project: &Project) -> Result<Vec<String>> {
+        let data = read_json(
+            self.client
+                .get(format!(
+                    "{}api/workspaces/{}/worktrees",
+                    self.base, project.id
+                ))
+                .send()
+                .await?
+                .error_for_status()?,
+        )
+        .await?;
+        let trees = data["worktrees"]
+            .as_array()
+            .filter(|trees| trees.len() <= 128)
+            .ok_or("invalid worktree inventory")?;
+        let mut directories = vec![project.path.clone()];
+        for tree in trees {
+            if tree["nestedFolderMissing"].as_bool() == Some(true) {
+                continue;
+            }
+            let directory = tree["serviceDirectory"]
+                .as_str()
+                .or_else(|| tree["directory"].as_str())
+                .filter(|d| crate::server_path::absolute(d))
+                .ok_or("invalid worktree directory")?;
+            if !directories
+                .iter()
+                .any(|d| crate::server_path::same(d, directory))
+            {
+                directories.push(directory.into());
+            }
+        }
+        Ok(directories)
+    }
+    pub async fn search_sessions(&self, project: &Project, query: &str) -> Result<Vec<Session>> {
+        use std::collections::HashSet;
+        if query.is_empty() || query.len() > 4096 {
+            return Err("invalid session search query".into());
+        }
+        let mut matches = Vec::new();
+        let mut ids = HashSet::new();
+        for directory in self.session_directories(project).await? {
+            let mut cursor = None;
+            let mut cursors = HashSet::new();
+            loop {
+                let page = self
+                    .session_page(project, &directory, Some(query), cursor.as_deref())
+                    .await?;
+                matches.extend(page.rows.into_iter().filter(|r| ids.insert(r.id.clone())));
+                if matches.len() > 2000 {
+                    return Err("session search result limit reached".into());
+                }
+                let Some(next) = page.next else { break };
+                if cursors.len() >= 10 || !cursors.insert(next.clone()) {
+                    return Err("invalid or excessive session search cursors".into());
+                }
+                cursor = Some(next);
+            }
+        }
+        Ok(matches)
     }
     pub async fn create_session(&self, project: &Project, title: &str) -> Result<Session> {
         if title.trim().is_empty() || title.len() > 512 {
@@ -278,12 +389,35 @@ impl Backend {
         let (backend, session, _) = self.bind_session_placed(project, id, fresh).await?;
         Ok((backend, session))
     }
+    pub async fn bind_at(
+        &self,
+        project: &Project,
+        id: &str,
+        expected: Option<&str>,
+        fresh: bool,
+    ) -> Result<(Self, Session)> {
+        let (backend, session, _) = self
+            .bind_at_placed(project, id, expected, fresh, true)
+            .await?;
+        Ok((backend, session))
+    }
 
     pub async fn bind_session_placed(
         &self,
         project: &Project,
         id: &str,
         fresh: bool,
+    ) -> Result<(Self, Session, String)> {
+        self.bind_at_placed(project, id, None, fresh, false).await
+    }
+
+    async fn bind_at_placed(
+        &self,
+        project: &Project,
+        id: &str,
+        expected: Option<&str>,
+        fresh: bool,
+        verify_directory: bool,
     ) -> Result<(Self, Session, String)> {
         if !valid_id(id) || id.starts_with("ses_cn_schedule_") {
             return Err("invalid session".into());
@@ -316,24 +450,30 @@ impl Backend {
         }
         let data = read_json(response.error_for_status()?).await?;
         let row = &data["data"];
+        let directory = row["location"]["directory"]
+            .as_str()
+            .ok_or("missing session directory")?;
         let placement = row["listWorktreeSlug"]
             .as_str()
             .filter(|slug| valid_id(slug));
-        let info = if placement.is_some()
-            && let Some(path) = row["location"]["directory"]
-                .as_str()
-                .filter(|path| crate::absolute_server_path(path))
-        {
-            session(
-                row,
-                &Project {
-                    id: project.id.clone(),
-                    path: path.into(),
-                },
-            )?
-        } else {
-            session(row, project)?
-        };
+        let linked = !crate::server_path::same(&project.path, directory);
+        if expected.is_some_and(|d| !crate::server_path::same(d, directory)) || linked && fresh {
+            return Err("foreign session location".into());
+        }
+        if linked {
+            let owned = if verify_directory {
+                self.session_directories(project)
+                    .await?
+                    .iter()
+                    .any(|d| crate::server_path::same(d, directory))
+            } else {
+                placement.is_some_and(|slug| slug != "root")
+            };
+            if !owned {
+                return Err("foreign session location".into());
+            }
+        }
+        let info = session_at(row, directory)?;
         if info.id != id {
             return Err("session response identity mismatch".into());
         }
@@ -388,13 +528,16 @@ fn project(data: &Value) -> Result<Project> {
     })
 }
 fn session(data: &Value, project: &Project) -> Result<Session> {
+    session_at(data, &project.path)
+}
+fn session_at(data: &Value, directory: &str) -> Result<Session> {
     let id = data["id"]
         .as_str()
         .filter(|v| valid_id(v))
         .ok_or("invalid session id")?;
     if !data["location"]["directory"]
         .as_str()
-        .is_some_and(|p| crate::server_path::same(p, &project.path))
+        .is_some_and(|p| crate::server_path::same(p, directory))
         || data["location"].get("workspaceID").is_some()
     {
         return Err("foreign session location".into());

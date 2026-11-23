@@ -11,6 +11,7 @@ mod prompt;
 pub mod proxy;
 mod proxy_body;
 pub mod scope;
+mod session_environment;
 pub mod update;
 
 use std::{
@@ -79,6 +80,10 @@ impl Native {
     pub fn endpoint(&self) -> Option<Arc<Endpoint>> {
         self.endpoint.read().unwrap().clone()
     }
+    pub fn current(&self, endpoint: &Arc<Endpoint>) -> bool {
+        let live = self.endpoint.read().unwrap();
+        live.as_ref().is_some_and(|current| Arc::ptr_eq(current, endpoint)) && self.validated.lock().unwrap().is_some()
+    }
     pub fn url(&self) -> Url {
         self.endpoint().map_or_else(|| UNCONNECTED.clone(), |e| e.url.clone())
     }
@@ -101,7 +106,11 @@ impl Native {
             (Some(current), Some(_)) => match lifecycle.discover(deadline).await {
                 Ok(Some(found)) if found != **current => found,
                 _ => {
-                    *self.validated.lock().unwrap() = Some(Instant::now());
+                    let mut validated = self.validated.lock().unwrap();
+                    if validated.is_none() {
+                        return Err(Refusal::Failed("OpenCode connection was invalidated during discovery".into()));
+                    }
+                    *validated = Some(Instant::now());
                     return Ok(current.clone());
                 }
             },
@@ -112,7 +121,8 @@ impl Native {
         };
         admission::admit(&self.client, &found).await?;
         let found = Arc::new(found);
-        *self.endpoint.write().unwrap() = Some(found.clone());
+        let mut endpoint = self.endpoint.write().unwrap();
+        *endpoint = Some(found.clone());
         *self.validated.lock().unwrap() = Some(Instant::now());
         Ok(found)
     }
@@ -138,7 +148,8 @@ impl Native {
     /// The event stream of `endpoint` ended or failed: the next acquisition discovers again
     /// (and starts the daemon when it is gone). Requests keep it until then.
     pub fn invalidate(&self, endpoint: &Arc<Endpoint>) {
-        if self.lifecycle.is_some() && self.endpoint().is_some_and(|e| Arc::ptr_eq(&e, endpoint)) {
+        let live = self.endpoint.read().unwrap();
+        if self.lifecycle.is_some() && live.as_ref().is_some_and(|e| Arc::ptr_eq(e, endpoint)) {
             *self.validated.lock().unwrap() = None;
         }
     }

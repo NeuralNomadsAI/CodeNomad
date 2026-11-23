@@ -84,6 +84,7 @@ mod tests {
     fn families_follow_owned_host_and_service_directories_not_clone_identity() {
         let host = "D:/main";
         let linked = Worktree {
+            head: None,
             slug: "linked".into(),
             directory: "D:/linked".into(),
             service_directory: Some("/mnt/d/linked".into()),

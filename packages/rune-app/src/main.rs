@@ -20,11 +20,14 @@ mod platform;
 #[path = "../tests/probes/mod.rs"]
 mod probes;
 mod screen;
+mod settings;
 mod shell;
 mod strings;
 use screen::Screen;
 mod workspace;
-use codenomad_client::{Receiver, Sender, bounded};
+#[cfg(test)]
+use codenomad_client::bounded;
+use codenomad_client::{Receiver, Sender};
 use rune::edit::TextEdit;
 use rune::{AppSpec, Cx, El, Tx};
 use rune_theme_codenomad::layout::{self, Layout};
@@ -45,8 +48,12 @@ struct State {
     documents: files::document::store::Store,
     reads: platform::reads::Reads,
     attachments: chat::attachments::Reader,
+    #[cfg(target_arch = "wasm32")]
+    pairing: platform::pairing::Recovery,
     transcript_display: transcript_state::Display,
+    tool_diff_preferences: chat::ToolDiffPreferences,
     screen: Screen,
+    settings: settings::Host,
     input_scope: std::rc::Rc<()>,
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
@@ -71,6 +78,10 @@ enum Phase {
     Streaming,
     Failed,
     Reconnecting,
+    #[cfg(target_arch = "wasm32")]
+    WorkspaceMissing,
+    #[cfg(target_arch = "wasm32")]
+    RestoreFailed,
 }
 fn init() -> State {
     State {
@@ -85,8 +96,12 @@ fn init() -> State {
         documents: Default::default(),
         reads: Default::default(),
         attachments: Default::default(),
+        #[cfg(target_arch = "wasm32")]
+        pairing: Default::default(),
         transcript_display: Default::default(),
+        tool_diff_preferences: Default::default(),
         screen: Screen::Chat { launcher: None },
+        settings: Default::default(),
         input_scope: std::rc::Rc::new(()),
         rejected_edit: TextEdit::new(""),
         workspace: None,
@@ -125,11 +140,7 @@ fn setup(s: &mut State, wake: rune::Waker) {
         workspace::connected(s);
         return;
     }
-    let (out, incoming) = bounded(64);
-    let (commands, input) = bounded(1);
-    s.incoming = Some(incoming);
-    s.commands = Some(commands);
-    platform::spawn(transport::run_async(out, input, wake));
+    transport::start(s, true);
 }
 fn local_stress() -> bool {
     #[cfg(feature = "test-support")]
@@ -156,11 +167,40 @@ fn request_older(s: &mut State, _: &mut Tx) {
     }
 }
 fn retry_connection(s: &mut State, tx: &mut Tx) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if platform::pairing::required(s) {
+            platform::pairing::observe(s);
+            return;
+        }
+        if matches!(s.phase, Phase::WorkspaceMissing | Phase::RestoreFailed) {
+            launcher::reopen(s);
+            return;
+        }
+        if s.screen.is_launcher() && s.commands.is_none() {
+            if s.screen.launcher().is_some_and(|l| l.connection.is_some()) {
+                launcher::list(s, false);
+            } else {
+                launcher::connect(s, tx);
+            }
+            return;
+        }
+    }
+    if s.screen
+        .launcher()
+        .is_some_and(|l| l.authentication_required)
+    {
+        s.show_launcher();
+        return;
+    }
     if s.incoming.as_ref().is_none_or(Receiver::is_closed)
         || s.commands.as_ref().is_none_or(Sender::is_closed)
     {
         if let Some(id) = workspace::active_session(s).map(str::to_owned) {
             launcher::choose(s, id, tx);
+        } else if s.screen.launcher().is_none() && s.incoming.is_some() {
+            s.phase = Phase::Reconnecting;
+            transport::start(s, false);
         }
     } else if s
         .commands
@@ -190,8 +230,17 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= launcher::poll(s, tx);
     changed |= s.composer.picker.poll(&s.reads, &s.wake);
     changed |= chat::attachments::poll(s, tx);
+    #[cfg(target_arch = "wasm32")]
+    {
+        changed |= platform::pairing::poll(s, tx);
+    }
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
+    changed |= settings::poll(s);
+    #[cfg(target_arch = "wasm32")]
+    if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
+        changed |= launcher::reopen(s);
+    }
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     changed |= git::poll(s, now, tx);
     workspace::capture_files_mode(s);
@@ -212,6 +261,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
+                settings::connected(s, &backend);
                 workspace::restore_files_mode(s);
                 if s.agent.is_none() {
                     s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
@@ -250,6 +300,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     files.event(event);
                 }
             }
+            Event::Preferences(owner) => settings::invalidate(s, owner),
             Event::Sync(page) => {
                 s.composer
                     .picker
@@ -287,8 +338,12 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.history_error = false;
                 s.paging = false;
             }
-            Event::Reconnecting => {
+            Event::Reconnecting | Event::ConnectionLost => {
                 s.composer.picker.set_attachments_supported(false);
+                #[cfg(target_arch = "wasm32")]
+                if matches!(event, Event::ConnectionLost) && !platform::pairing::required(s) {
+                    platform::pairing::observe(s);
+                }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
@@ -314,6 +369,12 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
                 s.phase = Phase::Reconnecting;
             }
+            Event::WorkspaceMissing => {
+                #[cfg(target_arch = "wasm32")]
+                { s.phase = Phase::WorkspaceMissing; }
+                #[cfg(not(target_arch = "wasm32"))]
+                { s.phase = Phase::Failed; }
+            }
             Event::History(messages) => {
                 s.messages = messages;
                 s.phase = Phase::Ready;
@@ -338,8 +399,16 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Done => s.phase = Phase::Ready,
-            Event::Failed => {
+            Event::AuthenticationRequired(_) | Event::Failed => {
                 s.composer.picker.set_attachments_supported(false);
+                #[cfg(target_arch = "wasm32")]
+                if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
+                    platform::pairing::observe(s);
+                }
+                if let Event::AuthenticationRequired(expired) = event {
+                    s.commands = None;
+                    settings::authentication_required(s, &expired);
+                }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
@@ -356,40 +425,45 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
     changed
 }
 fn view(s: &State, cx: &mut Cx<State>) -> El {
-    layout::render(cx, |cx| {
+    settings::render(s, cx, |cx| {
         #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
         if s.git.scene {
             return probes::git_scene::view(s);
         }
         let base = shell::view(s, cx, chat_view);
         let mut layer = Vec::new();
-        if !s.screen.is_launcher() {
-            composer::view::overlays(s, &mut layer);
+        if !s.screen.is_launcher() { composer::view::overlays(s, &mut layer); }
+        let body = layout::with_overlays(base, layer);
+        #[cfg(target_arch = "wasm32")]
+        if platform::pairing::required(s) {
+            return rune::col()
+                .full_width()
+                .full_height()
+                .child(platform::pairing::view(s))
+                .child(body.remaining());
         }
-        layout::with_overlays(base, layer)
+        body
     })
-    .locale_direction(strings::locale())
+    .on_layout_tx(chat::ToolDiffPreferences::layout)
 }
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
-    let locale = strings::locale();
-    let rows = layout::transcript_rows(
-        s.messages.len(),
-        |s: &State, i| s.messages[i].id.clone().into(),
-        move |s: &State, i| strings::with_locale(locale, || transcript::message(s, i)),
-    )
-    .key("rows")
-    .virtual_rows_version(s.revision);
-    let expanded = s
-        .agent
-        .as_ref()
-        .is_some_and(|a| a.picker || !a.ids().is_empty());
+    let expanded = interruption_expanded(s);
     rune_theme_codenomad::interruption::session_surface(expanded)
         .child(shell::reader(s, || {
-            rune_theme_codenomad::interruption::history(expanded).child(rows)
+            rune_theme_codenomad::interruption::history(expanded)
+                .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
+                .on_layout_tx(chat::ToolDiffPreferences::history_layout)
+                .child(transcript::rows(s))
         }))
         .child(agent_view::view(s, cx))
         .children(chat::attachments::error(s))
         .child(composer::view::view(s))
+}
+
+fn interruption_expanded(s: &State) -> bool {
+    s.agent
+        .as_ref()
+        .is_some_and(|a| a.picker || !a.ids().is_empty())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -424,6 +498,11 @@ fn main() {
         gallery::shell::run();
         return;
     }
+    #[cfg(feature = "test-support")]
+    if platform::has_flag("--gallery-preferences") {
+        settings::gallery();
+        return;
+    }
     run_app();
 }
 #[cfg(target_arch = "wasm32")]
@@ -451,7 +530,10 @@ fn run_app() {
             ],
             ..layout::app_spec(strings::t("window.title.main"), init, view)
         },
-        workspace::finish,
+        |s, tx| {
+            settings::close(s);
+            workspace::finish(s, tx);
+        },
     );
     platform::finish();
 }

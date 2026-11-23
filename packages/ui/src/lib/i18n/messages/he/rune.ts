@@ -2,6 +2,7 @@ export const runeMessages = {
   "rune.attachments_unavailable": "שרת זה אינו תומך בהיסטוריית קבצים מצורפים.",
   "rune.attachments_missing": "הקבצים המצורפים לטיוטה לא שוחזרו.",
   "rune.attachments_keep_text": "שמירת הטקסט בלבד",
+  "rune.pairing_guide": "במארח CodeNomad, השתמשו ב־admin.sh או ב־admin.ps1 ליצירת קישור צימוד. פתחו את הקישור בכרטיסייה אחרת במכשיר זה.",
   "rune.loading": "טוען",
   "rune.ready": "מוכן",
   "rune.streaming": "תגובה בתהליך",

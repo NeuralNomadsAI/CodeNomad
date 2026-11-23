@@ -27,6 +27,12 @@ pub(super) struct Cache {
     input_scope: std::rc::Rc<()>,
 }
 impl Cache {
+    pub(super) fn has_conversation_stream(&self) -> bool {
+        self.incoming
+            .as_ref()
+            .is_some_and(|incoming| !incoming.is_closed())
+    }
+
     pub fn navigation_blocked(&self) -> bool {
         self.agent
             .as_ref()
@@ -64,6 +70,7 @@ impl Cache {
         s.attachments = self.attachments;
         s.git = self.git;
         s.transcript_display = self.transcript_display;
+        crate::chat::ToolDiffPreferences::sync(s);
         s.chat_title = self.title;
         s.messages = self.messages;
         s.draft = self.draft;

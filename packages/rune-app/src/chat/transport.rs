@@ -4,7 +4,7 @@ use crate::{CODE, Message};
 pub use codenomad_client::transport::{Command, Event, PromptOutcome, publish, run_backend};
 #[cfg(test)]
 pub use codenomad_client::wire::decode_event;
-use codenomad_client::{Receiver, Sender};
+use codenomad_client::{Receiver, Sender, bounded};
 #[cfg(feature = "test-support")]
 use std::time::Duration;
 #[cfg(any(test, feature = "test-support"))]
@@ -24,22 +24,84 @@ pub fn synthetic() -> Vec<crate::history::Row> {
         .map(Into::into)
         .collect()
 }
-pub async fn run_async(out: Sender<Event>, input: Receiver<Command>, wake: rune::Waker) {
-    if crate::platform::setting("RUNE_BACKEND").is_some() && !crate::local_stress() {
-        let result = match crate::platform::configured_backend().await {
-            Ok(backend) => run_backend(backend, out.clone(), input, wake.clone()).await,
-            Err(error) => Err(error),
-        };
-        if result.is_err() {
-            eprintln!("Rune backend unavailable");
-            publish(&out, &wake, Event::Failed).await;
+pub fn start(s: &mut crate::State, bootstrap: bool) {
+    s.agent = None;
+    launch(s, Startup::Configured { bootstrap });
+}
+
+pub(crate) fn start_bound(s: &mut crate::State, backend: crate::backend::Backend) {
+    launch(s, Startup::Bound(backend));
+}
+
+enum Startup {
+    Configured { bootstrap: bool },
+    Bound(crate::backend::Backend),
+}
+
+fn launch(s: &mut crate::State, startup: Startup) {
+    let (out, incoming) = bounded(64);
+    let (commands, input) = bounded(1);
+    s.incoming = Some(incoming);
+    s.commands = Some(commands);
+    let wake = s.wake.clone();
+    let previous = crate::settings::stop_before_conversation(s);
+    crate::platform::spawn(async move {
+        if let Some(previous) = previous {
+            let _ = previous.recv().await;
         }
+        if input.is_closed() {
+            return;
+        }
+        match startup {
+            Startup::Configured { bootstrap } => run_configured(out, input, wake, bootstrap).await,
+            Startup::Bound(backend) => run_bound(Ok(backend), out, input, wake).await,
+        }
+    });
+}
+
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(crate) async fn run_async(out: Sender<Event>, input: Receiver<Command>, wake: rune::Waker) {
+    run_configured(out, input, wake, true).await;
+}
+
+async fn run_configured(
+    out: Sender<Event>,
+    input: Receiver<Command>,
+    wake: rune::Waker,
+    bootstrap: bool,
+) {
+    if crate::platform::setting("RUNE_BACKEND").is_some() && !crate::local_stress() {
+        run_bound(
+            crate::platform::configured_backend(bootstrap).await,
+            out,
+            input,
+            wake,
+        )
+        .await;
         return;
     }
     #[cfg(feature = "test-support")]
     run_synthetic(out, input, wake).await;
     #[cfg(not(feature = "test-support"))]
     publish(&out, &wake, Event::Failed).await;
+}
+
+async fn run_bound(
+    backend: crate::history::Result<crate::backend::Backend>,
+    out: Sender<Event>,
+    input: Receiver<Command>,
+    wake: rune::Waker,
+) {
+    let result = match backend {
+        Ok(backend) => run_backend(backend, out.clone(), input, wake.clone()).await,
+        Err(error) => Err(error),
+    };
+    if result.is_err() {
+        eprintln!("Rune backend unavailable");
+        publish(&out, &wake, Event::Failed).await;
+    }
+    drop(out);
+    wake();
 }
 #[cfg(feature = "test-support")]
 async fn run_synthetic(out: Sender<Event>, input: Receiver<Command>, wake: rune::Waker) {

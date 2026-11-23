@@ -23,6 +23,7 @@ fn stash(s: &mut State) {
             entry.sessions = std::mem::take(&mut l.sessions);
             entry.listed_sessions = std::mem::take(&mut l.listed_sessions);
             entry.creation_uncertain = l.creation_uncertain;
+            entry.linked = l.linked.pages.clone();
             entry.next = l.next.take();
             entry.consumed_cursors = std::mem::take(&mut l.consumed_cursors);
             entry.visits = std::mem::take(&mut l.visits);
@@ -43,11 +44,12 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
     let item = &mut ui.entries[ui.active];
     s.shell.wanted = item.wanted_panels;
     if let Some(l) = s.screen.launcher_mut() {
-        l.project = item.project.clone();
+        crate::launcher::set_project(l, item.project.clone());
         l.sessions = std::mem::take(&mut item.sessions);
         l.listed_sessions = std::mem::take(&mut item.listed_sessions);
         l.next = item.next.take();
         l.consumed_cursors = std::mem::take(&mut item.consumed_cursors);
+        l.linked.pages = item.linked.clone();
         l.visits = std::mem::take(&mut item.visits);
         l.folder = TextEdit::new(match &item.saved {
             Tab::Workspace(w) => w.folder.as_str(),

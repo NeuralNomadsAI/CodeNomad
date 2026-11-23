@@ -14,6 +14,17 @@ use rune_theme_codenomad::{
 
 const PART_LIMIT: usize = 1000;
 
+pub fn rows(s: &State) -> El {
+    let locale = locale();
+    layout::transcript_rows(
+        s.messages.len(),
+        |s: &State, i| s.messages[i].id.clone().into(),
+        move |s: &State, i| crate::strings::with_locale(locale, || message(s, i)),
+    )
+    .key("rows")
+    .virtual_rows_version(s.revision)
+}
+
 pub fn message(s: &State, i: usize) -> El {
     let m = &s.messages[i];
     let mut header = layout::action_row().child(
