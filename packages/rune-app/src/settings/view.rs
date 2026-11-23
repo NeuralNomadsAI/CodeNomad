@@ -35,6 +35,7 @@ pub(super) struct Window {
     seen_revision: u64,
     section: Section,
     pub(super) opencode: opencode::Status,
+    logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
 }
 
@@ -94,7 +95,8 @@ impl Window {
     }
 
     fn request_close(&mut self, tx: &mut rune::Tx) {
-        self.shared.borrow_mut().opencode_install.cancel_check();
+        self.shared.borrow_mut().hide_opencode();
+        self.logging.close();
         if self.memory_editor.has_unsaved() {
             self.confirm_close = true;
         } else {
@@ -124,7 +126,7 @@ impl Window {
         {
             let mut prefs = self.shared.borrow_mut();
             prefs.window_wake = None;
-            prefs.opencode_install.cancel_check();
+            prefs.hide_opencode();
             prefs.memory.show(false);
             prefs.provider_target = None;
         }
@@ -137,7 +139,7 @@ impl Window {
 pub(super) fn closed(s: &mut Window, _: &mut rune::Tx) {
     #[cfg(target_os = "windows")]
     crate::platform::preferences_placement::closed();
-    s.shared.borrow_mut().opencode_install.cancel_check();
+    s.shared.borrow_mut().hide_opencode();
     if !s.retain_editor_on_native_close() {
         s.close(super::warn_save_failed);
     }
@@ -204,7 +206,7 @@ pub(super) fn spec() -> AppSpec<Window> {
                 && prefs
                     .window_wake
                     .clone()
-                    .is_some_and(|wake| s.opencode.step(&mut prefs, &wake));
+                    .is_some_and(|wake| prefs.show_opencode() | s.opencode.step(&mut prefs, &wake));
             drop(prefs);
             let providers_changed = if s.section == Section::Providers {
                 let prefs = s.shared.borrow();
@@ -304,7 +306,8 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 };
                 if s.section != Section::OpenCode {
                     s.opencode = opencode::Status::default();
-                    s.shared.borrow_mut().opencode_install.cancel_check();
+                    s.logging.close();
+                    s.shared.borrow_mut().hide_opencode();
                 }
                 s.shared
                     .borrow_mut()
@@ -338,13 +341,19 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let (key, controls) = match s.section {
             Section::OpenCode => (
                 "opencode",
-                opencode::view(
-                    &s.opencode,
-                    &prefs,
-                    Window::start_opencode_install,
-                    |s: &mut Window| s.check_opencode(Some(true)),
-                    |s| &mut s.opencode,
-                ),
+                col()
+                    .full_width()
+                    .child(opencode::view(
+                        &s.opencode,
+                        &prefs,
+                        Window::start_opencode_install,
+                        |s: &mut Window| s.check_opencode(Some(true)),
+                        |s| &mut s.opencode,
+                    ))
+                    .child(
+                        s.logging
+                            .view(&s.shared, &mut layers, |s: &mut Window| &mut s.logging),
+                    ),
             ),
             Section::General => (
                 "general",

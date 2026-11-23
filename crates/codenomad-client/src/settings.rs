@@ -46,12 +46,14 @@ async fn session_directory(backend: &Backend, workspace: &str, session: &str) ->
 pub enum Owner {
     Config,
     State,
+    Server,
 }
 impl Owner {
     fn url(self, backend: &Backend) -> String {
         let path = match self {
             Self::Config => "api/storage/config/ui",
             Self::State => "api/storage/state/ui",
+            Self::Server => "api/storage/config/server",
         };
         format!("{}{path}", backend.base)
     }
@@ -237,6 +239,7 @@ impl PreferencesWatch {
                                         Input::Opened(_) => 11,
                                         Input::Preferences(Owner::Config) => 1,
                                         Input::Preferences(Owner::State) => 2,
+                                        Input::Preferences(Owner::Server) => 16,
                                         Input::Workspace(
                                             _,
                                             crate::transport::WorkspaceEvent::MemoryChanged,
@@ -290,6 +293,10 @@ impl PreferencesWatch {
 
     pub fn take_memory_changed(&self) -> bool {
         self.dirty.fetch_and(!8, SeqCst) & 8 != 0
+    }
+
+    pub fn take_server_changed(&self) -> bool {
+        self.dirty.fetch_and(!16, SeqCst) & 16 != 0
     }
 
     pub fn stop(self) -> crate::Receiver<()> {

@@ -20,6 +20,9 @@ const NATIVE_EVENT_LIMIT: usize = 256 * 1024;
 const OWNER_EVENT_LIMIT: usize = 2 * 1024 * 1024;
 
 fn storage_owner(value: &Value) -> Option<crate::settings::Owner> {
+    if value["type"] == "storage.configChanged" && value["owner"] == "server" {
+        return Some(crate::settings::Owner::Server);
+    }
     if !matches!(value["owner"].as_str(), Some("ui" | "*")) {
         return None;
     }

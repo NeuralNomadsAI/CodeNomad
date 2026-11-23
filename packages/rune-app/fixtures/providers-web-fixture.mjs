@@ -22,6 +22,8 @@ let contrast = 'on', permissions = 'autonomous'
 const writes = []
 const memoryRequests = []
 const opencodeRequests = []
+const logLevelWrites = []
+let logLevel = 'DEBUG'
 let releaseInstall, installed = false
 const installReady = new Promise(resolve => { releaseInstall = resolve })
 const reviews = []
@@ -122,6 +124,18 @@ const server = createServer(async (req,res) => {
       projectEntries = []
       return json({deleted:true})
     }
+    if (p === '/api/storage/config/server') {
+      assert(local,'Only the local OpenCode pane reads server configuration')
+      if (req.method === 'PATCH') {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        const change = JSON.parse(body)
+        assert.deepEqual(change,{logLevel:'WARN'})
+        logLevelWrites.push(change)
+        logLevel = change.logLevel
+      }
+      return json({logLevel})
+    }
     if (p.startsWith('/api/storage/')) return json({})
     if (p === '/api/workspaces/catalogue/worktrees') return json({repository:'uninitialized',worktrees:[]})
     if (p === '/api/workspaces/catalogue/provider-accounts/example') {
@@ -212,6 +226,12 @@ try {
       await openCode.click({force:true})
       await update.waitFor({state:'attached'})
       assert.deepEqual(opencodeRequests,['GET'])
+      const logging = page.getByRole('button',{name:'OpenCode Log Level',exact:true})
+      await page.locator('button[aria-description="Debug"]').waitFor({state:'attached'})
+      await logging.click({force:true})
+      await page.getByRole('option',{name:'Warn',exact:true}).click({force:true})
+      await page.locator('button[aria-description="Warn"]').waitFor({state:'attached'})
+      assert.deepEqual(logLevelWrites,[{logLevel:'WARN'}])
       await Promise.all([
         page.waitForRequest(request=>new URL(request.url()).pathname==='/api/opencode/update' && request.method()==='POST'),
         update.click({force:true}),
@@ -231,8 +251,9 @@ try {
       await visible(account)
       assert.equal(await openCode.count(),0)
       assert.deepEqual(opencodeRequests,[])
+      assert.deepEqual(logLevelWrites,[])
     }
-    console.log(JSON.stringify({fixture:'opencode-web',channel:local?'local':'remote',opencodeRequests}))
+    console.log(JSON.stringify({fixture:'opencode-web',channel:local?'local':'remote',opencodeRequests,logLevelWrites}))
   }
 
   async function checkProviders() {
@@ -266,7 +287,8 @@ try {
     assert.fail(`Missing editable field: ${label}`)
   }
   await edit('Title','Edited project memory')
-  await click('Save')
+  const save = page.getByRole('button',{name:'Save',exact:true}).and(page.locator(':not([disabled], [aria-disabled="true"])'))
+  await save.click({force:true,timeout:15000})
   await page.getByRole('button',{name:'Edited project memory',exact:true}).waitFor({state:'attached'})
   await click('Edited project memory')
   await click('Forget')

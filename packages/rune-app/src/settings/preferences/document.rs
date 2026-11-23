@@ -8,6 +8,7 @@ pub(super) enum Choice {
     Locale,
     Contrast,
     NewConversationPermissions,
+    LogLevel,
     Mode,
     Palette(bool),
 }
@@ -17,6 +18,7 @@ impl Choice {
         match self {
             Self::Locale => patch["settings"]["locale"] = json!(value),
             Self::Contrast => patch["settings"]["highContrast"] = json!(value),
+            Self::LogLevel => patch["logLevel"] = json!(value),
             Self::NewConversationPermissions => {
                 patch["settings"]["newConversationPermissions"] = json!(value)
             }
@@ -35,6 +37,7 @@ impl Choice {
         match self {
             Self::Locale => snapshot["settings"]["locale"] == value,
             Self::Contrast => snapshot["settings"]["highContrast"] == value,
+            Self::LogLevel => snapshot["logLevel"] == value,
             Self::NewConversationPermissions => {
                 snapshot["settings"]["newConversationPermissions"] == value
             }
@@ -140,7 +143,7 @@ impl Document {
     pub(super) fn stage(&mut self, choice: Choice, value: &'static str) {
         if matches!(
             choice,
-            Choice::Contrast | Choice::NewConversationPermissions
+            Choice::Contrast | Choice::NewConversationPermissions | Choice::LogLevel
         ) {
             self.write.failed.remove(&choice);
         }
@@ -154,6 +157,13 @@ impl Document {
 
     pub(super) fn choice_failed(&self, choice: Choice) -> bool {
         self.write.failed.contains(&choice)
+    }
+
+    pub(super) fn unsettled(&self) -> bool {
+        self.flight.is_some()
+            || self.barrier.is_some()
+            || !self.write.pending.is_empty()
+            || self.write.retry
     }
 
     #[cfg(not(target_arch = "wasm32"))]
