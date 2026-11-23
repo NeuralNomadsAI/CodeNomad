@@ -29,7 +29,7 @@ export class AuthManager {
   private readonly sessionManager: SessionManager
   private readonly cookieName: string
   private readonly authEnabled: boolean
-  private managedSession: { current: string; previous?: string; deliveredAt?: number } | undefined
+  private managedSession: { current: string; previous?: string; delivered: boolean } | undefined
   private readonly principalLoggedOutListeners = new Set<(id: string) => void>()
 
   constructor(private readonly init: AuthManagerInit, private readonly logger: Logger) {
@@ -77,7 +77,7 @@ export class AuthManager {
     if (!this.tokenManager?.consume(token)) return undefined
     const session = this.sessionManager.createSession(this.getStatus().username)
     if (this.init.managedLocal && this.authStore?.canRenewBootstrapSession()) {
-      this.managedSession = { current: session.id, deliveredAt: Date.now() }
+      this.managedSession = { current: session.id, delivered: true }
     }
     return session
   }
@@ -86,9 +86,9 @@ export class AuthManager {
   renewManagedSession(): string | null {
     const managed = this.managedSession
     if (!managed || !this.authStore?.canRenewBootstrapSession()) return null
-    if (this.sessionManager.hasSession(managed.current)) return managed.deliveredAt !== undefined ? null : managed.current
+    if (this.sessionManager.hasSession(managed.current)) return managed.delivered ? null : managed.current
     const current = this.sessionManager.createSession(this.getStatus().username).id
-    this.managedSession = { current, previous: managed.deliveredAt === undefined ? managed.previous : managed.current }
+    this.managedSession = { current, previous: managed.delivered ? managed.current : managed.previous, delivered: false }
     return current
   }
 
@@ -128,9 +128,9 @@ export class AuthManager {
     const managed = this.managedSession
     const cookie = !isRemoteRequest(request) && !isRefusedDeviceRequest(request) && !remoteDeviceOf(request)
       ? this.cookieSessionId(request.headers) : undefined
-    // An already-sent logout can reach the server just after the new cookie's first request.
-    const revokingManaged = managed && cookie && (cookie === managed.current || (cookie === managed.previous
-      && (managed.deliveredAt === undefined || Date.now() - managed.deliveredAt < 10_000)))
+    // The immediate predecessor is accepted only for sign-out, including a
+    // request already in flight when the desktop replaced its cookie.
+    const revokingManaged = managed && cookie && (cookie === managed.current || cookie === managed.previous)
     if (revokingManaged) this.managedSession = undefined
     const id = revokingManaged ? managed.current : session?.sessionId
     if (!id) return
@@ -177,9 +177,7 @@ export class AuthManager {
 
     const session = this.sessionManager.getSession(this.cookieSessionId(headers))
     if (!session) return null
-    if (this.managedSession?.current === session.id && this.managedSession.deliveredAt === undefined) {
-      this.managedSession.deliveredAt = Date.now()
-    }
+    if (this.managedSession?.current === session.id) this.managedSession.delivered = true
     return { username: session.username, sessionId: session.id }
   }
 

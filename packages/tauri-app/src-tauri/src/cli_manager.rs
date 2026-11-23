@@ -1216,22 +1216,24 @@ impl CliProcessManager {
         let deadline = Instant::now() + Duration::from_secs(2);
         app.run_on_main_thread(move || {
             let publish = || -> anyhow::Result<bool> {
-                // Window creation consumes the current access on this same thread.
-                // Never wait on lifecycle work that can itself be waiting for the UI.
-                let Some(_authority) = manager.generation_authority.try_lock() else { return Ok(false) };
-                if Instant::now() >= deadline || !manager.is_ready_generation(generation)
-                    || manager.ready_local_access().as_ref() != Some(&access) {
-                    return Ok(false);
+                {
+                    // Avoid waiting for lifecycle and release authority before WebKit
+                    // can reenter the event loop while setting a cookie.
+                    let Some(_authority) = manager.generation_authority.try_lock() else { return Ok(false) };
+                    if Instant::now() >= deadline || !manager.is_ready_generation(generation)
+                        || manager.ready_local_access().as_ref() != Some(&access) {
+                        return Ok(false);
+                    }
+                    *manager.local_access.lock() = Some(LocalCliAccess {
+                        session_cookie: session.clone(),
+                        ..access.clone()
+                    });
                 }
-                *manager.local_access.lock() = Some(LocalCliAccess {
-                    session_cookie: session.clone(),
-                    ..access.clone()
-                });
                 set_session_cookie(&handle, &access.base_url, &access.cookie_name, &session)?;
                 if let Some(window) = handle.get_webview(crate::preferences_window::LABEL) {
                     window.set_cookie(local_session_cookie(&access.base_url, &access.cookie_name, &session)?)?;
                 }
-                Ok(true)
+                Ok(manager.is_ready_generation(generation))
             };
             let _ = done.send(publish());
         })?;
@@ -1247,12 +1249,15 @@ impl CliProcessManager {
         self.local_access.lock().clone()
     }
 
-    /// Resolve and enqueue a new window's cookie together; renewal publishes
-    /// the replacement access before enqueuing its own cookie writes.
+    /// Recheck after an install: a renewal can publish while WebKit sets the cookie.
     pub(crate) fn install_local_window_cookie(&self, window: &tauri::Webview, target: &str) -> tauri::Result<()> {
-        let access = self.local_access.lock();
-        if let Some(cookie) = access.as_ref().and_then(|access| access.session_cookie_for(target)) {
+        let mut access = self.ready_local_access();
+        for _ in 0..2 {
+            let Some(cookie) = access.as_ref().and_then(|access| access.session_cookie_for(target)) else { break };
             window.set_cookie(cookie)?;
+            let current = self.ready_local_access();
+            if current == access { break }
+            access = current;
         }
         Ok(())
     }

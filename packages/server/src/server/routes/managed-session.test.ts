@@ -13,7 +13,7 @@ test("only the process parent renews an expired managed session; logout and pass
   const clock = t.mock.method(Date, "now", () => 1_000)
   const directory = await mkdtemp(join(tmpdir(), "managed-session-"))
   const auth = new AuthManager({ configPath: join(directory, "config.yaml"), username: "local",
-    generateToken: true, managedLocal: true, sessionIdleMs: 100 }, pino({ level: "silent" }) as never)
+    generateToken: true, managedLocal: true, sessionIdleMs: 20_000 }, pino({ level: "silent" }) as never)
   const app = Fastify()
   t.after(async () => { clock.mock.restore(); await app.close(); await rm(directory, { recursive: true, force: true }) })
   registerAuthRoutes(app, { authManager: auth })
@@ -33,7 +33,7 @@ test("only the process parent renews an expired managed session; logout and pass
   assert.equal(original.statusCode, 200)
   const oldCookie = (original.headers["set-cookie"] as string).split(";")[0]
   assert.equal(reply(), "-")
-  clock.mock.mockImplementation(() => 1_101)
+  clock.mock.mockImplementation(() => 21_001)
   assert.equal((await read(oldCookie)).statusCode, 401)
   assert.deepEqual((await publicStatus(oldCookie)).json(), { authenticated: false })
   assert.equal((await bootstrap(first)).statusCode, 401)
@@ -45,16 +45,17 @@ test("only the process parent renews an expired managed session; logout and pass
   assert.notEqual(cookie, oldCookie)
   assert.equal((await read(cookie)).statusCode, 200)
   assert.equal((await read(oldCookie)).statusCode, 401)
-  clock.mock.mockImplementation(() => 1_202)
+  clock.mock.mockImplementation(() => 41_002)
   assert.equal((await app.inject({ method: "POST", url: "/api/auth/logout", headers: { cookie } })).statusCode, 200)
   assert.equal(reply(), "-")
 
   const raced = await bootstrap(auth.issueBootstrapToken()!)
   const raceCookie = (raced.headers["set-cookie"] as string).split(";")[0]
-  clock.mock.mockImplementation(() => 1_303)
+  clock.mock.mockImplementation(() => 61_003)
   const uninstalled = reply()
   assert.notEqual(uninstalled, "-")
   assert.equal((await read(`${auth.getCookieName()}=${uninstalled}`)).statusCode, 200)
+  clock.mock.mockImplementation(() => 72_004)
   assert.equal((await app.inject({ method: "POST", url: "/api/auth/logout", headers: { cookie: raceCookie },
     remoteAddress: "192.0.2.1" })).statusCode, 200)
   assert.equal((await read(`${auth.getCookieName()}=${uninstalled}`)).statusCode, 401)
