@@ -223,7 +223,8 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       let before,prefix
       for(const until=Date.now()+2500;;){
         before=await capture(clip)
-        prefix=await glyphMatch(blank,before,before)
+        // Locate the typed prefix by its ink, not by changed focus or field pixels.
+        prefix=await glyphMatch(blank,before,before,0,0,true)
         if(looksLikeGlyphs(prefix)&&prefix.width>=30)break
         assert(Date.now()<until,'The initial text must already be painted before starting preedit')
       }
@@ -242,7 +243,7 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
         const matches=await Promise.all(samples.map(sample=>glyphMatch(before,reference,sample,startX)))
         preedit=matches.find(looksLikeGlyphs)
         if(preedit)break
-        assert(Date.now()<until,`Rune must paint the committed glyph shapes during preedit: ${JSON.stringify(matches)}`)
+        assert(Date.now()<until,`Rune must paint the committed glyph shapes during preedit: ${JSON.stringify({prefix,startX,matches})}`)
       }
       assert(!looksLikeGlyphs(await glyphMatch(before,reference,before,startX)),'The no-glyph control must fail')
       // An external text service can replace a range without emitting key strokes.
