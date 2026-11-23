@@ -163,7 +163,11 @@ pub fn client_state_load_file_drafts(
     key: Option<String>,
 ) -> Result<Vec<super::file_drafts::Draft>, String> {
     let (window_id, generation) = validate_access(&webview, &state, &access_token)?;
-    state.load_file_drafts_for(&window_id, key.as_deref(), generation)
+    let result = state.load_file_drafts_for(&window_id, key.as_deref(), generation)?;
+    if validate_access(&webview, &state, &access_token)?.1 != generation {
+        return Err("Client state renderer authority changed during load".into());
+    }
+    Ok(result)
 }
 
 #[tauri::command]
