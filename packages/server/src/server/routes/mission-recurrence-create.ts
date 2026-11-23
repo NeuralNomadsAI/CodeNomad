@@ -5,6 +5,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import type { SettingsService } from "../../settings/service"
 import { recurrenceConfigSchema, recurrenceTitle, type RecurrenceConfig } from "../../missions/recurrence-contract"
+import { displayMissionText } from "../../missions/truncate-text"
 import { compareModelError, freezeCompareProfiles, missionProfileRoles, validateMissionProfileCatalog, validateMissionProfiles } from "../../missions/playbook-profiles"
 import { recurrenceCreateSchema } from "../../missions/recurrence-create-input"
 export { recurrenceCreateSchema } from "../../missions/recurrence-create-input"
@@ -158,8 +159,9 @@ export async function executeMissionRecurrenceCreation(deps: RecurrenceCreationD
       if (!await lifetime.wait(watchedCurrent())) return reply.code(403).send({ error: "Watched conversation is not owned by this root" })
       // These labels describe frozen selections/host, not a grant or provisioned
       // authority. Provider credentials and profile YAML never enter the RPC.
+      const automaticTitle = input.title === undefined ? recurrenceTitle(input.instructions) : undefined
       const config: RecurrenceConfig = {
-        title: input.title ?? recurrenceTitle(input.instructions), consigne: input.instructions, clock: input.clock, template: input.template,
+        title: input.title ?? displayMissionText(automaticTitle ?? "").trimEnd(), consigne: input.instructions, clock: input.clock, template: input.template,
         ...(input.notes === undefined ? {} : { notes: input.notes }),
         profileID: profileScope.key, executionHost,
         profiles: input.profiles, taskMode: input.taskMode,
@@ -189,12 +191,16 @@ export async function executeMissionRecurrenceCreation(deps: RecurrenceCreationD
       const previous = await lifetime.wait(rpc.recurrenceRead({ id }, options) as Promise<NativeSummary>)
       await lifetime.wait(assertPhysicalCurrent())
       if (previous.schedule) {
+        const recordedDigest = previous.schedule.digest
+        const matches = recordedDigest === digest || (automaticTitle !== undefined && automaticTitle !== config.title
+          && recordedDigest === recurrenceConfigDigest({ ...config, title: automaticTitle }))
         if (previous.schedule.id !== id || previous.schedule.projectID !== resolved.project.id
-          || previous.schedule.projectCanonical !== resolved.project.canonical || previous.schedule.digest !== digest
+          || previous.schedule.projectCanonical !== resolved.project.canonical || !matches
           || !args.observeOnly && (previous.schedule.state !== "paused" || previous.schedule.revision !== 0)) {
           return reply.code(409).send({ error: "Recurrence request conflict" })
         }
-        reconcileRecurrenceCreation(fence, key, holdDigest)
+        reconcileRecurrenceCreation(fence, key, recordedDigest === digest ? holdDigest
+          : recurrenceConfigDigest({ digest: recordedDigest, workspaceID, directory, checkout, family }))
         return { schedule: previous.schedule }
       }
       if (args.observeOnly) return reply.code(503).send({ missionID: id, requestID: input.requestID, schedule: null, pending: true })

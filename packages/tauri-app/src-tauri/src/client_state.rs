@@ -2,6 +2,7 @@ mod access;
 mod commands;
 mod cross_host;
 mod envelope;
+mod file_drafts;
 mod navigation;
 mod partitions;
 mod process;
@@ -15,11 +16,13 @@ mod window_updates;
 pub use commands::{
     __cmd__client_state_claim_access, __cmd__client_state_clear,
     __cmd__client_state_commit_partitions, __cmd__client_state_load,
+    __cmd__client_state_load_file_drafts, __cmd__client_state_save_file_draft,
     __cmd__client_state_load_partition, __cmd__client_state_navigation_flushed,
     __cmd__client_state_renderer_flushed, __cmd__client_state_save,
     __cmd__client_state_set_restore_enabled, __cmd__client_state_startup_command_result,
     __tauri_command_name_client_state_claim_access, __tauri_command_name_client_state_clear,
     __tauri_command_name_client_state_commit_partitions, __tauri_command_name_client_state_load,
+    __tauri_command_name_client_state_load_file_drafts, __tauri_command_name_client_state_save_file_draft,
     __tauri_command_name_client_state_load_partition,
     __tauri_command_name_client_state_navigation_flushed,
     __tauri_command_name_client_state_renderer_flushed, __tauri_command_name_client_state_save,
@@ -29,6 +32,7 @@ pub use commands::{
 pub use commands::{
     client_state_claim_access, client_state_clear, client_state_commit_partitions,
     client_state_load, client_state_load_partition, client_state_navigation_flushed,
+    client_state_load_file_drafts, client_state_save_file_draft,
     client_state_renderer_flushed, client_state_save, client_state_set_restore_enabled,
     client_state_startup_command_result,
 };
@@ -105,6 +109,7 @@ pub struct ClientState {
     renderer_access: access::RendererAccess,
     ephemeral_windows: Mutex<HashSet<String>>,
     renderer_flush: RendererFlush,
+    file_draft_readers: file_drafts::Readers,
     startup_commands: startup_command::StartupCommands,
     write_state: StateWriter,
 }
@@ -240,6 +245,7 @@ impl ClientState {
             renderer_access: access::RendererAccess::default(),
             ephemeral_windows: Mutex::new(HashSet::new()),
             renderer_flush: RendererFlush::default(),
+            file_draft_readers: file_drafts::Readers::default(),
             startup_commands: startup_command::StartupCommands::default(),
             write_state,
         }
@@ -866,6 +872,9 @@ impl ClientState {
 
     pub(crate) fn unregister_window(&self, window_id: &str) {
         self.renderer_access.remove(window_id);
+        if let Ok(mut readers) = self.file_draft_readers.lock() {
+            readers.remove(window_id);
+        }
         if let Ok(mut windows) = self.ephemeral_windows.lock() {
             windows.remove(window_id);
         }
@@ -901,6 +910,12 @@ impl ClientState {
             self.finish_window_capture_policy(&state, window_id);
         }
         result?;
+        if let Ok(mut readers) = self.file_draft_readers.lock() {
+            if let Some((generation, _)) = readers.get_mut(window_id) {
+                // The renderer survives record removal while its workspace release runs.
+                *generation = None;
+            }
+        }
         self.renderer_access.remove(window_id);
         self.zoom_levels
             .lock()
@@ -932,17 +947,17 @@ impl ClientState {
         window_label: &str,
         window_id: &str,
         require_claim: bool,
-    ) {
+    ) -> Result<Option<u64>, ()> {
         let _request = self
             .renderer_flush
             .request_lock
             .lock()
             .unwrap_or_else(|err| err.into_inner());
         if require_claim && !self.renderer_access.is_claimed_for(window_id) {
-            return;
+            return Ok(None);
         }
         let Some(webview) = app.get_webview(window_label) else {
-            return;
+            return Err(());
         };
         let generation = {
             let mut windows = self
@@ -960,7 +975,7 @@ impl ClientState {
             RendererFlushRequest { generation, prepare_generation: None },
         ) {
             eprintln!("[client-state] failed to request renderer flush: {err}");
-            return;
+            return Err(());
         }
 
         let deadline = Instant::now() + RENDERER_FLUSH_TIMEOUT;
@@ -974,6 +989,36 @@ impl ClientState {
             && Instant::now() < deadline
         {
             std::thread::sleep(Duration::from_millis(10));
+        }
+        if self
+            .renderer_flush
+            .windows
+            .lock()
+            .ok()
+            .and_then(|windows| windows.get(window_id).copied())
+            .is_some_and(|state| state == (generation, generation))
+        {
+            Ok(Some(generation))
+        } else {
+            Self::cancel_navigation_flush(app, window_label, Some(generation));
+            Err(())
+        }
+    }
+
+    pub(crate) fn cancel_navigation_flush(
+        app: &AppHandle,
+        window_label: &str,
+        generation: Option<u64>,
+    ) {
+        if let (Some(webview), Some(generation)) = (app.get_webview(window_label), generation) {
+            let _ = webview.emit_to(
+                window_label,
+                "client-state:navigation-flush-cancelled",
+                RendererFlushRequest {
+                    generation,
+                    prepare_generation: None,
+                },
+            );
         }
     }
 

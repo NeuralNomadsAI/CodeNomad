@@ -1090,6 +1090,29 @@ fn v1_and_v2_migrate_in_memory_without_load_rewrites() {
 }
 
 #[test]
+fn file_drafts_survive_secondary_window_removal_without_affecting_window_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = ClientState::initialize_at(directory.path()).unwrap();
+    enable_restore(&state);
+    let primary = state.active_window_id().unwrap();
+    let secondary = "11111111-1111-4111-8111-111111111111";
+    assert!(state.add_window(secondary.into()).unwrap());
+    assert!(state.save_snapshot_guarded_for(&primary, json!({"tabs":["project"]}), || true).unwrap());
+    let draft = json!({"fingerprint":"0".repeat(64),"text":"été"});
+    let change = serde_json::from_value(json!({"key":"test","expected":null,"draft":draft})).unwrap();
+    assert!(state.save_file_draft(secondary, change, || true).unwrap());
+    assert!(state.remove_window(secondary).unwrap());
+    assert_eq!(serde_json::to_value(state.load_file_drafts(&primary).unwrap()).unwrap(),
+        json!([{"key":"test","fingerprint":"0".repeat(64),"text":"été"}]));
+    let stale = serde_json::from_value(json!({"key":"test","expected":null,"draft":null})).unwrap();
+    assert!(state.save_file_draft(&primary, stale, || true).unwrap());
+    assert_eq!(state.load_file_drafts(&primary).unwrap().len(), 1);
+    fs::write(directory.path().join("workspace-file-drafts.json"), b"{corrupt").unwrap();
+    assert!(state.load_file_drafts(&primary).unwrap().is_empty());
+    assert_eq!(state.load_window(&primary).unwrap().snapshot, json!({"tabs":["project"]}));
+}
+
+#[test]
 fn v3_records_isolate_tokens_partitions_clear_and_removal() {
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
