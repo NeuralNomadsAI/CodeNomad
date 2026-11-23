@@ -42,9 +42,9 @@ struct Completion {
 }
 
 pub(crate) struct Panel {
-    backend: Backend,
+    pub(super) backend: Backend,
     reads: Reads,
-    wake: Wake,
+    pub(super) wake: Wake,
     out: Sender<Completion>,
     incoming: Receiver<Completion>,
     project: Option<String>,

@@ -32,6 +32,24 @@ pub(super) struct Observation {
 }
 
 impl Observation {
+    pub fn working(&self) -> bool {
+        self.pages
+            .iter()
+            .filter(|page| self.current(page))
+            .flat_map(|page| &page.actors)
+            .any(|actor| {
+                actor.request.is_some()
+                    || matches!(
+                        actor.state,
+                        ActorState::Running
+                            | ActorState::Queued
+                            | ActorState::Background
+                            | ActorState::Form
+                            | ActorState::Permission
+                    )
+            })
+    }
+
     pub fn refresh(&mut self) {
         self.pending = Some(0);
     }

@@ -15,6 +15,7 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         if !s.screen.is_launcher() {
             composer::view::overlays(s, &mut layer);
         }
+        layer.extend(crate::workspace::mission_confirmation(s));
         let body = layout::with_overlays(base, layer);
         #[cfg(target_arch = "wasm32")]
         if platform::pairing::required(s) {

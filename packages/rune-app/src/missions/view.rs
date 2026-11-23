@@ -35,7 +35,12 @@ impl<S> Scoped<S> {
 }
 
 /// Panel content only. The Shell owns its occurrence, visibility and mounting.
+#[cfg(test)]
 pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
+    panel_body(ui, owner, rune::el())
+}
+
+pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El) -> El {
     let heading = t("missions.control.mapLabel");
     let search = t("missionsPanel.picker.search");
     let partial = ui.has_more(Kind::Summaries);
@@ -80,7 +85,7 @@ pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
                 }
             }));
         }
-        body = body.child(detail(ui, scoped.clone()));
+        body = body.child(actions).child(detail(ui, scoped.clone()));
     }
     if !ui.cleanups.is_empty() {
         body = body.child(

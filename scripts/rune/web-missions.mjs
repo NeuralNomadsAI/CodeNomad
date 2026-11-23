@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
 import {writeFile} from 'node:fs/promises'
 import {actorWindow,assertActorActivity} from './web-mission-activity.mjs'
+import {checkLifecycle,lifecycleFixture} from './web-mission-lifecycle.mjs'
 
 const digest=rows=>createHash('sha256').update(`[${rows.join(',')}]`,'utf16le').digest('base64url')
 const summary=(id,title,revision)=>JSON.stringify({
@@ -27,12 +28,17 @@ const descriptor={digest:digest([]),characters:2,total:0,array:true}
 export function missionsFixture({page,messages,artifact,project}){
   let summaries=initial, corrupt=false, held, gammaRevision=6
   const reads=[]
+  const lifecycle=lifecycleFixture()
   function release(){held?.release()}
   async function route(route,path){
     if(path==='/api/meta'){
       const response=await route.fetch({maxRedirects:0})
       const meta=await response.json()
       await route.fulfill({response,json:{...meta,capabilities:[...new Set([...(meta.capabilities??[]),'missions'])]}})
+      return true
+    }
+    if(path.endsWith('/missions/gamma/control')){
+      await lifecycle.reply(route,gammaRevision,value=>{gammaRevision=value})
       return true
     }
     if(!path.endsWith('/missions/panel-page'))return false
@@ -50,6 +56,10 @@ export function missionsFixture({page,messages,artifact,project}){
        tasks:{page:{...taskPage(0,50),attention:{...attention,keys:['task-50']}},pins:['tsk-51'],reportPins:[],version:taskOrder}}
       if(missionID!=='gamma'){
         header.tasks={page:{order:digest([]),offset:0,end:0,total:0,reports:0,counts:{}},pins:[],reportPins:[],version:digest([])}
+      }else{
+        const {runState,control}=lifecycle.header()
+        header.root.runState=runState
+        if(control)header.control=control
       }
       const live=request.source==='activity'
       const row=request.header?header:live?actorWindow(missionID,gammaRevision,taskOrder):
@@ -184,6 +194,7 @@ export function missionsFixture({page,messages,artifact,project}){
     await row('Tâche suivante').waitFor()
     await attentionAction.waitFor({state:'detached'})
     assert.equal(await row('Étape 51').count(),1,'A pinned task is reconciled into its numbered window')
+    await checkLifecycle(page,messages,lifecycle.calls)
     await page.waitForFunction(folder=>{
       const raw=sessionStorage.getItem('codenomad.rune.alpha.client-state.v1')
       const current=raw&&JSON.parse(raw).session.tabs.find(tab=>tab.folder===folder)

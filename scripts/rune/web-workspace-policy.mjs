@@ -55,6 +55,10 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if(!owned||!workspaces.has(owned[1]))return false
       if(method==='GET'&&owned[2]==='worktrees')return true
       if(method==='POST'&&owned[2]==='session-history/window')return ['ses_existing','ses_another','ses_linked','ses_linked_next'].includes(body?.sessionID)
+      if(missions&&method==='POST'&&owned[2]==='missions/gamma/control')return ['start','pause','stop'].includes(body?.action)&&
+        Number.isSafeInteger(body.expectedRevision)&&body.expectedRevision>0&&typeof body.requestId==='string'&&/^[a-f0-9-]{36}$/.test(body.requestId)&&
+        Object.keys(body).every(key=>['action','expectedRevision','requestId','graceful'].includes(key))&&
+        (body.graceful===undefined||body.action==='pause'&&body.graceful===true)
       if(missions&&method==='POST'&&owned[2]==='missions/panel-page'){
         if(body?.source==='mission')return body.header===true&&['alpha','beta','gamma'].includes(body.missionID)
         if(body?.source==='activity')return body.actorOffset===0&&['alpha','beta','gamma'].includes(body.missionID)

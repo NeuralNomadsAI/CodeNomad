@@ -25,6 +25,7 @@ pub(super) struct Detail {
     pending: Option<Demand>,
     retry: Option<Demand>,
     pub failed: bool,
+    pub map_reads: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -59,6 +60,15 @@ impl Answer {
 }
 
 impl Detail {
+    pub fn authoritative(&self) -> bool {
+        !self.busy()
+            && !self.failed
+            && self
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| Some(snapshot.header.root.revision) >= self.observed)
+    }
+
     pub fn clear(&mut self) {
         *self = Self::default();
     }
@@ -158,6 +168,7 @@ impl Detail {
                     self.observed = self.observed.max(Some(answer.revision()));
                     match answer {
                         Answer::New(header, tasks, end) => {
+                            self.map_reads = self.map_reads.saturating_add(1);
                             self.snapshot = Some(Snapshot {
                                 header,
                                 tasks: Rc::new(TaskRows::new(tasks)),
@@ -167,6 +178,7 @@ impl Detail {
                             false
                         }
                         Answer::Same(header) => {
+                            self.map_reads = self.map_reads.saturating_add(1);
                             if let Some(old) = &mut self.snapshot {
                                 old.header = header;
                             }
