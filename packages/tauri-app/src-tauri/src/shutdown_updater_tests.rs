@@ -47,7 +47,7 @@ fn timeout_and_failed_cleanup_discard_installer_and_permit_a_fresh_check() {
         } else {
             coordinator.acknowledge_global(&requests[0].0, requests[0].1);
             assert!(coordinator.begin_cleanup(false));
-            coordinator.cleanup_failed();
+            coordinator.cleanup_failed(|| {});
         }
         assert!(coordinator.with_navigation_authority(|| ()).is_some());
         assert!(coordinator.state.lock().unwrap().update.is_none());
@@ -75,7 +75,7 @@ fn an_existing_quit_cannot_be_converted_to_an_update() {
 fn a_failed_attempts_timeout_cannot_cancel_a_new_update() {
     let coordinator = ShutdownCoordinator::default();
     let old_requests = coordinator.begin_shutdown(["one".into()]).unwrap();
-    coordinator.cleanup_failed();
+    coordinator.cleanup_failed(|| {});
     let (update, installed, cancelled) = prepared();
     let requests = coordinator.begin_update(["one".into()], update).unwrap();
     coordinator.expire_pending_shutdown(&old_requests);

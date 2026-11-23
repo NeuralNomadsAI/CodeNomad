@@ -1506,26 +1506,32 @@ fn collect_directory_paths(paths: &[std::path::PathBuf]) -> Vec<String> {
         .collect()
 }
 
-fn emit_window_event(app_handle: &AppHandle, window_label: &str, event_name: &str) {
-    if let Some(webview) = app_handle.get_webview(window_label) {
-        let _ = webview.emit(event_name, ());
+type FolderDropEvent = (tauri::Webview, &'static str, Option<Vec<std::path::PathBuf>>);
+
+struct FolderDropEvents(std::sync::mpsc::Sender<FolderDropEvent>);
+
+impl FolderDropEvents {
+    fn new() -> Self {
+        let (sender, queue) = std::sync::mpsc::channel::<FolderDropEvent>();
+        std::thread::spawn(move || {
+            for (webview, event, paths) in queue {
+                if let Some(paths) = paths {
+                    let directories = collect_directory_paths(&paths);
+                    if !directories.is_empty() {
+                        let _ = webview.emit(event, json!({ "paths": directories }));
+                    }
+                } else {
+                    let _ = webview.emit(event, ());
+                }
+            }
+        });
+        Self(sender)
     }
-}
 
-fn emit_folder_drop_event(
-    app_handle: &AppHandle,
-    window_label: &str,
-    event_name: &str,
-    paths: &[std::path::PathBuf],
-) {
-    let directories = collect_directory_paths(paths);
-
-    if directories.is_empty() {
-        return;
-    }
-
-    if let Some(webview) = app_handle.get_webview(window_label) {
-        let _ = webview.emit(event_name, json!({ "paths": directories }));
+    fn send(app: &AppHandle, label: &str, event: &'static str, paths: Option<Vec<std::path::PathBuf>>) {
+        if let Some(webview) = app.get_webview(label) {
+            let _ = app.state::<Self>().0.send((webview, event, paths));
+        }
     }
 }
 
@@ -1744,11 +1750,7 @@ fn configure_developer_environment() {
 fn schedule_launch_drain(app: AppHandle, queue: Arc<launch::LaunchQueue>) {
     let dispatch = app.clone();
     let _ = app.run_on_main_thread(move || {
-        for intent in queue.drain() {
-            if let Err(error) = local_windows::handle_intent(&dispatch, intent) {
-                eprintln!("[tauri-startup] launch intent failed: {error}");
-            }
-        }
+        local_windows::handle_intents(&dispatch, queue.drain());
     });
 }
 
@@ -1987,7 +1989,9 @@ fn main() {
     let browser_controller = browser_controller::BrowserController::new(
         setup_scope.webview_data_directory.join("browser"),
     );
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().append_invoke_initialization_script(
+        "window.__CODENOMAD_CLIENT_STATE_DOCUMENT__ = new Promise(resolve => { window.__CODENOMAD_RESOLVE_CLIENT_STATE_DOCUMENT__ = resolve; });",
+    );
     #[cfg(target_os = "macos")]
     let builder = builder.append_invoke_initialization_script(
         "window.__CODENOMAD_NOTIFICATION_PERMISSION__ = true;",
@@ -2096,7 +2100,20 @@ fn main() {
             scoped_profile: setup_scope.scoped,
         })
         .manage(client_state::IpcQueue::new())
+        .manage(FolderDropEvents::new())
         .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                let app = webview.app_handle();
+                if let (Ok(window_id), Some(state)) = (
+                    identity::local_window_id(webview.label()),
+                    app.try_state::<client_state::ClientState>(),
+                ) {
+                    let managed_backend = app.state::<AppState>().manager.status().url;
+                    if is_allowed_local_origin(payload.url(), managed_backend.as_deref()) {
+                        state.renderer_page_finished(&window_id, webview, payload.url());
+                    }
+                }
+            }
             if payload.event() == PageLoadEvent::Started {
                 let app = webview.app_handle();
                 if let (Ok(window_id), Some(state)) = (
@@ -2421,21 +2438,21 @@ fn main() {
                 event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { paths, .. }),
                 ..
             } => {
-                emit_folder_drop_event(&app_handle, &label, "desktop:folder-drag-enter", &paths);
+                FolderDropEvents::send(&app_handle, &label, "desktop:folder-drag-enter", Some(paths));
             }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }),
                 ..
             } => {
-                emit_folder_drop_event(&app_handle, &label, "desktop:folder-drop", &paths);
+                FolderDropEvents::send(&app_handle, &label, "desktop:folder-drop", Some(paths));
             }
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Leave),
                 ..
             } => {
-                emit_window_event(&app_handle, &label, "desktop:folder-drag-leave");
+                FolderDropEvents::send(&app_handle, &label, "desktop:folder-drag-leave", None);
             }
             tauri::RunEvent::WindowEvent {
                 label,

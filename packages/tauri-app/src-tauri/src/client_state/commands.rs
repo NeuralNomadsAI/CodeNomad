@@ -22,6 +22,13 @@ pub(crate) fn with_ordered_ipc(
         client_state_navigation_flushed,
         client_state_startup_command_result,
     ];
+    with_renderer_queue(dispatch, fallback)
+}
+
+fn with_renderer_queue<R: tauri::Runtime>(
+    dispatch: fn(tauri::ipc::Invoke<R>) -> bool,
+    fallback: impl Fn(tauri::ipc::Invoke<R>) -> bool,
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool {
     move |invoke| {
         if !invoke.message.command().starts_with("client_state_") {
             return fallback(invoke);
@@ -36,8 +43,16 @@ pub(crate) fn with_ordered_ipc(
             }
             let window_id = crate::identity::local_window_id(&label)?;
             let state = app.try_state::<ClientState>().ok_or("Client state is unavailable")?;
-            let document = state.renderer_access.document_for(&window_id);
             let url = webview.url().map_err(|err| format!("failed to inspect current renderer URL: {err}"))?;
+            let document = if invoke.message.command() == "client_state_claim_access" {
+                let challenge = match invoke.message.payload() {
+                    tauri::ipc::InvokeBody::Json(body) => body.get("documentChallenge").and_then(Value::as_str),
+                    tauri::ipc::InvokeBody::Raw(_) => None,
+                };
+                state.renderer_access.challenged_document(&window_id, challenge.unwrap_or_default(), &url)?
+            } else {
+                state.renderer_access.document_for(&window_id)
+            };
             Ok::<_, String>(Renderer { label, local: Some(LocalDocument { window_id, document, url }) })
         })();
         let renderer = match renderer {
@@ -88,10 +103,53 @@ thread_local! {
     static RENDERER: RefCell<Option<Renderer>> = const { RefCell::new(None) };
 }
 
-impl<'a> tauri::ipc::CommandArg<'a, tauri::Wry> for Renderer {
-    fn from_command(_: tauri::ipc::CommandItem<'a, tauri::Wry>) -> Result<Self, tauri::ipc::InvokeError> {
+impl<'a, R: tauri::Runtime> tauri::ipc::CommandArg<'a, R> for Renderer {
+    fn from_command(_: tauri::ipc::CommandItem<'a, R>) -> Result<Self, tauri::ipc::InvokeError> {
         RENDERER.with(|slot| slot.borrow().clone()).ok_or_else(|| "Missing client state IPC context".into())
     }
+}
+
+#[cfg(test)]
+#[test]
+fn delayed_first_claim_cannot_claim_a_same_url_successor() {
+    use tauri::test::{self, mock_builder, mock_context, noop_assets, INVOKE_KEY};
+    let directory = tempfile::tempdir().unwrap();
+    let state = ClientState::initialize_at(directory.path()).unwrap();
+    let window_id = state.active_window_id().unwrap();
+    let app = mock_builder()
+        .manage(state)
+        .manage(IpcQueue::new())
+        .invoke_handler(with_renderer_queue(tauri::generate_handler![client_state_claim_access], |_| false))
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let window = tauri::WebviewWindowBuilder::new(
+        &app,
+        crate::identity::local_window_label(&window_id).unwrap(),
+        tauri::WebviewUrl::App("index.html".into()),
+    ).build().unwrap();
+    let url = window.url().unwrap();
+    let state = app.state::<ClientState>();
+    state.renderer_page_started(&window_id, Some(&url));
+    let outgoing = state.renderer_access.document_challenge(&window_id, &url).unwrap();
+    window.navigate(url.clone()).unwrap();
+    state.renderer_page_started(&window_id, Some(&url));
+    let incoming = state.renderer_access.document_challenge(&window_id, &url).unwrap();
+    let claim = |challenge: uuid::Uuid, access_token: &str| {
+        test::get_ipc_response(&window, tauri::webview::InvokeRequest {
+            cmd: "client_state_claim_access".into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: url.clone(),
+            body: serde_json::json!({ "documentChallenge": challenge.to_string(), "accessToken": access_token }).into(),
+            headers: Default::default(),
+            invoke_key: INVOKE_KEY.to_string(),
+        })
+    };
+    assert_eq!(
+        claim(outgoing, "delayed").err().unwrap(),
+        serde_json::json!("Client state renderer document retired"),
+    );
+    assert!(claim(incoming, "successor").is_ok());
 }
 
 impl Renderer {
@@ -165,12 +223,10 @@ impl LocalDocument {
 #[tauri::command]
 pub fn client_state_claim_access(
     renderer: Renderer,
-    app_state: State<'_, AppState>,
     state: State<'_, ClientState>,
     access_token: String,
 ) -> Result<(), String> {
     let local = renderer.local()?;
-    validate_claim_origin(&local.url, &local.window_id, &app_state, &state)?;
     state.claim_renderer_access(&local.window_id, local.document, &access_token, &local.url)
 }
 

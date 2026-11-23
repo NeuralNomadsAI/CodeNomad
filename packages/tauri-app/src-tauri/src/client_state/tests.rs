@@ -213,12 +213,12 @@ fn shutdown_barrier_seals_admission_and_waits_for_publication_clear_and_ack() {
         acknowledging_state.acknowledge_renderer_flush(&acknowledging_window, 1);
     })).unwrap();
 
-    assert!(!crate::shutdown::drain_client_state(&queue, Instant::now() + Duration::from_millis(30)));
+    assert!(!queue.seal_and_drain_until(Instant::now() + Duration::from_millis(30)));
     assert!(queue.enqueue(Box::new(|| panic!("accepted after seal"))).is_err());
     assert_eq!(acknowledged_generation(&state), 0);
     assert!(state.is_primary());
     resume.send(()).unwrap();
-    assert!(crate::shutdown::drain_client_state(&queue, Instant::now() + Duration::from_secs(5)));
+    assert!(queue.seal_and_drain_until(Instant::now() + Duration::from_secs(5)));
     assert_eq!(acknowledged_generation(&state), 1);
     state.release_locks();
     let reopened = ClientState::initialize_at(directory.path()).unwrap();
@@ -251,7 +251,7 @@ fn queued_same_origin_commit_is_rejected_when_the_next_document_starts() {
     })).unwrap();
     state.renderer_page_started(&window_id, Some(&url));
     resume.send(()).unwrap();
-    assert!(crate::shutdown::drain_client_state(&queue, Instant::now() + Duration::from_secs(5)));
+    assert!(queue.seal_and_drain_until(Instant::now() + Duration::from_secs(5)));
     assert!(state.renderer_access.claim_for(&window_id, "outgoing", &url).is_err());
     state.renderer_access.claim_for(&window_id, "incoming", &url).unwrap();
 }

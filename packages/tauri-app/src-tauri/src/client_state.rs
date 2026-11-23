@@ -90,6 +90,17 @@ impl ClientState {
         self.renderer_access.page_started(window_id, allowed_url);
     }
 
+    pub(crate) fn renderer_page_finished(&self, window_id: &str, webview: &tauri::Webview, url: &Url) {
+        let Some(challenge) = self.renderer_access.document_challenge(window_id, url) else {
+            return;
+        };
+        // Deliver into the committed document, never via an invoke that an
+        // outgoing document could have queued before the navigation.
+        let _ = webview.eval(format!(
+            "window.__CODENOMAD_RESOLVE_CLIENT_STATE_DOCUMENT__?.('{challenge}');"
+        ));
+    }
+
     fn is_primary(&self) -> bool {
         self.process.is_primary()
     }
@@ -584,24 +595,43 @@ impl ClientState {
         result.map(|()| true)
     }
 
-    pub(crate) fn add_window(&self, window_id: String) -> Result<bool, String> {
+    pub(crate) fn queue_new_window(
+        app: &AppHandle,
+        window_id: String,
+        existing: bool,
+        complete: impl FnOnce(Result<bool, String>) + Send + 'static,
+    ) -> Result<(), String> {
+        let worker = app.clone();
+        app.state::<IpcQueue>()
+            .enqueue(Box::new(move || {
+                let state = worker.state::<Self>();
+                complete(if existing {
+                    Ok(state.is_primary())
+                } else {
+                    state.add_window(window_id)
+                });
+            }))
+            .map_err(str::to_string)
+    }
+
+    fn add_window(&self, window_id: String) -> Result<bool, String> {
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
         if !self.is_primary() {
             return Ok(false);
         }
-        let previous = {
-            let mut state = self.state.lock().map_err(|err| err.to_string())?;
+        let mut next = {
+            let state = self.state.lock().map_err(|err| err.to_string())?;
             if state.unsupported_future_envelope {
                 return Ok(false);
             }
-            let previous = state.clone();
-            state.add_window(window_id.clone())?;
-            previous
+            state.clone()
         };
-        if let Err(err) = self.write_current_state() {
-            *self.state.lock().map_err(|lock_err| lock_err.to_string())? = previous;
-            return Err(err);
-        }
+        // Keep the tentative record and serialization off the lock used by native window setup.
+        next.add_window(window_id.clone())?;
+        let bytes = serde_json::to_vec(&next).map_err(|err| err.to_string())?;
+        (self.write_state)(&self.state_path, &bytes, &|| self.is_primary())?;
+        *self.state.lock().map_err(|err| err.to_string())? = next;
+        self.window_captures_published();
         self.zoom_levels
             .lock()
             .map_err(|err| err.to_string())?

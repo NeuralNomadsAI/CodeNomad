@@ -64,7 +64,7 @@ fn final_shutdown_and_cleanup_start_once() {
     assert!(coordinator.acknowledge_global(&requests[1].0, requests[1].1));
     assert!(coordinator.begin_cleanup(false));
     assert!(!coordinator.begin_cleanup(false));
-    coordinator.cleanup_failed();
+    coordinator.cleanup_failed(|| {});
     assert!(!coordinator.shutdown_started());
     assert!(coordinator.with_navigation_authority(|| ()).is_some());
     assert!(coordinator.begin_shutdown(std::iter::empty()).is_some());
@@ -83,7 +83,7 @@ fn restart_waits_for_cleanup_and_is_cancelled_when_cleanup_fails() {
     coordinator.request_restart();
     coordinator.begin_shutdown(std::iter::empty()).unwrap();
     assert!(coordinator.begin_cleanup(false));
-    coordinator.cleanup_failed();
+    coordinator.cleanup_failed(|| {});
     assert!(!coordinator.complete_cleanup());
 }
 
@@ -406,7 +406,7 @@ fn failed_global_shutdown_cancels_the_exact_renderer_generations() {
     }
     assert!(coordinator.begin_cleanup(false));
 
-    let mut cancellations = coordinator.cleanup_failed();
+    let mut cancellations = coordinator.cleanup_failed(|| {});
     requests.sort();
     cancellations.sort();
     assert_eq!(cancellations, requests);
@@ -495,11 +495,7 @@ fn quit_can_still_cancel_after_a_removing_window_joins_release() {
     assert!(!coordinator.admit_global_prepare(label, requests[0].1));
     release_close(&coordinator, label, closing);
 
-    let PendingShutdownTimeoutAction::Cancel(cancellations) =
-        coordinator.expire_pending_shutdown(&requests)
-    else {
-        panic!("quit should cancel");
-    };
+    let cancellations = coordinator.expire_pending_shutdown(&requests);
     assert_eq!(cancellations, vec![requests[1].clone()]);
     assert!(!coordinator.shutdown_started());
 }
@@ -511,11 +507,7 @@ fn timed_out_global_shutdown_reopens_navigation_authority() {
         .begin_shutdown(["local-a".to_string(), "local-b".to_string()])
         .unwrap();
 
-    let PendingShutdownTimeoutAction::Cancel(mut cancellations) =
-        coordinator.expire_pending_shutdown(&requests)
-    else {
-        panic!("ordinary shutdown timeout should cancel");
-    };
+    let mut cancellations = coordinator.expire_pending_shutdown(&requests);
     requests.sort();
     cancellations.sort();
     assert_eq!(cancellations, requests);
@@ -525,31 +517,32 @@ fn timed_out_global_shutdown_reopens_navigation_authority() {
 
 #[cfg(windows)]
 #[test]
-fn windows_session_end_promotes_an_ordinary_shutdown_timeout_to_cleanup() {
+fn confirmed_session_end_takes_over_quit_already_in_native_preflight() {
     let coordinator = ShutdownCoordinator::default();
-    let requests = coordinator.begin_shutdown(["local-a".to_string()]).unwrap();
-    coordinator.begin_windows_session_end(["local-a".to_string()]);
-
-    assert!(matches!(
-        coordinator.expire_pending_shutdown(&requests),
-        PendingShutdownTimeoutAction::Cleanup
-    ));
-    assert!(coordinator.begin_cleanup(true));
+    coordinator.begin_shutdown(std::iter::empty()).unwrap();
+    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_windows_session_end(["local-a".to_string()]).is_none());
+    let (deadline, start) = coordinator.confirm_windows_session_end();
+    assert!(start);
+    assert_eq!(coordinator.confirm_windows_session_end(), (deadline, false));
+    assert!(coordinator.cleanup_failed(|| panic!("must not reopen admission")).is_empty());
+    assert!(!coordinator.wait_for_windows_cleanup(Instant::now()));
+    coordinator.complete_cleanup();
+    assert!(coordinator.wait_for_windows_cleanup(Instant::now()));
 }
 
 #[cfg(windows)]
 #[test]
 fn windows_session_end_keeps_normal_quit_from_claiming_cleanup() {
     let coordinator = ShutdownCoordinator::default();
-    let preparation = coordinator.begin_windows_session_end(["local-a".to_string()]);
-    let generation = preparation.generation;
-    let requests = preparation.requests.unwrap();
+    let requests = coordinator.begin_windows_session_end(["local-a".to_string()]).unwrap();
 
     assert!(!coordinator.begin_cleanup(false));
     assert!(coordinator.acknowledge_global(&requests[0].0, requests[0].1));
     assert!(!coordinator.begin_cleanup(false));
-    assert!(coordinator.begin_windows_cleanup(generation));
-    assert!(!coordinator.begin_windows_cleanup(generation));
+    let (deadline, start) = coordinator.confirm_windows_session_end();
+    assert!(start);
+    assert_eq!(coordinator.confirm_windows_session_end(), (deadline, false));
 }
 
 #[cfg(windows)]
@@ -566,52 +559,43 @@ fn cancelled_windows_session_end_reopens_renderer_persistence() {
 
 #[cfg(windows)]
 #[test]
-fn multi_window_session_end_prepare_reuses_generation_deadline_and_requests() {
+fn multi_window_session_end_only_prepares_once() {
     let coordinator = ShutdownCoordinator::default();
     let first =
         coordinator.begin_windows_session_end(["local-a".to_string(), "local-b".to_string()]);
     let second = coordinator.begin_windows_session_end(["local-c".to_string()]);
 
-    assert_eq!(first.requests.as_ref().unwrap().len(), 2);
-    assert_eq!(second.generation, first.generation);
-    assert_eq!(second.deadline, first.deadline);
-    assert!(second.requests.is_none());
+    assert_eq!(first.unwrap().len(), 2);
+    assert!(second.is_none());
 }
 
 #[cfg(windows)]
 #[test]
-fn repeated_session_end_calls_share_timeout_and_cleanup_claim() {
+fn confirmed_session_end_needs_no_query_or_renderer_acknowledgement() {
     let coordinator = ShutdownCoordinator::default();
-    let preparation = coordinator.begin_windows_session_end(std::iter::empty());
-    let generation = preparation.generation;
-
-    assert_eq!(
-        coordinator.windows_session_end_remaining(generation, preparation.deadline),
-        Some(Duration::ZERO)
-    );
-    assert!(coordinator.begin_windows_cleanup(generation));
-    assert!(!coordinator.begin_windows_cleanup(generation));
-    assert_eq!(
-        coordinator.windows_session_end_remaining(
-            generation,
-            preparation.deadline + Duration::from_secs(1)
-        ),
-        Some(Duration::ZERO)
-    );
+    let requests = coordinator.begin_shutdown(["local-a".into()]).unwrap();
+    let (deadline, first) = coordinator.confirm_windows_session_end();
+    assert!(first);
+    assert_eq!(coordinator.confirm_windows_session_end(), (deadline, false));
+    assert!(!coordinator.acknowledge_global(&requests[0].0, requests[0].1));
 }
 
 #[cfg(windows)]
 #[test]
-fn cancelled_session_end_cannot_claim_cleanup_for_its_successor() {
-    let coordinator = ShutdownCoordinator::default();
-    let first = coordinator
-        .begin_windows_session_end(["local-a".to_string()])
-        .generation;
-    coordinator.cancel_windows_session_end();
-    let second = coordinator
-        .begin_windows_session_end(["local-a".to_string()])
-        .generation;
-
-    assert!(!coordinator.begin_windows_cleanup(first));
-    assert!(coordinator.begin_windows_cleanup(second));
+fn session_end_stops_backend_after_failed_or_blocked_persistence() {
+    let deadline = Instant::now() + WINDOWS_SESSION_END_STOP_RESERVE + Duration::from_secs(1);
+    assert!(!windows_session_end_cleanup(deadline, |_| false, |until| {
+        assert_eq!(until, deadline);
+        assert!(Instant::now() < until);
+    }));
+    let (unblock, blocked) = std::sync::mpsc::channel::<()>();
+    let deadline = Instant::now() + WINDOWS_SESSION_END_STOP_RESERVE + Duration::from_millis(30);
+    assert!(!windows_session_end_cleanup(deadline, move |_| {
+        blocked.recv().unwrap();
+        true
+    }, |until| {
+        assert_eq!(until, deadline);
+        assert!(Instant::now() < until);
+        unblock.send(()).unwrap();
+    }));
 }

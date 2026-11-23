@@ -247,7 +247,6 @@ pub(crate) fn prompt(
             &capture.owner,
             &initial,
             generation,
-            capture.purpose,
             str::to_owned,
         );
         let (Some(parent), Some(destination)) = (parent, destination) else {
@@ -281,34 +280,36 @@ pub(crate) fn prompt(
             let accepted = answer == gtk::ResponseType::Yes
                 && std::time::Instant::now() < deadline
                 && view.upgrade().is_some_and(|view| {
-                    let Some(url) = view.uri().and_then(|uri| Url::parse(uri.as_str()).ok()) else {
-                        return false;
-                    };
-                    url == initial
-                        && with_api_microphone_document(
-                            &app,
-                            &response_capture.owner,
-                            &url,
-                            generation,
-                            response_capture.purpose,
-                            |_| {
-                                app.state::<DeviceSpeech>()
-                                    .accept_remote_microphone(&response_capture)
-                            },
-                        ) == Some(true)
+                    view.uri().and_then(|uri| Url::parse(uri.as_str()).ok()).as_ref() == Some(&initial)
                 });
-            if accepted {
-                let expiry = Arc::downgrade(&response_capture);
-                glib::timeout_add_local_once(EXPIRE, move || {
-                    if let Some(capture) = expiry.upgrade() {
-                        capture.revoke();
-                    }
-                });
-                response_capture.open(reply);
-            } else {
+            if !accepted {
                 response_capture.revoke();
                 reply.reject(DENIED);
+                return;
             }
+            tauri::async_runtime::spawn_blocking(move || {
+                let speech = app.state::<DeviceSpeech>();
+                let selected = response_capture.purpose.allows_engine(|| {
+                    speech.preferred_engine() == Ok(Some(crate::device_speech::Engine::Api))
+                });
+                if !selected || std::time::Instant::now() >= deadline
+                    || with_api_microphone_document(&app, &response_capture.owner, &initial, generation,
+                        |_| speech.accept_remote_microphone(&response_capture)) != Some(true)
+                {
+                    response_capture.revoke();
+                    reply.reject(DENIED);
+                    return;
+                }
+                let expiry = Arc::downgrade(&response_capture);
+                let _ = app.run_on_main_thread(move || {
+                    glib::timeout_add_local_once(EXPIRE, move || {
+                        if let Some(capture) = expiry.upgrade() {
+                            capture.revoke();
+                        }
+                    });
+                });
+                response_capture.open(reply);
+            });
         })));
         let destroyed = response.clone();
         dialog.connect_destroy(move |_| {

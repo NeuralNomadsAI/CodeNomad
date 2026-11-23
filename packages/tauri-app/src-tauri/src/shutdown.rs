@@ -15,6 +15,8 @@ const SHUTDOWN_STOP_ATTEMPTS: usize = 2;
 const FLUSH_CANCELLED_EVENT: &str = "client-state:flush-cancelled";
 #[cfg(windows)]
 const WINDOWS_SESSION_END_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(windows)]
+const WINDOWS_SESSION_END_STOP_RESERVE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PendingClose {
@@ -40,19 +42,6 @@ enum LocalCloseCompletion {
     },
 }
 
-#[cfg(windows)]
-struct WindowsSessionEndPreparation {
-    generation: u64,
-    deadline: Instant,
-    requests: Option<Vec<(String, u64)>>,
-}
-
-enum PendingShutdownTimeoutAction {
-    Cancel(Vec<(String, u64)>),
-    #[cfg(windows)]
-    Cleanup,
-}
-
 #[derive(Default)]
 struct ShutdownState {
     next_generation: u64,
@@ -71,7 +60,7 @@ struct ShutdownState {
     automation_restart: Option<crate::developer_relaunch::RelaunchPlan>,
     update: Option<crate::desktop_updater::PreparedUpdate>,
     #[cfg(windows)]
-    windows_session_end_generation: Option<u64>,
+    windows_session_end_queried: bool,
     #[cfg(windows)]
     windows_session_end_deadline: Option<Instant>,
     #[cfg(windows)]
@@ -270,6 +259,10 @@ impl ShutdownCoordinator {
 
     fn begin_workspace_releases(&self) -> Vec<(String, client_state::RendererFlushRequest)> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        #[cfg(windows)]
+        if state.windows_session_end_deadline.is_some() {
+            return Vec::new();
+        }
         let labels: Vec<_> = state
             .global_requests
             .iter()
@@ -295,6 +288,10 @@ impl ShutdownCoordinator {
         let (state, _) = self
             .release_acknowledged
             .wait_timeout_while(state, timeout, |state| {
+                #[cfg(windows)]
+                if state.windows_session_end_deadline.is_some() {
+                    return false;
+                }
                 !state.global_pending.is_empty()
                     || !state.removing_local_closes.is_empty()
                     || !state.releasing_local_closes.is_empty()
@@ -314,7 +311,7 @@ impl ShutdownCoordinator {
             return false;
         }
         #[cfg(windows)]
-        if state.windows_session_end_owns_shutdown {
+        if state.windows_session_end_owns_shutdown || state.windows_session_end_deadline.is_some() {
             return false;
         }
         state.global_pending.clear();
@@ -322,8 +319,13 @@ impl ShutdownCoordinator {
         true
     }
 
-    fn cleanup_failed(&self) -> Vec<(String, u64)> {
+    fn cleanup_failed(&self, reopen: impl FnOnce()) -> Vec<(String, u64)> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        #[cfg(windows)]
+        if state.windows_session_end_deadline.is_some() {
+            return Vec::new();
+        }
+        reopen();
         state.update.take();
         let cancellations = state.global_requests.drain().collect();
         state.cleanup_started = false;
@@ -332,16 +334,10 @@ impl ShutdownCoordinator {
         state.automation_restart.take();
         state.global_pending.clear();
         state.capturing_local_closes.clear();
-        #[cfg(windows)]
-        {
-            state.windows_session_end_generation = None;
-            state.windows_session_end_deadline = None;
-            state.windows_session_end_owns_shutdown = false;
-        }
         cancellations
     }
 
-    fn expire_pending_shutdown(&self, requests: &[(String, u64)]) -> PendingShutdownTimeoutAction {
+    fn expire_pending_shutdown(&self, requests: &[(String, u64)]) -> Vec<(String, u64)> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if !state.shutdown_started || state.cleanup_started
             || state.global_requests.is_empty()
@@ -349,18 +345,14 @@ impl ShutdownCoordinator {
                 state.global_requests.get(label) == Some(generation)
             }).count() != state.global_requests.len()
         {
-            return PendingShutdownTimeoutAction::Cancel(Vec::new());
-        }
-        #[cfg(windows)]
-        if state.windows_session_end_generation.is_some() {
-            return PendingShutdownTimeoutAction::Cleanup;
+            return Vec::new();
         }
         state.update.take();
         state.shutdown_started = false;
         state.restart_requested = false;
         state.automation_restart.take();
         state.global_pending.clear();
-        PendingShutdownTimeoutAction::Cancel(state.global_requests.drain().collect())
+        state.global_requests.drain().collect()
     }
 
     fn admit_local_removal(&self, label: &str, generation: u64) -> Option<PendingClose> {
@@ -464,11 +456,9 @@ impl ShutdownCoordinator {
             .unwrap_or(false)
     }
 
-    fn allow_exit(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .exit_allowed = true;
+    #[cfg(windows)]
+    fn windows_session_end_confirmed(&self) -> bool {
+        self.state.lock().unwrap_or_else(|error| error.into_inner()).windows_session_end_deadline.is_some()
     }
 
     fn request_restart(&self) {
@@ -481,6 +471,7 @@ impl ShutdownCoordinator {
     fn complete_cleanup(&self) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.exit_allowed = true;
+        self.release_acknowledged.notify_all();
         state.restart_requested
     }
 
@@ -504,103 +495,62 @@ impl ShutdownCoordinator {
     fn begin_windows_session_end(
         &self,
         labels: impl IntoIterator<Item = String>,
-    ) -> WindowsSessionEndPreparation {
+    ) -> Option<Vec<(String, u64)>> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some(generation) = state.windows_session_end_generation {
-            return WindowsSessionEndPreparation {
-                generation,
-                deadline: state
-                    .windows_session_end_deadline
-                    .unwrap_or_else(Instant::now),
-                requests: None,
-            };
+        if state.windows_session_end_deadline.is_some() || state.windows_session_end_queried {
+            return None;
         }
-        state.next_generation += 1;
-        let session_generation = state.next_generation;
-        let session_deadline = Instant::now() + WINDOWS_SESSION_END_TIMEOUT;
-        state.windows_session_end_generation = Some(session_generation);
-        state.windows_session_end_deadline = Some(session_deadline);
+        state.windows_session_end_queried = true;
         state.pending_automation_restart.take();
         state.automation_restart.take();
         if state.update.take().is_some() {
             state.restart_requested = false;
         }
-        if state.shutdown_started {
-            return WindowsSessionEndPreparation {
-                generation: session_generation,
-                deadline: session_deadline,
-                requests: Some(Vec::new()),
-            };
-        }
-        state.windows_session_end_owns_shutdown = true;
-        state.shutdown_started = true;
-        state.local_closes.clear();
-        state.capturing_local_closes.clear();
-        state.global_requests.clear();
-        let mut requests = Vec::new();
-        for label in labels {
-            if state.releasing_local_closes.contains_key(&label) || state.approved_local_closes.contains(&label) {
-                continue;
-            }
-            state.next_generation += 1;
-            let generation = state.next_generation;
-            state.global_pending.insert(label.clone(), generation);
-            state.global_requests.insert(label.clone(), generation);
-            requests.push((label, generation));
-        }
-        WindowsSessionEndPreparation {
-            generation: session_generation,
-            deadline: session_deadline,
-            requests: Some(requests),
-        }
+        let requests = Self::begin_shutdown_locked(&mut state, labels);
+        state.windows_session_end_owns_shutdown = requests.is_some();
+        requests
     }
 
     #[cfg(windows)]
-    fn windows_session_end_owns_shutdown(&self, generation: u64) -> bool {
-        self.state
-            .lock()
-            .map(|state| {
-                state.windows_session_end_generation == Some(generation)
-                    && state.windows_session_end_owns_shutdown
-            })
-            .unwrap_or(false)
-    }
-
-    #[cfg(windows)]
-    fn begin_windows_cleanup(&self, generation: u64) -> bool {
+    fn confirm_windows_session_end(&self) -> (Instant, bool) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.windows_session_end_generation != Some(generation)
-            || !state.windows_session_end_owns_shutdown
-            || state.cleanup_started
-        {
-            return false;
+        if let Some(deadline) = state.windows_session_end_deadline {
+            return (deadline, false);
         }
+        let deadline = Instant::now() + WINDOWS_SESSION_END_TIMEOUT;
+        state.windows_session_end_deadline = Some(deadline);
+        if state.exit_allowed {
+            return (deadline, false);
+        }
+        state.shutdown_started = true;
         state.cleanup_started = true;
+        state.restart_requested = false;
+        state.update.take();
+        state.pending_automation_restart.take();
+        state.automation_restart.take();
         state.global_pending.clear();
-        true
+        self.release_acknowledged.notify_all();
+        (deadline, true)
     }
 
     #[cfg(windows)]
-    fn windows_session_end_remaining(&self, generation: u64, now: Instant) -> Option<Duration> {
-        self.state.lock().ok().and_then(|state| {
-            (state.windows_session_end_generation == Some(generation))
-                .then(|| {
-                    state
-                        .windows_session_end_deadline
-                        .map(|deadline| deadline.saturating_duration_since(now))
-                })
-                .flatten()
-        })
+    fn wait_for_windows_cleanup(&self, deadline: Instant) -> bool {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let (state, _) = self.release_acknowledged.wait_timeout_while(
+            state,
+            deadline.saturating_duration_since(Instant::now()),
+            |state| !state.exit_allowed,
+        ).unwrap_or_else(|error| error.into_inner());
+        state.exit_allowed
     }
 
     #[cfg(windows)]
     fn cancel_windows_session_end(&self) -> Vec<(String, u64)> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.windows_session_end_generation.is_none() {
+        if state.windows_session_end_deadline.is_some() || !state.windows_session_end_queried {
             return Vec::new();
         }
-        state.windows_session_end_generation = None;
-        state.windows_session_end_deadline = None;
+        state.windows_session_end_queried = false;
         if !state.windows_session_end_owns_shutdown || state.cleanup_started {
             return Vec::new();
         }
@@ -619,6 +569,14 @@ fn awaits_renderer_flush(url: Option<&tauri::Url>) -> bool {
 }
 
 fn emit_prepare(app: &AppHandle, label: &str, generation: u64) -> bool {
+    use crate::preferences_window::{PreferencesWindow, ShutdownPrepare, LABEL};
+    if label == LABEL {
+        match app.state::<PreferencesWindow>().prepare_shutdown(generation) {
+            ShutdownPrepare::JoinClose => return true,
+            ShutdownPrepare::Skip => return false,
+            ShutdownPrepare::Renderer => {}
+        }
+    }
     emit_flush(app, label, client_state::RendererFlushRequest { generation, prepare_generation: None })
 }
 
@@ -721,7 +679,7 @@ fn finish_local_close(app: AppHandle, label: String, window_id: String, generati
             LocalCloseCompletion::Release { request, shutdown_ready } => {
                 let emitted = emit_flush(&app, &label, request);
                 if shutdown_ready {
-                    start_cleanup(app.clone(), false);
+                    start_cleanup(app.clone());
                 }
                 if emitted {
                     std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
@@ -736,7 +694,7 @@ fn finish_local_close(app: AppHandle, label: String, window_id: String, generati
                         && !emit_prepare(&app, &label, generation)
                         && coordinator.acknowledge_global(&label, generation)
                     {
-                        start_cleanup(app.clone(), false);
+                        start_cleanup(app.clone());
                     }
                 }
             }
@@ -751,18 +709,15 @@ fn renderer_labels(app: &AppHandle) -> Vec<String> {
             .into_keys()
             .filter(|label| label.starts_with("remote-")),
     );
-    if app.get_webview_window(crate::preferences_window::LABEL).is_some()
-        && app.state::<crate::preferences_window::PreferencesWindow>().renderer_ready()
-    {
-        labels.push(crate::preferences_window::LABEL.to_string());
-    }
+    // Include loading Preferences: it may already be persisting an individual close.
+    labels.push(crate::preferences_window::LABEL.to_string());
     labels
 }
 
 pub(crate) fn request(app: AppHandle) {
     let labels = renderer_labels(&app);
     let Some(requests) = app.state::<ShutdownCoordinator>().begin_shutdown(labels) else {
-        start_cleanup(app, false);
+        start_cleanup(app);
         return;
     };
     flush_shutdown(app, requests, CLOSE_CAPTURE_TIMEOUT);
@@ -807,18 +762,13 @@ fn flush_shutdown(app: AppHandle, requests: Vec<(String, u64)>, timeout: Duratio
                 .is_some_and(|state| state.global_pending.get(label) != Some(generation))
         })
     {
-        start_cleanup(app, false);
+        start_cleanup(app);
         return;
     }
     std::thread::spawn(move || {
         std::thread::sleep(timeout);
-        match app.state::<ShutdownCoordinator>().expire_pending_shutdown(&requests) {
-            PendingShutdownTimeoutAction::Cancel(cancellations) => {
-                emit_flush_cancellations(&app, cancellations)
-            }
-            #[cfg(windows)]
-            PendingShutdownTimeoutAction::Cleanup => start_cleanup(app, true),
-        }
+        let cancellations = app.state::<ShutdownCoordinator>().expire_pending_shutdown(&requests);
+        emit_flush_cancellations(&app, cancellations);
     });
 }
 
@@ -830,7 +780,7 @@ pub(crate) fn renderer_flushed(app: AppHandle, label: String, window_id: String,
         .state::<ShutdownCoordinator>()
         .acknowledge_global(&label, generation)
     {
-        start_cleanup(app, false);
+        start_cleanup(app);
         return;
     }
     finish_local_close(app, label, window_id, generation);
@@ -838,14 +788,14 @@ pub(crate) fn renderer_flushed(app: AppHandle, label: String, window_id: String,
 
 pub(crate) fn preferences_renderer_flushed(app: AppHandle, generation: u64) {
     if app.state::<ShutdownCoordinator>().acknowledge_global(crate::preferences_window::LABEL, generation) {
-        start_cleanup(app, false);
+        start_cleanup(app);
     }
 }
 
-fn start_cleanup(app: AppHandle, deadline_reached: bool) {
+fn start_cleanup(app: AppHandle) {
     if !app
         .state::<ShutdownCoordinator>()
-        .begin_cleanup(deadline_reached)
+        .begin_cleanup(false)
     {
         return;
     }
@@ -857,17 +807,29 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
             speech.stop_hex();
         }
         client_state::capture_all_windows(&app);
+        let coordinator = app.state::<ShutdownCoordinator>();
+        #[cfg(windows)]
+        if coordinator.windows_session_end_confirmed() {
+            return;
+        }
         release_workspaces(&app, RENDERER_FLUSH_TIMEOUT);
+        #[cfg(windows)]
+        if coordinator.windows_session_end_confirmed() {
+            return;
+        }
         let queue = app.state::<client_state::IpcQueue>();
-        if !drain_client_state(&queue, Instant::now() + IPC_DRAIN_TIMEOUT) {
+        if !queue.seal_and_drain_until(Instant::now() + IPC_DRAIN_TIMEOUT) {
             eprintln!("[tauri] shutdown canceled: client state IPC did not drain");
-            queue.reopen();
-            let cancellations = app.state::<ShutdownCoordinator>().cleanup_failed();
+            let cancellations = coordinator.cleanup_failed(|| queue.reopen());
             emit_flush_cancellations(&app, cancellations);
             return;
         }
         let result = if let Some(state) = app.try_state::<AppState>() {
             retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
+                #[cfg(windows)]
+                if coordinator.windows_session_end_confirmed() {
+                    return Ok(());
+                }
                 state.manager.stop().map_err(|error| error.to_string())
             })
         } else {
@@ -875,20 +837,24 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
         };
         if let Err(error) = result {
             eprintln!("[tauri] shutdown cleanup remains unconfirmed: {error}");
-            queue.reopen();
-            let cancellations = app.state::<ShutdownCoordinator>().cleanup_failed();
+            let cancellations = coordinator.cleanup_failed(|| queue.reopen());
             emit_flush_cancellations(&app, cancellations);
             return;
         }
-        let update = app.state::<ShutdownCoordinator>().state.lock()
-            .unwrap_or_else(|error| error.into_inner()).update.take();
+        let update = {
+            let mut state = coordinator.state.lock().unwrap_or_else(|error| error.into_inner());
+            #[cfg(windows)]
+            if state.windows_session_end_deadline.is_some() {
+                return;
+            }
+            state.update.take()
+        };
         if let Err(error) = update.map(|update| update.install()).unwrap_or(Ok(())) {
             eprintln!("[tauri] update installation failed: {error}");
             // The failed installer must not be replayed. Restore the owned
             // backend after reopening navigation, so even immediate readiness
             // can restore the windows. A newer quit still wins recovery admission.
-            queue.reopen();
-            let cancellations = app.state::<ShutdownCoordinator>().cleanup_failed();
+            let cancellations = coordinator.cleanup_failed(|| queue.reopen());
             emit_flush_cancellations(&app, cancellations);
             let recovery = app.try_state::<AppState>().and_then(|state| {
                 with_navigation_authority(&app, || state.manager.start(app.clone(), crate::is_dev_mode()))
@@ -906,7 +872,7 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
             return;
         }
         client_state::release(&app);
-        let restart = app.state::<ShutdownCoordinator>().complete_cleanup();
+        let restart = coordinator.complete_cleanup();
         if restart {
             #[cfg(target_os = "macos")]
             RESTART_ON_EXIT.store(true, std::sync::atomic::Ordering::Release);
@@ -917,8 +883,18 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
     });
 }
 
-pub(crate) fn drain_client_state(queue: &client_state::IpcQueue, deadline: Instant) -> bool {
-    queue.seal_and_drain_until(deadline)
+pub(crate) fn preferences_close_settled(app: &AppHandle, generation: u64, saved: bool) {
+    let coordinator = app.state::<ShutdownCoordinator>();
+    let label = crate::preferences_window::LABEL;
+    if !coordinator.admit_global_prepare(label, generation) {
+        return;
+    }
+    // A refused close leaves Preferences open; prepare that renderer as usual.
+    if (saved || !emit_prepare(app, label, generation))
+        && coordinator.acknowledge_global(label, generation)
+    {
+        start_cleanup(app.clone());
+    }
 }
 
 pub(crate) fn request_restart(app: AppHandle) {
@@ -1038,17 +1014,15 @@ pub(crate) fn exit_allowed(app: &AppHandle) -> bool {
 }
 
 #[cfg(windows)]
-fn prepare_windows_session_end(app: &AppHandle) -> (u64, Instant) {
+fn prepare_windows_session_end(app: &AppHandle) {
     let labels = renderer_labels(app);
-    let preparation = app
+    let requests = app
         .state::<ShutdownCoordinator>()
         .begin_windows_session_end(labels);
-    crate::remote_dictation::revoke(app, None);
-    let generation = preparation.generation;
-    let deadline = preparation.deadline;
-    let Some(requests) = preparation.requests else {
-        return (generation, deadline);
+    let Some(requests) = requests else {
+        return;
     };
+    crate::remote_dictation::revoke(app, None);
     for (label, flush_generation) in requests {
         if !app.state::<ShutdownCoordinator>().admit_global_prepare(&label, flush_generation) {
             continue;
@@ -1058,7 +1032,6 @@ fn prepare_windows_session_end(app: &AppHandle) -> (u64, Instant) {
                 .acknowledge_global(&label, flush_generation);
         }
     }
-    (generation, deadline)
 }
 
 #[cfg(windows)]
@@ -1071,68 +1044,68 @@ fn cancel_windows_session_end(app: &AppHandle) {
 
 #[cfg(windows)]
 pub(crate) fn request_windows_session_end(app: AppHandle) {
-    let (generation, session_deadline) = prepare_windows_session_end(&app);
-    if let Some(speech) = app.try_state::<crate::device_speech::DeviceSpeech>() {
-        speech.revoke(None);
+    let coordinator = app.state::<ShutdownCoordinator>();
+    let (deadline, start) = coordinator.confirm_windows_session_end();
+    if start {
+        let cleanup_app = app.clone();
+        std::thread::spawn(move || {
+            let speech_app = cleanup_app.clone();
+            std::thread::spawn(move || {
+                if let Some(speech) = speech_app.try_state::<crate::device_speech::DeviceSpeech>() {
+                    speech.revoke(None);
+                    speech.stop_hex();
+                }
+            });
+            let persist_app = cleanup_app.clone();
+            let saved = windows_session_end_cleanup(
+                deadline,
+                move |persist_deadline| {
+                    // Native dispatch is blocked; use only admitted writes and
+                    // geometry already captured by window events.
+                    persist_app.state::<client_state::IpcQueue>()
+                        .seal_and_drain_until(persist_deadline)
+                        && client_state::flush_without_window_capture(&persist_app)
+                },
+                |deadline| {
+                    if let Some(state) = cleanup_app.try_state::<AppState>() {
+                        if let Err(error) = retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
+                            state.manager.stop_until(deadline)
+                        }) {
+                            eprintln!("[tauri] Windows session-end backend stop: {error}");
+                        }
+                    }
+                },
+            );
+            if saved {
+                client_state::release(&cleanup_app);
+            }
+            cleanup_app.state::<ShutdownCoordinator>().complete_cleanup();
+        });
     }
-    if !app
-        .state::<ShutdownCoordinator>()
-        .windows_session_end_owns_shutdown(generation)
-    {
-        while !exit_allowed(&app) && Instant::now() < session_deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        return;
+    if !coordinator.wait_for_windows_cleanup(deadline) {
+        eprintln!("[tauri] Windows session-end cleanup exceeded {:?}", WINDOWS_SESSION_END_TIMEOUT);
     }
+}
 
-    if !app
-        .state::<ShutdownCoordinator>()
-        .begin_windows_cleanup(generation)
-    {
-        return;
-    }
-
-    let (finished_tx, finished_rx) = std::sync::mpsc::sync_channel(1);
-    let cleanup_app = app.clone();
+#[cfg(windows)]
+fn windows_session_end_cleanup(
+    deadline: Instant,
+    persist: impl FnOnce(Instant) -> bool + Send + 'static,
+    stop_backend: impl FnOnce(Instant),
+) -> bool {
+    let persist_deadline = deadline - WINDOWS_SESSION_END_STOP_RESERVE;
+    let (done, persistence) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
-        // WM_ENDSESSION is already blocking native dispatch. The backend will
-        // release workspaces on stop; no renderer round trip is possible here.
-        if !drain_client_state(&cleanup_app.state::<client_state::IpcQueue>(), session_deadline)
-            || !client_state::flush_without_window_capture(&cleanup_app)
-            || Instant::now() >= session_deadline
-        {
-            let _ = finished_tx.send(Err("client state flush did not finish within the session end budget".into()));
-            return;
-        }
-        if let Some(speech) = cleanup_app.try_state::<crate::device_speech::DeviceSpeech>() {
-            speech.stop_hex();
-        }
-        let result = {
-            cleanup_app
-                .try_state::<AppState>()
-                .map(|state| {
-                    retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
-                        state
-                            .manager
-                            .stop_until(session_deadline)
-                            .map_err(|error| error.to_string())
-                    })
-                })
-                .unwrap_or(Ok(()))
-        };
-        client_state::release(&cleanup_app);
-        cleanup_app.state::<ShutdownCoordinator>().allow_exit();
-        let _ = finished_tx.send(result);
+        let _ = done.send(persist(persist_deadline));
     });
-    let remaining = app
-        .state::<ShutdownCoordinator>()
-        .windows_session_end_remaining(generation, Instant::now())
-        .unwrap_or_default();
-    match finished_rx.recv_timeout(remaining) {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => eprintln!("[tauri] Windows session-end cleanup: {error}"),
-        Err(_) => eprintln!("[tauri] Windows session-end cleanup exceeded {:?}", WINDOWS_SESSION_END_TIMEOUT),
+    let saved = persistence
+        .recv_timeout(persist_deadline.saturating_duration_since(Instant::now()))
+        .unwrap_or(false);
+    if !saved {
+        eprintln!("[tauri] Windows session-end client state persistence incomplete");
     }
+    stop_backend(deadline);
+    saved
 }
 
 #[cfg(windows)]

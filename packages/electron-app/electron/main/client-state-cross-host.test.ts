@@ -182,7 +182,7 @@ test("simultaneous claimants deterministically recover a stale owner", (t) => {
   mkdirSync(staleDirectory)
   const observed = JSON.stringify(stale)
   writeFileSync(join(staleDirectory, "owner.json"), observed)
-  writeFileSync(join(directory, "participant.603.b.json"), JSON.stringify(second))
+  writeFileSync(join(directory, "participant.603.b.json"), JSON.stringify({ ...second, cohort: null }))
   writeFileSync(join(directory, "recovery.603.b.claim"), observed)
   const identities = new Map([[602, first.processStartIdentity], [603, second.processStartIdentity]])
   const deps = {
@@ -226,7 +226,7 @@ test("graceful handoff retires the old cohort so a crashed successor can recover
   await primary.release()
   assert.equal(readdirSync(directory).some((name) => name.startsWith("retired.")), false)
   assert.equal(JSON.parse(readFileSync(ownerFile(directory), "utf8")).runToken, "successor")
-  assert.deepEqual(JSON.parse(readFileSync(join(directory, "participant.423.successor.json"), "utf8")), successorOwner)
+  assert.deepEqual(JSON.parse(readFileSync(join(directory, "participant.423.successor.json"), "utf8")), { ...successorOwner, cohort: successorOwner })
   assert.equal(existsSync(join(directory, "participant.422.secondary.json")), false)
   assert.equal(existsSync(join(directory, "participant.425.late.json")), false)
   assert.equal(existsSync(malformed), false)
@@ -241,6 +241,48 @@ test("graceful handoff retires the old cohort so a crashed successor can recover
     processStartIdentity: (pid) => identities.get(pid),
   })!
   assert.equal(claimant.isPrimary, true)
+})
+
+test("registrations immediately before and after graceful rename bind to different recovery cohorts", async (t) => {
+  const directory = temp(t)
+  const primary = owner(701, "primary"), late = owner(702, "late"), successor = owner(703, "next")
+  const nextSecondary = owner(704, "next-secondary"), claimant = owner(705, "claimant")
+  const ownerlessSecondary = owner(706, "ownerless")
+  const identities = new Map([primary, late, successor, nextSecondary, claimant, ownerlessSecondary].map((actor) => [actor.pid, actor.processStartIdentity]))
+  const deps = {
+    pidAlive: (pid: number) => identities.has(pid),
+    processStartIdentity: (pid: number) => identities.get(pid),
+  }
+  let postRename!: CrossHostRegistration
+  const registration = CrossHostRegistration.register(directory, primary, true, {
+    ...deps,
+    onGracefulOwnerRetiring: () => {
+      assert.equal(CrossHostRegistration.register(directory, late, true, deps)!.isPrimary, false)
+    },
+    onOwnerRetired: () => {
+      assert.equal(existsSync(ownerFile(directory)), false)
+      assert.equal(CrossHostRegistration.register(directory, ownerlessSecondary, false, deps)!.isPrimary, false)
+      assert.equal(CrossHostRegistration.register(directory, successor, true, deps)!.isPrimary, true)
+      postRename = CrossHostRegistration.register(directory, nextSecondary, false, deps)!
+    },
+  })!
+
+  await registration.release()
+  const latePath = join(directory, "participant.702.late.json")
+  const nextPath = join(directory, "participant.704.next-secondary.json")
+  const ownerlessPath = join(directory, "participant.706.ownerless.json")
+  assert.deepEqual(JSON.parse(readFileSync(latePath, "utf8")), { ...late, cohort: primary })
+  assert.deepEqual(JSON.parse(readFileSync(nextPath, "utf8")), { ...nextSecondary, cohort: successor })
+  assert.deepEqual(JSON.parse(readFileSync(ownerlessPath, "utf8")), { ...ownerlessSecondary, cohort: ownerlessSecondary })
+
+  identities.delete(successor.pid)
+  const blocked = CrossHostRegistration.register(directory, claimant, true, deps)!
+  assert.equal(blocked.isPrimary, false, "the successor's live secondary still fences recovery")
+  await blocked.release()
+  await postRename.release()
+  assert.equal(CrossHostRegistration.register(directory, claimant, true, deps)!.isPrimary, true, "unrelated generations cannot fence the successor")
+  assert.equal(existsSync(latePath), true)
+  assert.equal(existsSync(ownerlessPath), true)
 })
 
 test("non-owner release does not remove a live owner's record", async (t) => {

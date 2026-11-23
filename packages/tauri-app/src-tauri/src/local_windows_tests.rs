@@ -5,6 +5,29 @@ fn id(value: u8) -> String {
 }
 
 #[test]
+fn pending_windows_reserve_saved_ids_and_count_against_capacity() {
+    let mut registry = Registry::default();
+    let saved = vec![id(1), id(2)];
+    assert_eq!(
+        registry.reserve_new_window(saved.clone()).unwrap(),
+        (id(1), true)
+    );
+    assert_eq!(
+        registry.reserve_new_window(saved.clone()).unwrap(),
+        (id(2), true)
+    );
+    assert!(registry.mru_label().is_none());
+    for _ in 2..MAX_LOCAL_WINDOWS {
+        let (new_id, existing) = registry.reserve_new_window(saved.clone()).unwrap();
+        assert!(!existing);
+        assert!(registry.contains_id(&new_id));
+    }
+    assert!(registry.reserve_new_window(saved.clone()).is_err());
+    registry.pending.remove(&id(1));
+    assert_eq!(registry.reserve_new_window(saved).unwrap(), (id(1), true));
+}
+
+#[test]
 fn registry_tracks_uuid_labels_mru_and_folder_ack_order() {
     let mut registry = Registry::default();
     let first = registry.add(id(1), true).unwrap();
@@ -290,7 +313,10 @@ fn updates_requested_from_preferences_or_remote_run_in_the_last_local_window() {
     let local = format!("local-{}", id(1));
     let other = format!("local-{}", id(2));
     for focused in ["preferences", "remote-profile"] {
-        assert_eq!(select_update_label(Some(focused), Some(&local)), Some(local.clone()));
+        assert_eq!(
+            select_update_label(Some(focused), Some(&local)),
+            Some(local.clone())
+        );
     }
     assert_eq!(select_update_label(Some(&other), Some(&local)), Some(other));
     assert_eq!(select_update_label(Some("preferences"), None), None);
@@ -312,31 +338,61 @@ fn menu_toggle_during_native_focus_gap_keeps_view_and_file_commands_enabled() {
             "leftPanel": { "label": "Left", "checked": checked, "enabled": true },
             "rightPanel": { "label": "Right", "checked": true, "enabled": true },
             "timeline": { "label": "Timeline", "checked": true, "enabled": true }
-        })).unwrap()
+        }))
+        .unwrap()
     };
-    windows.set_workspace_menu_enabled(&local.label, true).unwrap();
-    windows.set_view_menu_state(&local.label, Some(snapshot(true))).unwrap();
-    assert_eq!(windows.menu_state(Some(&local.label)), (true, Some(snapshot(true))));
+    windows
+        .set_workspace_menu_enabled(&local.label, true)
+        .unwrap();
+    windows
+        .set_view_menu_state(&local.label, Some(snapshot(true)))
+        .unwrap();
+    assert_eq!(
+        windows.menu_state(Some(&local.label)),
+        (true, Some(snapshot(true)))
+    );
 
     // The native popup temporarily owns focus, then the renderer publishes the
     // unchecked panel. Both menus must retain the same target as click dispatch.
     assert_eq!(windows.menu_state(None), (true, Some(snapshot(true))));
-    windows.set_view_menu_state(&local.label, Some(snapshot(false))).unwrap();
+    windows
+        .set_view_menu_state(&local.label, Some(snapshot(false)))
+        .unwrap();
     assert_eq!(windows.menu_state(None), (true, Some(snapshot(false))));
-    assert_eq!(windows.menu_state(Some(&local.label)), (true, Some(snapshot(false))));
+    assert_eq!(
+        windows.menu_state(Some(&local.label)),
+        (true, Some(snapshot(false)))
+    );
 
     for non_local in ["remote-profile", crate::preferences_window::LABEL] {
         assert_eq!(windows.menu_state(Some(non_local)), (false, None));
     }
     let other = windows.registry.lock().unwrap().add(id(2), true).unwrap();
-    assert_eq!(windows.menu_state(Some(&local.label)), (true, Some(snapshot(false))));
-    assert_eq!(windows.menu_state(None), (false, None), "new MRU has no project");
+    assert_eq!(
+        windows.menu_state(Some(&local.label)),
+        (true, Some(snapshot(false)))
+    );
+    assert_eq!(
+        windows.menu_state(None),
+        (false, None),
+        "new MRU has no project"
+    );
     windows.remove_runtime(&other.label);
     assert_eq!(windows.menu_state(None), (true, Some(snapshot(false))));
-    windows.set_workspace_menu_enabled(&local.label, false).unwrap();
-    assert_eq!(windows.menu_state(None), (false, None), "reload clears both snapshots");
+    windows
+        .set_workspace_menu_enabled(&local.label, false)
+        .unwrap();
+    assert_eq!(
+        windows.menu_state(None),
+        (false, None),
+        "reload clears both snapshots"
+    );
     windows.remove_runtime(&local.label);
-    assert_eq!(windows.menu_state(None), (false, None), "closed windows cannot remain targets");
+    assert_eq!(
+        windows.menu_state(None),
+        (false, None),
+        "closed windows cannot remain targets"
+    );
 }
 
 #[test]

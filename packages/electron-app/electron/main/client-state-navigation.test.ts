@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { ClientStateManager } from "./client-state"
+import { CrossHostRegistration } from "./client-state-cross-host"
 import { ClientStateNavigationController, shouldResetRendererAccessTokenForNavigation } from "./client-state-navigation"
 import { SerializedLifecycle } from "./serialized-lifecycle"
 
@@ -33,6 +34,7 @@ test("renderer access resets only for trusted full main-frame navigation", () =>
 
 test("immediate reload flushes latest state before rotating document access", async (t) => {
   const manager = managerHarness(t)
+  t.mock.getter(CrossHostRegistration.prototype, "isPrimary", () => assert.fail("navigation used synchronous lease verification"))
   await manager.setRestoreEnabled(true)
   manager.claimClientStateAccess("outgoing")
   const load = (token: string) => { manager.assertRendererAccessToken(token); return manager.loadClientState() }

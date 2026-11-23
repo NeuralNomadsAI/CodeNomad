@@ -76,10 +76,25 @@ struct PreferencesState {
     request: PreferencesRequest,
     opener: PreferencesOpener,
     renderer_ready: bool,
-    close_approved: bool,
+    incarnation: u64,
+    close: PreferencesClose,
     transition_id: u64,
     pending_transition: Option<(u64, PreferencesTransition)>,
     trusted_origins: Vec<String>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+enum PreferencesClose {
+    #[default]
+    Open,
+    Persisting { shutdown_generation: Option<u64> },
+    Approved,
+}
+
+pub(crate) enum ShutdownPrepare {
+    Renderer,
+    JoinClose,
+    Skip,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,6 +112,9 @@ pub(crate) struct PreferencesWindow {
     selection: server_selection::SelectionCommands,
     cleanup: memory_cleanup::CleanupCommands,
     operation: Mutex<()>,
+    // Serialize restore-record writes and incarnation replacement without
+    // holding the state lock while the filesystem responds.
+    persistence: Mutex<()>,
     state: Mutex<PreferencesState>,
 }
 
@@ -106,6 +124,7 @@ impl Default for PreferencesWindow {
             selection: server_selection::SelectionCommands::default(),
             cleanup: memory_cleanup::CleanupCommands::default(),
             operation: Mutex::new(()),
+            persistence: Mutex::new(()),
             state: Mutex::new(PreferencesState {
                 request: PreferencesRequest {
                     section: DEFAULT_SECTION.to_string(),
@@ -117,7 +136,8 @@ impl Default for PreferencesWindow {
                 },
                 opener: PreferencesOpener::default(),
                 renderer_ready: false,
-                close_approved: false,
+                incarnation: 0,
+                close: PreferencesClose::Open,
                 transition_id: 0,
                 pending_transition: None,
                 trusted_origins: Vec::new(),
@@ -127,10 +147,70 @@ impl Default for PreferencesWindow {
 }
 
 impl PreferencesWindow {
-    fn set_request(&self, request: PreferencesRequest) {
+    fn new_incarnation(&self, request: PreferencesRequest) -> u64 {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.incarnation += 1;
+        state.close = PreferencesClose::Open;
+        state.renderer_ready = false;
+        state.pending_transition = None;
         state.request = request;
-        state.close_approved = false;
+        state.incarnation
+    }
+
+    fn save_request(
+        &self,
+        incarnation: u64,
+        request: PreferencesRequest,
+        persist: impl FnOnce(&PreferencesRequest) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let _write = self.persistence.lock().unwrap_or_else(|error| error.into_inner());
+        {
+            let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            if state.incarnation != incarnation || state.close != PreferencesClose::Open {
+                return Ok(false);
+            }
+        }
+        persist(&request)?;
+        self.state.lock().unwrap_or_else(|error| error.into_inner()).request = request;
+        Ok(true)
+    }
+
+    fn incarnation(&self) -> u64 {
+        self.state.lock().unwrap_or_else(|error| error.into_inner()).incarnation
+    }
+
+    fn begin_close(&self, incarnation: u64) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.incarnation != incarnation || state.close != PreferencesClose::Open {
+            return false;
+        }
+        state.close = PreferencesClose::Persisting { shutdown_generation: None };
+        true
+    }
+
+    fn persist_close(
+        &self,
+        incarnation: u64,
+        persist: impl FnOnce() -> Result<(), String>,
+    ) -> Option<(Result<(), String>, Option<u64>)> {
+        let _write = self.persistence.lock().unwrap_or_else(|error| error.into_inner());
+        {
+            let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            if state.incarnation != incarnation || !matches!(state.close, PreferencesClose::Persisting { .. }) {
+                return None;
+            }
+        }
+        let result = persist();
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let previous = std::mem::replace(&mut state.close, if result.is_ok() {
+            PreferencesClose::Approved
+        } else {
+            PreferencesClose::Open
+        });
+        let PreferencesClose::Persisting { shutdown_generation } = previous else {
+            unreachable!("a close holds persistence authority until its result is published");
+        };
+        Some((result, shutdown_generation))
     }
 
     /// A new Preferences window always starts a new opener epoch; reuse rotates
@@ -161,12 +241,31 @@ impl PreferencesWindow {
             .clone()
     }
 
-    pub(crate) fn renderer_ready(&self) -> bool {
-        self.state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .renderer_ready
+    pub(crate) fn prepare_shutdown(&self, generation: u64) -> ShutdownPrepare {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let renderer_ready = state.renderer_ready;
+        match &mut state.close {
+            PreferencesClose::Persisting { shutdown_generation } => {
+                *shutdown_generation = Some(shutdown_generation.unwrap_or_default().max(generation));
+                ShutdownPrepare::JoinClose
+            }
+            PreferencesClose::Open if renderer_ready => ShutdownPrepare::Renderer,
+            _ => ShutdownPrepare::Skip,
+        }
     }
+}
+
+fn save_request(
+    app: &AppHandle,
+    preferences: &PreferencesWindow,
+    incarnation: u64,
+    request: PreferencesRequest,
+) -> Result<bool, String> {
+    preferences.save_request(incarnation, request, |request| {
+        app.state::<crate::client_state::ClientState>()
+            .set_preferences(Some(request.clone()))
+            .map(|_| ())
+    })
 }
 
 fn validate_section(section: &str) -> Result<(), String> {
@@ -344,9 +443,7 @@ fn open_preferences(
             .unwrap_or_else(|error| error.into_inner())
             .renderer_ready;
         if !renderer_ready {
-            app.state::<crate::client_state::ClientState>()
-                .set_preferences(Some(request.clone()))?;
-            preferences.set_request(request.clone());
+            save_request(app, preferences, preferences.incarnation(), request.clone())?;
         }
         // Startup state follows the newest opener even while other drafts are guarded.
         preferences.set_opener(opener.clone(), false);
@@ -357,8 +454,11 @@ fn open_preferences(
     }
 
     app_state.manager.ready_local_access().ok_or("Local CodeNomad server is unavailable")?;
-    suspend_guard(app);
-    preferences.set_request(request.clone());
+    let incarnation = {
+        let _write = preferences.persistence.lock().unwrap_or_else(|error| error.into_inner());
+        crate::shutdown::with_navigation_authority(app, || preferences.new_incarnation(request.clone()))
+            .ok_or("The CodeNomad host is shutting down")?
+    };
     preferences.set_opener(opener, true);
     let data_directory = app_state.webview_data_directory.join("local");
     let builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("loading.html".into()))
@@ -421,10 +521,7 @@ fn open_preferences(
         let _ = preferences_window.destroy();
         return Err(error);
     }
-    if let Err(error) = app
-        .state::<crate::client_state::ClientState>()
-        .set_preferences(Some(request))
-    {
+    if let Err(error) = save_request(app, preferences, incarnation, request) {
         let _ = preferences_window.destroy();
         return Err(error);
     }
@@ -492,15 +589,15 @@ pub(crate) fn preferences_window_ready(
     app_state: tauri::State<'_, AppState>,
     preferences: tauri::State<'_, PreferencesWindow>,
 ) -> Result<(), String> {
+    let incarnation = preferences.incarnation();
     crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
     if webview.label() != LABEL {
         return Err("Preferences readiness requires the Preferences window".to_string());
     }
-    preferences
-        .state
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .renderer_ready = true;
+    let mut state = preferences.state.lock().unwrap_or_else(|error| error.into_inner());
+    if state.incarnation == incarnation {
+        state.renderer_ready = true;
+    }
     Ok(())
 }
 
@@ -526,15 +623,14 @@ pub(crate) fn preferences_accept_request(
     request: PreferencesRequest,
     generation: Option<u64>,
 ) -> Result<(), String> {
+    let incarnation = preferences.incarnation();
     crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
     if webview.label() != LABEL {
         return Err("Preferences request acceptance requires the Preferences window".to_string());
     }
     let request = validate_request(request)?;
-    app.state::<crate::client_state::ClientState>()
-        .set_preferences(Some(request.clone()))?;
-    preferences.set_request(request);
-    if let Some(generation) = generation {
+    let saved = save_request(&app, &preferences, incarnation, request)?;
+    if let Some(generation) = generation.filter(|_| saved) {
         crate::shutdown::preferences_renderer_flushed(app, generation);
     }
     Ok(())
@@ -683,44 +779,67 @@ pub(crate) fn suspend_guard(app: &AppHandle) {
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     state.renderer_ready = false;
-    state.close_approved = false;
     state.pending_transition = None;
 }
 
 pub(crate) fn approve_close(app: &AppHandle) -> Result<(), String> {
+    let preferences = app.state::<PreferencesWindow>();
+    let incarnation = preferences.incarnation();
+    if crate::shutdown::with_navigation_authority(app, || preferences.begin_close(incarnation)) != Some(true) {
+        return Ok(());
+    }
+    finish_close(app, incarnation).map(|_| ())
+}
+
+fn finish_close(app: &AppHandle, incarnation: u64) -> Result<bool, String> {
+    let preferences = app.state::<PreferencesWindow>();
+    if preferences.incarnation() != incarnation {
+        return Ok(false);
+    }
     crate::client_state::capture_and_flush_window(app, LABEL);
-    app.state::<crate::client_state::ClientState>()
-        .set_preferences(None)?;
-    app.state::<PreferencesWindow>()
-        .state
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .close_approved = true;
-    Ok(())
+    let Some((result, generation)) = preferences.persist_close(incarnation, || {
+        app.state::<crate::client_state::ClientState>()
+            .set_preferences(None)
+            .map(|_| ())
+    }) else {
+        return Ok(false);
+    };
+    if let Some(generation) = generation {
+        crate::shutdown::preferences_close_settled(app, generation, result.is_ok());
+    }
+    result.map(|()| true)
 }
 
 pub(crate) fn intercept_close(app: &AppHandle) -> bool {
     let preferences = app.state::<PreferencesWindow>();
-    let mut state = preferences
-        .state
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    if std::mem::take(&mut state.close_approved) {
-        return false;
-    }
-    if let Some(window) = app.get_webview_window(LABEL) {
-        if state.renderer_ready {
-            let _ = window.emit("preferences:close-requested", ());
-        } else {
-            let app = app.clone();
-            std::thread::spawn(move || {
-                if let Err(error) = approve_close(&app)
-                    .and_then(|()| window.close().map_err(|error| error.to_string()))
-                {
-                    eprintln!("[client-state] failed to close Preferences: {error}");
-                }
-            });
+    let (incarnation, ready) = {
+        let state = preferences.state.lock().unwrap_or_else(|error| error.into_inner());
+        match state.close {
+            PreferencesClose::Approved => return false,
+            PreferencesClose::Persisting { .. } => return true,
+            PreferencesClose::Open => (state.incarnation, state.renderer_ready),
         }
+    };
+    let Some(window) = app.get_webview_window(LABEL) else {
+        return true;
+    };
+    if ready {
+        if crate::shutdown::with_navigation_authority(app, || ()).is_some() {
+            let _ = window.emit("preferences:close-requested", ());
+        }
+    } else if crate::shutdown::with_navigation_authority(app, || preferences.begin_close(incarnation)) == Some(true) {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let result = finish_close(&app, incarnation).and_then(|approved| {
+                if approved {
+                    window.close().map_err(|error| error.to_string())?;
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                eprintln!("[client-state] failed to close Preferences: {error}");
+            }
+        });
     }
     true
 }
@@ -744,6 +863,61 @@ fn show_loading_now(app: &AppHandle) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn quit_joins_the_only_preferences_close_write() {
+        let preferences = PreferencesWindow::default();
+        let incarnation = preferences.new_incarnation(preferences.request());
+        assert!(preferences.begin_close(incarnation));
+        std::thread::scope(|scope| {
+            let (writing, started) = std::sync::mpsc::channel();
+            let (finish, release) = std::sync::mpsc::channel();
+            let preferences = &preferences;
+            let worker = scope.spawn(move || preferences.persist_close(incarnation, || {
+                writing.send(()).unwrap();
+                release.recv().unwrap();
+                Ok(())
+            }));
+            started.recv().unwrap();
+            assert!(!preferences.begin_close(incarnation));
+            assert!(matches!(preferences.prepare_shutdown(14), ShutdownPrepare::JoinClose));
+            finish.send(()).unwrap();
+            assert_eq!(worker.join().unwrap(), Some((Ok(()), Some(14))));
+        });
+        assert!(matches!(preferences.prepare_shutdown(15), ShutdownPrepare::Skip));
+    }
+
+    #[test]
+    fn failed_close_leaves_preferences_open_for_shutdown_prepare() {
+        let preferences = PreferencesWindow::default();
+        let incarnation = preferences.new_incarnation(preferences.request());
+        preferences.state.lock().unwrap().renderer_ready = true;
+        assert!(preferences.begin_close(incarnation));
+        assert!(matches!(preferences.prepare_shutdown(7), ShutdownPrepare::JoinClose));
+        assert_eq!(
+            preferences.persist_close(incarnation, || Err("write failed".into())),
+            Some((Err("write failed".into()), Some(7)))
+        );
+        assert!(matches!(preferences.prepare_shutdown(7), ShutdownPrepare::Renderer));
+        assert!(preferences.begin_close(incarnation));
+    }
+
+    #[test]
+    fn stale_close_worker_cannot_clear_or_approve_a_replacement() {
+        let preferences = PreferencesWindow::default();
+        let first = preferences.new_incarnation(preferences.request());
+        assert!(preferences.begin_close(first));
+        let request = PreferencesRequest { section: "speech".into(), ..preferences.request() };
+        let replacement = preferences.new_incarnation(request.clone());
+        assert!(preferences.begin_close(replacement));
+        assert!(preferences.persist_close(first, || panic!("stale write")).is_none());
+        assert!(!preferences
+            .save_request(first, request.clone(), |_| panic!("stale request write"))
+            .unwrap());
+        assert_eq!(preferences.request(), request);
+        assert!(matches!(preferences.prepare_shutdown(3), ShutdownPrepare::JoinClose));
+        assert_eq!(preferences.persist_close(replacement, || Ok(())), Some((Ok(()), Some(3))));
+    }
 
     #[test]
     fn validates_sections_and_builds_an_explicit_preferences_target() {

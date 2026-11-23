@@ -202,13 +202,15 @@ impl ProcessState {
         }
     }
 
-    pub(super) fn is_primary(&self) -> bool {
-        let has_local_lock = self
-            .primary_lock
+    pub(super) fn has_primary_lock(&self) -> bool {
+        self.primary_lock
             .lock()
             .map(|lock| lock.is_some())
-            .unwrap_or(false);
-        has_local_lock
+            .unwrap_or(false)
+    }
+
+    pub(super) fn is_primary(&self) -> bool {
+        self.has_primary_lock()
             && self
                 .cross_host_registration
                 .lock()

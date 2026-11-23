@@ -1,7 +1,7 @@
 use crate::client_state::{self, ClientState, NavigationKind};
 use crate::identity::{local_window_id, local_window_label};
 use crate::launch::LaunchIntent;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, Webview, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
@@ -204,6 +204,7 @@ impl Registry {
 #[derive(Default)]
 struct Registry {
     records: HashMap<String, LocalWindowRecord>,
+    pending: HashSet<String>,
     mru: Vec<String>,
     backend_target: Option<String>,
 }
@@ -249,7 +250,26 @@ impl Registry {
             .values()
             .filter(|record| !record.connect_only)
             .count()
+            + self.pending.len()
             < MAX_LOCAL_WINDOWS
+    }
+
+    fn contains_id(&self, id: &str) -> bool {
+        self.pending.contains(id)
+            || local_window_label(id).is_ok_and(|label| self.records.contains_key(&label))
+    }
+
+    fn reserve_new_window(&mut self, saved: Vec<String>) -> Result<(String, bool), String> {
+        if !self.has_user_window_capacity() {
+            return Err("Too many local windows".into());
+        }
+        let (id, existing) = saved
+            .into_iter()
+            .find(|id| !self.contains_id(id))
+            .map(|id| (id, true))
+            .unwrap_or_else(|| (uuid::Uuid::new_v4().to_string(), false));
+        self.pending.insert(id.clone());
+        Ok((id, existing))
     }
 
     fn remove(&mut self, label: &str) -> Option<LocalWindowRecord> {
@@ -298,8 +318,15 @@ impl Registry {
 #[derive(Default)]
 pub(crate) struct LocalWindows {
     registry: Mutex<Registry>,
+    launch_dispatch: Mutex<LaunchDispatch>,
     /// A connect-only launch defers the saved Preferences window until it falls back to a normal start.
     startup_restore_deferred: std::sync::atomic::AtomicBool,
+}
+
+#[derive(Default)]
+struct LaunchDispatch {
+    pending: VecDeque<LaunchIntent>,
+    draining: bool,
 }
 
 impl LocalWindows {
@@ -333,12 +360,9 @@ impl LocalWindows {
     }
 
     pub(crate) fn contains_id(&self, id: &str) -> bool {
-        local_window_label(id).ok().is_some_and(|label| {
-            self.registry
-                .lock()
-                .ok()
-                .is_some_and(|registry| registry.records.contains_key(&label))
-        })
+        self.registry
+            .lock()
+            .is_ok_and(|registry| registry.contains_id(id))
     }
 
     pub(crate) fn mru_label(&self) -> Option<String> {
@@ -400,7 +424,10 @@ impl LocalWindows {
         state: Option<crate::view_menu::ViewMenuState>,
     ) -> Result<(), String> {
         let mut registry = self.registry.lock().map_err(|error| error.to_string())?;
-        let record = registry.records.get_mut(label).ok_or("Unknown local window")?;
+        let record = registry
+            .records
+            .get_mut(label)
+            .ok_or("Unknown local window")?;
         record.view_menu_state = state;
         Ok(())
     }
@@ -415,7 +442,12 @@ impl LocalWindows {
         let label = select_local_label(focused, registry.mru_label().as_deref());
         let record = label.as_ref().and_then(|label| registry.records.get(label));
         record
-            .map(|record| (record.workspace_menu_enabled, record.view_menu_state.clone()))
+            .map(|record| {
+                (
+                    record.workspace_menu_enabled,
+                    record.view_menu_state.clone(),
+                )
+            })
             .unwrap_or_default()
     }
 
@@ -532,7 +564,8 @@ impl LocalWindows {
         }
     }
 
-    pub(crate) fn has_user_window_capacity(&self) -> bool {
+    #[cfg(test)]
+    fn has_user_window_capacity(&self) -> bool {
         self.registry
             .lock()
             .is_ok_and(|registry| registry.has_user_window_capacity())
@@ -640,7 +673,8 @@ pub(crate) fn browser_open_candidates(app: &AppHandle) -> Result<Vec<(String, St
 }
 
 pub(crate) fn browser_open_window_current(app: &AppHandle, label: &str, incarnation: &str) -> bool {
-    app.state::<LocalWindows>().automation_window_current(label, incarnation)
+    app.state::<LocalWindows>()
+        .automation_window_current(label, incarnation)
 }
 
 /// The update flow lives in application windows. Preferences and remote windows
@@ -810,29 +844,59 @@ fn build_local_window(
     Ok(record)
 }
 
-pub(crate) fn create_new_window(app: &AppHandle) -> Result<LocalWindowRecord, String> {
-    let state = app.state::<ClientState>();
-    if let Some(id) = state
-        .window_ids()
-        .into_iter()
-        .find(|id| !app.state::<LocalWindows>().contains_id(id))
-    {
-        return create_local_window(app, id, state.is_primary_process());
-    }
-    if !app.state::<LocalWindows>().has_user_window_capacity() {
-        return Err("Too many local windows".to_string());
-    }
-    let id = uuid::Uuid::new_v4().to_string();
-    let persisted = match state.add_window(id.clone()) {
-        Ok(persisted) => persisted,
-        Err(error) => {
-            eprintln!(
-                "[client-state] failed to persist a new window; using an ephemeral window: {error}"
-            );
-            false
+pub(crate) fn create_new_window(app: &AppHandle) -> Result<(), String> {
+    schedule_new_window(app, |_, result| {
+        if let Err(error) = result {
+            eprintln!("[tauri] failed to create local window: {error}");
         }
-    };
-    create_local_window(app, id, persisted)
+    })
+}
+
+fn schedule_new_window(
+    app: &AppHandle,
+    complete: impl FnOnce(&AppHandle, Result<LocalWindowRecord, String>) + Send + 'static,
+) -> Result<(), String> {
+    let windows = app.state::<LocalWindows>();
+    let saved = app.state::<ClientState>().window_ids();
+    let (id, existing) = windows
+        .registry
+        .lock()
+        .map_err(|error| error.to_string())?
+        .reserve_new_window(saved)?;
+    let worker = app.clone();
+    let pending_id = id.clone();
+    let enqueued = crate::shutdown::with_navigation_authority(app, || {
+        ClientState::queue_new_window(app, id.clone(), existing, move |result| {
+            let dispatch = worker.clone();
+            let failed_id = pending_id.clone();
+            if worker.run_on_main_thread(move || {
+                release_new_window(&dispatch, &pending_id);
+                if crate::shutdown::with_navigation_authority(&dispatch, || ()).is_none() {
+                    complete(&dispatch, Err("Application shutdown is in progress".into()));
+                    return;
+                }
+                let persisted = result.unwrap_or_else(|error| {
+                    eprintln!("[client-state] failed to persist a new window; using an ephemeral window: {error}");
+                    false
+                });
+                let result = create_local_window(&dispatch, pending_id, persisted);
+                complete(&dispatch, result);
+            }).is_err() {
+                release_new_window(&worker, &failed_id);
+            }
+        })
+    })
+    .unwrap_or_else(|| Err("Application shutdown is in progress".into()));
+    if enqueued.is_err() {
+        release_new_window(app, &id);
+    }
+    enqueued
+}
+
+fn release_new_window(app: &AppHandle, id: &str) {
+    if let Ok(mut registry) = app.state::<LocalWindows>().registry.lock() {
+        registry.pending.remove(id);
+    }
 }
 
 pub(crate) fn restore_windows(app: &AppHandle) -> Result<(), String> {
@@ -853,7 +917,47 @@ pub(crate) fn restore_windows(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn handle_intent(app: &AppHandle, intent: LaunchIntent) -> Result<(), String> {
+pub(crate) fn handle_intents(app: &AppHandle, intents: Vec<LaunchIntent>) {
+    {
+        let windows = app.state::<LocalWindows>();
+        let Ok(mut dispatch) = windows.launch_dispatch.lock() else {
+            return;
+        };
+        dispatch.pending.extend(intents);
+        if dispatch.draining {
+            return;
+        }
+        dispatch.draining = true;
+    }
+    drain_intents(app);
+}
+
+fn drain_intents(app: &AppHandle) {
+    loop {
+        let allowed = crate::shutdown::with_navigation_authority(app, || ()).is_some();
+        let intent = {
+            let windows = app.state::<LocalWindows>();
+            let Ok(mut dispatch) = windows.launch_dispatch.lock() else {
+                return;
+            };
+            if !allowed {
+                dispatch.pending.clear();
+            }
+            let Some(intent) = dispatch.pending.pop_front() else {
+                dispatch.draining = false;
+                return;
+            };
+            intent
+        };
+        match handle_intent(app, intent) {
+            Ok(true) => return, // Resume when the new window has an MRU entry.
+            Ok(false) => {}
+            Err(error) => eprintln!("[tauri-startup] launch intent failed: {error}"),
+        }
+    }
+}
+
+fn handle_intent(app: &AppHandle, intent: LaunchIntent) -> Result<bool, String> {
     let windows = app.state::<LocalWindows>();
     if intent.is_connect_only() && windows.mru_label().is_none() {
         // Nothing to run the connection in: a hidden, unpersisted window runs it and closes once it settles.
@@ -871,17 +975,28 @@ pub(crate) fn handle_intent(app: &AppHandle, intent: LaunchIntent) -> Result<(),
             let _ = timeout_app
                 .run_on_main_thread(move || abandon_launch_window(&dispatch, &record.label));
         });
-        return Ok(());
+        return Ok(false);
     }
-    let record = if intent.new_window {
-        create_new_window(app)?
-    } else if let Some(label) = app.state::<LocalWindows>().mru_label() {
-        app.state::<LocalWindows>()
-            .record(&label)
-            .ok_or_else(|| "MRU local window disappeared".to_string())?
-    } else {
-        create_new_window(app)?
-    };
+    if !intent.new_window {
+        if let Some(record) = windows.mru_label().and_then(|label| windows.record(&label)) {
+            return deliver_intent(app, record, intent).map(|()| false);
+        }
+    }
+    schedule_new_window(app, move |app, result| {
+        if let Err(error) = result.and_then(|record| deliver_intent(app, record, intent)) {
+            eprintln!("[tauri-startup] launch intent failed: {error}");
+        }
+        drain_intents(app);
+    })?;
+    Ok(true)
+}
+
+fn deliver_intent(
+    app: &AppHandle,
+    record: LocalWindowRecord,
+    intent: LaunchIntent,
+) -> Result<(), String> {
+    let windows = app.state::<LocalWindows>();
     for folder in intent.folders {
         app.state::<LocalWindows>()
             .queue_folder(app, &record.label, folder)?;
@@ -893,11 +1008,10 @@ pub(crate) fn handle_intent(app: &AppHandle, intent: LaunchIntent) -> Result<(),
     Ok(())
 }
 
-/// Opens the local windows a normal start shows, beside a failed connect-only window, and returns the one to report in.
-fn restore_normal_start(app: &AppHandle) -> Result<String, String> {
+/// Opens saved windows beside a failed connect-only window, and returns the one to report in.
+fn restore_normal_start(app: &AppHandle, persisted: bool) -> Result<Option<String>, String> {
     let state = app.state::<ClientState>();
     let windows = app.state::<LocalWindows>();
-    let persisted = state.is_primary_process();
     for id in state.window_ids() {
         if !windows.contains_id(&id) {
             create_local_window(app, id, persisted)?;
@@ -913,22 +1027,13 @@ fn restore_normal_start(app: &AppHandle) -> Result<String, String> {
         .ok()
         .and_then(|id| local_window_label(&id).ok())
         .filter(usable);
-    let label = match active.or_else(|| {
+    Ok(active.or_else(|| {
         windows
             .records()
             .into_iter()
             .map(|record| record.label)
             .find(usable)
-    }) {
-        Some(label) => label,
-        None => create_new_window(app)?.label,
-    };
-    windows.release_startup_restore();
-    if windows.backend_target().is_some() {
-        crate::preferences_window::navigate_backend(app);
-    }
-    focus(app, &label);
-    Ok(label)
+    }))
 }
 
 fn close_local_window(app: &AppHandle, label: &str) {
@@ -946,29 +1051,88 @@ fn settle_connection(
         ConnectionSettlement::Keep => {}
         ConnectionSettlement::Close => close_local_window(app, label),
         ConnectionSettlement::StartNormally(connections) => {
-            let windows = app.state::<LocalWindows>();
-            let fallback = match restore_normal_start(app) {
-                Ok(fallback) => fallback,
-                Err(error) => {
-                    // Without a normal start the hidden window itself becomes visible and runs or reports them.
-                    eprintln!(
-                        "[tauri-startup] normal start after a launch connection failed: {error}"
-                    );
-                    windows.promote(label);
-                    for pending in connections {
-                        windows.queue_connection(app, label, pending.target, pending.failure)?;
+            let worker = app.clone();
+            let label = label.to_string();
+            tauri::async_runtime::spawn_blocking(move || {
+                let persisted = worker.state::<ClientState>().is_primary_process();
+                let dispatch = worker.clone();
+                let _ = worker.run_on_main_thread(move || {
+                    if crate::shutdown::with_navigation_authority(&dispatch, || ()).is_none() {
+                        return;
                     }
-                    focus(app, label);
-                    return Ok(());
-                }
-            };
-            for pending in connections {
-                windows.queue_connection(app, &fallback, pending.target, pending.failure)?;
-            }
-            close_local_window(app, label);
+                    match restore_normal_start(&dispatch, persisted) {
+                        Ok(None) => {
+                            let fallback_label = label.clone();
+                            let fallback_connections = connections.clone();
+                            if let Err(error) =
+                                schedule_new_window(&dispatch, move |app, result| {
+                                    finish_normal_start(
+                                        app,
+                                        &label,
+                                        connections,
+                                        result.map(|record| record.label),
+                                    );
+                                })
+                            {
+                                finish_normal_start(
+                                    &dispatch,
+                                    &fallback_label,
+                                    fallback_connections,
+                                    Err(error),
+                                );
+                            }
+                        }
+                        Ok(Some(target)) => {
+                            finish_normal_start(&dispatch, &label, connections, Ok(target))
+                        }
+                        Err(error) => {
+                            finish_normal_start(&dispatch, &label, connections, Err(error))
+                        }
+                    }
+                });
+            });
         }
     }
     Ok(())
+}
+
+fn finish_normal_start(
+    app: &AppHandle,
+    label: &str,
+    connections: VecDeque<PendingConnection>,
+    fallback: Result<String, String>,
+) {
+    if crate::shutdown::with_navigation_authority(app, || ()).is_none() {
+        return;
+    }
+    let windows = app.state::<LocalWindows>();
+    let fallback = match fallback {
+        Ok(fallback) => {
+            windows.release_startup_restore();
+            if windows.backend_target().is_some() {
+                crate::preferences_window::navigate_backend(app);
+            }
+            fallback
+        }
+        Err(error) => {
+            // Keep the hidden launch's work reachable if a normal window cannot be built.
+            eprintln!("[tauri-startup] normal start after a launch connection failed: {error}");
+            windows.promote(label);
+            label.to_string()
+        }
+    };
+    for pending in connections {
+        if let Err(error) =
+            windows.queue_connection(app, &fallback, pending.target, pending.failure)
+        {
+            eprintln!("[tauri-startup] launch connection failed: {error}");
+            return;
+        }
+    }
+    focus(app, &fallback);
+    if fallback != label {
+        close_local_window(app, label);
+    }
 }
 
 /// Hands a hidden launch window's connections to a normal start (backend failure or timeout).

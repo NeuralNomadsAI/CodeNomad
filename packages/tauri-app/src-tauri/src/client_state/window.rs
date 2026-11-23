@@ -312,7 +312,9 @@ pub fn setup_local_window(
     let _ = window.set_zoom(initial_zoom);
     #[cfg(windows)]
     register_native_zoom_handler(window, app, window_id.to_string(), persisted);
-    if !client_state.is_primary() || !persisted {
+    // Placement is advisory. Durable publication rechecks the cross-host
+    // lease on the worker; native construction only needs the local role.
+    if !persisted || !client_state.process.has_primary_lock() {
         crate::window_constraints::register(&window.as_ref().window(), initial_zoom);
         if show {
             let _ = window.show();

@@ -1,10 +1,10 @@
 use crate::{
-    device_speech::{DeviceSpeech, MicrophonePurpose, Request, SpeechError},
+    device_speech::{DeviceSpeech, MicrophonePurpose, Request, SpeechAdmission, SpeechError},
     local_windows::LocalWindows,
     preferences_window, AppState,
 };
 use serde_json::{json, Value};
-use tauri::{Manager, State, Webview};
+use tauri::{Manager, Webview};
 
 #[cfg(target_os = "linux")]
 #[path = "device_speech_remote_microphone.rs"]
@@ -97,13 +97,28 @@ pub(crate) fn bind_microphone(window: &tauri::WebviewWindow, remote: bool) {
     });
 }
 
-#[tauri::command(async)]
-pub(crate) fn device_speech_request(
+#[tauri::command]
+pub(crate) async fn device_speech_request(
     webview: Webview,
-    state: State<'_, AppState>,
-    speech: State<'_, DeviceSpeech>,
     request: Request,
 ) -> Result<Value, String> {
+    let witness = webview
+        .app_handle()
+        .state::<DeviceSpeech>()
+        .document_witness(webview.label());
+    tauri::async_runtime::spawn_blocking(move || run_request(webview, request, witness))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn run_request(
+    webview: Webview,
+    request: Request,
+    witness: (std::sync::Arc<()>, u64),
+) -> Result<Value, String> {
+    let app = webview.app_handle();
+    let state = app.state::<AppState>();
+    let speech = app.state::<DeviceSpeech>();
     let label = webview.label();
     let sheet = crate::remote_dictation::is_sheet(label);
     let registered = webview
@@ -148,33 +163,44 @@ pub(crate) fn device_speech_request(
     {
         return Err("Focus the local dictation sheet to start".into());
     }
-    let result = crate::shutdown::with_navigation_authority(webview.app_handle(), || {
+    let preflight = speech.preflight(witness, &request);
+    let result = crate::shutdown::with_navigation_authority(app, || {
         if sheet {
             crate::remote_dictation::with_trusted_sheet(
-                webview.app_handle(),
+                app,
                 label,
                 &current,
                 matches!(request, Request::Read {}),
-                || speech.request(label, request),
+                || speech.admit(label, request, preflight, false),
             )
         } else {
             Some(match request {
                 #[cfg(target_os = "linux")]
-                Request::AuthorizeApiMicrophone { id } => {
-                    speech.authorize_api_microphone(label, &current, id, preferences)
-                }
+                Request::AuthorizeApiMicrophone { id } => speech
+                    .authorize_api_microphone(label, &current, id, preferences, preflight)
+                    .map(SpeechAdmission::Complete),
                 #[cfg(target_os = "linux")]
                 Request::RevokeApiMicrophone { id } => {
                     speech.revoke_api_microphone(label, &id);
-                    Ok(Value::Null)
+                    Ok(SpeechAdmission::Complete(Value::Null))
                 }
-                request => speech.request(label, request),
+                request => speech.admit(label, request, preflight, false),
             })
         }
     })
     .ok_or("Application is shutting down")?
     .ok_or("Device speech requires the registered local dictation sheet")?;
-    Ok(speech_response(result))
+    Ok(speech_response(result.and_then(
+        |admission| match admission {
+            SpeechAdmission::Complete(value) => Ok(value),
+            SpeechAdmission::Select(engine, caps, preflight) => {
+                speech.finish_selection(label, engine, caps, preflight, |admit| {
+                    crate::shutdown::with_navigation_authority(app, admit) == Some(true)
+                })
+            }
+            SpeechAdmission::CancelCommit(control) => speech.finish_cancel(label, control),
+        },
+    )))
 }
 
 pub(crate) fn speech_response(result: Result<Value, SpeechError>) -> Value {

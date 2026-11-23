@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { ClientStateManager, type ClientStateWriter } from "./client-state"
+import { CrossHostRegistration } from "./client-state-cross-host"
 import { deterministicLegacyWindowId, parseClientState } from "./client-state-envelope"
 import { MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES } from "./client-state-partitions"
 
@@ -57,6 +58,7 @@ test("Preferences restoration survives final local-window shutdown and clears on
   assert.equal(await manager.savePreferencesWindow(geometry), true)
   await manager.drainAndReleasePrimary()
   const reopened = h.create()
+  t.mock.getter(CrossHostRegistration.prototype, "isPrimary", () => assert.fail("Preferences used synchronous lease verification"))
   assert.equal(reopened.preferences, undefined)
   assert.deepEqual(reopened.lastPreferences, { section: "providers", scrollTop: 420 })
   assert.deepEqual(reopened.preferencesWindow, geometry)
@@ -245,7 +247,7 @@ test("unshipped partitioned V2 shared state is not copied over shipped V1 migrat
   await manager.drainAndReleasePrimary()
 })
 
-test("ownership loss immediately disables restore reads and mutations", async (t) => {
+test("ownership loss disables renderer restore reads and mutations", async (t) => {
   const h = harness(t, {
     version: 1,
     restoreEnabled: true,
@@ -253,11 +255,46 @@ test("ownership loss immediately disables restore reads and mutations", async (t
     window: { bounds: { x: 0, y: 0, width: 900, height: 700 }, maximized: false, fullscreen: false, zoomFactor: 1 },
   })
   const manager = h.create()
+  const id = manager.activeWindowId
+  manager.claimClientStateAccess("renderer", id)
   writeFileSync(join(h.directory, "election", "primary.owner.json", "owner.json"), "malformed")
-  assert.equal(manager.isPrimary, false)
-  assert.deepEqual(manager.loadClientState(), { isPrimary: false, restoreEnabled: false, snapshot: null, partitionProtocolVersion: 1 })
-  assert.equal(manager.getWindowState(), undefined)
-  assert.equal(await manager.saveClientState({ ignored: true }), false)
+  assert.deepEqual(await manager.loadClientStateForRenderer(id, "renderer"), {
+    isPrimary: false, restoreEnabled: false, snapshot: null, partitionProtocolVersion: 1,
+  })
+  assert.equal(await manager.saveClientState({ ignored: true }, "renderer", id), false)
+})
+
+test("renderer root load observes earlier publication and never sees a later failed write", async (t) => {
+  const h = harness(t, { version: 1, restoreEnabled: true })
+  const manager = h.create()
+  const id = manager.activeWindowId
+  manager.claimClientStateAccess("renderer", id)
+  let enter!: () => void, resume!: () => void
+  const entered = new Promise<void>((resolve) => { enter = resolve })
+  const gate = new Promise<void>((resolve) => { resume = resolve })
+  let checks = 0
+  t.mock.method(CrossHostRegistration.prototype, "checkPrimary", async () => {
+    // The first save checks at mutation admission and at atomic replacement.
+    if (++checks === 3) { enter(); await gate }
+    return true
+  })
+  const earlier = manager.saveClientState({ revision: 1 }, "renderer", id)
+  const load = manager.loadClientStateForRenderer(id, "renderer")
+  const later = manager.saveClientState({ revision: 2 }, "renderer", id)
+  try {
+    await entered
+    assert.equal(await earlier, true)
+    assert.deepEqual(persistedRecord(h.statePath).snapshot, { revision: 1 })
+    h.fail(true)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(checks, 3)
+  } finally {
+    resume()
+    await Promise.allSettled([earlier, load, later])
+  }
+  assert.deepEqual((await load).snapshot, { revision: 1 })
+  await assert.rejects(later, /injected write failure/)
+  assert.deepEqual(persistedRecord(h.statePath).snapshot, { revision: 1 })
 })
 
 test("failed preference and clear writes roll memory and suppression back", async (t) => {
@@ -373,8 +410,10 @@ test("partition commits leave the event loop free and publish in order before qu
 test("a failed drain keeps ownership and permits a persisted retry", async (t) => {
   const h = harness(t, { version: 1, restoreEnabled: true })
   const manager = h.create()
+  manager.claimClientStateAccess("renderer")
   h.fail(true)
   await assert.rejects(manager.saveClientState({ failed: true }), /injected write failure/)
+  assert.equal((await manager.loadClientStateForRenderer(manager.activeWindowId, "renderer")).snapshot, null)
   await assert.rejects(manager.drainAndReleasePrimary(), /injected write failure/)
   assert.equal(manager.isPrimary, true)
   assert.equal(existsSync(join(h.directory, "client-state.primary.lock")), true)

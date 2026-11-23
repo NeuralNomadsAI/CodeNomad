@@ -202,11 +202,11 @@ export class ClientStateManager {
     } catch (error) {
       console.warn("[client-state] failed to register cross-host ownership", error)
     }
-    if (!this.crossHostRegistration?.isPrimary) {
+    if (!this.checkStartupPrimary()) {
       if (election) removeProcessOwnerLockIfOwned(this.lockPath, this.owner)
       this.primary = false
     }
-    if (this.isPrimary) {
+    if (this.primary) {
       const legacySharedStatePath = options?.legacySharedStatePath === undefined
         ? (options?.crossHostElectionDirectory ? null : resolveLegacyCrossHostStatePath())
         : options.legacySharedStatePath
@@ -231,6 +231,12 @@ export class ClientStateManager {
   }
 
   get isPrimary(): boolean {
+    // Native window and flush dispatch need only the startup role. Persistence
+    // revalidates the lease asynchronously at the point of use.
+    return this.primary
+  }
+
+  private checkStartupPrimary(): boolean {
     if (!this.primary || !this.crossHostRegistration?.isPrimary) return false
     if (!this.legacyTauriDataPath) return true
     try {
@@ -308,11 +314,16 @@ export class ClientStateManager {
     return this.projectClientState(windowId, this.isPrimary)
   }
 
-  async loadClientStateForRenderer(windowId: string, rendererToken: unknown): Promise<ClientStateLoadResult> {
-    await this.writeQueue.catch(() => {})
-    const primary = await this.checkPrimary()
-    this.assertRendererAccessToken(rendererToken, windowId)
-    return this.projectClientState(windowId, primary)
+  loadClientStateForRenderer(windowId: string, rendererToken: unknown): Promise<ClientStateLoadResult> {
+    const operation = this.writeQueue.catch(() => {}).then(async () => {
+      const primary = await this.checkPrimary()
+      this.assertRendererAccessToken(rendererToken, windowId)
+      return this.projectClientState(windowId, primary)
+    })
+    // A read delays later writes without hiding a failed publication from flush.
+    this.writeQueue = this.writeQueue.finally(() => operation.then(() => {}, () => {}))
+    void this.writeQueue.catch(() => {})
+    return operation
   }
 
   private projectClientState(windowId: string, primary: boolean): ClientStateLoadResult {
@@ -775,7 +786,7 @@ export class ClientStateManager {
 
   // Migration runs before the first application window and before the async IPC queue exists.
   private assertStartupReplacementAllowed(): void {
-    if (!this.isPrimary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
+    if (!this.checkStartupPrimary() || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
       throw new Error("Client state ownership changed before atomic replacement")
     }
   }

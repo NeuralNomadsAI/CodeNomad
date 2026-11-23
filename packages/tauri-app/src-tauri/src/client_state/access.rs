@@ -17,6 +17,7 @@ struct RendererAccessState {
     pending_origin: Option<String>,
     generation: u64,
     document: u64,
+    challenge: Option<(uuid::Uuid, String)>,
 }
 
 pub(super) struct PendingNavigation {
@@ -58,12 +59,31 @@ impl RendererAccess {
         let state = states.entry(window_id.to_owned()).or_default();
         let document = self.next();
         state.document = document;
+        state.challenge = None;
         state.generation = document;
         if let Some(token) = state.token.take() {
             state.retired_token = Some(token);
         }
         state.committed_origin = None;
         state.pending_origin = allowed_url.and_then(|url| origin_key(url).ok());
+    }
+
+    pub(super) fn document_challenge(&self, window_id: &str, url: &Url) -> Option<uuid::Uuid> {
+        let origin = origin_key(url).ok()?;
+        let mut states = self.state.lock().ok()?;
+        let state = states.get_mut(window_id)?;
+        let (nonce, bound_origin) = state.challenge.get_or_insert_with(|| (uuid::Uuid::new_v4(), origin.clone()));
+        (*bound_origin == origin).then_some(*nonce)
+    }
+
+    pub(super) fn challenged_document(&self, window_id: &str, challenge: &str, url: &Url) -> Result<u64, String> {
+        let origin = origin_key(url)?;
+        let challenge = uuid::Uuid::parse_str(challenge).ok();
+        self.state.lock().ok().and_then(|states| {
+            let state = states.get(window_id)?;
+            let (nonce, bound_origin) = state.challenge.as_ref()?;
+            (challenge.as_ref() == Some(nonce) && bound_origin == &origin).then_some(state.document)
+        }).ok_or_else(|| "Client state renderer document retired".to_string())
     }
 
     pub(super) fn claim(&self, access_token: &str, renderer_url: &Url) -> Result<(), String> {

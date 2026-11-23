@@ -41,12 +41,13 @@ retries once with all partition bodies.
 Tauri admits client-state IPC to a FIFO worker before yielding the event loop,
 so writes and renderer flush acknowledgements keep delivery order. Admission
 captures the renderer URL and document epoch; page-load start retires the
-previous epoch after any pre-navigation flush. Quit seals the queue and waits
+previous epoch after any pre-navigation flush. A first claim must carry the
+challenge injected into its committed document. Quit seals the queue and waits
 for a bounded FIFO barrier before releasing ownership. Windows requests the
 renderer flush at session-end query and drains admitted work at confirmed
-session end. Electron serializes publication and asynchronous ownership checks
-on its write queue, and fences the retiring participant cohort before reopening
-ownership.
+session end. Electron serializes renderer loads and publication on its write
+queue. Both hosts bind participating processes to an exact owner generation so
+recovery after a handoff waits only for that generation and unbound records.
 
 Workspace file drafts use a separate `workspace-file-drafts.json` beside the
 profile's client-state envelope. Both hosts serialize atomic draft changes under

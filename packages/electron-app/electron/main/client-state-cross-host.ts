@@ -22,6 +22,7 @@ export interface CrossHostLeaseDependencies {
   onOwnerPrepared?(): void
   onOwnerRetired?(): void
   onGracefulOwnerChecked?(): void
+  onGracefulOwnerRetiring?(): void
 }
 
 const defaultDependencies: CrossHostLeaseDependencies = {
@@ -126,7 +127,7 @@ function sync(descriptor: number): void {
   }
 }
 
-function publishFile(path: string, value: string): void {
+function publishFile(path: string, value: string, replace = false): void {
   const temporary = join(dirname(path), `.publish.${randomUUID()}.tmp`)
   let descriptor: number | undefined
   try {
@@ -135,7 +136,8 @@ function publishFile(path: string, value: string): void {
     sync(descriptor)
     closeSync(descriptor)
     descriptor = undefined
-    linkSync(temporary, path)
+    if (replace) renameSync(temporary, path)
+    else linkSync(temporary, path)
   } finally {
     if (descriptor !== undefined) try { closeSync(descriptor) } catch {}
     try { unlinkSync(temporary) } catch {}
@@ -150,8 +152,20 @@ function recoveryPath(directory: string, owner: ProcessOwner): string {
   return join(directory, `${RECOVERY_PREFIX}${owner.pid}.${owner.runToken}${RECOVERY_SUFFIX}`)
 }
 
+function serializeParticipant(owner: ProcessOwner, cohort: ProcessOwner | null): string {
+  const { pid, runToken, processStartIdentity } = owner
+  return JSON.stringify({ pid, runToken, processStartIdentity, cohort })
+}
+
+function participantCohort(value: string): ProcessOwner | null | undefined {
+  try {
+    const record = JSON.parse(value)
+    if (Object.hasOwn(record, "cohort")) return parseOwner(JSON.stringify(record.cohort)) ?? null
+  } catch {}
+}
+
 function publishParticipant(path: string, owner: ProcessOwner): void {
-  const value = serializeOwner(owner)
+  const value = serializeParticipant(owner, null)
   try { publishFile(path, value) } catch (error) {
     if (!hasErrorCode(error, "EEXIST") || readIfExists(path) !== value) throw error
   }
@@ -159,6 +173,10 @@ function publishParticipant(path: string, owner: ProcessOwner): void {
 
 function ownerPath(directory: string): string {
   return join(directory, CROSS_HOST_OWNER_DIRECTORY, OWNER_FILENAME)
+}
+
+function retiredOwnerDirectory(directory: string, owner: ProcessOwner): string {
+  return join(directory, `${RETIRED_PREFIX}${owner.pid}.${owner.runToken}`)
 }
 
 function ownerIsStale(owner: ProcessOwner, dependencies: CrossHostLeaseDependencies): boolean | undefined {
@@ -193,10 +211,13 @@ async function retireOwnerIfOwned(directory: string, owner: ProcessOwner, depend
     if (!name.startsWith(PARTICIPANT_PREFIX) || !name.endsWith(PARTICIPANT_SUFFIX)) continue
     const path = join(directory, name)
     const participant = await readIfExistsAsync(path)
-    if (participant !== undefined) participants.set(path, participant)
+    if (participant === undefined) continue
+    const cohort = participantCohort(participant)
+    if (cohort === undefined || (cohort && sameOwner(cohort, owner))) participants.set(path, participant)
   }
   if (await readIfExistsAsync(ownerPath(directory)) !== observed) return
-  const retired = join(directory, `${RETIRED_PREFIX}${owner.pid}.${owner.runToken}`)
+  dependencies.onGracefulOwnerRetiring?.()
+  const retired = retiredOwnerDirectory(directory, owner)
   try { await rename(join(directory, CROSS_HOST_OWNER_DIRECTORY), retired) } catch (error) {
     if (["ENOENT", "EEXIST", "ENOTEMPTY"].some((code) => hasErrorCode(error, code)) || await lstat(retired).catch(() => undefined)) return
     throw error
@@ -218,13 +239,16 @@ function recoveryClaimants(
   directory: string,
   current: ProcessOwner,
   observedOwner: string,
+  owner: ProcessOwner,
   dependencies: CrossHostLeaseDependencies,
 ): ProcessOwner[] | undefined {
   const claimants = [current]
   for (const name of readdirSync(directory)) {
     if (!name.startsWith(PARTICIPANT_PREFIX) || !name.endsWith(PARTICIPANT_SUFFIX)) continue
     const path = join(directory, name)
-    const participant = parseOwner(readIfExists(path) ?? "")
+    const value = readIfExists(path)
+    if (value === undefined) continue
+    const participant = parseOwner(value)
     if (!participant) return undefined
     if (sameOwner(participant, current)) continue
     const stale = ownerIsStale(participant, dependencies)
@@ -233,6 +257,8 @@ function recoveryClaimants(
       try { unlinkSync(recoveryPath(directory, participant)) } catch {}
       continue
     }
+    const cohort = participantCohort(value)
+    if (cohort && !sameOwner(cohort, owner)) continue
     const claimPath = recoveryPath(directory, participant)
     let claim = readIfExists(claimPath)
     for (let attempt = 0; claim !== observedOwner && attempt < 20; attempt += 1) {
@@ -247,12 +273,12 @@ function recoveryClaimants(
 
 function retireOwner(directory: string, observed: string, owner: ProcessOwner, claimant: ProcessOwner, dependencies: CrossHostLeaseDependencies): boolean {
   if (ownerIsStale(owner, dependencies) !== true) return false
-  const claimants = recoveryClaimants(directory, claimant, observed, dependencies)
+  const claimants = recoveryClaimants(directory, claimant, observed, owner, dependencies)
   if (!claimants) return false
   claimants.sort((left, right) => serializeOwner(left) < serializeOwner(right) ? -1 : 1)
   if (!sameOwner(claimants[0]!, claimant)) return false
   if (readIfExists(ownerPath(directory)) !== observed) return false
-  const retired = join(directory, `${RETIRED_PREFIX}${owner.pid}.${owner.runToken}`)
+  const retired = retiredOwnerDirectory(directory, owner)
   try {
     renameSync(join(directory, CROSS_HOST_OWNER_DIRECTORY), retired)
     dependencies.onOwnerRetired?.()
@@ -340,15 +366,17 @@ export class CrossHostRegistration {
     publishParticipant(participant, owner)
     dependencies.onParticipantPublished?.()
     let primary = false
+    let cohort: ProcessOwner | undefined
     let recoveryClaim: string | undefined
     try {
       if (typeof primaryCandidate === "function" ? primaryCandidate() : primaryCandidate) {
         for (let attempt = 0; attempt < ACQUIRE_ATTEMPTS; attempt += 1) {
-          if (publishOwner(directory, owner, dependencies)) { primary = true; break }
+          if (publishOwner(directory, owner, dependencies)) { primary = true; cohort = owner; break }
           const observed = readIfExists(ownerPath(directory))
           if (observed === undefined) continue
           const existing = parseOwner(observed)
           if (!existing) break
+          cohort = existing
           if (sameOwner(existing, owner)) { primary = true; break }
           if (ownerIsStale(existing, dependencies) === true) {
             recoveryClaim ??= recoveryPath(directory, owner)
@@ -358,6 +386,14 @@ export class CrossHostRegistration {
           }
           if (!retireOwner(directory, observed, existing, owner, dependencies)) break
         }
+      } else {
+        cohort = parseOwner(readIfExists(ownerPath(directory)) ?? "")
+      }
+      try { publishFile(participant, serializeParticipant(owner, cohort ?? owner), true) } catch (error) {
+        // A successfully elected owner still has its original conservative
+        // registration if the filesystem refuses to update the cohort.
+        if (!primary) throw error
+        console.warn("[client-state] failed to bind cross-host owner cohort", error)
       }
       return new CrossHostRegistration(directory, owner, participant, recoveryClaim, primary, dependencies)
     } catch (error) {
