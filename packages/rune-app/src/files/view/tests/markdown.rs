@@ -25,6 +25,67 @@ fn markdown_text(rt: &mut Runtime<State>, text: String) {
     rt.frame(0.02);
 }
 
+#[cfg(feature = "test-support")]
+#[test]
+fn remote_markdown_image_decodes_in_the_reader_without_backend_credentials() {
+    use base64::Engine;
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let seed = http
+            .backend
+            .client
+            .get(format!("{}seed", http.backend.base));
+        let seeded = tokio::spawn(async move { seed.send().await });
+        let request = http.accept().await;
+        assert!(request.header.starts_with("GET /seed "));
+        request.send("HTTP/1.1 204 No Content\r\nSet-Cookie: codenomad=fixture; Path=/\r\nConnection: close\r\n\r\n", &[]).await;
+        assert_eq!(seeded.await.unwrap().unwrap().status(), 204);
+        let mut rt = runtime(http.ui(Store::default(), "markdown-remote-image"));
+        let encode = base64::engine::general_purpose::STANDARD;
+        let text = format!(
+            "![picture]({}picture.png)\n\n![local](./private.png)",
+            http.backend.base
+        );
+        open(&mut rt, &http, "image.md", &encode.encode(text)).await;
+        let request = http.accept().await;
+        assert!(request.header.starts_with("GET /picture.png "));
+        let headers = request.header.to_ascii_lowercase();
+        for forbidden in ["cookie:", "authorization:", "referer:"] {
+            assert!(!headers.contains(forbidden), "{headers}");
+        }
+        let cases: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/reader-content.json"
+        ))
+        .unwrap();
+        let image = encode
+            .decode(cases["images"][0]["base64"].as_str().unwrap())
+            .unwrap();
+        let header = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            image.len()
+        );
+        request.send(&header, &image).await;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
+            rt.frame(0.02);
+            if rt
+                .elements()
+                .iter()
+                .any(|node| node.label.as_deref() == Some("picture") && node.rect[2] == 8.0)
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Markdown image did not decode and mount"
+            );
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        http.quiet().await;
+    });
+}
+
 #[test]
 fn rendered_scroll_survives_switching_to_source_and_back() {
     crate::platform::block_on(async {
@@ -126,7 +187,11 @@ fn enter_activates_the_focused_view_toggle_and_refresh() {
             rt.frame(0.02);
         };
         activate(&mut rt, "file-source-toggle");
-        assert!(rt.find("file-source-text").is_some());
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| editable_source(&node.path, &node.role))
+        );
         activate(&mut rt, "file-refresh");
         rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
         http.request("GET", "markup.md")

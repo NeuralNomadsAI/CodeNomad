@@ -247,7 +247,8 @@ fn save_requires_a_post_gesture_read_and_retains_edits_after_departure() {
         assert_eq!(
             lock(resumed.document.draft.as_ref().unwrap())
                 .original
-                .as_deref(),
+                .as_ref()
+                .map(|original| original.text.as_str()),
             Some("b")
         );
         request(&mut resumed, &http, "GET", "first.txt")
@@ -325,7 +326,7 @@ fn overwrite_and_discard_decisions_are_scoped_and_writes_require_versions() {
         assert_eq!(put.body["contents"], "c");
         put.reply(409, serde_json::json!({})).await;
         poll(&mut ui, |ui| !ui.document.pending()).await;
-        assert_eq!(ui.document.error(), Some(Error::Conflict));
+        assert_eq!(ui.document.error(), Some(Error::Conflict(None)));
         http.quiet().await;
         ui.refresh_document(ui.document.scope());
         let discard = ui.document.confirmation().unwrap();

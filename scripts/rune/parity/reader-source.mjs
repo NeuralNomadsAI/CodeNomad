@@ -82,9 +82,12 @@ try {
     const chrome = tree.elements.find(n => n.key === 'file-close')
     assert.equal(chrome.rect[0] + chrome.rect[2] - x, width - 8, 'Dismiss stays trailing')
     if (scene === 'source') {
-      const text = tree.elements.find(n => n.key === 'file-source-text')
+      const text = tree.elements.find(n => n.role === 'textbox' && n.path.includes('/file-editor/'))
       const { x: sx, y: sy } = geometry['.view-lines']
-      assert(Math.abs(text.rect[0] - x - sx) <= 2 && Math.abs(text.rect[1] - y - sy) <= 2, 'Source text origin')
+      const editorOffset = [text.rect[0] - x - sx, text.rect[1] - y - sy]
+      geometry.editorOffset = editorOffset
+      assert(Math.abs(editorOffset[0]) <= 2, 'Source editor column')
+      assert(editorOffset[1] >= 0 && editorOffset[1] <= 8, 'Source editor gutter stays within the Kit inset')
     }
     if (scene === 'markup-md') {
       const heading = tree.elements.find(n => n.role === 'heading' && n.text === 'Reader')
@@ -92,6 +95,11 @@ try {
       assert(Math.abs(heading.rect[0] - x - hx) <= 1 && Math.abs(heading.rect[1] - y - hy) <= 1, 'Rendered heading origin')
       const image = tree.elements.find(n => n.role === 'image' && n.label === 'blocked')
       geometry.markdownImageOffset = image.rect[1] - y - geometry['.workspace-markdown img'].y
+      geometry.markdownBlocks = await view.locator('.workspace-markdown .markdown-body').evaluate(body =>
+        [...body.children].map(node => {
+          const { marginTop, marginBottom, lineHeight } = getComputedStyle(node)
+          return { tag: node.tagName, marginTop, marginBottom, lineHeight, y: node.getBoundingClientRect().y, height: node.getBoundingClientRect().height }
+        }))
     }
     assert.deepEqual(errors, [])
     await page.close()

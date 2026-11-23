@@ -57,7 +57,10 @@ pub(super) fn run(rt: &mut Runtime<State>) -> Value {
     stage(rt, "document-race");
     confirm(rt, stale, true);
     wait(rt, "write version conflict", |s| {
-        s.files.as_ref().unwrap().document.error() == Some(Error::Conflict)
+        matches!(
+            s.files.as_ref().unwrap().document.error(),
+            Some(Error::Conflict(_))
+        )
     });
     assert_eq!(rt.state.files.as_ref().unwrap().document.edit().text, DRAFT);
     stage(rt, "document-conflict");

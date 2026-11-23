@@ -8,6 +8,7 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
 };
 
+mod editor;
 mod tree;
 pub(crate) use tree::tree;
 
@@ -144,11 +145,12 @@ fn reader_content(s: &State) -> El {
         s,
         "file-refresh",
         t("instanceShell.rightPanel.actions.refresh"),
-        ui.reader.busy() || ui.document.pending() || ui.document.dirty(),
+        ui.reader.busy() || ui.document.pending(),
         |ui, _| ui.refresh_document(ui.document.scope()),
     )];
     let mut content_view = rune::el();
-    if let Some(kind) = ui.presentation.kind {
+    let kind = ui.document_kind();
+    if let Some(kind) = kind {
         content_view = match kind {
             Kind::Binary => text(t("filesPanel.binary")).pad(Space::Md),
             Kind::Image => match ui.presentation.image.as_ref() {
@@ -174,7 +176,9 @@ fn reader_content(s: &State) -> El {
                         false,
                         |ui, tx| {
                             ui.presentation.source = !ui.presentation.source;
-                            if !ui.presentation.source {
+                            if ui.presentation.source {
+                                ui.pictures.suspend();
+                            } else {
                                 tx.scroll_to_y(
                                     "file-rendered-scroll",
                                     ui.presentation.rendered_scroll.get(),
@@ -185,6 +189,7 @@ fn reader_content(s: &State) -> El {
                 }
                 let source = ui.presentation.source || format == Format::Source;
                 if source {
+                    let field = editor::source(s, ui, &target.path, view_width, &mut actions);
                     actions.push(
                         theme::wrap_button(
                             dark,
@@ -200,17 +205,19 @@ fn reader_content(s: &State) -> El {
                         )
                         .key("file-wrap"),
                     );
-                    theme::source_view(
-                        dark,
-                        theme::source(
+                    field.unwrap_or_else(|| {
+                        theme::source_view(
                             dark,
-                            &target.path,
-                            text,
+                            theme::source(
+                                dark,
+                                &target.path,
+                                text,
+                                ui.presentation.wrap,
+                                view_width.map(|width| theme::source_width(dark, width)),
+                            ),
                             ui.presentation.wrap,
-                            view_width.map(|width| theme::source_width(dark, width)),
-                        ),
-                        ui.presentation.wrap,
-                    )
+                        )
+                    })
                 } else {
                     theme::rendered_viewport(
                         dark,
@@ -231,6 +238,7 @@ fn reader_content(s: &State) -> El {
                             let unwrapped = ui.presentation.unwrapped_blocks.clone();
                             let input_scope = s.input_scope.clone();
                             let revision = ui.document.revision();
+                            let pictures = ui.pictures.shown.clone();
                             rune::col().pad(Space::Lg).child(theme::markdown(
                                 dark,
                                 text,
@@ -240,6 +248,7 @@ fn reader_content(s: &State) -> El {
                                 move |code| {
                                     code_controls(dark, &input_scope, scope, revision, code)
                                 },
+                                move |source| pictures.get(source).cloned(),
                             ))
                         },
                     )
@@ -288,8 +297,18 @@ fn reader_content(s: &State) -> El {
             }
         }),
     ));
-    let readonly =
-        (!matches!(ui.presentation.kind, Some(Kind::Text(_)))).then(|| t("filesPanel.readOnly"));
+    let status = if ui.document.dirty() {
+        Some(t("settings.configFiles.state.unsaved"))
+    } else {
+        (!matches!(kind, Some(Kind::Text(_)))).then(|| t("filesPanel.readOnly"))
+    };
+    let error =
+        match ui.document.error() {
+            Some(super::document::store::Error::Conflict(Some(reason))) => Some(reason),
+            save_error => ui.reader.error().map(str::to_owned).or_else(|| {
+                save_error.map(|_| t("instanceShell.rightPanel.toast.saveError").into())
+            }),
+        };
     theme::surface(dark)
         .key(format!("file-reader-{scope}"))
         .role("region")
@@ -297,14 +316,10 @@ fn reader_content(s: &State) -> El {
         .child(theme::header(
             &target.path,
             &target.directory,
-            readonly,
+            status,
             actions,
         ))
-        .children(
-            ui.reader
-                .error()
-                .map(|error| text(error).role("alert").pad(Space::Md)),
-        )
+        .children(error.map(|message| text(message).role("alert").pad(Space::Md)))
         .children(
             (ui.reader.busy() && ui.reader.preview().is_none()).then(|| {
                 text(t("instanceInfo.loading"))
@@ -313,6 +328,7 @@ fn reader_content(s: &State) -> El {
             }),
         )
         .child(content_view.remaining())
+        .children(editor::decision(s, ui))
 }
 
 fn code_controls(

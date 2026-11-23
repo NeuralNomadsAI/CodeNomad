@@ -25,7 +25,7 @@ fn source_reader_can_scroll_with_tab_and_page_down() {
         let y = |rt: &Runtime<State>| {
             rt.elements()
                 .into_iter()
-                .find(|node| node.key.as_deref() == Some("file-source-text"))
+                .find(|node| editable_source(&node.path, &node.role))
                 .unwrap()
                 .rect[1]
         };
@@ -74,7 +74,10 @@ fn reader_uses_product_palette_and_compact_named_actions() {
             assert_eq!(close.label.as_deref(), Some("Back to conversation"));
             assert!(wrap.text.as_ref().is_none_or(String::is_empty));
             let gutter = find("file-line-numbers");
-            let source = find("file-source-text");
+            let source = nodes
+                .iter()
+                .find(|node| editable_source(&node.path, &node.role))
+                .unwrap();
             assert_eq!(gutter.text.as_deref(), Some("1\n2"));
             assert!(source.rect[0] > gutter.rect[0] && gutter.rect[0] > reader.rect[0]);
             assert!(accessible(&rt.accessibility_json(), "file-line-numbers").is_none());

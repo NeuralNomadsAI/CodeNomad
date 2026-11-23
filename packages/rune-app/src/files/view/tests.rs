@@ -5,6 +5,7 @@ use codenomad_client::files::{Entry, EntryKind};
 use rune::{Env, Key, KeyEvent, Mods, Runtime};
 use std::time::{Duration, Instant};
 
+mod editor;
 mod markdown;
 mod reading;
 mod resize;
@@ -40,6 +41,9 @@ fn click(rt: &mut Runtime<State>, key: &str) {
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     rt.frame(0.02);
+}
+fn editable_source(path: &str, role: &str) -> bool {
+    path.contains("/file-editor/") && role == "textbox"
 }
 async fn settle(rt: &mut Runtime<State>) {
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -124,7 +128,11 @@ fn eye_opens_real_reader_and_return_preserves_chat_draft_without_prompt() {
             .preview("main.rs", &"bGV0IHggPSAxOwog".repeat(400), Some("v1"))
             .await;
         settle(&mut rt).await;
-        assert!(rt.elements().iter().any(|node| node.key.as_deref() == Some("file-source-text") && node.visible[3] > 0.0), "{:?}", rt.elements().into_iter().filter(|node|node.path.contains("file-") || node.key.as_deref() == Some("history")).map(|node|(node.key,node.rect,node.visible,node.text)).collect::<Vec<_>>());
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| editable_source(&node.path, &node.role) && node.visible[3] > 0.0)
+        );
         assert_eq!(
             rt.state.files.as_ref().unwrap().document.edit().text,
             "let x = 1;\n ".repeat(400)
@@ -344,9 +352,16 @@ fn failed_read_retries_and_passive_revalidation_preserves_source_selection() {
             .preview("main.rs", "Zm4gbWFpbigpIHt9", Some("v1"))
             .await;
         settle(&mut rt).await;
-        rt.update(|_, tx| tx.select_text("file-source-text", 0..12));
+        rt.update(|state, _| {
+            let ui = state.files.as_mut().unwrap();
+            let scope = ui.document.scope();
+            ui.document.input(scope).set_selection(0, 12);
+        });
         rt.frame(0.02);
-        assert_eq!(rt.selected_text().as_deref(), Some("fn main() {}"));
+        assert_eq!(
+            rt.state.files.as_ref().unwrap().document.edit().selected(),
+            "fn main() {}"
+        );
         rt.update(|state, _| state.files.as_mut().unwrap().reader.refresh());
         rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
         http.request("GET", "main.rs")
@@ -354,7 +369,10 @@ fn failed_read_retries_and_passive_revalidation_preserves_source_selection() {
             .preview("main.rs", "Zm4gbWFpbigpIHt9", Some("v2"))
             .await;
         settle(&mut rt).await;
-        assert_eq!(rt.selected_text().as_deref(), Some("fn main() {}"));
+        assert_eq!(
+            rt.state.files.as_ref().unwrap().document.edit().selected(),
+            "fn main() {}"
+        );
         assert!(rt.state.files.as_ref().unwrap().reader.error().is_none());
         http.quiet().await;
     });
@@ -405,7 +423,7 @@ fn markdown_links_html_and_mermaid_fallback_use_only_the_loaded_document() {
                     assert!(
                         rt.elements()
                             .iter()
-                            .any(|node| node.key.as_deref() == Some("file-source-text"))
+                            .any(|node| editable_source(&node.path, &node.role))
                     );
                 }
                 "valid.mmd" => assert!(nodes.iter().any(|node| node.role == "figure"
@@ -478,16 +496,8 @@ fn departed_reader_press_and_reopening_keep_the_current_target_and_owned_draft()
         assert!(
             rt.elements()
                 .iter()
-                .any(|node| node.key.as_deref() == Some("file-source-text")
+                .any(|node| editable_source(&node.path, &node.role)
                     && node.text.as_deref() == Some("owned unfinished edit"))
-        );
-        let tree = rt.accessibility_json();
-        assert!(
-            accessible(&tree, "file-refresh").unwrap()["states"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|state| state == "disabled")
         );
         click(&mut rt, "file-refresh");
         assert!(
@@ -497,7 +507,12 @@ fn departed_reader_press_and_reopening_keep_the_current_target_and_owned_draft()
                 .unwrap()
                 .document
                 .confirmation()
-                .is_none()
+                .is_some()
+        );
+        click(&mut rt, "file-decision-cancel");
+        assert_eq!(
+            rt.state.files.as_ref().unwrap().document.edit().text,
+            "owned unfinished edit"
         );
         http.quiet().await;
     });
@@ -545,7 +560,7 @@ fn closing_reader_restores_the_transcript_reading_position() {
         let source_rect = |rt: &Runtime<State>| {
             rt.elements()
                 .into_iter()
-                .find(|node| node.key.as_deref() == Some("file-source-text"))
+                .find(|node| editable_source(&node.path, &node.role))
                 .unwrap()
         };
         let source = source_rect(&rt);

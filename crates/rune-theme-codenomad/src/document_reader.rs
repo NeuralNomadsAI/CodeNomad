@@ -1,8 +1,10 @@
 use crate::{Length, Space, TextRole, Tokens, kit, layout::Layout, tokens};
 use rune::{El, Icon, ScrollSpec, TextStyle};
 pub use rune_kit::markdown::CodeFrame;
+use rune_kit::markdown::{Block, parse};
 use rune_kit::{Markdown, MarkdownStyle, syntax};
 
+pub mod editor;
 mod toolbar;
 pub use toolbar::wrap_button;
 
@@ -54,7 +56,7 @@ pub fn image(image: &rune::Image, label: &str) -> El {
                 .label(label),
         )
 }
-pub fn header(title: &str, directory: &str, readonly: Option<&str>, actions: Vec<El>) -> El {
+pub fn header(title: &str, directory: &str, status: Option<&str>, actions: Vec<El>) -> El {
     let t = tokens(crate::layout::dark());
     let metric = |name| t.metric("readerHeader", name).px();
     rune::row()
@@ -76,7 +78,7 @@ pub fn header(title: &str, directory: &str, readonly: Option<&str>, actions: Vec
                 .gap(t.metric("readerHeading", "rowGap").px())
                 .child(rune::text(title).truncate().font(font(t, "readerTitle")))
                 .child(
-                    rune::text(readonly.map_or_else(
+                    rune::text(status.map_or_else(
                         || directory.to_owned(),
                         |label| format!("{directory} · {label}"),
                     ))
@@ -150,9 +152,9 @@ fn focus_scroll(dark: bool, viewport: El) -> El {
         t.color("focus-ring-color"),
     )
 }
-pub fn source(dark: bool, path: &str, text: &str, wrap: bool, view_width: Option<f32>) -> El {
+fn source_spans(dark: bool, path: &str, text: &str) -> Vec<rune::Span> {
     let t = tokens(dark);
-    let spans = syntax::highlight(syntax::lang_for_path(path), text)
+    syntax::highlight(syntax::lang_for_path(path), text)
         .into_iter()
         .filter_map(|(range, paint)| {
             use syntax::Syntax::*;
@@ -167,8 +169,10 @@ pub fn source(dark: bool, path: &str, text: &str, wrap: bool, view_width: Option
             span.color = Some(t.color(role));
             Some(span)
         })
-        .collect::<Vec<_>>();
-    let source = rune::rich(text, spans)
+        .collect()
+}
+pub fn source(dark: bool, path: &str, text: &str, wrap: bool, view_width: Option<f32>) -> El {
+    let source = rune::rich(text, source_spans(dark, path, text))
         .key("file-source-text")
         .selectable(true)
         .literal_direction()
@@ -200,17 +204,33 @@ pub fn source_font(dark: bool) -> TextStyle {
     style
 }
 fn gutter(dark: bool, contents: &str, view_width: Option<f32>) -> El {
+    gutter_style(dark, contents, view_width, source_font(dark), 0.0)
+}
+fn gutter_width(style: TextStyle, lines: usize) -> f32 {
+    rune::text::advance("00000", style).max(rune::text::advance(&lines.to_string(), style))
+}
+fn gutter_style(
+    dark: bool,
+    contents: &str,
+    view_width: Option<f32>,
+    style: TextStyle,
+    body_inset: f32,
+) -> El {
     use std::fmt::Write;
     let lines = contents.as_bytes().iter().filter(|&&c| c == b'\n').count() + 1;
-    let style = source_font(dark);
     let t = tokens(dark);
-    let width =
-        rune::text::advance("00000", style).max(rune::text::advance(&lines.to_string(), style));
-    let gap = t.space(Space::Lg).px();
-    let wrap = view_width.map(|view| (view - width - gap).max(1.0));
+    let width = gutter_width(style, lines);
+    let gap = t.space(Space::Lg).px() - body_inset;
+    let wrap = view_width.map(|view| (view - width - gap - 2.0 * body_inset).max(1.0));
     rune::memo(
         "file-line-numbers",
-        (crate::palette_index(dark), wrap.map(f32::to_bits), contents),
+        (
+            crate::palette_index(dark),
+            wrap.map(f32::to_bits),
+            style.line_px().to_bits(),
+            gap.to_bits(),
+            contents,
+        ),
         || {
             let mut numbers = String::new();
             for (i, line) in contents.split('\n').enumerate() {
@@ -291,6 +311,7 @@ pub fn markdown<S: 'static>(
     open: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
     wrap: impl Fn(usize, &str) -> bool + 'static,
     code_header: impl Fn(&CodeFrame<'_>) -> El + 'static,
+    image: impl Fn(&str) -> Option<rune::Image> + 'static,
 ) -> El {
     Markdown::new(text)
         .style(markdown_style(dark))
@@ -300,8 +321,31 @@ pub fn markdown<S: 'static>(
         .code_wrap(wrap)
         .code_frame(move |body, code| rune::col().w_full().child(code_header(code)).child(body))
         .on_link_tx(open)
+        .images(image)
         .diagram_frame(move |diagram, _| diagram.label(diagram_label))
         .build(kit(dark))
+}
+pub fn markdown_image_sources(text: &str) -> Vec<String> {
+    fn collect(blocks: Vec<Block>, found: &mut Vec<String>) {
+        for block in blocks {
+            match block {
+                Block::Image { src, .. } => found.push(src),
+                Block::Quote(items) => collect(items, found),
+                Block::List { items, .. } => {
+                    for item in items {
+                        collect(item, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if !text.contains("![") {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    collect(parse(text), &mut found);
+    found
 }
 pub fn code_header(dark: bool, language: &str, wrap: El, copy: El) -> El {
     let t = tokens(dark);

@@ -1,3 +1,4 @@
+use super::source_text::Snapshot;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard, Weak},
@@ -10,12 +11,12 @@ pub struct Key {
     pub directory: String,
     pub path: String,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     Read,
     ReadOnly,
     MissingVersion,
-    Conflict,
+    Conflict(Option<String>),
     Uncertain,
     TooLarge,
 }
@@ -26,10 +27,10 @@ pub(super) enum Pending {
 }
 #[derive(Default)]
 pub(super) struct Draft {
-    pub original: Option<String>,
+    pub original: Option<Snapshot>,
     pub text: String,
     pub pending: Option<Pending>,
-    pub uncertain: Option<String>,
+    pub uncertain: Option<Snapshot>,
     pub error: Option<Error>,
     pub revision: u64,
 }
@@ -37,7 +38,10 @@ impl Draft {
     pub fn dirty(&self) -> bool {
         self.original
             .as_ref()
-            .is_some_and(|original| *original != self.text)
+            .is_some_and(|original| original.text != self.text)
+    }
+    fn retained(&self) -> bool {
+        self.dirty() || self.pending.is_some() || self.uncertain.is_some()
     }
 }
 pub(super) type Shared = Arc<Mutex<Draft>>;
@@ -64,6 +68,12 @@ impl Store {
             .any(|key| key.instance == tab_key)
     }
 
+    pub(super) fn has_edits(&self, server: &str, instance: &str) -> bool {
+        lock(&self.0)
+            .drafts
+            .keys()
+            .any(|key| key.server == server && key.instance == instance)
+    }
     pub(super) fn writes(&self, server: &str, instance: &str) -> Writes {
         let mut store = lock(&self.0);
         store.writes.retain(|_, writes| writes.strong_count() > 0);
@@ -91,10 +101,38 @@ impl Store {
         let draft = lock(shared);
         let mut store = lock(&self.0);
         let drafts = &mut store.drafts;
-        if draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some() {
+        if draft.retained() {
             drafts.insert(key.clone(), shared.clone());
         } else if drafts.get(key).is_some_and(|old| Arc::ptr_eq(old, shared)) {
             drafts.remove(key);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tab_guard_reads_retained_drafts_without_a_reader() {
+        let store = Store::default();
+        let key = Key {
+            server: "one".into(),
+            instance: "tab-2".into(),
+            directory: "/project".into(),
+            path: "main.rs".into(),
+        };
+        let shared = store.open(&key);
+        {
+            let mut draft = lock(&shared);
+            draft.original = Some(Snapshot::loaded("original"));
+            draft.text = "local edit".into();
+        }
+        store.sync(&key, &shared);
+        assert!(!store.has_tab_edits("tab-1"));
+        assert!(store.has_tab_edits("tab-2"));
+        lock(&shared).text = "original".into();
+        store.sync(&key, &shared);
+        assert!(!store.has_tab_edits("tab-2"));
     }
 }
