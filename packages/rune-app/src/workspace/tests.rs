@@ -9,6 +9,7 @@ fn workspace() -> Workspace {
         workspace_id: None,
         active_session_id: None,
         drafts: BTreeMap::new(),
+        view: Default::default(),
     }
 }
 fn snapshot(workspace: Workspace) -> Snapshot {
@@ -35,9 +36,17 @@ fn canonical_round_trip_keeps_occurrences_and_text_separate() {
     first.server_id = Some("server-one".into());
     first.workspace_id = Some("workspace-one".into());
     first.active_session_id = Some("ses_same".into());
+    first.view = ViewState {
+        files_tab: true,
+        files_mode: Some("changes"),
+    };
     first.drafts.insert("ses_same".into(), "first\n🦀".into());
     let mut second = first.clone();
     second.occurrence = 1;
+    second.view = ViewState {
+        files_tab: false,
+        files_mode: Some("history"),
+    };
     second.drafts.insert("ses_same".into(), "second".into());
     second
         .drafts
@@ -58,6 +67,12 @@ fn canonical_round_trip_keeps_occurrences_and_text_separate() {
     assert_eq!(encode(&decode(&bytes).unwrap()).unwrap(), bytes);
     let json: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["layout"], json!({}));
+    assert_eq!(
+        json["session"]["tabs"][1]["viewState"],
+        json!({
+            "version": 1, "rightPanelTab": "files", "filesMode": "changes"
+        })
+    );
     for key in [
         "attachments",
         "scrollSnapshots",

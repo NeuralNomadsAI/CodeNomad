@@ -34,6 +34,7 @@ impl Server {
         let address = format!("http://{}", listener.local_addr().unwrap());
         let (stop, stopped) = mpsc::channel();
         let worker = thread::spawn(move || {
+            let mut withheld = vec![];
             for reply in replies {
                 let deadline = Instant::now() + Duration::from_secs(5);
                 let mut socket = loop {
@@ -87,6 +88,10 @@ impl Server {
                     (!body.is_empty()).then(|| serde_json::from_slice::<Value>(&body).unwrap()),
                     reply.body
                 );
+                if reply.status == 0 {
+                    withheld.push(socket);
+                    continue;
+                }
                 let response = if reply.status == 204 {
                     &[][..]
                 } else {
@@ -496,5 +501,119 @@ fn only_confirmed_absence_or_departure_retires_a_session_visit() {
                 missing
             );
         }
+    });
+}
+
+#[test]
+fn malformed_catalogue_data_is_not_a_terminal_session_page() {
+    run(async {
+        let route = "GET /workspaces/workspace/instance/api/session?directory=%2Ftrial&limit=200";
+        let server = Server::start(vec![
+            reply(route, None, 200, json!({"data":[], "cursor":[]})),
+            reply(
+                route,
+                None,
+                200,
+                json!({"data":[{"id":"ses_a","location":{"directory":"/trial"},"parentID":false}]}),
+            ),
+            reply(route, None, 200, json!({"data":[], "cursor":{}})),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        let project = crate::catalog::Project {
+            id: "workspace".into(),
+            path: "/trial".into(),
+        };
+        assert!(backend.sessions(&project, None).await.is_err());
+        assert!(backend.sessions(&project, None).await.is_err());
+        assert!(
+            backend
+                .sessions(&project, None)
+                .await
+                .unwrap()
+                .next
+                .is_none()
+        );
+    });
+}
+
+#[test]
+fn catalogue_omissions_require_targeted_absence() {
+    run(async {
+        let server = Server::start(vec![
+            reply(
+                "GET /workspaces/workspace/instance/api/session/unresponsive",
+                None,
+                0,
+                json!({}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/reordered",
+                None,
+                200,
+                json!({"data":{"id":"reordered","location":{"directory":"/trial"}}}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/unavailable",
+                None,
+                503,
+                json!({}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/deleted",
+                None,
+                404,
+                json!({"_tag":"SessionNotFoundError","sessionID":"deleted"}),
+            ),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        let project = crate::catalog::Project {
+            id: "workspace".into(),
+            path: "/trial".into(),
+        };
+        let ids = ["unresponsive", "reordered", "unavailable", "deleted"].map(str::to_owned);
+        let (out, results) = async_channel::bounded(ids.len());
+        backend
+            .confirm_missing_sessions(&project, ids.into(), out, || {})
+            .await;
+        assert_eq!(results.try_recv().unwrap().0, "deleted");
+        assert!(results.try_recv().is_err());
+    });
+}
+
+#[test]
+fn a_linked_session_requires_the_owned_proxy_placement() {
+    run(async {
+        let route = "GET /workspaces/workspace/instance/api/session/linked";
+        let server = Server::start(vec![
+            reply(
+                route,
+                None,
+                200,
+                json!({"data":{"id":"linked","location":{"directory":"/linked"}}}),
+            ),
+            reply(
+                route,
+                None,
+                200,
+                json!({"data":{"id":"linked","location":{"directory":"/linked"},"listWorktreeSlug":"linked-worktree"}}),
+            ),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        let project = crate::catalog::Project {
+            id: "workspace".into(),
+            path: "/trial".into(),
+        };
+        assert!(
+            backend
+                .bind_session(&project, "linked", false)
+                .await
+                .is_err()
+        );
+        let (bound, row) = backend
+            .bind_session(&project, "linked", false)
+            .await
+            .unwrap();
+        assert_eq!(bound.workspace, "workspace");
+        assert_eq!(row.id, "linked");
     });
 }

@@ -36,6 +36,10 @@ use transport::{Command, Event};
 pub const CODE: &str = "fn main() {\n    println!(\"Rune · Code Nomad\");\n}";
 pub use codenomad_client::Message;
 struct State {
+    #[cfg(target_os = "windows")]
+    native_locale: std::cell::Cell<Option<&'static str>>,
+    #[cfg(target_os = "windows")]
+    native_locale_repaint: std::cell::Cell<bool>,
     wake: codenomad_client::Wake,
     agent: Option<agent::Ui>,
     files: Option<files::Ui>,
@@ -69,6 +73,10 @@ enum Phase {
 }
 fn init() -> State {
     State {
+        #[cfg(target_os = "windows")]
+        native_locale: std::cell::Cell::new(None),
+        #[cfg(target_os = "windows")]
+        native_locale_repaint: std::cell::Cell::new(false),
         wake: std::sync::Arc::new(|| {}),
         agent: None,
         files: None,
@@ -189,10 +197,13 @@ fn latest(_: &mut State, tx: &mut Tx) {
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = poll_chat(s, 64);
     let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
+    changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
+    shell::sync(s);
     changed |= workspace::poll(s, now, tx);
     changed |= files::poll(s, now, tx);
     changed |= git::poll(s, now, tx);
+    workspace::capture_files_mode(s);
     if changed {
         tx.instant();
     }
@@ -208,6 +219,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::Connected(backend) => {
                 s.renew_scope();
                 git::connected(s, &backend);
+                workspace::restore_files_mode(s);
                 if s.agent.is_none() {
                     s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
                 }
@@ -334,14 +346,16 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         .as_ref()
         .is_some_and(|a| a.picker || !a.ids().is_empty());
     rune_theme_codenomad::interruption::session_surface(expanded)
-        .child(files::view::body(
-            s,
-            chat::reading::history(
+        .child(shell::reader(s, || {
+            files::view::body(
                 s,
-                rune_theme_codenomad::interruption::history(expanded).child(rows),
-            ),
-            expanded,
-        ))
+                chat::reading::history(
+                    s,
+                    rune_theme_codenomad::interruption::history(expanded).child(rows),
+                ),
+                expanded,
+            )
+        }))
         .child(agent_view::view(s, cx))
         .child(composer(s, expanded.then_some(cx)))
 }

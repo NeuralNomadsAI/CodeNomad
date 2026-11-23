@@ -124,6 +124,25 @@ fn foreign_and_malformed_workspace_events_publish_no_partial_batch() {
 }
 
 #[test]
+fn a_renamed_active_session_does_not_invalidate_an_inflight_history_read() {
+    run(async {
+        let b = backend().await;
+        let (out, input) = bounded(2);
+        let state = State::default();
+        deliver(
+            &b,
+            &out,
+            &state,
+            json!({"type":"instance.event","instanceId":"owner",
+            "event":{"type":"session.renamed","data":{"sessionID":"session","title":"New"}}}),
+        )
+        .await;
+        assert!(input.is_empty());
+        assert_eq!(state.version.load(SeqCst), 0);
+    });
+}
+
+#[test]
 fn git_hints_follow_the_owned_stream_without_a_native_session_id() {
     run(async {
         let backend = backend().await;
@@ -262,4 +281,81 @@ fn workspace_events_cross_existing_http_stream_and_recovery_lane() {
     });
     let _ = stop.send(());
     assert_eq!(worker.join().unwrap(), 1);
+}
+
+#[test]
+fn catalogue_watch_receives_owned_hints_without_binding_a_conversation() {
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        sync::mpsc,
+        thread,
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("http://{}/", listener.local_addr().unwrap());
+    let (signal, send_hint) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        listener.set_nonblocking(true).unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        let mut socket = loop {
+            if let Ok((socket, _)) = listener.accept() {
+                break socket;
+            }
+            assert!(
+                std::time::Instant::now() < until,
+                "catalogue SSE not attached"
+            );
+            thread::sleep(Duration::from_millis(2));
+        };
+        socket.set_nonblocking(false).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut bytes = vec![];
+        while !bytes.ends_with(b"\r\n\r\n") {
+            assert!(bytes.len() < 8192);
+            let mut byte = [0];
+            socket.read_exact(&mut byte).unwrap();
+            bytes.push(byte[0]);
+        }
+        assert!(bytes.starts_with(b"GET /api/events?"));
+        socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+        socket.flush().unwrap();
+        send_hint.recv_timeout(Duration::from_secs(2)).unwrap();
+        let frame = json!({"type":"workspace.worktreesChanged","workspaceId":"owner"});
+        writeln!(socket, "data: {frame}\n").unwrap();
+        socket.flush().unwrap();
+    });
+    run(async {
+        let backend = Backend::connect(&address, "").await.unwrap();
+        assert!(backend.session.is_empty());
+        let (wake, changed) = bounded(4);
+        let (watch, task) = CatalogueWatch::new(
+            backend,
+            Arc::new(move || {
+                let _ = wake.try_send(());
+            }),
+        );
+        let task = tokio::spawn(task);
+        let ready = runtime::recv_timeout(&changed, Duration::from_secs(2)).await;
+        assert!(ready.is_some());
+        assert!(matches!(watch.take(), CatalogueChanges::All));
+        signal.send(()).unwrap();
+        assert!(
+            runtime::recv_timeout(&changed, Duration::from_secs(2))
+                .await
+                .is_some()
+        );
+        assert!(matches!(watch.take(), CatalogueChanges::Workspaces(ids) if ids.contains("owner")));
+        drop(watch);
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap();
+    });
+    worker.join().unwrap();
 }

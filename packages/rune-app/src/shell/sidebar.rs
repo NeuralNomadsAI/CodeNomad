@@ -108,32 +108,54 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         );
     }
     let filter = l.search.text.to_lowercase();
-    let selected = workspace::active_session(s);
-    let mut items = col().full_width().role("list").label(title).focus_group();
-    for session in l
-        .sessions
-        .iter()
-        .filter(|s| s.title.to_lowercase().contains(&filter))
-    {
-        let id = session.id.clone();
-        let title = if session.title.is_empty() {
-            t("sessionList.session.untitled")
-        } else {
-            &session.title
-        };
-        let key = format!("session-{id}");
-        items = items.child(
+    let filtered = std::rc::Rc::new(
+        l.sessions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, row)| {
+                (filter.is_empty() || row.title.to_lowercase().contains(&filter)).then_some(index)
+            })
+            .collect::<Vec<_>>(),
+    );
+    let for_key = filtered.clone();
+    let items = layout::transcript_rows(
+        filtered.len(),
+        move |s: &State, i| {
+            s.screen
+                .launcher()
+                .and_then(|l| l.sessions.get(for_key[i]))
+                .map_or_else(
+                    || std::borrow::Cow::Owned(format!("row-{i}")),
+                    |row| std::borrow::Cow::Owned(format!("session-{}", row.id)),
+                )
+        },
+        move |s: &State, i| {
+            let Some(session) = s
+                .screen
+                .launcher()
+                .and_then(|l| l.sessions.get(filtered[i]))
+            else {
+                return rune::el();
+            };
+            let title = if session.title.is_empty() {
+                t("sessionList.session.untitled")
+            } else {
+                &session.title
+            };
+            let id = session.id.clone();
             shell::session_row(
                 title,
-                selected == Some(id.as_str()),
+                workspace::active_session(s) == Some(id.as_str()),
                 disabled,
-                screen::action_tx(scope, move |s, tx| {
-                    launcher::choose(s, id.clone(), tx);
+                screen::action_tx(&s.input_scope, move |s, tx| {
+                    launcher::choose(s, id.clone(), tx)
                 }),
             )
-            .key(key),
-        );
-    }
+        },
+    )
+    .role("list")
+    .label(title)
+    .focus_group();
     let mut items = col().full_width().child(items);
     if l.sessions.is_empty() && !l.pending {
         items = items.child(text(t("rune.empty_sessions")).pad(Space::Sm));
@@ -142,7 +164,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         items = items.child(button(
             "more-sessions",
             t("rune.more"),
-            disabled || l.sessions.len() >= launcher::MAX_BROWSED_SESSIONS,
+            disabled || !l.can_page(),
             screen::action(scope, |s| launcher::list(s, true)),
         ));
     }
