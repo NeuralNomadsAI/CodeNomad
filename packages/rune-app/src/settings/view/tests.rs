@@ -3,6 +3,44 @@ use rune::{Env, Runtime};
 use serde_json::Value;
 
 #[test]
+fn unsupported_advanced_switch_is_disabled_with_keyboard_help() {
+    fn find_switch(tree: &Value) -> Option<&Value> {
+        if tree["role"] == "switch" && tree["name"] == "Hold long assistant replies" {
+            return Some(tree);
+        }
+        tree["children"].as_array()?.iter().find_map(find_switch)
+    }
+
+    let state = Window {
+        section: Section::Advanced,
+        ..Window::default()
+    };
+    let mut prefs = state.shared.borrow_mut();
+    prefs.fixture();
+    prefs.fixture_locale("en");
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    drop(prefs);
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let tree = rt.accessibility_json();
+    let switch = find_switch(&tree).unwrap();
+    assert!(
+        switch["states"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::from("disabled"))
+    );
+    rt.update(|_, tx| tx.focus("advanced-help-holdLongAssistantReplies", true));
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Text(" ".into()),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(rt.state.advanced_help == Some(crate::settings::advanced::Toggle::LongReplies));
+}
+
+#[test]
 fn keyboard_shortcuts_records_the_focused_save_binding() {
     let state = Window {
         section: Section::Shortcuts,

@@ -421,13 +421,13 @@ try {
     await whitespace.press('Enter')
     await page.getByRole('switch',{name:'Hide whitespace-only changes',checked:false,exact:true}).waitFor({state:'attached'})
     assert.deepEqual(writes,[{settings:{hideDiffWhitespaceChanges:false}}])
-    assert.equal(await page.getByRole('switch').count(),5,'The second-launch control is native-only in Solid')
-    const replies = page.getByRole('switch',{name:'Hold long assistant replies',exact:true})
+    // Rune's current mirror omits disabled switches; their keyboard help stays available.
+    assert.equal(await page.getByRole('button',{name:'Focus existing window on second launch',exact:true}).count(),0)
+    assert.deepEqual(await page.getByRole('switch').allTextContents(),['Hide whitespace-only changes'])
     const info = page.getByRole('button',{name:'Hold long assistant replies',exact:true})
     assert.equal(await info.getAttribute('aria-description'),'Rune does not apply this setting yet.')
     await info.press('Enter')
-    await replies.press('Enter')
-    assert.equal(await replies.getAttribute('aria-checked'),'true')
+    assert.deepEqual(writes,[{settings:{hideDiffWhitespaceChanges:false}}])
     await page.getByRole('button',{name:'Environment Variables (0 variables)',exact:true}).press('Enter')
     const focusField = async (label, value) => {
       const field = page.locator(`[aria-label="${label}"]:focus`)
