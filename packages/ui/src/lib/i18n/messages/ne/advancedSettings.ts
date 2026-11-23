@@ -1,5 +1,5 @@
 export const advancedSettingsMessages = {
-  "advancedSettings.savedForSharedClients": "साझा प्राथमिकतामा सुरक्षित हुन्छ। Rune ले यो सेटिङ अझै लागू गर्दैन।",
+  "advancedSettings.unavailable": "Rune ले यो सेटिङ अझै लागू गर्दैन।",
   "advancedSettings.environmentVariables.maskValue": "पूर्वनिर्धारित रूपमा मान लुकाउनुहोस्",
   "advancedSettings.title": "उन्नत सेटिङहरू",
   "advancedSettings.environmentVariables.title": "वातावरण चरहरू (Environment Variables)",

@@ -59,6 +59,7 @@ pub(super) struct Panel {
     scope: super::host_support::HostSupport,
     config_files: super::config_files::Editor,
     environment: super::advanced::environment::Editor,
+    advanced_help: Option<super::advanced::Toggle>,
     confirm_config_close: bool,
     opencode: opencode::Status,
     logging: opencode::logging::Logging,
@@ -197,6 +198,7 @@ fn close(s: &mut State) {
     }
     panel.shown = false;
     panel.contrast_help = false;
+    panel.advanced_help = None;
     panel.permissions.close();
     panel.catalog.suspend();
     let mut prefs = s.settings.shared.borrow_mut();
@@ -312,6 +314,7 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 panel.info.close();
             }
             panel.contrast_help = false;
+            panel.advanced_help = None;
             panel.permissions.close();
             panel.memory_help_failed = false;
             prefs.memory.show(panel.section == Section::General);
@@ -429,12 +432,18 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             .child(super::advanced::view(
                 prefs,
                 false,
+                panel.advanced_help,
+                |s: &mut State, choice| {
+                    let help = &mut s.settings.web.advanced_help;
+                    *help = (*help != Some(choice)).then_some(choice);
+                },
                 |s: &mut State, toggle, checked| {
                     s.settings
                         .shared
                         .borrow_mut()
                         .set_advanced_toggle(toggle, checked);
                 },
+                |s: &mut State| s.settings.shared.borrow_mut().retry_advanced(),
             ))
             .child(
                 panel
@@ -515,14 +524,14 @@ fn general(panel: &Panel, prefs: &Preferences, system_more: bool) -> El {
                 |s: &mut State| s.settings.web.contrast_help = !s.settings.web.contrast_help,
                 |s: &mut State, choice| s.settings.shared.borrow_mut().set_contrast(choice),
             ))
-            .children(prefs.error().map(|error| {
+            .children(prefs.general_error().map(|error| {
                 layout::action_row()
                     .child(text(t(error)).wrap().role("alert"))
                     .child(layout::button(
                         t("sessionList.loadError.retry"),
                         !prefs.can_retry(),
                         |s: &mut State| {
-                            s.settings.shared.borrow_mut().retry();
+                            s.settings.shared.borrow_mut().retry_general();
                         },
                     ))
             })),

@@ -1,5 +1,5 @@
 export const advancedSettingsMessages = {
-  "advancedSettings.savedForSharedClients": "共有設定に保存されます。Rune ではまだこの設定は適用されません。",
+  "advancedSettings.unavailable": "Rune ではまだこの設定は適用されません。",
   "advancedSettings.environmentVariables.maskValue": "既定で値を隠す",
   "advancedSettings.title": "詳細設定",
   "advancedSettings.environmentVariables.title": "環境変数",

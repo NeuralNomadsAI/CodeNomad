@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "שגיאת תחביר בשורה {line}",
   "settings.nav.servers": "שרתים",
   "settings.servers.open": "פתיחה",
   "settings.servers.dialog.name": "שם",

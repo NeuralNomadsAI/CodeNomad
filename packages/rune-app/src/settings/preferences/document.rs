@@ -221,12 +221,12 @@ impl Document {
         self.read.queued = true;
     }
 
-    pub(super) fn retry(&mut self, only: Option<Choice>) {
+    pub(super) fn retry(&mut self, accepts: impl Fn(Choice) -> bool) {
         let operation = self.flight.as_ref().map(|flight| &flight.operation);
         self.write
             .retry
             .extend(self.write.failed.iter().copied().filter(|choice| {
-            only.is_none_or(|only| only == *choice)
+            accepts(*choice)
                 && !self.write.pending.contains(choice)
                 && !matches!(operation, Some(Operation::Write(sent)) if sent.contains_key(choice))
                 && !matches!(operation, Some(Operation::Read { retry }) if retry.contains(choice))
@@ -247,10 +247,16 @@ impl Document {
         self.snapshot.is_none() && !self.read.failed
     }
 
+    #[cfg(test)]
     pub(super) fn write_failed(&self) -> bool {
         !self.write.failed.is_empty()
     }
 
+    pub(super) fn any_failure(&self, accepts: impl Fn(Choice) -> bool) -> bool {
+        self.write.failed.iter().copied().any(accepts)
+    }
+
+    #[cfg(test)]
     pub(super) fn write_failed_other_than(&self, choice: Choice) -> bool {
         self.write.failed.iter().any(|failed| *failed != choice)
     }

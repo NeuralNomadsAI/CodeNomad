@@ -113,6 +113,8 @@ Si le système prend en charge les actions de notification, un clic affiche la c
 
 ## Options avancées {#advanced}
 
+Dans Rune, placez le focus sur le **i** à côté d’un réglage désactivé pour connaître la raison. L’éditeur de configuration indique la ligne des erreurs JSON/JSONC et laisse l’enregistrement disponible.
+
 1. Ouvrez **Avancé**.
 2. Cochez ou décochez seulement les options nécessaires ; chaque changement est enregistré via les préférences CodeNomad. Pour changer l’environnement d’exécution des sessions, dépliez le groupe replié **Variables d'environnement** à la fin.
 

@@ -30,7 +30,7 @@ const configPath = '/api/config-files'
 const configFile = `${configPath}/opencode-global-config-jsonc/content`
 const configOther = `${configPath}/opencode-global-config/content`
 let configContent = '{\r\n  // comment\r\n}\r\n', configWrites = 0, hideWhitespace = true
-let longReplies = true, environmentVariables = {}, secureEnvVars = []
+let environmentVariables = {}, secureEnvVars = []
 let contrast = 'on', permissions = 'autonomous'
 let notificationRouting, notifyFocused
 let hotkeyOverrides = { 'new-instance': [{key:'n',mod:true}], 'file-save': [{key:'n',mod:true}] }
@@ -175,7 +175,6 @@ const server = createServer(async (req,res) => {
         const patch = JSON.parse(body)
         writes.push(patch)
         hideWhitespace = patch.settings.hideDiffWhitespaceChanges ?? hideWhitespace
-        longReplies = patch.settings.holdLongAssistantReplies ?? longReplies
         if (shortcuts && Array.isArray(patch.settings.hotkeyOverrides?.['close-instance'])) {
           return res.writeHead(503).end()
         }
@@ -196,7 +195,7 @@ const server = createServer(async (req,res) => {
       }
       return json({settings:{locale:'en',highContrast:contrast,newConversationPermissions:permissions,
         notificationRouting,osNotificationsAllowWhenVisible:notifyFocused,hotkeyOverrides,
-        hideDiffWhitespaceChanges:hideWhitespace,holdLongAssistantReplies:longReplies}})
+        hideDiffWhitespaceChanges:hideWhitespace,holdLongAssistantReplies:true}})
     }
     if (p === '/api/storage/state/ui') {
       await stateReady
@@ -403,8 +402,9 @@ try {
     await visible('~/.config/opencode/opencode.jsonc')
     const focused = page.getByRole('textbox',{name:'Config Files',exact:true})
     for (let i=0;i<24 && !await focused.count();i++) await page.keyboard.press('Tab')
-    await focused.fill('{\n  // edited\n}\n')
+    await focused.fill('{\n  // edited\n  "key": invalid\n}\n')
     await visible('Unsaved changes')
+    await visible('Syntax error on line 3')
     await radio('OpenCode Global Config').press('Enter')
     await visible('Discard unsaved changes before continuing?')
     await page.getByRole('button',{name:'Keep editing',exact:true}).press('Enter')
@@ -412,7 +412,7 @@ try {
     await page.getByRole('button',{name:'Save',exact:true}).press('Enter')
     await visible('Config file saved.')
     assert.equal(configWrites,1)
-    assert.equal(configContent,'{\r\n  // edited\r\n}\r\n')
+    assert.equal(configContent,'{\r\n  // edited\r\n  "key": invalid\r\n}\r\n')
     await radio('OpenCode Global Config').press('Enter')
     await visible('File will be created on save')
     await radio('Advanced').press('Enter')
@@ -423,10 +423,11 @@ try {
     assert.deepEqual(writes,[{settings:{hideDiffWhitespaceChanges:false}}])
     assert.equal(await page.getByRole('switch').count(),5,'The second-launch control is native-only in Solid')
     const replies = page.getByRole('switch',{name:'Hold long assistant replies',exact:true})
-    assert.match(await replies.getAttribute('aria-description'),/Saved in shared preferences/)
+    const info = page.getByRole('button',{name:'Hold long assistant replies',exact:true})
+    assert.equal(await info.getAttribute('aria-description'),'Rune does not apply this setting yet.')
+    await info.press('Enter')
     await replies.press('Enter')
-    await page.getByRole('switch',{name:'Hold long assistant replies',checked:false,exact:true}).waitFor({state:'attached'})
-    assert.deepEqual(writes.at(-1),{settings:{holdLongAssistantReplies:false}})
+    assert.equal(await replies.getAttribute('aria-checked'),'true')
     await page.getByRole('button',{name:'Environment Variables (0 variables)',exact:true}).press('Enter')
     const focusField = async (label, value) => {
       const field = page.locator(`[aria-label="${label}"]:focus`)
@@ -443,7 +444,8 @@ try {
     await page.getByRole('button',{name:'Add variable',exact:true}).press('Enter')
     await page.getByRole('button',{name:'Environment Variables (1 variable)',exact:true}).waitFor({state:'attached'})
     assert.deepEqual(secureEnvVars,['CN_FIXTURE'])
-    console.log(JSON.stringify({fixture:'config-files',configWrites,hideWhitespace,longReplies,environmentStored:true}))
+    assert.deepEqual(writes,[{settings:{hideDiffWhitespaceChanges:false}}])
+    console.log(JSON.stringify({fixture:'config-files',configWrites,hideWhitespace,environmentStored:true}))
   }
 
   async function checkInfo() {

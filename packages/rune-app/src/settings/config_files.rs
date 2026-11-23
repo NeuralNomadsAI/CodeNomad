@@ -7,6 +7,7 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     settings as chrome,
 };
+mod syntax;
 
 #[derive(Default)]
 pub(super) struct Editor {
@@ -17,6 +18,7 @@ pub(super) struct Editor {
     draft: TextEdit,
     exists: bool,
     crlf: bool,
+    syntax_line: Option<usize>,
     read: Option<(Sender<()>, Receiver<Read>)>,
     write: Option<Receiver<(String, bool)>>,
     goal: Option<usize>,
@@ -94,6 +96,7 @@ impl Editor {
                     let input = content.contents.replace("\r\n", "\n");
                     self.draft = TextEdit::new(&input);
                     self.original = Some(input);
+                    self.diagnose();
                 }
                 Read::Content(_, None) => {
                     self.notice = Some("settings.configFiles.errors.loadContent")
@@ -156,6 +159,18 @@ impl Editor {
     fn reload(&mut self, index: usize) {
         self.notice = None;
         self.goal = Some(index);
+    }
+
+    fn diagnose(&mut self) {
+        let language = self
+            .active
+            .and_then(|index| self.files.as_ref()?.get(index))
+            .map(|file| file.language.as_str());
+        self.syntax_line = match language {
+            Some("json") => syntax::error_line(&self.draft.text, false),
+            Some("jsonc") => syntax::error_line(&self.draft.text, true),
+            _ => None,
+        };
     }
 
     fn save(&mut self, prefs: &Preferences) {
@@ -246,8 +261,13 @@ impl Editor {
                         .label(t("settings.configFiles.title"))
                         .disabled(waiting || self.confirm.is_some())
                         .on_edit(move |s| &mut edit(s).draft)
-                        .build(field_kit(layout::dark())),
+                        .build(field_kit(layout::dark()))
+                        .on_input_change(move |s, _| edit(s).diagnose()),
                 )
+                .children(self.syntax_line.map(|line| {
+                    text(t("settings.configFiles.syntaxLine").replace("{line}", &line.to_string()))
+                        .role("status")
+                }))
                 .child(
                     layout::action_row()
                         .child(chrome::primary_action(

@@ -39,6 +39,10 @@ impl Toggle {
         !matches!(self, Self::SecondLaunch | Self::ProviderBalance)
     }
 
+    pub fn supported(self) -> bool {
+        self == Self::Whitespace
+    }
+
     fn labels(self) -> (&'static str, &'static str) {
         match self {
             Self::EmptySessions => (
@@ -72,34 +76,63 @@ impl Toggle {
 pub(super) fn view<S: 'static>(
     prefs: &Preferences,
     native: bool,
+    help_open: Option<Toggle>,
+    info: fn(&mut S, Toggle),
     toggle: fn(&mut S, Toggle, bool),
+    retry: fn(&mut S),
 ) -> El {
     chrome::card(
-        col().full_width().separate(Space::Sm).children(
-            Toggle::ALL
-                .into_iter()
-                .filter(|choice| native || *choice != Toggle::SecondLaunch)
-                .map(|choice| {
-                    let (title, help) = choice.labels();
-                    let value = prefs.advanced_toggle(choice);
-                    let checked = value.unwrap_or_else(|| choice.default_value());
-                    let explanation = if choice == Toggle::Whitespace {
-                        t(help)
-                    } else {
-                        t("advancedSettings.savedForSharedClients")
-                    };
-                    chrome::setting_row(
-                        t(title),
-                        chrome::setting_switch(
+        col()
+            .full_width()
+            .separate(Space::Sm)
+            .children(prefs.advanced_failed().then(|| {
+                rune_theme_codenomad::layout::action_row()
+                    .child(rune::text(t("settings.preferenceSaveFailed")).role("alert"))
+                    .child(rune_theme_codenomad::layout::button(
+                        t("sessionList.loadError.retry"),
+                        !prefs.can_retry(),
+                        retry,
+                    ))
+            }))
+            .children(
+                Toggle::ALL
+                    .into_iter()
+                    .filter(|choice| native || *choice != Toggle::SecondLaunch)
+                    .map(|choice| {
+                        let (title, help) = choice.labels();
+                        let value = prefs.advanced_toggle(choice);
+                        let checked = value.unwrap_or_else(|| choice.default_value());
+                        let explanation = if choice.supported() {
+                            t(help)
+                        } else {
+                            t("advancedSettings.unavailable")
+                        };
+                        chrome::setting_row(
                             t(title),
-                            checked,
-                            !prefs.can_retry() || value.is_none() || prefs.advanced_pending(choice),
-                            move |s| toggle(s, choice, !checked),
+                            rune_theme_codenomad::layout::action_row()
+                                .child(
+                                    chrome::info_tip(
+                                        t(title),
+                                        explanation,
+                                        help_open == Some(choice),
+                                        move |s| info(s, choice),
+                                    )
+                                    .key(format!("advanced-help-{}", choice.key())),
+                                )
+                                .child(
+                                    chrome::setting_switch(
+                                        t(title),
+                                        checked,
+                                        !choice.supported()
+                                            || !prefs.can_retry()
+                                            || value.is_none()
+                                            || prefs.advanced_pending(choice),
+                                        move |s| toggle(s, choice, !checked),
+                                    )
+                                    .description(explanation),
+                                ),
                         )
-                        .help(explanation)
-                        .description(explanation),
-                    )
-                }),
-        ),
+                    }),
+            ),
     )
 }

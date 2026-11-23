@@ -23,7 +23,8 @@ impl Preferences {
     }
 
     pub(in crate::settings) fn set_advanced_toggle(&mut self, toggle: Toggle, value: bool) {
-        if self.can_retry()
+        if toggle.supported()
+            && self.can_retry()
             && !self.advanced_pending(toggle)
             && self.advanced_toggle(toggle).is_some_and(|old| old != value)
         {

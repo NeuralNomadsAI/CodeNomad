@@ -65,7 +65,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 | Preferences → Remote Access | `remote-control-settings-section.tsx` | `settings/remote.rs`: the local host lists paired devices with origin and last activity and creates one-time HTTPS pairing links only for advertised origins. Links can be copied from the visible card; browser clipboard errors appear in the card. An unconfirmed mutation refreshes status and devices without replay. Device actions wait for a confirmed list. |
 | Preferences → Keyboard shortcuts | `hotkeys-settings-section.tsx`, `hotkey-bindings.ts` | `settings/shortcuts/`: confirmed host overrides, filter and conflict feedback. Capture rejects function keys that the Web editor drops without Ctrl/Cmd ([Rune #1661](https://github.com/anomalyco/rune/issues/1661)) and paste chords consumed by focused editors ([Rune #1662](https://github.com/anomalyco/rune/issues/1662)). The focused filter ends capture. A confirmed Web change announces conflicts through `Tx::announce` ([Rune #1677](https://github.com/anomalyco/rune/issues/1677)). |
 | Preferences → Info | `info-settings-section.tsx` | `settings/info.rs` and `info/diagnostics.rs`: native and Web read host versions, filtered connectivity and release offers on demand. Changing the update feed uses the server owner and rereads metadata after settlement. Download update opens the offered release page. The diagnostics report can be copied or saved; the public bug form receives only version and platform fields. External launch feedback covers immediate validation ([Rune #1688](https://github.com/anomalyco/rune/issues/1688)). |
-| Preferences → Config Files / Advanced | `config-files-settings-section.tsx`, `advanced-settings-section.tsx` | `settings/config_files.rs` opens the advertised `config-files` catalogue, keeps a local draft and asks before discarding edits. Save sends one PUT; an uncertain receipt rereads the selected file. `settings/advanced/` writes the shared behavior preferences and server environment settings. The whitespace filter applies in Files; the editor masks designated environment values. |
+| Preferences → Config Files / Advanced | `config-files-settings-section.tsx`, `advanced-settings-section.tsx` | `settings/config_files.rs` opens the advertised `config-files` catalogue, keeps a local draft and asks before discarding edits. JSON/JSONC syntax diagnostics name the line while Save stays available. Save sends one PUT; an uncertain receipt rereads the selected file. Advanced edits the Files whitespace filter and server environment. See [Advanced parity gaps](#advanced-parity-gaps). |
 | Preferences → Memory | `agent-memory-settings-card.tsx`, `agent-memory-editor.tsx` | Native and browser General share the memory switch, a folded scope list and revision-checked editing and Forget. Project reads use the captured workspace and native session Location. Consultation badges use a visit-stable baseline from browser storage or the native client-state store. Closing native Preferences with unsaved memory edits asks before discarding. Tidy up rechecks the opener, memory and authorized directory before creating a session and sending the fixed prompt once. An unconfirmed creation stops before prompt dispatch, disables the action for that visit and directs the user to the project’s sessions. Reopening Preferences allows a fresh confirmed attempt in a new session. |
 | Window close | `components/window-close-button.tsx` | `components/window_close_button.rs`: six Windows light/dark pairs, accessibility and interaction qualified at scale 1 |
 | Server startup | Tauri `cli_manager.rs` | `platform/host/`: isolated Windows bootstrap, shutdown and generation qualified |
@@ -79,6 +79,19 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 | File row actions | `FileRowActions.tsx`, `row-compact-actions.ts` | Shared `file_row_actions`: pinned toggles, inline/overflow state, inert secondary controls, focus handoff and generated CSS tints exercised in native Runtime. Complete Source/native capture, motion, pointer lifecycle and caller assembly remain pending |
 
 ## Workspace and qualification
+
+### Advanced parity gaps
+
+Solid lists the switches in `packages/ui/src/components/settings/advanced-settings-section.tsx:13–29` and the folded environment editor at `:31–50`. Rune displays each pending switch disabled with a keyboard-accessible explanation; the second-launch switch belongs to native Preferences.
+
+| Preference | Pending effect | Owner |
+|---|---|---|
+| `autoCleanupBlankSessions` | Clean up blank sessions | Shell |
+| `keepUnseenSubagentIdleStatus` | Retain unseen subagent idle markers | Shell |
+| `focusExistingWindowOnSecondLaunch` | Focus the existing window on launch | Shell / native launcher |
+| `showProviderUsageCreditBalance` | Show credit balance in Status → Provider Usage | Shell |
+| `holdLongAssistantReplies` | Hold automatic following during long replies | Transcript |
+| `environmentVariables` | Apply the profile's overrides when starting a stopped service; the server applies them to conversation sends | Server |
 
 The composer's worktree selector changes conversation placement through the server's family transaction. Browsing Git checkouts stays independent. A settled reply and fresh placement and activity reads precede rebinding; the occurrence retains its draft and reading anchor. A lost reply keeps the family on hold for the life of the window.
 

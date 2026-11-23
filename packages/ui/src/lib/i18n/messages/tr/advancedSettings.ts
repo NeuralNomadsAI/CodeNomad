@@ -1,5 +1,5 @@
 export const advancedSettingsMessages = {
-  "advancedSettings.savedForSharedClients": "Paylaşılan tercihlere kaydedilir. Rune bu ayarı henüz uygulamıyor.",
+  "advancedSettings.unavailable": "Rune bu ayarı henüz uygulamıyor.",
   "advancedSettings.environmentVariables.maskValue": "Değeri varsayılan olarak gizle",
   "advancedSettings.title": "Gelişmiş Ayarlar",
   "advancedSettings.environmentVariables.title": "Ortam Değişkenleri",

@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "{line}. satırda söz dizimi hatası",
   "settings.nav.servers": "Sunucular",
   "settings.servers.open": "Aç",
   "settings.servers.dialog.name": "Ad",

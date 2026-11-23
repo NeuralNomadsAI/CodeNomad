@@ -463,6 +463,7 @@ export const settingsMessages = {
   "settings.configFiles.errors.loadList": "Failed to load config files.",
   "settings.configFiles.errors.loadContent": "Failed to load config file.",
   "settings.configFiles.errors.save": "Failed to save config file.",
+  "settings.configFiles.syntaxLine": "Syntax error on line {line}",
   "settings.configFiles.toast.saveSuccess": "Config file saved.",
   "settings.configFiles.toast.saveError": "Failed to save config file.",
   "settings.configFiles.confirmDiscard.message": "Discard unsaved changes before continuing?",

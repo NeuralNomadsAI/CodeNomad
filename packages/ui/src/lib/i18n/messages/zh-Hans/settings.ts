@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "第 {line} 行有语法错误",
   "settings.nav.servers": "服务器",
   "settings.servers.open": "打开",
   "settings.servers.dialog.name": "名称",
