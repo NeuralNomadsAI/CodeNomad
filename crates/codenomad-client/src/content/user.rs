@@ -96,7 +96,7 @@ pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
                 Some("inline" | "file") => file["data"]
                     .as_str()
                     .or_else(|| source["data"].as_str())
-                    .map(PictureSource::inline),
+                    .map(|data| PictureSource::inline(mime, data)),
                 _ => None,
             };
             picture

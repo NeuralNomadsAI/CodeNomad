@@ -15,7 +15,7 @@ pub struct Picture {
     pub source: PictureSource,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum PictureSource {
     Inline(Arc<str>),
     Http(Arc<str>),
@@ -24,8 +24,15 @@ pub enum PictureSource {
 }
 
 impl PictureSource {
-    pub(super) fn inline(value: &str) -> Self {
-        if inline_fits(value) {
+    pub(super) fn inline(mime: &str, value: &str) -> Self {
+        let prefix = value
+            .get(..value.len().min(64))
+            .and_then(|prefix| STANDARD.decode(prefix).ok());
+        if inline_fits(value)
+            && prefix
+                .as_ref()
+                .is_some_and(|bytes| raster_type(bytes, mime))
+        {
             Self::Inline(value.into())
         } else {
             Self::Unavailable
@@ -40,7 +47,7 @@ impl PictureSource {
         {
             let expected = format!("data:{mime};base64");
             if header.eq_ignore_ascii_case(&expected) {
-                return Self::inline(body);
+                return Self::inline(mime, body);
             }
             return Self::Unavailable;
         }
@@ -96,6 +103,17 @@ impl PictureSource {
     }
 }
 
+impl std::fmt::Debug for PictureSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Inline(_) => "InlineImage",
+            Self::Http(_) => "HttpImage",
+            Self::Attachment(_) => "AttachmentImage",
+            Self::Unavailable => "UnavailableImage",
+        })
+    }
+}
+
 fn inline_fits(value: &str) -> bool {
     !value.is_empty() && value.len() <= MAX_FILE_BYTES.div_ceil(3) * 4
 }
@@ -108,6 +126,16 @@ pub(super) fn is_image(mime: &str) -> bool {
 }
 
 fn passive_raster(bytes: &[u8], claimed: &str) -> bool {
+    raster_type(bytes, claimed)
+        && images::can_decode(bytes)
+        && imagesize::blob_size(bytes).ok().is_some_and(|size| {
+            size.width > 0
+                && size.height > 0
+                && size.width.saturating_mul(size.height) <= 8 * 1024 * 1024
+        })
+}
+
+fn raster_type(bytes: &[u8], claimed: &str) -> bool {
     use imagesize::ImageType::*;
     let Ok(kind) = imagesize::image_type(bytes) else {
         return false;
@@ -122,14 +150,8 @@ fn passive_raster(bytes: &[u8], claimed: &str) -> bool {
         Heif(imagesize::Compression::Av1) => "image/avif",
         _ => return false,
     };
-    (claimed.eq_ignore_ascii_case(mime)
-        || (matches!(kind, Ico) && claimed.eq_ignore_ascii_case("image/vnd.microsoft.icon")))
-        && images::can_decode(bytes)
-        && imagesize::blob_size(bytes).ok().is_some_and(|size| {
-            size.width > 0
-                && size.height > 0
-                && size.width.saturating_mul(size.height) <= 8 * 1024 * 1024
-        })
+    claimed.eq_ignore_ascii_case(mime)
+        || (matches!(kind, Ico) && claimed.eq_ignore_ascii_case("image/vnd.microsoft.icon"))
 }
 
 pub(super) fn tool_pictures(state: &Value, bytes: &mut usize) -> Vec<Picture> {
@@ -170,7 +192,7 @@ fn media_requires_a_passive_signature_and_matching_mime() {
     let response = json!({"status":"completed","content":[
         {"type":"file","uri":"file:///private.png","mime":"image/png"},
         {"type":"file","uri":"https://user:secret@example.com/image.png","mime":"image/png"},
-        {"type":"file","uri":"data:image/png;base64,AAAA","mime":"image/png"},
+        {"type":"file","uri":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWNQSFjwHx9moL0CAFNzQ+EMxFw9AAAAAElFTkSuQmCC","mime":"image/png"},
         {"type":"text","text":"visible log"}
     ]});
     let mut bytes = ROW_IMAGE_BYTES;
