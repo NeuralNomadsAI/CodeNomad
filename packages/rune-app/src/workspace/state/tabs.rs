@@ -1,7 +1,7 @@
 use super::{Cache, State, Tab, TextEdit, Tx, busy, capture, capture_files_mode, entry};
 use crate::platform;
 
-fn stash(s: &mut State, tx: &mut Tx) {
+fn stash(s: &mut State) {
     capture_files_mode(s);
     capture(s);
     crate::chat::suspend(s);
@@ -118,7 +118,7 @@ pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
     if busy(s) {
         return;
     }
-    stash(s, tx);
+    stash(s);
     if let Some(ui) = &mut s.workspace {
         ui.active = index;
         ui.changed();
@@ -137,7 +137,7 @@ pub fn new_tab(s: &mut State, tx: &mut Tx) {
     if !can_new(s) {
         return;
     }
-    stash(s, tx);
+    stash(s);
     if let Some(ui) = &mut s.workspace {
         ui.entries
             .push(entry(format!("tab-{}", ui.next_key), Tab::Blank));
@@ -166,7 +166,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     }
     let active = s.workspace.as_ref().is_some_and(|ui| ui.active == index);
     if active {
-        stash(s, tx);
+        stash(s);
     } else {
         capture(s);
     }

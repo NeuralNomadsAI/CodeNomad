@@ -39,7 +39,14 @@ impl Cache {
         )
     }
     pub(super) fn history_protected(&self) -> bool {
-        self.phase == Phase::Streaming || self.navigation_blocked()
+        self.phase == Phase::Streaming
+            || self.agent.as_ref().is_some_and(|agent| agent.running)
+            || self
+                .reader
+                .as_ref()
+                .and_then(crate::chat::reader::Reader::running)
+                == Some(true)
+            || self.navigation_blocked()
     }
     pub(super) fn evict_history(&mut self) {
         self.messages = Vec::new();

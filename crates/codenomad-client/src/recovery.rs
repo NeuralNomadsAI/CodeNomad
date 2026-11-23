@@ -75,21 +75,29 @@ impl ReadingLane {
 async fn read_page(
     reading: Option<&ReadingLane>,
     generation: u64,
+    wire: &stream::State,
     page: impl std::future::Future<Output = history::Result<history::Page>>,
 ) -> Option<history::Result<history::Page>> {
-    match reading {
-        Some(reading) => {
-            futures_lite::future::race(
-                async {
-                    reading.demand.changed_after(generation).await;
-                    None
-                },
-                async { Some(page.await) },
-            )
-            .await
+    let content = async {
+        match reading {
+            Some(reading) => {
+                futures_lite::future::race(
+                    async {
+                        reading.demand.changed_after(generation).await;
+                        None
+                    },
+                    async { Some(page.await) },
+                )
+                .await
+            }
+            None => Some(page.await),
         }
-        None => Some(page.await),
-    }
+    };
+    futures_lite::future::race(content, async {
+        wire.placement_changed().await;
+        None
+    })
+    .await
 }
 
 async fn reader_event(
@@ -238,7 +246,7 @@ pub(crate) async fn run_with_reading(
                     Some(Instant::now() + Duration::from_millis(250 * (1u64 << attempts.min(4))));
                 if attempts <= 6 {
                     publish(&out, &wake, Event::Reconnecting).await;
-                } else if attempts == 7 {
+                } else if attempts == 7 && reading.is_none() {
                     // Keep the same subscription owner after showing the outage.
                     publish(&out, &wake, Event::Failed).await;
                 }
@@ -285,7 +293,8 @@ pub(crate) async fn run_with_reading(
                     active_reader && opened && (!dirty || tail_gap) && wire.upstream.load(SeqCst)
                 }) {
                     let stamp = wire.version.load(SeqCst);
-                    let Some(page) = read_page(reading, generation, backend.page(target)).await
+                    let Some(page) =
+                        read_page(reading, generation, &wire, backend.page(target)).await
                     else {
                         continue;
                     };
@@ -526,7 +535,7 @@ pub(crate) async fn run_with_reading(
                     backend.restore(first.as_deref()).await
                 }
             };
-            let Some(snapshot) = read_page(reading, generation, snapshot).await else {
+            let Some(snapshot) = read_page(reading, generation, &wire, snapshot).await else {
                 continue;
             };
             match snapshot {
@@ -570,10 +579,15 @@ pub(crate) async fn run_with_reading(
                     }
                     busy = page.running;
                     terminal = false;
+                    if reading.is_some()
+                        && !publish(&out, &wake, Event::ObservedRunning(busy)).await
+                    {
+                        return Ok(());
+                    }
                     if !reader_event(reading, generation, &out, &wake, Event::Sync(page)).await {
                         return Ok(());
                     }
-                    if done {
+                    if done && reading.is_none() {
                         reader_event(reading, generation, &out, &wake, Event::Done).await;
                     }
                 }

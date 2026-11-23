@@ -274,7 +274,9 @@ fn latest(s: &mut State, tx: &mut Tx) {
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = poll_chat(s, 64);
-    if !git::has_preview(s)
+    if !s.screen.is_launcher()
+        && !git::has_preview(s)
+        && !files::has_preview(s)
         && let Some(reader) = &mut s.reader
     {
         reader.renderer_ready(tx);
@@ -316,7 +318,8 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
         && agent.known
         && s.phase != Phase::Failed
     {
-        s.phase = if agent.running {
+        let running = s.reader.as_ref().and_then(chat::reader::Reader::running);
+        s.phase = if running.unwrap_or(agent.running) {
             Phase::Streaming
         } else {
             Phase::Ready
@@ -368,7 +371,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                         Phase::Ready
                     };
                 }
-                if let Some(agent) = &mut s.agent {
+                if let Some(agent) = &mut s.agent
+                    && (!agent.known || agent.running != running)
+                {
                     agent.running = running;
                     agent.refresh(false);
                 }
@@ -398,7 +403,10 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.can_older = page.older.is_some();
                 s.paging = false;
                 s.history_error = false;
-                s.phase = if page.running {
+                // Status and snapshots have separate mailboxes; the observation is ordered
+                // with native activity even if the snapshot is still queued.
+                let running = s.reader.as_ref().and_then(chat::reader::Reader::running);
+                s.phase = if running.unwrap_or(page.running) {
                     Phase::Streaming
                 } else {
                     Phase::Ready
@@ -416,9 +424,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
             }
             Event::Reconnecting | Event::ConnectionLost => {
-                if let Some(reader) = &mut s.reader {
-                    reader.reconnecting();
-                }
+                chat::reader::reconnecting(s);
                 #[cfg(target_arch = "wasm32")]
                 if matches!(event, Event::ConnectionLost) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);

@@ -244,29 +244,29 @@ pub fn suspend() {
             })
         },
     );
-    rt.update(|s, _| {
+    rt.update(|s, tx| {
         s.agent
             .as_mut()
             .unwrap()
-            .select_request("permission-suspended".into())
+            .select_request("permission-suspended".into());
+        tx.instant();
     });
-    assert!(
-        rt.accessibility_json()
-            .to_string()
-            .contains("synthetic.txt")
-    );
+    rt.frame(0.02);
+    assert!(rt.find("allow_once").is_some());
     assert_eq!(rt.state.draft.text, "keep this draft");
     assert!(
         rt.state
             .transcript_display
             .toggled("tool-message-00410:6:reveal")
     );
-    rt.update(|s, _| {
+    rt.update(|s, tx| {
         s.agent
             .as_mut()
             .unwrap()
-            .select_request("form-suspended".into())
+            .select_request("form-suspended".into());
+        tx.instant();
     });
+    rt.frame(0.02);
     assert!(
         rt.accessibility_json()
             .to_string()

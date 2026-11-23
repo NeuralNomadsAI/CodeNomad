@@ -24,7 +24,7 @@ pub(crate) struct Reader {
     pending_scroll: bool,
     gap: bool,
     parked: bool,
-    terminal_since_sync: bool,
+    running: Option<bool>,
 }
 
 impl Reader {
@@ -44,7 +44,7 @@ impl Reader {
                 pending_scroll: false,
                 gap: false,
                 parked: false,
-                terminal_since_sync: false,
+                running: None,
             },
             ReadingLane {
                 demand,
@@ -78,7 +78,7 @@ impl Reader {
     }
 
     pub(crate) fn blocks_send(&self) -> bool {
-        self.hidden || self.resume_pending || self.gap || self.parked
+        self.hidden || self.resume_pending || self.gap || self.parked || self.running == Some(true)
     }
 
     pub(crate) fn needs_latest(&self) -> bool {
@@ -118,17 +118,21 @@ impl Reader {
     }
 
     pub(crate) fn observed_running(&mut self, running: bool) {
-        self.terminal_since_sync = !running;
+        self.running = Some(running);
     }
 
-    pub(crate) fn reconnecting(&mut self) {
-        if self.resume_pending && !self.hidden {
-            self.resume(self.bookmark.clone());
+    pub(crate) fn running(&self) -> Option<bool> {
+        self.running
+    }
+
+    fn reconnecting(&mut self, reading: &Reading, paging: bool) {
+        if !self.hidden && (self.resume_pending || paging) {
+            self.resume(self.bookmark(reading));
         }
     }
 
     pub(crate) fn bookmark(&self, reading: &Reading) -> Bookmark {
-        if self.resume_pending || self.hidden {
+        if self.resume_pending || self.pending_scroll || self.hidden {
             self.bookmark.clone()
         } else {
             reading.bookmark(self.gap)
@@ -142,11 +146,18 @@ impl Reader {
     }
 }
 
+pub(crate) fn reconnecting(s: &mut State) {
+    if let Some(reader) = &mut s.reader {
+        reader.reconnecting(s.transcript_display.reading_mut(), s.paging);
+    }
+    s.paging = false;
+}
+
 pub(crate) fn suspend(s: &mut State) {
     if let Some(reader) = &mut s.reader {
         reader.bookmark = reader.bookmark(s.transcript_display.reading_mut());
         reader.stop_content();
-        if reader.terminal_since_sync && s.phase == crate::Phase::Streaming {
+        if reader.running() == Some(false) && s.phase == crate::Phase::Streaming {
             s.phase = crate::Phase::Ready;
         }
         s.paging = false;
@@ -235,6 +246,32 @@ mod tests {
             .unwrap();
         assert!(poll_chat(&mut state, 8));
         assert!(state.phase == Phase::Ready);
+    }
+
+    #[test]
+    fn a_queued_idle_page_cannot_override_a_newer_running_observation() {
+        let mut state = init();
+        let (reader, lane) = Reader::open();
+        state.reader = Some(reader);
+        let (out, incoming) = bounded(2);
+        state.incoming = Some(incoming);
+        lane.events
+            .try_send((
+                0,
+                0,
+                Event::Sync(crate::history::Page {
+                    rows: vec![],
+                    older: None,
+                    newer: None,
+                    running: false,
+                }),
+            ))
+            .unwrap();
+        out.try_send(Event::ObservedRunning(false)).unwrap();
+        out.try_send(Event::ObservedRunning(true)).unwrap();
+        assert!(poll_chat(&mut state, 8));
+        assert!(state.phase == Phase::Streaming);
+        assert!(state.reader.as_ref().unwrap().blocks_send());
     }
 
     #[test]
