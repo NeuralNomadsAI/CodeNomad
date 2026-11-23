@@ -122,6 +122,9 @@ override them. An unknown value refuses startup.
 - Server-to-server `POST /api/remote-control/pair` accepts a valid one-use
   code with no Origin, Referer or browser fetch metadata. Browser pairing
   supplies the exact tunnel Origin. Other tunnel mutations require that Origin.
+- `GET` and `HEAD` navigations to `/remote-pair` and `/` accept external links
+  on the tunnel and verified direct HTTPS hosts. Direct entry reads without an
+  explicit `Origin` use the target host; API admission retains its source checks.
 - A remote `/api/auth/status` without a valid device reports
   `pairingRequired`. The recovery dialog then explains how to pair again
   instead of offering password login, keeping the page and its drafts.

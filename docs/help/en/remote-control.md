@@ -21,7 +21,7 @@ Where the tunnel is blocked but the backend is reachable over trusted HTTPS, for
 
 1. On the host, open **Settings → Remote Access → Remote Control**.
 2. Under **Direct HTTPS pairing**, pick the **HTTPS address** when several are listed, then choose **Create HTTPS pairing link**.
-3. Open the link on the device, as for a tunnel link.
+3. Open the link on the device, as for a tunnel link. You can click it from another page.
 
 The link follows the same five-minute, one-use rules and replaces any unused link; repeated wrong codes are rate-limited. A reverse proxy must terminate trusted TLS, pass the original `Host` and `Origin` headers, and reach the backend over loopback or a protected network.
 
