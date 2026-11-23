@@ -1,24 +1,45 @@
+use codenomad_client::{Receiver, runtime::Instant};
+use std::collections::{HashMap, HashSet};
+
+type Checks = (
+    Receiver<(String, Instant)>,
+    HashMap<String, Option<Instant>>,
+);
+
+struct Visit {
+    id: String,
+    listed: bool,
+}
+
 #[derive(Default)]
 pub struct Visits {
-    ids: Vec<Option<String>>,
+    ids: Vec<Option<Visit>>,
     cursor: usize,
+    checks: Option<Checks>,
 }
 
 impl Visits {
-    pub fn record(&mut self, id: &str, step: Option<usize>) {
+    pub fn record(&mut self, id: &str, step: Option<usize>, listed: bool) {
+        let listed = listed || self.ids.iter().flatten().any(|v| v.id == id && v.listed);
         if let Some(step) = step.filter(|&step| self.at(step) == Some(id)) {
             self.cursor = step;
         } else if self.at(self.cursor) != Some(id) {
             self.ids.drain((self.cursor + 1).min(self.ids.len())..);
-            self.ids.push(Some(id.into()));
+            self.ids.push(Some(Visit {
+                id: id.into(),
+                listed,
+            }));
             if self.ids.len() > 50 {
                 self.ids.remove(0);
             }
             self.cursor = self.ids.len() - 1;
         }
+        if listed && let Some(Some(visit)) = self.ids.get_mut(self.cursor) {
+            visit.listed = true;
+        }
     }
     fn at(&self, index: usize) -> Option<&str> {
-        self.ids.get(index)?.as_deref()
+        self.ids.get(index)?.as_ref().map(|visit| visit.id.as_str())
     }
     pub fn steps<'a>(
         &'a self,
@@ -33,10 +54,55 @@ impl Visits {
     }
     pub fn forget(&mut self, missing: &[String]) {
         for id in &mut self.ids {
-            if id.as_ref().is_some_and(|id| missing.contains(id)) {
+            if id.as_ref().is_some_and(|visit| missing.contains(&visit.id)) {
                 *id = None;
             }
         }
+    }
+    pub fn observe_listing(&mut self, listed: &HashSet<String>) {
+        for visit in self.ids.iter_mut().flatten() {
+            if listed.contains(&visit.id) {
+                visit.listed = true;
+            }
+        }
+    }
+    pub fn listed_ids(&self) -> impl Iterator<Item = &str> {
+        let mut seen = HashSet::new();
+        self.ids.iter().rev().flatten().filter_map(move |visit| {
+            let id = visit.id.as_str();
+            (visit.listed && seen.insert(id)).then_some(id)
+        })
+    }
+    pub fn start_checks(&mut self, ids: &[String], rx: Receiver<(String, Instant)>) {
+        self.checks = Some((rx, ids.iter().map(|id| (id.clone(), None)).collect()));
+    }
+    pub fn cancel_checks(&mut self) {
+        self.checks = None;
+    }
+    pub fn verified(&mut self, id: &str, at: Instant) {
+        if let Some((_, verified)) = &mut self.checks
+            && let Some(stamp) = verified.get_mut(id)
+        {
+            *stamp = Some(at);
+        }
+    }
+    pub fn poll_checks(&mut self) -> bool {
+        let Some((checks, verified)) = &self.checks else {
+            return false;
+        };
+        let missing: Vec<_> = std::iter::from_fn(|| checks.try_recv().ok())
+            .filter(|(id, start)| {
+                verified
+                    .get(id)
+                    .is_some_and(|stamp| stamp.is_none_or(|stamp| *start > stamp))
+            })
+            .map(|(id, _)| id)
+            .collect();
+        if checks.is_closed() && checks.is_empty() {
+            self.checks = None;
+        }
+        self.forget(&missing);
+        !missing.is_empty()
     }
 }
 
@@ -48,15 +114,40 @@ mod tests {
     fn selection_after_back_replaces_forward_and_unavailable_sessions_are_skipped() {
         let mut visits = Visits::default();
         for key in ["a", "b", "c"] {
-            visits.record(key, None);
+            visits.record(key, None, false);
         }
         visits.forget(&["b".into()]);
         assert_eq!(visits.steps(true, Some("c")).next(), Some((0, "a")));
-        visits.record("a", Some(0));
+        visits.record("a", Some(0), false);
         assert_eq!(visits.steps(false, Some("a")).next(), Some((2, "c")));
         assert_eq!(visits.steps(true, None).next(), Some((0, "a")));
-        visits.record("d", None);
+        visits.record("d", None, false);
         assert_eq!(visits.steps(false, Some("d")).next(), None);
         assert_eq!(visits.steps(true, Some("d")).next(), Some((0, "a")));
+    }
+
+    #[test]
+    fn selecting_while_checks_are_pending_supersedes_only_that_sessions_check() {
+        let mut visits = Visits::default();
+        for key in ["a", "b", "c"] {
+            visits.record(key, None, true);
+        }
+        let (out, input) = codenomad_client::bounded(3);
+        visits.start_checks(&["a".into(), "b".into()], input);
+        let started = Instant::now();
+        visits.record("b", Some(1), true);
+        visits.verified("b", started);
+        out.try_send(("a".into(), started)).unwrap();
+        out.try_send(("b".into(), started)).unwrap();
+        assert!(visits.poll_checks());
+        assert_eq!(visits.steps(true, None).next(), Some((1, "b")));
+        assert!(visits.steps(true, Some("b")).next().is_none());
+        out.try_send((
+            "b".into(),
+            Instant::now() + std::time::Duration::from_secs(1),
+        ))
+        .unwrap();
+        assert!(visits.poll_checks());
+        assert!(visits.steps(true, None).next().is_none());
     }
 }

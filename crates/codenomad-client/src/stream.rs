@@ -9,6 +9,8 @@ use std::{
     },
     time::Duration,
 };
+mod catalogue;
+pub use catalogue::{CatalogueChanges, CatalogueWatch};
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_browser.rs"]
 mod browser;
@@ -19,6 +21,7 @@ pub struct State {
     pub version: AtomicU64,
     pub alive: AtomicBool,
     pub upstream: AtomicBool,
+    catalogue: Option<Arc<catalogue::Signals>>,
 }
 impl State {
     pub fn valid(&self, version: u64) -> bool {
@@ -51,6 +54,9 @@ pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>
 }
 
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {
+    if let Some(signals) = &state.catalogue {
+        signals.invalidate(None);
+    }
     state.alive.store(true, SeqCst);
     state.upstream.store(true, SeqCst);
     out.send(Input::Opened(epoch)).await?;
@@ -81,6 +87,10 @@ pub(super) async fn dispatch(
         return Ok(());
     }
     let value: Value = serde_json::from_str(data.trim())?;
+    if let Some(signals) = &state.catalogue {
+        signals.observe(&value);
+        return Ok(());
+    }
     if let Some(event) = workspace_event(b, &value) {
         out.send(Input::Workspace(epoch, event)).await?;
         return Ok(());
@@ -137,6 +147,17 @@ pub(super) async fn dispatch(
         out.send(Input::Hint(epoch, version)).await?;
     } else if own
         && value["type"] == "instance.event"
+        && !matches!(
+            native["type"].as_str(),
+            Some(
+                "session.created"
+                    | "session.forked"
+                    | "session.renamed"
+                    | "session.archived"
+                    | "session.unarchived"
+                    | "worktree.updated"
+            )
+        )
         && (native["data"]["sessionID"] == b.session
             || native["data"]["form"]["sessionID"] == b.session
             || native["type"] == "server.connected")

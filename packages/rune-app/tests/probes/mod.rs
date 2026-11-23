@@ -16,6 +16,8 @@ mod real_history;
 mod recovery;
 mod session_transport;
 mod slash;
+#[cfg(all(test, target_os = "windows"))]
+mod titlebar_locale;
 pub mod transcript_scene;
 mod window_restore;
 mod workspaces;
