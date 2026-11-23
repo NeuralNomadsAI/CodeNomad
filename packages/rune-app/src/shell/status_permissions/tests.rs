@@ -4,6 +4,21 @@ use serde_json::json;
 use std::sync::Arc;
 
 #[test]
+fn permission_announcements_track_each_error_independently() {
+    let mut owner = Permissions {
+        visible: true,
+        issue: Some(WriteIssue::Unverified),
+        ..Default::default()
+    };
+    assert!(owner.new_errors().eq(["permissions.blockUnverified"]));
+    owner.failed = true;
+    assert!(owner.new_errors().eq(["permissions.unconfirmed"]));
+    assert_eq!(owner.new_errors().next(), None);
+    owner.issue = Some(WriteIssue::Unconfirmed);
+    assert!(owner.new_errors().eq(["permissions.changeFailed"]));
+}
+
+#[test]
 fn status_exposes_the_folded_mode_and_keyboard_controls_in_both_themes() {
     use rune::{Env, Key, KeyEvent, Mods, Runtime};
     fn render(s: &State, cx: &mut rune::Cx<State>) -> El {

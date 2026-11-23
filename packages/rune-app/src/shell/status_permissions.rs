@@ -34,8 +34,8 @@ pub(crate) struct Permissions {
     write: Option<(Mode, Receiver<Result<Snapshot, WriteIssue>>)>,
     checking: Option<(Mode, WriteIssue)>,
     issue: Option<WriteIssue>,
-    #[cfg(target_arch = "wasm32")]
-    announced_error: Option<&'static str>,
+    #[cfg(any(test, target_arch = "wasm32"))]
+    announced_errors: [Option<&'static str>; 2],
 }
 
 impl Permissions {
@@ -244,6 +244,20 @@ impl Permissions {
             WriteIssue::Unconfirmed => "permissions.changeFailed",
         })
     }
+
+    #[cfg(any(test, target_arch = "wasm32"))]
+    fn new_errors(&mut self) -> impl Iterator<Item = &'static str> + use<> {
+        let present = [
+            self.issue_key(),
+            (self.visible && self.failed).then_some("permissions.unconfirmed"),
+        ];
+        let announced = std::mem::replace(&mut self.announced_errors, present);
+        present.into_iter().zip(announced).filter_map(
+            |(key, previous)| {
+                if key == previous { None } else { key }
+            },
+        )
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -262,6 +276,8 @@ fn demand(launcher: bool, panel: bool, status: bool) -> bool {
 }
 
 pub(crate) fn poll(s: &mut State, _tx: &mut rune::Tx) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    let locale = crate::settings::preference_locale(s);
     s.status_permissions.show(demand(
         s.screen.is_launcher(),
         s.shell.visible(1),
@@ -271,13 +287,11 @@ pub(crate) fn poll(s: &mut State, _tx: &mut rune::Tx) -> bool {
     let changed = owner.poll(&s.reads, &s.wake);
     #[cfg(target_arch = "wasm32")]
     {
-        let error = owner
-            .issue_key()
-            .or_else(|| (owner.visible && owner.failed).then_some("permissions.unconfirmed"));
-        if error != std::mem::replace(&mut owner.announced_error, error)
-            && let Some(key) = error
-        {
-            layout::announce_selection(_tx, t(key));
+        let words = crate::strings::with_locale(locale, || {
+            owner.new_errors().map(t).collect::<Vec<_>>().join("\n")
+        });
+        if !words.is_empty() {
+            layout::announce_selection(_tx, &words);
         }
     }
     changed

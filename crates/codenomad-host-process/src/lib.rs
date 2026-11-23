@@ -16,7 +16,7 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use date::{local_month_day, local_short_date_time};
+pub use date::{local_clock, local_month_day};
 #[cfg(unix)]
 use unix::Family;
 #[cfg(windows)]

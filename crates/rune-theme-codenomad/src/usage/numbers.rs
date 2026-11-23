@@ -4,9 +4,9 @@ pub fn exact(locale: &str, count: u64) -> String {
 }
 
 pub fn decimal(locale: &str, amount: f64) -> String {
-    let raw = format!("{amount:.8}");
+    let raw = fixed(amount, 8);
     let decimal = raw.trim_end_matches('0').trim_end_matches('.');
-    localized(locale, if decimal == "-0" { "0" } else { decimal })
+    localized(locale, decimal)
 }
 
 pub fn compact(locale: &str, count: u64) -> String {
@@ -28,18 +28,57 @@ pub fn usd(locale: &str, cost: f64, small_cost_precision: bool) -> String {
             format!("{cost:.decimal_places$}")
         }
     } else {
-        format!("{cost:.2}")
+        fixed(cost.abs(), 2)
     };
     let amount = localized(locale, &raw);
+    let sign = if cost.is_sign_negative() { "-" } else { "" };
     match locale {
-        "es" => format!("{amount}\u{a0}US$"),
-        "fr" => format!("{amount}\u{a0}$US"),
-        "de" | "ru" => format!("{amount}\u{a0}$"),
-        "he" => format!("\u{200f}{amount}\u{a0}\u{200f}$"),
-        "zh-Hans" => format!("US${amount}"),
-        "ne" => format!("US$\u{a0}{amount}"),
-        _ => format!("${amount}"),
+        "es" => format!("{sign}{amount}\u{a0}US$"),
+        "fr" => format!("{sign}{amount}\u{a0}$US"),
+        "de" | "ru" => format!("{sign}{amount}\u{a0}$"),
+        "he" => format!(
+            "\u{200f}{}{amount}\u{a0}\u{200f}$",
+            if sign.is_empty() { "" } else { "\u{200e}-" }
+        ),
+        "zh-Hans" => format!("{sign}US${amount}"),
+        "ne" => format!("{sign}US$\u{a0}{amount}"),
+        _ => format!("{sign}${amount}"),
     }
+}
+
+// Intl's halfExpand rounds the shortest decimal representation, not the binary float.
+fn fixed(amount: f64, places: usize) -> String {
+    let raw = amount.abs().to_string();
+    if !amount.is_finite() {
+        return amount.to_string();
+    }
+    let (whole, fraction) = raw.split_once('.').unwrap_or((&raw, ""));
+    let mut digits: Vec<_> = whole.bytes().chain(fraction.bytes().take(places)).collect();
+    digits.resize(whole.len() + places, b'0');
+    if fraction
+        .as_bytes()
+        .get(places)
+        .is_some_and(|digit| *digit >= b'5')
+    {
+        let mut carry = true;
+        for digit in digits.iter_mut().rev() {
+            if *digit == b'9' {
+                *digit = b'0';
+            } else {
+                *digit += 1;
+                carry = false;
+                break;
+            }
+        }
+        if carry {
+            digits.insert(0, b'1');
+        }
+    }
+    digits.insert(digits.len() - places, b'.');
+    if amount.is_sign_negative() {
+        digits.insert(0, b'-');
+    }
+    digits.into_iter().map(char::from).collect()
 }
 
 fn localized(locale: &str, ascii: &str) -> String {
@@ -96,4 +135,34 @@ fn formats_keep_units_and_usd_but_use_the_app_locales_symbols() {
     assert_eq!(usd("fr", 0.0068, true), "0,0068\u{a0}$US");
     assert_eq!(usd("de", 1024.75, false), "1.024,75\u{a0}$");
     assert_eq!(usd("he", 0.5, false), "\u{200f}0.50\u{a0}\u{200f}$");
+}
+
+#[cfg(test)]
+#[test]
+fn usd_matches_intl_half_expand_for_all_app_locales() {
+    for (locale, positive, negative) in [
+        ("en", "$1,024.13", "-$1,024.13"),
+        ("de", "1.024,13\u{a0}$", "-1.024,13\u{a0}$"),
+        ("es", "1024,13\u{a0}US$", "-1024,13\u{a0}US$"),
+        (
+            "fr",
+            "1\u{202f}024,13\u{a0}$US",
+            "-1\u{202f}024,13\u{a0}$US",
+        ),
+        (
+            "he",
+            "\u{200f}1,024.13\u{a0}\u{200f}$",
+            "\u{200f}\u{200e}-1,024.13\u{a0}\u{200f}$",
+        ),
+        ("ja", "$1,024.13", "-$1,024.13"),
+        ("ne", "US$\u{a0}१,०२४.१३", "-US$\u{a0}१,०२४.१३"),
+        ("ru", "1\u{a0}024,13\u{a0}$", "-1\u{a0}024,13\u{a0}$"),
+        ("tr", "$1.024,13", "-$1.024,13"),
+        ("zh-Hans", "US$1,024.13", "-US$1,024.13"),
+    ] {
+        assert_eq!(usd(locale, 1024.125, false), positive);
+        assert_eq!(usd(locale, -1024.125, false), negative);
+    }
+    assert_eq!(usd("en", 1.005, false), "$1.01");
+    assert_eq!(usd("en", 9.995, false), "$10.00");
 }

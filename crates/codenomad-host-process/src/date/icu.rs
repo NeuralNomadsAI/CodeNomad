@@ -6,7 +6,7 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::FreeLibrary,
-    Globalization::{UDAT_PATTERN, UDAT_SHORT, UErrorCode, UFieldPosition},
+    Globalization::{UDAT_PATTERN, UErrorCode, UFieldPosition},
     System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW},
 };
 
@@ -104,31 +104,19 @@ pub(super) fn month_day(millis: f64, locale: &str) -> Option<String> {
         if status > 0 || len <= 0 || len as usize >= pattern.len() {
             return None;
         }
-        icu.format(millis, locale, UDAT_PATTERN, &pattern[..len as usize])
+        icu.format(millis, locale, &pattern[..len as usize])
     }
 }
 
-pub(super) fn short_date_time(millis: f64, locale: &str) -> Option<String> {
-    let icu = ICU.get_or_init(Icu::load).as_ref()?;
-    let locale = CString::new(locale).ok()?;
-    icu.format(millis, locale.as_ptr().cast(), UDAT_SHORT, &[])
-}
-
 impl Icu {
-    fn format(
-        &self,
-        millis: f64,
-        locale: *const u8,
-        style: i32,
-        pattern: &[u16],
-    ) -> Option<String> {
+    fn format(&self, millis: f64, locale: *const u8, pattern: &[u16]) -> Option<String> {
         let mut status = 0;
         let mut text = [0; 128];
         // ICU owns the formatter until it is closed here; a null zone uses the local timezone.
         unsafe {
             let format = (self.open_date)(
-                style,
-                style,
+                UDAT_PATTERN,
+                UDAT_PATTERN,
                 locale,
                 null(),
                 0,

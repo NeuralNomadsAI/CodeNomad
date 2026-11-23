@@ -20,6 +20,7 @@ struct Authority {
     model_generation: u64,
     online: bool,
     backpressure: bool,
+    publication_waiting: bool,
     upstream: Option<(u64, bool)>,
 }
 
@@ -35,12 +36,15 @@ impl Watch {
         expected: (u64, bool, u64),
         publish: impl FnOnce() -> T,
     ) -> Option<T> {
-        let authority = self.0.lock().unwrap();
-        (expected.1 && authority.stamp() == expected && !authority.backpressure).then(publish)
+        let mut authority = self.0.lock().unwrap();
+        if !expected.1 || authority.stamp() != expected {
+            return None;
+        }
+        (!authority.wait_for_ingress()).then(publish)
     }
 
     pub fn backpressured(&self) -> bool {
-        self.0.lock().unwrap().backpressure
+        self.0.lock().unwrap().wait_for_ingress()
     }
 
     pub(crate) fn transport(&self, online: bool) -> bool {
@@ -50,6 +54,7 @@ impl Watch {
         }
         authority.online = online;
         authority.backpressure = false;
+        authority.publication_waiting = false;
         authority.upstream = None;
         authority.generation += 1;
         if !online {
@@ -72,6 +77,7 @@ impl Watch {
                     return false;
                 }
                 authority.upstream = status;
+                authority.model_generation += 1;
             }
         }
         authority.generation += 1;
@@ -80,6 +86,11 @@ impl Watch {
 }
 
 impl Authority {
+    fn wait_for_ingress(&mut self) -> bool {
+        self.publication_waiting |= self.backpressure;
+        self.backpressure
+    }
+
     fn stamp(&self) -> (u64, bool, u64) {
         (
             self.generation,
@@ -103,13 +114,13 @@ fn congestion_parks_a_ready_quota_reply_without_changing_its_authority() {
     let stamp = watch.current();
     let (send, reply) = crate::bounded(1);
     send.try_send(42).unwrap();
-    ingress.backpressure(true);
+    let chunk = ingress.chunk();
     assert_eq!(
         watch.publish_if_current(stamp, || reply.try_recv().unwrap()),
         None
     );
     assert!(!reply.is_empty());
-    ingress.backpressure(false);
+    drop(chunk);
     assert_eq!(
         watch.publish_if_current(stamp, || reply.try_recv().unwrap()),
         Some(42)
@@ -159,6 +170,23 @@ pub(crate) struct Ingress {
     session: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct Chunk<'a>(&'a Ingress);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for Chunk<'_> {
+    fn drop(&mut self) {
+        let wake = {
+            let mut authority = self.0.watch.0.lock().unwrap();
+            authority.backpressure = false;
+            std::mem::take(&mut authority.publication_waiting)
+        };
+        if wake {
+            (self.0.wake)();
+        }
+    }
+}
+
 impl Ingress {
     pub fn new(watch: Watch, wake: crate::Wake, workspace: String, session: String) -> Self {
         Self {
@@ -176,13 +204,9 @@ impl Ingress {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn backpressure(&self, blocked: bool) {
-        let mut authority = self.watch.0.lock().unwrap();
-        if authority.backpressure != blocked {
-            authority.backpressure = blocked;
-            drop(authority);
-            (self.wake)();
-        }
+    pub fn chunk(&self) -> Chunk<'_> {
+        self.watch.0.lock().unwrap().backpressure = true;
+        Chunk(self)
     }
 
     pub fn frame(&self, data: &str) {
@@ -471,7 +495,7 @@ fn identical_native_status_preserves_authority_but_new_generations_revoke_it() {
         generation: 8,
         connected: true
     }));
-    assert_eq!(watch.current(), (current.0 + 1, true, current.2));
+    assert_eq!(watch.current(), (current.0 + 1, true, current.2 + 1));
     assert!(watch.transport(false));
     assert!(!watch.current().1);
     let closed = watch.current();
@@ -479,5 +503,5 @@ fn identical_native_status_preserves_authority_but_new_generations_revoke_it() {
         generation: 9,
         connected: true
     }));
-    assert_eq!(watch.current(), (closed.0 + 1, false, closed.2));
+    assert_eq!(watch.current(), (closed.0 + 1, false, closed.2 + 1));
 }

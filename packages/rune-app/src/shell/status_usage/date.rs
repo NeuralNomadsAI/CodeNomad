@@ -4,9 +4,6 @@ pub(super) fn reset(millis: Option<f64>) -> Option<String> {
     Some(crate::strings::t("providerUsage.resets").replace("{time}", &date))
 }
 
-#[cfg(windows)]
-use codenomad_host_process::local_short_date_time as short;
-
 #[cfg(target_arch = "wasm32")]
 fn short(millis: f64, locale: &str) -> Option<String> {
     use js_sys::{Array, Intl, Object, Reflect};
@@ -23,19 +20,26 @@ fn short(millis: f64, locale: &str) -> Option<String> {
         .as_string()
 }
 
-#[cfg(unix)]
+#[cfg(not(target_arch = "wasm32"))]
 fn short(millis: f64, locale: &str) -> Option<String> {
-    let (year, month, day, hour, minute) =
-        codenomad_host_process::local_clock((millis / 1000.0).floor() as i64)?;
+    let local = codenomad_host_process::local_clock((millis / 1000.0).floor() as i64)?;
+    Some(short_civil(local, locale))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn short_civil(local: (i32, i32, i32, i32, i32), locale: &str) -> String {
+    let (year, month, day, hour, minute) = local;
     let date = match locale {
         "en" => format!("{month}/{day}/{:02}", year.rem_euclid(100)),
         "de" => format!("{day:02}.{month:02}.{:02}", year.rem_euclid(100)),
+        "es" => format!("{day}/{month}/{:02}", year.rem_euclid(100)),
         "ru" => format!("{day:02}.{month:02}.{year:04}"),
-        "tr" => format!("{day:02}.{month:02}.{year:04}"),
+        "tr" => format!("{day}.{month:02}.{year:04}"),
         "fr" => format!("{day:02}/{month:02}/{year:04}"),
         "he" => format!("{day}.{month}.{year:04}"),
         "ja" => format!("{year:04}/{month:02}/{day:02}"),
-        "zh-Hans" | "ne" => format!("{year:04}/{month}/{day}"),
+        "ne" => format!("{:02}/{month}/{day}", year.rem_euclid(100)),
+        "zh-Hans" => format!("{year:04}/{month}/{day}"),
         _ => format!("{day}/{month}/{year:04}"),
     };
     let mut stamp = if locale == "en" {
@@ -45,7 +49,12 @@ fn short(millis: f64, locale: &str) -> Option<String> {
             if hour < 12 { "AM" } else { "PM" }
         )
     } else {
-        format!("{date} {hour:02}:{minute:02}")
+        match locale {
+            "es" | "he" => format!("{date}, {hour}:{minute:02}"),
+            "de" | "ne" | "ru" => format!("{date}, {hour:02}:{minute:02}"),
+            "ja" => format!("{date} {hour}:{minute:02}"),
+            _ => format!("{date} {hour:02}:{minute:02}"),
+        }
     };
     if locale == "ne" {
         stamp = stamp
@@ -57,7 +66,27 @@ fn short(millis: f64, locale: &str) -> Option<String> {
             })
             .collect();
     }
-    Some(stamp)
+    stamp
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn short_civil_time_matches_intl_in_all_app_locales() {
+    for (locale, morning, evening) in [
+        ("en", "3/4/26, 8:07 AM", "11/18/26, 5:42 PM"),
+        ("de", "04.03.26, 08:07", "18.11.26, 17:42"),
+        ("es", "4/3/26, 8:07", "18/11/26, 17:42"),
+        ("fr", "04/03/2026 08:07", "18/11/2026 17:42"),
+        ("he", "4.3.2026, 8:07", "18.11.2026, 17:42"),
+        ("ja", "2026/03/04 8:07", "2026/11/18 17:42"),
+        ("ne", "२६/३/४, ०८:०७", "२६/११/१८, १७:४२"),
+        ("ru", "04.03.2026, 08:07", "18.11.2026, 17:42"),
+        ("tr", "4.03.2026 08:07", "18.11.2026 17:42"),
+        ("zh-Hans", "2026/3/4 08:07", "2026/11/18 17:42"),
+    ] {
+        assert_eq!(short_civil((2026, 3, 4, 8, 7), locale), morning);
+        assert_eq!(short_civil((2026, 11, 18, 17, 42), locale), evening);
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

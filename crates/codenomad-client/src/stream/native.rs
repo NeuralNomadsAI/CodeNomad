@@ -5,7 +5,6 @@ use super::{
     limits::reread,
     opened,
 };
-use async_channel::TrySendError;
 use std::time::Duration;
 
 pub(super) async fn read_native(
@@ -94,6 +93,8 @@ async fn receive_chunk(
     quota: Option<&crate::provider_usage::Ingress>,
     frames: &Sender<Parsed>,
 ) -> Result<()> {
+    // Bytes already delivered by HTTP may still contain a revocation past the next queued frame.
+    let _unobserved = quota.map(crate::provider_usage::Ingress::chunk);
     for byte in chunk {
         if let Some(frame) = parser.byte(*byte)? {
             if let Some(quota) = quota {
@@ -105,20 +106,7 @@ async fn receive_chunk(
                     _ => {}
                 }
             }
-            match frames.try_send(frame) {
-                Ok(()) => {}
-                Err(TrySendError::Full(frame)) => {
-                    if let Some(quota) = quota {
-                        quota.backpressure(true);
-                    }
-                    let sent = frames.send(frame).await;
-                    if let Some(quota) = quota {
-                        quota.backpressure(false);
-                    }
-                    sent?;
-                }
-                Err(TrySendError::Closed(_)) => return Err("event reader closed".into()),
-            }
+            frames.send(frame).await?;
         }
     }
     Ok(())

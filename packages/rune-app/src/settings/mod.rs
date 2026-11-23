@@ -159,6 +159,15 @@ pub(crate) fn show_provider_usage_credit_balance(s: &State) -> bool {
         .is_some_and(|config| config["settings"]["showProviderUsageCreditBalance"] == true)
 }
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn preference_locale(s: &State) -> &'static str {
+    s.settings
+        .shared
+        .borrow()
+        .locale()
+        .unwrap_or_else(strings::locale)
+}
+
 pub(crate) fn stop_before_conversation(s: &State) -> Option<codenomad_client::Receiver<()>> {
     s.settings.shared.borrow_mut().stop_before_conversation()
 }
