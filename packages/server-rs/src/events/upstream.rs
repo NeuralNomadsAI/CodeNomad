@@ -9,7 +9,8 @@ use futures_util::{Stream, StreamExt};
 use serde::de::DeserializeOwned;
 
 /// The largest buffered event, as `maxSseEventBytes` in the TypeScript client.
-pub const MAX_EVENT_UNITS: usize = 16 * 1024 * 1024;
+// The native inbox can contain all 20 MiB of admitted uploads in base64.
+pub const MAX_EVENT_UNITS: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -287,7 +288,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_an_event_above_the_size_limit() {
-        let text = format!("data: {}", json!({ "output": "x".repeat(16 * 1024 * 1024) }));
+        let text = format!("data: {}", json!({ "output": "x".repeat(MAX_EVENT_UNITS) }));
         assert_eq!(collect(vec![text.into_bytes()]).await, vec![Err(Error::EventTooLarge)]);
     }
 

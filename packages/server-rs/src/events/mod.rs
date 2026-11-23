@@ -32,6 +32,8 @@ use crate::{App, Error, Shared, error};
 pub struct Connection {
     client_id: String,
     connection_id: String,
+    #[serde(default)]
+    user_files: Option<String>,
 }
 
 impl Connection {
@@ -101,8 +103,13 @@ pub async fn connect(
     query: Result<Query<Connection>, QueryRejection>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, Error> {
     let owner = owner(channel.as_ref().map(|c| &c.0));
-    let key =
-        owned_key(&owner, query.map_err(|_| error(Status::BAD_REQUEST, "Invalid client connection"))?.0.validate()?);
+    let query = query.map_err(|_| error(Status::BAD_REQUEST, "Invalid client connection"))?.0;
+    let reference_files = match query.user_files.as_deref() {
+        Some(crate::sessions::user_files::REFERENCE) => true,
+        None => false,
+        _ => return Err(error(Status::BAD_REQUEST, "Invalid client connection")),
+    };
+    let key = owned_key(&owner, query.validate()?);
     let limit = if owner == "local" { LOCAL_STREAMS } else { DEVICE_STREAMS };
     let cancel = CancellationToken::new();
     let mut inventory = app.inner.lock().unwrap();
@@ -117,7 +124,7 @@ pub async fn connect(
         previous.cancellation.cancel();
     }
     // Subscribed under the inventory lock: the replayed statuses precede every later one.
-    let sub = app.events.subscribe();
+    let sub = app.events.subscribe_to(reference_files);
     drop(inventory);
     let guard = Guard(app, key, cancel.clone(), sub);
     Ok(Sse::new(async_stream::stream! {
