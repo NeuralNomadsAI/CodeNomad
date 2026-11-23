@@ -853,7 +853,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
    * open one, an open prose fragment keeps text the fetched page only
    * prefixes (the stream continued past the fetch), and committed versions
    * order by the records' server timestamps, the fetched page winning ties. */
-  function residentPartWins(resident: ClientPart, snapshot: ClientPart, residentUpdatedAt: number, snapshotUpdatedAt: number, residentRecordComplete = false, snapshotRecordComplete = false): boolean {
+  function residentPartWins(resident: ClientPart, snapshot: ClientPart, residentUpdatedAt: number, snapshotUpdatedAt: number, residentRecordEnded = false, snapshotRecordEnded = false): boolean {
     if (resident.type !== snapshot.type) return false
     if (resident.type === "tool") {
       const residentTerminal = isTerminalToolStatus((resident as { state?: { status?: unknown } }).state?.status)
@@ -866,12 +866,16 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       // Completion evidence orders before any prefix reasoning, read like
       // the native merge's test: a fragment is committed by its own ending
       // or by its message's end, even when only the message carries
-      // `time.completed`. A committed fetched fragment is the final
-      // version even when it is shorter than what the open stream
-      // displayed (`updatedAt` may hold the creation time and cannot order
-      // these).
-      const residentCommitted = isCommittedProsePart(resident) || residentRecordComplete
-      const snapshotCommitted = isCommittedProsePart(snapshot) || snapshotRecordComplete
+      // `time.completed`. The record keeps no end time of its own, so the
+      // message's end is its terminal display status - which the
+      // normalizer derives from that end: `complete` for a finished
+      // message, `error` for an interrupted or failed one (`sent` still
+      // means running for shells and compactions). A committed fetched
+      // fragment is the final version even when it is shorter than what the
+      // open stream displayed (`updatedAt` may hold the creation time and
+      // cannot order these).
+      const residentCommitted = isCommittedProsePart(resident) || residentRecordEnded
+      const snapshotCommitted = isCommittedProsePart(snapshot) || snapshotRecordEnded
       if (snapshotCommitted && !residentCommitted) return false
       if (!residentCommitted) {
         if (!snapshotCommitted) {
@@ -939,9 +943,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const snapshotProseUsedSet = new Set<string>()
     const mergedParts: MessageRecord["parts"] = {}
     const mergedIds: string[] = []
-    let snapshotSurvives = false
-    const residentComplete = resident.status === "complete"
-    const snapshotComplete = next.status === "complete"
+    const ended = (record: MessageRecord) => record.status === "complete" || record.status === "error"
+    const residentEnded = ended(resident)
+    const snapshotEnded = ended(next)
     const canonicalize = (part: MessageRecord["parts"][string], id: string): MessageRecord["parts"][string] => {
       if (part.id === id && (part.data as { id?: unknown }).id === id) return part
       return { ...part, id, data: { ...part.data, id } as ClientPart }
@@ -956,15 +960,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         // id: transcript lookups resolve parts by data.id.
         const snapshotProseUsed = snapshotProseUsedSet
         const residentWon = residentSide !== undefined
-          && residentPartWins(residentSide.part.data, snapshotPart.data, resident.updatedAt, next.updatedAt, residentComplete, snapshotComplete)
+          && residentPartWins(residentSide.part.data, snapshotPart.data, resident.updatedAt, next.updatedAt, residentEnded, snapshotEnded)
         if (residentSide) residentProseUsed.add(residentSide.id)
         snapshotProseUsed.add(id)
         if (residentWon) {
           const data = prosePartWithFetchedEnd(residentSide!.part.data, snapshotPart.data)
-          mergedParts[id] = canonicalize({ ...residentSide!.part, data }, id)
+          const wrapper = data === residentSide!.part.data ? residentSide!.part : { ...residentSide!.part, data }
+          mergedParts[id] = canonicalize(wrapper, id)
         } else {
           mergedParts[id] = snapshotPart
-          snapshotSurvives = true
         }
         mergedIds.push(id)
         continue
@@ -974,14 +978,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       const residentPart = resident.parts[id]
       if (!residentPart) {
         mergedParts[id] = snapshotPart
-        snapshotSurvives = true
         continue
       }
-      if (residentPartWins(residentPart.data, snapshotPart.data, resident.updatedAt, next.updatedAt, residentComplete, snapshotComplete)) {
+      if (residentPartWins(residentPart.data, snapshotPart.data, resident.updatedAt, next.updatedAt, residentEnded, snapshotEnded)) {
         mergedParts[id] = residentPart
       } else {
         mergedParts[id] = snapshotPart
-        snapshotSurvives = true
       }
     }
     if (keepResidentExtras) {
@@ -1004,7 +1006,25 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         }
       }
     }
-    if (!snapshotSurvives) return resident
+    // The resident record object is reused only when the merge leaves both
+    // its metadata and its part list unchanged (unchanged records keep
+    // their object so their subscribers stay quiet). Anything else - an
+    // emptied part list included - publishes the merged record.
+    const partsUnchanged = mergedIds.length === resident.partIds.length
+      && mergedIds.every((id, index) => {
+        if (id !== resident.partIds[index]) return false
+        const merged = mergedParts[id]
+        const current = resident.parts[id]
+        return merged === current || (merged !== undefined && current !== undefined && partDataEqual(merged.data, current.data))
+      })
+    const metadataUnchanged = resident.role === next.role
+      && resident.sessionId === next.sessionId
+      && resident.status === next.status
+      && resident.createdAt === next.createdAt
+      && resident.updatedAt === next.updatedAt
+      && resident.isEphemeral === next.isEphemeral
+      && samePromptDisplayMetadata(next.clientPromptDisplayMetadata, resident.clientPromptDisplayMetadata)
+    if (partsUnchanged && metadataUnchanged) return resident
     return { ...next, parts: mergedParts, partIds: mergedIds, revision: resident.revision + 1 }
   }
 

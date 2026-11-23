@@ -933,6 +933,65 @@ describe("chunked hydration", () => {
     assert.equal(ids.at(-1), "msg_aaa_live", "an arrival sharing no id with the page lands at the end, not ahead of older messages")
   })
 
+  it("lets an interrupted step's final text supersede its open stream", async () => {
+    const store = createInstanceMessageStore("chunked-interrupted-step")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    // The message ended through an interruption: it carries time.completed
+    // and an interruption error, so its display status is `error` and its
+    // text is final even though it is shorter than the open stream showed.
+    const fetched = base.map((input, index) =>
+      index === 10
+        ? { ...input, status: "error" as const, parts: [{ type: "text" as const, text: "BASE" }] }
+        : input,
+    )
+    const streamed = base.map((input, index) =>
+      index === 10
+        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "BASE partial" }] }
+        : input,
+    )
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const record = store.getMessage("msg_010")!
+    assert.equal((record.parts[record.partIds[0]]?.data as { text?: string })?.text, "BASE", "an ended message's text is final whatever its display status")
+    assert.equal(record.status, "error")
+  })
+
+  it("empties a stale partial when the authoritative page holds no content", async () => {
+    const store = createInstanceMessageStore("chunked-empty-content")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    const fetched = base.map((input, index) =>
+      index === 10 ? { ...input, parts: [] } : input,
+    )
+    const streamed = base.map((input, index) =>
+      index === 10
+        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "stale partial text" }] }
+        : input,
+    )
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const record = store.getMessage("msg_010")!
+    assert.equal(record.partIds.length, 0, "an authoritative step with no content drops the stale partial")
+    assert.equal(record.status, "complete")
+  })
+
+  it("reuses the resident record when the merge changes nothing", async () => {
+    const store = createInstanceMessageStore("chunked-merge-reuse")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    const result = store.hydrateMessages("session", base, undefined, { chunked: true })
+    // A projection lands the very same content and metadata for one row.
+    store.hydrateMessages("session", base, undefined, { preserveOmitted: true })
+    const revision = store.getMessage("msg_010")!.revision
+
+    assert.equal(await result, true)
+    // Store setters merge into the resident object, so identity cannot tell
+    // reuse from a redundant write; the record revision can.
+    assert.equal(store.getMessage("msg_010")?.revision, revision, "a merge that changes nothing publishes nothing")
+  })
+
   it("keeps tokens published after the fetch through a same-window reload", async () => {
     const store = createInstanceMessageStore("chunked-usage-reload")
     const inputs = makeInputs(CHUNK_SIZE + 5)
