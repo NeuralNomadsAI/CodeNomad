@@ -3,7 +3,9 @@ use rune::{Chord, ChordKey, ChordMod, Key, KeyEvent, Keybind, PhysicalKeyCode, T
 use serde_json::Value;
 
 pub(crate) const FILE_SAVE: &str = "file-save";
-const DEFAULT_SAVE: Chord = Chord::new(ChordKey::Char('s')).with(ChordMod::Primary);
+const fn primary(key: char) -> Chord {
+    Chord::new(ChordKey::Char(key)).with(ChordMod::Primary)
+}
 
 fn decode(rule: &Value) -> Option<Chord> {
     let rule = rule.as_object()?;
@@ -48,11 +50,11 @@ fn decode(rule: &Value) -> Option<Chord> {
     Some(chord)
 }
 
-fn file_save(overrides: Option<&[Value]>) -> Vec<Chord> {
+fn bindings(overrides: Option<&[Value]>, default: char) -> Vec<Chord> {
     overrides
         .filter(|rules| rules.len() <= 8)
         .and_then(|rules| rules.iter().map(decode).collect())
-        .unwrap_or_else(|| vec![DEFAULT_SAVE])
+        .unwrap_or_else(|| vec![primary(default)])
 }
 
 pub(crate) fn save_label(s: &State) -> String {
@@ -61,7 +63,7 @@ pub(crate) fn save_label(s: &State) -> String {
 
 pub(super) fn binding_label(overrides: Option<&[Value]>) -> String {
     let platform = rune::KeyPlatform::current();
-    file_save(overrides)
+    bindings(overrides, 's')
         .iter()
         .map(|chord| Keybind::from(*chord).label_on(platform))
         .collect::<Vec<_>>()
@@ -71,34 +73,28 @@ pub(super) fn binding_label(overrides: Option<&[Value]>) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn conflict_label(preferences: &super::Preferences) -> Vec<&'static str> {
     let platform = rune::KeyPlatform::current();
-    let save = file_save(preferences.shortcut(FILE_SAVE));
+    let save = bindings(preferences.shortcut(FILE_SAVE), 's');
     [
         ("new-instance", 'n', "hotkeys.action.new-instance"),
         ("close-instance", 'w', "hotkeys.action.close-instance"),
     ]
     .into_iter()
     .filter_map(|(id, default, label)| {
-        let mut shell = preferences.shortcut(id).map_or_else(
-            || vec![Chord::new(ChordKey::Char(default)).with(ChordMod::Primary)],
-            |rules| rules.iter().filter_map(shell_chord).collect(),
-        );
-        shell.retain(|chord| save.iter().any(|save| save.same_keys(chord, platform)));
-        (!shell.is_empty()).then_some(label)
+        bindings_conflict(
+            &save,
+            &bindings(preferences.shortcut(id), default),
+            platform,
+        )
+        .then_some(label)
     })
     .collect()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn shell_chord(rule: &Value) -> Option<Chord> {
-    let name = rule["key"].as_str()?;
-    let chord = decode(rule)?;
-    match chord.key() {
-        ChordKey::Char(c) if name.chars().eq([c]) || name.eq_ignore_ascii_case(&c.to_string()) => {
-            Some(chord)
-        }
-        ChordKey::Function(n) if name.eq_ignore_ascii_case(&format!("f{n}")) => Some(chord),
-        _ => None,
-    }
+fn bindings_conflict(first: &[Chord], second: &[Chord], platform: rune::KeyPlatform) -> bool {
+    first
+        .iter()
+        .any(|a| second.iter().any(|b| a.same_keys(b, platform)))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -151,8 +147,18 @@ pub(super) fn record(event: &KeyEvent, tx: &Tx) -> Option<Value> {
 }
 
 pub(crate) fn matches_save(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
+    matches_shortcut(s, FILE_SAVE, event, tx, 's')
+}
+
+pub(crate) fn matches_shortcut(
+    s: &State,
+    action: &str,
+    event: &KeyEvent,
+    tx: &Tx,
+    default: char,
+) -> bool {
     let preferences = s.settings.shared.borrow();
-    file_save(preferences.shortcut(FILE_SAVE))
+    bindings(preferences.shortcut(action), default)
         .iter()
         .any(|chord| matches(*chord, event, physical_slot(tx), tx.key_base()))
 }
@@ -163,7 +169,6 @@ fn logical_command(typed: char, event: &KeyEvent, base: Option<char>) -> char {
         && typed.is_ascii()
         && event.mods.ctrl
         && !event.mods.alt
-        && !event.mods.shift
     {
         return base.filter(|c| !c.is_ascii()).unwrap_or(typed);
     }
@@ -216,17 +221,17 @@ fn physical_slot(tx: &Tx) -> Option<char> {
 #[test]
 fn resolves_shared_save_overrides() {
     use serde_json::json;
-    assert_eq!(file_save(None), [DEFAULT_SAVE]);
-    assert!(file_save(Some(&[])).is_empty());
+    assert_eq!(bindings(None, 's'), [primary('s')]);
+    assert!(bindings(Some(&[]), 's').is_empty());
     assert_eq!(
-        file_save(Some(&[json!({"key":"x", "mod":1})])),
-        [DEFAULT_SAVE]
+        bindings(Some(&[json!({"key":"x", "mod":1})]), 's'),
+        [primary('s')]
     );
     assert_eq!(
-        file_save(Some(&[
-            json!({"key":"F8"}),
-            json!({"key":"Digit1","ctrl":true})
-        ])),
+        bindings(
+            Some(&[json!({"key":"F8"}), json!({"key":"Digit1","ctrl":true})]),
+            's'
+        ),
         [
             Chord::new(ChordKey::Function(8)),
             Chord::new(ChordKey::Char('1')).with(ChordMod::Ctrl)
@@ -274,24 +279,52 @@ fn logical_punctuation_matches_only_the_character_solid_records() {
 #[cfg(all(test, target_os = "windows"))]
 #[test]
 fn localized_ctrl_letter_uses_the_key_rune_reports_before_us_fallback() {
-    let event = KeyEvent {
-        key: Key::Command(';'),
+    use serde_json::json;
+    for shift in [false, true] {
+        let event = KeyEvent {
+            key: Key::Command(';'),
+            mods: rune::Mods {
+                ctrl: true,
+                cmd: true,
+                shift,
+                ..Default::default()
+            },
+        };
+        let save = bindings(Some(&[json!({"key":"ö","mod":true,"shift":shift})]), 's');
+        let new_tab = bindings(Some(&[json!({"key":";","ctrl":true,"shift":shift})]), 'n');
+        assert!(matches(
+            save[0],
+            &event,
+            None,
+            Some(if shift { 'Ö' } else { 'ö' })
+        ));
+        assert!(!matches(new_tab[0], &event, None, Some('ö')));
+        assert!(!bindings_conflict(
+            &save,
+            &new_tab,
+            rune::KeyPlatform::Windows
+        ));
+        let same_key = bindings(Some(&[json!({"key":"Ö","ctrl":true,"shift":shift})]), 'n');
+        assert!(matches(same_key[0], &event, None, Some('ö')));
+        assert!(bindings_conflict(
+            &save,
+            &same_key,
+            rune::KeyPlatform::Windows
+        ));
+    }
+    let alt_gr = KeyEvent {
+        key: Key::Text("@".to_owned()),
         mods: rune::Mods {
             ctrl: true,
             cmd: true,
+            alt: true,
             ..Default::default()
         },
     };
-    assert!(matches(
-        Chord::parse("mod+ö").unwrap(),
-        &event,
-        None,
-        Some('ö')
-    ));
     assert!(!matches(
-        Chord::parse("mod+;").unwrap(),
-        &event,
+        Chord::parse("ctrl+alt+q").unwrap(),
+        &alt_gr,
         None,
-        Some('ö')
+        Some('q')
     ));
 }

@@ -40,7 +40,7 @@ Reemplazar o cerrar el lector afecta solo a la pestaña de proyecto actual. Las 
 
 El lector de código conserva el ajuste de línea al cambiar de archivo o pestaña de proyecto y lo restaura con el estado de la ventana.
 Al volver a abrir un archivo de código reciente en la misma pestaña de proyecto, se restauran la selección y la posición de desplazamiento.
-Si cambia el ajuste de línea por el ancho del lector, la primera línea de código visible permanece a la vista.
+Al actualizar el archivo o cambiar el tamaño del lector, la primera línea de código visible permanece a la vista.
 
 ## Vistas previas de solo lectura y acotadas {#preview-limits}
 

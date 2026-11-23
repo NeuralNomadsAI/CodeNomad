@@ -74,18 +74,22 @@ pub(super) fn source(
     let text = &ui.document.edit().text;
     let source_layout = theme::editor::SourceLayout::new(dark, text, wrap, view_width);
     let viewport = ui.document.source_viewport();
+    let reflow = viewport.reflow();
     let restore = document_action_tx(s, {
         let viewport = viewport.clone();
         let scroll_key = scroll_key.clone();
         move |ui, tx| {
-            if !wrap || view_width.is_some() {
+            if viewport.reflow() == reflow && (!wrap || view_width.is_some()) {
                 viewport.restore(&scroll_key, &ui.document.edit().text, source_layout, tx);
             }
         }
     });
-    // A new wrap width mounts a fresh watcher even when the editor's outer rectangle is unchanged.
+    // Replacement or a new wrap width can move rows without changing the viewport rectangle.
     let watch = rune::el()
-        .key(format!("{scroll_key}-anchor-{}", source_layout.width_key()))
+        .key(format!(
+            "{scroll_key}-anchor-{reflow}-{}",
+            source_layout.width_key()
+        ))
         .on_layout_tx(move |s, _, tx| restore(s, tx));
     Some(
         theme::editor::editor_view(dark, field, text, wrap, view_width, watch)

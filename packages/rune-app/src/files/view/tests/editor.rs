@@ -66,11 +66,22 @@ fn wrapped_reader_keeps_its_logical_top_line_across_resize_and_reopen() {
         assert_eq!(row, wide);
         assert!((new_y - y).abs() < 1.0, "{y} → {new_y} after reopening");
 
-        click(&mut rt, "file-close");
         let shortened = STANDARD.encode(format!("prefix\nshort target\n{}", "after\n".repeat(120)));
-        open(&mut rt, &http, "wrapped.txt", &shortened).await;
+        click(&mut rt, "file-refresh");
+        rt.update_if(|s, _| s.files.as_mut().unwrap().poll(20.0));
+        http.request("GET", "wrapped.txt")
+            .await
+            .preview("wrapped.txt", &shortened, Some("v2"))
+            .await;
+        settle(&mut rt).await;
         let (row, new_y) = top_line(&rt);
         assert_eq!(row, 1);
+        assert!((new_y - y).abs() < 1.0, "{y} → {new_y} after refresh");
+
+        click(&mut rt, "file-close");
+        open(&mut rt, &http, "wrapped.txt", &contents).await;
+        let (row, new_y) = top_line(&rt);
+        assert_eq!(row, wide);
         assert!(
             (new_y - y).abs() < 1.0,
             "{y} → {new_y} with the same width but different wrapping"
@@ -191,7 +202,7 @@ fn overwrite_dialog_defaults_to_cancel_and_keeps_the_draft() {
 }
 
 #[test]
-fn typing_and_control_save_use_the_versioned_workspace_file() {
+fn typing_and_primary_save_use_the_versioned_workspace_file() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;
         let mut rt = runtime(http.ui(Store::default(), "source-editor"));
@@ -211,9 +222,15 @@ fn typing_and_control_save_use_the_versioned_workspace_file() {
                 .iter()
                 .any(|node| node.path == input.path && node.focused)
         );
+        let mac = cfg!(target_os = "macos");
+        // Rune's native macOS End jumps to the end of the document.
         rt.key(KeyEvent {
-            key: Key::End,
-            mods: Mods::default(),
+            key: if mac { Key::Right } else { Key::End },
+            mods: Mods {
+                cmd: mac,
+                logo: mac,
+                ..Mods::default()
+            },
         });
         rt.key(KeyEvent {
             key: Key::Enter,
@@ -236,6 +253,8 @@ fn typing_and_control_save_use_the_versioned_workspace_file() {
             key: Key::Command('s'),
             mods: Mods {
                 cmd: true,
+                ctrl: !mac,
+                logo: mac,
                 ..Mods::default()
             },
         });

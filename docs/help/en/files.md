@@ -40,7 +40,7 @@ Reader replacement and closure affect only the current project tab. Duplicate ta
 
 The source reader remembers word wrap across files and project tabs, and restores it with the saved window state.
 Reopening a recently viewed source file in the same project tab restores its selection and scroll position.
-When wrapping changes with the reader width, the first visible source line stays in view.
+The first visible source line stays in view when the file refreshes or the reader is resized.
 
 ## Read-only and bounded previews {#preview-limits}
 

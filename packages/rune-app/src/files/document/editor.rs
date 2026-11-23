@@ -431,6 +431,9 @@ impl Editor {
         }
         let draft = lock(&shared);
         if self.revision != draft.revision {
+            self.position
+                .viewport
+                .before_text_replacement(&self.edit.text);
             let live_selection = self
                 .position
                 .viewport

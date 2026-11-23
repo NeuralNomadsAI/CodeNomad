@@ -68,6 +68,7 @@ impl Position {
                 position: Cell::new(saved.map_or_else(ScrollPosition::default, |view| view.scroll)),
                 pending: Cell::new(true),
                 mounted: Cell::new(false),
+                reflow: Cell::new(0),
             }),
         }
     }
@@ -93,15 +94,31 @@ pub(crate) struct Viewport {
     position: Cell<ScrollPosition>,
     pending: Cell<bool>,
     mounted: Cell<bool>,
+    reflow: Cell<u64>,
 }
 
 impl Viewport {
     pub(super) fn saved_scroll(&self, text: &str) -> ScrollPosition {
         let mut saved = self.position.get();
-        saved.anchor = saved
-            .layout
-            .and_then(|layout| layout.capture(text, saved.offset[1]));
+        if saved.anchor.is_none() {
+            saved.anchor = saved
+                .layout
+                .and_then(|layout| layout.capture(text, saved.offset[1]));
+        }
         saved
+    }
+
+    pub(super) fn before_text_replacement(&self, text: &str) {
+        let saved = self.saved_scroll(text);
+        if saved.anchor.is_some() {
+            self.position.set(saved);
+            self.arm();
+            self.reflow.set(self.reflow.get().wrapping_add(1));
+        }
+    }
+
+    pub(crate) fn reflow(&self) -> u64 {
+        self.reflow.get()
     }
 
     pub(super) fn arm(&self) {

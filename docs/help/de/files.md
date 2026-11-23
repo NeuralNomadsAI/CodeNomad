@@ -40,7 +40,7 @@ Das Ersetzen und Schließen der Leseansicht betrifft nur den aktuellen Projekt-T
 
 Die Quelltextansicht merkt sich den Zeilenumbruch über Dateien und Projekt-Tabs hinweg und stellt ihn mit dem Fensterzustand wieder her.
 Beim erneuten Öffnen einer kürzlich angezeigten Quelldatei im selben Projekt-Tab werden Auswahl und Scrollposition wiederhergestellt.
-Wenn sich der Zeilenumbruch durch die Breite ändert, bleibt die erste sichtbare Quellzeile im Blick.
+Beim Aktualisieren der Datei oder Ändern der Ansichtsgröße bleibt die erste sichtbare Quellzeile im Blick.
 
 ## Schreibgeschützte und begrenzte Vorschauen {#preview-limits}
 
