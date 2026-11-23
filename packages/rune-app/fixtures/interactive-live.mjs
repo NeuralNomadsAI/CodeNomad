@@ -1,10 +1,10 @@
 // Interactive qualification against a seeded, private OpenCode database.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
 import {writeFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
 import path from 'node:path'
 import {args,requirePrivateCli,withNative} from './live-access.mjs'
+import {launchFixture,rustOrigin} from './fixture-host.mjs'
 import {prepareRealHistory} from './real-history-prepare.mjs'
 import {seedRealHistory} from './real-history-seed.mjs'
 import {privateEnvironment} from './private-profile.mjs'
@@ -25,13 +25,12 @@ await native.read(`/api/session/${fork.id}`,{method:'PATCH',body:JSON.stringify(
 const verified=(await native.read(`/api/session/${fork.id}`)).data;assert.deepEqual(verified.permissions,deny)
 const copied=await native.read(`/api/session/${fork.id}/message?limit=200`);assert.equal(copied.data.length,200);assert(copied.cursor?.next)
 const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'interactive-rune-owned-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
-const server=spawn(serverBinary,[directory,path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-let log='',child,observer,stopped=false,newID
+const server=launchFixture(serverBinary,[directory,path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n'})
+let child,observer,guard,stopped=false,newID
 const stats={sourceID:source.id,longID:fork.id,longTitle,newTitle,sourceRowsInPage:first.data.length,sourceHasOlder:true,longCopiedRowsInPage:copied.data.length,newID:null,turns:[],tools:0}
-server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d)
 const save=()=>writeFile(path.join(profile,'proof.json'),JSON.stringify(stats,null,2))
 try{
-  let origin;for(const until=Date.now()+20000;!origin;){assert(Date.now()<until&&server.exitCode===null,'Rust startup');origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,100))}
+  const origin=await server.ready(rustOrigin)
   const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'interactive-rune-owned-backend'})});assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const call=(route,init={})=>fetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
@@ -58,7 +57,7 @@ try{
     }
   }
   watch().catch(error=>{if(!stopped&&error.name!=='AbortError')console.error('observer:',error.message)})
-  const guard=setInterval(async()=>{
+  guard=setInterval(async()=>{
     if(newID||stopped)return
     try{
       const rows=await native.read(`/api/session?${new URLSearchParams({directory,limit:'200'})}`)
@@ -72,9 +71,9 @@ try{
     }catch(error){console.error('guard:',error.message)}
   },1000)
   await save();await writeFile(path.join(profile,'session.json'),JSON.stringify({profile,directory,sourceID:source.id,longID:fork.id,longTitle,newTitle}))
-  child=spawn(clientBinary,[],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...await privateEnvironment(profile),RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'interactive-rune-owned-backend',RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
-  child.stdout.on('data',d=>log+=d);child.stderr.on('data',d=>{log+=d;console.error(String(d).trim())})
-  console.log(JSON.stringify({type:'INTERACTIVE_READY',profile,directory,longTitle,newTitle,pid:child.pid}))
-  await new Promise(r=>child.on('exit',r));clearInterval(guard)
-}finally{stopped=true;observer?.abort();if(child?.exitCode===null)child.kill();server.stdin.end();await Promise.race([new Promise(r=>server.on('exit',r)),new Promise(r=>setTimeout(r,3000))]);if(server.exitCode===null)server.kill();await save();await writeFile(path.join(profile,'rust.log'),log)}
+  child=launchFixture(clientBinary,[],{cwd:profile,env:{...await privateEnvironment(profile),RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'interactive-rune-owned-backend',RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
+  child.child.stderr.on('data',d=>console.error(String(d).trim()))
+  console.log(JSON.stringify({type:'INTERACTIVE_READY',profile,directory,longTitle,newTitle,pid:await child.pid()}))
+  assert.equal(await child.closed,0,child.output())
+}finally{stopped=true;clearInterval(guard);observer?.abort();try{await child?.stop()}finally{await server.stop()}await save();await writeFile(path.join(profile,'rust.log'),server.output())}
 })

@@ -5,6 +5,15 @@ use rune::{Env, Runtime};
 use serde_json::json;
 use std::time::{Duration, Instant};
 fn wait(rt: &mut Runtime<State>, label: &str, predicate: impl Fn(&State) -> bool) {
+    wait_frames(rt, label, predicate, |_| {});
+}
+
+fn wait_frames(
+    rt: &mut Runtime<State>,
+    label: &str,
+    predicate: impl Fn(&State) -> bool,
+    mut sample: impl FnMut(&Runtime<State>),
+) {
     let deadline = Instant::now() + Duration::from_secs(120);
     while !predicate(&rt.state) {
         assert!(
@@ -13,10 +22,12 @@ fn wait(rt: &mut Runtime<State>, label: &str, predicate: impl Fn(&State) -> bool
         );
         assert!(Instant::now() < deadline, "real history timed out: {label}");
         rt.frame(1.0 / 60.0);
+        sample(rt);
         std::thread::sleep(Duration::from_millis(15));
     }
     for _ in 0..12 {
         rt.frame(1.0 / 60.0);
+        sample(rt);
     }
 }
 fn canonical(rt: &Runtime<State>, rows: &[serde_json::Value]) {
@@ -59,22 +70,39 @@ pub fn run() {
     rt.frame(0.0);
     let reading = anchor(&rt);
     rt.update(|s,tx|{s.draft=rune::TextEdit::new("Sans aucun outil ni fichier à créer, réponds uniquement par un bloc de code Rust. Dans main, écris soixante déclarations explicites et distinctes, de let value_01 = 1; à let value_60 = 60;, chacune sur sa ligne, puis println!(\"RUNE-REAL-REPRISE\");. Ne remplace pas les déclarations par une boucle.");send(s,tx,false);});
-    wait(&mut rt, "real streamed response and recovery", |s| {
-        if s.phase != Phase::Ready
-            || !s
-                .messages
-                .iter()
-                .any(|r| r.role == "assistant" && r.body.contains("RUNE-REAL-REPRISE"))
-        {
-            return false;
+    let (mut max_jump, mut frames, mut reconnecting) = (0.0f32, 0, 0);
+    let mut sample = |rt: &Runtime<State>| {
+        frames += 1;
+        if rt.state.phase == Phase::Reconnecting {
+            reconnecting += 1;
         }
-        let stats = control("stats");
-        stats["terminals"] == 1 && stats["cuts"] == 1
-    });
+        max_jump = max_jump.max(check_anchor(rt, &reading));
+    };
+    sample(&rt);
+    wait_frames(
+        &mut rt,
+        "real streamed response and recovery",
+        |s| {
+            if s.phase != Phase::Ready
+                || !s
+                    .messages
+                    .iter()
+                    .any(|r| r.role == "assistant" && r.body.contains("RUNE-REAL-REPRISE"))
+            {
+                return false;
+            }
+            let stats = control("stats");
+            stats["terminals"] == 1 && stats["cuts"] == 1
+        },
+        sample,
+    );
+    assert!(
+        reconnecting > 0 && frames > reconnecting,
+        "sample both the outage and recovery"
+    );
     let expected = control("expected");
     let rows = expected["rows"].as_array().unwrap();
     canonical(&rt, &rows[400..]);
-    let max_jump = check_anchor(&rt, &reading);
     let stats = control("stats");
     assert_eq!(stats["prompts"], 1);
     assert_eq!(stats["cuts"], 1);
@@ -83,6 +111,6 @@ pub fn run() {
     assert!(stats["sseConnections"].as_u64().unwrap() >= 2);
     println!(
         "{}",
-        json!({"result":"real-opencode-history-recovery-ok","nativeRows":rt.state.messages.len(),"maxAnchorJumpPoints":max_jump,"stats":stats})
+        json!({"result":"real-opencode-history-recovery-ok","nativeRows":rt.state.messages.len(),"maxAnchorJumpPoints":max_jump,"sampledFrames":frames,"reconnectingFrames":reconnecting,"stats":stats})
     );
 }

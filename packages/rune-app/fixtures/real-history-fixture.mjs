@@ -2,9 +2,9 @@
 import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
 import {createServer,request} from 'node:http'
-import {spawn} from 'node:child_process'
 import path from 'node:path'
-import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
+import {args,fixtureTarget,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
+import {launchFixture,rustOrigin} from './fixture-host.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
@@ -18,15 +18,13 @@ const info=await native.read('/api/info')
 const stats={nativeVersion:info.version??info.data?.version,prompts:0,cuts:0,nativeFragments:0,tools:0,terminals:0,sseConnections:0,lastOutcome:null}
 const env={...await privateEnvironment(manifest.profile),CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,
   CNRS_SERVER_PASSWORD:'real-history-private-backend',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:manifest.profile}
-const server=spawn(serverBinary,
+const server=launchFixture(serverBinary,
   [path.dirname(manifest.project),path.join(manifest.profile,'real-backend.json'),'0','existing-opencode'],
-  {cwd:manifest.profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-let log='',child,proxy,observer
-server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d)
+  {cwd:manifest.profile,env,shutdown:'shutdown\n'})
+let child,proxy,observer
 let result=1
 try{
-  let origin
-  for(const end=Date.now()+20000;!origin;){assert(Date.now()<end&&server.exitCode===null,'Rust startup');origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,100))}
+  const origin=await server.ready(rustOrigin)
   const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'real-history-private-backend'})})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
@@ -56,8 +54,10 @@ try{
   }
   watch().catch(error=>{if(error.name!=='AbortError')console.error(`observer: ${error.message}`)})
   proxy=createServer(async(req,res)=>{
-    if(req.url.startsWith('/__real__/')){
-      const action=req.url.slice('/__real__/'.length)
+    const target=fixtureTarget(req.url,origin)
+    if(!target){res.writeHead(403);res.end('Foreign fixture origin forbidden');return}
+    if(target.pathname.startsWith('/__real__/')){
+      const action=target.pathname.slice('/__real__/'.length)
       let value=stats
       if(action==='expected'){
         const transfer=(await native.read(`/api/experimental/session/${manifest.sessionID}/export`)).data
@@ -66,11 +66,10 @@ try{
       }
       res.setHeader('content-type','application/json');res.end(JSON.stringify(value));return
     }
-    if(req.method==='POST'&&req.url===`/workspaces/${workspace.id}/instance/api/session/${manifest.sessionID}/prompt`)stats.prompts++
-    const target=new URL(req.url,origin)
+    if(req.method==='POST'&&target.pathname===`/workspaces/${workspace.id}/instance/api/session/${manifest.sessionID}/prompt`)stats.prompts++
     const up=request(target,{method:req.method,headers:{...req.headers,host:target.host}},async response=>{
       res.writeHead(response.statusCode,response.headers)
-      if(!req.url.startsWith('/api/events?')){response.pipe(res);return}
+      if(target.pathname!=='/api/events'){response.pipe(res);return}
       stats.sseConnections++;let buffer='',delivered=0;const decoder=new TextDecoder()
       try{
         for await(const chunk of response){buffer+=decoder.decode(chunk,{stream:true});let index
@@ -93,19 +92,18 @@ try{
   })
   await new Promise(r=>proxy.listen(0,'127.0.0.1',r))
   const base=`http://127.0.0.1:${proxy.address().port}/`
-  child=spawn(clientBinary,['--probe-real-history'],
-    {cwd:manifest.profile,windowsHide:true,stdio:'inherit',env:{...await privateEnvironment(manifest.profile),RUNE_BACKEND:base,
+  child=launchFixture(clientBinary,['--probe-real-history'],
+    {cwd:manifest.profile,env:{...await privateEnvironment(manifest.profile),RUNE_BACKEND:base,
       RUNE_WORKSPACE:workspace.id,RUNE_SESSION:manifest.sessionID,RUNE_PASSWORD:'real-history-private-backend',RUNE_TEST_CONTROL:`${base}__real__/`}})
-  result=await new Promise((resolve,reject)=>{child.on('exit',resolve);child.on('error',reject)})
+  result=await child.closed
+  process.stdout.write(child.output())
   assert.equal(result,0,'real history probe failed')
   console.log(JSON.stringify({fixture:'real-rust-real-opencode-history',result:'ok',...stats}))
 }finally{
-  observer?.abort();if(child?.exitCode===null)child.kill()
+  observer?.abort()
   proxy?.closeAllConnections();proxy?.close()
-  server.stdin.write('shutdown\n')
-  await Promise.race([new Promise(r=>server.on('exit',r)),new Promise(r=>setTimeout(r,5000))])
-  if(server.exitCode===null)server.kill()
-  await writeFile(path.join(manifest.profile,'real-backend.log'),log)
+  try{await child?.stop()}finally{await server.stop()}
+  await writeFile(path.join(manifest.profile,'real-backend.log'),server.output())
 }
 process.exitCode=result??1
 },{profile:manifest.profile})

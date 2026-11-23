@@ -1,9 +1,9 @@
 // Explicit real OpenCode test. Own empty project/session; deny all model tools.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
 import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {requirePrivateCli,withNative} from './live-access.mjs'
+import {launchFixture,rustOrigin} from './fixture-host.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
@@ -17,11 +17,10 @@ const session=(await native.read('/api/session',{method:'POST',body:JSON.stringi
 await writeFile(path.join(profile,'session.json'),JSON.stringify({session:session.id,project,title},null,2))
 assert(session?.id&&session.location.directory===project)
 const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'fixture-controls-live',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile}
-const server=spawn(serverBinary,[project,path.join(profile,'identity.json'),'0','owned-real-controls'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-let log='',client,result=1,observer,watch,events=[],cleaned=false
-server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d)
+const server=launchFixture(serverBinary,[project,path.join(profile,'identity.json'),'0','owned-real-controls'],{cwd:profile,env,shutdown:'shutdown\n'})
+let client,result=1,observer,watch,events=[],cleaned=false
 try{
-  let origin;for(const until=Date.now()+20000;!origin;){assert(Date.now()<until&&server.exitCode===null,'owned Rust startup');origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,50))}
+  const origin=await server.ready(rustOrigin)
   const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'fixture-controls-live'})});assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const response=await fetch(`${origin}/api/workspaces`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({path:project})})
@@ -37,8 +36,9 @@ try{
       const value=JSON.parse(raw);if(value.type==='instance.event'&&value.event?.data?.sessionID===session.id)events.push(value.event.type)
     }
   }})().catch(error=>{if(!observer.signal.aborted)throw error})
-  client=spawn(clientBinary,['--probe-real-controls'],{cwd:profile,env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-controls-live',RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_TEST_MODEL:JSON.stringify(target),RUNE_LOCALE:'fr'},windowsHide:true,stdio:'inherit'})
-  result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})
+  client=launchFixture(clientBinary,['--probe-real-controls'],{cwd:profile,env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-controls-live',RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_TEST_MODEL:JSON.stringify(target),RUNE_LOCALE:'fr'}})
+  result=await client.closed
+  process.stdout.write(client.output())
   assert.equal(result,0)
   const fresh=(await native.read(`/api/session/${session.id}`)).data
   assert.deepEqual(fresh.model,target);assert.deepEqual(fresh.permissions,permissions)
@@ -48,15 +48,16 @@ try{
   assert(events.includes('session.execution.interrupted'),'native interruption event')
   console.log(JSON.stringify({result:'real-controls-qualified',deltaEvents:events.filter(t=>t==='session.text.delta').length,toolEvents:0,rows:exported.messages.length,profile}))
 }finally{
-  if(client?.exitCode===null)client.kill();observer?.abort();await watch?.catch(()=>{})
+  observer?.abort();await watch?.catch(()=>{})
   try{
+  await client?.stop()
   const fresh=(await native.read(`/api/session/${session.id}`)).data
   assert.equal(fresh.title,title);assert.equal(fresh.location.directory,project);assert.deepEqual(fresh.permissions,permissions)
   if(fresh.time?.busy>(fresh.time?.idle??0))await native.read(`/api/session/${session.id}/interrupt`,{method:'POST',body:'{"resume":false}'})
   await native.read(`/api/session/${session.id}`,{method:'DELETE'});cleaned=true
   }finally{
-  server.stdin.end();await Promise.race([new Promise(r=>server.on('exit',r)),new Promise(r=>setTimeout(r,3000))]);if(server.exitCode===null)server.kill()
-  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,events,session:session.id,project,cleaned},null,2));await writeFile(path.join(profile,'rust.log'),log)
+  await server.stop()
+  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,events,session:session.id,project,cleaned},null,2));await writeFile(path.join(profile,'rust.log'),server.output())
   }
 }
 process.exitCode=result??1

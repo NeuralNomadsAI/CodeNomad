@@ -1,10 +1,10 @@
 // Own backend and private OpenCode, with every tool denied.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
 import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {prepareLive} from './live-session.mjs'
 import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
+import {launchFixture,rustOrigin} from './fixture-host.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requirePrivateCli();requireTestSupport()
@@ -18,18 +18,12 @@ assert.equal(current.location.directory,project)
 assert.deepEqual(current.permissions,[{action:'*',resource:'*',effect:'deny'}])
 const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:live.origin,CNRS_FIXTURE_PASSWORD:live.password,
   CNRS_SERVER_PASSWORD:'rune-live-private-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
-const server=spawn(serverBinary,
-  [path.dirname(project),path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-let log=''
-server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d)
+const server=launchFixture(serverBinary,
+  [path.dirname(project),path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n'})
 let child
 let observed
 try {
-  let origin
-  for(const end=Date.now()+20000;!origin;){
-    assert(Date.now()<end&&server.exitCode===null,'Private Rust server startup failed')
-    origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,100))
-  }
+  const origin=await server.ready(rustOrigin)
   const login=await fetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'rune-live-private-backend'})})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
@@ -69,17 +63,14 @@ try {
   }
   observe().catch(error=>{if(error.name!=='AbortError')console.error(`Live observer: ${error.message}`)})
   console.log(JSON.stringify({type:'RUNE_LIVE_READY',profile,project,sessionID,workspace:workspace.id,tools:'deny-all'}))
-  child=spawn(clientBinary,[],{cwd:profile,windowsHide:true,stdio:'inherit',
+  child=launchFixture(clientBinary,[],{cwd:profile,
     env:{...await privateEnvironment(profile),RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:sessionID,
       RUNE_PASSWORD:'rune-live-private-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:'1',RUNE_LIVE_TITLE:'1'}})
-  console.log(JSON.stringify({type:'RUNE_LIVE_WINDOW',pid:child.pid}))
-  await new Promise((resolve,reject)=>{child.on('exit',resolve);child.on('error',reject)})
+  console.log(JSON.stringify({type:'RUNE_LIVE_WINDOW',pid:await child.pid()}))
+  assert.equal(await child.closed,0,child.output())
 } finally {
   observed?.abort()
-  if(child?.exitCode===null)child.kill()
-  server.stdin.write('shutdown\n')
-  await Promise.race([new Promise(r=>server.on('exit',r)),new Promise(r=>setTimeout(r,5000))])
-  if(server.exitCode===null)server.kill()
-  await writeFile(path.join(profile,'backend.log'),log)
+  try{await child?.stop()}finally{await server.stop()}
+  await writeFile(path.join(profile,'backend.log'),server.output())
 }
 },{profile:manifest?.profile})
