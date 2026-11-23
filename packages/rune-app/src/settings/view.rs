@@ -28,6 +28,7 @@ pub(super) struct Window {
     contrast_help: bool,
     permissions: super::behavior::Permissions,
     memory_help_failed: bool,
+    memory_editor: super::memory::editor::Editor,
     seen_revision: u64,
     section: Section,
     pub(super) opencode: opencode::Status,
@@ -126,6 +127,7 @@ pub(super) fn spec() -> AppSpec<Window> {
                 wake();
             }
             let updated = prefs.revision != std::mem::replace(&mut s.seen_revision, prefs.revision);
+            let editor_changed = prefs.memory.poll_editor(&mut s.memory_editor);
             if updated {
                 tx.set_title(crate::strings::with_locale(
                     prefs.locale().unwrap_or_else(crate::strings::locale),
@@ -144,13 +146,17 @@ pub(super) fn spec() -> AppSpec<Window> {
             } else {
                 false
             };
-            updated | status_changed | providers_changed
+            updated | status_changed | providers_changed | editor_changed
         }),
-        on_key: Some(|_, event, tx| {
+        on_key: Some(|s, event, tx| {
             if event.key != rune::Key::Escape {
                 return false;
             }
-            tx.close_window();
+            if s.memory_editor.shown() {
+                s.memory_editor.dismiss();
+            } else if !s.shared.borrow_mut().memory.cancel_cleanup_confirmation() {
+                tx.close_window();
+            }
             true
         }),
         #[cfg(any(test, feature = "test-support"))]
@@ -274,6 +280,15 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 ),
             ),
         };
+        if let Some(editor) = prefs.memory.editor_view(
+            &s.memory_editor,
+            |s: &mut Window| &mut s.memory_editor,
+            |s: &mut Window, action| {
+                super::memory::review_action(&mut s.shared.borrow_mut(), action)
+            },
+        ) {
+            layers.push(editor);
+        }
         chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers).on_window_focus(
             |s: &mut Window, focused, _| {
                 if focused && s.section == Section::OpenCode {

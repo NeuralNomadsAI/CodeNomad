@@ -19,6 +19,27 @@ use std::{
     time::Duration,
 };
 
+async fn session_directory(backend: &Backend, workspace: &str, session: &str) -> Result<String> {
+    if !crate::history::valid_id(workspace) || !crate::history::valid_id(session) {
+        return Err("Invalid session Location".into());
+    }
+    let url = format!(
+        "{}workspaces/{workspace}/instance/api/session/{session}",
+        backend.base
+    );
+    let value = read_json(backend.client.get(url).send().await?.error_for_status()?).await?;
+    let record = &value["data"];
+    let location = &record["location"];
+    if record["id"] != session || location.get("workspaceID").is_some() {
+        return Err("Invalid session Location".into());
+    }
+    location["directory"]
+        .as_str()
+        .filter(|path| crate::absolute_server_path(path))
+        .map(str::to_owned)
+        .ok_or_else(|| "Invalid session directory".into())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Owner {
     Config,

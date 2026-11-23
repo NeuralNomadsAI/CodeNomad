@@ -32,6 +32,11 @@ pub(crate) struct Host {
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
     last_display: Option<([&'static str; 5], bool)>,
+    memory_cleanup: Option<memory::cleanup::Run>,
+}
+
+pub(crate) fn poll_memory_cleanup(s: &mut State, tx: &mut rune::Tx) -> bool {
+    memory::cleanup::poll(s, tx)
 }
 
 pub(crate) fn poll(s: &mut State) -> bool {

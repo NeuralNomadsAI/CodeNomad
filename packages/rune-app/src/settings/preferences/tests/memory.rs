@@ -43,7 +43,14 @@ fn memory_settings_are_demanded_and_failed_writes_only_read_back() {
 fn failed_memory_reads_keep_the_last_confirmed_switch_value() {
     fn view(prefs: &Preferences, _: &mut rune::Cx<Preferences>) -> rune::El {
         crate::strings::with_locale("en", || {
-            crate::settings::memory::view::<Preferences>(prefs, false, |_, _| {}, |_, _| {})
+            crate::settings::memory::view::<Preferences>(
+                prefs,
+                false,
+                |_, _| {},
+                |_, _| {},
+                |_, _| {},
+                |_, _| {},
+            )
         })
     }
 

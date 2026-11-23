@@ -9,6 +9,10 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     settings as chrome,
 };
+pub(super) mod cleanup;
+pub(super) mod editor;
+pub(super) mod review;
+mod seen;
 
 #[derive(Default)]
 pub(super) struct Setting {
@@ -19,6 +23,7 @@ pub(super) struct Setting {
     failed: bool,
     pending: Option<bool>,
     flight: Option<Receiver<(Option<bool>, bool)>>,
+    review: review::Review,
 }
 
 impl Setting {
@@ -27,6 +32,9 @@ impl Setting {
             self.invalidate();
         }
         self.visible = visible;
+        if !visible {
+            self.review.suspend();
+        }
     }
 
     pub fn bind(&mut self, same: bool) {
@@ -43,6 +51,22 @@ impl Setting {
 
     pub fn invalidate(&mut self) {
         self.refresh = true;
+        self.review.invalidate();
+    }
+
+    pub fn poll_review(
+        &mut self,
+        backend: &Backend,
+        project: Option<&super::providers::Target>,
+        main: &Option<rune::Waker>,
+        window: &Option<rune::Waker>,
+    ) -> bool {
+        self.review.poll(
+            (self.visible && self.current == Some(true)).then_some(backend),
+            project,
+            main,
+            window,
+        )
     }
 
     pub fn transport(&mut self, online: bool) {
@@ -50,6 +74,45 @@ impl Setting {
         if online && !previous {
             self.invalidate();
         }
+    }
+
+    pub fn poll_editor(&self, editor: &mut editor::Editor) -> bool {
+        editor.poll(&self.review)
+    }
+
+    pub fn cleanup_current(&self, intent: &cleanup::Intent) -> bool {
+        self.visible
+            && self.current == Some(true)
+            && !self.failed
+            && self.review.cleanup_current(intent)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn cancel_cleanup_confirmation(&mut self) -> bool {
+        if self.review.cleanup_pending() {
+            self.review.action(review::Action::ConfirmTidy(false), None);
+            return true;
+        }
+        false
+    }
+
+    pub fn take_cleanup(&mut self) -> Option<cleanup::Intent> {
+        self.review.take_cleanup()
+    }
+
+    pub fn cleanup_failed(&mut self, intent: &cleanup::Intent) {
+        self.review.cleanup_failed(intent);
+    }
+
+    pub fn editor_view<S: 'static>(
+        &self,
+        editor: &editor::Editor,
+        access: fn(&mut S) -> &mut editor::Editor,
+        action: impl Fn(&mut S, review::Action) -> bool + Clone + 'static,
+    ) -> Option<El> {
+        editor
+            .view(&self.review, access, action.clone())
+            .or_else(|| self.review.cleanup_confirmation(action))
     }
 
     fn set(&mut self, next: bool) {
@@ -115,6 +178,8 @@ pub(super) fn view<S: 'static>(
     help_failed: bool,
     apply: impl Fn(&mut S, Option<bool>) + Clone + 'static,
     help_error: impl Fn(&mut S, bool) + 'static,
+    open: impl Fn(&mut S, review::Edit) + Clone + 'static,
+    review_action: impl Fn(&mut S, review::Action) + Clone + 'static,
 ) -> El {
     let setting = &prefs.memory;
     let title = t("settings.memory.title");
@@ -148,10 +213,31 @@ pub(super) fn view<S: 'static>(
                         move |s| apply(s, None),
                     ))
             }))
+            .children(help_failed.then(|| text(t("commands.openHelp.failed")).role("alert").wrap()))
             .children(
-                help_failed.then(|| text(t("commands.openHelp.failed")).role("alert").wrap()),
+                (setting.current == Some(true) && prefs.can_retry()).then(|| {
+                    setting
+                        .review
+                        .view(prefs.provider_target.as_ref(), open, review_action)
+                }),
             ),
     )
+}
+
+pub(super) fn review_action(prefs: &mut Preferences, action: review::Action) -> bool {
+    if prefs.can_retry() && prefs.memory.visible && prefs.memory.current == Some(true) {
+        let write = matches!(action, review::Action::Write(..));
+        let was_writing = prefs.memory.review.writing();
+        prefs
+            .memory
+            .review
+            .action(action, prefs.provider_target.as_ref());
+        for wake in [&prefs.main_wake, &prefs.window_wake].into_iter().flatten() {
+            wake();
+        }
+        return !write || (!was_writing && prefs.memory.review.writing());
+    }
+    false
 }
 
 pub(super) fn action(prefs: &mut Preferences, desired: Option<bool>) {

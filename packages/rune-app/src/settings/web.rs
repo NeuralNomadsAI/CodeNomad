@@ -29,6 +29,7 @@ pub(super) struct Panel {
     contrast_help: bool,
     permissions: super::behavior::Permissions,
     memory_help_failed: bool,
+    memory_editor: super::memory::editor::Editor,
     catalog: Catalog,
 }
 
@@ -38,12 +39,14 @@ impl Panel {
     }
 
     pub fn poll(&mut self, prefs: &Preferences, wake: &rune::Waker) -> bool {
-        self.shown
-            && self.section == Section::Providers
-            && self.catalog.poll(
-                prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
-                Some(wake),
-            )
+        let editor = prefs.memory.poll_editor(&mut self.memory_editor);
+        editor
+            | (self.shown
+                && self.section == Section::Providers
+                && self.catalog.poll(
+                    prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
+                    Some(wake),
+                ))
     }
 }
 
@@ -115,6 +118,10 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                     super::memory::action(&mut s.settings.shared.borrow_mut(), desired)
                 },
                 |s: &mut State, failed| s.settings.web.memory_help_failed = failed,
+                |s: &mut State, edit| s.settings.web.memory_editor.open(edit),
+                |s: &mut State, action| {
+                    super::memory::review_action(&mut s.settings.shared.borrow_mut(), action);
+                },
             ))
             .child(
                 panel
@@ -131,6 +138,15 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             })
         }
     };
+    if let Some(editor) = prefs.memory.editor_view(
+        &panel.memory_editor,
+        |s: &mut State| &mut s.settings.web.memory_editor,
+        |s: &mut State, action| {
+            super::memory::review_action(&mut s.settings.shared.borrow_mut(), action)
+        },
+    ) {
+        layers.push(editor);
+    }
     Some(
         chrome::embedded_section(
             t("settings.title"),

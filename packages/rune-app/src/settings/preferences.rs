@@ -236,7 +236,10 @@ impl Preferences {
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         let changed = self.config.poll(backend, Owner::Config, &main, &window)
             | self.state.poll(backend, Owner::State, &main, &window)
-            | self.memory.poll(backend, &main, &window);
+            | self.memory.poll(backend, &main, &window)
+            | self
+                .memory
+                .poll_review(backend, self.provider_target.as_ref(), &main, &window);
         if changed {
             self.revision += 1;
         }
