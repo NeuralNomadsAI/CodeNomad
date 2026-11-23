@@ -2,10 +2,15 @@
 use crate::history::Result;
 use serde_json::Value;
 use std::{mem::size_of, sync::Arc};
+mod user;
+pub(crate) use user::digest as attachment_digest;
+pub use user::{File, Reference, Skill};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part {
     Text(Text),
     Tool(Arc<Tool>),
+    Skill(Skill),
+    File(File),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextProvenance {
@@ -154,7 +159,7 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
 }
 
 /// Merge open fragments without making an older persisted prefix replace live text.
-pub fn merge_page(live: &[crate::Message], page: &mut [crate::Message]) -> Result<()> {
+pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]) -> Result<()> {
     for row in page.iter_mut().filter(|r| r.role == "assistant") {
         if row.completed {
             continue;
@@ -162,6 +167,7 @@ pub fn merge_page(live: &[crate::Message], page: &mut [crate::Message]) -> Resul
         let Some(prior) = live.iter().find(|r| r.id == row.id) else {
             continue;
         };
+        let row = std::sync::Arc::make_mut(row);
         let texts: Vec<_> = prior
             .parts
             .iter()
@@ -218,6 +224,8 @@ fn part_keys(parts: &[Part]) -> Vec<String> {
                 key
             }
             Part::Tool(t) => format!("tool:{}", t.id),
+            Part::Skill(s) => format!("skill:{}", s.id),
+            Part::File(f) => format!("file:{}", f.id),
         })
         .collect()
 }
@@ -234,6 +242,9 @@ pub struct Tool {
     output_bytes: usize,
 }
 pub fn decode(v: &Value) -> Result<Vec<Part>> {
+    if v["type"] == "user" {
+        return user::decode(v);
+    }
     let Some(parts) = v["content"].as_array() else {
         return Ok(vec![]);
     };
@@ -353,6 +364,8 @@ pub fn bytes(parts: &[Part]) -> usize {
             .map(|p| match p {
                 Part::Text(t) => t.text.len(),
                 Part::Tool(t) => t.bytes,
+                Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
+                Part::File(f) => file_bytes(f),
             })
             .sum::<usize>()
 }
@@ -365,4 +378,23 @@ pub(crate) fn tool_text_bytes(parts: &[Part]) -> usize {
             _ => None,
         })
         .sum()
+}
+pub fn attachment_bytes(parts: &[Part]) -> usize {
+    parts
+        .iter()
+        .map(|part| match part {
+            Part::File(f) => file_bytes(f),
+            Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
+            _ => 0,
+        })
+        .sum()
+}
+fn file_bytes(file: &File) -> usize {
+    file.id.len()
+        + file.mime.len()
+        + file.name.as_ref().map_or(0, String::len)
+        + file
+            .reference
+            .as_ref()
+            .map_or(0, |r| r.message.len() + r.sha256.len())
 }

@@ -69,6 +69,21 @@ pub fn authentication_dialog<S: 'static>(
         )
 }
 
+#[cfg(target_os = "windows")]
+pub fn placed_window<S: 'static>(
+    spec: rune::WindowSpec<S>,
+    position: (i32, i32),
+    dimensions: (u32, u32),
+    maximized: bool,
+) -> rune::WindowSpec<S> {
+    spec.options(rune::WindowOptions {
+        position: Some(position),
+        physical_size: Some(dimensions),
+        ..Default::default()
+    })
+    .map_app(|app| app.maximized(maximized))
+}
+
 pub fn shell_entry(tabs: El, entry: El) -> El {
     row()
         .full_width()
@@ -224,4 +239,16 @@ pub fn color_scheme(title: &str, mode: &str, segments: El, picker: El) -> El {
         .child(text(title).role("heading").text_role(TextRole::Button))
         .child(layout::action_row().child(text(mode)).child(segments))
         .child(picker)
+}
+
+pub fn disclosure<S: 'static>(
+    label: &str,
+    open: bool,
+    body: El,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    rune_kit::Collapsible::new(label, open)
+        .child(body)
+        .on_toggle(toggle)
+        .build(crate::kit(layout::dark()))
 }

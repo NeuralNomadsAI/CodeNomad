@@ -72,6 +72,8 @@ fn body(
 pub fn reader(s: &State, history: impl FnOnce() -> El) -> El {
     if crate::git::has_preview(s) {
         crate::git::reader(s)
+    } else if crate::files::has_preview(s) {
+        crate::files::view::in_shell(s)
     } else {
         history()
     }
@@ -105,10 +107,21 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         return false;
     }
     if event.mods == Mods::default() {
-        return match event.key {
+        let handled = match event.key {
             Key::Escape if s.shell.close_floating(tx) => true,
             Key::Escape if crate::git::has_preview(s) => {
                 crate::git::close_preview(s);
+                tx.instant();
+                true
+            }
+            Key::Escape if crate::files::has_preview(s) && !s.screen.is_launcher() => {
+                if let Some(files) = &mut s.files {
+                    if files.document.confirmation().is_some() {
+                        return false;
+                    }
+                    files.close_reader();
+                    files.reading.restore(tx);
+                }
                 tx.instant();
                 true
             }
@@ -118,19 +131,19 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
             }
             _ => false,
         };
-    }
-    if !event.mods.ctrl || event.mods.alt || event.mods.shift {
-        return false;
-    }
-    match event.key {
-        Key::Command('n') if workspace::can_new(s) => workspace::new_tab(s, tx),
-        Key::Command('w') => {
-            let Some(key) = s.workspace.as_ref().map(|ui| ui.active_key().to_owned()) else {
-                return false;
-            };
-            workspace::close(s, &key, tx);
+        if handled {
+            return true;
         }
-        _ => return false,
+    }
+    if crate::settings::matches_shortcut(s, "new-instance", event, 'n') && workspace::can_new(s) {
+        workspace::new_tab(s, tx);
+    } else if crate::settings::matches_shortcut(s, "close-instance", event, 'w') {
+        let Some(key) = s.workspace.as_ref().map(|ui| ui.active_key().to_owned()) else {
+            return false;
+        };
+        workspace::close(s, &key, tx);
+    } else {
+        return false;
     }
     true
 }

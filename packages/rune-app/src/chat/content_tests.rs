@@ -2,6 +2,123 @@ use crate::{Phase, State, content::Part, history, init, view};
 use rune::{Env, Runtime};
 use serde_json::json;
 #[test]
+fn replacing_a_window_keeps_overlap_identity() {
+    let mut state = init();
+    let first: history::Row =
+        history::decode_message(&json!({"id":"first","type":"user","text":"First"}))
+            .unwrap()
+            .into();
+    let shared: history::Row =
+        history::decode_message(&json!({"id":"shared","type":"user","text":"Overlap"}))
+            .unwrap()
+            .into();
+    let departed: history::Row =
+        history::decode_message(&json!({"id":"departed","type":"user","text":"Departed"}))
+            .unwrap()
+            .into();
+    state.messages = vec![shared.clone(), departed];
+    let (events, incoming) = crate::bounded(1);
+    state.incoming = Some(incoming);
+    events
+        .try_send(crate::transport::Event::Older(history::Page {
+            rows: vec![first, shared.clone()],
+            older: None,
+            newer: Some(json!({"kind":"after","messageID":"shared"})),
+            running: false,
+            user_file_references: false,
+        }))
+        .unwrap();
+    assert!(crate::poll_chat(&mut state, 1));
+    assert!(state.history_detached);
+    assert!(std::sync::Arc::ptr_eq(&shared, &state.messages[1]));
+}
+#[test]
+fn attachment_reveal_keeps_the_gap_between_head_and_tail() {
+    let files = (0..1001)
+        .map(|index| {
+            json!({
+                "name":format!("Part {index}"), "mime":"text/plain","source":{"type":"unavailable"}
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut s = init();
+    s.messages = vec![
+        history::decode_message(&json!({"id":"dense","type":"user","text":"Files","files":files}))
+            .unwrap()
+            .into(),
+    ];
+    s.phase = Phase::Ready;
+    let mut rt = Runtime::new(s, view, (900.0, 700.0), Env::new(false, 1.0));
+    rt.frame(0.0);
+    let elements = rt.elements();
+    let head = elements
+        .iter()
+        .position(|el| el.key.as_deref() == Some("dense-file-499"))
+        .unwrap();
+    let marker = elements
+        .iter()
+        .position(|el| el.key.as_deref() == Some("parts-gap-dense"))
+        .unwrap();
+    let tail = elements
+        .iter()
+        .position(|el| el.key.as_deref() == Some("dense-file-501"))
+        .unwrap();
+    assert!(head < marker && marker < tail);
+    assert!(rt.find("dense-file-500").is_none());
+    rt.update(|s, _| crate::transcript_state::Display::reveal_next(s, "parts-gap-dense"));
+    rt.frame(0.0);
+    assert!(rt.find("dense-file-500").is_some());
+    assert!(rt.find("parts-gap-dense").is_none());
+}
+#[test]
+fn user_attachments_render_as_chips_without_instructions_or_uris() {
+    crate::strings::with_locale("en", || {
+        for dark in [false, true] {
+            let row = history::decode_message(&json!({
+                "id":"user-files","type":"user","text":"",
+                "skills":[{"id":"skill","name":"Review","text":"PRIVATE-SKILL-INSTRUCTIONS"}],
+                "agents":[{"name":"PRIVATE-AGENT"}],
+                "files":[
+                    {"name":"Picture","mime":"image/png","source":{"type":"inline"},"data":"PRIVATE-BYTES"},
+                    {"mime":"text/plain","source":{"type":"uri","uri":"file:///private/notes.txt"}},
+                    {"mime":"application/octet-stream","source":{"type":"inline"},"data":"PRIVATE-BYTES"}
+                ]
+            })).unwrap();
+            let mut s = init();
+            s.messages = vec![row.into()];
+            s.phase = Phase::Ready;
+            let mut rt = Runtime::new(s, view, (390.0, 700.0), Env::new(dark, 1.0));
+            for _ in 0..12 {
+                rt.frame(1.0 / 60.0);
+            }
+            for key in [
+                "user-files-skill-0",
+                "user-files-file-0",
+                "user-files-file-1",
+                "user-files-file-2",
+            ] {
+                assert!(rt.find(key).is_some(), "no rendered chip {key}");
+            }
+            assert!(rt.find("part-user-files-0").is_none());
+            let tree = rt.accessibility_json().to_string();
+            for label in ["Review", "Picture", "notes.txt", "attachment"] {
+                assert!(
+                    tree.contains(&format!("\"{label}\"")),
+                    "no accessible name {label}: {tree}"
+                );
+            }
+            for private in [
+                "PRIVATE-SKILL-INSTRUCTIONS",
+                "PRIVATE-AGENT",
+                "PRIVATE-BYTES",
+                "file:///private",
+            ] {
+                assert!(!tree.contains(private));
+            }
+        }
+    });
+}
+#[test]
 fn streamed_text_after_a_tool_reaches_the_rendered_transcript() {
     let row = history::decode_message(&json!({"id":"mixed","type":"assistant","content":[
         {"type":"text","text":"Before"},
@@ -11,7 +128,7 @@ fn streamed_text_after_a_tool_reaches_the_rendered_transcript() {
     .unwrap();
     let (out, input) = crate::bounded(4);
     let mut state = init();
-    state.messages = vec![row];
+    state.messages = vec![row.into()];
     state.phase = Phase::Streaming;
     state.incoming = Some(input);
     let mut rt = Runtime::new(state, view, (960.0, 760.0), Env::new(false, 1.0));
@@ -47,7 +164,7 @@ fn native_tools_preserve_order_and_reveal_real_input_output_on_demand() {
         matches!(&row.parts[..],[Part::Text(a),Part::Tool(_),Part::Text(b),Part::Tool(_)] if a.text=="Before"&&b.text=="After")
     );
     let mut s = init();
-    s.messages = vec![row];
+    s.messages = vec![row.into()];
     s.phase = Phase::Ready;
     let mut rt = Runtime::new(s, view, (960.0, 1000.0), Env::new(true, 1.0));
     for _ in 0..12 {
@@ -90,7 +207,7 @@ fn markdown_and_specialized_tools_use_native_content_in_the_runtime() {
     for dark in [false, true] {
         let mut state = init();
         let native = serde_json::from_str(include_str!("../../fixtures/transcript.json")).unwrap();
-        state.messages = vec![history::decode_message(&native).unwrap()];
+        state.messages = vec![history::decode_message(&native).unwrap().into()];
         state.phase = Phase::Ready;
         let mut rt = Runtime::new(
             state,
@@ -136,7 +253,7 @@ fn markdown_and_specialized_tools_use_native_content_in_the_runtime() {
 fn transcript_edit_switches_the_shared_diff_without_changing_the_copied_patch() {
     let mut state = init();
     let native = serde_json::from_str(include_str!("../../fixtures/transcript.json")).unwrap();
-    state.messages = vec![history::decode_message(&native).unwrap()];
+    state.messages = vec![history::decode_message(&native).unwrap().into()];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(
         state,
@@ -182,7 +299,7 @@ fn transcript_patch_with_out_of_range_lines_uses_the_raw_fallback() {
     state.messages = vec![history::decode_message(&json!({"id":"range","type":"assistant","time":{"completed":1},"content":[
         {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","input":{"filePath":"app.rs"},
             "metadata":{"diff":patch}}}
-    ]})).unwrap()];
+    ]})).unwrap().into()];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
     for _ in 0..12 {
@@ -202,7 +319,7 @@ fn transcript_keeps_and_copies_a_patch_with_long_unicode_headers() {
     state.messages = vec![history::decode_message(&json!({"id":"unicode","type":"assistant","time":{"completed":1},"content":[
         {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","input":{"filePath":path},
             "metadata":{"files":[{"file":path,"patch":patch}]},"content":[{"type":"text","text":"Edited …"}]}}
-    ]})).unwrap()];
+    ]})).unwrap().into()];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
     let clipboard = rune::clipboard::memory();
@@ -226,7 +343,7 @@ fn wrapped_update_patch_uses_the_shared_diff_and_copies_the_original() {
     let mut state = init();
     state.messages = vec![history::decode_message(&json!({"id":"wrapped","type":"assistant","time":{"completed":1},"content":[
         {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","metadata":{"diff":patch}}}
-    ]})).unwrap()];
+    ]})).unwrap().into()];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
     let clipboard = rune::clipboard::memory();
@@ -256,7 +373,8 @@ fn edit_cards(count: usize) -> State {
         history::decode_message(
             &json!({"id":"cards","type":"assistant","time":{"completed":1},"content":cards}),
         )
-        .unwrap(),
+        .unwrap()
+        .into(),
     ];
     state.phase = Phase::Ready;
     state
@@ -436,7 +554,7 @@ fn historical_part_gap_reveals_the_middle_without_rejecting_the_message() {
     .unwrap();
     assert_eq!(row.parts.len(), 1237);
     let mut state = init();
-    state.messages = vec![row];
+    state.messages = vec![row.into()];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
     rt.frame(0.0);
@@ -478,8 +596,11 @@ fn revealing_latest_prose_keeps_the_reader_at_the_cut() {
         "The remainder stays below. ".repeat(2500)
     );
     let mut state = init();
-    state.messages =
-        vec![history::decode_message(&json!({"id":"reveal","type":"user","text":source})).unwrap()];
+    state.messages = vec![
+        history::decode_message(&json!({"id":"reveal","type":"user","text":source}))
+            .unwrap()
+            .into(),
+    ];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
     for _ in 0..12 {
@@ -512,7 +633,8 @@ fn long_streaming_markdown_coalesces_deltas_and_closes_immediately() {
     state.messages = vec![
         history::decode_message(&json!({"id":"stream","type":"assistant",
         "content":[{"type":"text","text":long}]}))
-        .unwrap(),
+        .unwrap()
+        .into(),
     ];
     state.phase = Phase::Streaming;
     let (out, queue) = crate::bounded(8);
@@ -554,7 +676,7 @@ fn tool_failure_can_copy_its_full_error_before_reveal() {
         {"type":"tool","id":"read","name":"read","state":{"status":"error","error":{"message":error}}}
     ]})).unwrap();
     let mut state = init();
-    state.messages = vec![row];
+    state.messages = vec![row.into()];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
     let clipboard = rune::clipboard::memory();
@@ -580,7 +702,7 @@ fn native_tool_ids_cannot_alias_another_calls_disclosure() {
         {"type":"tool","id":"a-tool_input","name":"read","state":{"status":"completed","content":[{"type":"text","text":"OTHER OUTPUT"}]}}
     ]})).unwrap();
     let mut state = init();
-    state.messages = vec![row];
+    state.messages = vec![row.into()];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
     rt.frame(0.0);
@@ -621,7 +743,7 @@ fn prose_keeps_literal_html_line_breaks_and_copies_undisplayed_source() {
     let row =
         history::decode_message(&json!({"type":"user","id":"literal","text":source})).unwrap();
     let mut state = init();
-    state.messages = vec![row];
+    state.messages = vec![row.into()];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
     let clipboard = rune::clipboard::memory();

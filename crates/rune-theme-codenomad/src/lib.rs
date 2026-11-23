@@ -4,6 +4,7 @@ pub mod action_menu;
 #[cfg(feature = "test-support")]
 pub mod action_menu_scene;
 pub mod ansi;
+pub mod attachment;
 pub mod catalogue;
 pub mod document_reader;
 pub mod file_row_actions;

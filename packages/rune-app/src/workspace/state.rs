@@ -6,7 +6,7 @@ mod drafts;
 mod panel_state;
 mod strip;
 
-pub use drafts::{bound, capture, draft_changed};
+pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
 pub use panel_state::{
     capture_files_mode, files_tab, panel_width, restore_files_mode, set_files_tab,
 };
@@ -32,7 +32,7 @@ pub(super) struct Entry {
     listed_sessions: HashSet<String>,
     creation_uncertain: bool,
     next: Option<String>,
-    linked: Option<crate::launcher::linked::Pages>,
+    linked: crate::launcher::linked::Linked,
     consumed_cursors: HashSet<u64>,
     visits: crate::launcher::Visits,
     catalogue: catalogue::Refresh,
@@ -41,6 +41,16 @@ pub(super) struct Entry {
     binding: Option<Backend>,
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
+    live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
+}
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
+    let ui = s.workspace.as_ref()?;
+    let entry = &ui.entries[ui.active];
+    let Tab::Workspace(saved) = &entry.saved else {
+        return None;
+    };
+    Some((&entry.key, saved))
 }
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
@@ -147,8 +157,11 @@ impl Ui {
         let Some(store) = &self.persistence.store else {
             return;
         };
-        let bytes = match super::encode(&self.snapshot()) {
-            Ok(bytes) => bytes,
+        let bytes = match super::encode_for_save(&self.snapshot()) {
+            Ok((bytes, partial)) => {
+                self.persistence.partial = partial;
+                bytes
+            }
             Err(_) => {
                 store.stage(&[], &[]);
                 self.persistence.write_error = true;
@@ -168,15 +181,6 @@ impl Ui {
         store.stage(&bytes, &records);
         self.staged_revision = Some(self.revision);
     }
-}
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
-    let ui = s.workspace.as_ref()?;
-    let entry = &ui.entries[ui.active];
-    let Tab::Workspace(saved) = &entry.saved else {
-        return None;
-    };
-    Some((&entry.key, saved))
 }
 fn same_project(a: &Workspace, b: &Workspace) -> bool {
     same_folder(&a.folder, &b.folder)
@@ -204,7 +208,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         listed_sessions: HashSet::new(),
         creation_uncertain: false,
         next: None,
-        linked: None,
+        linked: Default::default(),
         consumed_cursors: HashSet::new(),
         visits: Default::default(),
         catalogue: Default::default(),
@@ -213,6 +217,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         binding: None,
         cleared,
         pending_drafts: HashSet::new(),
+        live_drafts: Default::default(),
     }
 }
 fn busy(s: &State) -> bool {
@@ -221,6 +226,11 @@ fn busy(s: &State) -> bool {
 }
 pub fn input_ready(s: &State) -> bool {
     s.workspace.as_ref().is_none_or(|ui| ui.ready)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn native_window_store(s: &State) -> Option<platform::storage::Store> {
+    s.workspace.as_ref()?.persistence.store.clone()
 }
 pub fn active_session(s: &State) -> Option<&str> {
     let ui = s.workspace.as_ref()?;
@@ -283,10 +293,7 @@ pub fn connected(s: &mut State) {
         .screen
         .launcher()
         .and_then(|l| l.state_directory())
-        .or_else(|| {
-            platform::setting("CODENOMAD_PROFILE").filter(|p| p.starts_with("trial-"))?;
-            platform::setting("RUNE_STATE_DIR").map(std::path::PathBuf::from)
-        });
+        .or_else(platform::storage::configured_directory);
     #[cfg(target_arch = "wasm32")]
     let directory = None;
     ui.persistence.start(directory, s.wake.clone());
@@ -369,6 +376,8 @@ pub fn opened(s: &mut State, project: &Project) {
         }
     } else {
         let mut drafts = std::collections::BTreeMap::new();
+        let mut attachment_drafts = std::collections::BTreeSet::new();
+        let mut attachment_parts = std::collections::BTreeMap::new();
         item.cleared.clear();
         for w in ui.closed.iter().filter(|w| {
             same_folder(&w.folder, &project.path)
@@ -376,6 +385,8 @@ pub fn opened(s: &mut State, project: &Project) {
                 && (backend_id.is_none() || w.server_id == l.server_id)
         }) {
             for (id, text) in &w.drafts {
+                attachment_drafts.remove(id);
+                attachment_parts.remove(id);
                 if text.is_empty() {
                     drafts.remove(id);
                     item.cleared.insert(id.clone());
@@ -384,8 +395,18 @@ pub fn opened(s: &mut State, project: &Project) {
                     item.cleared.remove(id);
                 }
             }
+            attachment_drafts.extend(w.attachment_drafts.iter().cloned());
+            for id in &w.attachment_drafts {
+                attachment_parts.remove(id);
+            }
+            attachment_parts.extend(w.attachment_parts.clone());
         }
-        item.pending_drafts = drafts.keys().chain(item.cleared.iter()).cloned().collect();
+        item.pending_drafts = drafts
+            .keys()
+            .chain(item.cleared.iter())
+            .chain(attachment_drafts.iter())
+            .cloned()
+            .collect();
         item.saved = Tab::Workspace(Workspace {
             backend_id: backend_id.clone(),
             server_id: if backend_id.is_some() {
@@ -398,8 +419,11 @@ pub fn opened(s: &mut State, project: &Project) {
             workspace_id: Some(project.id.clone()),
             active_session_id: None,
             drafts,
+            attachment_drafts,
+            attachment_parts,
             view: Default::default(),
         });
+        item.live_drafts.clear();
     }
     item.project = Some(project.clone());
     item.binding = l.connection.clone();
@@ -455,10 +479,13 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     for item in &mut ui.entries {
         if let Some(cache) = item.cache.take() {
             cache.apply(s);
-            let awaiting_prompt = s.pending_prompt.is_some();
+            let awaiting_prompt = s.composer.pending();
+            let uncertain_prompt = s.composer.unconfirmed_id().is_some();
             changed |= crate::poll_chat(s, 8);
-            if awaiting_prompt && s.pending_prompt.is_none() {
-                drafts_changed |= drafts::capture_draft(item, &s.draft.text);
+            if awaiting_prompt && !s.composer.pending()
+                || uncertain_prompt && s.composer.unconfirmed_id().is_none()
+            {
+                drafts_changed |= drafts::capture_draft(item, s);
             }
             changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
             changed |= crate::git::poll(s, now, tx);
@@ -474,6 +501,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         ui.persistence.read_error,
         ui.persistence.write_error,
         ui.persistence.file_draft_error,
+        ui.persistence.partial,
     );
     let snapshot = ui.snapshot();
     ui.persistence.poll_save(&snapshot, now, tx, s.wake.clone());
@@ -483,6 +511,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         ui.persistence.read_error,
         ui.persistence.write_error,
         ui.persistence.file_draft_error,
+        ui.persistence.partial,
     );
     s.workspace = Some(ui);
     if became_ready {
@@ -495,7 +524,8 @@ pub fn status(s: &State) -> Option<&'static str> {
     let ui = s.workspace.as_ref()?;
     if ui.persistence.read_error {
         Some("rune.restore_error")
-    } else if ui.persistence.write_error {
+    } else if ui.persistence.write_error || ui.persistence.partial || ui.has_unsaved_large_drafts()
+    {
         Some("rune.save_error")
     } else if ui.persistence.file_draft_error {
         Some("filesPanel.draftLimit")

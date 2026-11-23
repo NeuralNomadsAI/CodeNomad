@@ -137,6 +137,10 @@ pub fn list(s: &mut State, more: bool) {
     if more && !l.can_page() {
         return;
     }
+    #[cfg(target_arch = "wasm32")]
+    if !more && l.show_search && !l.search.text.trim().is_empty() {
+        l.search_results = Default::default();
+    }
     l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
@@ -221,14 +225,14 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
 }
 pub fn can_change_session(s: &State) -> bool {
     s.phase != Phase::Streaming
-        && s.pending_prompt.is_none()
+        && !s.composer.pending()
         && crate::workspace::input_ready(s)
         && !crate::agent::navigation_blocked(s)
 }
 pub(super) fn can_rebind(s: &State, id: &str) -> bool {
     !s.screen.is_launcher()
         && s.phase == Phase::Failed
-        && s.pending_prompt.is_none()
+        && !s.composer.pending()
         && crate::workspace::active_session(s) == Some(id)
 }
 pub fn can_visit(s: &State, back: bool) -> bool {
@@ -265,6 +269,9 @@ pub(super) fn retire_session(s: &mut State, id: &str) {
     s.incoming = None;
     s.agent = None;
     s.files = None;
+    s.attachments = Default::default();
+    s.composer = Default::default();
+    s.history_detached = false;
     s.messages.clear();
     s.chat_title.clear();
     s.draft = TextEdit::new("");
@@ -306,6 +313,7 @@ pub(super) fn bind(
     if !same_session {
         crate::files::bind(s, &b);
         s.agent = None;
+        s.attachments = Default::default();
         s.messages.clear();
         s.can_older = false;
     } else if let Some(agent) = &mut s.agent {
@@ -325,6 +333,7 @@ pub(super) fn bind(
     crate::workspace::restore_files_mode(s);
     s.paging = false;
     s.history_error = false;
+    s.history_detached = false;
     s.revision += 1;
     attach(s, b);
     s.show_chat();

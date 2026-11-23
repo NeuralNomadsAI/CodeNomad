@@ -35,6 +35,7 @@ pub struct State {
     pub cancelled: AtomicBool,
     pub version: AtomicU64,
     pub alive: AtomicBool,
+    pub running: AtomicBool,
     pub upstream: AtomicBool,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     catalogue: Option<Arc<catalogue::Signals>>,
@@ -155,9 +156,11 @@ impl State {
 }
 
 pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>) {
+    state.running.store(true, SeqCst);
     runtime::spawn(async move {
         let result = read(&backend, epoch, &out, &state).await;
         state.alive.store(false, SeqCst);
+        state.running.store(false, SeqCst);
         state.version.fetch_add(1, SeqCst);
         let expired = result
             .as_ref()
@@ -239,18 +242,18 @@ pub(super) async fn dispatch(
         return Ok(());
     }
     let value: Value = serde_json::from_str(data.trim())?;
-    if let Some(owner) = storage_owner(&value) {
-        if state.catalogue.is_some() {
-            return Ok(());
+    if let Some(signals) = &state.catalogue {
+        if data.len() > NATIVE_EVENT_LIMIT && storage_owner(&value).is_none() {
+            return Err("oversized SSE event".into());
         }
+        signals.observe(&value);
+        return Ok(());
+    }
+    if let Some(owner) = storage_owner(&value) {
         return state.storage_changed(epoch, owner, out).await;
     }
     if data.len() > NATIVE_EVENT_LIMIT {
         return Err("oversized SSE event".into());
-    }
-    if let Some(signals) = &state.catalogue {
-        signals.observe(&value);
-        return Ok(());
     }
     if let Some(event) = workspace_event(b, &value) {
         out.send(Input::Workspace(epoch, event)).await?;
@@ -258,7 +261,19 @@ pub(super) async fn dispatch(
     }
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
-    if own && value["type"] == "instance.event" && native["type"] == "vcs.branch.updated" {
+    let catalogues = (own && value["type"] == "instance.event")
+        .then(|| match native["type"].as_str() {
+            Some("command.updated") => Some(WorkspaceEvent::CommandsChanged),
+            Some("agent.updated" | "skill.updated") => Some(WorkspaceEvent::MentionsChanged),
+            Some("config.updated" | "plugin.updated" | "models-dev.refreshed") => {
+                Some(WorkspaceEvent::ComposerCataloguesChanged)
+            }
+            _ => None,
+        })
+        .flatten();
+    if let Some(event) = catalogues {
+        out.send(Input::Workspace(epoch, event)).await?;
+    } else if own && value["type"] == "instance.event" && native["type"] == "vcs.branch.updated" {
         out.send(Input::Workspace(
             epoch,
             WorkspaceEvent::WorktreesChanged {
@@ -276,7 +291,14 @@ pub(super) async fn dispatch(
         .await?;
     } else if own && value["type"] == "instance.eventStatus" {
         let ready = value["status"] == "connected";
-        state.upstream.store(ready, SeqCst);
+        let was_ready = state.upstream.swap(ready, SeqCst);
+        if ready && !was_ready {
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::ComposerCataloguesChanged,
+            ))
+            .await?;
+        }
         let version = state.version.fetch_add(1, SeqCst) + 1;
         out.send(if ready {
             Input::Hint(epoch, version)
@@ -357,7 +379,11 @@ async fn read_native(b: &Backend, epoch: u64, out: &Sender<Input>, state: &State
     let response = b
         .client
         .get(format!("{}api/events", b.base))
-        .query(&[("clientId", &b.client_id), ("connectionId", &connection)])
+        .query(&[
+            ("clientId", b.client_id.as_str()),
+            ("connectionId", connection.as_str()),
+            ("userFiles", crate::attachments::USER_FILES_REFERENCE),
+        ])
         .timeout(Duration::from_secs(86400))
         .send()
         .await?

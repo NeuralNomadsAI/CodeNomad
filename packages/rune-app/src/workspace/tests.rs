@@ -9,8 +9,42 @@ fn workspace() -> Workspace {
         workspace_id: None,
         active_session_id: None,
         drafts: BTreeMap::new(),
+        attachment_drafts: Default::default(),
+        attachment_parts: Default::default(),
         view: Default::default(),
     }
+}
+
+#[test]
+fn saving_preserves_valid_siblings_of_an_invalid_tab() {
+    let mut broken = workspace();
+    broken
+        .drafts
+        .insert("ses_bad".into(), "X".repeat(MAX_DRAFT + 1));
+    broken
+        .drafts
+        .insert("ses_sibling".into(), "same tab survives".into());
+    let mut good = workspace();
+    good.occurrence = 1;
+    good.drafts
+        .insert("ses_ok".into(), "saved independently".into());
+    let snapshot = Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        tabs: vec![Tab::Workspace(broken), Tab::Workspace(good.clone())],
+        active: Some(1),
+    };
+    assert!(encode(&snapshot).is_err());
+    let (bytes, partial) = encode_for_save(&snapshot).unwrap();
+    assert!(partial);
+    let saved = decode(&bytes).unwrap();
+    assert!(matches!(&saved.tabs[0], Tab::Workspace(tab)
+        if tab.drafts.len() == 1 && tab.drafts["ses_sibling"] == "same tab survives"));
+    assert_eq!(saved.tabs[1], Tab::Workspace(good));
+    assert!(
+        matches!(&snapshot.tabs[0], Tab::Workspace(tab) if tab.drafts["ses_bad"].len() > MAX_DRAFT)
+    );
 }
 fn snapshot(workspace: Workspace) -> Snapshot {
     Snapshot {

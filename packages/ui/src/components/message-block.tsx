@@ -9,6 +9,7 @@ import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/messa
 import {
   buildRecordDisplayData,
   clearRecordDisplayCacheForInstance,
+  markRecordPartSearchRevealed,
   MESSAGE_PART_REVEAL_STEP,
   revealHiddenRecordParts,
 } from "../stores/message-v2/record-display-cache"
@@ -596,6 +597,15 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (current) void current.revision
     const element = blockRef()
     if (!element) return
+
+    // The active match can land in text beyond a block's rendered window; reveal
+    // its part wholesale so the highlight pass finds (and scrolls to) the hit.
+    const activePartId = relevantActiveMatch
+      ? relevantActiveMatch.partId ?? (relevantActiveMatch.partIndex !== undefined ? current?.partIds[relevantActiveMatch.partIndex] : undefined)
+      : undefined
+    if (activePartId) {
+      markRecordPartSearchRevealed(props.instanceId, relevantActiveMatch!.messageId, activePartId)
+    }
 
     const frame = requestAnimationFrame(() => applySearchHighlights(element, query, relevantActiveMatch, reveal, props.alignInTranscript))
     onCleanup(() => {

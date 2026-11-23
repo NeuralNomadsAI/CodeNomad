@@ -47,9 +47,20 @@ fn visible(rt: &Runtime<State>, key: &str) {
     }
     assert!(
         node.rect[3] > 0.0 && node.visible[2] > 0.0 && node.visible[3] >= node.rect[3] - 1.0,
-        "{key} must be a usable visible control: rect={:?} visible={:?}",
+        "{key} must be a usable visible control: rect={:?} visible={:?}, layout={:?}",
         node.rect,
-        node.visible
+        node.visible,
+        rt.elements()
+            .iter()
+            .filter_map(|e| {
+                let key = e.key.as_deref()?;
+                matches!(
+                    key,
+                    "application-shell" | "session-shell" | "session-stack" | "session-composer"
+                )
+                .then_some((key, e.rect, e.visible))
+            })
+            .collect::<Vec<_>>()
     );
 }
 fn reveal(rt: &mut Runtime<State>, key: &str) {
@@ -66,13 +77,16 @@ fn workspace_chat_keeps_history_agent_and_composer_inside_the_viewport() {
         let mut state = state();
         state.workspace = Some(crate::workspace::Ui::new());
         state.chat_title = "Existing history".into();
-        state.messages.push(crate::Message {
-            id: "visible-history".into(),
-            role: "assistant".into(),
-            completed: true,
-            body: "Existing answer".into(),
-            parts: vec![],
-        });
+        state.messages.push(
+            crate::Message {
+                id: "visible-history".into(),
+                role: "assistant".into(),
+                completed: true,
+                body: "Existing answer".into(),
+                parts: vec![],
+            }
+            .into(),
+        );
         let rt = runtime(state, size);
         for key in [
             "tab-body-tab-0",
@@ -108,28 +122,11 @@ fn workspace_chat_keeps_history_agent_and_composer_inside_the_viewport() {
 }
 #[test]
 fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
-    for files_wanted in [None, Some(false), Some(true)] {
-        for size in [
-            (1920.0, 900.0),
-            (1400.0, 900.0),
-            (390.0, 740.0),
-            (390.0, 320.0),
-        ] {
+    for right_wanted in [false, true] {
+        for size in [(1400.0, 900.0), (390.0, 740.0), (390.0, 320.0)] {
             let mut state = state();
             crate::gallery::shell::fixture(&mut state);
-            state.workspace = Some(crate::workspace::Ui::new());
-            if let Some(wanted) = files_wanted {
-                let mut backend = crate::platform::block_on(crate::backend::Backend::connect(
-                    "http://127.0.0.1:9",
-                    "",
-                ))
-                .unwrap();
-                let project = state.screen.launcher().unwrap().project.as_ref().unwrap();
-                backend.workspace.clone_from(&project.id);
-                backend.session = "session".into();
-                crate::files::bind(&mut state, &backend);
-                state.files.as_mut().unwrap().show(wanted);
-            }
+            state.shell.wanted = [Some([false, right_wanted]); 2];
             let ui = state.agent.as_mut().unwrap();
             ui.selected = "permission-fixture".into();
             ui.permissions.push(Permission {
@@ -143,16 +140,10 @@ fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
             });
             ui.reasons.insert(ui.selected.clone(), TextEdit::new(""));
             let mut rt = runtime(state, size);
-            visible(&rt, "session-header");
-            if let Some(wanted) = files_wanted {
-                let files = rt.state.files.as_ref().unwrap();
-                assert_eq!(files.panel, wanted);
-                if size.0 == 390.0 {
-                    assert!(!files.drawer().pinned);
-                } else if size.0 == 1920.0 {
-                    assert_eq!(files.drawer().pinned, wanted);
-                }
-            }
+            assert_eq!(
+                rt.find("right-panel").is_some(),
+                right_wanted && size.0 > 390.0
+            );
             for key in ["allow_once", "allow_always", "reject"] {
                 if size.1 == 320.0 {
                     reveal(&mut rt, key);
@@ -161,14 +152,16 @@ fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
                 }
             }
             reveal(&mut rt, "reason-permission-fixture");
-            reveal(&mut rt, "composer");
-            if size == (390.0, 320.0) && files_wanted == Some(true) {
-                let (x, y) = rt.find("composer").unwrap();
-                rt.pointer_down(x, y);
-                rt.pointer_up(x, y);
-                rt.paste("short viewport draft");
-                rt.frame(0.02);
-                assert_eq!(rt.state.draft.text, "short viewport draft");
+            rt.update(|_, tx| tx.scroll_to_bottom_instant("session-stack"));
+            settle(&mut rt);
+            visible(&rt, "composer");
+            let (x, y) = rt.find("composer").unwrap();
+            rt.pointer_down(x, y);
+            rt.pointer_up(x, y);
+            rt.paste("draft through the dock");
+            rt.frame(0.02);
+            assert_eq!(rt.state.draft.text, "draft through the dock");
+            if size == (390.0, 320.0) && right_wanted {
                 let long = "Long draft line\n".repeat(60);
                 let (commands, received) = bounded(1);
                 rt.update(|s, _| {
@@ -179,28 +172,28 @@ fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
                 let editor = rt
                     .elements()
                     .into_iter()
-                    .find(|node| node.key.as_deref() == Some("composer"))
+                    .find(|node| node.path.ends_with("/composer/scroll/input"))
                     .unwrap();
                 let viewport = rt
                     .elements()
                     .into_iter()
-                    .find(|node| node.path.ends_with("/session-composer/scroll"))
+                    .find(|node| node.path.ends_with("/composer/scroll"))
                     .unwrap();
                 assert!(editor.rect[3] > 320.0, "fixture must overflow the editor");
                 assert!(
                     viewport.rect[3] <= 320.0,
                     "long draft must not grow the viewport"
                 );
-                rt.update(|_, tx| tx.scroll_to_bottom_instant("session-composer/scroll"));
+                rt.update(|_, tx| tx.scroll_to_bottom_instant(&viewport.path));
                 rt.frame(0.02);
-                assert_eq!(rt.scroll_at_bottom("session-composer/scroll"), Some(true));
+                assert_eq!(rt.scroll_at_bottom(&viewport.path), Some(true));
                 reveal(&mut rt, "send");
                 let (x, y) = rt.find("send").unwrap();
                 rt.pointer_down(x, y);
                 rt.pointer_up(x, y);
                 rt.frame(0.02);
                 assert!(
-                    matches!(received.try_recv().unwrap(), crate::transport::Command::Send(text) if text == long)
+                    matches!(received.try_recv().unwrap(), crate::transport::Command::Prompt(prompt) if prompt.text == long.trim_end())
                 );
             }
             reveal(&mut rt, "history");

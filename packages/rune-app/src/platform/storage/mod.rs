@@ -4,6 +4,13 @@ use crate::workspace::MAX_BYTES;
 const FILE_DRAFT_BYTES: usize = 256 * 1024;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn configured_directory() -> Option<std::path::PathBuf> {
+    crate::platform::setting("CODENOMAD_PROFILE")
+        .filter(|profile| profile.starts_with("trial-"))?;
+    crate::platform::setting("RUNE_STATE_DIR").map(std::path::PathBuf::from)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
     use std::{
@@ -70,9 +77,9 @@ mod native {
             })
         }
         pub fn load(&self) -> Result<Option<Vec<u8>>> {
-            self.load_document("state.json", MAX_BYTES)
+            self.load_file("state.json", MAX_BYTES)
         }
-        fn load_document(&self, name: &str, limit: usize) -> Result<Option<Vec<u8>>> {
+        fn load_file(&self, name: &str, limit: usize) -> Result<Option<Vec<u8>>> {
             let path = self.directory.join(name);
             plain(&path, false)?;
             let file = match File::open(path) {
@@ -91,9 +98,9 @@ mod native {
             Ok(Some(bytes))
         }
         pub fn save(&self, bytes: &[u8]) -> Result<()> {
-            self.save_document("state.json", bytes, MAX_BYTES)
+            self.save_file("state.json", MAX_BYTES, bytes)
         }
-        fn save_document(&self, name: &str, bytes: &[u8], limit: usize) -> Result<()> {
+        fn save_file(&self, name: &str, limit: usize, bytes: &[u8]) -> Result<()> {
             if bytes.len() > limit {
                 return Err("state too large".into());
             }
@@ -132,6 +139,24 @@ mod native {
         staged: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
     }
     impl Store {
+        #[cfg(target_os = "windows")]
+        pub(crate) fn preferences_frame(&self) -> Option<Vec<u8>> {
+            self.files
+                .lock()
+                .ok()?
+                .load_file("preferences.json", 512)
+                .ok()
+                .flatten()
+        }
+
+        #[cfg(target_os = "windows")]
+        pub(crate) fn save_preferences_frame(&self, bytes: &[u8]) -> Result<()> {
+            self.files
+                .lock()
+                .map_err(|_| "state store unavailable")?
+                .save_file("preferences.json", 512, bytes)
+        }
+
         pub async fn open(directory: PathBuf) -> Result<Self> {
             let files = tokio::task::spawn_blocking(move || Files::open(directory)).await??;
             Ok(Self {
@@ -152,7 +177,7 @@ mod native {
                 files
                     .lock()
                     .map_err(|_| "state store unavailable")?
-                    .load_document("workspace-file-drafts.json", FILE_DRAFT_BYTES)
+                    .load_file("workspace-file-drafts.json", FILE_DRAFT_BYTES)
             })
             .await?
         }
@@ -160,7 +185,7 @@ mod native {
             self.files
                 .lock()
                 .map_err(|_| "state store unavailable")?
-                .save_document("workspace-file-drafts.json", bytes, FILE_DRAFT_BYTES)
+                .save_file("workspace-file-drafts.json", FILE_DRAFT_BYTES, bytes)
         }
         pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
             let files = self.files.clone();

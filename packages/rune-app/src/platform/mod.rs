@@ -1,11 +1,16 @@
 //! Platform boundary for task execution, connection defaults and local file picking.
 pub(crate) mod collation;
 mod connection;
+#[cfg(not(target_arch = "wasm32"))]
+mod device_file;
+pub(crate) mod device_picker;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod pairing;
 pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;
+#[cfg(target_arch = "wasm32")]
+mod web_attachment;
 pub(crate) mod workspace_open;
 pub(crate) use connection::configured_target;
 #[cfg(not(target_arch = "wasm32"))]
@@ -20,6 +25,68 @@ pub use boot::LocalHost;
 pub struct LocalHost;
 pub fn local_server_available() -> bool {
     cfg!(not(target_arch = "wasm32"))
+}
+pub fn attachment_export_available() -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        true
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window().and_then(|w| w.document()).is_some()
+    }
+}
+
+pub fn export_attachment(
+    s: &mut crate::State,
+    tx: &mut rune::Tx,
+    name: &str,
+    bytes: std::sync::Arc<Vec<u8>>,
+) {
+    let name = name
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !matches!(*name, "" | "." | ".."))
+        .unwrap_or_else(|| crate::strings::t("messageItem.attachment.defaultName"));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let scope = s.input_scope.clone();
+        tx.save_file(
+            rune::file_dialog::FileDialogOptions {
+                file_name: Some(name.into()),
+                ..Default::default()
+            },
+            move |s: &mut crate::State, result, _| {
+                if !s.current_scope(&scope) {
+                    return;
+                }
+                if let Ok(Some(path)) = result {
+                    let (out, input) = codenomad_client::bounded(1);
+                    s.attachments.write = Some(input);
+                    let wake = s.wake.clone();
+                    spawn(async move {
+                        let ok = tokio::task::spawn_blocking(move || {
+                            std::fs::write(path, bytes.as_slice())
+                        })
+                        .await
+                        .is_ok_and(|result| result.is_ok());
+                        if out.send(ok).await.is_ok() {
+                            wake();
+                        }
+                    });
+                } else {
+                    s.attachments.saving = false;
+                    s.attachments.error = result.is_err();
+                }
+            },
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = tx;
+        s.attachments.error = web_attachment::download(name, bytes.as_slice()).is_err();
+        s.attachments.saving = false;
+    }
 }
 /// Called after Rune releases the event loop; process waits remain outside active UI work.
 pub fn finish() {
@@ -152,16 +219,25 @@ pub fn has_flag(flag: &str) -> bool {
 }
 #[cfg(not(target_arch = "wasm32"))]
 pub fn preferences_window<S: 'static>(
+    owner: &crate::State,
     spec: rune::AppSpec<S>,
     state: S,
     close: fn(&mut S, &mut rune::Tx),
 ) -> rune::WindowHandle {
-    rune::open_window(
-        rune::WindowSpec::new("preferences", spec)
-            .state(state)
-            .on_close(close),
-    )
+    let spec = rune::WindowSpec::new("preferences", spec)
+        .state(state)
+        .on_close(close);
+    #[cfg(target_os = "windows")]
+    return preferences_placement::open(spec, owner);
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = owner;
+        rune::open_window(spec)
+    }
 }
+
+#[cfg(target_os = "windows")]
+pub(crate) mod preferences_placement;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn preferences_save_warning(

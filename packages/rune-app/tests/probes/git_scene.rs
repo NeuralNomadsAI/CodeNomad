@@ -25,7 +25,7 @@ pub fn view(s: &crate::State) -> rune::El {
                 .child(
                     git_panel::conversation_column()
                         .child(crate::git::reader(s))
-                        .child(crate::composer(s, None)),
+                        .child(crate::composer::view::view(s, false)),
                 )
                 .child(crate::git::panel(s, width, rune::el())),
         )
@@ -58,14 +58,19 @@ fn setup(s: &mut crate::State, mode: Mode) {
         s.reads.clone(),
         s.wake.clone(),
     );
+    let empty = crate::platform::setting("RUNE_GIT_PANEL_STATE");
     let inventory = Worktrees {
-        repository: Repository::Git,
+        repository: match empty.as_deref() {
+            Some("no-git") => Repository::NoGit,
+            Some("uninitialized") => Repository::Uninitialized,
+            _ => Repository::Git,
+        },
         trees: vec![
             Worktree {
                 slug: "root".into(),
                 directory: "/CodeNomad".into(),
                 branch: Some("feat/git-history".into()),
-                head: Some("1".repeat(40)),
+                head: empty.is_none().then(|| "1".repeat(40)),
                 service_directory: None,
                 missing: false,
             },
@@ -126,7 +131,7 @@ fn setup(s: &mut crate::State, mode: Mode) {
     })
     .collect();
     let page = Page {
-        head: commits.first().map(|c| c.id.clone()),
+        head: empty.is_none().then(|| "1".repeat(40)),
         commits,
         has_more: false,
     };
@@ -149,6 +154,9 @@ fn setup(s: &mut crate::State, mode: Mode) {
                 CommitFile { path: "src/styles/panels/git-history.css".into(), kind: "A".into(), original_path: None },
             ],
         });
+    }
+    if let Some(state) = empty {
+        ui.load_empty_scene(&state);
     }
     s.git.owner = Some(ui);
     s.git.scene = true;

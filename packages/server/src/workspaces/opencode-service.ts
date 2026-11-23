@@ -12,6 +12,7 @@ import { rememberRuntime, runtimeIdentity, type ContractProfile } from "../openc
 import { locationRequestOptions } from "../opencode/compatibility/location"
 import { assertSupportedOpenCode } from "../opencode/runtime-support"
 import { observePendingDiscovery, carryPendingCompactions } from "./pending-discovery"
+import { projectLargeNativeEvents } from "./native-event-stream"
 
 type RequestOptions = { signal?: AbortSignal; deadlineAt?: number }
 const CONNECTION_RECHECK_INTERVAL_MS = 30_000
@@ -266,7 +267,11 @@ export class OpenCodeSharedService {
       client: this.dependencies.makeClient({
         baseUrl: endpoint.url,
         headers: this.dependencies.headers(endpoint),
-        fetch,
+        fetch: async (input, init) => {
+          const response = await fetch(input, init)
+          const target = new URL(input instanceof Request ? input.url : input, endpoint.url)
+          return target.pathname === "/api/event" ? projectLargeNativeEvents(response) : response
+        },
       }),
     }
     this.negotiationControllers.set(connection, negotiation)

@@ -69,6 +69,8 @@ Prompt forwarding keeps native fields (`text`, `files`, `agents`, `skills`, `met
 
 Slash commands retain native `name`, `text`, delivery and attachment fields inside the 1 MiB mutation bound. Sends read the profile environment at admission, preserve native session ownership and use the same validated connection for the environment and input writes. `bench/compare.mjs command-admission` exercises these checks without a model or OpenCode process.
 
+Prompt and command sends accept sessions in existing subfolders of the opened workspace or a live linked checkout. The proxy verifies the physical directory and native checkout registration before updating the environment and forwarding the input.
+
 Known divergence: when a platform package does not match its registry integrity, the TypeScript server installs it anyway through `@opencode/cli`'s postinstall fallback; Rust refuses it (`bench/opencode-install.mjs`). OpenCode 1.x npm replacement is not ported: such an installation is refused.
 
 The Source prompt client uses `application/json`. For a `text/plain` prompt, Rust refuses the non-JSON content with HTTP 400; TypeScript fails to serialize its error and returns HTTP 500. `prompt-admission` keeps this observation and both error bodies in `outsideJson`.

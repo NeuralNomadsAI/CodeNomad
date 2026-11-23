@@ -1,4 +1,7 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "यो सर्भरले संलग्न फाइलको इतिहास समर्थन गर्दैन।",
+  "rune.attachments_missing": "मस्यौदाका संलग्न फाइलहरू पुनर्स्थापित भएनन्।",
+  "rune.attachments_keep_text": "पाठ मात्र राख्नुहोस्",
   "rune.pairing_guide": "जोड्ने लिङ्क बनाउन CodeNomad होस्टमा admin.sh वा admin.ps1 चलाउनुहोस्। यस उपकरणको अर्को ट्याबमा लिङ्क खोल्नुहोस्।",
   "rune.loading": "लोड हुँदैछ",
   "rune.ready": "तयार",

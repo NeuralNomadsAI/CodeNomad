@@ -1,5 +1,5 @@
 use crate::{
-    Message, Phase, State, agent,
+    Phase, State, agent,
     transport::{Command, Event},
 };
 use codenomad_client::{Receiver, Sender};
@@ -8,12 +8,13 @@ use rune::edit::TextEdit;
 pub(super) struct Cache {
     agent: Option<agent::Ui>,
     files: Option<crate::files::Ui>,
+    attachments: crate::chat::attachments::Reader,
     git: crate::git::Binding,
     transcript_display: crate::transcript_state::Display,
     title: String,
-    messages: Vec<Message>,
+    messages: Vec<crate::history::Row>,
     draft: TextEdit,
-    pending_prompt: Option<String>,
+    composer: crate::composer::Owner,
     incoming: Option<Receiver<Event>>,
     commands: Option<Sender<Command>>,
     phase: Phase,
@@ -21,6 +22,7 @@ pub(super) struct Cache {
     can_older: bool,
     paging: bool,
     error: bool,
+    history_detached: bool,
     launcher_visible: bool,
     input_scope: std::rc::Rc<()>,
 }
@@ -32,7 +34,7 @@ impl Cache {
     }
 
     pub fn navigation_blocked(&self) -> bool {
-        self.pending_prompt.is_some()
+        self.composer.pending()
             || self
                 .agent
                 .as_ref()
@@ -45,12 +47,13 @@ impl Cache {
         Self {
             agent: s.agent.take(),
             files: s.files.take(),
+            attachments: std::mem::take(&mut s.attachments),
             git: crate::git::Binding::take(&mut s.git),
             transcript_display: std::mem::take(&mut s.transcript_display),
             title: std::mem::take(&mut s.chat_title),
             messages: std::mem::take(&mut s.messages),
             draft: std::mem::replace(&mut s.draft, TextEdit::new("")),
-            pending_prompt: s.pending_prompt.take(),
+            composer: std::mem::take(&mut s.composer),
             incoming: s.incoming.take(),
             commands: s.commands.take(),
             phase: std::mem::replace(&mut s.phase, Phase::Ready),
@@ -58,6 +61,7 @@ impl Cache {
             can_older: std::mem::take(&mut s.can_older),
             paging: std::mem::take(&mut s.paging),
             error: std::mem::take(&mut s.history_error),
+            history_detached: std::mem::take(&mut s.history_detached),
             launcher_visible: s.screen.is_launcher(),
             input_scope: s.input_scope.clone(),
         }
@@ -65,13 +69,14 @@ impl Cache {
     pub fn apply(self, s: &mut State) {
         s.agent = self.agent;
         s.files = self.files;
+        s.attachments = self.attachments;
         s.git = self.git;
         s.transcript_display = self.transcript_display;
         crate::chat::ToolDiffPreferences::sync(s);
         s.chat_title = self.title;
         s.messages = self.messages;
         s.draft = self.draft;
-        s.pending_prompt = self.pending_prompt;
+        s.composer = self.composer;
         s.incoming = self.incoming;
         s.commands = self.commands;
         s.phase = self.phase;
@@ -79,6 +84,7 @@ impl Cache {
         s.can_older = self.can_older;
         s.paging = self.paging;
         s.history_error = self.error;
+        s.history_detached = self.history_detached;
         if self.launcher_visible {
             s.screen.show_launcher();
         } else {

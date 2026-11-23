@@ -4,23 +4,37 @@ import {createServer} from 'node:http'
 import {spawn} from 'node:child_process'
 import {mkdir, writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {randomUUID} from 'node:crypto'
+import {createHash,randomUUID} from 'node:crypto'
 import {responseFor,textStream} from './fixture-response.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {FixtureStore} from './fixture-store.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requireTestSupport()
 const here = path.resolve(import.meta.dirname,'..')
-const profile = path.join(here,'fixture-profile',randomUUID())
+const artifacts = process.env.RUNE_FIXTURE_ARTIFACTS ?? path.join(here,'fixture-profile')
+assert(path.isAbsolute(artifacts),'Fixture artifacts directory must be absolute')
+const profile = path.join(artifacts,randomUUID())
 const project = path.join(profile,'projects','synthetic')
 await mkdir(project,{recursive:true})
 const session = 'ses_rune_synthetic'
 const code = 'fn main() {\n    println!("Rune · Code Nomad");\n}'
 const record = {id:session,projectID:'global',location:{directory:project},time:{created:1},title:'Synthetic Rune'}
 const fresh = process.argv.includes('--fresh-probe')
-const store = new FixtureStore(fresh?0:10000)
+const slash = process.argv.includes('--probe-slash')
+const attachments = process.argv.includes('--probe-attachments')
+const bytes = Buffer.from('Rune attachment fixture 🦀\r\n')
+const capture = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aN0AAAAASUVORK5CYII=','base64')
+const sha = bytes=>createHash('sha256').update(bytes).digest('hex')
+if(attachments) {
+  for(const file of [path.join(project,'sample.txt'),path.join(profile,'selected.txt'),path.join(profile,'dropped.txt'),path.join(profile,'pasted.txt')])
+    await writeFile(file,bytes)
+  await writeFile(path.join(profile,'capture.png'),capture)
+}
+const store = new FixtureStore(fresh||slash||attachments?0:10000)
 const upstreamStreams = new Set()
 const requests = []
+const commands = []
+let attachmentPrompts=0, attachmentReads=0, projectionReads=0
 let turn = 0
 const upstream = createServer(async(req,res)=>{
   const url = new URL(req.url,'http://127.0.0.1')
@@ -34,25 +48,70 @@ const upstream = createServer(async(req,res)=>{
     upstreamStreams.add(res);req.on('close',()=>upstreamStreams.delete(res));return
   }
   if(url.pathname==='/api/location') return json({data:{directory:project}})
+  if(slash&&url.pathname==='/api/command') {
+    assert.equal(req.method,'GET')
+    return json({location:{directory:project},data:[{name:'review',description:'Review changes'}]})
+  }
   if(url.pathname===`/api/session/${session}`) return json({data:record})
   if(url.pathname===`/api/session/${session}/message`) {
     const limit=Number(url.searchParams.get('limit'));assert([1,200].includes(limit));
     return json({data:store.rows.slice(-limit),cursor:{}})
   }
   if(url.pathname==='/api/plugin') return json({location:{directory:project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
-  if(url.pathname==='/api/rpc/codenomad.session-pruning/window') {
+  if(['/api/rpc/codenomad.session-pruning/window','/api/rpc/codenomad.session-pruning/windowUserFilesV1'].includes(url.pathname)) {
     assert.equal(JSON.parse(raw).input.sessionID,session)
-    return json({output:store.window(JSON.parse(raw).input.target)})
+    const window=store.window(JSON.parse(raw).input.target)
+    if(url.pathname.endsWith('windowUserFilesV1')&&window.status==='window') {
+      window.userFiles='reference-v1'
+      projectionReads++
+    }
+    return json({output:window})
+  }
+  if(attachments&&url.pathname==='/api/rpc/codenomad.session-pruning/sessionAttachment') {
+    const {input}=JSON.parse(raw)
+    assert.equal(input.sessionID,session)
+    assert.equal(input.messageID,store.rows[0]?.id)
+    assert(Number.isInteger(input.fileIndex)&&input.fileIndex>=0&&input.fileIndex<5)
+    const content=input.fileIndex===4?capture:bytes
+    assert.equal(input.sha256,sha(content))
+    if(input.confirm) return json({output:{status:'current'}})
+    attachmentReads++
+    return json({output:{status:'file',data:content.toString('base64')}})
   }
   if(url.pathname==='/api/rpc/codenomad.missions/scheduleCarrierRead') return json({output:{owned:false}})
   if(url.pathname===`/api/session/${session}/environment`) {
     assert.equal(req.method,'PUT');return json({data:{}})
+  }
+  if(slash&&url.pathname===`/api/session/${session}/command`) {
+    assert.equal(req.method,'POST')
+    commands.push(JSON.parse(raw))
+    res.writeHead(204);res.end();return
   }
   if(url.pathname===`/api/session/${session}/prompt`) {
     assert.equal(req.method,'POST');assert.equal(typeof JSON.parse(raw).text,'string')
     assert(upstreamStreams.size>0,'Rust bridge connected')
     const emit=(type,data)=>{for(const stream of upstreamStreams)stream.write(`data: ${JSON.stringify({id:randomUUID(),type,
       created:Date.now(),location:{directory:project},data:{sessionID:session,...data}})}\n\n`)}
+    if(attachments) {
+      const input=JSON.parse(raw)
+      assert.equal(input.text,'./sample.txt')
+      assert.equal(input.files.length,5)
+      assert.equal(input.files[0].name,'sample.txt')
+      assert.match(input.files[0].uri,/^file:\/\/\/.*\/sample\.txt$/)
+      assert.deepEqual(input.files.slice(1,4),['selected.txt','dropped.txt','pasted.txt'].map(name=>({
+        name,uri:`data:text/plain;base64,${bytes.toString('base64')}`
+      })))
+      assert.deepEqual(input.files[4],{name:'clipboard.png',uri:`data:image/png;base64,${capture.toString('base64')}`})
+      attachmentPrompts++
+      const row=store.append('user',input.text);row.id=input.id
+      row.files=input.files.map(({name},index)=>({
+        name,mime:index===4?'image/png':'text/plain',source:{type:'deferred',sha256:sha(index===4?capture:bytes)}
+      }))
+      const receipt={id:input.id,sessionID:session,type:'user',payload:{text:input.text,files:row.files}}
+      emit('session.inbox.enqueued',{item:receipt})
+      emit('session.inbox.delivered',{item:receipt})
+      return json({data:receipt})
+    }
     const currentTurn=++turn
     const replyID=`reply-native-${currentTurn}`
     const response=responseFor(currentTurn,JSON.parse(raw).text)
@@ -97,6 +156,23 @@ try {
       RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0'},
   })
   result=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+  if(attachments&&result===0) {
+    child=spawn(clientBinary,runeArgs,{
+      cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,
+        RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_ATTACHMENT_STAGE:'reopen'},
+    })
+    result=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+  }
+  if(slash) {
+    assert(!requests.includes(`POST /api/session/${session}/prompt`),'command must never fall back to a native prompt')
+    assert.deepEqual(commands,[{name:'review',text:'résumé 🦀',delivery:'steer'}],
+      'Rune command must reach native OpenCode once through the Rust relay')
+  }
+  if(attachments) {
+    assert.equal(attachmentPrompts,1)
+    assert.equal(attachmentReads,5)
+    assert(projectionReads>=2,'Both Rune boots must negotiate the attachment history')
+  }
   assert.equal(result,0,'Rune client exit')
   console.log(JSON.stringify({fixture:'real-rust-server-synthetic-opencode',exitCode:result,requests},null,2))
 } finally {

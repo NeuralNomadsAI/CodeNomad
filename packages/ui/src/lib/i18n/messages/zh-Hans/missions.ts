@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.activation.disableConfirm": "在 OpenCode 全局配置中停用任务？不会删除或暂停任何内容。",
   "missions.followed.title": "关注的对话",
   "missions.followed.add": "添加对话",
   "missions.followed.source": "关注的对话 {number}",

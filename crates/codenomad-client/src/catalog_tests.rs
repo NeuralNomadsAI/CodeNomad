@@ -453,7 +453,7 @@ fn server_search_follows_scoped_worktree_cursors_and_binds_the_exact_match() {
             {"directory":"/alias", "serviceDirectory":"/linked"},
             {"directory":"/missing","nestedFolderMissing":true}
         ]});
-        let session = json!({"id":"later","title":"Off page","location":{"directory":"/linked"}});
+        let session = json!({"id":"later","title":"Off page","location":{"directory":"/linked"},"listWorktreeSlug":"linked"});
         let server = Server::start(vec![
             reply(
                 "GET /api/workspaces/workspace/worktrees",
@@ -485,12 +485,6 @@ fn server_search_follows_scoped_worktree_cursors_and_binds_the_exact_match() {
                 200,
                 json!({"data":session}),
             ),
-            reply(
-                "GET /api/workspaces/workspace/worktrees",
-                None,
-                200,
-                inventory,
-            ),
         ]);
         let backend = Backend::connect(&server.address, "").await.unwrap();
         let project = crate::catalog::Project {
@@ -501,11 +495,12 @@ fn server_search_follows_scoped_worktree_cursors_and_binds_the_exact_match() {
         assert_eq!(results.len(), 1);
         let found = &results[0];
         assert_eq!(found.id, "later");
-        let (bound, info) = backend
-            .bind_at(&project, &found.id, None, false)
+        let (bound, info, slug) = backend
+            .bind_session_placed(&project, &found.id, false)
             .await
             .unwrap();
         assert_eq!(bound.session, info.id);
+        assert_eq!(slug, "linked");
     });
 }
 

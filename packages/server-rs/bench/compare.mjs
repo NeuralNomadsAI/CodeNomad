@@ -15,7 +15,7 @@ import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "workspace-claims", "agent-controls", "remote-session-controls", "static-assets", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
+const MODES = ["http", "files", "contract", "history-bytes", "attachment-history", "workspace-claims", "agent-controls", "remote-session-controls", "static-assets", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
 if (["prompt-admission", "command-admission"].includes(mode)) {
   await (await import("./prompt-admission.mjs")).run(mode === "command-admission")
@@ -23,6 +23,12 @@ if (["prompt-admission", "command-admission"].includes(mode)) {
 }
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
+if (mode === "attachment-history") {
+  const contract = await fromDist("opencode/session-pruning/navigation-contract.js")
+  assert(contract.sessionAttachmentInputSchema?.safeParse({
+    sessionID: "ses_fixture", messageID: "msg_fixture", fileIndex: 0, sha256: "a".repeat(64), confirm: true,
+  }).success, "The TS build and bundled pruning plugin must support attachment references and confirmation")
+}
 const bench = mode === "solid" ? undefined : await import(`./${mode === "http" ? "worktrees" : mode}.mjs`)
 const missionServe = process.env.CNRS_BENCH_MISSIONS_SERVE === "1" || mode === "missions-wayfinder" && process.platform === "win32"
 assert(!missionServe || process.platform === "win32" && ["missions", "missions-calendar", "missions-wayfinder"].includes(mode))
@@ -486,7 +492,9 @@ try {
       ts = await start("ts", local, tsRoot, password, missionServe ? undefined : path.join(remote.root, "rust.data", "tls", "ca-cert.pem"))
       assert.notEqual(ts.daemonPID, rs.daemonPID)
       result.daemons = [ts.status, rs.status]
-      await qualify(ts, rs, password, rsRoot)
+      // Attachment history opens and authenticates its own workspaces. Pending
+      // question recovery belongs to the general qualification, not this mode.
+      if (mode !== "attachment-history") await qualify(ts, rs, password, rsRoot)
       if (mode === "solid") return await solid({ ts, rs, local, remote, tsRoot, rsRoot, password })
       const hosts = []
       for (const host of [ts, rs]) {

@@ -19,13 +19,16 @@ pub fn fixture(s: &mut State) {
     };
     s.chat_title = "Fixture conversation".into();
     s.phase = Phase::Ready;
-    s.messages = vec![Message {
-        id: "hello".into(),
-        role: "user".into(),
-        body: "Fixture message".into(),
-        parts: vec![],
-        completed: true,
-    }];
+    s.messages = vec![
+        Message {
+            id: "hello".into(),
+            role: "user".into(),
+            body: "Fixture message".into(),
+            parts: vec![],
+            completed: true,
+        }
+        .into(),
+    ];
 }
 
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]

@@ -13,7 +13,7 @@ fn older_pages_preserve_complete_tool_text_above_the_metadata_budget() {
             "type": "tool", "id": "call", "name": "read",
             "state": {"status": "completed", "content": [{"type": "text", "text": "x".repeat(450 * 1024)}]}
         }]
-    })).unwrap()).collect();
+    })).unwrap().into()).collect();
     let mut resident = rows[17..].to_vec();
     for index in (0usize..17).rev().step_by(2) {
         resident = history::join(&rows[index.saturating_sub(1)..=index + 1], &resident).unwrap();
@@ -39,6 +39,7 @@ fn edit_patches_in_metadata_share_the_tool_text_budget() {
                 }]
             }))
             .unwrap()
+            .into()
         })
         .collect();
     let mut resident = rows[24..].to_vec();
@@ -48,7 +49,7 @@ fn edit_patches_in_metadata_share_the_tool_text_budget() {
     assert_eq!(resident, rows);
 }
 
-fn rows(ids: &[&str]) -> Vec<Message> {
+fn rows(ids: &[&str]) -> Vec<history::Row> {
     ids.iter()
         .map(|id| Message {
             parts: vec![],
@@ -57,19 +58,22 @@ fn rows(ids: &[&str]) -> Vec<Message> {
             completed: true,
             body: format!("body {id}"),
         })
+        .map(std::sync::Arc::new)
         .collect()
 }
 #[test]
 fn overlap_preserves_native_order_and_replaces_overlap_authoritatively() {
     let a = rows(&["z", "y", "x"]);
     let mut b = rows(&["y", "x", "w"]);
-    b[0].body = "changed".into();
+    std::sync::Arc::make_mut(&mut b[0]).body = "changed".into();
     let merged = history::join(&a, &b).unwrap();
     assert_eq!(
         merged.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
         vec!["z", "y", "x", "w"]
     );
     assert_eq!(merged[1].body, "changed");
+    assert!(std::sync::Arc::ptr_eq(&a[0], &merged[0]));
+    assert!(std::sync::Arc::ptr_eq(&b[0], &merged[1]));
 }
 #[test]
 fn broken_overlap_duplicate_ids_and_resident_overflow_fail_closed() {
@@ -83,10 +87,11 @@ fn broken_overlap_duplicate_ids_and_resident_overflow_fail_closed() {
             completed: true,
             body: "x".into(),
         })
+        .map(std::sync::Arc::new)
         .collect::<Vec<_>>();
     assert!(history::check(&many).is_err());
     let mut huge = rows(&["a"]);
-    huge[0].body = "x".repeat(history::MAX_BYTES + 1);
+    std::sync::Arc::make_mut(&mut huge[0]).body = "x".repeat(history::MAX_BYTES + 1);
     assert!(history::check(&huge).is_err());
 }
 #[test]

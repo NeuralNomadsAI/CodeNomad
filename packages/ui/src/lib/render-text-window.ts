@@ -8,6 +8,8 @@
 export const MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT = 50_000
 /** Tool output (shell, read, diff, ANSI, patches) renders this many characters before its reveal. */
 export const TOOL_OUTPUT_RENDER_CHARACTER_LIMIT = 10_000
+/** Subagent card panes (the task card's nested prompt and report scrollers) render this many characters before their reveal. */
+export const TASK_PANE_RENDER_CHARACTER_LIMIT = 20_000
 /** One reveal extends a block by at most this many characters, so no render jumps by more than about ¼ MB. */
 export const TEXT_REVEAL_CHARACTER_STEP = 250_000
 /** Markdown longer than this renders its code blocks without syntax highlighting (highlighting costs ~5 µs per character). */

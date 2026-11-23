@@ -1,4 +1,5 @@
 //! Native qualification entry points, enabled exclusively by `test-support`.
+mod composer_attachments;
 mod controls;
 mod files_document;
 mod files_reader;
@@ -16,6 +17,7 @@ mod pending_open;
 mod real_history;
 mod recovery;
 mod session_transport;
+mod slash;
 #[cfg(all(test, target_os = "windows"))]
 mod titlebar_locale;
 pub mod transcript_scene;
@@ -54,6 +56,8 @@ pub fn dispatch() -> bool {
         ("--probe-fresh", session_transport::fresh),
         ("--probe-recovery", recovery::run),
         ("--probe-contract", session_transport::contract),
+        ("--probe-slash", slash::run),
+        ("--probe-attachments", composer_attachments::run),
     ] {
         if crate::platform::has_flag(flag) {
             run();

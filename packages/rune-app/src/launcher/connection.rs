@@ -13,6 +13,10 @@ pub(super) fn watch_catalogue(l: &mut Launcher) {
 }
 
 pub fn connect(s: &mut State, _: &mut Tx) {
+    #[cfg(target_arch = "wasm32")]
+    if crate::platform::pairing::required(s) {
+        return;
+    }
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };

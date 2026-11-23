@@ -4,6 +4,10 @@ Una Misión reúne un objetivo, una conversación del coordinador, tareas y resu
 
 Si Misiones no está disponible, **Ajustes de OpenCode** abre la recuperación del servicio para un plugin ausente o con errores. **Diagnóstico del servidor** abre el informe de diagnóstico en Configuración → Info cuando el puente local de Misiones del servidor no está disponible.
 
+## Mostrar u ocultar Misiones {#activation}
+
+En **Personalizar panel derecho**, marca **Misiones** para mostrar la pestaña o desmárcala y confirma para ocultarla. El gesto también escribe `codenomad.missions` o `-codenomad.missions` en la configuración global del servidor OpenCode conectado. Las reglas del proyecto pueden prevalecer. Desactivar no elimina ni pausa nada, pero pueden omitirse ejecuciones programadas. Si falla la escritura, la pestaña conserva la visibilidad elegida. **Restablecer** solo cambia la disposición. **Estado → Plugins** omite el aviso para esa regla global exacta; las demás desactivaciones siguen ofreciendo **Reactivar**.
+
 ## Crear una Misión {#create}
 
 Las conexiones remotas usan el mismo formulario y los mismos controles. Usa preferentemente HTTPS para proteger el tráfico de red.

@@ -106,6 +106,7 @@ struct Queue {
 pub struct Sub {
     queue: Mutex<Queue>,
     pub ready: Notify,
+    reference_files: bool,
 }
 
 pub enum Next {
@@ -126,8 +127,12 @@ pub struct Hub {
 }
 
 impl Hub {
+    #[cfg(test)]
     pub fn subscribe(&self) -> Arc<Sub> {
-        let sub = Arc::new(Sub::default());
+        self.subscribe_to(false)
+    }
+    pub fn subscribe_to(&self, reference_files: bool) -> Arc<Sub> {
+        let sub = Arc::new(Sub { reference_files, ..Default::default() });
         let mut subs = self.subs.lock().unwrap();
         {
             let mut q = sub.queue.lock().unwrap();
@@ -154,6 +159,13 @@ impl Hub {
             return;
         }
         let frame = Arc::new(Frame::new(&value));
+        let preprojected =
+            value["type"] == "instance.event" && crate::sessions::user_files::is_projected_inbox(&value["event"]);
+        let projected = if subs.iter().any(|sub| sub.reference_files) {
+            crate::sessions::user_files::projected_event(&value).map(|value| Arc::new(Frame::new(&value)))
+        } else {
+            None
+        };
         if status && let Some(id) = value["instanceId"].as_str() {
             let mut statuses = self.statuses.lock().unwrap();
             let reason = value["reason"].as_str().unwrap_or_default();
@@ -164,11 +176,20 @@ impl Hub {
             }
         }
         for sub in subs.iter() {
+            let frame = if sub.reference_files { projected.as_ref().unwrap_or(&frame) } else { &frame };
             let mut q = sub.queue.lock().unwrap();
             if q.closing {
                 continue;
             }
-            if !q.fold(&frame, &value, &self.retained) {
+            if preprojected && !sub.reference_files {
+                if let Some(workspace) = frame.workspace.as_deref() {
+                    q.resync(workspace, &self.statuses.lock().unwrap(), &self.retained);
+                }
+                q.closing = true;
+                sub.ready.notify_one();
+                continue;
+            }
+            if !q.fold(frame, &value, &self.retained) {
                 q.push(Item::new(frame.clone()), &self.retained);
             }
             if q.over() {
@@ -393,6 +414,34 @@ mod tests {
             hub.publish(delta("ses_a", 0, &i.to_string()));
             assert_eq!(drain(&hub, &sub), [delta("ses_a", 0, &i.to_string())]);
         }
+    }
+
+    #[test]
+    fn a_large_inbox_attachment_projects_only_for_reference_subscribers() {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        let hub = Hub::default();
+        let legacy = hub.subscribe();
+        let references = hub.subscribe_to(true);
+        let data = STANDARD.encode(vec![17; 255 * 1024]);
+        let event = native(
+            WS,
+            json!({"type":"session.inbox.enqueued","data":{
+                "sessionID":"ses_a","inboxID":"msg_seen","item":{"type":"user","payload":{
+                    "files":[{"name":"example.bin","mime":"application/octet-stream","data":data}]
+                }}
+            }}),
+        );
+        hub.publish(event.clone());
+        hub.publish(delta("ses_a", 1, "follow-up"));
+        let raw = drain(&hub, &legacy);
+        assert_eq!(&raw[0], &event);
+        assert!(raw[0].to_string().len() > 256 * 1024);
+        let projected = drain(&hub, &references);
+        let file = &projected[0]["event"]["data"]["item"]["payload"]["files"][0];
+        assert_eq!(file["source"]["type"], "deferred");
+        assert!(file.get("data").is_none());
+        assert!(projected[0].to_string().len() < 1024);
+        assert_eq!(projected[1], delta("ses_a", 1, "follow-up"));
     }
 
     #[test]

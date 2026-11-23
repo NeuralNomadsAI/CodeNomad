@@ -8835,6 +8835,12 @@
     },
     {
       "specifier": "node:assert/strict",
+      "file": "packages/ui/src/stores/opencode-data-read-testing.ts",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:assert/strict",
       "file": "packages/ui/src/stores/opencode-data-reconnect.test.ts",
       "line": 1,
       "resolution": "external-dependency-requires-installed-contract"
@@ -14277,6 +14283,18 @@
     },
     {
       "specifier": "solid-js",
+      "file": "packages/ui/tests/browser/fixtures/scroll-pipeline.tsx",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js/web",
+      "file": "packages/ui/tests/browser/fixtures/scroll-pipeline.tsx",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js",
       "file": "packages/ui/tests/browser/fixtures/search-highlight.tsx",
       "line": 1,
       "resolution": "external-dependency-requires-installed-contract"
@@ -14528,9 +14546,15 @@
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
+      "specifier": "solid-toast",
+      "file": "packages/ui/tests/browser/fixtures/status-panel.tsx",
+      "line": 3,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
       "specifier": "solid-js",
       "file": "packages/ui/tests/browser/fixtures/status-panel.tsx",
-      "line": 2,
+      "line": 4,
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
@@ -14674,6 +14698,18 @@
     {
       "specifier": "solid-js/web",
       "file": "packages/ui/tests/browser/fixtures/timeline-tool-filters.tsx",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js",
+      "file": "packages/ui/tests/browser/fixtures/tool-card-bounds.tsx",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js/web",
+      "file": "packages/ui/tests/browser/fixtures/tool-card-bounds.tsx",
       "line": 2,
       "resolution": "external-dependency-requires-installed-contract"
     },
@@ -18974,6 +19010,24 @@
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
+      "specifier": "node:assert/strict",
+      "file": "packages/ui/tests/browser/scroll-pipeline.test.ts",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:test",
+      "file": "packages/ui/tests/browser/scroll-pipeline.test.ts",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "playwright",
+      "file": "packages/ui/tests/browser/scroll-pipeline.test.ts",
+      "line": 3,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
       "specifier": "playwright",
       "file": "packages/ui/tests/browser/search-highlight-assertions.ts",
       "line": 1,
@@ -20283,6 +20337,24 @@
     },
     {
       "specifier": "node:assert/strict",
+      "file": "packages/ui/tests/browser/tool-card-bounds.test.ts",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:test",
+      "file": "packages/ui/tests/browser/tool-card-bounds.test.ts",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "playwright",
+      "file": "packages/ui/tests/browser/tool-card-bounds.test.ts",
+      "line": 4,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:assert/strict",
       "file": "packages/ui/tests/browser/tool-images.test.ts",
       "line": 1,
       "resolution": "external-dependency-requires-installed-contract"
@@ -20875,7 +20947,7 @@
     "packages/ui/src/components/form-request.tsx": "c95f6bb8fe6983af464dd3cce935210242c620583dd87aeda59fadb22f2909ca",
     "packages/ui/src/components/git-diff-view.tsx": "a4a9f153a507835c3d5c5e2907168e13a264429d47380c7a0db92d0708f69922",
     "packages/ui/src/components/git-image-preview.tsx": "f6347f337561057aaf23b457fd26f7fb4e7e9637870e346897c45b36b23666e9",
-    "packages/ui/src/components/hidden-text.tsx": "b106169cf94a213b5f78a901fbbcbdfb95224208bcc134a7b1216b5751ea70a9",
+    "packages/ui/src/components/hidden-text.tsx": "97265611ed97f31a702a92843d647bb2481abdb178ebc45899cf655c4f5c8650",
     "packages/ui/src/components/history-message-preview.tsx": "118840e82d04dc173fb35d5b2f71b3f92435c36b5f6fb9f5ccc6a361ac0904dc",
     "packages/ui/src/components/history-search-results.tsx": "9819ffcd37b139a832aa345d54020d2b34542c1bac362f2ec9929e44638821c9",
     "packages/ui/src/components/info-popover-button.tsx": "0cb67b1c2bd5c7287300159157e3ea6960d2dd487bf8cfdfac50498932507438",
@@ -20895,8 +20967,8 @@
     "packages/ui/src/components/instance/shell/drawer-orientation.ts": "6d3a3033034c51390a884738e4b0b576ab29d63e8be7d6ca8a8338479303a255",
     "packages/ui/src/components/instance/shell/file-preview-lifetime.ts": "59c7d0165e79662d43497f0aa4a24f3333a1ac8f414dae16bba3662c5235f977",
     "packages/ui/src/components/instance/shell/right-panel/FileRowActions.tsx": "ce396a3a02b9d8b85301fe89033114d89b476b4ee8c81b43e1a53699e0cba1a0",
-    "packages/ui/src/components/instance/shell/right-panel/RightPanel.tsx": "20ef3afdafc8ab327cb8e9e9cfa17d9b8ebaf6ce8babd4a27648c078a7b53543",
-    "packages/ui/src/components/instance/shell/right-panel/RightPanelCustomizationPopover.tsx": "773f52f39a93589c33f001cf1db4ebe614bc553dbdd9f4cd4da7668fa8905ab1",
+    "packages/ui/src/components/instance/shell/right-panel/RightPanel.tsx": "59b39318bee4e79458073d959361a312de142bd93e2399833b387ed08c901f42",
+    "packages/ui/src/components/instance/shell/right-panel/RightPanelCustomizationPopover.tsx": "722c511eb1c1e4d0e6d9f22368734502e8c23f06f4ec1a12f54662527ee4d9fd",
     "packages/ui/src/components/instance/shell/right-panel/components/DiffToolbar.tsx": "6ebce6daf8886e511eedcfdd201e40ff86cbb661952e99bc617e6a5dca283ec3",
     "packages/ui/src/components/instance/shell/right-panel/components/OverlayList.tsx": "922d9704b3f657d114b8c49ebc5543d172427b76526ef1d9fce92c796030f96c",
     "packages/ui/src/components/instance/shell/right-panel/components/WorkspaceTree.tsx": "d7a5fece63b366f70f2cd8b6826700c1a052812eda50dd518dcae07721d2d568",
@@ -20956,7 +21028,7 @@
     "packages/ui/src/components/measured-action-overflow.ts": "4c0ed8b0c7fff778bcb59993389fe26455934a6804327884221531c1852b7c37",
     "packages/ui/src/components/mermaid-diagram.tsx": "0b7a1f2c26edff383f4f4db916ec3f3af60459a24a38404aa63dda2bd2f66d7d",
     "packages/ui/src/components/message-anchors.ts": "4e4561fad115da8e7d396622a4c226d9f6872bac5bc7a2aa5b029ca9d051c540",
-    "packages/ui/src/components/message-block.tsx": "257c50e27a40dfe4833031af5938cc023094a0fbfa2681dcee6c7899fc636173",
+    "packages/ui/src/components/message-block.tsx": "191ca55b4c3a6efc6b774e5b47290bbbf3b4cdaaf82ad1168e5af36f6b4a4f91",
     "packages/ui/src/components/message-content-icons.ts": "a0abe0f586f52b62ec12209cfd4cdc9558b4e7ea14b82c4154b1affa43bf7ef6",
     "packages/ui/src/components/message-history-pagination.test.ts": "0792d49aea611b001a551d2ae0bd9688f5f4886f9b56598d064e477b72eed55b",
     "packages/ui/src/components/message-history-pagination.ts": "4ddeabf53474185930b4fa0af6d352f4ea0fabc4828477cb5dc418204a136e45",
@@ -20964,7 +21036,7 @@
     "packages/ui/src/components/message-list-header.tsx": "38eeb951bb9f9dd677b7f0a77840ae91caca356ec73f0e44f13da97ac9e415c9",
     "packages/ui/src/components/message-part.tsx": "219462b6df7e30db707a846548ea6c3e4b4d723530f6febe9e6a3f8cebe31a3b",
     "packages/ui/src/components/message-preview.tsx": "c070d068aa81b0bdb36637d5a1089c8e53219ac02cc9d29131840d7848ddba4e",
-    "packages/ui/src/components/message-section.tsx": "f3220f8bfe7ce9caee0c8e8b0edfdf8dc9bec3337394fcd9a61eff1f9d257ced",
+    "packages/ui/src/components/message-section.tsx": "5560589a8205a689acf20a5a880eed0c489f78220ffc825e709ea63b2e364c11",
     "packages/ui/src/components/message-timeline-projection.test.ts": "4c72f0a4e628ce382efd6c816d5587e1a338f63bbf5f5a5a504ddf4fcd9c0ede",
     "packages/ui/src/components/message-timeline-projection.ts": "c3f03d3e25d2b32efb2c3d5bc571e3b9cffffd3d2961aab55e6aa7addd7e0a8d",
     "packages/ui/src/components/message-timeline-v2.test.ts": "eb175df19ed9b9e5213e2f99a482f7bea1834b90081a378ecf0b1226d17c501f",
@@ -21099,7 +21171,7 @@
     "packages/ui/src/components/plugin-add-menu.tsx": "5839535ea6890da958beb5b5ee93bbf5bb68348e60d77ce58c949ef85eac42b2",
     "packages/ui/src/components/plugin-row-actions.tsx": "521021ed8448ef5f2b24a2c19435cf65c2cf51e6b40a5be7ad45a6f4fc704d56",
     "packages/ui/src/components/plugin-source-add.tsx": "601bf37399bb24bca2daf8aee108ffbcba9e161f4f5e1ff379453f0e3e9dc191",
-    "packages/ui/src/components/plugin-system-attention.tsx": "079ec6d445ac48e188c04abe6303f4741788251959c6f712b00d908a6b4346b1",
+    "packages/ui/src/components/plugin-system-attention.tsx": "ac73ef50deb80951f638b53599dc59cba19218e01486ac6a21f910bdd4cc180e",
     "packages/ui/src/components/preferences-window.tsx": "0514ecba91e21897712906c244ceca921490c322f3d45ea091ba942ba4f1cece",
     "packages/ui/src/components/project-rename-dialog.tsx": "19bbc419926d6998dd81a0a2336678a945ce62879c8c61bf07784c2e4ba4ce1d",
     "packages/ui/src/components/prompt-input.tsx": "3bee42107d48facdb972e5dfa76445c14b9ce2384b21acb37a85555b40276b2b",
@@ -21290,10 +21362,10 @@
     "packages/ui/src/components/tool-call/renderers/subagent-report.ts": "9f35b8f083dcef16756cd8a278499469f00d0ff9e3fd3b723bd4b82da8d79d76",
     "packages/ui/src/components/tool-call/renderers/task-copy.test.ts": "b92651abaa12b23bcbb7f8d10c0f829ed210f6a522dc497931f00dfabcd739f1",
     "packages/ui/src/components/tool-call/renderers/task-copy.ts": "c5180b840707d7021a476e4f4d11b5eb5dbd8038a47485c013195a5b3c0191d9",
-    "packages/ui/src/components/tool-call/renderers/task-summary.ts": "52e9bcecf523aa7db0654d3576d35eea8626556c3fc2cded41c179354a6d4feb",
+    "packages/ui/src/components/tool-call/renderers/task-summary.ts": "1fad313db849f379bf0c05d090f45fd1d494291693084d6af13699a794ce54eb",
     "packages/ui/src/components/tool-call/renderers/task-title.test.ts": "6ab7b618e2159476c4470f05f5a1d05e5e7708e1d3035de090e80c76f5becc9a",
     "packages/ui/src/components/tool-call/renderers/task-title.ts": "c451e55cf6eda6b427718b6abdcdd5502e8f2b18fb6d1b172e65cfb50f7c380b",
-    "packages/ui/src/components/tool-call/renderers/task.tsx": "289bd7673a388eb040714dbaea9ef7a6207830301f75d55526914b4846bde140",
+    "packages/ui/src/components/tool-call/renderers/task.tsx": "ccba7e29890097fc2877709cbbee560a8a0f58aef9422a3c38689b21e342683d",
     "packages/ui/src/components/tool-call/renderers/todo-data.ts": "2a50459a129813eb912b43f79ee27667ce88bd27576dcfa18fd26e22f20d2b45",
     "packages/ui/src/components/tool-call/renderers/todo.tsx": "95d0212ff52b889385b0e92ad199b947c3985866e0503a004933d1caa672c060",
     "packages/ui/src/components/tool-call/renderers/webfetch.tsx": "8c65052bca1cd738ca15d6498e8984efa65242553bffd17d7806470e638f973d",
@@ -21320,8 +21392,8 @@
     "packages/ui/src/components/user-message-navigation.ts": "321bfb704ebd02eb98920613fa6d3c99b0dc318b145dbfec534c17f8867105d9",
     "packages/ui/src/components/version-pill.tsx": "2d0433a2184ddc8ef31de61b703c3a903a176ef708d465b90897cdafefceef42",
     "packages/ui/src/components/virtual-follow-behavior.test.ts": "a05a79bba70a0248e875b86d47897c8950e37a796700b0e98f17527a5d16ee67",
-    "packages/ui/src/components/virtual-follow-behavior.ts": "76d4218055b759fd68bfcd73afbf7ff75f6e9d5c5bf6b67d1dbda87809a7a8d2",
-    "packages/ui/src/components/virtual-follow-list.tsx": "7b7964cdd7c768889f60a35de6aba188f5c2fada9c111cf38527c46675fedd57",
+    "packages/ui/src/components/virtual-follow-behavior.ts": "7cdbf4e45f8c25153f97107175d3efb4a51eb9b527feaff071609d8d0c898d19",
+    "packages/ui/src/components/virtual-follow-list.tsx": "b171fc0a7e7c2cf9316a5f8e957590c63f17d349b6451e780715a4588dac0878",
     "packages/ui/src/components/virtual-follow-measurements.test.ts": "666b46f8d703524b32d957b6a4001af34d985e160440f094e505db232f58cc2d",
     "packages/ui/src/components/virtual-follow-measurements.ts": "7734f0acf7ddd2df19b246860039946eaedf2e3e477c83afeca1aa07bbc5cdbb",
     "packages/ui/src/components/virtual-reader-settlement.test.ts": "a4e15a017d07cf5eae320ed412e16066921d1a229537d2bfea2241db81904055",
@@ -21420,7 +21492,7 @@
     "packages/ui/src/lib/external-url.ts": "a287a4cdd8a449b843af672e5b6e87318eec58012ab78339dc4d1e2db5d3acc9",
     "packages/ui/src/lib/filesystem-events.test.ts": "2b5a9ce1209d9400d90dabf23df6ea5f3ab93bb5948d6defb85a6a2ade00ca4a",
     "packages/ui/src/lib/filesystem-events.ts": "52f80beee37924ee3a51a1211a72fa885286c7d32bf354b1777074401ad17d3a",
-    "packages/ui/src/lib/follow-scroll.tsx": "f226d0d5ba86b18cc102dc62fdcc487cefd927affdc045766e5047bd80428a90",
+    "packages/ui/src/lib/follow-scroll.tsx": "27a3f04a15ccc2d893c03414d6fe488f07d1b567b17be5cf7c2a957a743c3e5d",
     "packages/ui/src/lib/form-answer-interaction.ts": "b0593b0e1d6efb31211a1ead0097c108734e704fdabf3286cadec894d0675f59",
     "packages/ui/src/lib/form-schema.ts": "c908280818c0301dd6b3a216edfb671e50b13f94795c912a4f8c781fbb8e024d",
     "packages/ui/src/lib/formatters.ts": "cf7b243d9e9a9c8fca8686e74c1de7ea1fab264eaf3c433db9e8963957a3be12",
@@ -21485,15 +21557,15 @@
     "packages/ui/src/lib/i18n/messages/de/mission-scheduling.ts": "b7830d0883665b1b63550bfce9d4bea5b0782fda4dc86754a09187e31aff31bb",
     "packages/ui/src/lib/i18n/messages/de/missions-create.ts": "98a446c4a98c84793db97c1e83d3863442104a2e7ea459039810d011dd5c595e",
     "packages/ui/src/lib/i18n/messages/de/missions-panel.ts": "fbfa18658946dd150535a9a360746125bafcf02a8803404de2227a4fadd10a73",
-    "packages/ui/src/lib/i18n/messages/de/missions.ts": "faa6653afa711d4a0779e5d70de1d432ee517a97c564c3b10f5cdd0d115dead9",
+    "packages/ui/src/lib/i18n/messages/de/missions.ts": "860187638a04bec5a8053786cd1b7735560420ed48aadfbc1dfa92ca5d482d03",
     "packages/ui/src/lib/i18n/messages/de/opencode-login-start.ts": "0a7be640aad0426db7bbaaa1369fb1cfa030f19bb2304caa5cd146917ab15c8b",
     "packages/ui/src/lib/i18n/messages/de/permission-receipts.ts": "f58594f85d821bb9aa533d53470a5641744df74c197057c95c968090127e7aac",
     "packages/ui/src/lib/i18n/messages/de/plugin-sources.ts": "00e3b988321d8b4bed236071fbe7023a4c797ed033e56bb93e4cb8af38a71c45",
     "packages/ui/src/lib/i18n/messages/de/remoteAccess.ts": "0c070c72fb1510350e6d4589d5c2767011eda03cebba9626e3f62cedbd81744d",
     "packages/ui/src/lib/i18n/messages/de/remoteControl.ts": "29ebf065ab66de53e6126fea292b71e9575619a4616082e1d9b8f11f4a3b8aa0",
-    "packages/ui/src/lib/i18n/messages/de/rune.ts": "056d7087c11c7fb341a7e632682c21563c7278e6bf1ca8241e9dd98e21196ee3",
+    "packages/ui/src/lib/i18n/messages/de/rune.ts": "d834b03252f3bd488cfe6ada1f58f6c8405e8dda36b6978f2693b92cb11bd971",
     "packages/ui/src/lib/i18n/messages/de/session.ts": "079e73c6b14a30520451c4637f46ed25747e69853f7a56ae35d562e1dfb56778",
-    "packages/ui/src/lib/i18n/messages/de/settings.ts": "6446f8810a93c66fd161010dc69c5a87966bee09fed72a3594c72e91b334ca75",
+    "packages/ui/src/lib/i18n/messages/de/settings.ts": "4f7f08806b32f35f83c0596aacb119cacfdff9bd4d153b2e41ecfef2f7b4efc3",
     "packages/ui/src/lib/i18n/messages/de/time.ts": "5b0e3cb04d9c2d3923f63e7e53b0d34cc2d0bbc1da21ec57a5bc04fcb96d0fa4",
     "packages/ui/src/lib/i18n/messages/de/toolCall.ts": "b2c8c264d06760fd577a43f62a397e50d5f5c11e04302f1b4c614026b9935287",
     "packages/ui/src/lib/i18n/messages/en/advancedSettings.ts": "78bd63fbc64512b8c24838a26806da5e6c1fb31b9ed4def0957387725a236e02",
@@ -21515,15 +21587,15 @@
     "packages/ui/src/lib/i18n/messages/en/mission-scheduling.ts": "b6b96fdfd7a9231d14144d4452ba1af0335cf6af4dda691d3e0da812ef4ad6f9",
     "packages/ui/src/lib/i18n/messages/en/missions-create.ts": "588683b25632d6f0af2cc68d1cb7f90f45a9f5c0bbda8bf8bdc447f4e8326235",
     "packages/ui/src/lib/i18n/messages/en/missions-panel.ts": "871e4898a536c8293f928a3bc62d95e5cf40013ab167957f5db04a64e94e030d",
-    "packages/ui/src/lib/i18n/messages/en/missions.ts": "0a08de2b4b0839d244b1b228d4897f207ded493e258e1e949e4f38a78e5d6308",
+    "packages/ui/src/lib/i18n/messages/en/missions.ts": "a907d8736f57443484eafbb040038224d1e6fb2861ce3350aff234bf6522de67",
     "packages/ui/src/lib/i18n/messages/en/opencode-login-start.ts": "e64e5b0483fb5c42a0084dbfff895f430ad64a8ca3eb7724105cc85fa9defcac",
     "packages/ui/src/lib/i18n/messages/en/permission-receipts.ts": "364535d3391ab3ee0b08344a8b13087d742b808d98dcaba304dbc8bb3805a6e0",
     "packages/ui/src/lib/i18n/messages/en/plugin-sources.ts": "ee23b7b07463c5b7b04a4c5295e79ebbd04bc74737e4efb93a263b231c36ed65",
     "packages/ui/src/lib/i18n/messages/en/remoteAccess.ts": "b1f0ae6c193b6bc28de7f95fda687559f48e7966af22e68ad1e0c0d7e2784b57",
     "packages/ui/src/lib/i18n/messages/en/remoteControl.ts": "f8205ac6cabb2c7ab1d407f9a980c708ad10cdda01cf43b809f79f420c2f7dc7",
-    "packages/ui/src/lib/i18n/messages/en/rune.ts": "16880d2cc3e6587e9339f7dad201848cda8e5bde5dddce39aaadd0dbe5ee85f0",
+    "packages/ui/src/lib/i18n/messages/en/rune.ts": "80308d49bb18e27f8ff019bb6526cf3cfb720a21297665e68bc638980f798311",
     "packages/ui/src/lib/i18n/messages/en/session.ts": "47a036d2fc98f78c203565a2847696695be87b767d5571bb180038763ae7a23c",
-    "packages/ui/src/lib/i18n/messages/en/settings.ts": "a5b16a45a5df18006ff79c6c536654e25adf39f89783ff1d4db0ea661ae962c8",
+    "packages/ui/src/lib/i18n/messages/en/settings.ts": "a60299d0346c4b9e9510023fa54b394bafbf02e3f0862ca21d98d6e8bcaba5a5",
     "packages/ui/src/lib/i18n/messages/en/time.ts": "1021ea17c34c4fa505144269b398d5320d182aa88238d47bc50d176afa41f389",
     "packages/ui/src/lib/i18n/messages/en/toolCall.ts": "88fa7a4a0490c4d2fd4ef32a1ff6f397fee7d0a0322f385f18772b54f456d040",
     "packages/ui/src/lib/i18n/messages/es/advancedSettings.ts": "3c91df877e81c2e004a1b1e68b4bcb371842c577ae9b6780496d547e7a425c09",
@@ -21545,15 +21617,15 @@
     "packages/ui/src/lib/i18n/messages/es/mission-scheduling.ts": "661a4b249d727136f3c84cd3ad2c722701e62ef3e08c32ed1364e51e634e3938",
     "packages/ui/src/lib/i18n/messages/es/missions-create.ts": "45030f45da0a55e426c25ea6adc0ebfdd01c16051dbf3e15861712d11cd6355b",
     "packages/ui/src/lib/i18n/messages/es/missions-panel.ts": "880e0ea06f2d978656a35ade5b1e4fd5c91412afc3fb1da6bfe183a8056152bb",
-    "packages/ui/src/lib/i18n/messages/es/missions.ts": "62814545caffc049f1a8699faab522d3fc8ba9337f8e5f3c52ccb71e6d5bc5dc",
+    "packages/ui/src/lib/i18n/messages/es/missions.ts": "35d03c282b66dcf119555577445edff9925c7f6421785c589e0079332690c738",
     "packages/ui/src/lib/i18n/messages/es/opencode-login-start.ts": "9d237a44fa764893b88363390ac8294893c1f6cce8bc2ae51a56ea20bc60f75c",
     "packages/ui/src/lib/i18n/messages/es/permission-receipts.ts": "be59413d9dc7de3ed45de957fe88d75a2a02455393bc1f991a146afe7ea9f816",
     "packages/ui/src/lib/i18n/messages/es/plugin-sources.ts": "b5d5efd083989ba9419d7b631b7d7b1e1bdacb1cd8a6e4f5a2017c8cef0080aa",
     "packages/ui/src/lib/i18n/messages/es/remoteAccess.ts": "f51c1ea87f9fda046861e782f44ca8f486100ce1a4cf7a600ec22e14ec03f9c8",
     "packages/ui/src/lib/i18n/messages/es/remoteControl.ts": "37bf7fe88da7417d83abbf86f3b428cd4d697d60223940a56833d8839a58d380",
-    "packages/ui/src/lib/i18n/messages/es/rune.ts": "3d07088fca1a7700ea02e765fc223cbfe2a41b569119b8681c2a751d18e2d953",
+    "packages/ui/src/lib/i18n/messages/es/rune.ts": "676345935f4f9c0a2ae67c0f1eaa5f24d1ea45e57494d5a5985e90af168345d2",
     "packages/ui/src/lib/i18n/messages/es/session.ts": "3509dbe21917cb5c257f2fdecca1cb0b0b726915358c15ffa3c3a9ac52960294",
-    "packages/ui/src/lib/i18n/messages/es/settings.ts": "cf5ec829b94f3abe3db1529703caeb4f1e44e6213399e06ca5074d562567767b",
+    "packages/ui/src/lib/i18n/messages/es/settings.ts": "1fce7986bcf077a8859c3d0dd2dbe0e30efbf0b45bcb251d1a3ec7159017c10a",
     "packages/ui/src/lib/i18n/messages/es/time.ts": "9a7d68d1ac61f9e03f7230f73727b0fee406fd06307b49b00492b450a90fef40",
     "packages/ui/src/lib/i18n/messages/es/toolCall.ts": "6e69db4ea4ba688ebb99e623443037157b059a210afad45ef41d0c918fa8d206",
     "packages/ui/src/lib/i18n/messages/fr/advancedSettings.ts": "dfa1a201b57c0792034fc638203379657643f39e30de37edea6bfb71548d5ee3",
@@ -21575,15 +21647,15 @@
     "packages/ui/src/lib/i18n/messages/fr/mission-scheduling.ts": "59b645458b968386e799b2e9150e2917b17484657f4293ee8083aa743dc1c9e7",
     "packages/ui/src/lib/i18n/messages/fr/missions-create.ts": "be90402b8aae7eba8a464de35bd9d0994198041d978dc7a98a765488d53501df",
     "packages/ui/src/lib/i18n/messages/fr/missions-panel.ts": "f51ac7033aeebd1034983c74b0d7e492d2f6bc0db1e50354c7d3158ca8f67840",
-    "packages/ui/src/lib/i18n/messages/fr/missions.ts": "daf676158653ddfd6a8b9474d692f6045b452a37a3c9a68d0db3298de84887c6",
+    "packages/ui/src/lib/i18n/messages/fr/missions.ts": "67e99c275cf6124e6e05ca84f0905a0180cad10056bb88b8ffd0de367b494065",
     "packages/ui/src/lib/i18n/messages/fr/opencode-login-start.ts": "b94608ae29ee94ea83509a26b45bcbcc7e421711ad7ee68b6bca2577e759e0b0",
     "packages/ui/src/lib/i18n/messages/fr/permission-receipts.ts": "d50164d4501303235dd31d3b01090afa70b7684c4a20a2120115be07d3b4ed69",
     "packages/ui/src/lib/i18n/messages/fr/plugin-sources.ts": "380a679c09ebcae02f28a43d89e5abfc08222a65820cbae23af764f93e5f14d1",
     "packages/ui/src/lib/i18n/messages/fr/remoteAccess.ts": "d4e627ddc598bab7553d133288cded70cb3e47677e27b1535b5deaee5510057d",
     "packages/ui/src/lib/i18n/messages/fr/remoteControl.ts": "a4224c51a92a4ce3c153cf069fa396f30164a7aa1fad03221a62a267d68afc4f",
-    "packages/ui/src/lib/i18n/messages/fr/rune.ts": "c5291bc60a0c2b9dce7750af13e31cd74bccb33090b56bca2ba2804bea38680c",
+    "packages/ui/src/lib/i18n/messages/fr/rune.ts": "c25ae22ff705a4b131baea881a36cc81675ac98e10908fc856df73a9ca9e5282",
     "packages/ui/src/lib/i18n/messages/fr/session.ts": "62ec3b75a607d1546a46d0455d3b4fd647f09c03bcfe03ca872121c389e5cc91",
-    "packages/ui/src/lib/i18n/messages/fr/settings.ts": "34b048d9d59bebb0089722b184c8a738f501d60e3c0ff957830b1d527c4a5652",
+    "packages/ui/src/lib/i18n/messages/fr/settings.ts": "3320790fa221f87c42ace5940feceac4cfb976d847603c4eda1624b0b9769553",
     "packages/ui/src/lib/i18n/messages/fr/time.ts": "4ba4ae9bf412ef14213ad7c0b27386bb7d14757a0c5641377d890d1b62f3b75e",
     "packages/ui/src/lib/i18n/messages/fr/toolCall.ts": "b3d8864a4f11a0dcb67075918b7b157d026cc9811a286d0a4b20a8138749b1d6",
     "packages/ui/src/lib/i18n/messages/he/advancedSettings.ts": "888b8c5113fca34a3a8ecd29d5efd1c5f4c36489e9872d65a5ccceb5836fd9d1",
@@ -21605,15 +21677,15 @@
     "packages/ui/src/lib/i18n/messages/he/mission-scheduling.ts": "8471408ec9965927dbcaa75e7ca4867d3d5353a9af8da686c7384479662509f7",
     "packages/ui/src/lib/i18n/messages/he/missions-create.ts": "5b3a5a7fb627c5038d7c0c0519963bdb1b41e24c453f60448e9701e706dc3c67",
     "packages/ui/src/lib/i18n/messages/he/missions-panel.ts": "495177000738b53de828199af10544b9173241d86b7192ba058f2b6edde9b310",
-    "packages/ui/src/lib/i18n/messages/he/missions.ts": "17ce85794713be9066f3b50d29517869c55b246b0fff6a1566009043a753cf14",
+    "packages/ui/src/lib/i18n/messages/he/missions.ts": "12ad544b5397d4f8376bddea60020e62b063fc63f703c65b12512658eed27c4e",
     "packages/ui/src/lib/i18n/messages/he/opencode-login-start.ts": "ff3ac841931bee62bb476257988da287363f2af699cfef21ac2efffa6dfd8969",
     "packages/ui/src/lib/i18n/messages/he/permission-receipts.ts": "825025340ee55ae696d25bea70a0f796fc659fdb0ffe7c7855a425cdf6d0aaf7",
     "packages/ui/src/lib/i18n/messages/he/plugin-sources.ts": "abb2b1402bd22bf4f92c0dcf0e0617e0364f8cf0b273da731852a0dac86200e0",
     "packages/ui/src/lib/i18n/messages/he/remoteAccess.ts": "cc0d3ed258ba01ef195ed52c631245e57bf84c5bd54f969e3e02d6e3df358192",
     "packages/ui/src/lib/i18n/messages/he/remoteControl.ts": "cc741fd49982f84271d8933b517638ab804164c1a364783671d8a3c33cd13b7d",
-    "packages/ui/src/lib/i18n/messages/he/rune.ts": "aec430ebe508b08f08ad1ab949c59d146de31a4cb3eab59b52321943caec534e",
+    "packages/ui/src/lib/i18n/messages/he/rune.ts": "0f7f520c0be36d6b020af3be1e31999698db226d628a771dd30b92a0e83f832c",
     "packages/ui/src/lib/i18n/messages/he/session.ts": "6c434ec08f213d7db56bf64a0fa47607e4f6a95c7567cea9cc9f46a765c4b569",
-    "packages/ui/src/lib/i18n/messages/he/settings.ts": "39e7ddbc24251e5f188c1cd7362ca57796da4e5fc595d6d80f8da00ae5564386",
+    "packages/ui/src/lib/i18n/messages/he/settings.ts": "9b18b7015e503f81ea97d56a25a564899b0db4226e5c8742cf36f0e073c26fef",
     "packages/ui/src/lib/i18n/messages/he/time.ts": "794cc08188e23f608cdbdb9e278aa5ac4b1e598b792114b97f526f07c0e8652a",
     "packages/ui/src/lib/i18n/messages/he/toolCall.ts": "add7482cde64dd403c04f896468b8e5445f9cb72eafbf234a593b66836c0cc44",
     "packages/ui/src/lib/i18n/messages/integrations-locales.test.ts": "09fcd4b24cbedec5dfa9604eff57559f72777925821b4ac8ed64005b93643b06",
@@ -21636,15 +21708,15 @@
     "packages/ui/src/lib/i18n/messages/ja/mission-scheduling.ts": "b8b9a74f9cbfcbcee164907ae7224e9b97be83499dc504da73d41277b67e3f5d",
     "packages/ui/src/lib/i18n/messages/ja/missions-create.ts": "0af4ddc06793161fe98fa247658b331ebed16b4b660a7d092bb3138c2084f4b4",
     "packages/ui/src/lib/i18n/messages/ja/missions-panel.ts": "fee18c21519a684488d088a1b3acef051851b64a4c0ab53cda38be33039c1cc9",
-    "packages/ui/src/lib/i18n/messages/ja/missions.ts": "ef71fdd551738f27ec5fc7ea3d90f5880a5f20a40bb0d50112d79d2e0af645ca",
+    "packages/ui/src/lib/i18n/messages/ja/missions.ts": "c8b1eab5c66db08c722ff8cb3041736362708fba9fd16898505a0eabd2eff984",
     "packages/ui/src/lib/i18n/messages/ja/opencode-login-start.ts": "980100c2a904621fbeece8353320210b04fbb4f010ef507e261f55ce3ebe4fa9",
     "packages/ui/src/lib/i18n/messages/ja/permission-receipts.ts": "da302337b51ae689a775491c2a07cee2476cc9549a419169f7955b0bc4fb8824",
     "packages/ui/src/lib/i18n/messages/ja/plugin-sources.ts": "00481e8cc4947dda70d04939eb7ab0fbaf8a31c802361fc39311af091aef11f9",
     "packages/ui/src/lib/i18n/messages/ja/remoteAccess.ts": "8c86e267442de68af1a5290df70c6a9492ea3b65aeed6bfae6f56fadef898607",
     "packages/ui/src/lib/i18n/messages/ja/remoteControl.ts": "380b959161248150007dc9729677348bd8c0927ddf2ab9f30ffac7ae3fadbd8f",
-    "packages/ui/src/lib/i18n/messages/ja/rune.ts": "4c8d9822dea371e94ca368dd736c38c7dadcb35081e5ff5dfe0aa574148a1d38",
+    "packages/ui/src/lib/i18n/messages/ja/rune.ts": "007d10a80b460d531ddfb183b1ab9a647e0a0c07b9b19f3ec57d0afd633f32c5",
     "packages/ui/src/lib/i18n/messages/ja/session.ts": "960c6df4acf09c71489e3de38b534b0bfd60c5d5c25cb18a33f4afe4e5b4b709",
-    "packages/ui/src/lib/i18n/messages/ja/settings.ts": "f0a6dfb04cfb8b37784dd22e52536fa057eb12679905adc97c7cb9f784c4a1c0",
+    "packages/ui/src/lib/i18n/messages/ja/settings.ts": "75809f4e43220aa18afdfb170f695d2a9515b5ead6375d88eb1d39d6aed0c11e",
     "packages/ui/src/lib/i18n/messages/ja/time.ts": "8ddb7bbc69081b3e15b92586899e5ad215c17e77dd8ac8dc3e8c1adc5fa5659f",
     "packages/ui/src/lib/i18n/messages/ja/toolCall.ts": "347f4c4b7deaa4cd75b56e83885c343ad09a6d938c4e506fb898f55744b1552d",
     "packages/ui/src/lib/i18n/messages/merge.ts": "0906bb95d0b939898e8094a03a92a7d3475713a0054dbf1a3e18838bfb086254",
@@ -21670,15 +21742,15 @@
     "packages/ui/src/lib/i18n/messages/ne/mission-scheduling.ts": "a78ac701a5b33e02c3c62249d7b5d04c1d4d658d1b615ae667cab83e4855c9c1",
     "packages/ui/src/lib/i18n/messages/ne/missions-create.ts": "fcc3000ee8f570df4b3d6b731a483e4a178c43f605c3fa556366e37affd5835c",
     "packages/ui/src/lib/i18n/messages/ne/missions-panel.ts": "ec1c5fc4e6c9d44e0b062e222a4eeaf9aa06e678864ebf483bc2a1d97f79fa64",
-    "packages/ui/src/lib/i18n/messages/ne/missions.ts": "ca7d1a5219833b59931b1f5be59dffe97c27630517648b0cd9bfc6b4327dc152",
+    "packages/ui/src/lib/i18n/messages/ne/missions.ts": "6b269b0e906e6e728c29d3251b16eb6602685446983f0d95f2368a8d7c1c4dd7",
     "packages/ui/src/lib/i18n/messages/ne/opencode-login-start.ts": "4843cf456dce13509a762d147fa514650997ba21773ba636ce91d7323438696b",
     "packages/ui/src/lib/i18n/messages/ne/permission-receipts.ts": "b286658ef4aea73b98742b5068b697ca7913b25ca78e23185d23b1f85d6f2cbf",
     "packages/ui/src/lib/i18n/messages/ne/plugin-sources.ts": "a28d5720b54f95d0dbf5d4955436fb15f26e9fe1c66850942d6478f93365f722",
     "packages/ui/src/lib/i18n/messages/ne/remoteAccess.ts": "0fd4d0e11c2bc4b56b8dc518852a19627dcfe9849d7e93525f0b3102a471f8f5",
     "packages/ui/src/lib/i18n/messages/ne/remoteControl.ts": "9dd3f30bdd3970b6414a8fafdf8aeff1cb3f2cbb3be9206a6f8a73c8819c9b26",
-    "packages/ui/src/lib/i18n/messages/ne/rune.ts": "376d39a257b7c61509b6f196be10edabee6836bf2f09d21e71f96381956f614e",
+    "packages/ui/src/lib/i18n/messages/ne/rune.ts": "50ff0ed63953f8c180a65114ed2e10974077ab457841e8252fe69c5fe8bbea43",
     "packages/ui/src/lib/i18n/messages/ne/session.ts": "6a5ad6f5b2e43179e11c7174b3bc7720debe3bc832d0095fe775b4cb5f30818e",
-    "packages/ui/src/lib/i18n/messages/ne/settings.ts": "a1ff0c64074479d90805b8493b0f243cef335c2c47bfae1e9e27d3417afea6b0",
+    "packages/ui/src/lib/i18n/messages/ne/settings.ts": "dbb2bc3e9fdaa2374a677f97eb7bede56e4a045b69c896d08930dec209ae798e",
     "packages/ui/src/lib/i18n/messages/ne/time.ts": "a12f410ab472f3d81fd15e8fca5fb7adb3b1b3a128f790079fbd0f7d84a48ab9",
     "packages/ui/src/lib/i18n/messages/ne/toolCall.ts": "444f07293e3693ee1045619452d646c7e72042106bbae2454aa5982f9ae84415",
     "packages/ui/src/lib/i18n/messages/provider-usage-locales.test.ts": "8368275be1e3c66a09e6a571a7ae57253c9f6efa05539b6b202a221f0d30bc88",
@@ -21701,15 +21773,15 @@
     "packages/ui/src/lib/i18n/messages/ru/mission-scheduling.ts": "9cd5342165a7b31be13aa6f5142ea70412fc51b0dd2b063cc308df853a66e8ec",
     "packages/ui/src/lib/i18n/messages/ru/missions-create.ts": "801f4c12f70153da8cc935aef0b11d6a5b65f739132a19f0b3722cff6bb7f225",
     "packages/ui/src/lib/i18n/messages/ru/missions-panel.ts": "263cdd76f2967063275fe5e720d19d073bd57939c0110633ed02fdd332a0f9ac",
-    "packages/ui/src/lib/i18n/messages/ru/missions.ts": "10d86e5e4cb0c6b482b2738ebf4e54d38a7bfcc37dbf8517955c1b925936438a",
+    "packages/ui/src/lib/i18n/messages/ru/missions.ts": "2d172be22de344e5129b62b29a7190ad852603c02c2b7ad04985ecc35605afcb",
     "packages/ui/src/lib/i18n/messages/ru/opencode-login-start.ts": "e94e75306489c180e8b1d88bd8b570ccb9432ba50bc07031fba24087e51060de",
     "packages/ui/src/lib/i18n/messages/ru/permission-receipts.ts": "010059edec1dd2ba459abb12f3b331062b68ede89383e5e98bafe332dd47921f",
     "packages/ui/src/lib/i18n/messages/ru/plugin-sources.ts": "70057c4c2d85fb7da16e668800ded6f7faf9a970c9dac65cb6eab75ee77caf1e",
     "packages/ui/src/lib/i18n/messages/ru/remoteAccess.ts": "6a1fb1da90dc7d34ccfc8320ef58e90f957163abb23280bb4a06bcdff2528012",
     "packages/ui/src/lib/i18n/messages/ru/remoteControl.ts": "8cd3b24dc4568a27433636ede0eac914809957acc378f41ad79970ee8ff06672",
-    "packages/ui/src/lib/i18n/messages/ru/rune.ts": "4e5a1e26c6f2b4d09ce624eb987805780377e5f3793583670aee3b8789c92dbd",
+    "packages/ui/src/lib/i18n/messages/ru/rune.ts": "bb68c4786a16f3a72ef04c8f4afbc01b4e6e149b0ac8cb8788a30bf04425472d",
     "packages/ui/src/lib/i18n/messages/ru/session.ts": "1ab28e2821b9d8f77b822fe0db2e2d6881c72c597b0790cd9bed614b33b5e90e",
-    "packages/ui/src/lib/i18n/messages/ru/settings.ts": "d99263c915386e094914151f9993083eef8d2f4de1b84a13b7af3f3f8592bcab",
+    "packages/ui/src/lib/i18n/messages/ru/settings.ts": "fd48de4b3e248b62358b935ff70c6cd1e984e3ce719604296d9416b1fcd3e1fa",
     "packages/ui/src/lib/i18n/messages/ru/time.ts": "3e905f3e3c2216b26f0c87492bf184b87d64b314996fee46ec0de2c281f24ffd",
     "packages/ui/src/lib/i18n/messages/ru/toolCall.ts": "84ea1be56a16703dd0ccbd3a96679e53e3cf368ae3528f55d23ce7de9484efb6",
     "packages/ui/src/lib/i18n/messages/tr/advancedSettings.ts": "e9f816c712ff363eb0166f6ec86ee6232ba91c7fd9827f6109a6ed5c1a1b4d82",
@@ -21731,15 +21803,15 @@
     "packages/ui/src/lib/i18n/messages/tr/mission-scheduling.ts": "ecd7208f039166a3bb3931e9c8abbb0f6225d6733758e12ca7312934a26e4bbf",
     "packages/ui/src/lib/i18n/messages/tr/missions-create.ts": "4d1be2b4ae8031fad69761f8cfc28bf76623a1e53a9bd20acc5f7baeac0d95e6",
     "packages/ui/src/lib/i18n/messages/tr/missions-panel.ts": "df79a2c7038084d2b886be9ff322787ff927861c890d70f2ba7e83df1163fd7a",
-    "packages/ui/src/lib/i18n/messages/tr/missions.ts": "42fcb000176ec25cb7bfaf3bab7b65136911483fb32a437ee7ed3c86f4d01f74",
+    "packages/ui/src/lib/i18n/messages/tr/missions.ts": "511a467a5f884e6f7d12952c95a35d37e8a46019eb8b2286c37adfbe746a1bf8",
     "packages/ui/src/lib/i18n/messages/tr/opencode-login-start.ts": "c3902fc97d1af9d2e8870d095d368a2028b29a9b2433da5b4c6300616b3fca45",
     "packages/ui/src/lib/i18n/messages/tr/permission-receipts.ts": "d1772b013956c059256cff9162ca9b80763379aed349269857c5b53856ded86d",
     "packages/ui/src/lib/i18n/messages/tr/plugin-sources.ts": "6b839291e0f1e59cdb4e80f1feb173211c4eb652686365879d90d5dc5d6aea22",
     "packages/ui/src/lib/i18n/messages/tr/remoteAccess.ts": "26ce2d7f1419713b85c6887d37537a8eacd7ff220a0c247778c709a05cd158f4",
     "packages/ui/src/lib/i18n/messages/tr/remoteControl.ts": "f977299aaa21ac54b1716bfc3681ebc208cf4d2fde8d9afa64c3bd3d10e651ee",
-    "packages/ui/src/lib/i18n/messages/tr/rune.ts": "595dadcbb8a484cc57803871b2310d2e54dc3ef994af7c79ec9f6b75ab64b43a",
+    "packages/ui/src/lib/i18n/messages/tr/rune.ts": "a07d93a1e6bc3f09dae64d1d78b2e846b80910f693ba539429ee5931490a6270",
     "packages/ui/src/lib/i18n/messages/tr/session.ts": "714f984bcf9874b78017049be507116f9f40239ae4b81e6392d2e94f57f2dad6",
-    "packages/ui/src/lib/i18n/messages/tr/settings.ts": "c458fcd40cd75ffb9f6bb8c9c54dc17ab3b216637e427d7b6de92660931fb033",
+    "packages/ui/src/lib/i18n/messages/tr/settings.ts": "e98da2a768df4d91a4b552f5226a068811bc3bcab8d3d6cfd1f87949411d46c1",
     "packages/ui/src/lib/i18n/messages/tr/time.ts": "41024ae94363893ccae86b4ba62b97eb77e7baa058673052b7bd62b2c04bd9f3",
     "packages/ui/src/lib/i18n/messages/tr/toolCall.ts": "3cd78f5d50ca4fd0a6d2462b73e7ba689ea6f66b92ebe0fcd6d76b61326d4ea9",
     "packages/ui/src/lib/i18n/messages/voice-locales.test.ts": "316dabd4271d3da26c9e468ea74d837e792ea291dda42760d98c44216e17cbaf",
@@ -21762,15 +21834,15 @@
     "packages/ui/src/lib/i18n/messages/zh-Hans/mission-scheduling.ts": "eaeadbdc97fbe6d4ec64968d0c164097602c544fbb99ed0d6e42a92a1009a784",
     "packages/ui/src/lib/i18n/messages/zh-Hans/missions-create.ts": "29c3eafa21604664c1f9451999986e7d4bd96f0347e57fa2589437d04c346cab",
     "packages/ui/src/lib/i18n/messages/zh-Hans/missions-panel.ts": "94cd65036ee3c54e1f4f0b519d0780ee809001ccdfca90806358873c51031a26",
-    "packages/ui/src/lib/i18n/messages/zh-Hans/missions.ts": "50efb5cea599a71ce42b5fdcc26c5847341857423ee707845d4bfb39f914b943",
+    "packages/ui/src/lib/i18n/messages/zh-Hans/missions.ts": "a42eddc458d5f40f6e8a61a5ff8be05c094ef1ce6d9835e0bef000729e2bf72c",
     "packages/ui/src/lib/i18n/messages/zh-Hans/opencode-login-start.ts": "cbfee47af4d3ba15303fa67c853105541c804af1cafc1803db5ec5d1adf1fec8",
     "packages/ui/src/lib/i18n/messages/zh-Hans/permission-receipts.ts": "59aa2454a2555fb857f54931a5e3d306e934591fe895d0ce62436aa2c0e87b8f",
     "packages/ui/src/lib/i18n/messages/zh-Hans/plugin-sources.ts": "dc047cc3d9bb30f9a983b9980bbdebc75ef883283a40dd1bacd18222009ce888",
     "packages/ui/src/lib/i18n/messages/zh-Hans/remoteAccess.ts": "9d5f7fb90193e572fab6fced7313efc072d6d46fd1e461804072cd4dac1e5eb5",
     "packages/ui/src/lib/i18n/messages/zh-Hans/remoteControl.ts": "b8c279a7980b26614c2f6498ec9dee56a03e00d0fa85a94073029e2f193a92dc",
-    "packages/ui/src/lib/i18n/messages/zh-Hans/rune.ts": "e411b4e8b2436a03acbc163ed1ca63b5d0acab1da8f6b28be160690a88ba44ba",
+    "packages/ui/src/lib/i18n/messages/zh-Hans/rune.ts": "cc55e89296a1e04ee36141f28ff57f3ef7a9b6cd402b51e02854b323fe566480",
     "packages/ui/src/lib/i18n/messages/zh-Hans/session.ts": "4ffc801a00b4ed473c8e021b4913469e06c93708700e9f8bbb142b163682c15e",
-    "packages/ui/src/lib/i18n/messages/zh-Hans/settings.ts": "20cbeb7c1265edd1ea75ac4eba8476f226e30f10afb970180066061769fba086",
+    "packages/ui/src/lib/i18n/messages/zh-Hans/settings.ts": "47d9920d720e762f6518add0f099977eb8ef43a2b0bf652d5491863cab4b7e4d",
     "packages/ui/src/lib/i18n/messages/zh-Hans/time.ts": "e7bc30806467e8b7935076b1f441d7babd6f0e6315f7b7da39f575984a0e93dd",
     "packages/ui/src/lib/i18n/messages/zh-Hans/toolCall.ts": "777737fdee05179628bfd6c3e7a4cc762b3b3e080102d5d2229aa2db3b9f84cd",
     "packages/ui/src/lib/instance-label.ts": "efc28dd6d93832cd287e571d9605e0590b9fe33c74cf7875e204189c3937a581",
@@ -21954,7 +22026,7 @@
     "packages/ui/src/lib/remote-server-request.test.ts": "d1998770613774ee773329248460fc7421ef3fb162aeed14d4fd649c9e701d6b",
     "packages/ui/src/lib/remote-server-request.ts": "d9758f3fc85387b52a66b9240fdf8bc3d44cec39d6baf72f700c1780d12c827a",
     "packages/ui/src/lib/render-text-window.test.ts": "9ea852d3278d483a8bfb69b39c5b66359de19efa11e5e4cfddb39af65e7bd0dd",
-    "packages/ui/src/lib/render-text-window.ts": "aefe6e538d0c8ee57efd54f72a0736d8db0286335052e49741afdf3cc111fec9",
+    "packages/ui/src/lib/render-text-window.ts": "83a8374a0c9b70c347f5cbbfca2e78db01d6eb2efab9c9fa10391187561fa4a5",
     "packages/ui/src/lib/request-focus.ts": "97b62acfebc2eb3bbab60c7fa20c48c33b2b5e63bcc0a1874c093cab4713ff64",
     "packages/ui/src/lib/retained-size.test.ts": "bed144ed6c28a7494bd4abeb6cf28ea299e709a56d0c73bfcf008984f9d816fd",
     "packages/ui/src/lib/retained-size.ts": "263cfc5c496e3ed3cdda0a8dc46eb27f3a199745b698455d1b29f68d533a172d",
@@ -21963,7 +22035,7 @@
     "packages/ui/src/lib/runtime-env.test.ts": "b888627adf72ac1d36b9d5f41be264988045afa89533738e5764f2ee34f546f0",
     "packages/ui/src/lib/runtime-env.ts": "6173992954434188101664472b22c4f74fd525116ff6a695a5a3b83113e17076",
     "packages/ui/src/lib/scroll-gesture-routing.test.ts": "0cbaafec0a8b68098acecfb11440823321b5c0c30637431c628e71311c371570",
-    "packages/ui/src/lib/scroll-gesture-routing.ts": "dca4897ccf3fda4e32eeb9667bd177d211804b4459d54575e02c6ae9f88afbeb",
+    "packages/ui/src/lib/scroll-gesture-routing.ts": "72d5f99295ba6b4dd8f37417797b91525d26afd8726d315eaa66e293aa006f8a",
     "packages/ui/src/lib/sdk-background-reads.test.ts": "57c87c4857da2e8bea617e6ab46d5680420b5c47ff01ea1aa59ef262ea8aa552",
     "packages/ui/src/lib/sdk-manager.test.ts": "9697afb61e16f81b0ce2ebab4ff5fe735d1613cec93ccfe32064bc5e8d4e0623",
     "packages/ui/src/lib/sdk-manager.ts": "827ec12be6a66815038d06ad0b2c9cf10e469b3e94155a07aa1c4db983ca1147",
@@ -21971,7 +22043,7 @@
     "packages/ui/src/lib/server-events.ts": "03d0a9535db6dec8e51163607143c17148a48907388c0044b1305951ca038a5c",
     "packages/ui/src/lib/server-meta.test.ts": "f5d25cff155d30842c938f5ebd82502c217df8e8a828471b8d62a1031b53f786",
     "packages/ui/src/lib/server-meta.ts": "db7bd3a3f6667110fae25d05831495d74ed34ccc4801b511ca027cbf533bef2b",
-    "packages/ui/src/lib/session-search.ts": "a8e62de0cb0ba0cc1f6040b1692527e717addca5fb5f2b6cd9d9b0608d79bf07",
+    "packages/ui/src/lib/session-search.ts": "a09d3dc62d3e15d6d6cde2417ce230026637b6643a3d0545f6485d37c46c059f",
     "packages/ui/src/lib/session-sidebar-events.ts": "ef6ef0a1624624e8ecc011fa88b751580813485ef24f21d9e9e10e8b66553cc8",
     "packages/ui/src/lib/session-transcript-lru.test.ts": "c2edc0e6c9cd484de57d0eaa0052bd75aea447b0bbd509bfab54a45287afd798",
     "packages/ui/src/lib/session-transcript-lru.ts": "2a17055ab95abf26f42d948eeaeb8623ee5765d3c3e125ce4a9fd977b4106803",
@@ -22135,12 +22207,12 @@
     "packages/ui/src/stores/message-history.ts": "42b5b405fe0e98b416fc8419bfb3c6542817eeb25e0dab81479de80e15206ff9",
     "packages/ui/src/stores/message-prompt-display.test.ts": "964e9ab9667af5eaf8d1200de9c3b8b202d8935705be9fad9503de919bf00bc5",
     "packages/ui/src/stores/message-prompt-display.ts": "3a21be1d313eccff5459d6d0c2ba7e96600db36abc04477686b36f7440602100",
-    "packages/ui/src/stores/message-v2/bridge.ts": "e38dd23cdfa5d7582768cec39c6a417dfb0927270ca788dc91e744d277095c6c",
+    "packages/ui/src/stores/message-v2/bridge.ts": "8a89c281ee3328ca166549d4f19ac2c3ee29af7c7c80200b72386095584203d0",
     "packages/ui/src/stores/message-v2/bus.test.ts": "a943ee816ed8ee2d14190b9f0b018cfee852f2ac654cadcc49a8a8dc518d175d",
     "packages/ui/src/stores/message-v2/bus.ts": "15aea46630479af36a6b6f76e614220c03c50b9ec33986eec97e318d1ec185bb",
     "packages/ui/src/stores/message-v2/empty-content.test.ts": "18157aed9983487db5c64bf628a49fd3247cdaaf4d923fc54f7b48c98a76af36",
-    "packages/ui/src/stores/message-v2/instance-store.test.ts": "b86617ce885ceef5f18d04acd88111a5e901233d596a3599bd4b132ebadcf225",
-    "packages/ui/src/stores/message-v2/instance-store.ts": "5348d27af986d35cea48b8243872b240b00cceaecc5a9c5204f9aba06a985554",
+    "packages/ui/src/stores/message-v2/instance-store.test.ts": "a2b4479a5896e85877afd43f1045ab29d376ff716d74f2c10d012df9056daa55",
+    "packages/ui/src/stores/message-v2/instance-store.ts": "80aaa0dabfe84f6a4b578fb70e7c0deb6035607a78853d05367e41f6a77ab6ed",
     "packages/ui/src/stores/message-v2/message-hydration-authority.test.ts": "65369d32b12344a433100682e411092a060c5e83bdbb62acf258da1454b03cff",
     "packages/ui/src/stores/message-v2/message-hydration-authority.ts": "a1b9ebb32dda1d1c6044a695aa82b12bfe99af46062227205a650e1abf533004",
     "packages/ui/src/stores/message-v2/message-status.test.ts": "707cef4f84c0af4b8ad2ed1b27a80e4bdcae4072fb151040d591e85d6ad9d135",
@@ -22150,7 +22222,7 @@
     "packages/ui/src/stores/message-v2/normalizers.test.ts": "36325b095352445035adeb1519ac7db0e7e45af7b6056f827c6c4c3e424a4be0",
     "packages/ui/src/stores/message-v2/normalizers.ts": "cc8e68bbaf9b7b4ca5d5b7a7a38fc7714c5eb5c164669b02217c7e883dbe0413",
     "packages/ui/src/stores/message-v2/pending-request-dedupe.ts": "010fda5081b31f1832cd32066e2a74ba2a007e9de922506dcc85883491e92462",
-    "packages/ui/src/stores/message-v2/record-display-cache.ts": "e3fc1007ebb340aaca2c88bf89449079392df607fbbee2b9f6971de2db3ba203",
+    "packages/ui/src/stores/message-v2/record-display-cache.ts": "fdfd3397073372aace6482b549689725dfde0b0a482c1088d4474bff87feaf3f",
     "packages/ui/src/stores/message-v2/run-failure.test.ts": "d349d2dc8a192a1ca60247a7dd40bde36b131e3da38047377e084fac0c3d1dc4",
     "packages/ui/src/stores/message-v2/run-failure.ts": "3c57895ecc51ec9df3cb0c9037ded81fb3fec539106249cd9ac23410d467e4c8",
     "packages/ui/src/stores/message-v2/session-info.ts": "8a385a0cc26f0e76312cbe3acaaa5b1f844054d5efa4f15d6234825c44757fa7",
@@ -22199,13 +22271,13 @@
     "packages/ui/src/stores/opencode-data-idle.test.ts": "5d5ff67641f97aa0b7e9dac32b6fd068e480e0430df9a506427f836b1ed22d3a",
     "packages/ui/src/stores/opencode-data-read-merge.test.ts": "23b65ef11e5acbc20aeeb43d1e03b5c1658c4d45999804e7329bd61f8446d257",
     "packages/ui/src/stores/opencode-data-read-merge.ts": "cba6bfb47a84e223acbb8271fc37ccfd9b323e8170dc2f76e943842a127a8dfc",
-    "packages/ui/src/stores/opencode-data-read-testing.ts": "d4ffd6e7b88875e1285e626a8b579d1798237ac3792ab7d122d77415fc180bc6",
-    "packages/ui/src/stores/opencode-data-reconnect.test.ts": "e45fb9fd73cc4925e36e3dd33096e5dd449d7ef28c9f027bceeb5ddee78db628",
+    "packages/ui/src/stores/opencode-data-read-testing.ts": "2cf1a50849e1169606ccf066bc8f8a159f918da33bfa6f69bce78a728f2c40cc",
+    "packages/ui/src/stores/opencode-data-reconnect.test.ts": "453e9850e76b4a8d65e9c474e81917be477b2ab0fd1d71bc73730f1c3971a610",
     "packages/ui/src/stores/opencode-data-round-boundary.test.ts": "3f9130fcc0e3166da43edf5aad2c619642df4d715ae7154f54ddfb7a351e1f39",
     "packages/ui/src/stores/opencode-data-settlement.test.ts": "488accd4f7f9ec70fb106ba1dceb4057785b38686c1a6e10801f2e43d9a6f0eb",
-    "packages/ui/src/stores/opencode-data-trailing-read.test.ts": "5dd242a032ab7eafa64aa03aa1fabc6c4b611ab432e7ba1decb3902ea8f9bc09",
-    "packages/ui/src/stores/opencode-data.test.ts": "23e1e2eefd0e7cfb17e74fa18686634281a36b2b609b2a53ef01cf47a4f02ad6",
-    "packages/ui/src/stores/opencode-data.ts": "05fa087c388d472b4547eeacca24a1849c40bb5b09d276ea393c5055fafc1b99",
+    "packages/ui/src/stores/opencode-data-trailing-read.test.ts": "b1dbd109b05903719b8aa8be7b9b28c51403dbdf455cac89e47b73ade38d87f6",
+    "packages/ui/src/stores/opencode-data.test.ts": "334b8f1a7ab7a68c9408a8382c241267a303270aaa3611e145e395c45b6b1274",
+    "packages/ui/src/stores/opencode-data.ts": "b8a920160b7a75a571d631a2503c0e72a524fb6e1eed9cb26c8a8be7ea816e53",
     "packages/ui/src/stores/opencode-inbox-rebinding.test.ts": "4effe667dab83e03048810ae3877f4ef750d439ecfc6e0b6d5e1fe10522418c9",
     "packages/ui/src/stores/opencode-projection-frame.test.ts": "4abae4b09b32f6154391d7b14528c562f80385065de7d2b8d09137130996d0ec",
     "packages/ui/src/stores/opencode-projection-frame.ts": "0ef36538ad55c4b6813a89c5653d5ce9f5d6c64158bec9cc5bd68bf76d2799d0",
@@ -22227,7 +22299,7 @@
     "packages/ui/src/stores/plugin-controls-events.test.ts": "a7cf58aeabf716b37546dbf07dd622c94b0779a3a101b64928563b000a73ac32",
     "packages/ui/src/stores/plugin-controls-events.ts": "24e969e352835e42aafbe353f02b951395e3cda7df27bb313d6431db87e5898c",
     "packages/ui/src/stores/plugin-controls.test.ts": "f420a6fd3b7c1fa6f905016742b0be3173f9c71b75bf6ce0c293577299046193",
-    "packages/ui/src/stores/plugin-controls.ts": "a248f2bc037f2a1274c641ee3df2fdbd054dbc7b3cfd09dfb6737caf5f0650c6",
+    "packages/ui/src/stores/plugin-controls.ts": "f98dbcaa58b36c10c68ac124463b91f0c3e9ae2a807417e2c2b5dd1a8c201f5b",
     "packages/ui/src/stores/plugin-package-actions.ts": "e62d4595e7c4d8a869f50d8402bae7b04aae7478620c12413e6ec53fea62ffb3",
     "packages/ui/src/stores/plugin-sources.test.ts": "196f78ea9e80da82913ff5339d364036500d89cc6ab7a02992b5f98d0d6ef814",
     "packages/ui/src/stores/plugin-sources.ts": "da89a617ce593eb5b5fac995075e5e0f985d339a0c9f7f1f98d921d3692f19ce",
@@ -22258,7 +22330,7 @@
     "packages/ui/src/stores/session-actions.test.ts": "fc9f0614dbafa09cb68be2ca62ea4119c6a5206ef07d28ec1b8351e6429fa5db",
     "packages/ui/src/stores/session-actions.ts": "0fe0d6ee60b7d0659d7968a4ec4059bb03d9d0a25e5bbb1058a2bf0d8ff330b8",
     "packages/ui/src/stores/session-api-running-open.test.ts": "1027d7ae90214d8407f55d6db1b989990a7b973f2deb68d69f6947ede8ad8d51",
-    "packages/ui/src/stores/session-api.ts": "f607d3545bec90f8e2586bcb3ca3047e9eb1d8a686712f581a9fd87de2ee3957",
+    "packages/ui/src/stores/session-api.ts": "1626c3e96ae39a819977501274f77ea01b61fa03443c800dcf01999f6b620ec0",
     "packages/ui/src/stores/session-archive.test.ts": "6677da22aafd5e3a205eef5901d877d02ddcbf6c52532e2701f11f732f726a08",
     "packages/ui/src/stores/session-archive.ts": "86f9a3bdc2c25cbf47461bf863f0f34f9895d76e711290ac0270a17378971bb9",
     "packages/ui/src/stores/session-browser-persistence.test.ts": "975f2ab13931a75b8b3d91a96f45af1c74ba24d3203646899983fca0e06d7575",
@@ -22322,7 +22394,7 @@
     "packages/ui/src/stores/session-prompt-ack.ts": "be07ab4bbb1f0fec8367cd7c0be369993e659a3246c06b3c4e89bab1917da1fc",
     "packages/ui/src/stores/session-pruning-events.test.ts": "c8fcf7d8c06fd7ab162d7e6e26602dadc10c128701e1f2189e082909d90b99d7",
     "packages/ui/src/stores/session-pruning-events.ts": "5e14e31b74f14d142309ee245afe586325d5098aaa4179824f532728a953e770",
-    "packages/ui/src/stores/session-pruning-pagination.test.ts": "937cb091aece46075b649be178adae74593297b15b811250b3c58a067380f717",
+    "packages/ui/src/stores/session-pruning-pagination.test.ts": "3e37f4c241b7e2c67c1bf9975d2b9221c8c1391f57df017065d6b11660426241",
     "packages/ui/src/stores/session-pruning-projection.test.ts": "b4145ea91333f100576eef79f43836cc517a7a858e936210a3a369c14e8642fa",
     "packages/ui/src/stores/session-pruning.ts": "02c70cd5acb5e3cf336d7f1aaed4349e0490cd3239e660fc04065ef4b0a5f706",
     "packages/ui/src/stores/session-request-authority.test.ts": "444f20e85f8424d001929170bc0b4ee3446bca33c8f91b20b2f19f37b9c1cc94",
@@ -22740,7 +22812,7 @@
     "packages/ui/tests/browser/fixtures/permission-fallback-diff.tsx": "dd54aac25b9b5d7fd42c02f10d705032a332cf172c458fd43afd0728ffc4a197",
     "packages/ui/tests/browser/fixtures/permission-feedback.tsx": "cc030fb17eac4729fe70513caacf3a23c69050738c90d4dba1a3b9609471c5ce",
     "packages/ui/tests/browser/fixtures/permission-receipts.tsx": "1720a02ee160e5e906226381889af0f9e5c249dfb6bcb772e5c59d2a86a72eb2",
-    "packages/ui/tests/browser/fixtures/plugin-controls.tsx": "b51c7e4fbfd281a7fbc5dca4dbfef7e8082a224df8cae5abba3ebc7960c37660",
+    "packages/ui/tests/browser/fixtures/plugin-controls.tsx": "5a69f94c48aee28d0410b82b2e843c39828324f01f60bc076c28419ab4db9888",
     "packages/ui/tests/browser/fixtures/plugin-packages.tsx": "e14c7996d23cf2c01a6e626766c9d5fdb23d84f409893a69cfef8915bb54759f",
     "packages/ui/tests/browser/fixtures/plugin-sources.tsx": "1ec3df76131388ef34156d61c68929549e8227de829bda026b86ae6a87edf72c",
     "packages/ui/tests/browser/fixtures/preferences-cleanup.ts": "41a56b470ab0a378619d7a97fac7c0c9e24145e49c6f3cb084e612f5183ef2d8",
@@ -22772,6 +22844,7 @@
     "packages/ui/tests/browser/fixtures/reveal-truncated-text.tsx": "0fc579ac99c44ca10b55a061d634defded3a88a27ddbdc4167d3ab280bb50078",
     "packages/ui/tests/browser/fixtures/rune-window-close.tsx": "2d0a7bdae9f59c76a43970bb6cfdd27016a08497592dd27e875a4e280971304a",
     "packages/ui/tests/browser/fixtures/scroll-input.tsx": "6ff532fa5a41ebfce0bf5dcdd44467d2ae03b4d4d9d0cfa804c37bb6fc004db3",
+    "packages/ui/tests/browser/fixtures/scroll-pipeline.tsx": "3110c3290e586610df21321683d9f0e169b4c289729c1e27acf125f1f5e12a9d",
     "packages/ui/tests/browser/fixtures/search-highlight-adapter.ts": "c56d50a8cdbd6fedc50a9799b8ebe97dbcf31a0773ae10e0acab3d21b464525d",
     "packages/ui/tests/browser/fixtures/search-highlight-baseline.ts": "68d2d614212287a302e176090b010096157ee98a130ca85abf0f4d611bebca96",
     "packages/ui/tests/browser/fixtures/search-highlight.tsx": "bda1a11a2cb7dbc90f4dd3df5f4c274895e36e3b08a71bb3e9940808e4ed3a77",
@@ -22798,7 +22871,7 @@
     "packages/ui/tests/browser/fixtures/skills.tsx": "b9614c95a055aa4cd5b3a5cd469731d42dfd4b74fb5b67bd9e76336554bdf9ef",
     "packages/ui/tests/browser/fixtures/speech-lifecycle.tsx": "0140b626bd695d675c8508482d3e9b786838b46482bb15e9b871a344d046b69e",
     "packages/ui/tests/browser/fixtures/startup-state-owner.tsx": "c98c4d867120287a15d37f8d25798e4b77f8da08600a653b918ae601444a0f6e",
-    "packages/ui/tests/browser/fixtures/status-panel.tsx": "61be6f40fa2afaab5fbfda2fd0d28fefe5670553410487eea5620c93cb9fcd0c",
+    "packages/ui/tests/browser/fixtures/status-panel.tsx": "0180f12b38da7f8c9770caef3efe49d70ccc161b59ad8296d17f16991c102a48",
     "packages/ui/tests/browser/fixtures/status-tokens.tsx": "8f520ddddc219b70dfed720c866b9d34bcdd09b7eeb3c10f60f2a4a50c208e84",
     "packages/ui/tests/browser/fixtures/stream-action-state.tsx": "9942db38d268ce38ee4d06c98bbe3e551a54017996ba7beaeb7a0c1b2bf12cff",
     "packages/ui/tests/browser/fixtures/stream-delta-churn.tsx": "e0851dc5a2665043603285e9ab123f6a8b00e381b1034d9021af9fd7b98e79ab",
@@ -22815,6 +22888,7 @@
     "packages/ui/tests/browser/fixtures/task-copy.tsx": "5c20d3d7d10ebfc068471f1210a95811fab2b907c661845d16a0a9f869720aba",
     "packages/ui/tests/browser/fixtures/timeline-sync.tsx": "086b24a18c4902e0d26f12d8da14506fe13f3def36978b6ca9fd6ced77cd98f8",
     "packages/ui/tests/browser/fixtures/timeline-tool-filters.tsx": "919b3fe985f19606ef65d705c80a2d98e435381b5b9270592a8c5864300855d4",
+    "packages/ui/tests/browser/fixtures/tool-card-bounds.tsx": "f604a9e97a89f3ff8633c43c729243282e7f59b1381084f01d77ca176737fdc2",
     "packages/ui/tests/browser/fixtures/tool-images.tsx": "2eac684424eee7ed275001ecb453203eafb78cc789276eaea9f3600821a484b2",
     "packages/ui/tests/browser/fixtures/tool-reprojection.tsx": "c1ae270c0615bb9658b7b3df24489a4a13efd073f139f3cab3e8744cf380bd9f",
     "packages/ui/tests/browser/fixtures/ui-settings.ts": "94b1ea6b9420fe4359252531dab4b1009a2fe14771244af90a50d4ababcf6873",
@@ -22838,7 +22912,7 @@
     "packages/ui/tests/browser/help-command.test.ts": "148f423f56351eea1c0a65961d5f95e8fde0aa8cd8b5e5e12a480c370c3a878a",
     "packages/ui/tests/browser/hex-capture.test.ts": "612e3119e30905851b1b957323e9d9e0f88974ab095bcb2882e64a6cce03abae",
     "packages/ui/tests/browser/hidden-forms.test.ts": "93756788920f9298bf99d5f40d6d56385864acb7b20f2ee65265e1832db075c4",
-    "packages/ui/tests/browser/history-navigation.test.ts": "8ad84df368537b59c834e726e2674a18f8cbf494ea64f58ac514de58c5baa36e",
+    "packages/ui/tests/browser/history-navigation.test.ts": "4cd1a4832f849867ad09613964aebe58a9f2eca62397c54b43488813aa86e705",
     "packages/ui/tests/browser/history.test.ts": "b3f512ebb68590bca0ab20a25e01fb9aded64f1fc82170764c80168f01dab464",
     "packages/ui/tests/browser/host-only-controls.test.ts": "b57bdbbbfa54b626b401cec553024da8b98dea952c86220e1de235ec1a2f7019",
     "packages/ui/tests/browser/hotkeys-settings.test.ts": "db6214be3cdca82fb60af012cdeb341eb39213a046201f22e98928541dec0867",
@@ -22943,7 +23017,7 @@
     "packages/ui/tests/browser/permission-fallback-diff.test.ts": "dcf7b971da2bc5eba3b8ab134f48660bcca9c41f82730ec4519a71caa856bb3b",
     "packages/ui/tests/browser/permission-feedback.test.ts": "3a1165ffb9e5b7fb39597bd36908fe41931dcfec10931a746ade70a0a83a7862",
     "packages/ui/tests/browser/permission-receipts.test.ts": "97126672d04de323c02a9edee5e2a54a10e4122e48afd964433ddf65c295ed11",
-    "packages/ui/tests/browser/plugin-controls.test.ts": "0cef35ad576b6e320f30af0b5030dd74b7df8e6cbc2af6b31bcf7c0e72c23943",
+    "packages/ui/tests/browser/plugin-controls.test.ts": "154522da4d1eb815db52f0704820d15053f7dbc7868bd4d6a21ff9ce65a9034f",
     "packages/ui/tests/browser/plugin-packages.test.ts": "8284afcf700c6f10c01db0715492369879a027f8ca7734cb4a50ec3d6e83bc3b",
     "packages/ui/tests/browser/plugin-sources.test.ts": "97ab22ba1e8e44d3b9ca123e3f5c1004f4eb0ce9d4efc1b6bc1eac800227576c",
     "packages/ui/tests/browser/positioner-motion.test.ts": "f0e9759e25607764ca5f422c3b0974182161e53294f74d620941679d7021aec9",
@@ -22972,10 +23046,11 @@
     "packages/ui/tests/browser/remote-tab-web-reload.test.ts": "bf9ffa09010f42a98daea212960bb4bf3d7bb00a2ec9fdee7c86d6b8b89ed0d9",
     "packages/ui/tests/browser/remote-web-restore.test.ts": "07d817092bbd0e3ac1911dfc9c26d2703777a81c424790fb8738efda2de525d7",
     "packages/ui/tests/browser/render-cost-mount.test.ts": "ceb84928e75e3a559ed2b7e55af31f96d6edff4818773b101050681395e45e71",
-    "packages/ui/tests/browser/render-cost.test.ts": "8d2ff05e7994e27aa68759bf9b47e5ff357f2148d4aaa042c31af7ff19c8c1b4",
+    "packages/ui/tests/browser/render-cost.test.ts": "31fddff4268155d2f052bfbec8e73a84d43fe5badf53f0b0e2289a92c8fe1620",
     "packages/ui/tests/browser/reveal-truncated-text.test.ts": "70aadfedc0c2f9fdd6f0fdd06d6b11790f8c79b1a30282428639c3c89d483a6a",
     "packages/ui/tests/browser/run.mjs": "483826d943afdf86422c2d0af8e3065a0ba8af883ede801759ff20c962d9048d",
     "packages/ui/tests/browser/rune-window-close.test.ts": "7ebd88e80fa5902eee126355f7a4c53cb8a64f51b46e2424b1bbbbf7c8078140",
+    "packages/ui/tests/browser/scroll-pipeline.test.ts": "6108030d51e298d0f60919e5e86a989aef504d8aaa286d2ab58abca98f864ad1",
     "packages/ui/tests/browser/search-highlight-assertions.ts": "f80fd0ecdcdf07646e628a330b267ecdd56d17a2639e81163618c1b51f3981ee",
     "packages/ui/tests/browser/search-highlight-harness.ts": "4a6d8fea739f1220fd99fdc07ab26f95c33ab2e27166ef6116d15bb970e11f42",
     "packages/ui/tests/browser/search-highlight-report.mjs": "5f89a9afb53249373108fcc17d13313197ba48ae5bcc6ebe7995a8dd4adf814c",
@@ -23010,7 +23085,7 @@
     "packages/ui/tests/browser/source-scroll-delivery.test.ts": "419f62ace1ddc93744978c77b4ae7c740053bac266ecc8f4c49b8051dcc52b0c",
     "packages/ui/tests/browser/source-scroll-delivery.ts": "03d65657df87213b30b59e4e0ee5025d1c9356aa145295b3019af2c91cc4f3a5",
     "packages/ui/tests/browser/speech-lifecycle.test.ts": "40976a9b8f4a92a268265dc09fb99710890a002b6afbd8792e8c6c14c3581e41",
-    "packages/ui/tests/browser/status-panel.test.ts": "9d5144dd3227abc123a686af17f94ef76fe99d5fa8a2ec33f7a8decbbd4c728e",
+    "packages/ui/tests/browser/status-panel.test.ts": "deff2a264b82f8672bf323148c5d0b9cc113d14c69af6f3e505b649a3199cad7",
     "packages/ui/tests/browser/status-tokens.test.ts": "299af391245a5cf3cd29ed838d6b9c744f95c9d87ac7c1cd85afc5226a2ce302",
     "packages/ui/tests/browser/stream-delta-churn.test.ts": "50564b10598def905b61664d73772c2ece32a8213491ec799214bfbfe5610e36",
     "packages/ui/tests/browser/streaming-outline.test.ts": "3571437301f1e1eee2aba798737ef74ea698ab36d784e1abccefd074c487618a",
@@ -23019,11 +23094,12 @@
     "packages/ui/tests/browser/system-notification-focus.test.ts": "bfa78e358713ac7033f7d665648674f4326a059066e146bc7cb0e4d3231e3661",
     "packages/ui/tests/browser/tab-chrome.test.ts": "187f7a30a685944c447db5adc51fb79884583ad89914f1bbf7e79ca7169d0853",
     "packages/ui/tests/browser/tab-view-persistence.test.ts": "7c2d5ae1762d62527c0645571fc11c41dac0903067abe2a3f6ea254e34170ed1",
-    "packages/ui/tests/browser/task-copy.test.ts": "de85e92f5504bfe8c7f293aa91c9aaddd721fb0419a6f6da1fbd45975e955b05",
+    "packages/ui/tests/browser/task-copy.test.ts": "046d44cf7e149f23e64a9ddbf3ac20efc07c7f6f5c71622afe4c8f736204e36f",
     "packages/ui/tests/browser/timeline-sync-session.ts": "6f7f0fff0f3cbc57e1fd86f1e1a538585004e5ca449f39e1093a767dd4ee603c",
     "packages/ui/tests/browser/timeline-sync.qualification.ts": "3372571dd2b2e4c303934fb9341038a60de3e2ece586cb5fcde816d70071d549",
     "packages/ui/tests/browser/timeline-sync.test.ts": "1266bd99cfdf6e2108dbd42a32fea0a32fb0ca2531b3a66772b34c015c39816d",
     "packages/ui/tests/browser/timeline-tool-filters.test.ts": "265bd0cc2149f6bac8f9b603152af9a183191686be18d671633cc0ec489b229d",
+    "packages/ui/tests/browser/tool-card-bounds.test.ts": "7708565b22bfe35d762f1af5dc9723ef162cab6d3ffb729662ffd182321baf84",
     "packages/ui/tests/browser/tool-images.test.ts": "d84a8e65da1f750f82c9873e13e6506b8691a0f1840fa318f7de7d1a289ff27d",
     "packages/ui/tests/browser/transcript-presets.test.ts": "494ef796c8f587a9a843958766cf958cb5fdc63694bd56ad098f7fe85b902bd4",
     "packages/ui/tests/browser/usage-metrics.test.ts": "93ff4c630fa05966c2c8df25530200f87868a6ed88904997f15ae870ebf55bce",
@@ -23051,7 +23127,7 @@
     "scripts/rune/component-inventory-ast.mjs": "3db80f65a676f5faad7a9c4e1ee17ce78b7ba4aea4de58c69bab8f091aacaea5",
     "scripts/rune/component-inventory.mjs": "b98ea680c0c49c6a4c30e6dc9fcdebc6a512fcfcdf2530aa02b6559b393b3fe8"
   },
-  "componentCount": 314,
+  "componentCount": 315,
   "modules": [
     {
       "source": "packages/ui/src/App.tsx",
@@ -23069,7 +23145,7 @@
     {
       "source": "packages/ui/src/components/action-overflow-menu.tsx",
       "sheet": "target/rune-inventory/components__action-overflow-menu.json",
-      "sheetSha256": "9c4b36a6b06c16cf497ff589a598825abd43340e91685237e97dbafaa41c9302",
+      "sheetSha256": "840e48b02eb08cf79ee575aad4a54989e1f3d36262441d95fdf38791478adc65",
       "components": [
         {
           "id": "packages/ui/src/components/action-overflow-menu.tsx#ActionOverflowMenu",
@@ -23077,7 +23153,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 144
+      "testReferenceCount": 145
     },
     {
       "source": "packages/ui/src/components/advanced-settings-modal.tsx",
@@ -23108,7 +23184,7 @@
     {
       "source": "packages/ui/src/components/alert-dialog.tsx",
       "sheet": "target/rune-inventory/components__alert-dialog.json",
-      "sheetSha256": "64d0a620de38fe09ab24271b684b0a62394a02c85f78820dffda3dff45c2f630",
+      "sheetSha256": "df577138a4aa723785b5966c805fb005fef57271649cb4a2b46651bb0f8a5e1d",
       "components": [
         {
           "id": "packages/ui/src/components/alert-dialog.tsx#AlertDialog",
@@ -23116,7 +23192,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 67
+      "testReferenceCount": 69
     },
     {
       "source": "packages/ui/src/components/app-actions.tsx",
@@ -23204,7 +23280,7 @@
     {
       "source": "packages/ui/src/components/brand-logo.tsx",
       "sheet": "target/rune-inventory/components__brand-logo.json",
-      "sheetSha256": "6615e508ecb2ee3346b32b4561d0bec0de816544f5879a5d0995735f66180b5e",
+      "sheetSha256": "861d2fba169d8d9dafce290f30b47731fe98f8a8cc7c61a82cf822a400d2fe20",
       "components": [
         {
           "id": "packages/ui/src/components/brand-logo.tsx#BrandLogo",
@@ -23212,12 +23288,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 87
+      "testReferenceCount": 88
     },
     {
       "source": "packages/ui/src/components/branded-empty-state.tsx",
       "sheet": "target/rune-inventory/components__branded-empty-state.json",
-      "sheetSha256": "ea07faef1aa531d09ff6e2ea0c52fcb05a2279ec43e7ec2e293d92caf4baf7af",
+      "sheetSha256": "57b5b9bfa46e6c382c144eddc19be4977e705ff487cea7d8506748d8cf08ee8f",
       "components": [
         {
           "id": "packages/ui/src/components/branded-empty-state.tsx#BrandedEmptyState",
@@ -23225,7 +23301,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 53
     },
     {
       "source": "packages/ui/src/components/browse-menu.tsx",
@@ -23248,7 +23324,7 @@
     {
       "source": "packages/ui/src/components/browser-frame.tsx",
       "sheet": "target/rune-inventory/components__browser-frame.json",
-      "sheetSha256": "2ccad0f0f70340be16d240769bdcf473bdc01cf35dc3a070ee9d0bd4c9e1208a",
+      "sheetSha256": "6a3186de2f24ede5d868c4f7a413f90b0a3908f4d8f00e6078540ff43ec110ac",
       "components": [
         {
           "id": "packages/ui/src/components/browser-frame.tsx#BrowserFrame",
@@ -23256,7 +23332,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 314
+      "testReferenceCount": 315
     },
     {
       "source": "packages/ui/src/components/command-palette.tsx",
@@ -23326,7 +23402,7 @@
     {
       "source": "packages/ui/src/components/dismissible-window.tsx",
       "sheet": "target/rune-inventory/components__dismissible-window.json",
-      "sheetSha256": "a867d369ae3eccb29f478caefcacf2ce6737f1952c16a5f63e71803f3d85b250",
+      "sheetSha256": "357cf4509300ef9bb74ae7c6a8f366daf9457b5cfead770eb7287654365abbc1",
       "components": [
         {
           "id": "packages/ui/src/components/dismissible-window.tsx#DismissibleWindow",
@@ -23334,7 +23410,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 93
+      "testReferenceCount": 94
     },
     {
       "source": "packages/ui/src/components/entry-count.tsx",
@@ -23461,7 +23537,7 @@
     {
       "source": "packages/ui/src/components/hidden-text.tsx",
       "sheet": "target/rune-inventory/components__hidden-text.json",
-      "sheetSha256": "8af2bfb156e8790c5b85a48872aa8bb6e5a3b1e696a088dbce79178ac1673782",
+      "sheetSha256": "97496b490888647d97bbadf406fba66e5665418f0d7c48d66493365ef591320e",
       "components": [
         {
           "id": "packages/ui/src/components/hidden-text.tsx#HiddenTextNotice",
@@ -23474,12 +23550,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 131
+      "testReferenceCount": 132
     },
     {
       "source": "packages/ui/src/components/history-message-preview.tsx",
       "sheet": "target/rune-inventory/components__history-message-preview.json",
-      "sheetSha256": "1be5b44d55636be696e91153b2da163aa9ed8ddd74cc6e78792164f6b05870d5",
+      "sheetSha256": "9b20cb72ada594659c7cbb51967331e25b6e537ca8374c2ee4f20e3ffaa3f2fa",
       "components": [
         {
           "id": "packages/ui/src/components/history-message-preview.tsx#HistoryMessagePreview",
@@ -23487,12 +23563,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/history-search-results.tsx",
       "sheet": "target/rune-inventory/components__history-search-results.json",
-      "sheetSha256": "2764c6cbd62ed4c8554d5bc98af895ddf4a6431c5ba7c5d05099bc43cd32b656",
+      "sheetSha256": "629dd6ffb9f5e0d9356b16a8804388c174ee08cd45a74b5ac3468026b944d9f2",
       "components": [
         {
           "id": "packages/ui/src/components/history-search-results.tsx#HistorySearchResults",
@@ -23515,12 +23591,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/info-popover-button.tsx",
       "sheet": "target/rune-inventory/components__info-popover-button.json",
-      "sheetSha256": "0839d2afffc17de05d36156a1c55c4910f09aa538c8c8f55b80c36e841b05549",
+      "sheetSha256": "14d23170e79ffbbee3276769643ade0278b2fc6ed59c0be6b9475d3d9f31eb6b",
       "components": [
         {
           "id": "packages/ui/src/components/info-popover-button.tsx#InfoPopoverButton",
@@ -23696,7 +23772,7 @@
     {
       "source": "packages/ui/src/components/instance/shell/right-panel/RightPanel.tsx",
       "sheet": "target/rune-inventory/components__instance__shell__right-panel__RightPanel.json",
-      "sheetSha256": "c0d42810cacc4d437ffde81815dee2b1809c73c39ecb98105c908f1f474c6619",
+      "sheetSha256": "ba243b321e12ecf1a6c8b6a5d26061ac4e83500e619072248ab61bdbeb43ab98",
       "components": [
         {
           "id": "packages/ui/src/components/instance/shell/right-panel/RightPanel.tsx#RightPanelTabFallback",
@@ -23719,7 +23795,7 @@
     {
       "source": "packages/ui/src/components/instance/shell/right-panel/RightPanelCustomizationPopover.tsx",
       "sheet": "target/rune-inventory/components__instance__shell__right-panel__RightPanelCustomizationPopover.json",
-      "sheetSha256": "8514fd289e8c9fbe095b2ea142b9c77c29aa6129e82c72750766a02ad4a99044",
+      "sheetSha256": "87f141a3a21d550e20c6283c984fa436a3b116c45af6c606915f635a355d2c3b",
       "components": [
         {
           "id": "packages/ui/src/components/instance/shell/right-panel/RightPanelCustomizationPopover.tsx#RightPanelCustomizationPopover",
@@ -23907,7 +23983,7 @@
     {
       "source": "packages/ui/src/components/load-error-state.tsx",
       "sheet": "target/rune-inventory/components__load-error-state.json",
-      "sheetSha256": "ca9cba465023676b09ab9b9e3514f9de2bfbdefb88a811b6f09de9e928b0cde9",
+      "sheetSha256": "e4de6bdaafac621dd587925011b6431020f29a68548b3874a0a3355931d88771",
       "components": [
         {
           "id": "packages/ui/src/components/load-error-state.tsx#LoadErrorState",
@@ -23915,7 +23991,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 140
+      "testReferenceCount": 141
     },
     {
       "source": "packages/ui/src/components/locale-selector.tsx",
@@ -23933,7 +24009,7 @@
     {
       "source": "packages/ui/src/components/markdown.tsx",
       "sheet": "target/rune-inventory/components__markdown.json",
-      "sheetSha256": "ec418c780d3de613c410f472ee890ec468ddf327972696179b356ab67c014b73",
+      "sheetSha256": "b834f7b57f0234b1288d0fac5bbccc461a7d0ff4c401c72c38a68fd9a3019db4",
       "components": [
         {
           "id": "packages/ui/src/components/markdown.tsx#Markdown",
@@ -23941,12 +24017,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 100
+      "testReferenceCount": 101
     },
     {
       "source": "packages/ui/src/components/mermaid-diagram.tsx",
       "sheet": "target/rune-inventory/components__mermaid-diagram.json",
-      "sheetSha256": "57c08ba9031e96b4d3b2e0a1aaa369c5369c4d89e0c544d2ca79e2e36eb4ff94",
+      "sheetSha256": "eaf838f2144884369489546afc598f78f00d75ec3481bcfed9a48722066fd6d4",
       "components": [
         {
           "id": "packages/ui/src/components/mermaid-diagram.tsx#MermaidDiagram",
@@ -23954,12 +24030,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 100
+      "testReferenceCount": 101
     },
     {
       "source": "packages/ui/src/components/message-block.tsx",
       "sheet": "target/rune-inventory/components__message-block.json",
-      "sheetSha256": "6d88befc835fa0fdd8e01428d0059810211b502f7998e375a67182982d7f705d",
+      "sheetSha256": "712dfc15a5c1dedb111803b28aaed8c8b6ad07b169f2d43d98d5328e1c7ef7e8",
       "components": [
         {
           "id": "packages/ui/src/components/message-block.tsx#ToolCallFallback",
@@ -24007,12 +24083,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 53
     },
     {
       "source": "packages/ui/src/components/message-item.tsx",
       "sheet": "target/rune-inventory/components__message-item.json",
-      "sheetSha256": "610003900c01a89e403833a34e0cd8d09c13cf2948219f4fb5a589d5cf223c17",
+      "sheetSha256": "5f2c19f66f0d265ea333a885cbe7bc2f1fc4f6290ce8d7e4cf95c254d80dafd9",
       "components": [
         {
           "id": "packages/ui/src/components/message-item.tsx#MessageItem",
@@ -24020,7 +24096,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 55
+      "testReferenceCount": 56
     },
     {
       "source": "packages/ui/src/components/message-list-header.tsx",
@@ -24038,7 +24114,7 @@
     {
       "source": "packages/ui/src/components/message-part.tsx",
       "sheet": "target/rune-inventory/components__message-part.json",
-      "sheetSha256": "356d8d29632ad6ce68791d7df3584ad4149d2678355816b4b87102284a334879",
+      "sheetSha256": "2909da6618c7123f35035f5647768292cda0c3c7064f74bbca73af999873706b",
       "components": [
         {
           "id": "packages/ui/src/components/message-part.tsx#MessagePart",
@@ -24051,7 +24127,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 55
+      "testReferenceCount": 56
     },
     {
       "source": "packages/ui/src/components/message-preview.tsx",
@@ -24069,7 +24145,7 @@
     {
       "source": "packages/ui/src/components/message-section.tsx",
       "sheet": "target/rune-inventory/components__message-section.json",
-      "sheetSha256": "b1ef87f2868eef805e4a3feb26a6c763bd974aec2061ae27b8efdb19e673c85c",
+      "sheetSha256": "4043c42f632b77d3668df3fd058a3765ca2c3cfdfe6f2788d5d1a1865b07f85b",
       "components": [
         {
           "id": "packages/ui/src/components/message-section.tsx#TimelinePlacement",
@@ -24082,12 +24158,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/message-timeline.tsx",
       "sheet": "target/rune-inventory/components__message-timeline.json",
-      "sheetSha256": "d77ce91e0188bffad094d4a823d040f8ec8605574a40c31019ff7b392d78cf65",
+      "sheetSha256": "a613c29c1038547afdd0c50021eea9a91b3ab1dfebaa1151560d1d45950c9510",
       "components": [
         {
           "id": "packages/ui/src/components/message-timeline.tsx#MessageTimeline",
@@ -24095,12 +24171,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/message-usage.tsx",
       "sheet": "target/rune-inventory/components__message-usage.json",
-      "sheetSha256": "44544056dfda6362e0bc7f8812c292d55c42efa15a45329e26d0f9f3b6956cb2",
+      "sheetSha256": "fc0f9fc60265c8f735edc0f573b8df9fc0d2ad2f50a71f1f0494ab5d55d3ebaa",
       "components": [
         {
           "id": "packages/ui/src/components/message-usage.tsx#MessageUsage",
@@ -24108,7 +24184,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 54
+      "testReferenceCount": 55
     },
     {
       "source": "packages/ui/src/components/mission-action-bar.tsx",
@@ -24802,7 +24878,7 @@
     {
       "source": "packages/ui/src/components/panel-extensions/extension-manager.tsx",
       "sheet": "target/rune-inventory/components__panel-extensions__extension-manager.json",
-      "sheetSha256": "c6b2b6e1fcc32e4457d147ad453776a9bc36f65a5d5d235846e4009c7b2c5946",
+      "sheetSha256": "08a6dbdd2d611cc8afb13827565f123e4aa86855f3c43840e3c92f8a922cf0da",
       "components": [
         {
           "id": "packages/ui/src/components/panel-extensions/extension-manager.tsx#ExtensionManager",
@@ -24833,7 +24909,7 @@
     {
       "source": "packages/ui/src/components/panel-extensions/extension-panel.tsx",
       "sheet": "target/rune-inventory/components__panel-extensions__extension-panel.json",
-      "sheetSha256": "e43d6b691938465fd3d975343197b5647c91bc7d3b24d20cb67403515315098e",
+      "sheetSha256": "d6c440b22213578417b72cef938ddb2455b734191f1c1c8267b11aa762b5c96d",
       "components": [
         {
           "id": "packages/ui/src/components/panel-extensions/extension-panel.tsx#ExtensionPanel",
@@ -24851,7 +24927,7 @@
     {
       "source": "packages/ui/src/components/part-duration.tsx",
       "sheet": "target/rune-inventory/components__part-duration.json",
-      "sheetSha256": "8dabe0733d02493ae66e8c8fb382015b8e2b853914441a6228916b1796bab775",
+      "sheetSha256": "923dec91ea8051becb0dd4bc2ff557fe2d0911716a8a9c0ab28d664067000f56",
       "components": [
         {
           "id": "packages/ui/src/components/part-duration.tsx#PartDuration",
@@ -24859,7 +24935,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 56
+      "testReferenceCount": 57
     },
     {
       "source": "packages/ui/src/components/permission-fallback-diff.tsx",
@@ -24890,7 +24966,7 @@
     {
       "source": "packages/ui/src/components/permission-receipts.tsx",
       "sheet": "target/rune-inventory/components__permission-receipts.json",
-      "sheetSha256": "9ad6c6e6bce983bfc0c8e8a21fb3754a5cdd8e41b2d6a285b22a4456aa5ab45f",
+      "sheetSha256": "00cf0401a0ab7dddef89bdac88a5136c3916297b4e7f140b1f39ab43d42e6f02",
       "components": [
         {
           "id": "packages/ui/src/components/permission-receipts.tsx#PermissionReceipts",
@@ -24903,7 +24979,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/plugin-activation-controls.tsx",
@@ -24978,7 +25054,7 @@
     {
       "source": "packages/ui/src/components/plugin-system-attention.tsx",
       "sheet": "target/rune-inventory/components__plugin-system-attention.json",
-      "sheetSha256": "c0d30043f9c9ea7bc08dfe9eac8bf05d01da4d04c0061c3a54cdc03bcd2e5eb4",
+      "sheetSha256": "e021dad56d279edc48a05c5113fc99e8de4fb258f828b8a8cc98ddc28b8e2d9d",
       "components": [
         {
           "id": "packages/ui/src/components/plugin-system-attention.tsx#PluginSystemAttention",
@@ -25318,7 +25394,7 @@
     {
       "source": "packages/ui/src/components/session-cleanup-progress.tsx",
       "sheet": "target/rune-inventory/components__session-cleanup-progress.json",
-      "sheetSha256": "c6290abb5c76769234fe7a2cb54ad391f3c711e7611fff1d157c5683b504719c",
+      "sheetSha256": "27c9767bde3e6caa8caea30a14ee3baf1b546508fed5a8e14b719e583fa3ee7b",
       "components": [
         {
           "id": "packages/ui/src/components/session-cleanup-progress.tsx#SessionCleanupProgress",
@@ -25326,7 +25402,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/session-expander.tsx",
@@ -26161,7 +26237,7 @@
     {
       "source": "packages/ui/src/components/speech-action-button.tsx",
       "sheet": "target/rune-inventory/components__speech-action-button.json",
-      "sheetSha256": "96a04b3f4f6313e8043a3128c547031247f72e69882923ca57b2fd122de2e07b",
+      "sheetSha256": "5061740f975492b3443fb8516e6c538d325c9a99d53d25d955e7fbcad346326a",
       "components": [
         {
           "id": "packages/ui/src/components/speech-action-button.tsx#SpeechActionButton",
@@ -26169,12 +26245,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 59
+      "testReferenceCount": 60
     },
     {
       "source": "packages/ui/src/components/system-message.tsx",
       "sheet": "target/rune-inventory/components__system-message.json",
-      "sheetSha256": "6e138b0150beb66cf863621ac76f3aa1c1ed95ba138f7a4029c61625bd4a0074",
+      "sheetSha256": "9e01d8f476158a742993e68ac035cbd556715aa01285e324040277ffb8f2d9d2",
       "components": [
         {
           "id": "packages/ui/src/components/system-message.tsx#SystemMessage",
@@ -26182,12 +26258,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 53
     },
     {
       "source": "packages/ui/src/components/tab-scroll.tsx",
       "sheet": "target/rune-inventory/components__tab-scroll.json",
-      "sheetSha256": "3d6f77198c4db19639c37c218d9abd69605c0fd30b0e3957962a83addf712408",
+      "sheetSha256": "0ad4e2a398bc0311fbdd3372a95cc19dc39176c3aebb11537d5c8c3092c80ba2",
       "components": [
         {
           "id": "packages/ui/src/components/tab-scroll.tsx#TabScroll",
@@ -26213,7 +26289,7 @@
     {
       "source": "packages/ui/src/components/timeline-virtual-list.tsx",
       "sheet": "target/rune-inventory/components__timeline-virtual-list.json",
-      "sheetSha256": "9d8f8cd7f72d7f041dd6c4166929e509f70667ee18fd0db7f2964f3c7fcc00be",
+      "sheetSha256": "3a9bf6604c03740f8d87b7b77a902615645baf95fdfc11be2a038d918939105a",
       "components": [
         {
           "id": "packages/ui/src/components/timeline-virtual-list.tsx#TimelineVirtualList",
@@ -26221,7 +26297,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/toast-history-panel.tsx",
@@ -26262,7 +26338,7 @@
     {
       "source": "packages/ui/src/components/tool-call/diagnostics-section.tsx",
       "sheet": "target/rune-inventory/components__tool-call__diagnostics-section.json",
-      "sheetSha256": "92bbe4d4ff1108441d8569d20082f3081b4980701a5fefb993f9074067d8fa8e",
+      "sheetSha256": "443121561699c18c7b1eeda6475ef753fc877a352d576bf04b32d6b5c70d3818",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/diagnostics-section.tsx#DiagnosticsPayloadAccess",
@@ -26270,7 +26346,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 132
+      "testReferenceCount": 133
     },
     {
       "source": "packages/ui/src/components/tool-call/diff-render.tsx",
@@ -26319,7 +26395,7 @@
     {
       "source": "packages/ui/src/components/tool-call/renderers/apply-patch.tsx",
       "sheet": "target/rune-inventory/components__tool-call__renderers__apply-patch.json",
-      "sheetSha256": "f14f04553be5ad136b39f2d794c4498ddd8c056850270ca9fe8144f7e45b0296",
+      "sheetSha256": "9ac35b91cdef04f402ebde3f40f0b2592b89819b54e6c2ccfbfe51ceec137b86",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/renderers/apply-patch.tsx#DiagnosticsInline",
@@ -26327,12 +26403,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 132
+      "testReferenceCount": 133
     },
     {
       "source": "packages/ui/src/components/tool-call/renderers/bash.tsx",
       "sheet": "target/rune-inventory/components__tool-call__renderers__bash.json",
-      "sheetSha256": "3ccc2044dafbeece8e54c8163dddefab47f73fd546fc6db4c58fb673505cdc6f",
+      "sheetSha256": "6196f90b154803729f55848d336b68659543398ab86436d815279ee99785e6c8",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/renderers/bash.tsx#OutputReveal",
@@ -26355,25 +26431,30 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 131
+      "testReferenceCount": 132
     },
     {
       "source": "packages/ui/src/components/tool-call/renderers/task.tsx",
       "sheet": "target/rune-inventory/components__tool-call__renderers__task.json",
-      "sheetSha256": "7e402e0915edc1cd011c0037fad20b661264fea32e77d6521eb050b6530c87b2",
+      "sheetSha256": "381e272317894514f6ee516d4553932e3e96e87562d5122bcd77ee6b62e04c0a",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/renderers/task.tsx#TaskToolCallRow",
           "name": "TaskToolCallRow",
           "status": "not-converted"
+        },
+        {
+          "id": "packages/ui/src/components/tool-call/renderers/task.tsx#TaskStepsGap",
+          "name": "TaskStepsGap",
+          "status": "not-converted"
         }
       ],
-      "testReferenceCount": 132
+      "testReferenceCount": 133
     },
     {
       "source": "packages/ui/src/components/tool-call/renderers/todo.tsx",
       "sheet": "target/rune-inventory/components__tool-call__renderers__todo.json",
-      "sheetSha256": "e387a9a43c1fa6f883c96bfcf1cdcf7dd51640204db8ce58dbf8d52af9c03417",
+      "sheetSha256": "25c5242a09bef9efc4982791282102cd486d885415a38d7b5f35fb700b960bbc",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/renderers/todo.tsx#TodoStatusIcon",
@@ -26386,7 +26467,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 131
+      "testReferenceCount": 132
     },
     {
       "source": "packages/ui/src/components/transcript-filters.tsx",
@@ -26417,7 +26498,7 @@
     {
       "source": "packages/ui/src/components/usage-metric-chips.tsx",
       "sheet": "target/rune-inventory/components__usage-metric-chips.json",
-      "sheetSha256": "f79ac224f9799b194870e65f6937a9506f58e1e892a459e056e19b03f36a57c3",
+      "sheetSha256": "f75ca79b800d43459dedc66f274a7497479081ca7712d1938759bb458b7ce5e6",
       "components": [
         {
           "id": "packages/ui/src/components/usage-metric-chips.tsx#UsageMetricChips",
@@ -26425,7 +26506,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 58
+      "testReferenceCount": 59
     },
     {
       "source": "packages/ui/src/components/version-pill.tsx",
@@ -26443,7 +26524,7 @@
     {
       "source": "packages/ui/src/components/virtual-follow-list.tsx",
       "sheet": "target/rune-inventory/components__virtual-follow-list.json",
-      "sheetSha256": "882acc600ad7f195baf248dfe62f654881d85de7ecc262318de7f5a3ff7fee30",
+      "sheetSha256": "c06d832b3cc161d3014db9dd2a339777cd3055ccee5be5519b82a42427d94748",
       "components": [
         {
           "id": "packages/ui/src/components/virtual-follow-list.tsx#VirtualFollowList",
@@ -26451,12 +26532,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 53
+      "testReferenceCount": 55
     },
     {
       "source": "packages/ui/src/components/window-close-button.tsx",
       "sheet": "target/rune-inventory/components__window-close-button.json",
-      "sheetSha256": "fd17d3216963c90cd60f81ef37c3c6939187f1d1782ec5230be04cefe9506a5b",
+      "sheetSha256": "34df34673c68cee1354aa35c61009616bf819b897687515537d229ac7d9419e2",
       "components": [
         {
           "id": "packages/ui/src/components/window-close-button.tsx#WindowCloseButton",
@@ -26464,7 +26545,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 317
+      "testReferenceCount": 318
     },
     {
       "source": "packages/ui/src/components/workspace-file-view.tsx",
@@ -26508,7 +26589,7 @@
     {
       "source": "packages/ui/src/lib/i18n/index.tsx",
       "sheet": "target/rune-inventory/lib__i18n__index.json",
-      "sheetSha256": "556693f6197b1ef09236bbe8a0beefae934bbb6c30108e82464896fb7e9871c4",
+      "sheetSha256": "e25f7e76f85ed3aa3fbd4d0cae8351924ad5c11128e11fa1ac99f48803dc018a",
       "components": [
         {
           "id": "packages/ui/src/lib/i18n/index.tsx#I18nProvider",
@@ -26516,12 +26597,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 362
+      "testReferenceCount": 363
     },
     {
       "source": "packages/ui/src/lib/theme.tsx",
       "sheet": "target/rune-inventory/lib__theme.json",
-      "sheetSha256": "be65a0213b100e1e4a8c9c82f93126c1f2ad4ee4323a90a516d1d26b26df332d",
+      "sheetSha256": "024680fcbca6018d5f7277da98083fcef1240d8e00ff6f1d8d7eda0451dee7b2",
       "components": [
         {
           "id": "packages/ui/src/lib/theme.tsx#ThemeProvider",
@@ -26529,7 +26610,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 135
+      "testReferenceCount": 136
     },
     {
       "source": "packages/ui/src/renderer/loading/main.tsx",
@@ -26560,7 +26641,7 @@
     {
       "source": "packages/ui/src/stores/instance-config.tsx",
       "sheet": "target/rune-inventory/stores__instance-config.json",
-      "sheetSha256": "665f8f256aca7b4897308b5a79dd0d8c4fecf6e734cd810eb9ef05b18e8ef896",
+      "sheetSha256": "fc4a09f384c83fbc37644a7d8d8067b70cfcdc66f6ec1b51e6101df80311e352",
       "components": [
         {
           "id": "packages/ui/src/stores/instance-config.tsx#InstanceConfigProvider",
@@ -26568,12 +26649,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 362
+      "testReferenceCount": 363
     },
     {
       "source": "packages/ui/src/stores/preferences.tsx",
       "sheet": "target/rune-inventory/stores__preferences.json",
-      "sheetSha256": "9096184ccd07fb8cab85c1a4ccf728fdf7bb31068c7b11c8ac30f572471d284a",
+      "sheetSha256": "ff7d6c608781abf9aac80ba0b3b51bd90d7e3741faabda88a393f87f6bae6019",
       "components": [
         {
           "id": "packages/ui/src/stores/preferences.tsx#ConfigProvider",
@@ -26581,7 +26662,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 362
+      "testReferenceCount": 363
     }
   ]
 }

@@ -609,6 +609,7 @@ export interface PluginActivationMutationRequest {
   pluginId: string
   scope: PluginControlScope
   enabled: boolean
+  managedBy?: "codenomad"
 }
 
 export interface PluginActivationMutationResponse {

@@ -1,4 +1,4 @@
-use super::{Snapshot, decode, encode};
+use super::{Snapshot, decode, encode_for_save};
 use crate::{history::Result, platform::storage::Store};
 use codenomad_client::{Receiver, bounded};
 use std::path::PathBuf;
@@ -10,6 +10,7 @@ pub(super) struct Persistence {
     pub read_error: bool,
     pub write_error: bool,
     pub file_draft_error: bool,
+    pub partial: bool,
     pub store: Option<Store>,
     loaded: Option<Receiver<Result<Loaded>>>,
     saving: Option<Receiver<(u64, bool)>>,
@@ -24,6 +25,7 @@ impl Persistence {
             read_error: false,
             write_error: false,
             file_draft_error: false,
+            partial: false,
             store: None,
             loaded: None,
             saving: None,
@@ -115,8 +117,11 @@ impl Persistence {
             tx.wake_at(self.due);
             return;
         }
-        let bytes = match encode(snapshot) {
-            Ok(bytes) => bytes,
+        let bytes = match encode_for_save(snapshot) {
+            Ok((bytes, partial)) => {
+                self.partial = partial;
+                bytes
+            }
             Err(_) => {
                 self.write_error = true;
                 return;
@@ -143,16 +148,17 @@ impl Persistence {
         let Some(store) = &self.store else {
             return true;
         };
-        let Ok(bytes) = encode(snapshot) else {
+        let Ok((bytes, partial)) = encode_for_save(snapshot) else {
             self.write_error = true;
             return false;
         };
+        self.partial = partial;
         let ok = store.save_exit(bytes).is_ok();
         self.write_error = !ok;
         if ok {
             self.saved = snapshot.revision;
         }
-        ok
+        ok && !partial
     }
     pub fn flush_file_drafts(&mut self, documents: &crate::files::document::store::Store) -> bool {
         let Some((revision, bytes)) = documents.file_draft_snapshot(self.saved_file_drafts) else {
@@ -178,7 +184,7 @@ pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
         ui.openings.close();
         let snapshot = ui.snapshot();
         let drafts_saved = ui.persistence.flush_file_drafts(&s.documents);
-        if ui.persistence.flush(&snapshot) && drafts_saved {
+        if ui.persistence.flush(&snapshot) && drafts_saved && !ui.has_unsaved_large_drafts() {
             ui.release_all();
         } else {
             crate::platform::release_records_on_exit(Vec::new(), ui.openings.clone());
@@ -214,7 +220,7 @@ mod tests {
             tabs: vec![super::super::Tab::Blank],
             active: Some(0),
         };
-        store.stage(&encode(&snapshot).unwrap(), &[]);
+        store.stage(&super::super::encode(&snapshot).unwrap(), &[]);
         let mut persistence = Persistence::new();
         persistence.store = Some(store);
         let wakes = Arc::new(AtomicUsize::new(0));

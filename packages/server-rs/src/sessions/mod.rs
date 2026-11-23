@@ -6,6 +6,7 @@ pub mod history;
 pub mod pending;
 pub mod permission_mode;
 pub mod receipts;
+pub(crate) mod user_files;
 
 use axum::{
     Extension, Router,
@@ -26,4 +27,5 @@ pub fn routes(shutdown: CancellationToken) -> Router<Shared> {
             get(permission_mode::routes::handle).put(permission_mode::routes::handle),
         )
         .route("/api/workspaces/{id}/session-history/{action}", post(history::handle))
+        .route("/api/workspaces/{id}/session-attachment/{session}/{message}/{index}/{sha}", get(history::attachment))
 }

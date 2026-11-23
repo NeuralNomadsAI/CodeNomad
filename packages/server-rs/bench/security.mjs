@@ -45,6 +45,17 @@ function send(url, {method="GET",headers={},body,ca,stream=false,servername}={})
     request.end(body)
   })
 }
+async function pairingNavigation(title, targets, rootHeaders={}) {
+  const headers={accept:"text/html",referer:"https://outside.invalid/link","sec-fetch-site":"cross-site","sec-fetch-mode":"navigate"}
+  for (const method of ["GET","HEAD"]) {
+    const roots=await Promise.all(targets.map(target=>target({url:"/",method,headers:{...headers,...rootHeaders}})))
+    assert.deepEqual(roots.map(r=>[r.status,r.headers.location]),[[302,"/remote-pair"],[302,"/remote-pair"]],title)
+    const pages=await Promise.all(targets.map((target,i)=>target({url:roots[i].headers.location,method,headers})))
+    assert.deepEqual(pages.map(r=>[r.status,r.headers["referrer-policy"]]),[[200,"no-referrer"],[200,"no-referrer"]],title)
+    if(method==="HEAD") assert(pages.every(r=>r.body===""),title)
+    reports.push({title:`${title}: ${method}`,statuses:pages.map(r=>r.status),rootStatuses:roots.map(r=>r.status)})
+  }
+}
 async function query(rust,ts) {
   const pairs=[ts,rust]
   const check=async (title, target, make, expected)=>{
@@ -65,6 +76,9 @@ async function query(rust,ts) {
   await check("wrong Host is misdirected","remote",()=>pair("GET","/api/auth/status",{
     headers:{Host:"other.invalid"},servername:"localhost"
   }),421)
+  await pairingNavigation("External ingress navigation",pairs.map(host=>host.remote))
+  await check("external pairing navigation still rejects an opaque Origin","remote",
+    ()=>pair("GET","/remote-pair",{headers:{origin:"null",referer:"https://outside.invalid/link"}}),403)
   await check("wrong Origin with valid code","remote",host=>redeem(host,good(host),{origin:"https://other.invalid"}),403)
   await check("empty browser metadata with valid code","remote",host=>redeem(host,good(host),{"sec-fetch-site":""}),403)
   for(let i=0;i<11;i++) await check(`incorrect attempt ${i+1}`,"remote",host=>redeem(host,"z".repeat(32)),i===10?429:401)
@@ -115,7 +129,7 @@ await withProductRuntime(exe,async()=>({}),async ({root:home,env,connection})=>{
       const end=Date.now()+15000
       while(!/^http:\/\/127/m.test(lines)&&Date.now()<end&&child.exitCode===null) await delay(25)
       const local=/^http:\/\/127\.0\.0\.1:\d+/m.exec(lines)?.[0]
-      const remote=/^HTTPS (https:\/\/127\.0\.0\.1:\d+)/m.exec(lines)?.[1]
+      const remote=/^HTTPS (https:\/\/\S+)/m.exec(lines)?.[1]
       assert(local&&remote,lines)
       return {local,remote}
     }
@@ -167,6 +181,21 @@ await withProductRuntime(exe,async()=>({}),async ({root:home,env,connection})=>{
     assert.equal(metadata.body.tlsFingerprint,leaf.fingerprint256.replaceAll(":","").toLowerCase())
     result.tls={trusted:true,rejectsUntrusted:true,rejectsWrongName:true,leafFingerprintMatches:true}
     await query(rust,ts)
+    const name="direct.fixture.test"
+    const direct=start("direct",{CNRS_FIXTURE_INGRESS:"0",CNRS_HTTPS_NAME:name})
+    try {
+      const {remote}=await direct.origins()
+      const authority=`${name}:${new URL(remote).port}`
+      const directCa=await readFile(path.join(home,"direct.data/tls/ca-cert.pem"))
+      const directTs=await startRemoteSurface({after(fn){cleanup.push(fn)}},{allowedOrigins:[`https://${authority}`],password})
+      const rustDirect=({url,headers,...options})=>send(`https://127.0.0.1:${new URL(remote).port}${url}`,{
+        ...options,ca:directCa,servername:name,headers:{...headers,Host:authority}
+      })
+      const tsDirect=({url,headers,...options})=>send(`http://${directTs.local}${url}`,{
+        ...options,headers:{...headers,Host:authority}
+      })
+      await pairingNavigation("External direct HTTPS navigation",[tsDirect,rustDirect],{cookie:"__Host-codenomad_device=stale"})
+    } finally { await direct.close() }
     const code=await rust.issue()
     const fresh=await rsRemote({url:"/api/remote-control/server-pair",method:"POST",...json({code,hostName:"Shutdown fixture"}),
       headers:{"content-type":"application/json","x-codenomad-server-pairing":"1"}})

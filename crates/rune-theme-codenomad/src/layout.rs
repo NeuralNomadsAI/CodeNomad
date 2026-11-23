@@ -75,6 +75,79 @@ pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
 pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
     rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
 }
+pub fn composer_field(edit: &TextEdit, placeholder: &str, compact: bool) -> rune_kit::TextArea {
+    let field = rune_kit::TextArea::new(edit)
+        .width(None)
+        .max_height(320.0)
+        .placeholder(placeholder);
+    if compact {
+        field.auto_grow(1, usize::MAX)
+    } else {
+        field.rows(5)
+    }
+}
+pub fn native_composer_input(edit: &TextEdit, placeholder: &str) -> El {
+    input(edit).hint(placeholder)
+}
+pub fn editor_menu<S: 'static>(
+    tx: &mut rune::Tx,
+    point: (f32, f32),
+    selected: bool,
+    pick: impl FnOnce(&mut S, Option<&str>, &mut rune::Tx) + 'static,
+) {
+    use rune::{Label, PopupItem, PopupMenu, labels::label};
+    let mut menu = PopupMenu::new()
+        .item(PopupItem::new("cut", label(Label::Cut)).enabled(selected))
+        .item(PopupItem::new("copy", label(Label::Copy)).enabled(selected))
+        .item(PopupItem::new("paste", label(Label::Paste)));
+    if !cfg!(target_os = "macos") {
+        menu = menu.item(PopupItem::new("select-all", label(Label::SelectAll)));
+    }
+    tx.popup_menu(menu, point, pick);
+}
+pub fn native_composer_field(editor: El, compact: bool) -> El {
+    let t = tokens(dark());
+    let minimum = if compact {
+        t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0
+    } else {
+        104.0
+    };
+    let field = rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
+        .min_h(minimum)
+        .max_h(320.0);
+    rune::col()
+        .w_full()
+        .child(field)
+        .fill(t.color("surface-field"))
+}
+pub fn announce_selection(tx: &mut rune::Tx, name: &str) {
+    tx.announce(name, rune::LiveRegion::Polite);
+}
+
+pub fn suggestion_list<S: 'static>(
+    key: &str,
+    anchor: &str,
+    label: &str,
+    empty: &str,
+    active: usize,
+    items: impl IntoIterator<Item = (String, String)>,
+) -> rune_kit::PopupList<S> {
+    rune_kit::PopupList::new(key, anchor)
+        .label(label)
+        .empty_message(empty)
+        .active(Some(active))
+        .items(
+            items
+                .into_iter()
+                .enumerate()
+                .map(|(index, (name, description))| {
+                    rune_kit::PopupItem::new(index.to_string(), name).description(description)
+                }),
+        )
+}
+pub fn with_overlays(base: El, layers: Vec<El>) -> El {
+    rune_kit::root(base, layers)
+}
 /// Shared wrapping action groups follow the available native/browser width.
 pub fn action_row() -> El {
     rune::row()

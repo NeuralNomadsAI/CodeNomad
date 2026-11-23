@@ -162,19 +162,7 @@ impl Cache {
             };
             self.entries.remove(index);
         }
-        let mut files = parse_patch(patch, path);
-        // Chunked highlighting in the pinned Kit requires the next 128-line boundary to fit.
-        let max_line = u32::MAX - 127;
-        if files.iter().flat_map(|file| &file.hunks).any(|hunk| {
-            [
-                (hunk.old_start, hunk.old_count),
-                (hunk.new_start, hunk.new_count),
-            ]
-            .into_iter()
-            .any(|(start, count)| start.saturating_add(count) > max_line)
-        }) {
-            files.clear();
-        }
+        let files = parse_patch(patch, path);
         let lines = files
             .iter()
             .filter(|file| !file.hunks.is_empty())
@@ -260,13 +248,85 @@ fn parse_patch(patch: &str, path: &str) -> Vec<diff::FileDiff> {
 }
 
 fn parse_complete(patch: &str) -> Vec<diff::FileDiff> {
+    let Some(expected) = check_patch(patch) else {
+        return vec![];
+    };
     let files = diff::parse(patch);
-    let expected = patch.lines().filter(|line| is_hunk(line)).count();
     if files.iter().map(|file| file.hunks.len()).sum::<usize>() == expected {
         files
     } else {
         vec![]
     }
+}
+
+/// Keep the original patch when counts disagree or word comparison exceeds the UI budget.
+fn check_patch(patch: &str) -> Option<usize> {
+    const COMPARE_LIMIT: usize = 2_000_000;
+    // Chunked highlighting in the pinned Kit requires the next 128-line boundary to fit.
+    const MAX_LINE: u32 = u32::MAX - 127;
+    let (mut hunks, mut remaining, mut cost) = (0, None, 0_usize);
+    let mut removed = 0_usize;
+    let mut added = 0_usize;
+    let mut max_span = 0_usize;
+    // Myers can visit O((old_len + new_len)^2) states for each paired line.
+    let comparisons = |old: usize, new: usize, width: usize| {
+        old.min(new)
+            .saturating_mul(width.saturating_mul(2).saturating_pow(2))
+    };
+    let mut lines = patch.lines().peekable();
+    while let Some(line) = lines.next() {
+        if is_hunk(line)
+            || line.starts_with("diff --git ")
+            || (remaining == Some([0, 0])
+                && line.starts_with("--- ")
+                && lines.peek().is_some_and(|next| next.starts_with("+++ ")))
+            || !line.starts_with([' ', '+', '-', '\\']) && !line.is_empty()
+        {
+            if remaining.is_some_and(|counts| counts != [0, 0]) {
+                return None;
+            }
+            remaining = None;
+            if is_hunk(line) {
+                let (ranges, _) = line.strip_prefix("@@ -")?.split_once(" @@")?;
+                let (old, new) = ranges.split_once(" +")?;
+                let count = |range: &str| {
+                    let (start, count) = range.split_once(',').unwrap_or((range, "1"));
+                    let (start, count) = (start.parse::<u32>().ok()?, count.parse::<u32>().ok()?);
+                    (start.saturating_add(count) <= MAX_LINE).then_some(count)
+                };
+                remaining = Some([count(old)?, count(new)?]);
+                hunks += 1;
+            }
+        } else if let Some(counts) = &mut remaining {
+            match line.as_bytes().first() {
+                Some(b'\\') => continue,
+                Some(b'-') => {
+                    counts[0] = counts[0].checked_sub(1)?;
+                    removed += 1;
+                }
+                Some(b'+') => {
+                    counts[1] = counts[1].checked_sub(1)?;
+                    added += 1;
+                }
+                _ if line.is_empty() && *counts == [0, 0] => {}
+                _ => {
+                    counts[0] = counts[0].checked_sub(1)?;
+                    counts[1] = counts[1].checked_sub(1)?;
+                }
+            }
+            if line.starts_with(['-', '+']) {
+                max_span = max_span.max(line.len() - 1);
+                continue;
+            }
+        }
+        cost = cost.saturating_add(comparisons(removed, added, max_span));
+        if cost > COMPARE_LIMIT {
+            return None;
+        }
+        (removed, added, max_span) = (0, 0, 0);
+    }
+    cost = cost.saturating_add(comparisons(removed, added, max_span));
+    (remaining.is_none_or(|counts| counts == [0, 0]) && cost <= COMPARE_LIMIT).then_some(hunks)
 }
 
 pub(super) fn is_hunk(line: &str) -> bool {
@@ -319,12 +379,12 @@ pub(super) fn body(
     let patch = patch.to_owned();
     let path = path.to_owned();
     let tool = tool.clone();
-    // Retry uncached cards when the viewport changes but their drawn rect does not.
+    // The retry marker remounts on resize without moving the selected text's node.
     let retry = entry
         .is_none()
         .then_some(s.tool_diff_preferences.history_epoch);
     let card_key = format!(
-        "{key}-card-{:p}-{:p}-{retry:?}",
+        "{key}-card-{:p}-{:p}",
         Rc::as_ptr(&scope),
         Arc::as_ptr(&tool)
     );
@@ -347,10 +407,16 @@ pub(super) fn body(
         }
     });
     let enter = admit.clone();
+    let retry_admit = admit.clone();
     col()
         .full_width()
         .key(card_key)
         .child(content)
+        .children(retry.map(|epoch| {
+            col()
+                .key(format!("retry-{epoch}"))
+                .on_drawn_layout_tx(move |s: &mut State, _, tx| retry_admit(s, tx))
+        }))
         .drawn_rect_into(&drawn)
         .on_drawn_layout_tx(move |s: &mut State, _, tx| admit(s, tx))
         .on_visible(move |s: &mut State, visible, tx| {
@@ -505,6 +571,24 @@ fn admission_never_evicts_a_still_visible_diff() {
 #[cfg(test)]
 #[test]
 fn a_partial_parse_never_replaces_the_raw_patch() {
-    let patch = "@@ -1 +1 @@\n-A\n+B\n@@ -4294967296 +4294967296 @@\n-C\n+D";
-    assert!(parse_patch(patch, "file.rs").is_empty());
+    for patch in [
+        "@@ -1 +1 @@\n-A\n+B\n@@ -4294967296 +4294967296 @@\n-C\n+D",
+        "@@ -1 +1 @@\n-A\n+B\n+C",
+        "@@ -1,2 +1,2 @@\n-A\n+B",
+    ] {
+        assert!(parse_patch(patch, "file.rs").is_empty());
+    }
+    assert!(!parse_patch("@@ -1 +1 @@\n-A\n+B", "file.rs").is_empty());
+}
+
+#[cfg(test)]
+#[test]
+fn a_small_patch_with_expensive_word_pairing_stays_raw() {
+    let patch = format!(
+        "@@ -1,4 +1,4 @@\n{}{}",
+        format!("-{}\n", "!".repeat(999)).repeat(4),
+        format!("+{}\n", "?".repeat(999)).repeat(4)
+    );
+    assert!(patch.encode_utf16().count() < TOOL_LIMIT);
+    assert!(parse_patch(&patch, "file.rs").is_empty());
 }

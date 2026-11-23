@@ -129,6 +129,7 @@ pub fn run() {
         older: None,
         newer: None,
         running: false,
+        user_file_references: false,
     }))
     .unwrap();
     rt.frame(0.0);

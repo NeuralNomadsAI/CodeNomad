@@ -4,6 +4,9 @@ use crate::platform;
 fn stash(s: &mut State) {
     capture_files_mode(s);
     capture(s);
+    s.attachments.cancel();
+    s.composer.picker.reset();
+    s.composer.device.cancel();
     if let Some(files) = &mut s.files {
         files.activate(false);
     }
@@ -21,8 +24,8 @@ fn stash(s: &mut State) {
             entry.sessions = std::mem::take(&mut l.sessions);
             entry.listed_sessions = std::mem::take(&mut l.listed_sessions);
             entry.creation_uncertain = l.creation_uncertain;
-            entry.linked = l.linked.pages.clone();
             entry.next = l.next.take();
+            entry.linked = std::mem::take(&mut l.linked);
             entry.consumed_cursors = std::mem::take(&mut l.consumed_cursors);
             entry.visits = std::mem::take(&mut l.visits);
             entry.sidebar_edits = Some((
@@ -46,8 +49,8 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
         l.sessions = std::mem::take(&mut item.sessions);
         l.listed_sessions = std::mem::take(&mut item.listed_sessions);
         l.next = item.next.take();
+        l.linked = std::mem::take(&mut item.linked);
         l.consumed_cursors = std::mem::take(&mut item.consumed_cursors);
-        l.linked.pages = item.linked.clone();
         l.visits = std::mem::take(&mut item.visits);
         l.folder = TextEdit::new(match &item.saved {
             Tab::Workspace(w) => w.folder.as_str(),
@@ -168,6 +171,12 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         saved
             .drafts
             .retain(|id, _| !removed.pending_drafts.contains(id));
+        saved
+            .attachment_drafts
+            .retain(|id| !removed.pending_drafts.contains(id));
+        saved
+            .attachment_parts
+            .retain(|id, _| !removed.pending_drafts.contains(id));
         // Clear authority belongs to this occurrence's live lifetime, outside text budgets.
         saved.drafts.extend(
             removed
@@ -211,8 +220,11 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
     if s.documents.has_tab_edits(&ui.entries[index].key) {
         return true;
     }
+    if ui.entries[index].has_unsaved_large_drafts() {
+        return true;
+    }
     if ui.active == index {
-        s.pending_prompt.is_some() || crate::agent::navigation_blocked(s)
+        s.composer.pending() || crate::agent::navigation_blocked(s)
     } else {
         ui.entries[index]
             .cache

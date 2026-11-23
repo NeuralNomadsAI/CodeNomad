@@ -17,6 +17,7 @@ mod workspace_actions;
 fn english(s: &State, cx: &mut rune::Cx<State>) -> El {
     crate::strings::with_locale("en", || crate::view(s, cx))
 }
+
 fn runtime(ui: crate::files::Ui) -> Runtime<State> {
     let mut state = crate::init();
     state.phase = crate::Phase::Ready;
@@ -25,6 +26,31 @@ fn runtime(ui: crate::files::Ui) -> Runtime<State> {
     rt.frame(0.0);
     for _ in 0..30 {
         rt.frame(0.02);
+    }
+    rt
+}
+
+fn shell_runtime(mut ui: crate::files::Ui) -> Runtime<State> {
+    let mut s = crate::init();
+    crate::gallery::shell::fixture(&mut s);
+    let backend = ui.backend.clone();
+    let project = crate::catalog::Project {
+        id: backend.workspace.clone(),
+        path: ui.tree.directory().into(),
+    };
+    s.screen.launcher_mut().unwrap().project = Some(project.clone());
+    s.workspace = Some(crate::workspace::Ui::new());
+    crate::workspace::opened(&mut s, &project);
+    crate::workspace::bound(&mut s, &backend);
+    crate::workspace::set_files_tab(&mut s, true);
+    s.shell.wanted = [Some([false, ui.panel]); 2];
+    ui.shell_managed = true;
+    s.files = Some(ui);
+    crate::git::connected(&mut s, &backend);
+    let mut rt = Runtime::new(s, english, (1000.0, 700.0), Env::new(false, 1.0));
+    for _ in 0..30 {
+        rt.frame(0.02);
+        rt.update(|s, _| crate::shell::sync(s));
     }
     rt
 }
@@ -41,6 +67,8 @@ fn click(rt: &mut Runtime<State>, key: &str) {
     let (x, y) = rt.find(key).unwrap_or_else(|| panic!("missing {key}"));
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
+    rt.frame(0.02);
+    rt.update(|s, _| crate::shell::sync(s));
     rt.frame(0.02);
 }
 fn editable_source(path: &str, role: &str) -> bool {
@@ -70,6 +98,7 @@ async fn open(rt: &mut Runtime<State>, http: &http::Http, path: &str, contents: 
         .await;
     settle(rt).await;
 }
+
 #[test]
 fn eye_opens_real_reader_and_return_preserves_chat_draft_without_prompt() {
     crate::platform::block_on(async {
@@ -104,21 +133,14 @@ fn eye_opens_real_reader_and_return_preserves_chat_draft_without_prompt() {
             })
             .collect();
         ui.panel = true;
-        let mut state = crate::init();
-        state.phase = crate::Phase::Ready;
-        state.draft = rune::TextEdit::new("unfinished prompt");
-        state.files = Some(ui);
+        let mut rt = shell_runtime(ui);
         let (commands, incoming) = codenomad_client::bounded(4);
-        state.commands = Some(commands);
-        let mut rt = Runtime::new(state, english, (1000.0, 700.0), Env::new(false, 1.0));
-        rt.frame(0.0);
-        for _ in 0..30 {
-            rt.frame(0.02);
-        }
+        rt.state.draft = rune::TextEdit::new("unfinished prompt");
+        rt.state.commands = Some(commands);
         click(&mut rt, "file-row-main.rs");
         assert!(rt.state.files.as_ref().unwrap().reader.target().is_none());
         click(&mut rt, "file-row-other.rs");
-        click(&mut rt, "file-eye-main.rs");
+        click(&mut rt, "workspace-actions:main.rs:pinned:preview");
         assert_eq!(
             rt.state.files.as_ref().unwrap().tree.selected(),
             Some("other.rs")
@@ -595,13 +617,16 @@ fn closing_reader_restores_the_transcript_reading_position() {
         }
         assert!(source_rect(&rt).rect[1] < source.rect[1]);
         rt.update(|state, _| {
-            state.messages.push(crate::Message {
-                id: "while-reading-file".into(),
-                role: "assistant".into(),
-                body: "Arriving message".into(),
-                parts: vec![],
-                completed: true,
-            });
+            state.messages.push(
+                crate::Message {
+                    id: "while-reading-file".into(),
+                    role: "assistant".into(),
+                    body: "Arriving message".into(),
+                    parts: vec![],
+                    completed: true,
+                }
+                .into(),
+            );
             state.revision += 1;
         });
         for _ in 0..30 {
