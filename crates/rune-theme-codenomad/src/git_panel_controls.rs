@@ -4,7 +4,10 @@ use crate::{
 };
 pub use rune::Icon as Glyph;
 use rune::{El, Phase, Tx, edit::TextEdit, row, text};
-use rune_kit::{Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Select, State};
+use rune_kit::{
+    Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, SegmentedControl, Select,
+    State,
+};
 
 pub enum ButtonLook {
     Neutral,
@@ -74,6 +77,19 @@ pub fn compact_file_actions(width: f32, label: &str) -> bool {
 }
 
 pub fn modes<S: 'static>(
+    labels: &[&str],
+    title: &str,
+    selected: Option<usize>,
+    select: impl Fn(&mut S, usize, &mut Tx) + Clone + 'static,
+) -> El {
+    SegmentedControl::new(labels, selected)
+        .label(title)
+        .width(None)
+        .on_pick(select)
+        .build(kit(dark()))
+}
+
+pub fn fit_modes<S: 'static>(
     labels: &[&str],
     title: &str,
     selected: Option<usize>,

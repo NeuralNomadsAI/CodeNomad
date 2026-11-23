@@ -32,12 +32,13 @@ function elements(tree) {
   return nodes
 }
 
-function native(scene, theme, stem, script, mark = "end", width, locale = "fr") {
+function native(scene, theme, stem, script, mark = "end", width, locale = "fr", commitDetail = false) {
   const tree = path.join(out, `${stem}.json`)
   const png = path.join(out, `${stem}.png`)
   const env = { ...process.env, RUNE_LOCALE: locale, CODENOMAD_PROFILE: "trial-git-parity" }
   for (const key of Object.keys(env)) if (key.startsWith("RUNE_") && key !== "RUNE_LOCALE") delete env[key]
   if (width) env.RUNE_GIT_PANEL_WIDTH = String(width)
+  if (commitDetail) env.RUNE_GIT_COMMIT_DETAIL = commitDetail === "hash" ? "hash" : "1"
   const args = ["--scene", scene, "--theme", theme, "--tree", tree, "--snap", png,
     "--size", `${viewport.width}x${viewport.height}`, "--scale", "1"]
   if (script) args.push("--script", script, "--at", `mark:${mark}`)
@@ -143,8 +144,50 @@ try {
       }
       report.push({ theme, locale, mode, nativeNodes: nodes.length, geometry })
     }
+    if (locale === "fr") {
+      await page.locator(".git-history-row").first().click()
+      const back = page.locator(".git-panel-back")
+      const summary = page.locator(".git-commit-summary")
+      await summary.getByText("2 fichiers modifiés", { exact: true }).waitFor()
+      await page.screenshot({ path: path.join(out, `solid-commit-detail-${theme}.png`) })
+      const detail = JSON.parse(await readFile(native("git-commits", theme, `rune-commit-detail-${theme}`, settle, "end", undefined, locale, true), "utf8"))
+      for (const [solid, key] of [[back, "git-history-back"], [summary, "git-commit-summary"]]) {
+        const a = await solid.boundingBox()
+        const b = detail.elements.find(node => node.key === key)?.rect
+        assert(a && b && Math.abs(a.width - b[2]) <= 2, `${theme}: ${key} spans the panel`)
+      }
+      assert(detail.elements.some(node => node.text === "2 fichiers modifiés" && node.path.includes("/git-commit-summary/")))
+      assert(elements(detail).some(node => node.key === "git-commit-file-preview-src/components/git-panel.tsx" && node.role === "button"))
+      await back.click()
+      await page.locator(".git-history-row").first().waitFor()
+    }
     await page.close()
   }
+  const back = path.join(out, "commit-back-script.json")
+  await writeFile(back, JSON.stringify({ events: [
+    { t: 0.2, type: "tap", key: "git-history-back" },
+    { t: 0.6, type: "mark", name: "end" },
+  ] }))
+  const history = JSON.parse(await readFile(native("git-commits", "dark", "commit-back", back, "end", undefined, "fr", true), "utf8"))
+  assert(elements(history).some(node => node.role === "button" && node.name?.startsWith("Make Git history")))
+  const focus = path.join(out, "commit-focus-script.json")
+  await writeFile(focus, JSON.stringify({ events: [
+    { t: 0.2, type: "tap", key: "git-commit-file-src/components/git-panel.tsx" },
+    { t: 0.4, type: "key", name: "Tab", shift: true },
+    { t: 0.6, type: "mark", name: "end" },
+  ] }))
+  const compactDetail = async (stem, script) =>
+    JSON.parse(await readFile(native("git-commits", "dark", stem, script, "end", 180, "fr", "hash"), "utf8"))
+  const unfocused = await compactDetail("commit-detail-180", settle)
+  const keyboard = await compactDetail("commit-focus-180", focus)
+  const backButton = tree => tree.elements.find(node => node.key === "git-history-back")
+  assert(keyboard.elements.some(node => node.key === "git-history-back" && node.focusVisible))
+  assert.equal(backButton(keyboard).fill, backButton(unfocused).fill, "Focus must not tint the return row")
+  const summary = unfocused.elements.find(node => node.key === "git-commit-summary")
+  const sha = unfocused.elements.find(node => node.path.includes("/git-commit-summary/") && /^[0-9a-f]{64}$/.test(node.text))
+  const short = unfocused.elements.find(node => node.path.includes("/git-commit-summary/") && node.text === "11111111")
+  assert(summary && sha && short && sha.rect[3] > 2 * short.rect[3], "A SHA-256 must wrap over multiple lines at 180 px")
+  assert(sha.rect[0] + sha.rect[2] <= summary.rect[0] + summary.rect[2], "The SHA-256 must stay inside the summary")
   const script = path.join(out, "interaction-script.json")
   await writeFile(script, JSON.stringify({ events: [
     { t: 0.2, type: "tap", key: "git-row-staged:file:src/components/git-panel.tsx" },
@@ -161,9 +204,11 @@ try {
   const nodes = elements(tree)
   assert(nodes.some(node => node.key === "git-section-staged" && !node.states.includes("expanded")))
   assert(nodes.some(node => node.key === "git-diff-mode" && node.states.includes("checked")))
-  const switched = JSON.parse(await readFile(native("git-changes", "dark", "mode-switch", script), "utf8"))
-  assert(elements(switched).some(node => node.role === "button" && node.name?.startsWith("Make Git history")))
-  assert(switched.elements.some(node => node.key === "segment2" && node.itemSelected))
+  for (const width of [360, 180]) {
+    const switched = JSON.parse(await readFile(native("git-changes", "dark", `mode-switch-${width}`, script, "end", width), "utf8"))
+    assert(elements(switched).some(node => node.role === "button" && node.name?.startsWith("Make Git history")), `Commits must open at ${width} px`)
+    assert(switched.elements.some(node => node.key === "segment2" && node.itemSelected), `Commits must be selected at ${width} px`)
+  }
   const compact = path.join(out, "compact-interaction.json")
   await writeFile(compact, JSON.stringify({ events: [
     { t: 0.2, type: "tap", key: "git-row-staged:menu:src/components/git-panel.tsx:trigger" },

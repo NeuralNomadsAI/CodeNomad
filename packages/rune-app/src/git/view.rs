@@ -36,7 +36,8 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
             super::set_mode(s, mode);
         }
     });
-    let selector = theme::modes(&MODE_NAMES.map(t), title, mode, width, set_mode).key("git-mode");
+    let selector =
+        theme::fit_modes(&MODE_NAMES.map(t), title, mode, width, set_mode).key("git-mode");
     let mut overlay = Vec::new();
     let context = theme::context()
         .key("git-context")
