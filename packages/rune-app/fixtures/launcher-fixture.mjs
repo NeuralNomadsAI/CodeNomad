@@ -16,6 +16,8 @@ import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.m
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {webLiveFixture} from './web-live-fixture.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
+const solid=webAndroid&&process.env.RUNE_ANDROID_SOLID_DIR
+const compare=webAndroid&&process.env.RUNE_ANDROID_COMPARE
 const sameOriginPairing=process.argv.includes('--same-origin-pairing')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
 const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile,root=path.resolve(import.meta.dirname,'../../..')
@@ -57,6 +59,8 @@ if(linked){
 }
 const records=new Map(),stores=new Map(),streams=new Set(),requests=[]
 const stats={created:0,prompts:0,lists:0}
+const fixtureModel={id:'fixture',providerID:'fixture',name:'Fixture',limit:{context:100000,output:4096},cost:[],variants:[]}
+const fixtureTokens={input:0,output:0,reasoning:0,cache:{read:0,write:0}}
 const uncertain=process.argv.includes('--uncertain-create')
 const withTools=process.argv.includes('--with-tools')
 const controls=process.argv.includes('--controls')
@@ -135,7 +139,10 @@ function clientOutput(chunk) {
 }
 function add(id,title,directory=project) {
   const row={id,title,projectID:linked||gitPanel?'fixture_project':'global',location:{directory},permissions:[{action:'*',resource:'*',effect:'deny'}],time:{created:1,busy:0,idle:1}}
-  records.set(id,row);stores.set(id,new FixtureStore(0));return row
+  if(compare)Object.assign(row,{tokens:fixtureTokens,cost:0,agent:'build',model:{id:'fixture',providerID:'fixture'}})
+  records.set(id,row)
+  stores.set(id,new FixtureStore(0,compare?{agent:row.agent,model:row.model}:undefined))
+  return row
 }
 add('ses_existing','Existing history')
 if(webMobile)for(let i=0;i<(webAndroid?70:210);i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
@@ -146,7 +153,7 @@ if(linked){
   add('ses_linked_next','Linked checkout next page',linked)
   stores.get('ses_linked_next').append('assistant','Linked checkout answer')
 }
-const mobile=webMobile?webLiveFixture({stores,project,streams}):null
+const mobile=webMobile?webLiveFixture({stores,project,streams,compare}):null
 if(withTools)stores.get('ses_existing').rows[1].content.push({type:'tool',id:'historical-read',name:'read',state:{status:'completed',input:{file:'synthetic.rs'},content:[{type:'text',text:'fn historical() {}'}]}})
 const control=controls?controlsFixture({records,stores,streams,project,stats}):null
 const upstream=createServer(async(req,res)=>{
@@ -160,7 +167,7 @@ const upstream=createServer(async(req,res)=>{
       assert(!(url.pathname.endsWith('/interrupt')||url.pathname.endsWith('/prompt')&&!webAndroid)&&
         !(url.pathname==='/api/session'&&req.method==='POST'),'Web fixture admits one Android prompt only')
       if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
-      if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[]})
+      if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:compare?[fixtureModel]:[]})
       if(/^\/api\/session\/[^/]+\/(permission|form)$/.test(url.pathname))return json({data:[]})
     }
     if(control&&await control.route(req,url,raw,json,res))return
@@ -169,6 +176,22 @@ const upstream=createServer(async(req,res)=>{
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
       streams.add(res);req.on('close',()=>streams.delete(res));return
     }
+    if(compare){
+      if(url.pathname==='/api/session/active')return json({data:{}})
+      if(url.pathname==='/api/project')return json([])
+      if(url.pathname==='/api/provider')return json({data:[{id:'fixture',name:'Fixture'}]})
+      if(url.pathname==='/api/model/default')return json({data:fixtureModel})
+      if(url.pathname==='/api/agent')return json({data:[{id:'build',name:'Build',mode:'primary'},{id:'plan',name:'Plan',mode:'primary'}]})
+      if(url.pathname==='/api/command')return json({data:[]})
+      if(url.pathname==='/api/mcp')return json({location:{directory:project},data:[]})
+      if(/^\/api\/experimental\/session\/ses_existing\/instructions\/entries\/[a-z0-9._-]+$/i.test(url.pathname)&&
+        ['PUT','DELETE'].includes(req.method)){res.statusCode=204;res.end();return}
+      if(url.pathname==='/api/rpc/codenomad.pending-requests/snapshot'){
+        assert.deepEqual(JSON.parse(raw).input.directories,[project])
+        return json({output:{originDirectory:project,data:[{directory:project,status:'complete',
+          locations:[{location:{directory:project},permissions:[],forms:[]}]}]}})
+      }
+    }
     if(url.pathname==='/api/location'){
       if(gitPanel){
         const directory=url.searchParams.get('location[directory]')??project
@@ -176,7 +199,8 @@ const upstream=createServer(async(req,res)=>{
         return json({directory,project:{id:'fixture_project',canonical:project,directory}})
       }
       const directory=url.searchParams.get('location[directory]')??project
-      return json(gitCount||linked?{directory,project:{id:'fixture_project',canonical:project,directory}}:{data:{directory:project}})
+      return json(gitCount||linked?{directory,project:{id:'fixture_project',canonical:project,directory}}:
+        compare?{directory:project,project:{id:'global',canonical:project,directory:project}}:{data:{directory:project}})
     }
     if(linked&&url.pathname==='/api/worktree')return json([{directory:project},{directory:linked}])
     if(linked&&url.pathname==='/api/worktree/refresh'){res.writeHead(204);res.end();return}
@@ -227,12 +251,22 @@ const upstream=createServer(async(req,res)=>{
     if(url.pathname==='/api/rpc/codenomad.session-pruning/window'){
       const {input}=JSON.parse(raw);return json({output:stores.get(input.sessionID).window(input.target)})
     }
+    if(compare&&url.pathname==='/api/rpc/codenomad.session-pruning/outline'){
+      const {input}=JSON.parse(raw),rows=stores.get(input.sessionID).rows
+      return json({output:{status:'outline',entries:rows.map(({id,type},seq)=>({id,type,seq,tools:0,reasoning:0,text:1})),
+        total:rows.length,cursor:null,checkpoints:[]}})
+    }
     if(url.pathname==='/api/rpc/codenomad.missions/scheduleCarrierRead')return json({output:{owned:false}})
     const match=url.pathname.match(/^\/api\/session\/([^/]+)(?:\/(.*))?$/)
     if(match){
       const [,id,action]=match,record=records.get(id),store=stores.get(id);assert(record,'known fixture session')
       if(!action)return json({data:record})
-      if(action==='message')return json({data:store.rows.slice(-Number(url.searchParams.get('limit'))),cursor:url.searchParams.get('order')==='asc'?{next:'future-read-anchor'}:{}})
+      if(action==='message'){
+        const ascending=url.searchParams.get('order')==='asc'
+        const limit=Number(url.searchParams.get('limit'))
+        const data=store.rows.slice(-limit)
+        return json({data:compare&&!ascending?data.reverse():data,cursor:ascending?{next:'future-read-anchor'}:{}})
+      }
       if(action==='environment'){res.statusCode=204;res.end();return}
       if(gitPanel&&id==='ses_another'&&action==='move'){
         assert.equal(req.method,'POST');assert.equal(record.location.directory,review)
@@ -243,11 +277,13 @@ const upstream=createServer(async(req,res)=>{
         for(const stream of streams)stream.write(`data: ${JSON.stringify(event)}\n\n`)
         return json({data:record})
       }
+      if(compare&&action==='inbox')return json({data:[]})
+      if(compare&&['agent','model'].includes(action)&&req.method==='POST'){res.statusCode=204;res.end();return}
       if(action==='prompt'){
         if(webAndroid){
           assert.equal(++stats.prompts,1)
           mobile.androidTurn(record,JSON.parse(raw))
-          return json({data:{id:'inbox-android'}})
+          return json({data:{id:JSON.parse(raw).id??'inbox-android'}})
         }
         const turn=++stats.prompts;assert(id.startsWith('ses_created_'),'send belongs to selected created session')
         const body=JSON.parse(raw),reply=store.append('assistant','',false)
@@ -286,7 +322,8 @@ await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
 if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
-if(web)env.CNRS_FIXTURE_UI_DIR=ui
+if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
+if(solid)env.CNRS_FIXTURE_SOLID_UI='1'
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 let server,exited,log='',client,result=1,http,staticProof,diagnostic='',runLog=''
 async function startServer(){
@@ -331,13 +368,14 @@ try{
     }else await http.storageState({path:storage})
     let workspace
     if(!webRestore){const opened=await http.post('/api/workspaces',{data:{path:project}});assert(opened.ok(),`Open isolated workspace: ${await opened.text()}`);workspace=(await opened.json()).id;assert(workspace)}
-    const wasm=await http.get('/app_bg.wasm');assert.equal(wasm.status(),200)
-    const sha256=createHash('sha256').update(await wasm.body()).digest('hex')
-    assert.equal(sha256,manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
-    staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,serverBinary,ui,paired}
+    const asset=await http.get(solid?'/index.html':'/app_bg.wasm');assert.equal(asset.status(),200)
+    const sha256=createHash('sha256').update(await asset.body()).digest('hex')
+    assert.equal(sha256,solid?createHash('sha256').update(await readFile(path.join(solid,'index.html'))).digest('hex'):
+      manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
+    staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,serverBinary,ui:solid||ui,paired}
     const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
     const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()]
-    const androidEnv=webAndroid?Object.fromEntries(['RUNE_ANDROID_ADB','RUNE_ANDROID_SERIAL','RUNE_ANDROID_ADB_PORT'].map(key=>[key,process.env[key]])):{}
+    const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
     if(webAndroid)androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
     client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
     if(mobile)client.on('message',async action=>{

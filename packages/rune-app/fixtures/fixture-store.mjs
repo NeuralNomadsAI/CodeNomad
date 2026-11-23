@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 export const code='fn main() {\n    println!("Rune · Code Nomad");\n}'
 export class FixtureStore {
-  constructor(count=10000) {
+  constructor(count=10000,assistantProfile) {
+    this.assistantProfile=assistantProfile
     this.rows=Array.from({length:count},(_,i)=>({id:`message-${String(i).padStart(5,'0')}`,type:'assistant',time:{created:i,completed:i+1},
       content:[{type:'text',text:i===count-1?code:`Synthetic message ${i}\nété · 日本語 · 🦀`}]}))
   }
@@ -23,7 +24,7 @@ export class FixtureStore {
   }
   append(type,body,completed=true) {
     const i=this.rows.length
-    const row={id:`message-${String(i).padStart(5,'0')}`,type,time:{created:Date.now()},...(type==='user'?{text:body}:{content:[{type:'text',text:body}]})}
+    const row={id:`message-${String(i).padStart(5,'0')}`,type,time:{created:Date.now()},...(type==='user'?{text:body}:{...this.assistantProfile,content:[{type:'text',text:body}]})}
     if(completed)row.time.completed=Date.now()
     this.rows.push(row);return row
   }

@@ -3,10 +3,10 @@ import {randomUUID} from 'node:crypto'
 import {textStream} from './fixture-response.mjs'
 import {androidLive,androidPrompt} from '../../../scripts/rune/web-android-contract.mjs'
 
-export function webLiveFixture({stores, project, streams}) {
+export function webLiveFixture({stores, project, streams, compare}) {
   const sessionID = 'ses_existing', store = stores.get(sessionID)
   const baseline = store.rows.length
-  let live, turnRecord, held = false, phase = 'live'
+  let live, turnRecord, rejectedReconnect, held = false, phase = 'live'
   const emit = (type, data) => {
     const row = {id:randomUUID(), type, created:Date.now(), location:{directory:project}, data:{sessionID,...data}}
     for (const stream of streams) stream.write(`data: ${JSON.stringify(row)}\n\n`)
@@ -20,14 +20,15 @@ export function webLiveFixture({stores, project, streams}) {
     phase='cut'
   }
   return {
-    get held() { return held },
+    get held() { if(held)rejectedReconnect?.();return held },
     androidTurn(record,body){
       assert.equal(phase,'live')
       assert.equal(record.id,sessionID)
       assert.equal(body.text,androidPrompt)
       turnRecord=record
       record.time.busy=Date.now()
-      store.append('user',body.text)
+      const user=store.append('user',body.text)
+      if(typeof body.id==='string')user.id=body.id
       startReply(androidLive)
     },
     restartHistory() {
@@ -54,8 +55,9 @@ export function webLiveFixture({stores, project, streams}) {
           startReply('Mobile live SSE only')
           break
         }
-        case 'cut':
+        case 'cut': {
           assert(streams.size)
+          const retry=compare?new Promise(resolve=>{rejectedReconnect=resolve}):null
           held = true
           for (const stream of streams) stream.destroy()
           live.time.completed = Date.now()
@@ -63,7 +65,14 @@ export function webLiveFixture({stores, project, streams}) {
           store.rows.push(live)
           store.append('assistant', 'Mobile recovered history')
           phase = 'resume'
+          if(retry){
+            let timer
+            try {
+              await Promise.race([retry,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('No rejected upstream SSE retry')),10000)})])
+            } finally { clearTimeout(timer); rejectedReconnect=undefined }
+          }
           break
+        }
         case 'resume':
           held = false
           phase = 'reset'
