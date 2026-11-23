@@ -190,6 +190,58 @@ test("wheel routing probes the ancestor chain once per scroll change, not per ev
   }
 })
 
+test("End reaches a nested report's new bottom after unannounced growth", async () => {
+  const { page, errors } = await open()
+  try {
+    await page.evaluate(() => {
+      const w = window as any
+      w.fixture.addReport()
+      w.fixture.bottom()
+    })
+    await frames(page, 30)
+    await page.evaluate(() => {
+      // Warm the nested-scroller probe while the report does not overflow.
+      const report = document.querySelector("[data-subagent-report]")!
+      report.dispatchEvent(new WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true }))
+    })
+    await frames(page, 5)
+    await page.evaluate(() => {
+      const w = window as any
+      const stream = document.querySelector(".message-stream") as HTMLElement
+      w.fixture.stopFollow()
+      stream.scrollTop = Math.floor(stream.scrollTop / 3)
+    })
+    await frames(page, 10)
+    const parked = await page.evaluate(() => (document.querySelector(".message-stream") as HTMLElement).scrollTop)
+    const result = await page.evaluate(async () => {
+      const w = window as any
+      w.fixture.growReport(1200)
+      const report = document.querySelector("[data-subagent-report]") as HTMLElement
+      report.focus({ preventScroll: true })
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      return Boolean(report)
+    })
+    assert.ok(result, "the report row must be mounted and focusable")
+    await page.keyboard.press("End")
+    // The report scrolls natively (smoothly) to its own bottom; the parked
+    // transcript must not move.
+    await page.waitForFunction(() => {
+      const report = document.querySelector("[data-subagent-report]") as HTMLElement | null
+      return Boolean(report && report.scrollTop > 0 && report.scrollHeight - report.clientHeight - report.scrollTop <= 2)
+    }, undefined, { timeout: 10_000 })
+    const landed = await page.evaluate(() => {
+      const report = document.querySelector("[data-subagent-report]") as HTMLElement
+      const stream = document.querySelector(".message-stream") as HTMLElement
+      return { reportTop: report.scrollTop, reportGap: report.scrollHeight - report.clientHeight - report.scrollTop, streamTop: stream.scrollTop }
+    })
+    assert.ok(landed.reportGap <= 2 && landed.reportTop > 0, `End must reach the report's new bottom (scrollTop ${landed.reportTop}, gap ${landed.reportGap})`)
+    assert.ok(Math.abs(landed.streamTop - parked) <= 2, `the transcript must stay parked (${parked} -> ${landed.streamTop})`)
+    assert.deepEqual(errors, [])
+  } finally {
+    await page.close()
+  }
+})
+
 test("reactive effect re-runs do not write scrollTop synchronously", async () => {
   const { page, errors } = await open()
   try {

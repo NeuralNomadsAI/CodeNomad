@@ -357,6 +357,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     props.onScrollIntent?.(direction)
     supersedePositioning()
     const element = scrollElement()
+    // A gesture observes live geometry: content may have grown since the last
+    // measured epoch (a delayed image extending a nested report) without any
+    // scroll, row resize or render announcing it.
+    markScrollMetricsStale()
     syncControllerResult(scrollController.userGesture(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS, element ? getDomMetrics(element) : null, distance), "user-gesture")
     // No list positioning outlives this: see `writeScroll`.
     // At a clamped edge a wheel/key produces no scroll event. The gesture
@@ -1165,6 +1169,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const handleKeyIntent = (event: KeyboardEvent) => {
       if (!isActive() || event.defaultPrevented) return
       if (!SCROLL_INTENT_KEYS.has(event.key)) return
+      // Boundary keys route on nested extents: recheck them against live
+      // geometry (a delayed image may have extended a nested report since the
+      // last measured epoch without any observed scroll, resize or render).
+      markScrollMetricsStale()
       const intent = getKeyboardScrollIntent({
         key: event.key,
         shiftKey: event.shiftKey,
