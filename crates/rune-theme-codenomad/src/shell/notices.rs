@@ -20,14 +20,19 @@ pub fn bell<S: 'static>(
     let name = unread
         .as_ref()
         .map_or_else(|| label.into(), |(_, count)| format!("{label} · {count}"));
-    let button = super::control(&super::icons::BELL, label, touch)
-        .label(name)
-        .help(label)
-        .expanded(open)
-        .on_press_tx(move |s, tx| press(s, tx))
-        .build(kit(layout::dark()))
-        .on_key(layout::enter_action(invoke))
-        .key(ANCHOR);
+    let button = if touch {
+        crate::tabs::touch_bar_button(&super::icons::BELL, &name, label, move |s, tx| press(s, tx))
+            .expanded(open)
+    } else {
+        super::control(&super::icons::BELL, label, false)
+            .label(name)
+            .help(label)
+            .expanded(open)
+            .on_press_tx(move |s, tx| press(s, tx))
+            .build(kit(layout::dark()))
+    }
+    .on_key(layout::enter_action(invoke))
+    .key(ANCHOR);
     row()
         .center_y()
         .child(button)

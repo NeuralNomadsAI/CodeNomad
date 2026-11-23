@@ -43,8 +43,17 @@ impl BarAction {
             Self::Settings => &icons::SETTINGS,
             Self::Conversation => &icons::CONVERSATION,
         };
-        bar_button(icon, label, label, TOUCH_BAR_TARGET, move |s, _| invoke(s))
+        touch_bar_button(icon, label, label, move |s, _| invoke(s))
     }
+}
+
+pub(crate) fn touch_bar_button<S: 'static>(
+    icon: &'static Icon,
+    label: &str,
+    help: &str,
+    invoke: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    bar_button(icon, label, help, TOUCH_BAR_TARGET, invoke)
 }
 
 fn bar_button<S: 'static>(
@@ -678,7 +687,11 @@ mod tests {
                         .button(true, key, move |s: &mut App| s.closed.push(key.into()))
                         .key(key)
                 });
-                strip_view(s, true, actions)
+                let bell =
+                    crate::shell::notices::bell("bell", None, false, true, |s: &mut App, _| {
+                        s.closed.push("bell".into())
+                    });
+                strip_view(s, true, actions.into_iter().chain([bell]))
             })
         }
         for locale in ["fr", "he"] {
@@ -695,7 +708,12 @@ mod tests {
                     rune::Env::new(false, 1.0),
                 );
                 rt.frame(0.0);
-                let keys = ["project-tabs-new", "settings", "chat"];
+                let keys = [
+                    "project-tabs-new",
+                    "settings",
+                    "chat",
+                    crate::shell::notices::ANCHOR,
+                ];
                 let elements = rt.elements();
                 let mut bounds = keys.map(|key| {
                     elements
@@ -721,7 +739,7 @@ mod tests {
                     tap(&mut rt, point);
                 }
                 assert_eq!(rt.state.new, 1);
-                assert_eq!(rt.state.closed, ["settings", "chat"]);
+                assert_eq!(rt.state.closed, ["settings", "chat", "bell"]);
             }
         }
     }
