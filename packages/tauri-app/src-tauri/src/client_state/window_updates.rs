@@ -269,7 +269,7 @@ impl ClientState {
     // release. Admission is closed, so this is also safe if a wakeup was omitted.
     pub(super) fn flush_pending_window_captures(&self) -> Result<(), String> {
         {
-            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            let state = self.state.lock().map_err(|error| error.to_string())?;
             let pending = self
                 .pending_windows
                 .lock()
@@ -280,10 +280,13 @@ impl ClientState {
             {
                 return Ok(());
             }
-            drop(pending);
-            if !self.process.verify_primary()? {
-                return Ok(());
-            }
+        }
+        // Keep the state mutex available to native window callbacks during the ownership read.
+        if !self.process.verify_primary()? {
+            return Ok(());
+        }
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
             self.apply_window_captures(&mut state)?;
         }
         self.write_current_state()

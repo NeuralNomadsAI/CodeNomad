@@ -1,6 +1,9 @@
 use super::*;
 use crate::desktop_updater::PreparedUpdate;
+use std::{fs, path::Path};
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+
+const OWNER_RECORD: &str = ".cross-host-election/primary.owner.json/owner.json";
 
 fn prepared() -> (PreparedUpdate, Arc<AtomicUsize>, Arc<AtomicUsize>) {
     let installed = Arc::new(AtomicUsize::new(0));
@@ -60,33 +63,34 @@ fn timeout_and_failed_cleanup_discard_installer_and_permit_a_fresh_check() {
     }
 }
 
-#[test]
-fn unreadable_owner_with_unsynced_root_cancels_update_quit_and_reopens_admission() {
-    use std::fs;
-    use std::sync::atomic::AtomicBool;
-
-    let directory = tempfile::tempdir().unwrap();
-    let fail_sync = Arc::new(AtomicBool::new(false));
-    let check = fail_sync.clone();
+fn state_with_unsynced_root(directory: &Path) -> (client_state::ClientState, Arc<AtomicUsize>) {
+    let sync_attempts = Arc::new(AtomicUsize::new(0));
+    let check = sync_attempts.clone();
     let state = client_state::ClientState::initialize_at_with_publication_checks(
-        directory.path(),
+        directory,
         || Ok(()),
         move || {
-            if check.swap(false, Ordering::SeqCst) {
+            if check.fetch_add(1, Ordering::SeqCst) == 0 {
                 return Err("injected directory sync failure".into());
             }
             Ok(())
         },
     )
     .unwrap();
-    fail_sync.store(true, Ordering::SeqCst);
     let request = serde_json::from_value(serde_json::json!({ "section": "speech" })).unwrap();
     let error = state.set_preferences(Some(request)).unwrap_err();
     assert!(error.contains("durability unconfirmed"));
-    let root = fs::read_to_string(directory.path().join("client-state.json")).unwrap();
+    let root = fs::read_to_string(directory.join("client-state.json")).unwrap();
     assert!(root.contains(r#""section":"speech""#));
+    assert_eq!(sync_attempts.load(Ordering::SeqCst), 1);
+    (state, sync_attempts)
+}
 
-    let owner = directory.path().join(".cross-host-election/primary.owner.json/owner.json");
+#[test]
+fn unreadable_owner_with_unsynced_root_cancels_update_quit_and_reopens_admission() {
+    let directory = tempfile::tempdir().unwrap();
+    let (state, sync_attempts) = state_with_unsynced_root(directory.path());
+    let owner = directory.path().join(OWNER_RECORD);
     let backup = owner.with_extension("backup");
     fs::rename(&owner, &backup).unwrap();
     fs::create_dir(&owner).unwrap();
@@ -107,6 +111,7 @@ fn unreadable_owner_with_unsynced_root_cancels_update_quit_and_reopens_admission
     queue.enqueue(Box::new(|| {})).unwrap();
     assert_eq!(installed.load(Ordering::SeqCst), 0);
     assert_eq!(cancelled.load(Ordering::SeqCst), 1);
+    assert_eq!(sync_attempts.load(Ordering::SeqCst), 1);
 
     fs::remove_dir(&owner).unwrap();
     fs::rename(&backup, &owner).unwrap();
@@ -114,7 +119,25 @@ fn unreadable_owner_with_unsynced_root_cancels_update_quit_and_reopens_admission
     assert!(coordinator.begin_shutdown(Vec::<String>::new()).is_some());
     assert!(coordinator.begin_cleanup());
     coordinator.prepare_client_state_release(&queue, &state).unwrap();
+    assert_eq!(sync_attempts.load(Ordering::SeqCst), 2);
     assert!(coordinator.state.lock().unwrap().update.is_none());
+}
+
+#[test]
+fn missing_owner_with_unsynced_root_allows_quit_without_retrying_the_write() {
+    let directory = tempfile::tempdir().unwrap();
+    let (state, sync_attempts) = state_with_unsynced_root(directory.path());
+    fs::remove_file(directory.path().join(OWNER_RECORD)).unwrap();
+    assert!(state.can_register_window()); // The local primary lock is still held.
+    assert!(!state.is_primary_process());
+
+    let queue = client_state::IpcQueue::new();
+    let coordinator = ShutdownCoordinator::default();
+    assert!(coordinator.begin_shutdown(Vec::<String>::new()).is_some());
+    assert!(coordinator.begin_cleanup());
+    coordinator.prepare_client_state_release(&queue, &state).unwrap();
+    assert!(queue.enqueue(Box::new(|| {})).is_err());
+    assert_eq!(sync_attempts.load(Ordering::SeqCst), 1);
 }
 
 #[test]
