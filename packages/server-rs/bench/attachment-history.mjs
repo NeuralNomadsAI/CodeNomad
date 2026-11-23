@@ -3,7 +3,13 @@ import { createHash } from "node:crypto"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import { crc32 } from "node:zlib"
-import { fromDist } from "./fixtures.mjs"
+import { fromDist, privateGit } from "./fixtures.mjs"
+
+export async function prepare({ root }) {
+  // Strict media ownership refuses Git environment overrides. A private
+  // enclosing checkout stops discovery before reaching the CodeNomad checkout.
+  await privateGit(root, "attachment-history-boundary")
+}
 
 const MiB = 1024 * 1024
 const referenceHeaders = { "x-codenomad-user-files": "reference-v1" }
@@ -108,7 +114,7 @@ async function toolMedia(call, client, id, root, location, other, database) {
   database.prepare("UPDATE session_v2 SET revert=? WHERE id=?").run(JSON.stringify({ messageID: message }), session.id)
   const undoStatus = await assertNoImage(reference, 404)
   database.prepare("UPDATE session_v2 SET revert=NULL WHERE id=?").run(session.id)
-  await client.session.move({ sessionID: session.id, location: { directory: other } })
+  await client.session.move({ sessionID: session.id, directory: other })
   const movedStatus = await assertNoImage(reference, 403)
   return { order: digest(order.join("\n")), cursors, listDeferred: true,
     reference: reference.replace(root, "/api/workspaces/workspace").replace(session.id, "session"),
