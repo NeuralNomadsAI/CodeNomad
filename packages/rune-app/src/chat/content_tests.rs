@@ -222,7 +222,7 @@ fn transcript_keeps_and_copies_a_patch_with_long_unicode_headers() {
 
 #[test]
 fn wrapped_update_patch_uses_the_shared_diff_and_copies_the_original() {
-    let patch = "```diff\n*** Begin Patch\n*** Update File: src/demo.rs\n@@\n-return 7;\n+return 8;\n*** End Patch\n```";
+    let patch = "```diff\n*** Begin Patch\n\n*** Update File: src/demo.rs\n@@\n-return 7;\n+return 8;\n*** End Patch\n```";
     let mut state = init();
     state.messages = vec![history::decode_message(&json!({"id":"wrapped","type":"assistant","time":{"completed":1},"content":[
         {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","metadata":{"diff":patch}}}
@@ -247,8 +247,8 @@ fn edit_cards(count: usize) -> State {
     let cards: Vec<_> = (0..count)
         .map(|i| {
             json!({"type":"tool","name":"edit","id":format!("edit{i}"),
-                "state":{"status":"completed","input":{"filePath":"demo.rs"},
-                "metadata":{"diff":"@@ -1 +1 @@\n-before\n+after"}}})
+                "state":{"status":"completed","input":{},
+                "metadata":{"files":[{"file":"demo.rs","patch":"@@ -1 +1 @@\n-before\n+after"}]}}})
         })
         .collect();
     let mut state = init();
@@ -347,10 +347,50 @@ fn compact_view_mode_and_unified_wrap_are_local_to_the_card() {
 }
 
 #[test]
+fn a_larger_history_viewport_retries_an_already_mounted_diff() {
+    let mut rt = Runtime::new(edit_cards(12), view, (960.0, 360.0), Env::new(false, 1.0));
+    rt.frame(0.0);
+    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
+    for _ in 0..24 {
+        rt.frame(1.0 / 60.0);
+    }
+    let card = "toggle-tool-cards:5:edit1";
+    let top = |rt: &Runtime<State>| {
+        rt.elements()
+            .into_iter()
+            .find(|e| !e.exiting && e.key.as_deref() == Some(card))
+            .unwrap()
+            .rect[1]
+    };
+    let before = top(&rt);
+    assert!(rt.find("tool-cards:5:edit1-copy-patch").is_none());
+    rt.set_viewport((960.0, 960.0), 1.0);
+    for _ in 0..24 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!((before - top(&rt)).abs() < 1.0);
+    assert!(rt.find("tool-cards:5:edit1-copy-patch").is_some());
+}
+
+#[test]
 fn scrolling_one_message_can_show_more_diffs_than_the_cache_retains() {
-    let mut rt = Runtime::new(edit_cards(33), view, (960.0, 720.0), Env::new(false, 1.0));
+    let mut rt = Runtime::new(
+        edit_cards(33),
+        |s, cx| crate::strings::with_locale("en", || view(s, cx)),
+        (500.0, 720.0),
+        Env::new(false, 1.0),
+    );
     let mut seen = std::collections::HashSet::new();
     rt.frame(0.0);
+    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
+    for _ in 0..24 {
+        rt.frame(1.0 / 60.0);
+    }
+    let key = "tool-cards:5:edit0-mode";
+    let (x, y) = rt.find(key).unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
     for y in (0..10_000).step_by(280) {
         rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, y as f32));
         for _ in 0..4 {
@@ -370,6 +410,18 @@ fn scrolling_one_message_can_show_more_diffs_than_the_cache_retains() {
         }
     }
     assert_eq!(seen.len(), 33);
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|e| !e.exiting && e.key.as_deref() == Some(key))
+    );
+    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
+    for _ in 0..24 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rt.elements().into_iter().any(|e| !e.exiting
+        && e.key.as_deref() == Some(key)
+        && e.label.as_deref() == Some("Switch to unified view")));
 }
 
 #[test]
