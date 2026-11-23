@@ -55,6 +55,8 @@ struct State {
     #[cfg(target_arch = "wasm32")]
     pairing: platform::pairing::Recovery,
     transcript_display: transcript_state::Display,
+    rail_excerpts: timeline::ExcerptCache,
+    window_size: [f32; 2],
     tool_diff_preferences: chat::ToolDiffPreferences,
     screen: Screen,
     settings: settings::Host,
@@ -108,6 +110,8 @@ fn init() -> State {
         #[cfg(target_arch = "wasm32")]
         pairing: Default::default(),
         transcript_display: Default::default(),
+        rail_excerpts: Default::default(),
+        window_size: [0.0; 2],
         tool_diff_preferences: Default::default(),
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),

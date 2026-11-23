@@ -7,15 +7,14 @@ use codenomad_client::{
     timeline::{Excerpt, PREVIEW_BATCH},
 };
 use rune::{El, Tx};
+use rune_theme_codenomad::timeline::preview as theme;
 use std::{
     borrow::Cow,
     collections::{HashMap, VecDeque},
 };
 
-const CACHE: usize = 512;
 const FRESH_FOR: f64 = 30.0;
 const DELAY: f64 = 0.08;
-const OPEN_DELAY: f64 = 0.2;
 const CLOSE_DELAY: f64 = 0.16;
 const MAX_UNITS: usize = 4096;
 
@@ -28,13 +27,50 @@ pub(super) struct Previews {
     opening: Option<(String, f64)>,
     closing: Option<f64>,
     over_preview: bool,
-    placement: Option<(f32, f32, f32)>,
+    placement: Option<(f32, f32, f32, [f32; 2])>,
     plan: Option<(usize, usize, u64, bool)>,
     wanted: Vec<String>,
     due: Option<f64>,
     flight: Option<(Sender<()>, Receiver<Result<Vec<Excerpt>>>)>,
-    cache: HashMap<String, (Option<Excerpt>, f64)>,
-    order: VecDeque<String>,
+    cache_scope: Option<u64>,
+}
+
+#[derive(Default)]
+pub(crate) struct ExcerptCache {
+    next_scope: u64,
+    entries: HashMap<u64, HashMap<String, (Option<Excerpt>, f64)>>,
+    order: VecDeque<(u64, String)>,
+}
+
+impl ExcerptCache {
+    fn scope(&mut self) -> u64 {
+        let scope = self.next_scope;
+        self.next_scope += 1;
+        scope
+    }
+
+    fn get(&self, scope: Option<u64>, id: &str) -> Option<&(Option<Excerpt>, f64)> {
+        self.entries.get(&scope?)?.get(id)
+    }
+
+    fn remember(&mut self, scope: u64, id: String, entry: Option<Excerpt>, now: f64) {
+        self.order
+            .retain(|(owner, key)| *owner != scope || key != &id);
+        self.order.push_back((scope, id.clone()));
+        self.entries
+            .entry(scope)
+            .or_default()
+            .insert(id, (entry, now));
+        if self.order.len() > 512
+            && let Some((scope, id)) = self.order.pop_front()
+            && let Some(entries) = self.entries.get_mut(&scope)
+        {
+            entries.remove(&id);
+            if entries.is_empty() {
+                self.entries.remove(&scope);
+            }
+        }
+    }
 }
 
 impl Previews {
@@ -52,17 +88,15 @@ impl Previews {
         self.due = None;
         self.flight = None;
     }
+}
 
-    fn remember(&mut self, id: String, entry: Option<Excerpt>, now: f64) {
-        self.order.retain(|key| key != &id);
-        self.order.push_back(id.clone());
-        self.cache.insert(id, (entry, now));
-        if self.cache.len() > CACHE
-            && let Some(oldest) = self.order.pop_front()
-        {
-            self.cache.remove(&oldest);
-        }
+pub(crate) fn window_layout(s: &mut State, size: [f32; 2]) -> bool {
+    if s.window_size == size {
+        return false;
     }
+    s.window_size = size;
+    (s.wake)();
+    true
 }
 
 pub(crate) fn dismiss(s: &mut State) -> bool {
@@ -89,19 +123,21 @@ pub(super) fn marker(s: &State, index: usize, button: El) -> El {
     let button = if timeline.previews.target.as_ref() == Some(&id)
         && let Some(text) = preview_text(s, &timeline.markers[index])
     {
-        let excerpt = super::view::excerpt(&text);
+        let button = button.described_by(theme::KEY);
         if timeline.jump.active.as_deref() == Some(id.as_str()) {
             button.description(format!(
-                "{}. {excerpt}",
-                crate::strings::t("messageTimeline.current")
+                "{}. {}",
+                crate::strings::t("messageTimeline.current"),
+                theme::description(&text),
             ))
         } else {
-            button.description(excerpt)
+            button
         }
     } else {
         button
     };
-    button.on_hover_change(move |s: &mut State, inside, _| {
+    // Rune delays only unpressed hover; a held touch cannot open an excerpt.
+    theme::marker_hover(button).on_hover_change(move |s: &mut State, inside, _| {
         if !s.current_scope(&scope) {
             return;
         }
@@ -138,8 +174,8 @@ fn candidates(s: &State, visible: &[Marker], target: Option<&str>, now: f64) -> 
             break;
         }
         ids.push(&marker.message);
-        if p.cache
-            .get(marker.message.as_str())
+        if s.rail_excerpts
+            .get(p.cache_scope, marker.message.as_str())
             .is_some_and(|(_, at)| now - at < FRESH_FOR)
             || s.messages.iter().any(|row| row.id == marker.message)
         {
@@ -157,13 +193,18 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let now = tx.clock();
     let t = &s.transcript_display.timeline;
     let position = t.scroll.get().at;
-    let placement = (position.offset[1], position.viewport[1], t.width);
+    let placement = (
+        position.offset[1],
+        position.viewport[1],
+        t.width,
+        s.window_size,
+    );
     let range = rune_theme_codenomad::timeline::visible_markers(position, t.markers.len());
     let plan = (range.start, range.end, t.version, t.online);
     let visible = &t.markers[range];
     let focus = tx
         .focused()
-        .filter(|id| visible.iter().any(|m| m.id == *id))
+        .filter(|id| tx.focus_visible() && visible.iter().any(|m| m.id == *id))
         .map(str::to_owned);
     let p = &t.previews;
     let rail_scrolled = p.placement.is_some_and(|old| old != placement);
@@ -172,7 +213,7 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         .as_deref()
         .filter(|id| visible.iter().any(|m| m.id == *id));
     let focus_moved = p.focus != focus;
-    let keyboard_moved = focus_moved && focus.is_some() && tx.focus_visible();
+    let keyboard_moved = focus_moved && focus.is_some();
     let wanted_target = if keyboard_moved {
         focus.as_deref()
     } else {
@@ -183,13 +224,15 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         .flatten()
         .filter(|id| focus_moved || p.dismissed.as_deref() != Some(*id))
         .map(str::to_owned);
+    let pointer_target =
+        requested.as_deref().is_some_and(|id| hovered == Some(id)) && !keyboard_moved;
     let requested_changed = requested.as_deref() != p.opening.as_ref().map(|(id, _)| id.as_str());
     let wanted = (p.plan != Some(plan) || requested_changed)
         .then(|| candidates(s, visible, requested.as_deref(), now));
     let backend = t.backend.clone().filter(|_| t.online);
     let reads = s.reads.clone();
     let wake = s.wake.clone();
-    let p = &mut owner(s).previews;
+    let p = &mut s.transcript_display.timeline.previews;
     p.placement = Some(placement);
     p.plan = Some(plan);
     if rail_scrolled {
@@ -204,7 +247,16 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }
     p.focus = focus;
     if requested_changed {
-        p.opening = requested.map(|id| (id, now + OPEN_DELAY));
+        p.opening = requested.map(|id| {
+            (
+                id,
+                if pointer_target {
+                    now
+                } else {
+                    now + theme::OPEN_DELAY.as_secs_f64()
+                },
+            )
+        });
     }
     let old = p.target.clone();
     if rail_scrolled {
@@ -246,13 +298,14 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     {
         match result {
             Ok(entries) => {
+                let scope = *p.cache_scope.get_or_insert_with(|| s.rail_excerpts.scope());
                 let mut entries: HashMap<_, _> = entries
                     .into_iter()
                     .map(|entry| (entry.id.clone(), entry))
                     .collect();
                 for id in p.wanted.clone() {
                     let entry = entries.remove(&id);
-                    p.remember(id, entry, now);
+                    s.rail_excerpts.remember(scope, id, entry, now);
                 }
                 p.plan = None;
                 changed = true;
@@ -329,7 +382,11 @@ fn preview_text<'a>(s: &'a State, marker: &Marker) -> Option<Cow<'a, str>> {
             _ => excerpt_prefix(block.text).into(),
         }
     } else {
-        let entry = t.previews.cache.get(&marker.message)?.0.as_ref()?;
+        let entry = s
+            .rail_excerpts
+            .get(t.previews.cache_scope, &marker.message)?
+            .0
+            .as_ref()?;
         match marker.kind {
             MarkerKind::Tool => excerpt_prefix(&entry.tools),
             MarkerKind::Reasoning => return None,
@@ -353,14 +410,13 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
     let id = id.to_owned();
     let scope = s.input_scope.clone();
     Some(
-        rune_theme_codenomad::timeline::preview::surface(&id, &text).on_hover_change(
-            move |s: &mut State, inside, _| {
+        rune_theme_codenomad::timeline::preview::surface(&id, &text, s.window_size)?
+            .on_hover_change(move |s: &mut State, inside, _| {
                 if s.current_scope(&scope) && owner(s).previews.target.as_ref() == Some(&id) {
                     owner(s).previews.over_preview = inside;
                     (s.wake)();
                 }
-            },
-        ),
+            }),
     )
 }
 
@@ -386,8 +442,10 @@ mod tests {
         let markers = (0..40)
             .map(|i| marker(i, MarkerKind::Assistant))
             .collect::<Vec<_>>();
-        let previews = &mut owner(&mut s).previews;
-        previews.remember("message-1".into(), None, 10.0);
+        let scope = s.rail_excerpts.scope();
+        owner(&mut s).previews.cache_scope = Some(scope);
+        s.rail_excerpts
+            .remember(scope, "message-1".into(), None, 10.0);
         let mut visible = vec![
             marker(0, MarkerKind::Reasoning),
             marker(2, MarkerKind::Tool),
@@ -400,32 +458,49 @@ mod tests {
         assert!(candidates(&s, &visible[..4], None, 41.0).contains(&"message-1".into()));
     }
 
-    #[test]
-    fn focused_marker_opens_and_escape_keeps_the_same_focus() {
+    fn runtime(text: String, size: (f32, f32)) -> Runtime<State> {
         fn view(s: &State, cx: &mut Cx<State>) -> El {
             rune_theme_codenomad::layout::render(cx, |cx| crate::chat::view::chat_view(s, cx))
+                .on_layout_tx(|s, [_, _, w, h], tx| {
+                    if !window_layout(s, [w, h]) {
+                        tx.live_only();
+                    }
+                })
         }
         let mut s = crate::init();
-        let t = owner(&mut s);
-        t.width = 800.0;
-        t.markers.push(marker(0, MarkerKind::Assistant));
-        t.previews.remember(
+        let scope = s.rail_excerpts.scope();
+        s.rail_excerpts.remember(
+            scope,
             "message-0".into(),
             Some(Excerpt {
                 id: "message-0".into(),
-                text: "**Cached rail excerpt**".into(),
+                text,
                 tools: String::new(),
             }),
             0.0,
         );
-        let mut rt = Runtime::new(s, view, (800., 600.), Env::new(false, 1.0));
+        let t = owner(&mut s);
+        t.width = size.0;
+        t.previews.cache_scope = Some(scope);
+        t.markers.push(marker(0, MarkerKind::Assistant));
+        let mut rt = Runtime::new(s, view, size, Env::new(false, 1.0));
         rt.poll = Some(crate::poll);
         rt.on_key = Some(crate::shell::keys);
-        rt.frame(0.016);
-        rt.update(|_, tx| tx.focus_when_shown("marker-0", true));
+        settle(&mut rt);
+        rt
+    }
+
+    fn settle(rt: &mut Runtime<State>) {
         for _ in 0..30 {
             rt.frame(0.016);
         }
+    }
+
+    #[test]
+    fn focused_marker_opens_and_escape_keeps_the_same_focus() {
+        let mut rt = runtime("**Cached rail excerpt**".into(), (800., 600.));
+        rt.update(|_, tx| tx.focus_when_shown("marker-0", true));
+        settle(&mut rt);
         assert!(rt.find("timeline-peek").is_some());
         rt.key(KeyEvent {
             key: Key::Escape,
@@ -469,5 +544,106 @@ mod tests {
             rt.frame(0.016);
         }
         assert!(rt.find("timeline-peek").is_none());
+    }
+
+    #[test]
+    fn touch_never_opens_and_a_clicked_marker_does_not_keep_the_preview() {
+        let mut rt = runtime("Touch fixture".into(), (800., 600.));
+        let (x, y) = rt.find("marker-0").unwrap();
+        rt.touch(1, rune::TouchPhase::Started, x, y, 1.);
+        for _ in 0..34 {
+            rt.frame(0.016);
+            assert!(rt.find("timeline-peek").is_none());
+        }
+        rt.touch(1, rune::TouchPhase::Ended, x, y, 1.54);
+        settle(&mut rt);
+        assert!(rt.find("timeline-peek").is_none());
+        let mut rt = runtime("Click fixture".into(), (800., 600.));
+        let (x, y) = rt.find("marker-0").unwrap();
+        rt.pointer_move(x, y);
+        settle(&mut rt);
+        assert!(rt.find("timeline-peek").is_some());
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        // Hold the marker's non-keyboard focus even when the fixture cannot resolve its jump.
+        rt.update(|_, tx| tx.focus_when_shown("marker-0", false));
+        settle(&mut rt);
+        rt.pointer_move(10., y);
+        settle(&mut rt);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|el| el.key.as_deref() == Some("marker-0") && el.focused && !el.focus_visible)
+        );
+        assert!(rt.find("timeline-peek").is_none());
+    }
+
+    #[test]
+    fn short_window_scrolls_and_exposes_the_complete_rendered_description() {
+        let text = format!(
+            "**Beginning** [link](https://example.invalid)\n\n{}Final `token`",
+            "Line of text.\n\n".repeat(80)
+        );
+        let mut rt = runtime(text, (800., 290.));
+        rt.update(|_, tx| tx.focus_when_shown("marker-0", true));
+        settle(&mut rt);
+        let key = rune_theme_codenomad::timeline::preview::KEY;
+        let [x, y, w, h] = rt.presented(key).unwrap().0;
+        assert!(y >= 0. && y + h <= 290. && h <= 258.);
+        fn named<'a>(node: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+            if node["key"] == key {
+                Some(node)
+            } else {
+                node["children"]
+                    .as_array()?
+                    .iter()
+                    .find_map(|child| named(child, key))
+            }
+        }
+        let tree = rt.accessibility_json();
+        let button = named(&tree, "marker-0").unwrap();
+        assert_eq!(
+            button["description"],
+            format!("Beginning link {}Final token", "Line of text. ".repeat(80))
+        );
+        let tail = |rt: &Runtime<State>| {
+            rt.elements()
+                .into_iter()
+                .find(|el| {
+                    el.path.contains(key)
+                        && el
+                            .text
+                            .as_deref()
+                            .is_some_and(|text| text.starts_with("Beginning"))
+                })
+                .map(|el| el.rect[1])
+        };
+        let before = tail(&rt).unwrap();
+        rt.pointer_move(x + w / 2., y + h / 2.);
+        rt.wheel(x + w / 2., y + h / 2., -3500.);
+        settle(&mut rt);
+        assert!(rt.find(key).is_some());
+        assert!(tail(&rt).is_none_or(|y| y < before));
+    }
+
+    #[test]
+    fn excerpt_limit_is_shared_by_tab_caches_but_not_between_windows() {
+        let mut s = crate::init();
+        let tab = s.rail_excerpts.scope();
+        owner(&mut s).previews.cache_scope = Some(tab);
+        for i in 0..512 {
+            s.rail_excerpts
+                .remember(tab, format!("message-{i}"), None, 0.);
+        }
+        let display = std::mem::take(&mut s.transcript_display);
+        let other = s.rail_excerpts.scope();
+        s.rail_excerpts
+            .remember(other, "message-0".into(), None, 1.);
+        s.transcript_display = display;
+        assert_eq!(s.rail_excerpts.order.len(), 512);
+        let restored = owner(&mut s).previews.cache_scope;
+        assert!(s.rail_excerpts.get(restored, "message-0").is_none());
+        assert!(s.rail_excerpts.get(Some(other), "message-0").is_some());
+        assert!(crate::init().rail_excerpts.order.is_empty());
     }
 }

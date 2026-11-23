@@ -279,10 +279,24 @@ try {
             assert(toolBox)
             const pages=()=>routes.filter(route=>route.path.endsWith('/session-history/window')).length
             const noPage=pages()
-            await page.mouse.move(toolBox.x+toolBox.width/2,toolBox.y+toolBox.height/2)
             const tip=page.locator('[data-rune-a11y] p').and(page.getByText('Indexed tool excerpt message-00000',{exact:true}))
+            await page.mouse.move(box.x-420,box.y+190)
+            const cdp=await context.newCDPSession(page)
+            const touchPoint={x:toolBox.x+toolBox.width/2,y:toolBox.y+toolBox.height/2}
+            await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[touchPoint]})
+            try{
+              await page.waitForTimeout(280)
+              assert.equal(await tip.count(),0,'Holding a touch must not open a preview')
+            }finally{
+              await cdp.send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]})
+              await cdp.detach()
+            }
+            await page.mouse.move(touchPoint.x,touchPoint.y)
             await tip.waitFor()
-            await tool.and(rail.locator('[aria-description*="Indexed tool excerpt message-00000"]')).waitFor()
+            const described=tool.and(rail.locator('[aria-description$="Final token"]'))
+            await described.waitFor()
+            assert.equal(await described.getAttribute('aria-description'),
+              'Indexed tool excerpt message-00000 '+'Additional visible text. '.repeat(25)+'Final token')
             assert.equal(pages(),noPage,'Preview must not page the transcript')
             const tipBox=await tip.boundingBox()
             assert(tipBox&&tipBox.x>=0&&tipBox.y>=0&&tipBox.x+tipBox.width<=width+1&&tipBox.y+tipBox.height<=height+1)
@@ -324,6 +338,7 @@ try {
             await reasoning.and(rail.locator(`[aria-description^="${messages['messageTimeline.current']}"]`)).waitFor()
             assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1,'A resident jump uses no window')
             await page.mouse.move(box.x-40,box.y+25)
+            await reasoning.and(rail.locator(`[aria-description="${messages['messageTimeline.current']}"]`)).waitFor()
             await page.keyboard.press('Shift+Tab')
             // The mirror buttons are not DOM tab stops; Rune keeps focus on its canvas.
             await page.waitForFunction(label=>{

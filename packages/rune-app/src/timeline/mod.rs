@@ -7,6 +7,7 @@ pub(crate) mod search;
 mod tests;
 mod view;
 pub(crate) use navigation::{admit, cancel_jump, failed, input_precedes_admission, restore_search};
+pub(crate) use preview::{ExcerptCache, window_layout as preview_window_layout};
 pub(crate) use preview::{dismiss as dismiss_preview, overlay as preview_overlay};
 pub(crate) use reading_line::watch as watch_block;
 pub(crate) use view::poll_edge;

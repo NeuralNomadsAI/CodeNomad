@@ -34,5 +34,11 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         }
         body
     })
-    .on_layout_tx(chat::ToolDiffPreferences::layout)
+    .on_layout_tx(|s, [_, _, w, h], tx| {
+        let changed = chat::ToolDiffPreferences::layout(s, w)
+            | crate::timeline::preview_window_layout(s, [w, h]);
+        if !changed {
+            tx.live_only();
+        }
+    })
 }

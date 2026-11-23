@@ -51,16 +51,16 @@ impl Preferences {
         }
     }
 
-    pub(crate) fn layout(s: &mut State, [_, _, width, _]: [f32; 4], tx: &mut Tx) {
+    pub(crate) fn layout(s: &mut State, width: f32) -> bool {
         let compact = width <= 640.0;
         if compact == s.tool_diff_preferences.compact {
-            tx.live_only();
-            return;
+            return false;
         }
         s.tool_diff_preferences.compact = compact;
         s.tool_diff_preferences.layout_epoch += 1;
         Self::sync(s);
         s.revision += 1;
+        true
     }
 
     pub(crate) fn sync(s: &mut State) {

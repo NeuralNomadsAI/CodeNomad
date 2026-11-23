@@ -234,8 +234,8 @@ const upstream=createServer(async(req,res)=>{
       if(mobile?.held){res.statusCode=503;return json({})}
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
       streams.add(res)
-      const heartbeat=webSearch||webTimeline?setInterval(()=>res.write(': heartbeat\n\n'),15_000):undefined
-      req.on('close',()=>{clearInterval(heartbeat);streams.delete(res)})
+      const heartbeat=webSearch||webTimeline?setInterval(()=>res.write(': heartbeat\n\n'),15_000).unref():undefined
+      res.once('close',()=>{clearInterval(heartbeat);streams.delete(res)})
       return
     }
     if((webMobile||compare)&&req.method==='GET'&&url.pathname==='/api/command')return json({data:[]})
@@ -349,7 +349,8 @@ const upstream=createServer(async(req,res)=>{
       assert(input.messageIDs.length>0&&input.messageIDs.length<=12)
       assert.equal(new Set(input.messageIDs).size,input.messageIDs.length)
       return json({output:{status:'previews',entries:input.messageIDs.filter(id=>rows.some(row=>row.id===id))
-        .map(id=>({id,text:`**Indexed excerpt ${id}**`,tools:`**Indexed tool excerpt ${id}**`}))}})
+        .map(id=>({id,text:`**Indexed excerpt ${id}**`,tools:`**Indexed tool excerpt ${id}**${id==='message-00000'
+          ? '\n\n'+('Additional visible text.\n\n'.repeat(25))+'Final `token`' : ''}`}))}})
     }
     if(url.pathname==='/api/rpc/codenomad.session-pruning/outlineLayout'){
       const {input}=JSON.parse(raw),rows=stores.get(input.sessionID).rows
