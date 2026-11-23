@@ -80,12 +80,25 @@ pub(super) fn conflict_label(preferences: &super::Preferences) -> Vec<&'static s
     .filter_map(|(id, default, label)| {
         let mut shell = preferences.shortcut(id).map_or_else(
             || vec![Chord::new(ChordKey::Char(default)).with(ChordMod::Primary)],
-            |rules| rules.iter().filter_map(decode).collect(),
+            |rules| rules.iter().filter_map(shell_chord).collect(),
         );
         shell.retain(|chord| save.iter().any(|save| save.same_keys(chord, platform)));
         (!shell.is_empty()).then_some(label)
     })
     .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn shell_chord(rule: &Value) -> Option<Chord> {
+    let name = rule["key"].as_str()?;
+    let chord = decode(rule)?;
+    match chord.key() {
+        ChordKey::Char(c) if name.chars().eq([c]) || name.eq_ignore_ascii_case(&c.to_string()) => {
+            Some(chord)
+        }
+        ChordKey::Function(n) if name.eq_ignore_ascii_case(&format!("f{n}")) => Some(chord),
+        _ => None,
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -95,7 +108,9 @@ pub(super) fn record(event: &KeyEvent, tx: &Tx) -> Option<Value> {
         c.to_string()
     } else {
         match &event.key {
-            Key::Command(c) => c.to_lowercase().to_string(),
+            Key::Command(c) => logical_command(*c, event, tx.key_base())
+                .to_lowercase()
+                .to_string(),
             Key::Text(text) => text.to_lowercase(),
             Key::Function(n) => format!("f{n}"),
             Key::Tab => "tab".into(),
@@ -139,14 +154,30 @@ pub(crate) fn matches_save(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
     let preferences = s.settings.shared.borrow();
     file_save(preferences.shortcut(FILE_SAVE))
         .iter()
-        .any(|chord| matches(*chord, event, physical_slot(tx)))
+        .any(|chord| matches(*chord, event, physical_slot(tx), tx.key_base()))
 }
 
-fn matches(chord: Chord, event: &KeyEvent, physical: Option<char>) -> bool {
+fn logical_command(typed: char, event: &KeyEvent, base: Option<char>) -> char {
+    // Rune substitutes the US-position character for non-ASCII native Ctrl chords.
+    if cfg!(not(any(target_os = "macos", target_arch = "wasm32")))
+        && typed.is_ascii()
+        && event.mods.ctrl
+        && !event.mods.alt
+        && !event.mods.shift
+    {
+        return base.filter(|c| !c.is_ascii()).unwrap_or(typed);
+    }
+    typed
+}
+
+fn matches(chord: Chord, event: &KeyEvent, physical: Option<char>, base: Option<char>) -> bool {
+    if chord.has(ChordMod::Shift) != event.mods.shift {
+        return false;
+    }
     // Unlike Rune's menu chords, Solid uses the typed character outside digit/bracket slots.
     if let ChordKey::Char(expected) = chord.key() {
         let char = physical.or_else(|| match &event.key {
-            Key::Command(c) => Some(*c),
+            Key::Command(c) => Some(logical_command(*c, event, base)),
             Key::Text(text) => text.chars().next().filter(|c| c.len_utf8() == text.len()),
             _ => None,
         });
@@ -214,7 +245,53 @@ fn logical_punctuation_matches_only_the_character_solid_records() {
             ..Mods::default()
         },
     };
-    assert!(!matches(Chord::parse("shift+.").unwrap(), &event, None));
-    assert!(matches(Chord::parse("shift+>").unwrap(), &event, None));
-    assert!(matches(Chord::parse("shift+1").unwrap(), &event, Some('1')));
+    assert!(!matches(
+        Chord::parse("shift+.").unwrap(),
+        &event,
+        None,
+        Some('.')
+    ));
+    assert!(matches(
+        Chord::parse("shift+>").unwrap(),
+        &event,
+        None,
+        Some('.')
+    ));
+    assert!(!matches(
+        Chord::parse(">").unwrap(),
+        &event,
+        None,
+        Some('.')
+    ));
+    assert!(matches(
+        Chord::parse("shift+1").unwrap(),
+        &event,
+        Some('1'),
+        None
+    ));
+}
+
+#[cfg(all(test, target_os = "windows"))]
+#[test]
+fn localized_ctrl_letter_uses_the_key_rune_reports_before_us_fallback() {
+    let event = KeyEvent {
+        key: Key::Command(';'),
+        mods: rune::Mods {
+            ctrl: true,
+            cmd: true,
+            ..Default::default()
+        },
+    };
+    assert!(matches(
+        Chord::parse("mod+ö").unwrap(),
+        &event,
+        None,
+        Some('ö')
+    ));
+    assert!(!matches(
+        Chord::parse("mod+;").unwrap(),
+        &event,
+        None,
+        Some('ö')
+    ));
 }
