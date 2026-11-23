@@ -220,6 +220,8 @@
   "contextUsagePanel.labels.totalInput": "Всего ввод",
   "contextUsagePanel.labels.totalOutput": "Всего вывод",
   "contextUsagePanel.labels.totalReasoning": "Всего рассуждений",
+  "contextUsagePanel.partialTotal": "Частичный итог по разговору",
+  "contextUsagePanel.totalUnavailable": "Итог по разговору недоступен",
   "directoryBrowser.close": "Закрыть",
   "directoryBrowser.createFolder.cancelLabel": "Отмена",
   "directoryBrowser.createFolder.confirmLabel": "Создать",

@@ -75,6 +75,7 @@ fn main() {
             "memory_cleanup_result",
             "memory_cleanup_claim",
             "window_control",
+            "start_native_window_drag",
             "owned_webview_zoom",
             "popup_titlebar_menu",
             "open_remote_window",

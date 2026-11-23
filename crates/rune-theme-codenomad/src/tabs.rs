@@ -4,7 +4,7 @@ use crate::{
     layout::{self, Layout},
     tokens,
 };
-use rune::{Color, Cx, El, Icon, Tx};
+use rune::{Color, El, Icon, Tx};
 use rune_kit::{Button, ButtonVariant};
 use std::rc::Rc;
 
@@ -20,6 +20,71 @@ static FOLDER: Icon = Icon {
     view: 24.0,
     body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></g>"#,
 };
+
+const TOUCH_BAR_TARGET: f32 = 44.0;
+
+pub enum BarAction {
+    Settings,
+    Conversation,
+}
+
+impl BarAction {
+    pub fn button<S: 'static>(
+        self,
+        touch: bool,
+        label: &'static str,
+        invoke: impl Fn(&mut S) + 'static,
+    ) -> El {
+        if !touch {
+            return layout::button(label, false, invoke);
+        }
+        use crate::shell::icons;
+        let icon = match self {
+            Self::Settings => &icons::SETTINGS,
+            Self::Conversation => &icons::CONVERSATION,
+        };
+        touch_bar_button(icon, label, label, move |s, _| invoke(s))
+    }
+}
+
+pub(crate) fn touch_bar_button<S: 'static>(
+    icon: &'static Icon,
+    label: &str,
+    help: &str,
+    invoke: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    bar_button(icon, label, help, TOUCH_BAR_TARGET, invoke)
+}
+
+fn bar_button<S: 'static>(
+    icon: &'static Icon,
+    label: &str,
+    help: &str,
+    side: f32,
+    invoke: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let t = tokens(layout::dark());
+    rune::row()
+        .role("button")
+        .focusable(true)
+        .label(label)
+        .help(help)
+        .size(side, side)
+        .center()
+        .fill(t.color("new-tab-bg"))
+        .hover(t.color("new-tab-hover-bg"))
+        .focus_ring(
+            t.metric("windowIconFocus", "outlineWidth").px(),
+            t.metric("button", "borderTopWidth").px(),
+            t.color("accent-primary"),
+        )
+        .on_press_tx(invoke)
+        .child(
+            rune::icon(icon, t.length(Length::Icon).px())
+                .color(t.color("new-tab-text"))
+                .a11y_hidden(),
+        )
+}
 
 #[derive(Clone, Copy)]
 pub enum Status {
@@ -254,43 +319,34 @@ pub fn tab<S: 'static>(
     focus_layers(slot.locale_direction(locale), &key, "tabFocus").locale_direction(locale)
 }
 pub fn strip<S: 'static>(
-    _cx: &mut Cx<S>,
+    touch: bool,
     locale: &str,
     tabs: &[ProjectTab<'_>],
     active: Option<&str>,
     on_select: impl Fn(&mut S, &str, &mut Tx) + 'static,
     on_close: impl Fn(&mut S, &str, &mut Tx) + 'static,
     on_new: impl Fn(&mut S, &mut Tx) + 'static,
+    actions: impl IntoIterator<Item = El>,
 ) -> El {
     let dark = layout::dark();
     let t = tokens(dark);
     let word = |key| catalogue::message(locale, key).expect("generated tab catalogue key");
-    let new_size = t.length(Length::TouchCompact).px();
-    let new = rune::row()
-        .key("project-tabs-new")
-        .role("button")
-        .focusable(true)
-        .label(word("instanceTabs.new.ariaLabel"))
-        .help(word("instanceTabs.new.title"))
-        .size(new_size, new_size)
-        .center()
-        .radius(t.number("radius-md").px())
-        .fill(t.color("new-tab-bg"))
-        .hover(t.color("new-tab-hover-bg"))
-        .focus_ring(
-            t.metric("windowIconFocus", "outlineWidth").px(),
-            t.metric("button", "borderTopWidth").px(),
-            t.color("accent-primary"),
-        )
-        .on_press_tx(on_new)
-        .child(
-            rune::icon(&PLUS, t.length(Length::Icon).px())
-                .color(t.color("new-tab-text"))
-                .a11y_hidden(),
-        );
+    let new_size = if touch {
+        TOUCH_BAR_TARGET
+    } else {
+        t.length(Length::TouchCompact).px()
+    };
+    let new = bar_button(
+        &PLUS,
+        word("instanceTabs.new.ariaLabel"),
+        word("instanceTabs.new.title"),
+        new_size,
+        on_new,
+    )
+    .key("project-tabs-new");
     let select = Rc::new(on_select);
     let close = Rc::new(on_close);
-    let height = t.metric("tabActive", "height").px();
+    let height = t.metric("tabActive", "height").px().max(new_size);
     let items = tabs.iter().enumerate().map(|(i, descriptor)| {
         let (select, close) = (select.clone(), close.clone());
         tab(
@@ -338,7 +394,6 @@ pub fn strip<S: 'static>(
         .key("project-tabs")
         .w_full()
         .h(height)
-        .shrink()
         .min_w(0.0)
         .items_center()
         .fill(t.color("surface-secondary"))
@@ -352,12 +407,21 @@ pub fn strip<S: 'static>(
                 .child(list),
         )
         .child(new)
+        .child(rune::spacer())
+        .child(
+            rune::row()
+                .key("project-tabs-actions")
+                .items_center()
+                .gap(t.space(crate::Space::Xs).px())
+                .children(actions),
+        )
         .locale_direction(locale)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rune::Cx;
     struct App {
         active: String,
         closed: Vec<String>,
@@ -365,30 +429,32 @@ mod tests {
         locale: &'static str,
     }
     fn view(s: &App, cx: &mut Cx<App>) -> El {
-        layout::render(cx, |cx| {
-            strip(
-                cx,
-                s.locale,
-                &[
-                    ProjectTab {
-                        id: "a",
-                        title: "Alpha",
-                        status: Some(Status::Working),
-                        closable: true,
-                    },
-                    ProjectTab {
-                        id: "b",
-                        title: "Beta",
-                        status: Some(Status::Permission),
-                        closable: true,
-                    },
-                ],
-                Some(&s.active),
-                |s, id, _| s.active = id.into(),
-                |s, id, _| s.closed.push(id.into()),
-                |s, _| s.new += 1,
-            )
-        })
+        layout::render(cx, |_| strip_view(s, false, []))
+    }
+    fn strip_view(s: &App, touch: bool, actions: impl IntoIterator<Item = El>) -> El {
+        strip(
+            touch,
+            s.locale,
+            &[
+                ProjectTab {
+                    id: "a",
+                    title: "Alpha",
+                    status: Some(Status::Working),
+                    closable: true,
+                },
+                ProjectTab {
+                    id: "b",
+                    title: "Beta",
+                    status: Some(Status::Permission),
+                    closable: true,
+                },
+            ],
+            Some(&s.active),
+            |s: &mut App, id, _| s.active = id.into(),
+            |s, id, _| s.closed.push(id.into()),
+            |s, _| s.new += 1,
+            actions,
+        )
     }
     fn runtime(locale: &'static str) -> rune::Runtime<App> {
         let mut rt = rune::Runtime::new(
@@ -607,6 +673,75 @@ mod tests {
         let height = tokens(false).metric("tabActive", "height").px();
         assert_eq!(bounds("project-tabs"), [0.0, 0.0, 390.0, height]);
         assert_eq!(bounds("conversation"), [0.0, height, 390.0, 844.0 - height]);
+    }
+    #[test]
+    fn touch_actions_reserve_their_own_space_and_dispatch_separately() {
+        fn phone(s: &App, cx: &mut Cx<App>) -> El {
+            layout::render(cx, |_| {
+                let actions = [
+                    ("settings", BarAction::Settings),
+                    ("chat", BarAction::Conversation),
+                ]
+                .map(|(key, action)| {
+                    action
+                        .button(true, key, move |s: &mut App| s.closed.push(key.into()))
+                        .key(key)
+                });
+                let bell =
+                    crate::shell::notices::bell("bell", None, false, true, |s: &mut App, _| {
+                        s.closed.push("bell".into())
+                    });
+                strip_view(s, true, actions.into_iter().chain([bell]))
+            })
+        }
+        for locale in ["fr", "he"] {
+            for width in [320.0, 390.0, 430.0] {
+                let mut rt = rune::Runtime::new(
+                    App {
+                        active: "a".into(),
+                        closed: vec![],
+                        new: 0,
+                        locale,
+                    },
+                    phone,
+                    (width, 844.0),
+                    rune::Env::new(false, 1.0),
+                );
+                rt.frame(0.0);
+                let keys = [
+                    "project-tabs-new",
+                    "settings",
+                    "chat",
+                    crate::shell::notices::ANCHOR,
+                ];
+                let elements = rt.elements();
+                let mut bounds = keys.map(|key| {
+                    elements
+                        .iter()
+                        .find(|e| e.key.as_deref() == Some(key))
+                        .unwrap()
+                        .rect
+                });
+                bounds.sort_by(|a, b| a[0].total_cmp(&b[0]));
+                for [x, _, w, h] in bounds {
+                    assert!(
+                        w >= 44.0 && h >= 44.0 && x >= 0.0 && x + w <= width,
+                        "{locale}: {bounds:?}"
+                    );
+                }
+                assert!(
+                    bounds
+                        .windows(2)
+                        .all(|pair| pair[0][0] + pair[0][2] <= pair[1][0])
+                );
+                for key in keys {
+                    let point = rt.find(key).unwrap();
+                    tap(&mut rt, point);
+                }
+                assert_eq!(rt.state.new, 1);
+                assert_eq!(rt.state.closed, ["settings", "chat", "bell"]);
+            }
+        }
     }
     #[test]
     fn direction_and_words_follow_the_catalogue() {

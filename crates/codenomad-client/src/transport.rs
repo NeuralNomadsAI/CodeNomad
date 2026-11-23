@@ -8,6 +8,27 @@ pub struct DirectoryChange {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceEvent {
+    SessionCompacted {
+        id: String,
+    },
+    OpenCodeNotice {
+        id: String,
+        title: Option<String>,
+        body: String,
+        error: bool,
+        duration_ms: Option<u32>,
+    },
+    SessionRequest {
+        form: bool,
+        id: String,
+    },
+    SessionRequestResolved {
+        form: bool,
+        id: String,
+    },
+    SessionExecution {
+        notice: Option<String>,
+    },
     CommandsChanged,
     MentionsChanged,
     ComposerCataloguesChanged,
@@ -75,6 +96,8 @@ pub enum Event {
     Workspace(WorkspaceEvent),
     Preferences(crate::settings::Owner),
     AgentHint(bool),
+    SessionUsage(crate::content::Usage),
+    FamilyUsage(crate::content::FamilyChange),
     ObservedRunning {
         running: bool,
         version: u64,
@@ -93,6 +116,7 @@ pub enum Event {
     },
     Text(String, crate::content::TextEvent),
     Reasoning(String, crate::content::ReasoningEvent),
+    StepUsage(String, crate::content::Usage),
     Tool(String, std::sync::Arc<crate::content::Tool>),
     Done,
     AuthenticationRequired(Authentication),

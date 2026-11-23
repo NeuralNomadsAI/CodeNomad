@@ -9,4 +9,5 @@ pub fn load(s: &mut State) {
             .into(),
     ];
     s.phase = Phase::Ready;
+    crate::settings::fixture_message_usage(s, "collapsed");
 }

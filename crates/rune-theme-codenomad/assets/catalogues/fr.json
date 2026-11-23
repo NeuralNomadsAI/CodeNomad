@@ -220,6 +220,8 @@
   "contextUsagePanel.labels.totalInput": "Entrée totale",
   "contextUsagePanel.labels.totalOutput": "Sortie totale",
   "contextUsagePanel.labels.totalReasoning": "Raisonnement total",
+  "contextUsagePanel.partialTotal": "Total partiel de la conversation",
+  "contextUsagePanel.totalUnavailable": "Total de la conversation indisponible",
   "directoryBrowser.close": "Fermer",
   "directoryBrowser.createFolder.cancelLabel": "Annuler",
   "directoryBrowser.createFolder.confirmLabel": "Créer",

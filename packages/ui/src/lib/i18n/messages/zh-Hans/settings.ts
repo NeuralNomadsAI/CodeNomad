@@ -251,6 +251,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "输出",
   "contextUsagePanel.labels.cost": "费用",
   "contextUsagePanel.included": "已包含",
+  "contextUsagePanel.partialTotal": "会话部分总计",
+  "contextUsagePanel.totalUnavailable": "无法获取会话总计",
   "contextUsagePanel.labels.totalInput": "总输入",
   "contextUsagePanel.labels.totalOutput": "总输出",
   "contextUsagePanel.labels.totalCost": "总费用",

@@ -34,10 +34,10 @@ export function reconcileSessionModel(instanceId: string, sessionId: string): Pr
       const info = await getRootClient(instanceId).session.get({ sessionID: sessionId }, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
       if (!current()) return
       if (state.dirty) continue
-      withSession(instanceId, sessionId, session => {
+      withSession(instanceId, sessionId, (session, previous) => {
         // Session replacement or another authoritative refresh owns its newer
         // selection; never resurrect a removed session or overwrite that value.
-        if (session.model !== captured.model || !info.model) return false
+        if (previous.model !== captured.model || !info.model) return false
         session.model = { providerId: info.model.providerID, modelId: info.model.id }
       })
     } while (state.dirty)

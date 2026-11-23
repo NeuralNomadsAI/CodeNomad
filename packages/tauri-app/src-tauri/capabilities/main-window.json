@@ -10,6 +10,7 @@
     "core:default",
     "core:menu:default",
     "allow-window-control",
+    "allow-start-native-window-drag",
     "allow-popup-titlebar-menu",
     "dialog:allow-open",
     "allow-open-external-url",

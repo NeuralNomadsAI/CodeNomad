@@ -3,10 +3,16 @@ use tabs::{activate, close_blocked};
 pub use tabs::{can_new, close, new_tab, select};
 
 mod drafts;
+mod notification;
 mod panel_state;
+mod polling;
 mod strip;
 
 pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
+pub(crate) use notification::{
+    Activation, can_switch_for_notification, check_notification, notification_target,
+    observes_notification, open_notification, owns_notification, workspace_notification,
+};
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use panel_state::set_files_tab;
 pub use panel_state::{
@@ -16,6 +22,9 @@ pub(crate) use panel_state::{
     mission_event, mission_panel, mission_supported, right_panel_tab, set_right_panel_tab,
     suspend_missions,
 };
+#[cfg(target_arch = "wasm32")]
+pub(crate) use polling::poll_cached_notifications;
+pub use polling::{poll, status};
 pub use strip::strip;
 
 use super::{Snapshot, Tab, Workspace, cache::Cache, persistence::Persistence};
@@ -253,7 +262,7 @@ pub fn input_ready(s: &State) -> bool {
     s.workspace.as_ref().is_none_or(|ui| ui.ready)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn native_window_store(s: &State) -> Option<platform::storage::Store> {
     s.workspace.as_ref()?.persistence.store.clone()
 }
@@ -479,102 +488,6 @@ pub fn has_conversation_stream(s: &State) -> bool {
                     .is_some_and(Cache::has_conversation_stream)
             })
         })
-}
-
-pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    let Some(mut ui) = s.workspace.take() else {
-        return false;
-    };
-    ui.clock = now;
-    let loading = ui.persistence.loading;
-    if let Some((saved, drafts)) = ui.persistence.poll_load() {
-        ui.persistence.file_draft_read_error = match drafts {
-            Ok(Some(bytes)) => !s.documents.hydrate_file_drafts(&bytes),
-            Ok(None) => false,
-            Err(_) => true,
-        };
-        s.documents
-            .block_file_draft_updates(ui.persistence.file_draft_read_error);
-        if let Some(saved) = saved {
-            ui.hydrate(saved);
-            s.shell.restore_widths(ui.panel_widths);
-            s.shell.file_wrap = ui.file_wrap.unwrap_or(false);
-        }
-    }
-    let became_ready = loading && !ui.persistence.loading;
-    if became_ready {
-        ui.ready = true;
-        #[cfg(target_arch = "wasm32")]
-        if let Some(wrap) = platform::storage::browser_file_wrap() {
-            s.shell.file_wrap = wrap;
-        }
-    }
-    let active = Cache::take(s);
-    let mut changed = ui.persistence.poll_file_draft_retry(&s.documents);
-    let mut drafts_changed = false;
-    for item in &mut ui.entries {
-        if let Some(cache) = item.cache.take() {
-            cache.apply(s);
-            let awaiting_prompt = s.composer.pending();
-            let uncertain_prompt = s.composer.unconfirmed_id().is_some();
-            changed |= crate::poll_chat(s, 8);
-            if awaiting_prompt && !s.composer.pending()
-                || uncertain_prompt && s.composer.unconfirmed_id().is_none()
-            {
-                drafts_changed |= drafts::capture_draft(item, s);
-            }
-            changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
-            changed |= crate::git::poll(s, now, tx);
-            item.cache = Some(Cache::take(s));
-        }
-    }
-    active.apply(s);
-    changed |= panel_state::poll_missions(&mut ui, s, tx);
-    if drafts_changed {
-        ui.changed();
-    }
-    ui.stage();
-    let previous_error = (
-        ui.persistence.read_error,
-        ui.persistence.write_error,
-        ui.persistence.file_draft_error,
-        ui.persistence.partial,
-    );
-    let snapshot = ui.snapshot();
-    ui.persistence.poll_save(&snapshot, now, tx, s.wake.clone());
-    #[cfg(target_arch = "wasm32")]
-    ui.persistence.poll_file_drafts(&s.documents);
-    let error = (
-        ui.persistence.read_error,
-        ui.persistence.write_error,
-        ui.persistence.file_draft_error,
-        ui.persistence.partial,
-    );
-    s.workspace = Some(ui);
-    if became_ready {
-        resume(s, tx);
-    }
-    if changed {
-        history_budget::enforce(s);
-    }
-    changed |= catalogue::poll(s, now, tx);
-    changed || became_ready || error != previous_error
-}
-pub fn status(s: &State) -> Option<&'static str> {
-    let ui = s.workspace.as_ref()?;
-    if ui.persistence.read_error {
-        Some("rune.restore_error")
-    } else if ui.persistence.write_error || ui.persistence.partial || ui.has_unsaved_large_drafts()
-    {
-        Some("rune.save_error")
-    } else if ui.persistence.file_draft_error
-        || ui.persistence.file_draft_read_error
-        || s.documents.has_unretained_file_drafts()
-    {
-        Some("filesPanel.draftLimit")
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]

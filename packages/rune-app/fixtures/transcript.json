@@ -4,6 +4,8 @@
   "agent": "build",
   "model": {"providerID": "fixture", "id": "fixture"},
   "time": {"created": 1, "completed": 2},
+  "tokens": {"input": 1250, "output": 340, "reasoning": 92, "cache": {"read": 240, "write": 32}},
+  "cost": 0.0068,
   "content": [
     {"type": "reasoning", "text": "Consider the result.", "time": {"created": 1000, "completed": 2000}},
     {"type": "reasoning", "text": "**Check the output**\n\nVerify the sample trace.", "time": {"created": 2000, "completed": 4000}},

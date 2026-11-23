@@ -52,6 +52,7 @@ fn edit_patches_in_metadata_share_the_tool_text_budget() {
 fn rows(ids: &[&str]) -> Vec<history::Row> {
     ids.iter()
         .map(|id| Message {
+            usage: None,
             parts: vec![],
             id: (*id).into(),
             role: "assistant".into(),
@@ -81,6 +82,7 @@ fn broken_overlap_duplicate_ids_and_resident_overflow_fail_closed() {
     assert!(history::join(&rows(&["a", "b"]), &rows(&["b", "a"])).is_err());
     let many = (0..=history::MAX_ROWS)
         .map(|i| Message {
+            usage: None,
             parts: vec![],
             id: format!("m{i}"),
             role: "user".into(),

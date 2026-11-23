@@ -12,7 +12,7 @@ import { acquireNativeMissionScheduleAuthority, nativeMissionScheduleAgentCreati
 import { controlNativeMissionSchedule } from "./native-mission-schedule-control"
 import { readMissionSchedulePage } from "../../missions/mission-schedule-list"
 import { nativeMissionScheduleObservation } from "./native-mission-schedule-display"
-import { readNativeScheduleFlag } from "./native-schedule-flag"
+import { nativeScheduleFlagReply, readNativeScheduleFlag } from "./native-schedule-flag"
 import { readMissionPreparationBinding } from "../../missions/creation-intent"
 
 const readInput = z.object({ missionID: documentID, requestID: z.string().min(1).max(128).optional() }).strict()
@@ -29,7 +29,8 @@ export function nativeMissionScheduleHandlers(ctx: Plugin.Context, artifacts?: N
       const binding = await readMissionPreparationBinding({ get: key => run(ctx.storage.get(key)) }, ctx.location.project, creationRequestID)
       return binding ? { binding } : {}
     })).pipe(Effect.orDie)),
-    scheduleFlag: () => readNativeScheduleFlag(ctx).pipe(Effect.orDie),
+    scheduleFlag: () => readNativeScheduleFlag(ctx).pipe(Effect.map(nativeScheduleFlagReply), Effect.orDie),
+    scheduleSetting: () => readNativeScheduleFlag(ctx).pipe(Effect.orDie),
     scheduleList: (raw: unknown) => invocation.capture(Effect.tryPromise(() => invocation.check(run =>
       readMissionSchedulePage({ scan: input => run(ctx.storage.scan(input)) }, ctx.location.project, raw,
         doc => nativeMissionScheduleObservation(ctx, doc, run)))).pipe(Effect.orDie)),

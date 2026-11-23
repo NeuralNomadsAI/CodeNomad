@@ -1,5 +1,5 @@
 import { normalizeSessionCatalog, type PersistedSessionCatalogEntry } from "./session-catalog-persistence"
-import { encodePartition, type EncodedPartition } from "./client-state-partition-json"
+import { canonicalJson, encodeCanonicalPartition, sha256, type EncodedPartition } from "./client-state-partition-json"
 
 const encoder = new TextEncoder()
 const CHUNK_BYTES = 768 * 1024
@@ -9,7 +9,20 @@ export interface EncodedCatalog {
   rows: readonly PersistedSessionCatalogEntry[]
   chunks: CatalogChunk[]
 }
-const sizes = new WeakMap<PersistedSessionCatalogEntry, number>()
+const encodedRows = new WeakMap<PersistedSessionCatalogEntry, { text: string; bytes: number }>()
+
+function yieldCatalogEncode(): Promise<void> {
+  return new Promise(resolve => {
+    // Checkpoints can run during window shutdown, when hidden timers may be throttled.
+    const channel = new MessageChannel()
+    channel.port1.onmessage = () => {
+      channel.port1.close()
+      channel.port2.close()
+      resolve()
+    }
+    channel.port2.postMessage(null)
+  })
+}
 
 export async function encodeCatalogPartitions(input: PersistedSessionCatalogEntry[], previous?: EncodedCatalog): Promise<EncodedCatalog> {
   const rows = normalizeSessionCatalog(input)
@@ -17,26 +30,33 @@ export async function encodeCatalogPartitions(input: PersistedSessionCatalogEntr
   if (rows === previous?.rows) return previous
   const chunks: CatalogChunk[] = []
   let start = 0, bytes = 0
+  let newRows = 0
+  let texts: string[] = []
   const flush = async (end: number) => {
     const index = chunks.length, old = previous?.chunks[index]
     if (old && old.end - old.start === end - start
       && rows.slice(start, end).every((row, offset) => row === previous!.rows[old.start + offset])) {
       chunks.push({ start, end, partition: old.partition })
     } else {
-      chunks.push({ start, end, partition: await encodePartition({ format: 1, index, entries: rows.slice(start, end) }) })
+      const text = `{"entries":[${texts.join(",")}],"format":1,"index":${index}}`
+      chunks.push({ start, end, partition: await encodeCanonicalPartition(text) })
     }
-    start = end; bytes = 0
+    start = end; bytes = 0; texts = []
   }
   for (const [index, row] of rows.entries()) {
-    let size = sizes.get(row)
-    if (size === undefined) {
-      // Canonical and plain JSON differ only in key order, so they have the same size.
-      size = encoder.encode(JSON.stringify(row)).byteLength + 1
-      sizes.set(row, size)
+    let encoded = encodedRows.get(row)
+    if (!encoded) {
+      // Normalized rows are immutable. Yield during the first large encode;
+      // later checkpoints sort only new rows, even when a whole chunk is rehashed.
+      if (++newRows % 512 === 0) await yieldCatalogEncode()
+      const text = canonicalJson(row)
+      encoded = { text, bytes: encoder.encode(text).byteLength + 1 }
+      encodedRows.set(row, encoded)
     }
-    if (size > CHUNK_BYTES) throw new Error("Session catalog entry exceeds the native partition size")
-    if (bytes + size > CHUNK_BYTES) await flush(index)
-    bytes += size
+    if (encoded.bytes > CHUNK_BYTES) throw new Error("Session catalog entry exceeds the native partition size")
+    if (bytes + encoded.bytes > CHUNK_BYTES) await flush(index)
+    texts.push(encoded.text)
+    bytes += encoded.bytes
   }
   if (start < rows.length) await flush(rows.length)
   return { rows, chunks }

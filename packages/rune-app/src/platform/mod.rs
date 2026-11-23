@@ -4,6 +4,12 @@ mod connection;
 #[cfg(not(target_arch = "wasm32"))]
 mod device_file;
 pub(crate) mod device_picker;
+#[cfg(target_os = "windows")]
+pub(crate) use codenomad_windows_notifications as notifications;
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod notifications_web;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use notifications_web as notifications;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod pairing;
 pub(crate) mod reads;
@@ -223,10 +229,12 @@ pub fn preferences_window<S: 'static>(
     spec: rune::AppSpec<S>,
     state: S,
     close: fn(&mut S, &mut rune::Tx),
+    focus: fn(&mut S, bool, &mut rune::Tx),
 ) -> rune::WindowHandle {
     let spec = rune::WindowSpec::new("preferences", spec)
         .state(state)
-        .on_close(close);
+        .on_close(close)
+        .on_focus(focus);
     #[cfg(target_os = "windows")]
     return preferences_placement::open(spec, owner);
     #[cfg(not(target_os = "windows"))]

@@ -1,4 +1,5 @@
 //! Browser-owned EventSource. Recovery owns reconnect epochs and backoff.
+use super::limits::{FRAME_LIMIT, reread};
 use super::*;
 use std::{cell::Cell, rc::Rc};
 use wasm_bindgen::{JsCast, closure::Closure};

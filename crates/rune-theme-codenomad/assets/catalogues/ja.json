@@ -220,6 +220,8 @@
   "contextUsagePanel.labels.totalInput": "合計入力",
   "contextUsagePanel.labels.totalOutput": "合計出力",
   "contextUsagePanel.labels.totalReasoning": "合計推論",
+  "contextUsagePanel.partialTotal": "会話の一部の合計",
+  "contextUsagePanel.totalUnavailable": "会話の合計を取得できません",
   "directoryBrowser.close": "閉じる",
   "directoryBrowser.createFolder.cancelLabel": "キャンセル",
   "directoryBrowser.createFolder.confirmLabel": "作成",

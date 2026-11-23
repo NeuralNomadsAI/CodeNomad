@@ -21,4 +21,5 @@ pub(crate) use tool_diff::Preferences as ToolDiffPreferences;
 mod tools;
 pub(crate) mod transcript;
 pub(crate) mod transport;
+pub(crate) mod usage;
 pub(crate) mod view;

@@ -5,11 +5,13 @@ use std::{mem::size_of, sync::Arc};
 mod reasoning;
 mod subagent;
 mod tool_live;
+mod usage;
 mod user;
 pub use reasoning::{Reasoning, ReasoningEvent, apply_window as apply_reasoning};
 pub use subagent::SubagentReport;
 pub use tool_live::install as install_tool;
 pub(crate) use tool_live::{Fit as ToolFit, apply as apply_tool};
+pub use usage::{FAMILY_LIMIT, Family, FamilyChange, FamilyMember, FamilySnapshot, Usage};
 pub(crate) use user::digest as attachment_digest;
 pub use user::{File, Reference, Skill};
 #[derive(Clone, Debug, PartialEq)]
@@ -177,6 +179,7 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
             continue;
         };
         let row = std::sync::Arc::make_mut(row);
+        row.usage = row.usage.or(prior.usage);
         let texts: Vec<_> = prior
             .parts
             .iter()

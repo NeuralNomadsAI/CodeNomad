@@ -220,6 +220,8 @@
   "contextUsagePanel.labels.totalInput": "कुल इनपुट",
   "contextUsagePanel.labels.totalOutput": "कुल आउटपुट",
   "contextUsagePanel.labels.totalReasoning": "कुल तर्क (Reasoning)",
+  "contextUsagePanel.partialTotal": "कुराकानीको आंशिक जम्मा",
+  "contextUsagePanel.totalUnavailable": "कुराकानीको जम्मा उपलब्ध छैन",
   "directoryBrowser.close": "बन्द गर्नुहोस्",
   "directoryBrowser.createFolder.cancelLabel": "रद्द गर्नुहोस्",
   "directoryBrowser.createFolder.confirmLabel": "सिर्जना गर्नुहोस्",

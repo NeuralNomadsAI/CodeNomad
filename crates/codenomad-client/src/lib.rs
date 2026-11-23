@@ -30,7 +30,7 @@ pub mod stream;
 pub mod timeline;
 pub mod transport;
 pub mod wire;
-pub use async_channel::{Receiver, Sender, bounded};
+pub use async_channel::{Receiver, Sender, TryRecvError, bounded};
 
 /// Notify an owner's event loop after publishing data, without depending on its UI framework.
 pub type Wake = std::sync::Arc<dyn Fn() + Send + Sync>;
@@ -41,6 +41,7 @@ pub struct Message {
     pub role: String,
     pub completed: bool,
     pub body: String,
+    pub usage: Option<content::Usage>,
     pub parts: Vec<content::Part>,
 }
 
