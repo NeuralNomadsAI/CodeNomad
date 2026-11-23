@@ -51,7 +51,8 @@ import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { useFilePreviewLifetime } from "./shell/file-preview-lifetime"
 import ShellPanelToggle from "./shell/ShellPanelToggle"
 import { useSessionNavigationHistory } from "./shell/useSessionNavigationHistory"
-import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
+import { getRetrySeconds, idleFadeClassForSession, shouldShowSessionStatusForRow } from "../../stores/session-status"
+import { createDeadlineMemo } from "../../lib/deadline-memo"
 import { Command as CommandIcon, Globe, ListFilter, Maximize2, Search, ShieldAlert } from "lucide-solid"
 import type { PromptInputApi } from "../prompt-input/types"
 import type { Attachment } from "../../types/attachment"
@@ -147,7 +148,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   let headerRightEl: HTMLElement | undefined
   const [headerIndicatorsEl, setHeaderIndicatorsEl] = createSignal<HTMLElement>()
 
-  const [now, setNow] = createSignal(Date.now())
   const [sessionPromptApis, setSessionPromptApis] = createSignal<Record<string, PromptInputApi | null>>({})
   const pendingFirstPromptText = new Map<string, string>()
   const [draftAgent, setDraftAgent] = createSignal("")
@@ -379,12 +379,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   createEffect(() => {
-    if (typeof window === "undefined") return
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    onCleanup(() => window.clearInterval(timer))
-  })
-
-  createEffect(() => {
     if (!props.isActiveInstance) return
     const element = sessionCenterEl()
     if (!element || typeof ResizeObserver === "undefined") return
@@ -498,13 +492,16 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
   })
 
-  const activeSessionStatusPill = createMemo(() => {
-    const activeSessionId = activeSessionIdForInstance()
-    if (!activeSessionId || activeSessionId === "info") return null
+  const statusRow = createMemo(() => {
+    const id = activeSessionIdForInstance()
+    return props.isActiveInstance !== false && id && id !== "info" ? allInstanceSessions().get(id) ?? null : null
+  })
+  const activeSessionStatusPill = createDeadlineMemo((now, wakeAt) => {
+    const activeSession = statusRow()
+    if (!activeSession) return null
 
-    const activeSession = activeSessionForInstance()
-    const needsPermission = Boolean(activeSession?.pendingPermission)
-    const needsQuestion = Boolean(activeSession?.pendingForm)
+    const needsPermission = Boolean(activeSession.pendingPermission)
+    const needsQuestion = Boolean(activeSession.pendingForm)
     const needsInput = needsPermission || needsQuestion
 
     if (needsInput) {
@@ -517,20 +514,21 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       }
     }
 
-    const status = getSessionStatus(props.instance.id, activeSessionId)
-    const retry = getSessionRetry(props.instance.id, activeSessionId)
-    const showStatus = shouldShowSessionStatus(
+    const status = activeSession.status
+    const retry = activeSession.retry
+    const showStatus = shouldShowSessionStatusForRow(
       props.instance.id,
-      activeSessionId,
-      now(),
+      activeSession,
+      now,
       preferences().keepUnseenSubagentIdleStatus,
+      wakeAt,
     )
     if (!showStatus) {
       return null
     }
     const text = retry
       ? (() => {
-          const seconds = getRetrySeconds(retry.next, now())
+          const seconds = getRetrySeconds(retry.next, now, wakeAt)
           return seconds > 0 ? t("sessionList.status.retryingIn", { seconds: String(seconds) }) : t("sessionList.status.retrying")
         })()
       : status === "working"
@@ -540,7 +538,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           : t("sessionList.status.idle")
 
     const baseClassName = `session-${retry ? "retrying" : status}`
-    const fadeClassName = getSessionIdleFadeClass(props.instance.id, activeSessionId)
+    const fadeClassName = idleFadeClassForSession(props.instance.id, activeSession)
 
     return {
       className: fadeClassName ? `${baseClassName} ${fadeClassName}` : baseClassName,

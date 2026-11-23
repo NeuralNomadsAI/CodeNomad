@@ -33,6 +33,25 @@ Keep domain-specific implementations where authority, lifetime or runtime differ
 
 ## Implementations and limits
 
+Session list placement is cached by topology (parent and native location), independently
+of row metadata. Single-row publications retain unaffected descendant indexes and
+family trees; bulk inventory publication rebuilds the affected workspace's indexes
+on demand. Catalog-only changes may wait for 500 ms of quiet. Draft and
+attachment edits and other restore state (such as selection, expansion and
+scroll) arm a 2 s capture timer from the first dirty change; execution depends
+on browser scheduling. A deadline capture reads current runtime markers and
+membership/deletion authority, reusing the prior captured catalog when present
+or building it on the first capture. Persistence waits for 250 ms of quiet or
+the 500 ms save timer, whichever comes first. One native commit runs at a time;
+unsent autosaves coalesce into the latest state. Explicit flushes capture fresh
+data and bypass the autosave timers after any in-flight commit settles.
+Draft and attachment signals schedule capture without materializing their saved
+maps on each edit; serialization reads the current maps at the checkpoint.
+Session rename events publish their title directly in the catalog; unseen IDs
+share one metadata read carrying the latest title and archive changes observed
+during that read, fenced by newer snapshots.
+Single-row event publications read interruption flags by session ID.
+
 Current daily/native-scheduled passages acquire a source identity before slices and reuse
 the bounded selected-mission inventory owner without directory or finish-counter reads.
 Body keys include that exact passage source. Owner revision fences publication separately
@@ -90,18 +109,19 @@ recovery later succeeds.
 
 ### Client-state capture checkpoints
 
-`use-app-session-capture.ts` shares a value-diffed scalar session projection between
-capture scheduling and preserved-prompt hydration. It snapshots catalog fields and
-runtime/attention inputs even when instance Maps or nested metadata mutate in place.
+`use-app-session-capture.ts` tracks per-workspace checkpoint tokens for capture
+and topology tokens for preserved-prompt hydration. Session writes preserve
+unchanged nested field identities and invalidate the relevant token when a field
+changes or a publisher replaces the workspace map.
 Only cost/token changes while a session is working or compacting are deferred.
 Session membership, metadata, runtime transitions and idle usage still invalidate;
 drafts, attachments, selection, expansion, scrolls and outlines retain their triggers.
-Capture and explicit flush always read the fresh stores, including deferred counters.
+Quiet captures and explicit flushes encode fresh catalog data, including deferred counters.
 
 The accepted crash-freshness limit for these display-cache counters is the last
 successful checkpoint: an uninterrupted run with only usage changes can leave them
-at its starting checkpoint for the whole run. The next draft/metadata/view checkpoint,
-runtime transition or explicit navigation/shutdown flush includes the latest counters.
+at its starting checkpoint for the whole run. The next quiet capture or
+explicit navigation/shutdown flush includes the latest counters.
 Native hydration revalidates restored display data. Persistence retains its complete
 partition payloads, atomic publication, write-failure dirty state, ownership fences
 and native shutdown generation/cancellation rules.
