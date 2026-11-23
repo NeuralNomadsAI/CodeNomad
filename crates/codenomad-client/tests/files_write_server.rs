@@ -52,6 +52,7 @@ fn real_rust_files_write_contract() {
         assert_eq!(saved.bytes, first.as_bytes());
         assert_eq!(saved.bytes, fs::read(&private).unwrap());
         assert_ne!(saved.version, initial.version);
+        assert_eq!(first_version, saved.version);
         let external = "Modification externe · 京都\nà conserver";
         fs::write(&private, external).unwrap();
         assert!(matches!(backend.write_file(project, file, "obsolete", saved.version.as_deref().unwrap()).await.unwrap(), WriteResult::Conflict(Some(_))));
@@ -60,12 +61,12 @@ fn real_rust_files_write_contract() {
         assert_eq!(current.bytes, external.as_bytes());
         assert_ne!(current.version, saved.version);
         let final_text = "Version courante · τέλος 🦀\nseconde sauvegarde";
-        assert_eq!(first_version, current.version);
-        assert!(matches!(backend.write_file(project, file, final_text, current.version.as_deref().unwrap()).await.unwrap(), WriteResult::Saved(Some(_))));
+        let WriteResult::Saved(final_version) = backend.write_file(project, file, final_text, current.version.as_deref().unwrap()).await.unwrap() else { panic!("write refused") };
         let final_read = backend.preview_file(project, file).await.unwrap();
         assert_eq!(final_read.bytes, final_text.as_bytes());
         assert_eq!(fs::read(&private).unwrap(), final_text.as_bytes());
         assert_ne!(final_read.version, current.version);
+        assert_eq!(final_version, final_read.version);
         fs::remove_file(&private).unwrap();
         assert!(matches!(backend.write_file(project, file, "must not recreate", final_read.version.as_deref().unwrap()).await.unwrap(), WriteResult::Conflict(Some(_))));
         assert!(!private.exists());
