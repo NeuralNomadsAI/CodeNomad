@@ -13,7 +13,10 @@ use crate::{
 use serde_json::Value;
 use std::{
     collections::{HashSet, VecDeque},
-    sync::{Arc, atomic::Ordering::SeqCst},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering::SeqCst},
+    },
     time::Duration,
 };
 pub enum Input {
@@ -57,7 +60,16 @@ pub async fn run(
 
 pub struct ReadingLane {
     pub demand: demand::Observer,
-    pub events: Sender<(u64, Event)>,
+    pub events: Sender<(u64, u64, Event)>,
+    pub connection: Arc<AtomicU64>,
+}
+
+impl ReadingLane {
+    fn invalidate_connection(reading: Option<&Self>) {
+        if let Some(reading) = reading {
+            reading.connection.fetch_add(1, SeqCst);
+        }
+    }
 }
 
 async fn read_page(
@@ -90,13 +102,19 @@ async fn reader_event(
     let Some(reading) = reading else {
         return publish(out, wake, event).await;
     };
+    let connection = reading.connection.load(SeqCst);
     futures_lite::future::race(
         async {
             reading.demand.changed_after(generation).await;
             true
         },
         async {
-            if reading.events.send((generation, event)).await.is_err() {
+            if reading
+                .events
+                .send((generation, connection, event))
+                .await
+                .is_err()
+            {
                 return false;
             }
             wake();
@@ -160,6 +178,7 @@ pub(crate) async fn run_with_reading(
     let mut anchored = None;
     let mut tail_gap = false;
     loop {
+        let input = runtime::recv_timeout(&rx, Duration::from_millis(25)).await;
         if let Some(reading) = reading {
             let want = reading.demand.current();
             if want.generation != generation {
@@ -189,7 +208,7 @@ pub(crate) async fn run_with_reading(
             wire = make_wire();
             stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
         }
-        match runtime::recv_timeout(&rx, Duration::from_millis(25)).await {
+        match input {
             Some(Input::Workspace(e, event)) if e == epoch => {
                 if !publish(&out, &wake, Event::Workspace(event)).await {
                     wire.cancelled.store(true, SeqCst);
@@ -209,6 +228,7 @@ pub(crate) async fn run_with_reading(
                 quiet = Instant::now() + Duration::from_millis(100);
             }
             Some(Input::Closed(e)) if e == epoch => {
+                ReadingLane::invalidate_connection(reading);
                 opened = false;
                 connection_lost = true;
                 dirty = true;
@@ -228,6 +248,7 @@ pub(crate) async fn run_with_reading(
                 return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {
+                ReadingLane::invalidate_connection(reading);
                 dirty = true;
                 publish(&out, &wake, Event::Reconnecting).await;
             }
@@ -249,6 +270,7 @@ pub(crate) async fn run_with_reading(
                 }
             }
             Some(Input::Command(Command::Retry)) => {
+                ReadingLane::invalidate_connection(reading);
                 attempts = 0;
                 dirty = true;
                 parked = false;
@@ -381,6 +403,9 @@ pub(crate) async fn run_with_reading(
                             settlement_reads = 0;
                         }
                         busy = true;
+                        if reading.is_some() {
+                            publish(&out, &wake, Event::ObservedRunning(true)).await;
+                        }
                         if let Some(Event::Message(row)) = crate::wire::decode_native(&native) {
                             if known.insert(row.id.clone()) {
                                 if resident.len() >= history::MAX_ROWS {

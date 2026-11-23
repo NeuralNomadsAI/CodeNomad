@@ -300,7 +300,9 @@ fn a_queued_prompt_has_one_http_attempt_with_the_reader_and_upstream_events_down
             let (content, _snapshots) = bounded(1);
             demand.publish(None);
             let task = tokio::spawn(crate::transport::run_backend_reading(
-                backend, out, input, Arc::new(|| {}), ReadingLane { demand: observer, events: content },
+                backend, out, input, Arc::new(|| {}), ReadingLane {
+                    demand: observer, events: content, connection: Default::default()
+                },
             ));
             let (socket, _) = listener.accept().await.unwrap();
             let mut stream = BufReader::new(socket);

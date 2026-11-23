@@ -111,6 +111,21 @@ pub fn suspend() {
     rt.update(|s, _| s.draft = rune::TextEdit::new("keep this draft"));
     rt.update(crate::workspace::new_tab);
     assert_ne!(rt.state.workspace.as_ref().unwrap().active_key(), tab);
+    control("step-while-hidden");
+    let busy_label = crate::strings::t("instanceTab.status.working");
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        rt.frame(0.02);
+        if rt.accessibility_json().to_string().contains(busy_label) {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "first hidden step marks the project tab as working"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    control("finish-hidden-step");
     let pages = control("permission-while-hidden")["pages"].clone();
     assert!(rt.state.messages.is_empty());
     assert_eq!(control("stats")["pages"], pages);
