@@ -1,4 +1,5 @@
 //! Preferences owns its native window; its confirmed host settings also feed the shell.
+pub(crate) mod notification_routing;
 #[cfg(not(target_arch = "wasm32"))]
 mod opencode;
 mod preferences;

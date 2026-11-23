@@ -1,3 +1,4 @@
+mod notifications;
 mod panels;
 pub(crate) mod render;
 mod right_panel;
