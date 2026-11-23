@@ -443,7 +443,7 @@ impl Preferences {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn fixture_usage(&mut self, mode: &str) {
         let config = self
             .config

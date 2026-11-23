@@ -179,6 +179,7 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
             continue;
         };
         let row = std::sync::Arc::make_mut(row);
+        row.usage = row.usage.or(prior.usage);
         let texts: Vec<_> = prior
             .parts
             .iter()

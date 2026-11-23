@@ -94,6 +94,15 @@ async fn check(base: &str) -> Result<(), String> {
     {
         return Err("expected the child's current history, not the foreign session".into());
     }
+    let (mut step, mut session) = (false, false);
+    while !step || !session {
+        match runtime::recv_timeout(&events, Duration::from_secs(4)).await {
+            Some(Event::StepUsage(id, usage)) if id == "msg" && usage.input == 15 => step = true,
+            Some(Event::SessionUsage(usage)) if usage.input == 40 => session = true,
+            None => return Err("step or session usage update missing".into()),
+            _ => {}
+        }
+    }
     let _ = commands.send(Command::Close).await;
     Ok(())
 }

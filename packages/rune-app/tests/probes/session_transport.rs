@@ -144,6 +144,8 @@ pub fn contract() {
             | Event::Workspace(_)
             | Event::Preferences(_)
             | Event::Reasoning(..)
+            | Event::StepUsage(..)
+            | Event::SessionUsage(_)
             | Event::PromptAcknowledged { .. }
             | Event::Tool(..)
             | Event::PagingFailed => {}

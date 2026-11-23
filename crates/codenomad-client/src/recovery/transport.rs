@@ -233,6 +233,12 @@ pub(crate) async fn run_with_reading(
                 {
                     publish(&out, &wake, Event::AgentHint(false)).await;
                 }
+                if kind == "session.usage.updated" {
+                    if let Some(usage) = content::Usage::decode(&native["data"]) {
+                        publish(&out, &wake, Event::SessionUsage(usage)).await;
+                    }
+                    continue;
+                }
                 if matches!(kind, "session.deleted" | "session.revert.committed") {
                     publish(&out, &wake, Event::HistoryInvalidated).await;
                     if kind == "session.deleted" {
@@ -329,6 +335,24 @@ pub(crate) async fn run_with_reading(
                                 )
                                 .await;
                             }
+                        }
+                    }
+                    "session.step.ended" => {
+                        if let Some(usage) = content::Usage::decode(&native["data"])
+                            && let Some(row) = reader
+                                .resident
+                                .iter_mut()
+                                .find(|row| row.id == id && !row.completed)
+                        {
+                            Arc::make_mut(row).usage = Some(usage);
+                            reader_event(
+                                reading,
+                                reader.generation,
+                                &out,
+                                &wake,
+                                Event::StepUsage(id.into(), usage),
+                            )
+                            .await;
                         }
                     }
                     "session.text.started" | "session.text.delta" | "session.text.ended" => {

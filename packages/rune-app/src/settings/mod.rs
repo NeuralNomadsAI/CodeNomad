@@ -145,7 +145,7 @@ pub(crate) fn message_usage_visibility(s: &State) -> &'static str {
     usage_visibility(&s.settings.shared.borrow())
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
     s.settings.shared.borrow_mut().fixture_usage(mode);
     s.revision += 1;

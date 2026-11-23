@@ -61,6 +61,11 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     a.refresh(catalog)
                 }
             }
+            Event::SessionUsage(usage) => {
+                if let Some(agent) = &mut s.agent {
+                    agent.observe_usage(usage);
+                }
+            }
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::CommandsChanged) => {
                 s.composer.picker.commands_changed(&s.reads, &s.wake);
             }
@@ -236,6 +241,15 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Reasoning(id, event) => {
                 content::apply_reasoning(&mut s.messages, &id, &event);
+            }
+            Event::StepUsage(id, usage) => {
+                if let Some(row) = s
+                    .messages
+                    .iter_mut()
+                    .find(|row| row.id == id && !row.completed)
+                {
+                    std::sync::Arc::make_mut(row).usage = Some(usage);
+                }
             }
             Event::Tool(id, tool) => {
                 if let Some(row) = s
