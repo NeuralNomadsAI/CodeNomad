@@ -350,6 +350,15 @@ impl Lifecycle {
         }) {
             self.intents.remove(&source.mission);
             self.set_feedback(source, "missions.control.run.superseded");
+        } else if intent.request.action == LifecycleAction::Stop
+            && header.root.revision > intent.request.expected_revision
+            && header
+                .control
+                .as_ref()
+                .is_none_or(|receipt| !receipt.matches(&intent.request))
+        {
+            self.intents.remove(&source.mission);
+            self.set_feedback(source, "missions.control.run.rejected.stop");
         } else if let Some((resend, _)) = checking
             && self.current.as_ref() == Some(source)
         {

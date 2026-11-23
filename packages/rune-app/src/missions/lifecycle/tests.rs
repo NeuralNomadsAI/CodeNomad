@@ -228,3 +228,107 @@ fn unchanged_header_does_not_clear_intent_and_departure_cancels_only_the_check()
     assert_eq!(owner.readback(&source, Some(&empty), 3), None);
     assert!(owner.unresolved(&source, &empty));
 }
+
+#[test]
+fn a_revision_advance_retires_an_unrecorded_stop_but_not_a_recorded_partial_stop() {
+    let source = source("a");
+    let play = action(LifecycleAction::Start, 7);
+    let stop = action(LifecycleAction::Stop, 8);
+    let partial = header(8, Some(receipt(&play, 1, 0)));
+    for saved in [false, true] {
+        let mut owner = Lifecycle::default();
+        owner.retain_checks_for(Some(&source));
+        owner.intents.insert(
+            source.mission.clone(),
+            Intent::new(&source, stop.clone(), durable(&partial)),
+        );
+        assert!(owner.check(&source, &partial, false, 0));
+        owner.readback(&source, Some(&partial), 1);
+        assert!(owner.replayable(&source, 8));
+        assert!(owner.check(&source, &partial, true, 1));
+        let updated = header(9, Some(receipt(if saved { &stop } else { &play }, 1, 0)));
+        let replay = owner.readback(&source, Some(&updated), 2);
+        if saved {
+            assert_eq!(replay, Some(stop.clone()));
+        } else {
+            assert_eq!(replay, None);
+            assert!(!owner.replayable(&source, 9));
+            assert!(owner.can_stop(&source, &updated));
+            assert_eq!(
+                owner.feedback(&source),
+                Some("missions.control.run.rejected.stop")
+            );
+            assert_eq!(updated.root.revision, 9);
+        }
+    }
+}
+
+#[test]
+fn capacity_keeps_uncertain_intents_and_reopens_after_an_exact_late_ack() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let a = source("tab-a");
+        let b = source("tab-b");
+        let request = action(LifecycleAction::Stop, 7);
+        let mut owner = Lifecycle::default();
+        owner.retain_checks_for(Some(&a));
+        owner.start(
+            &a,
+            request.clone(),
+            None,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let post = http.accept().await;
+        for n in 1..CAPACITY {
+            let mut other = source("retained");
+            other.mission.id = format!("mission-{n}");
+            other.target.mission.clone_from(&other.mission.id);
+            owner.intents.insert(
+                other.mission.clone(),
+                Intent::new(&other, request.clone(), None),
+            );
+        }
+        let mut extra = source("extra");
+        extra.mission.id = "mission-extra".into();
+        extra.target.mission.clone_from(&extra.mission.id);
+        let partial = header(8, Some(receipt(&action(LifecycleAction::Start, 7), 1, 0)));
+        owner.retain_checks_for(Some(&extra));
+        assert!(!owner.idle(&extra, &header(7, None)));
+        assert!(!owner.can_stop(&extra, &partial));
+        assert!(!owner.check(&extra, &partial, false, 0));
+        owner.start(&extra, request.clone(), None, http.backend.clone(), wake);
+        http.quiet().await;
+        assert_eq!(owner.intents.len(), CAPACITY);
+
+        owner.retain_checks_for(Some(&b));
+        post.reply(200, json!({"mission":{
+            "id":"mission","projectID":"project","projectCanonical":"/fixture","coordinatorSessionId":"session",
+            "revision":8,"control":{"missionID":"mission","requestID":request.request_id,"action":"stop",
+            "expectedRevision":7,"pending":[],"completedRevision":8,"receipts":[]}
+        }})).await;
+        wait(done.recv()).await.unwrap();
+        assert_eq!(
+            owner.poll(),
+            vec![(
+                b.mission.clone(),
+                b.target.clone(),
+                LifecycleOutcome::Acknowledged(8)
+            )]
+        );
+        assert_eq!(owner.readback(&b, Some(&header(7, None)), 1), None);
+        assert_eq!(
+            owner.intents.len(),
+            CAPACITY,
+            "the old header cannot settle the late acknowledgement"
+        );
+        assert_eq!(
+            owner.readback(&b, Some(&header(8, Some(receipt(&request, 0, 0)))), 2),
+            None
+        );
+        assert_eq!(owner.intents.len(), CAPACITY - 1);
+        assert!(owner.idle(&extra, &header(8, None)));
+        http.quiet().await;
+    });
+}
