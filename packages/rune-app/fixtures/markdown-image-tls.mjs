@@ -1,16 +1,15 @@
 // node --import tsx packages/rune-app/fixtures/markdown-image-tls.mjs
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:https'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { resolveHttpsOptions } from '../../server/src/server/tls.ts'
 
 const target = process.env.CARGO_TARGET_DIR
 assert(target && path.isAbsolute(target), 'Pass the owned Cargo target directory')
-const temporary = path.join(target, 'tmp')
-await mkdir(temporary, { recursive: true })
-const configDir = await mkdtemp(path.join(temporary, 'trial-markdown-image-tls-'))
+const configDir = await mkdtemp(path.join(tmpdir(), 'trial-markdown-image-tls-'))
 let server
 try {
   const tls = resolveHttpsOptions({ host: '127.0.0.1', enabled: true, configDir, logger: { info() {}, warn() {} } })
@@ -19,6 +18,9 @@ try {
   const requests = []
   server = createServer(tls.httpsOptions, (request, response) => {
     requests.push({ path: request.url, headers: request.headers })
+    if (request.url === '/compressed.png') {
+      return response.writeHead(200, { 'Content-Type': 'image/png' }).end(Buffer.from([0x1f, 0x8b]))
+    }
     if (request.url !== '/image.png') return response.writeHead(404).end()
     response.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': bytes.length }).end(bytes)
   })
@@ -32,9 +34,8 @@ try {
     test.once('close', resolve)
   })
   assert.equal(status, 0)
-  assert.equal(requests.length, 1, 'The untrusted certificate never reaches HTTP')
-  assert.equal(requests[0].path, '/image.png')
-  for (const name of ['cookie', 'authorization', 'referer']) assert.equal(requests[0].headers[name], undefined)
+  assert.deepEqual(requests.map(request => request.path), ['/image.png', '/compressed.png'], 'The untrusted certificate never reaches HTTP')
+  for (const request of requests) for (const name of ['cookie', 'authorization', 'referer']) assert.equal(request.headers[name], undefined)
 } finally {
   if (server?.listening) await new Promise(resolve => server.close(resolve))
   await rm(configDir, { recursive: true, force: true })

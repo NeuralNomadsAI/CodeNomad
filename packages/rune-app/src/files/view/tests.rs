@@ -399,8 +399,7 @@ fn markdown_links_html_and_mermaid_fallback_use_only_the_loaded_document() {
                     .presentation
                     .image
                     .as_ref()
-                    .unwrap()
-                    .is_ready()
+                    .is_some_and(rune::Image::is_ready)
                 {
                     assert!(Instant::now() < deadline);
                     tokio::time::sleep(Duration::from_millis(2)).await;
@@ -445,6 +444,31 @@ fn markdown_links_html_and_mermaid_fallback_use_only_the_loaded_document() {
             assert!(rt.take_url_requests().is_empty());
             http.quiet().await;
         }
+    });
+}
+
+#[test]
+fn compressed_workspace_svg_is_rejected_before_the_decoder() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "compressed-svg"));
+        open(&mut rt, &http, "drawing.svg", "H4s=").await;
+        assert!(
+            rt.state
+                .files
+                .as_ref()
+                .unwrap()
+                .presentation
+                .image
+                .is_none()
+        );
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| node.text.as_deref()
+                    == Some("Preview unavailable for this binary file."))
+        );
+        http.quiet().await;
     });
 }
 
