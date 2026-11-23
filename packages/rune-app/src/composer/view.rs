@@ -84,6 +84,7 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
         .full_width()
         .pad(Space::Md)
         .separate(Space::Sm)
+        .children(crate::shell::status_permissions::confirmation(s))
         .child(col().content_direction().child(editor));
     let pasted = std::cell::OnceCell::new();
     let mut attachments = s

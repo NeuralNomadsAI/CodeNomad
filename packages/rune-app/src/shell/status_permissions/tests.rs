@@ -186,6 +186,9 @@ fn a_child_uses_the_confirmed_family_mode_and_reconciles_a_lost_write_without_re
         s.status_permissions.poll(&s.reads, &s.wake);
         assert!(s.status_permissions.failed);
         assert!(!s.status_permissions.available());
+        s.status_permissions.show(false);
+        assert!(!crate::composer::can_send(&s));
+        assert!(confirmation(&s).is_some());
         s.status_permissions.invalidate(Some("ses_root"));
         s.status_permissions.poll(&s.reads, &s.wake);
         request(&http, "GET")
@@ -199,6 +202,10 @@ fn a_child_uses_the_confirmed_family_mode_and_reconciles_a_lost_write_without_re
             Mode::Supervised
         );
         assert!(s.status_permissions.issue.is_none());
+        assert!(crate::composer::can_send(&s));
+        assert!(confirmation(&s).is_none());
+        s.status_permissions.show(true);
+        s.status_permissions.dirty = false;
         assert!(s.status_permissions.available());
         // Removing this fork's block can legitimately leave inherited rules in place.
         s.status_permissions.write(Mode::Autonomous, &s.wake);

@@ -36,11 +36,15 @@ pub(crate) struct Permissions {
 }
 
 impl Permissions {
-    pub(crate) fn leave_session(&mut self) {
-        *self = Self {
-            expanded: self.expanded,
-            ..Self::default()
-        };
+    pub(crate) fn attach(&mut self, backend: Option<&Backend>) {
+        if !self.settling() || backend.is_some_and(|backend| !self.same_session(backend)) {
+            *self = Self {
+                expanded: self.expanded,
+                ..Self::default()
+            };
+        } else {
+            self.online(false);
+        }
     }
 
     pub(crate) fn bind(&mut self, backend: &Backend) {
@@ -50,13 +54,25 @@ impl Permissions {
                 || previous.base != backend.base
                 || !previous.client.same_connection(&backend.client)
         }) {
-            self.leave_session();
+            self.attach(Some(backend));
         }
         self.backend = (backend.session.starts_with("ses")
             && backend.session.len() > 3
             && !backend.session.starts_with("ses_cn_schedule_")
             && backend.client.supports("conversation-permissions"))
         .then(|| backend.clone());
+    }
+
+    fn same_session(&self, backend: &Backend) -> bool {
+        self.backend.as_ref().is_some_and(|previous| {
+            previous.session == backend.session
+                && previous.base == backend.base
+                && (previous.client.same_connection(&backend.client)
+                    || previous
+                        .client
+                        .server_identity()
+                        .is_some_and(|id| backend.client.server_identity() == Some(id)))
+        })
     }
 
     pub(crate) fn online(&mut self, online: bool) {
@@ -103,7 +119,10 @@ impl Permissions {
     }
 
     pub(crate) fn settling(&self) -> bool {
-        self.writing() || (self.online && self.checking.is_some() && !self.failed)
+        self.writing()
+            || self
+                .checking
+                .is_some_and(|(_, issue)| !self.failed || matches!(issue, WriteIssue::Unconfirmed))
     }
 
     fn available(&self) -> bool {
@@ -235,6 +254,29 @@ pub(crate) fn poll(s: &mut State) -> bool {
     s.status_permissions.poll(&s.reads, &s.wake)
 }
 
+pub(crate) fn confirmation(s: &State) -> Option<El> {
+    let owner = &s.status_permissions;
+    if !owner.settling() {
+        return None;
+    }
+    if !owner.failed && owner.online {
+        return Some(text(t("permissions.applying")).role("status"));
+    }
+    Some(
+        layout::action_row()
+            .child(text(t("permissions.unconfirmed")).role("status"))
+            .child(retry(s)),
+    )
+}
+
+fn retry(s: &State) -> El {
+    layout::button(
+        t("permissions.retry"),
+        !s.status_permissions.online || s.status_permissions.read.is_some(),
+        screen::action(&s.input_scope, |s| s.status_permissions.dirty = true),
+    )
+}
+
 pub(super) fn view(s: &State) -> Option<El> {
     let owner = &s.status_permissions;
     owner.backend.as_ref()?;
@@ -285,16 +327,7 @@ pub(super) fn view(s: &State) -> Option<El> {
         body = body.child(text(status).role("status"));
     }
     if owner.failed {
-        body = body.child(
-            layout::button(
-                t("permissions.retry"),
-                !owner.online,
-                screen::action(&s.input_scope, |s| {
-                    s.status_permissions.dirty = true;
-                }),
-            )
-            .key("permission-mode-retry"),
-        );
+        body = body.child(retry(s).key("permission-mode-retry"));
     }
     if let Some(issue) = &owner.issue {
         body = body.child(

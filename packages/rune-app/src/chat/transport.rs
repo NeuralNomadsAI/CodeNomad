@@ -39,7 +39,10 @@ enum Startup {
 }
 
 fn launch(s: &mut crate::State, startup: Startup) {
-    s.status_permissions.leave_session();
+    s.status_permissions.attach(match &startup {
+        Startup::Bound(backend) => Some(backend),
+        Startup::Configured { .. } => None,
+    });
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);
     s.incoming = Some(incoming);
