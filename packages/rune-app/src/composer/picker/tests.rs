@@ -37,6 +37,7 @@ fn attachment_support_follows_the_window_marker() {
         rt.update(|s, _| {
             crate::poll_chat(s, 1);
             s.draft.clear();
+            s.composer.picker.reset();
         });
         rt.frame(0.0);
         assert_eq!(rt.find("attachments-disabled").is_none(), supported);
