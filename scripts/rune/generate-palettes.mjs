@@ -4,7 +4,7 @@ import path from 'node:path'
 import {createServer} from 'vite'
 import {chromium} from 'playwright'
 import {root,generated} from './generate-common.mjs'
-import {collectTheme} from './generate-theme-browser.mjs'
+import {collectFileActionColors,collectTheme} from './generate-theme-browser.mjs'
 import {themeFixtureHtml} from './generate-theme-fixture.mjs'
 
 const ui=path.join(root,'packages/ui')
@@ -39,6 +39,7 @@ try{
       },{id:palette.id,highContrast})
       const {colors,shadows,unresolved}=await page.evaluate(collectTheme,names)
       assert.deepEqual(unresolved,[],palette.id)
+      Object.assign(colors,await collectFileActionColors(page))
       if(highContrast)palette.contrast={colors,shadows}
       else Object.assign(palette,{colors,shadows})
     }
