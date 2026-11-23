@@ -23,12 +23,23 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                 .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
                 .children(super::receipts::session(s))
                 .child(transcript::rows(s));
-            chat::reading::viewport(s, history)
+            crate::timeline::view(
+                s,
+                chat::reading::viewport(s, crate::timeline::watch(s, history)),
+                expanded,
+            )
         }))
         .child(agent_view::view(s, cx))
         .children(chat::attachments::error(s))
         .child(composer::view::view(s, expanded, Some(worktree)));
-    rune_theme_codenomad::git_panel::with_overlays(body, overlays)
+    crate::timeline::search::overlay(s, cx, &mut overlays);
+    if s.paging {
+        overlays.push(rune_theme_codenomad::timeline::navigation_status(
+            crate::strings::t("history.navigation.loading"),
+        ));
+    }
+    overlays.extend(crate::timeline::preview_overlay(s));
+    rune_theme_codenomad::layout::with_overlays(body, overlays).key(crate::timeline::search::HOST)
 }
 
 fn interruption_expanded(s: &State) -> bool {

@@ -121,7 +121,7 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
                 .child(text(t(status)).text_role(TextRole::Label)),
         );
         if expanded && input.is_object() {
-            row = row.child(if let Some(input) = input_json(input) {
+            row = row.child(if let Some(input) = input_json(input, TOOL_LIMIT, false) {
                 markdown::tool_pane(
                     window(
                         s,

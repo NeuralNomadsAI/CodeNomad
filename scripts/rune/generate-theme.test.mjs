@@ -80,13 +80,16 @@ test('generated semantic metrics survive actual font changes and viewport change
       await page.setViewportSize({width:640,height:900})
       assert.deepEqual((await page.evaluate(collectTheme,names)).metrics,baseline.metrics,'Viewport-dependent intrinsic dimensions leaked into the theme')
       for(const [name,metric] of Object.entries(baseline.metrics)){
-        if(['windowIcon','windowIconGlyph','tabActive','tabGlyph','tabCloseGlyph','actionMenuIcon','fileRowActionGlyph'].includes(name))continue
+        if(['windowIcon','windowIconGlyph','tabActive','tabGlyph','tabCloseGlyph','actionMenuIcon','fileRowActionGlyph','timelineRail','timelineGap','timelineGlyph'].includes(name))continue
         assert(!('width'in metric)&&!('height'in metric),`${name} retained intrinsic dimensions`)
       }
       assert.equal(baseline.metrics.windowIcon.width,24)
       assert.equal(baseline.metrics.windowIcon.height,24)
       assert.equal(baseline.metrics.windowIconGlyph.width,14)
       assert.equal(baseline.metrics.windowIconGlyph.height,14)
+      assert.equal(baseline.metrics.timelineRail.width,40)
+      assert.equal(baseline.metrics.timelineMarker.minHeight,20)
+      assert.equal(baseline.metrics.timelineGap.height,5.59375)
       assert.deepEqual(baseline.metrics.tabFocus,{ringWidth:2,ringOffset:1,extent:3})
       for(const kind of ['tabFocus','tabCloseFocus']){
         assert.equal(baseline.colors[`${kind}-ring`],'#3b82f680','Normalized CSS RGB channels survive translucent color extraction')

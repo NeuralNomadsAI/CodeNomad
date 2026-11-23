@@ -1,4 +1,5 @@
 pub(crate) mod actions;
+pub(crate) mod anchors;
 pub(crate) mod attachments;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod authentication;
@@ -13,6 +14,7 @@ pub(crate) mod message_actions;
 pub(crate) mod reader;
 pub(crate) mod reading;
 mod receipts;
+pub(crate) mod search_hit;
 pub(crate) use reader::{resume, suspend};
 pub(crate) mod reasoning;
 #[cfg(test)]
@@ -20,6 +22,7 @@ mod rtl_tests;
 #[cfg(test)]
 mod tests;
 mod tool_diff;
+mod tool_patch;
 pub(crate) use tool_diff::Preferences as ToolDiffPreferences;
 mod tool_groups;
 mod tools;

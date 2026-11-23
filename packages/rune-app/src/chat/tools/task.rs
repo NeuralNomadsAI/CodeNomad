@@ -141,7 +141,7 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
     let child_steps = child_id.map_or(&[][..], |id| s.transcript_display.children.steps(id));
     let visible_steps = child_steps
         .iter()
-        .filter(|(_, step)| super::visible(s, step));
+        .filter(|(message, step)| super::visible(s, message, step));
     let legacy = tool.metadata["summary"]
         .as_array()
         .map_or(&[][..], Vec::as_slice);
@@ -253,17 +253,19 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
                 .role("listitem")
                 .child(layout::action_row().child(label).child(text(t(status))));
             if expanded && let Some(input) = input {
-                row = row.child(if let Some(input) = input_json(input) {
-                    window(
-                        s,
-                        format!("{key}-input"),
-                        &[&input],
-                        PANE_LIMIT,
-                        |shown, _| markdown::code(shown, "json", true, true),
-                    )
-                } else {
-                    text(t("toolCall.output.tooLarge"))
-                });
+                row = row.child(
+                    if let Some(input) = input_json(input, super::TOOL_LIMIT, false) {
+                        window(
+                            s,
+                            format!("{key}-input"),
+                            &[&input],
+                            PANE_LIMIT,
+                            |shown, _| markdown::code(shown, "json", true, true),
+                        )
+                    } else {
+                        text(t("toolCall.output.tooLarge"))
+                    },
+                );
             }
             list = list.child(row);
         }

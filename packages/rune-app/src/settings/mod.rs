@@ -17,6 +17,10 @@ mod stats;
 pub(crate) mod transcript_filters;
 mod transcript_preset;
 pub(crate) use transcript_preset::Row as TranscriptRow;
+
+pub(crate) fn show_timeline(s: &crate::State) -> bool {
+    s.settings.shared.borrow().show_timeline()
+}
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -287,6 +291,15 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         | filters_changed
         | transcript_changed
         | (display != std::mem::replace(&mut s.settings.last_display, display))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn locale(s: &State) -> &'static str {
+    s.settings
+        .shared
+        .borrow()
+        .locale()
+        .unwrap_or_else(strings::locale)
 }
 
 #[cfg(test)]

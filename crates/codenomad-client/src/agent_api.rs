@@ -18,28 +18,43 @@ pub struct Permission {
     pub resources: Vec<String>,
     pub message: String,
     pub supported: bool,
-    pub tool: Option<ToolTarget>,
+    pub tool: Option<ToolSource>,
 }
 #[derive(Clone)]
 pub struct Form {
     pub id: String,
     pub title: String,
     pub fields: Vec<Value>,
-    pub tool: Option<ToolTarget>,
+    pub tool: Option<ToolSource>,
     pub infer_websearch: bool,
 }
 
-#[derive(Clone)]
-pub struct ToolTarget {
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ToolSource {
     pub message: String,
     pub call: String,
 }
 
-fn target(message: &Value, call: &Value) -> Option<ToolTarget> {
+fn target(message: &Value, call: &Value) -> Option<ToolSource> {
     let id = |value: &Value| value.as_str().filter(|id| valid_id(id)).map(str::to_owned);
-    Some(ToolTarget {
+    Some(ToolSource {
         message: id(message)?,
         call: id(call)?,
+    })
+}
+
+fn tool_source(row: &Value) -> Option<ToolSource> {
+    let source = &row["source"];
+    if source["type"] != "tool" {
+        return None;
+    }
+    let (message, call) = (source["messageID"].as_str()?, source["id"].as_str()?);
+    if !valid_id(message) || call.is_empty() || call.len() > 512 {
+        return None;
+    }
+    Some(ToolSource {
+        message: message.into(),
+        call: call.into(),
     })
 }
 pub struct Snapshot {
@@ -416,7 +431,8 @@ pub fn permissions(value: &Value, session: &str) -> Result<Vec<Permission>> {
                     .or_else(|| row["metadata"].get("partID"))
                     .or_else(|| row["metadata"].get("partId"))
                     .unwrap_or(&row["source"]["id"]),
-            ),
+            )
+            .or_else(|| tool_source(row)),
         });
     }
     Ok(out)
@@ -456,7 +472,8 @@ pub fn forms(value: &Value, session: &str) -> Result<Vec<Form>> {
         let tool = target(
             explicit(&["messageID", "messageId"]),
             explicit(&["id", "callID", "callId"]),
-        );
+        )
+        .or_else(|| tool_source(row));
         out.push(Form {
             id,
             title: string(&row["title"], 4096)?,

@@ -228,12 +228,21 @@ fn color(mode: u16, mut values: impl Iterator<Item = u16>) -> Option<Color> {
 }
 
 pub fn code(source: &str, wrap: bool) -> El {
-    render(parse(source), wrap)
+    search_code(source, wrap, None)
 }
 
-fn render(log: Log, wrap: bool) -> El {
+pub fn search_code(
+    source: &str,
+    wrap: bool,
+    query: Option<crate::timeline::search::Query<'_>>,
+) -> El {
+    render(parse(source), wrap, query)
+}
+
+fn render(log: Log, wrap: bool, query: Option<crate::timeline::search::Query<'_>>) -> El {
     let (text, spans, strikes) = styled(log);
-    super::markdown::code_body(rune::rich(text, spans).strikes(strikes), wrap)
+    let body = rune::rich(&text, spans).strikes(strikes);
+    super::markdown::code_body(crate::timeline::search::ink(body, &text, query), wrap)
 }
 
 type Strike = (usize, usize, Option<Color>);

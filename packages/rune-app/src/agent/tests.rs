@@ -30,6 +30,8 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
             id: "question".into(),
             title: "A question".into(),
             fields: vec![],
+            tool: None,
+            infer_websearch: false,
         }]),
     };
     let mut s = crate::init();

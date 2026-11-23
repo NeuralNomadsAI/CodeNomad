@@ -26,6 +26,7 @@ mod settings;
 mod shell;
 use shell::render::view;
 mod strings;
+mod timeline;
 use screen::Screen;
 mod workspace;
 #[cfg(test)]
@@ -54,6 +55,10 @@ struct State {
     #[cfg(target_arch = "wasm32")]
     pairing: platform::pairing::Recovery,
     transcript_display: transcript_state::Display,
+    rail_excerpts: timeline::ExcerptCache,
+    saved_outlines: workspace::outlines::Cache,
+    rail_filter_revision: u64,
+    window_size: [f32; 2],
     tool_diff_preferences: chat::ToolDiffPreferences,
     screen: Screen,
     settings: settings::Host,
@@ -108,6 +113,10 @@ fn init() -> State {
         #[cfg(target_arch = "wasm32")]
         pairing: Default::default(),
         transcript_display: Default::default(),
+        rail_excerpts: Default::default(),
+        saved_outlines: Default::default(),
+        rail_filter_revision: 0,
+        window_size: [0.0; 2],
         tool_diff_preferences: Default::default(),
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),
@@ -175,14 +184,9 @@ fn local_stress() -> bool {
 fn send(s: &mut State, tx: &mut Tx) {
     composer::send(s, tx, false);
 }
-fn request_older(s: &mut State, _: &mut Tx) {
-    if s.can_older
-        && !s.paging
-        && s.commands
-            .as_ref()
-            .is_some_and(|c| c.try_send(Command::Older).is_ok())
-    {
-        s.paging = true;
+fn request_older(s: &mut State, tx: &mut Tx) {
+    if chat::reader::older(s) {
+        chat::reader::announce_paging(tx);
     }
 }
 fn latest(s: &mut State, tx: &mut Tx) {
@@ -203,7 +207,8 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 }
 
 fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    let chat = poll_chat(s, 64);
+    let gesture = timeline::poll_edge(s, tx);
+    let chat = !timeline::input_precedes_admission(s, tx) && poll_chat(s, 64);
     shell::notifications::collect(s, workspace::notification_target);
     if !s.screen.is_launcher()
         && !git::has_preview(s)
@@ -212,7 +217,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     {
         reader.renderer_ready(tx);
     }
-    let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
+    let mut changed = gesture | chat | transcript_state::Display::poll(s, chat, now, tx);
     changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
     changed |= s.composer.picker.poll(&s.reads, &s.wake);
@@ -225,7 +230,12 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
+    let transcript_revision = s.revision;
     changed |= settings::poll(s, tx) | settings::poll_window_actions(s, tx);
+    if s.revision != transcript_revision {
+        timeline::filters_changed(s);
+    }
+    changed |= timeline::search::settle_destination(s, tx);
     #[cfg(target_arch = "wasm32")]
     {
         changed |= settings::poll_stats(s, now, tx);

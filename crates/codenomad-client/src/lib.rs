@@ -22,6 +22,7 @@ mod prompt_command;
 mod prompt_receipt;
 pub mod recovery;
 pub mod runtime;
+pub mod search;
 mod server_path;
 pub mod settings;
 pub use server_path::absolute as absolute_server_path;

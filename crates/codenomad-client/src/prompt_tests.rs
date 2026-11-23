@@ -563,7 +563,10 @@ fn prompt_and_history_limits_do_not_expand_catalogues() {
             .insert(0, json!({"id":"overlap","type":"user","text":""}));
         let left = history::decode(before).unwrap();
         let right = history::decode(after).unwrap();
-        assert!(history::previous_page(&left, &right.rows).is_ok());
-        assert!(history::previous_page(&left, &right.rows[1..]).is_err());
+        use crate::transport::HistoryEdge::{After, Before};
+        assert!(history::edge_page(&left, &right.rows, Before).is_ok());
+        assert!(history::edge_page(&left, &right.rows[1..], Before).is_err());
+        assert!(history::edge_page(&right, &left.rows, After).is_ok());
+        assert!(history::edge_page(&right, &left.rows[..1], After).is_err());
     });
 }

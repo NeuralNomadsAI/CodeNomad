@@ -21,10 +21,16 @@ pub(super) fn view(s: &State, message: &Message) -> Option<El> {
         _ => return None,
     };
     let mode = settings::transcript_mode(s, TranscriptRow::System);
-    if system && mode == "hidden" {
+    if !super::super::anchors::context_visible(s, &message.role) {
         return Some(row);
     }
-    let expanded = !system || s.transcript_display.expanded(&key, mode == "expanded");
+    let search = s
+        .transcript_display
+        .search_highlight
+        .as_ref()
+        .filter(|hit| hit.message == message.id);
+    let expanded =
+        !system || search.is_some() || s.transcript_display.expanded(&key, mode == "expanded");
     let toggle = key.clone();
     let title = if system {
         layout::button(
@@ -55,21 +61,37 @@ pub(super) fn view(s: &State, message: &Message) -> Option<El> {
                     document::PROSE_LIMIT,
                     |shown, _| {
                         rune_theme_codenomad::markdown::tool_pane(
-                            rune_theme_codenomad::markdown::code(shown, "text", false, true),
+                            rune_theme_codenomad::timeline::search::ink(
+                                rune_theme_codenomad::markdown::code(shown, "text", false, true),
+                                shown,
+                                search.map(|hit| {
+                                    hit.query(Some((codenomad_client::search::Kind::Text, 0)))
+                                }),
+                            ),
                             true,
                         )
                     },
                 )
             } else {
-                document::prose(s, content, &message.body, false)
+                document::prose(s, &message.id, content, &message.body, false)
             }
         }));
-    row = row.pad(Space::Lg).child(super::super::reading::passage(
+    let marker = crate::timeline::demanded(s)
+        .then(|| {
+            super::super::anchors::blocks(message, 0, false)
+                .into_iter()
+                .next()
+        })
+        .flatten()
+        .map(|block| block.marker);
+    let card = super::super::reading::passage(
         s,
         card,
         &message.id,
         key,
         system.then_some(TranscriptRow::System),
-    ));
+        marker,
+    );
+    row = row.pad(Space::Lg).child(card);
     Some(row)
 }

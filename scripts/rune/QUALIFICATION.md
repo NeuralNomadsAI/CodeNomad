@@ -45,6 +45,23 @@ wasm-bindgen --target web --out-name probe --out-dir "$CARGO_TARGET_DIR/browser-
 node packages/rune-app/fixtures/browser-outline.mjs "$CARGO_TARGET_DIR/browser-outline"
 ```
 
+La galerie `history-rail` monte le composant Rune sur 200 000 repères sans serveur. Le test Windows vérifie l'étendue en haut et en bas, le nombre de repères montés, le clavier et le seuil de largeur. Chromium vérifie le miroir accessible, le clic, le clavier, le saut à un repère hors écran et la disparition sous 420 px, en clair et en sombre.
+
+```sh
+cargo test --locked -p rune-theme-codenomad --example history-rail
+cargo build --locked -p rune-theme-codenomad --example history-rail --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-name rail --out-dir "$CARGO_TARGET_DIR/browser-rail" "$CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/examples/history-rail.wasm"
+node packages/rune-app/fixtures/history-rail-web.mjs "$CARGO_TARGET_DIR/browser-rail"
+```
+
+Le raccord conversation est couvert par `cargo test --locked -p codenomad-rune-app timeline::` et, avec le bundle produit WASM et le serveur Rust de qualification, par `node packages/rune-app/fixtures/launcher-fixture.mjs --web-timeline`. Le banc vérifie le survol hors fenêtre sans page de transcript, le passage du pointeur à l’infobulle, le focus et la fermeture, puis un saut `around` et un saut résident sans requête.
+
+`node packages/rune-app/fixtures/launcher-fixture.mjs --web-touch-history` envoie le toucher, le glissement et le relâchement par le canal CDP tactile. Le banc retient la réponse du lecteur pendant le retour élastique et vérifie un seul curseur `before` ainsi que la disparition du statut après admission.
+
+La recherche utilise le même banc Rust, via `node packages/rune-app/fixtures/launcher-fixture.mjs --web-history-search` avec les routes `query` et `ranked`. Le scénario vérifie le focus pendant le glissement, l'ordre de Maj+Tab, le seuil de requête, un résultat résident sans fenêtre et l'ouverture d'une autre session par une fenêtre `around` après lecture unitaire. Sur mobile en paysage, il réduit la hauteur et fait défiler le corps jusqu'à une continuation classée sans déplacer la barre. Les tests `codenomad-client search::tests` couvrent aussi le redémarrage classé.
+
+`node packages/rune-app/fixtures/launcher-fixture.mjs --web-outline-restore` vérifie en Chromium un rechargement réel avec le repère restauré avant la réponse du broker, la réutilisation de la plage inchangée et le retour à une lecture à froid quand le cache est corrompu. Les deux rechargements conservent le brouillon.
+
 Le banc Code Mode vérifie quatre écritures de 70 Kio, la relecture après une trame hors borne et l’actualisation du fil enfant sur la connexion d’origine :
 
 ```powershell

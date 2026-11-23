@@ -31,6 +31,10 @@ impl Default for Reading {
 }
 
 impl Reading {
+    pub(super) fn hold(&mut self, message: String) {
+        self.following = false;
+        self.top = Some((message, 0.0));
+    }
     pub(super) fn settle(&mut self, attempted: &str, confirmed: Option<&str>) {
         if let Some((id, offset)) = &self.top
             && id == attempted
@@ -53,6 +57,7 @@ impl Reading {
     }
 
     pub(crate) fn restore(bookmark: &Bookmark, tx: &mut Tx) {
+        tx.instant();
         match bookmark {
             Bookmark::Latest => tx.scroll_to_bottom_instant("history"),
             Bookmark::Message { id, offset } => tx.scroll_key_to(id, *offset),
@@ -93,31 +98,37 @@ pub(super) fn passage(
     message: &str,
     key: String,
     mode: Option<crate::settings::TranscriptRow>,
+    marker: Option<codenomad_client::timeline::Marker<'_>>,
 ) -> El {
     let scope = s.input_scope.clone();
     let message = message.to_owned();
-    body.key(key.clone())
-        .on_drawn_layout_tx(move |s: &mut State, [_, y, _, height], tx| {
-            if s.current_scope(&scope) {
-                let [_, top, _, viewport] = s.tool_diff_preferences.history_bounds.get();
-                let reading = s.transcript_display.reading_mut();
-                if viewport > 0.0 && y <= top && y + height > top {
-                    reading.passage = Some(Passage {
-                        message: message.clone(),
-                        key: key.clone(),
-                        offset: y - top,
-                        mode,
-                    });
-                } else if reading
-                    .passage
-                    .as_ref()
-                    .is_some_and(|old| old.message == message && old.key == key)
-                {
-                    reading.passage = None;
-                }
+    let body = body.key(key.clone());
+    let observe = move |s: &mut State, [_, y, _, height]: [f32; 4], tx: &mut Tx| {
+        if s.current_scope(&scope) {
+            let [_, top, _, viewport] = s.tool_diff_preferences.history_bounds.get();
+            let reading = s.transcript_display.reading_mut();
+            if viewport > 0.0 && y <= top && y + height > top {
+                reading.passage = Some(Passage {
+                    message: message.clone(),
+                    key: key.clone(),
+                    offset: y - top,
+                    mode,
+                });
+            } else if reading
+                .passage
+                .as_ref()
+                .is_some_and(|old| old.message == message && old.key == key)
+            {
+                reading.passage = None;
             }
-            tx.live_only();
-        })
+        }
+        tx.live_only();
+    };
+    if let Some(marker) = marker {
+        crate::timeline::watch_block(s, marker, body, observe)
+    } else {
+        body.on_drawn_layout_tx(observe)
+    }
 }
 
 pub(crate) fn viewport(s: &State, history: El) -> El {

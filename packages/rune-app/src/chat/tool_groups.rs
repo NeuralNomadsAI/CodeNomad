@@ -6,7 +6,8 @@ use crate::{
     settings::{TranscriptRow, transcript_mode},
     strings::locale,
 };
-use rune::El;
+use codenomad_client::search::Kind as SearchKind;
+use rune::{El, col};
 use rune_theme_codenomad::{
     Space, catalogue,
     layout::{self, Layout},
@@ -37,6 +38,7 @@ struct Summary {
     count: usize,
     reads: usize,
     completed: bool,
+    search_hit: bool,
 }
 
 struct Run {
@@ -94,7 +96,7 @@ impl Groups {
                     Part::Tool(tool) if index.awaiting(&message.id, &tool.id) => {
                         index.finish(run.take(), true)
                     }
-                    Part::Tool(tool) if !tools::visible(s, tool) => (),
+                    Part::Tool(tool) if !tools::visible(s, &message.id, tool) => (),
                     Part::Tool(tool) if let Some(kind) = kind(tool) => {
                         if run.as_ref().is_some_and(|run| run.summary.kind != kind) {
                             index.finish(run.take(), true);
@@ -107,12 +109,20 @@ impl Groups {
                                 count: 0,
                                 reads: 0,
                                 completed: false,
+                                search_hit: false,
                             },
                             chunks: Vec::new(),
                         });
                         run.summary.count += 1;
                         run.summary.reads += usize::from(tool.name == "read");
                         run.summary.completed = message.completed;
+                        run.summary.search_hit |= super::search_hit::query(
+                            s,
+                            &message.id,
+                            SearchKind::Tool,
+                            tool.part_index,
+                        )
+                        .is_some_and(|q| q.active);
                         match run.chunks.last_mut() {
                             Some((last, range)) if *last == row => range.end = part + 1,
                             _ => run.chunks.push((row, part..part + 1)),
@@ -165,7 +175,7 @@ impl Groups {
             .enumerate()
             .find(|(_, row)| row.id == message)?;
         let part = current.parts.iter().position(|part| matches!(part,
-            Part::Tool(tool) if tools::visible(s, tool) && tools::tool_key(message, &tool.id) == key))?;
+            Part::Tool(tool) if tools::visible(s, message, tool) && tools::tool_key(message, &tool.id) == key))?;
         let (_, chunk) = self
             .chunks
             .iter()
@@ -208,13 +218,21 @@ fn waiting(s: &State) -> HashMap<String, HashSet<String>> {
 
 impl Chunk {
     fn expanded(&self, s: &State) -> bool {
-        s.transcript_display.expanded(
-            &self.summary.key,
-            transcript_mode(s, TranscriptRow::Groups) == "expanded",
-        )
+        self.summary.search_hit
+            || s.transcript_display.expanded(
+                &self.summary.key,
+                transcript_mode(s, TranscriptRow::Groups) == "expanded",
+            )
     }
 
-    pub(super) fn view(&self, s: &State, message: &str, parts: &[Part]) -> Option<El> {
+    pub(super) fn view<'a>(
+        &self,
+        s: &State,
+        message: &'a str,
+        parts: &[Part],
+        start: usize,
+        marker: &mut impl FnMut(Option<usize>) -> Option<codenomad_client::timeline::Marker<'a>>,
+    ) -> Option<El> {
         let summary = &self.summary;
         let key = &summary.key;
         let expanded = self.expanded(s);
@@ -233,25 +251,33 @@ impl Chunk {
             .key(format!("toggle-{key}"))
             .expanded(expanded)
         });
-        let mut body = rune::col()
-            .full_width()
-            .separate(Space::Sm)
-            .children(header);
+        let mut body = col().full_width().separate(Space::Sm).children(header);
         if expanded {
-            body = body.children(parts.iter().filter_map(|part| match part {
-                Part::Tool(tool) if tools::visible(s, tool) => Some(super::reading::passage(
-                    s,
-                    tools::view(s, message, tool),
-                    message,
-                    tools::tool_key(message, &tool.id),
-                    Some(TranscriptRow::tool(&tool.name)),
-                )),
-                _ => None,
-            }));
+            body = body.children(parts.iter().enumerate().filter_map(
+                |(offset, part)| match part {
+                    Part::Tool(tool) if tools::visible(s, message, tool) => {
+                        Some(super::reading::passage(
+                            s,
+                            tools::view(s, message, tool),
+                            message,
+                            tools::tool_key(message, &tool.id),
+                            Some(TranscriptRow::tool(&tool.name)),
+                            marker(Some(start + offset)),
+                        ))
+                    }
+                    _ => None,
+                },
+            ));
         }
         if self.first {
-            body =
-                super::reading::passage(s, body, message, key.clone(), Some(TranscriptRow::Groups));
+            body = super::reading::passage(
+                s,
+                body,
+                message,
+                key.clone(),
+                Some(TranscriptRow::Groups),
+                (!expanded).then(|| marker(Some(start))).flatten(),
+            );
         }
         Some(body)
     }
@@ -295,4 +321,113 @@ impl Summary {
             &[("tools", &details)],
         )
     }
+}
+
+fn key(message: &str, first: &Tool) -> String {
+    format!("group-{}", tools::tool_key(message, &first.id))
+}
+
+fn expanded(
+    s: &State,
+    message: &str,
+    key: &str,
+    mode: &str,
+    calls: &[(usize, &std::sync::Arc<Tool>)],
+) -> bool {
+    s.transcript_display.expanded(key, mode == "expanded")
+        || calls.iter().any(|(_, tool)| {
+            super::search_hit::query(s, message, SearchKind::Tool, tool.part_index)
+                .is_some_and(|q| q.active)
+        })
+}
+
+fn members<'a>(
+    s: &State,
+    message: &str,
+    parts: &'a [Part],
+) -> Option<(Kind, Vec<(usize, &'a std::sync::Arc<Tool>)>, usize)> {
+    if transcript_mode(s, TranscriptRow::Groups) == "hidden" {
+        return None;
+    }
+    let Part::Tool(first) = parts.first()? else {
+        return None;
+    };
+    if !tools::visible(s, message, first) || tools::awaiting_input(s, message, first) {
+        return None;
+    }
+    let group = kind(first)?;
+    let mut calls = Vec::new();
+    let mut end = 0;
+    for (i, part) in parts.iter().enumerate() {
+        match part {
+            Part::Text(text) if text.text.trim().is_empty() => (),
+            Part::Tool(tool) if tools::awaiting_input(s, message, tool) => break,
+            Part::Tool(tool) if !tools::visible(s, message, tool) => (),
+            Part::Tool(tool) if kind(tool) == Some(group) => {
+                calls.push((i, tool));
+                end = i + 1;
+            }
+            _ => break,
+        }
+    }
+    (calls.len() >= 2).then_some((group, calls, end))
+}
+
+pub(super) fn anchor(s: &State, message: &str, parts: &[Part], target: usize) -> Option<String> {
+    let mode = transcript_mode(s, TranscriptRow::Groups);
+    if mode == "hidden" {
+        return None;
+    }
+    let mut start = 0;
+    while start <= target {
+        if let Some((_, calls, end)) = members(s, message, &parts[start..]) {
+            if target < start + end {
+                let key = key(message, calls.first()?.1);
+                return (!expanded(s, message, &key, mode, &calls)).then_some(key);
+            }
+            start += end;
+        } else {
+            start += 1;
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+#[test]
+fn a_pending_tool_stays_out_of_both_collapsed_group_kinds() {
+    use serde_json::json;
+    crate::platform::block_on(async {
+        let mut s = crate::init();
+        crate::settings::fixture_transcript(&mut s, json!({"toolGroupVisibility":"collapsed"}));
+        let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        let mut agent = crate::agent::Ui::new(crate::agent::start(backend, s.wake.clone()));
+        agent.permissions = crate::agent_api::permissions(
+            &json!({"data":[{
+                "id":"permission","sessionID":"session","action":"read","resources":[],
+                "source":{"type":"tool","id":"pending","messageID":"step"}
+            }]}),
+            "session",
+        )
+        .unwrap();
+        s.agent = Some(agent);
+        for name in ["bash", "read"] {
+            let content = ["a", "b", "pending", "c", "d"].map(|id| {
+                json!({"type":"tool","id":id,"name":name,"state":{"status":"completed","input":{}}})
+            });
+            let message = crate::history::decode_message(
+                &json!({"id":"step","type":"assistant","content":content}),
+            )
+            .unwrap();
+            assert_eq!(
+                anchor(&s, "step", &message.parts, 0).as_deref(),
+                Some("group-tool-step:1:a")
+            );
+            assert!(anchor(&s, "step", &message.parts, 2).is_none());
+            assert_eq!(
+                anchor(&s, "step", &message.parts, 4).as_deref(),
+                Some("group-tool-step:1:c")
+            );
+        }
+    });
 }

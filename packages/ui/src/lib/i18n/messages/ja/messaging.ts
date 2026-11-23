@@ -84,6 +84,7 @@ export const messagingMessages = {
   "history.sessionUnavailable": "セッションを利用できません",
   "history.openSession": "セッションで開く",
   "history.openFailed": "このセッションを開けませんでした。",
+  "history.destinationFiltered": "この移動先はメッセージ内容のフィルターで非表示になっています。",
   "history.planning": "履歴を確認中：{count} 件",
   "history.pruning": "整理中：{count} / {total} 件",
   "transcriptFilters.title": "メッセージの内容",
@@ -150,6 +151,7 @@ export const messagingMessages = {
   "messageSection.search.noVisibleMatches": "表示中の一致はありません",
 
   "messageTimeline.ariaLabel": "メッセージタイムライン",
+  "messageTimeline.current": "現在の位置",
   "messageTimeline.segment.user.label": "あなた",
   "messageTimeline.segment.assistant.label": "AI",
   "messageTimeline.segment.compaction.label": "圧縮",

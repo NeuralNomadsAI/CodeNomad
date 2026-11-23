@@ -200,7 +200,6 @@ pub fn transcript_popup<S: 'static>(
         .key("transcript-filters")
         .role("dialog")
         .label(label)
-        .focus_group()
         .focus_return(trigger)
         .modal_tx(true, dismiss)
         // transcript-filters.css: width 18rem, an independently scrolling list.
@@ -263,7 +262,32 @@ pub fn transcript_filter_row<S: 'static>(
     disabled: bool,
     decorate: impl Fn(El, bool) -> El,
 ) -> El {
-    use crate::git_panel::{CHEVRON_DOWN, CHEVRON_RIGHT, EYE, icon_button};
+    use crate::git_panel::{CHEVRON_DOWN, CHEVRON_RIGHT, EYE};
+    fn filter_button<S: 'static>(
+        glyph: &'static rune::Icon,
+        label: &str,
+        disabled: bool,
+        active: bool,
+        press: impl Fn(&mut S, &mut rune::Tx) + 'static,
+    ) -> El {
+        let press = std::rc::Rc::new(press);
+        let by_pointer = press.clone();
+        let button =
+            crate::git_panel::icon_button(glyph, label, disabled, Some(active), move |s, tx| {
+                by_pointer(s, tx)
+            });
+        if disabled {
+            button
+        } else {
+            button.on_key(move |s, key, tx| {
+                if key.key != rune::Key::Enter {
+                    return false;
+                }
+                press(s, tx);
+                true
+            })
+        }
+    }
     let (visibility_name, visible, set_visibility) = visibility;
     let (expansion_name, expanded, set_expansion) = expansion;
     row()
@@ -280,18 +304,12 @@ pub fn transcript_filter_row<S: 'static>(
                 .truncate(),
         )
         .child(decorate(
-            icon_button(
-                &EYE,
-                visibility_name,
-                disabled,
-                Some(visible),
-                set_visibility,
-            )
-            .key("visibility"),
+            filter_button(&EYE, visibility_name, disabled, visible, set_visibility)
+                .key("visibility"),
             false,
         ))
         .child(decorate(
-            icon_button(
+            filter_button(
                 if expanded {
                     &CHEVRON_DOWN
                 } else {
@@ -299,7 +317,7 @@ pub fn transcript_filter_row<S: 'static>(
                 },
                 expansion_name,
                 disabled || !visible,
-                Some(expanded),
+                expanded,
                 set_expansion,
             )
             .key("expansion"),

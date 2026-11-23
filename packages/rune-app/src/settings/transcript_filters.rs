@@ -81,13 +81,13 @@ pub(crate) fn trigger(s: &State, overlay: &mut Vec<El>, touch: bool) -> El {
         let body = col()
             .full_width()
             .pad(Space::Sm)
-            .children(prefs.error().map(|error| {
+            .children(prefs.transcript_error().map(|error| {
                 layout::action_row()
                     .child(text(t(error)).role("alert"))
                     .child(layout::button(
                         t("sessionList.loadError.retry"),
                         !prefs.can_retry(),
-                        |s: &mut State| s.settings.shared.borrow_mut().retry(),
+                        |s: &mut State| s.settings.shared.borrow_mut().retry_transcript(),
                     ))
             }))
             .child(chrome::build_picker(preset, &mut selects))

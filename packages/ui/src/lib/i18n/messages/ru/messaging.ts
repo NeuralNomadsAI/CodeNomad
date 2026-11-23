@@ -84,6 +84,7 @@ export const messagingMessages = {
   "history.sessionUnavailable": "Сеанс недоступен",
   "history.openSession": "Открыть в сеансе",
   "history.openFailed": "Не удалось открыть этот сеанс.",
+  "history.destinationFiltered": "Это место скрыто фильтрами содержимого сообщений.",
   "history.planning": "Проверка истории: {count} сообщений",
   "history.pruning": "Очистка: {count} / {total} сообщений",
   "transcriptFilters.title": "Содержимое сообщений",
@@ -150,6 +151,7 @@ export const messagingMessages = {
   "messageSection.search.noVisibleMatches": "Нет видимых совпадений",
 
   "messageTimeline.ariaLabel": "Таймлайн сообщений",
+  "messageTimeline.current": "Текущая позиция",
   "messageTimeline.segment.user.label": "Вы",
   "messageTimeline.segment.assistant.label": "Асс.",
   "messageTimeline.segment.compaction.label": "Компактация",

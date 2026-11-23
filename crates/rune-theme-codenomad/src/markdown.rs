@@ -8,6 +8,7 @@ pub fn prose<S: 'static>(
     source: &str,
     streaming: bool,
     highlight: bool,
+    query: Option<(&[String], bool)>,
     link: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
     wrapped: impl Fn(usize, &str) -> bool + 'static,
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
@@ -17,8 +18,23 @@ pub fn prose<S: 'static>(
         .code_block(kit.c.bg_deep, kit.c.border_base)
         .link(kit.c.text_accent)
         .syntax_highlight(highlight);
-    Markdown::new(literal_breaks(source).into_owned())
+    let source = literal_breaks(source).into_owned();
+    let matches = match query {
+        Some((terms, true)) => crate::timeline::search::ranges(&source, terms)
+            .into_iter()
+            .map(|range| vec![range])
+            .collect(),
+        Some((terms, false)) => terms.first().map_or_else(Vec::new, |phrase| {
+            Markdown::find(&source, phrase, rune_kit::markdown::Case::Insensitive)
+                .into_iter()
+                .take(512)
+                .collect()
+        }),
+        None => Vec::new(),
+    };
+    Markdown::new(source)
         .style(style)
+        .highlights(matches)
         .selectable(true)
         .tasks_read_only()
         .scroll_wide(true)
@@ -31,7 +47,7 @@ pub fn prose<S: 'static>(
 
 // Normalize only parsed events. Diagram fences stay on Kit's source path so the
 // transcript can gate preview on completion and keep source actions on one frame.
-fn literal_breaks(source: &str) -> Cow<'_, str> {
+pub(crate) fn literal_breaks(source: &str) -> Cow<'_, str> {
     if !source.contains(['<', '\n']) {
         return Cow::Borrowed(source);
     }
@@ -140,6 +156,16 @@ fn tool_lines(lines: usize) -> f32 {
 }
 
 pub fn code(source: &str, language: &str, highlight: bool, wrap: bool) -> El {
+    search_code(source, language, highlight, wrap, None)
+}
+
+pub fn search_code(
+    source: &str,
+    language: &str,
+    highlight: bool,
+    wrap: bool,
+    query: Option<crate::timeline::search::Query<'_>>,
+) -> El {
     let dark = dark();
     let spans = if highlight {
         syntax::SyntaxTheme::from_kit(kit(dark))
@@ -147,7 +173,10 @@ pub fn code(source: &str, language: &str, highlight: bool, wrap: bool) -> El {
     } else {
         Vec::new()
     };
-    code_body(rich(source, spans), wrap)
+    code_body(
+        crate::timeline::search::ink(rich(source, spans), source, query),
+        wrap,
+    )
 }
 
 pub(crate) fn code_body(body: El, wrap: bool) -> El {

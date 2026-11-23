@@ -2,6 +2,56 @@ use super::*;
 use codenomad_client::git::{Change, Commit, Status};
 use codenomad_client::{git::Section, transport::WorkspaceEvent};
 
+#[test]
+fn history_uses_the_inventory_label_and_falls_back_to_branch_then_slug() {
+    let mut state = crate::init();
+    let mut owner = ui();
+    owner.inventory = Some(Worktrees {
+        repository: Repository::Git,
+        trees: vec![
+            Worktree {
+                slug: "owned-review".into(),
+                label: None,
+                directory: "D:/repo/review".into(),
+                service_directory: None,
+                branch: Some("review/feature".into()),
+                head: Some("not-a-label".into()),
+                missing: false,
+            },
+            Worktree {
+                slug: "detached".into(),
+                label: Some("Review checkout".into()),
+                directory: "D:/repo/detached".into(),
+                service_directory: None,
+                branch: None,
+                head: Some("not-a-label".into()),
+                missing: false,
+            },
+        ],
+    });
+    state.git.owner = Some(owner);
+    assert_eq!(
+        history_worktree(&state, "owned-review"),
+        Some("review/feature")
+    );
+    assert_eq!(
+        history_worktree(&state, "detached"),
+        Some("Review checkout")
+    );
+    state
+        .git
+        .owner
+        .as_mut()
+        .unwrap()
+        .inventory
+        .as_mut()
+        .unwrap()
+        .trees[1]
+        .label = None;
+    assert_eq!(history_worktree(&state, "detached"), Some("detached"));
+    assert_eq!(history_worktree(&state, "foreign"), None);
+}
+
 fn change(path: impl Into<String>, staged: bool, whitespace: bool, score: u64) -> Status {
     let counts = Change {
         kind: "modified".into(),
@@ -90,6 +140,7 @@ fn ui() -> Ui {
             trees: vec![
                 Worktree {
                     slug: "root".into(),
+                    label: None,
                     directory: "D:/repo".into(),
                     branch: Some("main".into()),
                     head: Some("a".repeat(40)),
@@ -98,6 +149,7 @@ fn ui() -> Ui {
                 },
                 Worktree {
                     slug: "other".into(),
+                    label: None,
                     directory: "D:/other".into(),
                     branch: None,
                     head: None,

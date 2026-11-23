@@ -15,6 +15,7 @@ use rune_theme_codenomad::{
     Space, TextRole, ansi,
     layout::{self, Layout},
     markdown,
+    timeline::search::Query,
 };
 use serde_json::Value;
 use std::{io, sync::Arc};
@@ -48,26 +49,39 @@ fn path(tool: &Tool) -> &str {
     }
 }
 
-fn input_json(value: &Value) -> Option<String> {
-    bounded_json(value, TOOL_LIMIT)
+fn bounded_json(value: &Value, limit: usize) -> Option<String> {
+    input_json(value, limit, false)
 }
 
-fn bounded_json(value: &Value, limit: usize) -> Option<String> {
+fn input_json(value: &Value, limit: usize, partial: bool) -> Option<String> {
     struct Limited(Vec<u8>, usize);
     impl io::Write for Limited {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            if bytes.len() > self.1.saturating_sub(self.0.len()) {
+            let count = bytes.len().min(self.1.saturating_sub(self.0.len()));
+            if count == 0 && !bytes.is_empty() {
                 return Err(io::ErrorKind::FileTooLarge.into());
             }
-            self.0.extend_from_slice(bytes);
-            Ok(bytes.len())
+            self.0.extend_from_slice(&bytes[..count]);
+            Ok(count)
         }
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
     }
     let mut out = Limited(Vec::new(), limit);
-    serde_json::to_writer_pretty(&mut out, value).ok()?;
+    let serialized = serde_json::to_writer_pretty(&mut out, value);
+    if serialized
+        .as_ref()
+        .is_err_and(|error| error.io_error_kind() != Some(io::ErrorKind::FileTooLarge) || !partial)
+    {
+        return None;
+    }
+    if serialized.is_err() {
+        if let Err(error) = std::str::from_utf8(&out.0) {
+            out.0.drain(error.valid_up_to()..);
+        }
+        out.0.extend_from_slice("…".as_bytes());
+    }
     String::from_utf8(out.0).ok()
 }
 
@@ -148,8 +162,25 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
     }
 }
 
-pub(super) fn visible(s: &State, tool: &Tool) -> bool {
+pub(super) fn visible(s: &State, message: &str, tool: &Tool) -> bool {
     settings::transcript_mode(s, TranscriptRow::tool(&tool.name)) != "hidden"
+        || awaiting_input(s, message, tool)
+}
+
+pub(super) fn awaiting_input(s: &State, message: &str, tool: &Tool) -> bool {
+    s.agent.as_ref().is_some_and(|agent| {
+        agent
+            .permissions
+            .iter()
+            .filter_map(|request| request.tool.as_ref())
+            .chain(
+                agent
+                    .forms
+                    .iter()
+                    .filter_map(|request| request.tool.as_ref()),
+            )
+            .any(|source| source.message == message && source.call == tool.id)
+    })
 }
 
 pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
@@ -169,10 +200,20 @@ pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
         }
     }
     let display = &s.transcript_display;
+    let patch_steps = is_patch(tool).then(|| {
+        std::array::from_fn::<_, { super::tool_patch::FILE_LIMIT }, _>(|index| {
+            display.steps(&format!("{key}-patch-{index}"))
+        })
+    });
     let stamp = (
         Arc::as_ptr(tool) as usize,
         std::rc::Rc::as_ptr(&s.input_scope) as usize,
         locale(),
+        display
+            .search_highlight
+            .as_ref()
+            .filter(|hit| hit.message == message),
+        patch_steps,
         [
             settings::transcript_mode(s, TranscriptRow::tool(&tool.name)),
             settings::transcript_mode(s, TranscriptRow::Inputs),
@@ -199,12 +240,83 @@ pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
     markdown::hold_frame(key.clone(), stamp, || render(s, message, tool, &key)).key(key)
 }
 
-fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
-    let expanded = s.transcript_display.expanded(
-        key,
-        tool.status == "error"
-            || settings::transcript_mode(s, TranscriptRow::tool(&tool.name)) == "expanded",
+fn is_patch(tool: &Tool) -> bool {
+    matches!(tool.name.as_str(), "apply_patch" | "patch")
+}
+
+fn tool_query<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<Query<'a>> {
+    super::search_hit::query(
+        s,
+        message,
+        codenomad_client::search::Kind::Tool,
+        tool.part_index,
+    )
+}
+
+pub(super) fn match_hidden_by_inputs(
+    s: &State,
+    message: &str,
+    tool: &Arc<Tool>,
+    query: Query<'_>,
+) -> bool {
+    if settings::transcript_mode(s, TranscriptRow::Inputs) != "hidden" || tool.input.is_null() {
+        return false;
+    }
+    if !tool
+        .input
+        .as_str()
+        .map(std::borrow::Cow::Borrowed)
+        .or_else(|| {
+            input_json(
+                &tool.input,
+                super::document::search_limit(Some(query)),
+                true,
+            )
+            .map(std::borrow::Cow::Owned)
+        })
+        .is_some_and(|input| query.matches(&input))
+    {
+        return false;
+    }
+    // Use the actual output renderer: shell commands, patches and errors can expose the same hit.
+    let claimed = std::cell::Cell::new(false);
+    let key = tool_key(message, &tool.id);
+    let _ = render_body(
+        s,
+        message,
+        tool,
+        &key,
+        Some(Query {
+            claimed: Some(&claimed),
+            ..query
+        }),
     );
+    !claimed.get()
+}
+
+fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
+    let claimed = std::cell::Cell::new(false);
+    let query = tool_query(s, message, tool).map(|query| Query {
+        claimed: Some(&claimed),
+        ..query
+    });
+    render_body(s, message, tool, key, query)
+}
+
+fn render_body(
+    s: &State,
+    message: &str,
+    tool: &Arc<Tool>,
+    key: &str,
+    query: Option<Query<'_>>,
+) -> El {
+    let active = query.is_some_and(|q| q.active);
+    let expanded = active
+        || s.transcript_display.expanded(
+            key,
+            tool.status == "error"
+                || settings::transcript_mode(s, TranscriptRow::tool(&tool.name)) == "expanded",
+        );
     let is_task = task::is_task(tool);
     let nested = message.starts_with("child:");
     let report = is_task.then(|| task::report(s, tool)).flatten();
@@ -279,7 +391,7 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     if !expanded {
         return block.children(diagnostics());
     }
-    let failure = render_error(s, message, key, tool);
+    let failure = render_error(s, message, key, tool, query);
     if tool.name == "question"
         && let Some(questions) = question::view(s, key, tool)
     {
@@ -317,6 +429,22 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
             &input_key,
             settings::transcript_mode(s, TranscriptRow::Inputs) == "expanded",
         );
+        let input = (show || active)
+            .then(|| {
+                tool.input
+                    .as_str()
+                    .map(std::borrow::Cow::Borrowed)
+                    .or_else(|| {
+                        input_json(&tool.input, super::document::search_limit(query), active)
+                            .map(std::borrow::Cow::Owned)
+                    })
+            })
+            .flatten();
+        let show = show
+            || active
+                && input
+                    .as_deref()
+                    .is_some_and(|text| query.is_some_and(|q| q.matches(text)));
         let toggle = input_key.clone();
         block = block.child(
             layout::button(
@@ -335,16 +463,23 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         );
         if show {
             block = block.child(copy(s, message, &tool.id, Section::Input));
-            let input = tool
-                .input
-                .as_str()
-                .map(std::borrow::Cow::Borrowed)
-                .or_else(|| input_json(&tool.input).map(std::borrow::Cow::Owned));
             if let Some(input) = input {
                 block = block.child(markdown::tool_pane(
-                    window(s, input_key, &[&input], TOOL_LIMIT, |shown, _| {
-                        markdown::code(shown, "json", true, true)
-                    }),
+                    window(
+                        s,
+                        input_key,
+                        &[&input],
+                        super::document::search_limit(query),
+                        |shown, units| {
+                            markdown::search_code(
+                                shown,
+                                "json",
+                                units <= HIGHLIGHT_LIMIT,
+                                true,
+                                query,
+                            )
+                        },
+                    ),
                     false,
                 ));
             } else {
@@ -357,9 +492,15 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     } else {
         lang
     };
-    let patch = (!pending && tool.name == "apply_patch")
-        .then(|| apply_patch::view(s, message, key, tool))
-        .flatten();
+    let patch = if pending {
+        None
+    } else if query.is_some() && is_patch(tool) {
+        super::tool_patch::view(s, tool, key, query)
+    } else if tool.name == "apply_patch" {
+        apply_patch::view(s, message, key, tool)
+    } else {
+        None
+    };
     if let Some(patch) = patch {
         block = block.child(patch);
     } else if has_output && !specialized_task {
@@ -405,25 +546,38 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                         .child(text(lang).text_role(TextRole::Label)),
                 )
                 .child(markdown::tool_pane(
-                    window(s, output_key, &parts, TOOL_LIMIT, |shown, units| {
-                        if tool.status == "running" && shell::matches(tool) {
-                            s.transcript_display.live_ansi(key, shown, wrap)
-                        } else if terminal {
-                            ansi::code(shown, wrap)
-                        } else {
-                            markdown::code(shown, lang, highlight && units <= HIGHLIGHT_LIMIT, wrap)
-                        }
-                    }),
+                    window(
+                        s,
+                        output_key,
+                        &parts,
+                        super::document::search_limit(query),
+                        |shown, units| {
+                            if tool.status == "running" && shell::matches(tool) {
+                                s.transcript_display.live_ansi(key, shown, wrap, query)
+                            } else if terminal {
+                                ansi::search_code(shown, wrap, query)
+                            } else {
+                                markdown::search_code(
+                                    shown,
+                                    lang,
+                                    highlight && units <= HIGHLIGHT_LIMIT,
+                                    wrap,
+                                    query,
+                                )
+                            }
+                        },
+                    ),
                     matches!(tool.name.as_str(), "edit" | "write"),
                 ))
         };
         block = block.child(
-            if tool.name == "websearch"
+            if !active
+                && tool.name == "websearch"
                 && tool.status == "completed"
                 && let Some(results) = search::view(s, parts[0])
             {
                 results
-            } else if !nested && tool_diff::candidate(tool, parts[0]) {
+            } else if !active && !nested && tool_diff::candidate(tool, parts[0]) {
                 tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
             } else {
                 fallback()
@@ -439,7 +593,13 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         .children(diagnostics())
 }
 
-fn render_error(s: &State, message: &str, key: &str, tool: &Tool) -> Option<El> {
+fn render_error(
+    s: &State,
+    message: &str,
+    key: &str,
+    tool: &Tool,
+    query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
+) -> Option<El> {
     let error = error(tool);
     (tool.status == "error" && !error.is_empty()).then(|| {
         col()
@@ -455,9 +615,9 @@ fn render_error(s: &State, message: &str, key: &str, tool: &Tool) -> Option<El> 
                     s,
                     format!("{key}-error"),
                     &[error],
-                    TOOL_LIMIT,
+                    super::document::search_limit(query),
                     |shown, _| {
-                        text(shown)
+                        rune_theme_codenomad::timeline::search::ink(text(shown), shown, query)
                             .full_width()
                             .wrap()
                             .content_direction()
@@ -483,5 +643,5 @@ fn nested_tool_arguments_stop_at_the_actual_pretty_json_budget() {
     }
     assert!(value.to_string().len() < TOOL_LIMIT);
     assert!(serde_json::to_string_pretty(&value).unwrap().len() > 400_000);
-    assert!(input_json(&value).is_none());
+    assert!(input_json(&value, TOOL_LIMIT, false).is_none());
 }

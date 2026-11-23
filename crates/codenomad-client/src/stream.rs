@@ -34,6 +34,7 @@ pub struct State {
     pub alive: AtomicBool,
     pub running: AtomicBool,
     pub upstream: AtomicBool,
+    pub(crate) history_revision: AtomicU64,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     catalogue: Option<Arc<catalogue::Signals>>,
     placement: Option<(Sender<()>, crate::Receiver<()>)>,
@@ -93,6 +94,12 @@ impl State {
     }
     pub fn valid(&self, version: u64) -> bool {
         self.version.load(SeqCst) == version
+            && self.alive.load(SeqCst)
+            && self.upstream.load(SeqCst)
+            && !self.cancelled.load(SeqCst)
+    }
+    pub(crate) fn history_current(&self, revision: u64) -> bool {
+        self.history_revision.load(SeqCst) == revision
             && self.alive.load(SeqCst)
             && self.upstream.load(SeqCst)
             && !self.cancelled.load(SeqCst)

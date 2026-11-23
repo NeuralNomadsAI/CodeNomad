@@ -36,8 +36,12 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         body
     })
     .on_window_focus(shell::notifications::focus_changed)
-    .on_layout_tx(|s, bounds, tx| {
-        chat::ToolDiffPreferences::layout(s, bounds, tx);
-        shell::notifications::measure_notices(s, bounds, tx);
+    .on_layout_tx(|s, bounds @ [_, _, w, h], tx| {
+        let changed = chat::ToolDiffPreferences::layout(s, w)
+            | crate::timeline::preview_window_layout(s, [w, h])
+            | shell::notifications::measure_notices(s, bounds, tx);
+        if !changed {
+            tx.live_only();
+        }
     })
 }

@@ -215,7 +215,9 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
                             && (live.text.len() > fetched.text.len()
                                 || live.units > fetched.units) =>
                     {
+                        let index = fetched.part_index;
                         *fetched = live.clone();
+                        fetched.part_index = index;
                     }
                     _ => {}
                 }
@@ -263,6 +265,7 @@ fn part_keys(parts: &[Part]) -> Vec<String> {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tool {
+    pub part_index: Option<usize>,
     pub id: String,
     pub name: String,
     pub status: String,
@@ -313,7 +316,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
     let mut ids = std::collections::HashSet::new();
     let mut reasoning_ordinal = 0;
     let mut media_bytes = media::ROW_IMAGE_BYTES;
-    for part in parts {
+    for (index, part) in parts.iter().enumerate() {
         if part["type"] == "text" {
             if let Some(text) = part["text"].as_str() {
                 charge(&mut resident, text.len())?;
@@ -335,6 +338,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
             result.push(Part::Reasoning(reasoning::decode(
                 part,
                 reasoning_ordinal,
+                index,
                 !v["time"]["completed"].is_null(),
             )));
             reasoning_ordinal += 1;
@@ -381,6 +385,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 return Err("resident tool text limit reached".into());
             }
             result.push(Part::Tool(Arc::new(Tool {
+                part_index: Some(index),
                 id: id.into(),
                 name: name.into(),
                 status: status.into(),

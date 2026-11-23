@@ -1,5 +1,6 @@
 use crate::history::Result;
 use crate::workspace::MAX_BYTES;
+use codenomad_client::timeline::SAVED_BYTES as OUTLINE_BYTES;
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn browser_file_wrap() -> Option<bool> {
@@ -241,6 +242,26 @@ mod native {
                 .map_err(|_| "state store unavailable")?
                 .save_file("workspace-file-drafts.json", FILE_DRAFT_BYTES, bytes)
         }
+        pub async fn load_outlines(&self) -> Result<Option<Vec<u8>>> {
+            let files = self.files.clone();
+            tokio::task::spawn_blocking(move || {
+                files
+                    .lock()
+                    .map_err(|_| "state store unavailable")?
+                    .load_file("outlines-v1.json", OUTLINE_BYTES)
+            })
+            .await?
+        }
+        pub async fn save_outlines(&self, bytes: Vec<u8>) -> Result<()> {
+            let files = self.files.clone();
+            tokio::task::spawn_blocking(move || {
+                files
+                    .lock()
+                    .map_err(|_| "state store unavailable")?
+                    .save_file("outlines-v1.json", OUTLINE_BYTES, &bytes)
+            })
+            .await?
+        }
         pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
             let files = self.files.clone();
             let staged = self.staged.clone();
@@ -364,6 +385,7 @@ impl Drop for BrowserListener {
 impl Store {
     const KEY: &'static str = "codenomad.rune.alpha.client-state.v1";
     const FILE_DRAFTS: &'static str = "codenomad.rune.alpha.workspace-file-drafts.v1";
+    const OUTLINES: &'static str = "codenomad.rune.alpha.outlines.v1";
     const RELEASED: &'static str = "codenomad.rune.alpha.records-released";
     pub async fn open() -> Result<Self> {
         use wasm_bindgen::JsCast;
@@ -430,6 +452,23 @@ impl Store {
         self.storage
             .set_item(Self::FILE_DRAFTS, std::str::from_utf8(bytes)?)
             .map_err(|_| "file draft write failed".into())
+    }
+    pub async fn load_outlines(&self) -> Result<Option<Vec<u8>>> {
+        let raw = self
+            .storage
+            .get_item(Self::OUTLINES)
+            .map_err(|_| "outline read failed")?;
+        Ok(raw
+            .filter(|text| text.len() <= OUTLINE_BYTES)
+            .map(String::into_bytes))
+    }
+    pub async fn save_outlines(&self, bytes: Vec<u8>) -> Result<()> {
+        if bytes.len() > OUTLINE_BYTES || self.staged.departing.get() {
+            return Err("outline store unavailable".into());
+        }
+        self.storage
+            .set_item(Self::OUTLINES, std::str::from_utf8(&bytes)?)
+            .map_err(|_| "outline write failed".into())
     }
     pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
         if self.staged.payload.borrow().0 != bytes {

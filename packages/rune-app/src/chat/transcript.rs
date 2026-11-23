@@ -11,7 +11,7 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
 };
 
-const PART_LIMIT: usize = 1000;
+pub(super) const PART_LIMIT: usize = 1000;
 
 mod context;
 #[cfg(test)]
@@ -79,6 +79,19 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
     if matches!(m.parts.as_slice(), [Part::SubagentReport(_)]) {
         return col().key(m.id.clone());
     }
+    let tracks = crate::timeline::demanded(s);
+    let blocks = tracks
+        .then(|| super::anchors::blocks(m, super::anchors::steps(s, &m.id), false))
+        .unwrap_or_default();
+    let mut blocks = blocks.into_iter().peekable();
+    let mut marker = |index| {
+        while blocks.peek().is_some_and(|block| block.part < index) {
+            blocks.next();
+        }
+        blocks
+            .next_if(|block| block.part == index)
+            .map(|block| block.marker)
+    };
     let header = layout::action_row().child(
         text(t(if m.role == "user" {
             "messageItem.speaker.you"
@@ -99,10 +112,11 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
         let key = format!("body-{}", m.id);
         view = view.child(super::reading::passage(
             s,
-            document::prose(s, key.clone(), &m.body, false),
+            document::prose(s, &m.id, key.clone(), &m.body, false),
             &m.id,
             key,
             None,
+            marker(None),
         ));
     }
     let gap_key = format!("parts-gap-{}", m.id);
@@ -154,7 +168,8 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
             );
         }
         let visible = index < head || index >= tail;
-        if index < group_end && matches!(part, Part::Tool(_)) {
+        if index < group_end {
+            ordinal += usize::from(matches!(part, Part::Text(_)));
             continue;
         }
         let body = match part {
@@ -166,6 +181,7 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                         s,
                         document::prose(
                             s,
+                            &m.id,
                             key.clone(),
                             &body.text,
                             !m.completed && body.provenance != TextProvenance::Closed,
@@ -173,18 +189,21 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                         &m.id,
                         key,
                         None,
+                        marker(Some(index)),
                     ))
                 } else {
                     None
                 }
             }
             Part::Tool(tool)
-                if visible && (tools::visible(s, tool) || groups.awaiting(&m.id, &tool.id)) =>
+                if visible
+                    && (tools::visible(s, &m.id, tool) || groups.awaiting(&m.id, &tool.id)) =>
             {
                 match groups.get(i, index) {
                     Some(chunk) => {
                         group_end = chunk.end;
-                        let body = chunk.view(s, &m.id, &m.parts[index..group_end]);
+                        let body =
+                            chunk.view(s, &m.id, &m.parts[index..group_end], index, &mut marker);
                         hidden_continuation |= body.is_none();
                         body
                     }
@@ -194,6 +213,7 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                         &m.id,
                         tools::tool_key(&m.id, &tool.id),
                         Some(crate::settings::TranscriptRow::tool(&tool.name)),
+                        marker(Some(index)),
                     )),
                 }
             }
@@ -210,6 +230,12 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                         .take_while(|part| {
                             matches!(part, Part::Reasoning(_))
                                 || matches!(part, Part::Text(text) if text.text.trim().is_empty())
+                                || matches!(
+                                    part,
+                                    Part::Tool(tool)
+                                        if !tools::visible(s, &m.id, tool)
+                                            && !groups.awaiting(&m.id, &tool.id)
+                                )
                         })
                         .count();
                 super::reasoning::view(s, &m.id, &m.parts[index..reasoning_end])
@@ -222,6 +248,17 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
         };
         if let Some(body) = body {
             shows_content = true;
+            // The first fragment of a reasoning run can be blank: its rendered group starts
+            // at the first non-blank fragment, though the renderer consumes the full run.
+            let body = if matches!(part, Part::Reasoning(_))
+                && let Some(selected) = (index..reasoning_end)
+                    .find(|&at| matches!(&m.parts[at], Part::Reasoning(p) if p.visible()))
+                && let Some(marker) = marker(Some(selected))
+            {
+                crate::timeline::watch_block(s, marker, body, |_, _, _| {})
+            } else {
+                body
+            };
             if reveal_start.is_some_and(|first| index >= first) {
                 view = view.child(
                     col()

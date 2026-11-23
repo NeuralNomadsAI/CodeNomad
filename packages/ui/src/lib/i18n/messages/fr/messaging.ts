@@ -84,6 +84,7 @@ export const messagingMessages = {
   "history.sessionUnavailable": "Session indisponible",
   "history.openSession": "Ouvrir dans la session",
   "history.openFailed": "Impossible d’ouvrir cette session.",
+  "history.destinationFiltered": "Les filtres de Contenu des messages masquent cette destination.",
   "history.planning": "Analyse de l’historique : {count} messages",
   "history.pruning": "Nettoyage : {count} / {total} messages",
   "transcriptFilters.title": "Contenu des messages",
@@ -150,6 +151,7 @@ export const messagingMessages = {
   "messageSection.search.noVisibleMatches": "Aucun résultat visible",
 
   "messageTimeline.ariaLabel": "Chronologie des messages",
+  "messageTimeline.current": "Position actuelle",
   "messageTimeline.segment.user.label": "Vous",
   "messageTimeline.segment.assistant.label": "Assistant",
   "messageTimeline.segment.compaction.label": "Compactage",

@@ -221,6 +221,8 @@ fn notification_observation_requires_a_root_and_a_new_confirmed_idle() {
             id: "form-1".into(),
             title: "Question".into(),
             fields: vec![],
+            tool: None,
+            infer_websearch: false,
         }]),
     };
     attention.observe(&snapshot, true);

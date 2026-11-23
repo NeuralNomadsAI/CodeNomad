@@ -79,6 +79,9 @@ pub(super) async fn relay(
     } else if own && value["type"] == "instance.eventStatus" {
         let ready = value["status"] == "connected";
         let was_ready = state.upstream.swap(ready, SeqCst);
+        if ready != was_ready {
+            state.history_revision.fetch_add(1, SeqCst);
+        }
         if ready && !was_ready {
             out.send(Input::Workspace(
                 epoch,
@@ -133,6 +136,12 @@ pub(super) async fn relay(
             out.send(Input::Workspace(epoch, event)).await?;
         }
         let version = state.version.fetch_add(1, SeqCst) + 1;
+        if matches!(
+            native["type"].as_str(),
+            Some("session.moved" | "session.deleted" | "session.revert.committed")
+        ) {
+            state.history_revision.fetch_add(1, SeqCst);
+        }
         if native["type"] == "session.moved"
             && native["data"]["sessionID"] == b.session
             && let Some((cancel, _)) = &state.placement

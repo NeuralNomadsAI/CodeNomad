@@ -35,6 +35,14 @@ pub(super) struct Preferences {
 }
 
 impl Preferences {
+    pub(super) fn show_timeline(&self) -> bool {
+        self.config
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot["settings"]["showMessageTimeline"].as_bool())
+            .unwrap_or(true)
+    }
+
     pub(super) fn usage_visibility(&self, pending: bool) -> &'static str {
         self.transcript_mode(Row::Usage, pending)
     }
@@ -223,6 +231,20 @@ impl Preferences {
     pub(super) fn retry_general(&mut self) {
         self.config.retry(general_config);
         self.state.retry(general_state);
+    }
+
+    pub(super) fn transcript_error(&self) -> Option<&'static str> {
+        if self.authentication_required || self.config.read_failed() {
+            Some("rune.connect_error")
+        } else if self.config.any_failure(is_transcript) {
+            Some("settings.preferenceSaveFailed")
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn retry_transcript(&mut self) {
+        self.config.retry(is_transcript);
     }
 
     pub(super) fn retry_advanced(&mut self) {
@@ -676,6 +698,10 @@ impl Preferences {
 
 fn general_config(choice: Choice) -> bool {
     matches!(choice, Choice::Locale | Choice::Contrast)
+}
+
+fn is_transcript(choice: Choice) -> bool {
+    matches!(choice, Choice::TranscriptPreset | Choice::TranscriptRow(_))
 }
 
 fn general_state(choice: Choice) -> bool {

@@ -344,20 +344,23 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             },
         );
         let mut layers = Vec::new();
-        let status = if let Some(error) = (s.section == Section::General)
-            .then(|| prefs.general_error())
-            .flatten()
-            .or_else(|| {
-                (prefs.backend.is_none() && prefs.saved(Owner::Config).is_none())
-                    .then_some("rune.connect_error")
-            }) {
+        let status = if let Some(error) = match s.section {
+            Section::General => prefs.general_error(),
+            Section::Conversation => prefs.transcript_error(),
+            _ => None,
+        }
+        .or_else(|| {
+            (prefs.backend.is_none() && prefs.saved(Owner::Config).is_none())
+                .then_some("rune.connect_error")
+        }) {
             layout::action_row()
                 .child(text(t(error)).role("alert"))
                 .child(layout::button(
                     t("sessionList.loadError.retry"),
                     !prefs.can_retry(),
-                    |s: &mut Window| {
-                        s.shared.borrow_mut().retry_general();
+                    |s: &mut Window| match s.section {
+                        Section::Conversation => s.shared.borrow_mut().retry_transcript(),
+                        _ => s.shared.borrow_mut().retry_general(),
                     },
                 ))
         } else if prefs.saved(Owner::Config).is_none() {

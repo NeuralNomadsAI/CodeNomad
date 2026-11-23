@@ -392,13 +392,27 @@ pub(super) fn view(
                 s.settings.web.catalog.toggle()
             })
         }
-        Section::Conversation => super::conversation::content(
-            prefs,
-            panel.transcript_picker,
-            &mut layers,
-            |s: &mut State, row| s.settings.web.transcript_picker = row,
-            |s: &mut State, row, mode| s.settings.shared.borrow_mut().set_transcript(row, mode),
-        ),
+        Section::Conversation => col()
+            .full_width()
+            .separate(Space::Sm)
+            .children(prefs.transcript_error().map(|error| {
+                layout::action_row()
+                    .child(text(t(error)).wrap().role("alert"))
+                    .child(layout::button(
+                        t("sessionList.loadError.retry"),
+                        !prefs.can_retry(),
+                        |s: &mut State| {
+                            s.settings.shared.borrow_mut().retry_transcript();
+                        },
+                    ))
+            }))
+            .child(super::conversation::content(
+                prefs,
+                panel.transcript_picker,
+                &mut layers,
+                |s: &mut State, row| s.settings.web.transcript_picker = row,
+                |s: &mut State, row, mode| s.settings.shared.borrow_mut().set_transcript(row, mode),
+            )),
         Section::Shortcuts => super::shortcuts::editor::view(
             &s.settings.shared,
             &panel.shortcut_filter,

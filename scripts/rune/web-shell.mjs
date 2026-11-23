@@ -27,6 +27,7 @@ export function shell(messages, direction) {
 <link rel="stylesheet" href="./theme.css"><link rel="stylesheet" href="./shell.css"></head>
 <body><div id="rune-boot" role="status" aria-live="polite" data-state="loading" data-failure="${escapeHtml(messages.failed)}">
 <span id="rune-status">${escapeHtml(messages.loading)}</span><button id="rune-retry" hidden>${escapeHtml(messages.retry)}</button></div>
+<div id="rune-history-alert" role="alert"></div>
 <script type="module" src="./boot.js"></script></body></html>\n`
 }
 export function pairShell(messages, css, script) {

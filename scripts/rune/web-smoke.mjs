@@ -11,10 +11,12 @@ import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from 
 import {mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste} from './web-paste.mjs'
 import {missionsFixture} from './web-missions.mjs'
+import {historySearch} from './web-history-search.mjs'
+import {markerFilters} from './web-marker-filters.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'paste-only':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'paste-only':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
@@ -49,8 +51,8 @@ const connectedPalettes = values.connected
   if(values.mobile)assets.add('/remote-pair')
 try {
   const android=mobileContext(browser)
-  const sizes=values.missions?[['desktop',1200,900,false]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
-    [['desktop',960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
+  const sizes=values.missions?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
+    [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
   for (const [name, width, height, touch] of sizes) {
     const control=name==='phone-dpr1-control'
     for (const colorScheme of control?['light']:['light','dark']) {
@@ -68,8 +70,11 @@ try {
       const missions=values.missions?missionsFixture({page,messages,artifact:path.join(out,`missions-${colorScheme}`),project:values.project}):null
       if(missions)await context.addInitScript(()=>Object.defineProperty(Crypto.prototype,'subtle',{value:undefined}))
       const errors = [], forbiddenRequests = [], routes=[], history=[]
+      let holdOlder
+      let holdAnchor
+      let holdPreview
       let measured, tabBar
-      const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,mobilePreferences:values.mobile===true})
+      const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,mobilePreferences:values.mobile===true,markerFilters:values.timeline})
       let eventSource=0
       let releaseLinked
       const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
@@ -86,6 +91,9 @@ try {
         if(pathname.endsWith('/session-history/window')&&response.ok())history.push({input:request.postDataJSON(),body:await response.json().catch(()=>null)})
       })
       page.on('pageerror', error => errors.push({name: error.name, message: error.message}))
+      if(values['history-search'])page.on('console', message=>{
+        if(message.type()==='error'&&/panic|token|panicked/i.test(message.text()))errors.push({name:'Rune',message:message.text()})
+      })
       // Connected scenes admit only their private creations; synthetic scenes refuse all API access.
       await context.route('**/*', async route => {
         const requested = new URL(route.request().url())
@@ -107,6 +115,23 @@ try {
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/worktrees')){
           markLinked()
           await beforeLinked
+        }
+        if(p.endsWith('/session-history/window')){
+          const kind=req.postDataJSON()?.target?.kind
+          if(holdOlder&&kind==='before'){
+            const release=holdOlder;holdOlder=undefined
+            await release
+            return route.continue().catch(()=>{})
+          }
+          if(holdAnchor&&kind==='around'){
+            const held=holdAnchor;holdAnchor=undefined
+            await held.release.promise
+            return route.continue().catch(()=>{})
+          }
+        }
+        if(holdPreview&&p.endsWith('/session/ses_another/message/message-00000')){
+          const held=holdPreview;holdPreview=undefined
+          await held.promise
         }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/instance/api/session')&&
           requested.searchParams.get('directory')===path.join(path.dirname(values.project),'linked')){
@@ -245,15 +270,216 @@ try {
             await row('Existing history').waitFor()
             await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
           }
-          await press(messages['rune.more'])
+           if(!values['history-search']){
+           await press(messages['rune.more'])
           if(values.mobile){
             await row('Another session').waitFor()
             await select('Linked checkout next page','ses_linked_next')
             await page.getByText('Linked checkout answer',{exact:true}).waitFor()
           }
-          await select('Another session','ses_another')
-          await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
+           await select('Another session','ses_another')
+           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
+           }
           await select('Existing history','ses_existing');await reading()
+          if(values['touch-history']){
+            const cdp=await context.newCDPSession(page)
+            const release=Promise.withResolvers()
+            const path=res=>res.url().endsWith('/session-history/window')&&res.postDataJSON()?.target?.kind==='before'
+            const requestedBody=history.findLast(r=>r.input.sessionID==='ses_existing'&&r.input.target.kind==='latest').body
+            const requested=page.waitForRequest(path)
+            const received=page.waitForResponse(res=>res.ok()&&path(res.request()))
+            void requested.catch(()=>{})
+            void received.catch(()=>{})
+            const loading=page.locator('[data-rune-a11y]').getByText(messages['history.navigation.loading'],{exact:true}).first()
+            holdOlder=release.promise
+            const touchAt=(type,y)=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:y?[{x:180,y}]:[]})
+            try{
+              await touchAt('touchStart',132)
+              for(let y=156;y<=588;y+=24){
+                await touchAt('touchMove',y)
+                await page.evaluate(()=>new Promise(requestAnimationFrame))
+              }
+              assert.deepEqual((await requested).postDataJSON().target,requestedBody.older)
+              await loading.waitFor()
+              await touchAt('touchEnd')
+              // Let the real renderer settle touch momentum before releasing the held HTTP read.
+              await page.waitForTimeout(800)
+              await loading.waitFor()
+            }finally{
+              await touchAt('touchEnd').catch(()=>{})
+              release.resolve()
+            }
+            assert.equal((await (await received).json()).status,'window')
+            await loading.waitFor({state:'detached'})
+            assert.equal(history.filter(item=>item.input.target.kind==='before').length,1)
+            await press(messages['rune.latest'])
+            await reading()
+          }
+          if(values.timeline&&name==='desktop'){
+            const rail=page.getByRole('navigation',{name:messages['messageTimeline.ariaLabel']})
+            const box=await rail.boundingBox()
+            assert(box,'The conversation must mount the timeline')
+            const outline=page.waitForResponse(res=>res.url().endsWith('/session-history/outline')&&res.ok())
+            const tool=rail.getByRole('button',{name:'read',exact:true})
+            await page.mouse.move(box.x+10,box.y+10)
+            await page.mouse.wheel(0,-100000)
+            // The index can arrive before or after the normal latest-window response.
+            await Promise.race([outline,tool.waitFor({state:'attached'})])
+            await page.mouse.wheel(0,-100000)
+            await tool.waitFor()
+            const toolBox=await tool.boundingBox()
+            assert(toolBox)
+            const pages=()=>routes.filter(route=>route.path.endsWith('/session-history/window')).length
+            const noPage=pages()
+            const tip=page.locator('[data-rune-a11y] p').and(page.getByText('Indexed tool excerpt message-00000',{exact:true}))
+            await page.mouse.move(box.x-420,box.y+190)
+            const cdp=await context.newCDPSession(page)
+            const touchPoint={x:toolBox.x+toolBox.width/2,y:toolBox.y+toolBox.height/2}
+            await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[touchPoint]})
+            try{
+              await page.waitForTimeout(280)
+              assert.equal(await tip.count(),0,'Holding a touch must not open a preview')
+            }finally{
+              await cdp.send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]})
+              await cdp.detach()
+            }
+            await page.mouse.move(touchPoint.x,touchPoint.y)
+            await tip.waitFor()
+            const described=tool.and(rail.locator('[aria-description$="Final token"]'))
+            await described.waitFor()
+            assert.equal(await described.getAttribute('aria-description'),
+              'Indexed tool excerpt message-00000 '+'Additional visible text. '.repeat(25)+'Final token')
+            assert.equal(pages(),noPage,'Preview must not page the transcript')
+            const tipBox=await tip.boundingBox()
+            assert(tipBox&&tipBox.x>=0&&tipBox.y>=0&&tipBox.x+tipBox.width<=width+1&&tipBox.y+tipBox.height<=height+1)
+            await page.mouse.move(tipBox.x+tipBox.width/2,tipBox.y+tipBox.height/2)
+            await page.waitForTimeout(200) // More than the close grace period after leaving the marker.
+            await tip.waitFor()
+            await page.keyboard.press('Escape')
+            await tip.waitFor({state:'detached'})
+            await page.mouse.move(box.x-420,box.y+190)
+            await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+            const revisited=await tool.boundingBox()
+            assert(revisited)
+            await page.mouse.move(revisited.x+revisited.width/2,revisited.y+revisited.height/2,{steps:8})
+            await tip.waitFor()
+            await page.mouse.wheel(0,96)
+            await tip.waitFor({state:'detached'})
+            await page.mouse.wheel(0,-100000)
+            await tool.waitFor()
+            await page.mouse.move(box.x-40,box.y+25)
+            const run=tool.locator('xpath=following-sibling::button[1]')
+            await run.waitFor()
+            const before=history.filter(r=>r.input.target.kind==='around').length
+            const result=page.waitForResponse(res=>res.url().endsWith('/session-history/window')&&res.ok()
+              &&res.request().postDataJSON()?.target?.kind==='around')
+            await run.click({force:true})
+            assert.equal((await result).request().postDataJSON().target.messageID,'message-00000')
+            const exact=page.getByRole('paragraph').filter({hasText:'Exact position in the old message'})
+            await exact.waitFor()
+            assert(Math.abs((await exact.boundingBox()).y-box.y)<8,'The text block, not its message header, must land at the reading line')
+            assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1)
+            const reasoning=run.locator('xpath=following-sibling::button[1]')
+            await reasoning.and(rail.getByRole('button',{name:'**Second fixture reasoning**',exact:true})).waitFor()
+            const reasoningBox=await reasoning.boundingBox()
+            assert(reasoningBox)
+            await page.mouse.click(reasoningBox.x+reasoningBox.width/2,reasoningBox.y+reasoningBox.height/2)
+            const group=page.getByText('Second fixture reasoning',{exact:true})
+            await group.waitFor()
+            assert(Math.abs((await group.boundingBox()).y-box.y)<16,'The second reasoning run must land on its own group')
+            await reasoning.and(rail.locator(`[aria-description^="${messages['messageTimeline.current']}"]`)).waitFor()
+            assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1,'A resident jump uses no window')
+            await page.mouse.move(box.x-40,box.y+25)
+            await reasoning.and(rail.locator(`[aria-description="${messages['messageTimeline.current']}"]`)).waitFor()
+            await page.keyboard.press('Shift+Tab')
+            // The mirror buttons are not DOM tab stops; Rune keeps focus on its canvas.
+            await page.waitForFunction(label=>{
+              const id=document.querySelector('canvas[aria-activedescendant]')?.getAttribute('aria-activedescendant')
+              return document.getElementById(id)?.getAttribute('aria-label')===label
+            },await run.textContent())
+            const focusedPreview=run.and(rail.locator('[aria-description*="Exact position in the old message"]'))
+            await focusedPreview.waitFor()
+            await page.setViewportSize({width:width-40,height})
+            await focusedPreview.waitFor({state:'detached'})
+            await page.setViewportSize({width,height})
+            assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1,'Keyboard preview and resize stay local')
+            for(const passage of ['Native compacted passage','Native conversation context']){
+              await rail.getByRole('button',{name:passage,exact:true}).click({force:true})
+              const content=page.getByRole('paragraph').filter({hasText:passage})
+              await content.waitFor()
+              assert(Math.abs((await content.boundingBox()).y-box.y)<65,'Native context must land at its dedicated block')
+            }
+            await press(messages['rune.latest'])
+            await reading()
+            const older=page.getByRole('button',{name:messages['rune.older'],exact:true})
+            const resident=rail.getByRole('button',{name:'Existing answer',exact:true})
+            await page.mouse.move(box.x+10,box.y+10)
+            await page.mouse.wheel(0,100000)
+            await resident.waitFor()
+            const release=Promise.withResolvers()
+            holdOlder=release.promise
+            try{
+              const started=page.waitForRequest(req=>req.url().endsWith('/session-history/window')&&req.postDataJSON()?.target?.kind==='before')
+              await older.click({force:true})
+              await started
+              await resident.click({force:true})
+              await resident.and(rail.locator(`[aria-description^="${messages['messageTimeline.current']}"]`)).waitFor()
+            }finally{release.resolve()}
+            await reading()
+            const visible=history.findLast(r=>r.input.target.kind==='latest')
+            assert(visible?.body?.older?.messageID,'Latest window must expose an older cursor')
+            await page.mouse.wheel(0,-100000)
+            await run.waitFor()
+            const held={release:Promise.withResolvers()}
+            holdAnchor=held
+            try{
+              const anchor=page.waitForRequest(req=>req.url().endsWith('/session-history/window')&&req.postDataJSON()?.target?.kind==='around')
+              await run.click({force:true})
+              await anchor
+              const started=page.waitForRequest(req=>req.url().endsWith('/session-history/window')&&req.postDataJSON()?.target?.kind==='before')
+              const olderWindow=page.waitForResponse(res=>res.url().endsWith('/session-history/window')&&res.ok()
+                &&res.request().postDataJSON()?.target?.kind==='before')
+              await older.click({force:true})
+              assert.deepEqual((await started).postDataJSON().target,visible.body.older)
+              await olderWindow
+            }finally{held.release.resolve();holdAnchor=undefined}
+            await press(messages['rune.latest'])
+            await reading()
+            const readEdge=kind=>page.waitForResponse(res=>res.ok()&&res.url().endsWith('/session-history/window')
+              &&res.request().postDataJSON()?.target?.kind===kind)
+            const oldestRead=readEdge('oldest')
+            await press(messages['messageSection.scroll.toFirstAriaLabel'])
+            const firstWindow=await (await oldestRead).json()
+            assert.equal(firstWindow.older,null)
+            assert.equal(firstWindow.messages[0].id,'message-00000')
+            await page.getByRole('paragraph').filter({hasText:'Lead before the anchor'}).waitFor()
+            const firstBlock=await page.getByRole('paragraph').filter({hasText:'Lead before the anchor'}).boundingBox()
+            assert(firstBlock)
+            await page.mouse.move(firstBlock.x+10,firstBlock.y+10)
+            const forward=readEdge('after')
+            await page.mouse.wheel(0,100000)
+            await page.getByRole('paragraph').filter({hasText:'Fixture passage 196'}).waitFor()
+            await page.mouse.wheel(0,150)
+            const forwardResponse=await forward
+            assert.deepEqual(forwardResponse.request().postDataJSON().target,firstWindow.newer)
+            const forwardWindow=await forwardResponse.json()
+            await page.getByRole('paragraph').filter({hasText:'Fixture passage 196'}).waitFor()
+            await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+            const backward=readEdge('before')
+            await page.mouse.wheel(0,-100000)
+            await page.mouse.wheel(0,-150)
+            assert.deepEqual((await backward).request().postDataJSON().target,forwardWindow.older)
+            await page.getByRole('paragraph').filter({hasText:'Fixture passage 181'}).waitFor()
+            await press(messages['rune.latest'])
+            await reading()
+            await markerFilters(page,messages,url,values.project,{touch:false,pages})
+            // The text mirror updates before the newly mounted glyphs finish fading in.
+            await page.waitForTimeout(250)
+          }
+          if(values.timeline&&name==='tablet'){
+            const pages=()=>routes.filter(route=>route.path.endsWith('/session-history/window')).length
+            await markerFilters(page,messages,url,values.project,{touch:true,pages})
+          }
           if(missions)await missions.check(press)
          }else{
         // The DOM editing proxy is ready before the browser presents the GPU handover.
@@ -354,13 +580,27 @@ try {
           const existing=history.filter(row=>row.input.sessionID==='ses_existing')
           assert(existing.length>=1)
           for(const row of existing){
-            if(values.mobile&&(row.body.status!=='window'||!row.body.latest))continue
+             if((values.mobile||values.timeline||values['touch-history'])&&(row.body.status!=='window'||!row.body.latest))continue
             const bodies=row.body.messages.map(message=>message.text??message.content?.[0]?.text)
-            if(values.mobile)assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
+             if(values.mobile||values.timeline||values['touch-history']||values['history-search'])assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
             else assert.deepEqual(bodies,['Existing project history','Existing answer'])
           }
-          assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===0))
-          assert(routes.some(row=>row.query.includes('cursor=')))
+          if(!values['history-search']){
+            assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===0))
+            assert(routes.some(row=>row.query.includes('cursor=')))
+          }
+           if(values['history-search']&&(name==='desktop'||name==='phone'))await historySearch(page,messages,touch,{
+             holdNextAnchor(){
+               const held={release:Promise.withResolvers()}
+               holdAnchor=held
+               return ()=>{held.release.resolve();holdAnchor=undefined}
+             },
+             holdNextPreview(){
+               const held=Promise.withResolvers()
+               holdPreview=held
+               return ()=>{held.resolve();holdPreview=undefined}
+             },
+           })
           const inventory=async()=>{const response=await context.request.get(new URL('/api/workspaces',url).href);assert(response.ok());const rows=await response.json();assert(Array.isArray(rows)&&rows.length<=128);return rows.map(row=>row.id)}
           const before=await inventory(),owned=[...policy.workspaces],retained=before.filter(id=>!policy.workspaces.has(id))
           assert(owned.length>0&&owned.every(id=>before.includes(id)),'Browser must own its admitted occurrences')
