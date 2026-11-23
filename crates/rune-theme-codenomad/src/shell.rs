@@ -111,43 +111,51 @@ pub fn run<S: 'static>(
 ) {
     let mut app = App::new(spec).on_close(closing).on_quit(closing);
     if native_chrome {
-        rune::labels::set_locale(locale);
-        rune::labels::set_direction(if crate::catalogue::direction(locale) == "rtl" {
-            rune::Direction::Rtl
-        } else {
-            rune::Direction::Ltr
-        });
-        rune::labels::set_labels(move |label| {
-            use rune::labels::Label;
-            crate::catalogue::message(
-                locale,
-                match label {
-                    Label::Cut => "window.menu.native.cut",
-                    Label::Copy => "window.menu.native.copy",
-                    Label::Paste => "window.menu.native.paste",
-                    Label::SelectAll => "window.menu.native.selectAll",
-                    Label::Undo => "window.menu.native.undo",
-                    Label::Redo => "window.menu.native.redo",
-                    Label::Minimize => "window.controls.minimize",
-                    Label::Close => "window.controls.close",
-                    _ => return None,
-                },
-            )
-            .map(str::to_owned)
-        });
+        native_locale(locale);
         app = app.titlebar(rune::Titlebar::new(titlebar_height()));
     }
     app.run();
+}
+
+pub fn native_locale(locale: &'static str) {
+    rune::labels::set_locale(locale);
+    rune::labels::set_direction(if crate::catalogue::direction(locale) == "rtl" {
+        rune::Direction::Rtl
+    } else {
+        rune::Direction::Ltr
+    });
+    rune::labels::set_labels(move |label| {
+        use rune::labels::Label;
+        crate::catalogue::message(
+            locale,
+            match label {
+                Label::Cut => "window.menu.native.cut",
+                Label::Copy => "window.menu.native.copy",
+                Label::Paste => "window.menu.native.paste",
+                Label::SelectAll => "window.menu.native.selectAll",
+                Label::Undo => "window.menu.native.undo",
+                Label::Redo => "window.menu.native.redo",
+                Label::Minimize => "window.controls.minimize",
+                Label::Close => "window.controls.close",
+                _ => return None,
+            },
+        )
+        .map(str::to_owned)
+    });
+}
+
+pub fn live_caption() -> bool {
+    cfg!(target_os = "windows") && !rune::is_headless()
 }
 
 pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, rtl: bool, menus: El) -> El {
     let t = tokens(layout::dark());
     let gutter = t.space(Space::Md).px();
     let mut insets = cx.chrome_insets();
-    if cfg!(target_os = "windows") && rtl {
-        // Headless reports the caption width as trailing even when it mirrors the controls.
-        insets.leading += insets.trailing;
-        insets.trailing = 0.0;
+    if cfg!(target_os = "windows") {
+        let buttons = insets.leading + insets.trailing;
+        // A locale switch can arrive after the host measured the previous direction.
+        (insets.leading, insets.trailing) = if rtl { (buttons, 0.0) } else { (0.0, buttons) };
     }
     cx.caption_color(t.color("text-primary"));
     WindowTitlebar::from_insets(insets)
@@ -182,6 +190,36 @@ pub fn titlebar_menu<S: 'static>(label: &str, activate: impl Fn(&mut S, &mut Tx)
         .on_press_tx(move |s, tx| press(s, tx))
         .build(kit(layout::dark()))
         .on_key(enter_action(activate))
+}
+
+pub fn panel_tabs<S: 'static>(
+    title: &str,
+    labels: [&str; 2],
+    chosen: usize,
+    activate: impl Fn(&mut S, usize, &mut Tx) + Clone + 'static,
+) -> El {
+    row()
+        .role("tablist")
+        .label(title)
+        .focus_group()
+        .children(labels.into_iter().enumerate().map(|(index, label)| {
+            let activate = activate.clone();
+            let action = Rc::new(move |s: &mut S, tx: &mut Tx| activate(s, index, tx));
+            let press = action.clone();
+            Button::new(label)
+                .variant(if index == chosen {
+                    ButtonVariant::Ghost
+                } else {
+                    ButtonVariant::GhostMuted
+                })
+                .control_size(ControlSize::Small)
+                .on_press_tx(move |s, tx| press(s, tx))
+                .build(kit(layout::dark()))
+                .key(format!("right-panel-tab-{index}"))
+                .role("tab")
+                .focus_selected(index == chosen)
+                .on_key(enter_action(action))
+        }))
 }
 
 pub fn open_titlebar_menu<S: 'static>(

@@ -6,11 +6,11 @@ mod state;
 pub(crate) use persistence::finish;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use state::active_workspace;
-pub(crate) use state::panel_width;
 pub(crate) use state::{
-    Ui, active_session, bound, can_new, capture, close, connected, draft_changed,
-    has_conversation_stream, input_ready, new_tab, opened, poll, prepare_open, resume, retry,
-    select, status, strip, unselect_missing,
+    Ui, active_session, bound, can_new, capture, capture_files_mode, close, connected,
+    draft_changed, files_tab, has_conversation_stream, input_ready, new_tab, opened, panel_width,
+    poll, prepare_open, restore_files_mode, resume, retry, schedule_catalogue, select,
+    set_files_tab, status, strip, unselect_missing,
 };
 
 use serde_json::{Map, Value, json};
@@ -51,6 +51,13 @@ pub struct Workspace {
     pub workspace_id: Option<String>,
     pub active_session_id: Option<String>,
     pub drafts: BTreeMap<String, String>,
+    pub(crate) view: ViewState,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ViewState {
+    files_tab: bool,
+    files_mode: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +154,13 @@ pub fn encode(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
                         value[key] = Value::String(entry.clone());
                     }
                 }
+                if workspace.view != ViewState::default() {
+                    value["viewState"] = json!({
+                        "version": 1,
+                        "rightPanelTab": if workspace.view.files_tab { "files" } else { "status" },
+                        "filesMode": workspace.view.files_mode.unwrap_or("workspace"),
+                    });
+                }
                 value
             }
         })
@@ -203,7 +217,6 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                 "generationRecovery",
                 "seenInterruptions",
                 "outlineIndexes",
-                "viewState",
             ] {
                 if value.contains_key(key) {
                     empty_map(value.get(key))?;
@@ -244,11 +257,43 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                 workspace_id: optional_string(value, "workspaceId")?,
                 active_session_id: optional_string(value, "activeSessionId")?,
                 drafts,
+                view: view_state(value.get("viewState"))?,
             }))
         }
         Some(_) => Err(Error::Unsupported),
         None => Err(Error::Malformed),
     }
+}
+
+fn view_state(value: Option<&Value>) -> Result<ViewState, Error> {
+    let Some(value) = value else {
+        return Ok(ViewState::default());
+    };
+    let value = object(value)?;
+    if value.is_empty() {
+        return Ok(ViewState::default());
+    }
+    fields(value, &["version", "rightPanelTab", "filesMode"])?;
+    if integer(value.get("version"))? != 1 {
+        return Err(Error::Unsupported);
+    }
+    let files_tab = match value.get("rightPanelTab").map(|key| key.as_str()) {
+        None | Some(Some("status")) => false,
+        Some(Some("files")) => true,
+        _ => return Err(Error::Unsupported),
+    };
+    let files_mode = match value.get("filesMode") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            crate::git::Mode::restore(value.as_str().ok_or(Error::Malformed)?)
+                .ok_or(Error::Unsupported)?
+                .key(),
+        ),
+    };
+    Ok(ViewState {
+        files_tab,
+        files_mode: files_mode.or(files_tab.then_some("workspace")),
+    })
 }
 
 fn validate(snapshot: &Snapshot) -> Result<(), Error> {
@@ -387,3 +432,4 @@ fn integer(value: Option<&Value>) -> Result<u64, Error> {
 
 #[cfg(test)]
 mod tests;
+pub(crate) use state::{capture_files_mode, files_tab, restore_files_mode, set_files_tab};

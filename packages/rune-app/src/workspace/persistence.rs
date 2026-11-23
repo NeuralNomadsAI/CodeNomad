@@ -149,6 +149,7 @@ impl Persistence {
     }
 }
 pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
+    super::capture_files_mode(s);
     super::capture(s);
     if let Some(mut ui) = s.workspace.take() {
         ui.openings.close();
