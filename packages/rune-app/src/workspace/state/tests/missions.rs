@@ -69,8 +69,13 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         let meta = http.accept().await;
         assert!(meta.header.starts_with("GET /api/meta "));
         meta.reply(200, json!({"capabilities":["missions"]})).await;
-        test_http::wait(signal.recv()).await.unwrap();
-        tick(&mut rt);
+        test_http::wait(async {
+            while !crate::workspace::mission_supported(&rt.state) {
+                signal.recv().await.unwrap();
+                tick(&mut rt);
+            }
+        })
+        .await;
         assert!(rt.find("right-panel-tab-2").is_some());
         assert!(rt.find("missions-panel").is_none());
         http.quiet().await;
