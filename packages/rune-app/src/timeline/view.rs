@@ -22,7 +22,7 @@ pub(super) struct Scroll {
     direction: Option<HistoryEdge>,
 }
 
-pub(super) fn poll_edge(s: &mut State) -> bool {
+pub(crate) fn poll_edge(s: &mut State, tx: &mut rune::Tx) -> bool {
     let scroll = s.transcript_display.timeline.scroll.clone();
     let mut position = scroll.get();
     let edge = position.edge.take();
@@ -34,8 +34,9 @@ pub(super) fn poll_edge(s: &mut State) -> bool {
     }
     if !s.history_error
         && let Some(edge) = edge
+        && crate::chat::reader::request_page(s, edge)
     {
-        crate::chat::reader::request_page(s, edge);
+        crate::chat::reader::announce_paging(tx);
     }
     s.paging != was_paging
 }
@@ -45,7 +46,9 @@ fn turn_page_gesture(s: &mut State, direction: HistoryEdge) {
         .timeline
         .paging
         .as_ref()
-        .is_some_and(|(_, pending)| *pending != direction && *pending != HistoryEdge::Oldest)
+        .is_some_and(|(_, pending)| {
+            matches!(pending, Before | HistoryEdge::Oldest) != (direction == Before)
+        })
     {
         crate::chat::reader::cancel_page(s);
     }
@@ -61,6 +64,18 @@ fn boundary(pos: timeline::ScrollPosition, direction: f32) -> Option<HistoryEdge
     } else {
         None
     }
+}
+
+fn directed_delta(
+    previous: timeline::ScrollPosition,
+    now: timeline::ScrollPosition,
+) -> Option<f32> {
+    let old = previous.offset[1];
+    let delta = now.offset[1] - old;
+    // Rune #1674 counts the elastic return as by-hand motion. Ignore inward movement
+    // from outside the scroll extent, including the final step back to the edge.
+    (delta != 0.0 && !(old < 0.0 && delta > 0.0 || old > previous.max[1] && delta < 0.0))
+        .then_some(delta)
 }
 
 #[cfg(test)]
@@ -87,7 +102,7 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
     let wheel_scroll = scroll.clone();
     let wake = s.wake.clone();
     let scope = s.input_scope.clone();
-    el.on_wheel(move |s: &mut State, event, _| {
+    el.on_wheel(move |s: &mut State, event, tx| {
         if s.current_scope(&scope) {
             super::navigation::hand_scrolled(s, rail);
             if !rail && event.dy != 0.0 && event.dy.abs() > event.dx.abs() {
@@ -96,8 +111,9 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
                 if !s.history_error
                     && !event.momentum
                     && let Some(edge) = boundary(wheel_scroll.get().viewport, -event.dy)
+                    && crate::chat::reader::request_page(s, edge)
                 {
-                    crate::chat::reader::request_page(s, edge);
+                    crate::chat::reader::announce_paging(tx);
                 }
             }
         }
@@ -105,7 +121,7 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
     })
     .on_scroll_offset(move |at| {
         let mut gesture = scroll.get();
-        let previous = gesture.viewport.offset[1];
+        let previous = gesture.viewport;
         if rail {
             gesture.at = at;
         } else {
@@ -118,8 +134,7 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
                 &mut gesture.transcript
             };
             *epoch = epoch.wrapping_add(1);
-            if !rail && previous != at.offset[1] {
-                let delta = at.offset[1] - previous;
+            if !rail && let Some(delta) = directed_delta(previous, at) {
                 gesture.direction = Some(if delta < 0.0 { Before } else { After });
                 gesture.edge = boundary(at, delta);
             }

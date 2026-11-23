@@ -48,6 +48,7 @@ impl Reading {
     }
 
     pub(crate) fn restore(bookmark: &Bookmark, tx: &mut Tx) {
+        tx.instant();
         match bookmark {
             Bookmark::Latest => tx.scroll_to_bottom_instant("history"),
             Bookmark::Message { id, offset } => tx.scroll_key_to(id, *offset),

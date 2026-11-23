@@ -1,27 +1,37 @@
 //! Page gestures, admission and installation for the visible conversation.
 use super::*;
 
-pub(crate) fn older(s: &mut State) {
+pub(crate) fn older(s: &mut State) -> bool {
     let edge = s
         .transcript_display
         .timeline
         .page_retry
         .unwrap_or(HistoryEdge::Before);
-    request_page(s, edge);
+    request_page(s, edge)
+}
+
+pub(crate) fn announce_paging(tx: &mut Tx) {
+    rune_theme_codenomad::layout::announce_selection(
+        tx,
+        crate::strings::t("history.navigation.loading"),
+    );
 }
 
 pub(crate) fn oldest(s: &mut State, tx: &mut Tx) {
     if s.can_older {
         cancel_page(s);
-        request_page(s, HistoryEdge::Oldest);
+        if request_page(s, HistoryEdge::Oldest) {
+            announce_paging(tx);
+        }
     } else if !s.messages.is_empty() {
         cancel_page(s);
         crate::timeline::cancel_jump(s);
+        tx.instant();
         tx.scroll_to_instant("history", 0.0, 0.0);
     }
 }
 
-pub(crate) fn request_page(s: &mut State, edge: HistoryEdge) {
+pub(crate) fn request_page(s: &mut State, edge: HistoryEdge) -> bool {
     if s.paging
         || !matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming) && s.reader.is_some()
         || !match edge {
@@ -29,12 +39,12 @@ pub(crate) fn request_page(s: &mut State, edge: HistoryEdge) {
             HistoryEdge::After => s.history_detached && s.reader.is_some(),
         }
     {
-        return;
+        return false;
     }
     crate::timeline::cancel_jump(s);
     let (signal, cancelled) = bounded(1);
     let Some(commands) = s.commands.clone() else {
-        return;
+        return false;
     };
     let command = crate::transport::Command::Page(edge, cancelled.clone());
     let queued = match commands.try_send(command) {
@@ -55,6 +65,7 @@ pub(crate) fn request_page(s: &mut State, edge: HistoryEdge) {
         s.paging = true;
         s.history_error = false;
     }
+    queued
 }
 
 pub(crate) fn cancel_page(s: &mut State) {

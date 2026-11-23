@@ -13,7 +13,7 @@ import {historySearch} from './web-history-search.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},timeline:{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
@@ -46,7 +46,7 @@ const connectedPalettes = values.connected
   if(values.mobile)assets.add('/remote-pair')
 try {
   const android=mobileContext(browser)
-  const sizes=values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
+  const sizes=values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
     [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
   for (const [name, width, height, touch] of sizes) {
     const control=name==='phone-dpr1-control'
@@ -222,6 +222,40 @@ try {
           await select('Another session','ses_another')
           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
           await select('Existing history','ses_existing');await reading()
+          if(values['touch-history']){
+            const cdp=await context.newCDPSession(page)
+            const release=Promise.withResolvers()
+            const path=res=>res.url().endsWith('/session-history/window')&&res.postDataJSON()?.target?.kind==='before'
+            const requestedBody=history.findLast(r=>r.input.sessionID==='ses_existing'&&r.input.target.kind==='latest').body
+            const requested=page.waitForRequest(path)
+            const received=page.waitForResponse(res=>res.ok()&&path(res.request()))
+            void requested.catch(()=>{})
+            void received.catch(()=>{})
+            const loading=page.locator('[data-rune-a11y]').getByText(messages['history.navigation.loading'],{exact:true}).first()
+            holdOlder=release.promise
+            const touchAt=(type,y)=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:y?[{x:180,y}]:[]})
+            try{
+              await touchAt('touchStart',132)
+              for(let y=156;y<=588;y+=24){
+                await touchAt('touchMove',y)
+                await page.evaluate(()=>new Promise(requestAnimationFrame))
+              }
+              assert.deepEqual((await requested).postDataJSON().target,requestedBody.older)
+              await loading.waitFor()
+              await touchAt('touchEnd')
+              // Let the real renderer settle touch momentum before releasing the held HTTP read.
+              await page.waitForTimeout(800)
+              await loading.waitFor()
+            }finally{
+              await touchAt('touchEnd').catch(()=>{})
+              release.resolve()
+            }
+            assert.equal((await (await received).json()).status,'window')
+            await loading.waitFor({state:'detached'})
+            assert.equal(history.filter(item=>item.input.target.kind==='before').length,1)
+            await press(messages['rune.latest'])
+            await reading()
+          }
           if(values.timeline&&name==='desktop'){
             const rail=page.getByRole('navigation',{name:messages['messageTimeline.ariaLabel']})
             const box=await rail.boundingBox()
@@ -399,9 +433,9 @@ try {
           const existing=history.filter(row=>row.input.sessionID==='ses_existing')
           assert(existing.length>=1)
           for(const row of existing){
-            if((values.mobile||values.timeline)&&(row.body.status!=='window'||!row.body.latest))continue
+             if((values.mobile||values.timeline||values['touch-history'])&&(row.body.status!=='window'||!row.body.latest))continue
             const bodies=row.body.messages.map(message=>message.text??message.content?.[0]?.text)
-            if(values.mobile||values.timeline||values['history-search'])assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
+             if(values.mobile||values.timeline||values['touch-history']||values['history-search'])assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
             else assert.deepEqual(bodies,['Existing project history','Existing answer'])
           }
           assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===(values['history-search']?1:0)))

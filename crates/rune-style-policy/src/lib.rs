@@ -82,6 +82,7 @@ impl Policy {
                 "TextEdit",
                 "Key",
                 "KeyEvent",
+                "TouchPhase",
                 "PhysicalInput",
                 "PhysicalKeyCode",
                 "Mods",

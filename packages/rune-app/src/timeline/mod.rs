@@ -7,6 +7,7 @@ mod tests;
 mod view;
 pub(crate) use navigation::{admit, cancel_jump, failed, input_precedes_admission, restore_search};
 pub(crate) use reading_line::watch as watch_block;
+pub(crate) use view::poll_edge;
 pub(crate) use view::{view, watch};
 
 use crate::{State, backend::Backend, platform, transport::Event};
@@ -225,7 +226,6 @@ fn reproject(s: &mut State) -> bool {
 }
 
 pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
-    let paged = view::poll_edge(s);
     if !demanded(s) {
         if std::mem::take(&mut owner(s).visible) {
             if search::is_open(s) {
@@ -235,12 +235,11 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 suspend(s);
             }
         }
-        return paged
-            | if search::is_open(s) {
-                navigation::poll(s, tx)
-            } else {
-                navigation::apply_alignment(s, tx)
-            };
+        return if search::is_open(s) {
+            navigation::poll(s, tx)
+        } else {
+            navigation::apply_alignment(s, tx)
+        };
     }
     let reads = s.reads.clone();
     let wake = s.wake.clone();
@@ -280,5 +279,5 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     if std::mem::take(&mut t.changed) {
         changed |= reproject(s);
     }
-    changed | navigation::poll(s, tx) | paged
+    changed | navigation::poll(s, tx)
 }

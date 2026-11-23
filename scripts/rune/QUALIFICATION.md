@@ -48,6 +48,8 @@ node packages/rune-app/fixtures/history-rail-web.mjs "$CARGO_TARGET_DIR/browser-
 
 Le raccord conversation est testé par `cargo test --locked -p codenomad-rune-app timeline::tests` et, avec le bundle produit WASM et le serveur Rust de qualification, par `node packages/rune-app/fixtures/launcher-fixture.mjs --web-timeline`. Ce scénario demande une fenêtre `around` pour un bloc hors fenêtre, puis clique un repère de la fenêtre chargée sans requête.
 
+`node packages/rune-app/fixtures/launcher-fixture.mjs --web-touch-history` envoie le toucher, le glissement et le relâchement par le canal CDP tactile. Le banc retient la réponse du lecteur pendant le retour élastique et vérifie un seul curseur `before` ainsi que la disparition du statut après admission.
+
 La recherche utilise le même banc Rust, via `node packages/rune-app/fixtures/launcher-fixture.mjs --web-history-search` avec les routes `query` et `ranked`. Le scénario vérifie un résultat résident sans fenêtre, le rang d'un résultat d'une autre session, sa lecture unitaire et son ouverture au moyen d'une fenêtre `around`. Les tests `codenomad-client search::tests` couvrent les continuations et le redémarrage classé.
 
 ## Parité par composant

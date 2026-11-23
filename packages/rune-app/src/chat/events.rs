@@ -137,8 +137,12 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.history_detached = s.reader.is_some() && page.newer.is_some();
                 composer::reconcile(s);
                 s.can_older = page.older.is_some();
-                s.paging = false;
-                s.history_error = false;
+                // An earlier snapshot may already have been queued before the gesture.
+                // The page offer or its cancellation alone settles that gesture.
+                if s.transcript_display.timeline.paging.is_none() {
+                    s.paging = false;
+                    s.history_error = false;
+                }
                 // A newer activity event can run ahead of a snapshot in the content lane.
                 let running = if stale_activity {
                     s.reader.as_ref().is_some_and(|reader| {
@@ -279,6 +283,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if let Some(reader) = &mut s.reader {
                     reader.failed();
                 }
+                chat::reader::cancel_page(s);
                 s.paging = false;
                 s.history_error = true;
             }

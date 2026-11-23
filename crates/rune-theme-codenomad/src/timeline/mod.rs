@@ -8,6 +8,28 @@ use std::{borrow::Cow, rc::Rc};
 pub const VIEWPORT: &str = "timeline";
 pub use rune::ScrollPos as ScrollPosition;
 
+pub fn navigation_status(label: &'static str) -> El {
+    use crate::{Space, TextRole, layout::Layout};
+    let dark = layout::dark();
+    let k = crate::kit(dark);
+    rune_kit::popover::raised(
+        k,
+        rune::col()
+            .key("history-navigation-status")
+            .role("status")
+            .label_static(label)
+            .pad(Space::Sm)
+            .child(rune::text(label).text_role(TextRole::Label)),
+        0.0,
+    )
+    .anchored(
+        "oldest",
+        rune::Side::Top,
+        rune::Align::Start,
+        tokens(dark).space(Space::Xs).px(),
+    )
+}
+
 pub fn user_scrolled() -> bool {
     let (hand, instant, _) = rune::scroll_watch_state();
     hand && !instant

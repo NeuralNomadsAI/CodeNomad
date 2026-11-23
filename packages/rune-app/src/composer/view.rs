@@ -96,7 +96,7 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
                 )
             }),
         )
-        .children(s.can_older.then(|| {
+        .children((!s.messages.is_empty()).then(|| {
             crate::components::button_tx(
                 "oldest",
                 t("messageSection.scroll.toFirstAriaLabel"),

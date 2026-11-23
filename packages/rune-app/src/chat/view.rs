@@ -22,6 +22,11 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     overlays.extend(
         crate::timeline::search::panel(s).map(rune_theme_codenomad::timeline::search::floating),
     );
+    if s.paging {
+        overlays.push(rune_theme_codenomad::timeline::navigation_status(
+            crate::strings::t("history.navigation.loading"),
+        ));
+    }
     rune_theme_codenomad::layout::with_overlays(body, overlays)
 }
 

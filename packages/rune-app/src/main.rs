@@ -165,8 +165,10 @@ fn local_stress() -> bool {
 fn send(s: &mut State, tx: &mut Tx) {
     composer::send(s, tx, false);
 }
-fn request_older(s: &mut State, _: &mut Tx) {
-    chat::reader::older(s);
+fn request_older(s: &mut State, tx: &mut Tx) {
+    if chat::reader::older(s) {
+        chat::reader::announce_paging(tx);
+    }
 }
 fn latest(s: &mut State, tx: &mut Tx) {
     if s.reader.is_none() && s.history_detached {
@@ -182,6 +184,7 @@ fn latest(s: &mut State, tx: &mut Tx) {
     chat::reader::latest(s, tx);
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
+    let gesture = timeline::poll_edge(s, tx);
     let chat = !timeline::input_precedes_admission(s, tx) && poll_chat(s, 64);
     if !s.screen.is_launcher()
         && !git::has_preview(s)
@@ -190,7 +193,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     {
         reader.renderer_ready(tx);
     }
-    let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
+    let mut changed = gesture | chat | transcript_state::Display::poll(s, chat, now, tx);
     changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
     changed |= s.composer.picker.poll(&s.reads, &s.wake);

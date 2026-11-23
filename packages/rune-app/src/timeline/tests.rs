@@ -1,5 +1,5 @@
 use super::*;
-use rune::{Cx, El, Env, Runtime};
+use rune::{Cx, El, Env, Runtime, TouchPhase};
 use serde_json::json;
 
 #[test]
@@ -145,6 +145,174 @@ fn user(id: &str) -> crate::history::Row {
 
 fn view(s: &State, cx: &mut Cx<State>) -> El {
     rune_theme_codenomad::layout::render(cx, |cx| crate::chat::view::chat_view(s, cx))
+}
+
+#[test]
+fn touch_release_keeps_the_page_and_a_new_reverse_pan_rejects_its_queued_completion() {
+    use crate::transport::{Command, Event, HistoryEdge::Before};
+    let mut s = crate::init();
+    s.can_older = true;
+    s.messages = (0..20).map(|i| user(&format!("row-{i}"))).collect();
+    let (out, commands) = bounded(1);
+    let (events, incoming) = bounded(1);
+    s.commands = Some(out);
+    s.incoming = Some(incoming);
+    let mut rt = Runtime::new(s, view, (800., 600.), Env::new(false, 1.0));
+    rt.poll = Some(crate::poll);
+    rt.frame(0.016);
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_to_instant("history", 0.0, 0.0);
+    });
+    for _ in 0..6 {
+        rt.frame(0.016);
+    }
+    assert!(
+        commands.try_recv().is_err(),
+        "programmatic positioning is local"
+    );
+    let [x, y, w, h] = rt.presented("history").unwrap().0;
+    let x = x + w / 2.0;
+    rt.touch(1, TouchPhase::Started, x, y + h * 0.18, 0.2);
+    for i in 1..=8 {
+        rt.touch(
+            1,
+            TouchPhase::Moved,
+            x,
+            y + h * (0.18 + 0.07 * i as f32),
+            0.2 + f64::from(i) * 0.016,
+        );
+        rt.frame(0.016);
+    }
+    let Command::Page(Before, cancelled) = commands.try_recv().unwrap() else {
+        panic!("touch must request older history")
+    };
+    rt.touch(1, TouchPhase::Ended, x, y + h * 0.74, 0.33);
+    for _ in 0..90 {
+        rt.frame(0.016);
+    }
+    assert!(
+        !cancelled.is_closed(),
+        "the elastic return is not a new reverse gesture"
+    );
+    assert!(
+        commands.try_recv().is_err(),
+        "one page per released gesture"
+    );
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|el| el.path.contains("history-navigation-status") && el.role == "status")
+    );
+    rt.touch(2, TouchPhase::Started, x, y + h * 0.74, 2.0);
+    rt.touch(2, TouchPhase::Moved, x, y + h * 0.20, 2.1);
+    rt.frame(0.016);
+    events
+        .try_send(Event::PageFailed(cancelled.clone()))
+        .unwrap();
+    rt.frame(0.016);
+    assert!(
+        cancelled.is_closed(),
+        "the reverse gesture must precede queued admission"
+    );
+    rt.update(|s, _| assert!(!s.history_error && !s.paging));
+}
+
+#[test]
+fn an_earlier_reader_sync_does_not_allow_a_second_page_and_resident_first_is_local() {
+    use crate::{
+        history::Page,
+        transport::{Command, Event, HistoryEdge::Before},
+    };
+    let mut s = crate::init();
+    s.messages = vec![assistant("resident")];
+    s.can_older = true;
+    let (out, commands) = bounded(1);
+    let (events, incoming) = bounded(1);
+    s.commands = Some(out);
+    s.incoming = Some(incoming);
+    let mut rt = Runtime::new(s, view, (800., 600.), Env::new(false, 1.0));
+    rt.update(|s, tx| {
+        crate::chat::reader::request_page(s, Before);
+        let Command::Page(Before, cancelled) = commands.try_recv().unwrap() else {
+            panic!("older request")
+        };
+        events
+            .try_send(Event::ReaderSync {
+                page: Page {
+                    rows: s.messages.clone(),
+                    older: Some(json!({"kind":"before","messageID":"resident"})),
+                    newer: None,
+                    running: false,
+                    user_file_references: false,
+                },
+                version: 0,
+            })
+            .unwrap();
+        assert!(crate::poll(s, 1.0, tx));
+        assert!(!crate::chat::reader::request_page(s, Before));
+        assert!(commands.try_recv().is_err() && !cancelled.is_closed());
+        crate::chat::reader::cancel_page(s);
+        s.can_older = false;
+        crate::chat::reader::oldest(s, tx);
+        assert!(commands.try_recv().is_err());
+    });
+    rt.frame(0.016);
+    assert!(rt.find("oldest").is_some());
+}
+
+#[test]
+fn downwards_input_revokes_oldest_before_admitting_its_response() {
+    use crate::transport::{Command, Event, HistoryEdge::Oldest};
+    let mut s = crate::init();
+    s.can_older = true;
+    s.messages = (0..20).map(|i| user(&format!("row-{i}"))).collect();
+    let (out, commands) = bounded(1);
+    let (events, incoming) = bounded(1);
+    s.commands = Some(out);
+    s.incoming = Some(incoming);
+    let mut rt = Runtime::new(s, view, (800., 600.), Env::new(false, 1.0));
+    rt.poll = Some(crate::poll);
+    rt.frame(0.016);
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_to_instant("history", 0.0, 0.0);
+    });
+    for _ in 0..6 {
+        rt.frame(0.016);
+    }
+    assert!(
+        commands.try_recv().is_err(),
+        "programmatic positioning is local"
+    );
+    rt.update(crate::chat::reader::oldest);
+    let Command::Page(Oldest, cancelled) = commands.try_recv().unwrap() else {
+        panic!("oldest request");
+    };
+    let [x, y, w, h] = rt.presented("history").unwrap().0;
+    let x = x + w / 2.0;
+    rt.frame(0.016);
+    rt.touch(1, TouchPhase::Started, x, y + h * 0.76, 0.2);
+    for i in 1..=8 {
+        rt.touch(
+            1,
+            TouchPhase::Moved,
+            x,
+            y + h * (0.76 - 0.07 * i as f32),
+            0.2 + f64::from(i) * 0.016,
+        );
+        rt.frame(0.016);
+    }
+    events
+        .try_send(Event::PageFailed(cancelled.clone()))
+        .unwrap();
+    rt.frame(0.016);
+    assert!(cancelled.is_closed());
+    rt.update(|s, _| {
+        assert!(!s.history_error);
+        assert!(!s.paging);
+        assert_eq!(s.messages.first().map(|row| row.id.as_str()), Some("row-0"));
+    });
 }
 
 #[test]

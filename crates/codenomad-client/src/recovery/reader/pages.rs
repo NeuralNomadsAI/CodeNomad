@@ -41,7 +41,7 @@ impl Reader {
                     reading,
                     self.generation,
                     wire,
-                    backend.page(target),
+                    backend.page(target.clone()),
                 ),
             )
             .await
@@ -50,7 +50,9 @@ impl Reader {
             };
             match page {
                 Ok(page) if wire.valid(stamp) && rx.is_empty() => {
-                    if history::edge_page(&page, &self.resident, edge).is_ok() {
+                    if advances(&page, edge, &target)
+                        && history::edge_page(&page, &self.resident, edge).is_ok()
+                    {
                         if !crate::timeline::page_offer(cancel, &page, wire, stamp, async |event| {
                             reader_event(reading, self.generation, out, wake, event).await
                         })
@@ -141,4 +143,30 @@ impl Reader {
             self.dirty = false;
         }
     }
+}
+
+fn advances(page: &history::Page, edge: HistoryEdge, target: &Value) -> bool {
+    match edge {
+        HistoryEdge::Before => page.older.as_ref() != Some(target),
+        HistoryEdge::After => page.newer.as_ref() != Some(target),
+        HistoryEdge::Oldest => true,
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn a_neighbor_repeating_its_requested_cursor_is_not_admitted() {
+    let before = serde_json::json!({"kind":"before","messageID":"m"});
+    let after = serde_json::json!({"kind":"after","messageID":"m"});
+    let mut page = history::Page {
+        rows: vec![],
+        older: Some(before.clone()),
+        newer: Some(after.clone()),
+        running: false,
+        user_file_references: false,
+    };
+    assert!(!advances(&page, HistoryEdge::Before, &before));
+    assert!(!advances(&page, HistoryEdge::After, &after));
+    page.newer = None;
+    assert!(advances(&page, HistoryEdge::After, &after));
 }

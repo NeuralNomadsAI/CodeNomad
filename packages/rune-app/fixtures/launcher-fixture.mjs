@@ -25,7 +25,8 @@ const sampleScroll=webAndroid&&process.env.RUNE_ANDROID_SAMPLE==='scroll'
 const useTs=webAndroid&&process.env.RUNE_ANDROID_TS_SERVER==='1'
 assert(!useTs||solid&&compare,'The TS restart control runs the same Solid build and conversation')
 const sameOriginPairing=process.argv.includes('--same-origin-pairing')
-const webTimeline=process.argv.includes('--web-timeline')
+const webTouchHistory=process.argv.includes('--web-touch-history')
+const webTimeline=process.argv.includes('--web-timeline')||webTouchHistory
 const webSearch=process.argv.includes('--web-history-search')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
 const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
@@ -352,6 +353,10 @@ const upstream=createServer(async(req,res)=>{
     }
     if(['/api/rpc/codenomad.session-pruning/window','/api/rpc/codenomad.session-pruning/windowUserFilesV1'].includes(url.pathname)){
       const {input}=JSON.parse(raw),output=stores.get(input.sessionID).window(input.target)
+      if(webTouchHistory&&input.sessionID==='ses_existing'&&input.target.kind==='latest'&&output.status==='window'){
+        output.messages=output.messages.slice(-8)
+        output.older={kind:'before',messageID:output.messages[0].id}
+      }
       if(url.pathname.endsWith('windowUserFilesV1')&&output.status==='window')output.userFiles='reference-v1'
       return json({output})
     }
@@ -518,7 +523,7 @@ try{
     staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,backend:ts?'ts':'rust',serverBinary:ts?.args[0]??serverBinary,ui:solid||ui,paired}
     const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
     const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()]
-    if(webTimeline)args.push('--timeline')
+    if(webTimeline)args.push(webTouchHistory?'--touch-history':'--timeline')
     if(webSearch)args.push('--history-search')
     const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
     if(webAndroid){
@@ -582,7 +587,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid?1:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid?1:webTouchHistory?4:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
     if(!placeWorktree){
       await removeReview
