@@ -36,7 +36,7 @@ use rune_theme_codenomad::{
 use transport::{Command, Event};
 
 #[cfg(any(test, feature = "test-support"))]
-pub const CODE: &str = "fn main() {\n    println!(\"Rune ┬À Code Nomad\");\n}";
+pub const CODE: &str = "fn main() {\n    println!(\"Rune · Code Nomad\");\n}";
 pub use codenomad_client::Message;
 struct State {
     wake: codenomad_client::Wake,
