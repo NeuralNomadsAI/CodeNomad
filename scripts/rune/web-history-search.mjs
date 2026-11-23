@@ -4,7 +4,15 @@ import {installPngReader} from './png-pixels.mjs'
 export async function historySearch(page, messages, touch) {
   const viewport=page.viewportSize()
   const cdp=touch&&await page.context().newCDPSession(page)
-  if(touch)await page.setViewportSize({width:844,height:390})
+  const resize=async size=>{
+    await page.setViewportSize(size)
+    await page.waitForFunction(({width,height})=>{
+      const box=document.querySelector('canvas')?.getBoundingClientRect()
+      return box&&Math.abs(box.width-width)<=1&&Math.abs(box.height-height)<=1
+    },size)
+  }
+  const landscape={width:844,height:390}
+  if(touch)await resize(landscape)
   const activate=async locator=>{
     if(!touch)return locator.click({force:true})
     await locator.waitFor()
@@ -114,7 +122,7 @@ export async function historySearch(page, messages, touch) {
     assert.deepEqual(await search.getByRole('button').filter({hasText:/^Existing /}).allTextContents(),
       ['Existing ranked destination','Existing answer'])
     if(touch){
-      await page.setViewportSize({width:844,height:245})
+      await resize({width:844,height:245})
       const close=search.getByRole('button',{name:messages['messageSection.search.closeAriaLabel'],exact:true})
       const more=search.getByRole('button',{name:messages['history.furtherBack'],exact:true})
       const short=await search.boundingBox(), toolbar=await close.boundingBox()
@@ -135,7 +143,7 @@ export async function historySearch(page, messages, touch) {
       assert(older.ok())
       assert.equal(older.request().postDataJSON().cursor,(await ranked.json()).cursor)
       await search.getByRole('button',{name:'Existing older result',exact:true}).waitFor()
-      await page.setViewportSize({width:844,height:390})
+      await resize(landscape)
       await input.fill('Ex')
       await Promise.all([read('ranked'),input.fill('Existing')])
       await first.waitFor()
@@ -153,6 +161,6 @@ export async function historySearch(page, messages, touch) {
     assert.equal(await search.count(),0,'The previous search belongs to its source view')
   }finally{
     page.off('request',count)
-    if(touch)await page.setViewportSize(viewport)
+    if(touch)await resize(viewport)
   }
 }
