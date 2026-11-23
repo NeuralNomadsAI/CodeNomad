@@ -740,6 +740,20 @@ fn cli_get_status(
 }
 
 #[tauri::command]
+async fn cli_renew_managed_session(
+    webview: tauri::Webview,
+    app: AppHandle,
+) -> Result<bool, String> {
+    let state = app.state::<AppState>();
+    require_preferences_or_local_app_webview(&webview, &state)?;
+    let manager = state.manager.clone();
+    tauri::async_runtime::spawn_blocking(move || manager.renew_managed_session(&app))
+        .await
+        .map_err(|_| "Session renewal unavailable".to_string())?
+        .map_err(|_| "Session renewal unavailable".to_string())
+}
+
+#[tauri::command]
 fn cli_restart(
     webview: tauri::Webview,
     app: AppHandle,
@@ -2160,6 +2174,7 @@ fn main() {
         .invoke_handler(remote_dictation::with_relay(tauri::generate_handler![
             clipboard_attachments::read_clipboard_attachments,
             cli_get_status,
+            cli_renew_managed_session,
             device_speech_ipc::device_speech_request,
             cli_restart,
             wake_lock_start,
@@ -2327,7 +2342,7 @@ fn main() {
                     }
                 }
                 "open-about" | "help_open_about" => {
-                    // About opens Settings ÔåÆ Info ÔåÆ About from the most recently used
+                    // About opens Settings → Info → About from the most recently used
                     // application window, which brings the Preferences window forward.
                     let delivered = local_windows::update_flow_window(app_handle)
                         .is_some_and(|window| emit_menu_action_to(app_handle, &window, "open-about"));
@@ -2846,7 +2861,7 @@ fn open_releases_page(app_handle: &AppHandle) {
     }
 }
 
-/// Text of the native fallback when no application window can open Settings ÔåÆ Info.
+/// Text of the native fallback when no application window can open Settings → Info.
 fn about_fallback_text(version: &str) -> String {
     format!("CodeNomad {version}\nA desktop workspace for OpenCode.")
 }

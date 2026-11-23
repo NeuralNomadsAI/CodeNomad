@@ -3,7 +3,7 @@ import path from "path"
 import type { Logger } from "../logger"
 import { AuthStore } from "./auth-store"
 import { TokenManager } from "./token-manager"
-import { SessionManager } from "./session-manager"
+import { SessionManager, type SessionInfo } from "./session-manager"
 import { parseCookies } from "./http-auth"
 import { isLocalRequest, isRefusedDeviceRequest, isRemoteRequest, remoteDeviceOf } from "../remote-control/request-origin"
 
@@ -16,6 +16,7 @@ export interface AuthManagerInit {
   username: string
   password?: string
   generateToken: boolean
+  managedLocal?: boolean
   dangerouslySkipAuth?: boolean
   cookieName?: string
   sessionIdleMs?: number
@@ -28,6 +29,7 @@ export class AuthManager {
   private readonly sessionManager: SessionManager
   private readonly cookieName: string
   private readonly authEnabled: boolean
+  private managedSession: { current: string; previous?: string; deliveredAt?: number } | undefined
   private readonly principalLoggedOutListeners = new Set<(id: string) => void>()
 
   constructor(private readonly init: AuthManagerInit, private readonly logger: Logger) {
@@ -71,9 +73,23 @@ export class AuthManager {
     return this.tokenManager.generate()
   }
 
-  consumeBootstrapToken(token: string): boolean {
-    if (!this.tokenManager) return false
-    return this.tokenManager.consume(token)
+  createBootstrapSession(token: string): SessionInfo | undefined {
+    if (!this.tokenManager?.consume(token)) return undefined
+    const session = this.sessionManager.createSession(this.getStatus().username)
+    if (this.init.managedLocal && this.authStore?.canRenewBootstrapSession()) {
+      this.managedSession = { current: session.id, deliveredAt: Date.now() }
+    }
+    return session
+  }
+
+  /** Called only by the authenticated process parent on stdin. */
+  renewManagedSession(): string | null {
+    const managed = this.managedSession
+    if (!managed || !this.authStore?.canRenewBootstrapSession()) return null
+    if (this.sessionManager.hasSession(managed.current)) return managed.deliveredAt !== undefined ? null : managed.current
+    const current = this.sessionManager.createSession(this.getStatus().username).id
+    this.managedSession = { current, previous: managed.deliveredAt === undefined ? managed.previous : managed.current }
+    return current
   }
 
   async validateLogin(username: string, password: string): Promise<boolean> {
@@ -102,17 +118,26 @@ export class AuthManager {
       throw new Error("Internal authentication is disabled")
     }
     const status = await this.requireAuthStore().setPassword({ password, markUserProvided: true })
+    this.managedSession = undefined
     this.sessionManager.revokeUser(status.username)
     return status
   }
 
   revokeSession(request: FastifyRequest): void {
     const session = this.getSessionFromRequest(request)
-    if (!session) return
-    this.sessionManager.revoke(session.sessionId)
+    const managed = this.managedSession
+    const cookie = !isRemoteRequest(request) && !isRefusedDeviceRequest(request) && !remoteDeviceOf(request)
+      ? this.cookieSessionId(request.headers) : undefined
+    // An already-sent logout can reach the server just after the new cookie's first request.
+    const revokingManaged = managed && cookie && (cookie === managed.current || (cookie === managed.previous
+      && (managed.deliveredAt === undefined || Date.now() - managed.deliveredAt < 10_000)))
+    if (revokingManaged) this.managedSession = undefined
+    const id = revokingManaged ? managed.current : session?.sessionId
+    if (!id) return
+    this.sessionManager.revoke(id)
     const errors: unknown[] = []
     for (const listener of this.principalLoggedOutListeners) {
-      try { listener(session.sessionId) } catch (error) { errors.push(error) }
+      try { listener(id) } catch (error) { errors.push(error) }
     }
     if (errors.length) throw errors[0]
   }
@@ -150,13 +175,17 @@ export class AuthManager {
       return { username: this.init.username, sessionId: "auth-disabled" }
     }
 
-    const cookieHeader = Array.isArray(headers.cookie) ? headers.cookie.join("; ") : headers.cookie
-    const cookies = parseCookies(cookieHeader)
-    if (!cookies) return null
-    const sessionId = cookies[this.cookieName]
-    const session = this.sessionManager.getSession(sessionId)
+    const session = this.sessionManager.getSession(this.cookieSessionId(headers))
     if (!session) return null
+    if (this.managedSession?.current === session.id && this.managedSession.deliveredAt === undefined) {
+      this.managedSession.deliveredAt = Date.now()
+    }
     return { username: session.username, sessionId: session.id }
+  }
+
+  private cookieSessionId(headers: { cookie?: string | string[] | undefined }): string | undefined {
+    const cookieHeader = Array.isArray(headers.cookie) ? headers.cookie.join("; ") : headers.cookie
+    return parseCookies(cookieHeader)?.[this.cookieName]
   }
 
   watchSessionRevocation(sessionId: string, close: () => void): () => void {

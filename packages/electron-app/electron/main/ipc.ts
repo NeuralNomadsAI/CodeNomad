@@ -57,6 +57,7 @@ async function resolveLocalWorkspaceFolder(window: BrowserWindow, cliManager: Cl
 
 export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCDependencies) {
   let wakeLockId: number | null = null
+  let managedRenewal: Promise<boolean> | undefined
   const wakeLockWindows = new Set<number>()
   const wakeCleanupInstalled = new Set<number>()
   const local = (event: IpcMainInvokeEvent): LocalSender => {
@@ -95,6 +96,14 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
 
   ipcMain.handle("cli:getStatus", async (event) => { settings(event); return cliManager.getStatus() })
   ipcMain.handle("cli:restart", async (event) => { settings(event); return cliManager.restart({ dev: process.env.NODE_ENV === "development" }) })
+  ipcMain.handle("cli:renewManagedSession", async (event) => {
+    const window = settings(event)
+    const jar = window.webContents.session.cookies
+    managedRenewal ??= cliManager.renewManagedSession((url, value) => jar.set({
+      url, value, name: cliManager.getAuthCookieName(), httpOnly: true, path: "/", sameSite: "lax",
+    })).catch(() => false).finally(() => { managedRenewal = undefined })
+    return managedRenewal
+  })
   ipcMain.handle("window:new", async (event) => { local(event); await dependencies.newWindow(); return { ok: true } })
   ipcMain.handle("window:nextFolder", async (event) => dependencies.nextFolder(local(event).id))
   ipcMain.handle("window:ackFolder", async (event, folder: unknown, opened: unknown) => {

@@ -1,5 +1,5 @@
 use crate::{
-    cli_manager::{local_session_cookie, LocalCliAccess},
+    cli_manager::LocalCliAccess,
     AppState,
 };
 use serde::{Deserialize, Serialize};
@@ -252,15 +252,8 @@ fn navigate_authenticated(
         state.trusted_origins.remove(0);
     }
     drop(state);
-    window
-        .set_cookie(
-            local_session_cookie(
-                &access.base_url,
-                &access.cookie_name,
-                &access.session_cookie,
-            )
-            .map_err(|error| error.to_string())?,
-        )
+    window.app_handle().state::<AppState>().manager
+        .install_local_window_cookie(window.as_ref(), &access.base_url)
         .map_err(|error| error.to_string())?;
     window
         .navigate(target_url(&access.base_url, section)?)
@@ -363,10 +356,7 @@ fn open_preferences(
         let _ = existing.destroy();
     }
 
-    let access = app_state
-        .manager
-        .local_cli_access()
-        .ok_or("Local CodeNomad server is unavailable")?;
+    app_state.manager.ready_local_access().ok_or("Local CodeNomad server is unavailable")?;
     suspend_guard(app);
     preferences.set_request(request.clone());
     preferences.set_opener(opener, true);
@@ -416,7 +406,9 @@ fn open_preferences(
         return Err(error);
     }
 
-    if let Err(error) = navigate_authenticated(&preferences_window, &access, &request.section) {
+    let navigation = app_state.manager.ready_local_access().ok_or_else(|| "Local CodeNomad server is unavailable".to_string())
+        .and_then(|access| navigate_authenticated(&preferences_window, &access, &request.section));
+    if let Err(error) = navigation {
         let _ = preferences_window.destroy();
         return Err(error);
     }
@@ -788,7 +780,7 @@ mod tests {
     #[test]
     fn shared_local_session_cookie_remains_http_only() {
         let cookie =
-            local_session_cookie("http://127.0.0.1:3000", "codenomad_session_test", "secret")
+            crate::cli_manager::local_session_cookie("http://127.0.0.1:3000", "codenomad_session_test", "secret")
                 .unwrap();
         assert_eq!(cookie.domain(), Some("127.0.0.1"));
         assert_eq!(cookie.path(), Some("/"));
