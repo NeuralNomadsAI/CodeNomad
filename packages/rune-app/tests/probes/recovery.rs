@@ -135,7 +135,28 @@ pub fn suspend() {
         rt.frame(0.02);
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(control("stats")["pages"], pages);
+    let stats = control("stats");
+    assert_eq!(stats["pages"], pages);
+    assert_eq!(stats["transportConnections"], 1, "upstream-only reconnect");
+    for attempt in 1..=7 {
+        let before = control("cut-observer");
+        let until = Instant::now() + Duration::from_secs(6);
+        loop {
+            let stats = control("stats");
+            if stats["transportConnections"] == attempt + 1
+                && stats["gapPermissionReads"].as_u64() > before["gapPermissionReads"].as_u64()
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < until,
+                "suspended observer reconnect {attempt}"
+            );
+            rt.frame(0.02);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    assert_eq!(control("permission-after-reopens")["pages"], pages);
     let (x, y) = rt.find(&format!("t-{tab}")).unwrap();
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
@@ -155,13 +176,17 @@ pub fn suspend() {
     assert_eq!(control("stats")["resumedAnchor"], id);
     wait(
         &mut rt,
-        "both permissions are available after returning to the tab",
+        "permissions are available after returning to the tab",
         |s| {
             s.agent.as_ref().is_some_and(|agent| {
                 agent.online
-                    && ["permission-suspended", "permission-during-gap"]
-                        .iter()
-                        .all(|id| agent.permissions.iter().any(|p| p.id == *id))
+                    && [
+                        "permission-suspended",
+                        "permission-during-gap",
+                        "permission-after-reopens",
+                    ]
+                    .iter()
+                    .all(|id| agent.permissions.iter().any(|p| p.id == *id))
             })
         },
     );
