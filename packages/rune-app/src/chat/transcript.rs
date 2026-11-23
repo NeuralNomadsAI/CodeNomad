@@ -66,10 +66,9 @@ pub fn message(s: &State, i: usize) -> El {
                     .pad(Space::Sm)
                     .inset_surface()
                     .child(text(t(label)).text_role(TextRole::Label))
-                    .children(
-                        (!m.body.is_empty())
-                            .then(|| document::prose(s, format!("{key}-content"), &m.body, false)),
-                    ),
+                    .children((!m.body.is_empty()).then(|| {
+                        document::prose(s, &m.id, format!("{key}-content"), &m.body, false)
+                    })),
             ));
     }
     let mut header = layout::action_row().child(
@@ -119,7 +118,7 @@ pub fn message(s: &State, i: usize) -> El {
     if (m.role == "user" || m.parts.is_empty()) && !m.body.is_empty() {
         view = view.child(track(
             None,
-            document::prose(s, format!("body-{}", m.id), &m.body, false),
+            document::prose(s, &m.id, format!("body-{}", m.id), &m.body, false),
         ));
     }
     let gap_key = format!("parts-gap-{}", m.id);
@@ -178,6 +177,7 @@ pub fn message(s: &State, i: usize) -> El {
                     if visible && !body.text.trim().is_empty() {
                         Some(document::prose(
                             s,
+                            &m.id,
                             key,
                             &body.text,
                             !m.completed && body.provenance != TextProvenance::Closed,

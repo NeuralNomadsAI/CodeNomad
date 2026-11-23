@@ -26,19 +26,26 @@ pub fn synthetic() -> Vec<crate::history::Row> {
 }
 pub fn start(s: &mut crate::State, bootstrap: bool) {
     s.agent = None;
-    launch(s, Startup::Configured { bootstrap });
+    launch(s, Startup::Configured { bootstrap }, None);
 }
 
 pub(crate) fn start_bound(s: &mut crate::State, backend: crate::backend::Backend) {
-    launch(s, Startup::Bound(backend));
+    start_bound_at(s, backend, None);
 }
 
+pub(crate) fn start_bound_at(
+    s: &mut crate::State,
+    backend: crate::backend::Backend,
+    anchor: Option<String>,
+) {
+    launch(s, Startup::Bound(backend), anchor);
+}
 enum Startup {
     Configured { bootstrap: bool },
     Bound(crate::backend::Backend),
 }
 
-fn launch(s: &mut crate::State, startup: Startup) {
+fn launch(s: &mut crate::State, startup: Startup, anchor: Option<String>) {
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);
     s.incoming = Some(incoming);
@@ -46,7 +53,9 @@ fn launch(s: &mut crate::State, startup: Startup) {
     let reading = match &startup {
         Startup::Bound(_) => {
             let (mut reader, lane) = super::reader::Reader::open();
-            if let Some(previous) = &s.reader {
+            if let Some(id) = anchor {
+                reader.resume(super::reading::Bookmark::Message { id, offset: 0.0 });
+            } else if let Some(previous) = &s.reader {
                 reader.resume(previous.bookmark(s.transcript_display.reading_mut()));
             }
             s.reader = Some(reader);

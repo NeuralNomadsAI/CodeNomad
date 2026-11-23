@@ -48,11 +48,14 @@ export function workspacePolicy({origin,project,assets=new Set()}){
       if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
       if(method==='POST'&&p==='/api/workspaces/creation/cancel')return claim(body)&&claims.has(body.requestId)
       const scoped=p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(.*)$/)
+      if(scoped&&workspaces.has(scoped[1])&&method==='GET'&&scoped[2]==='session/ses_another/message/message-00000')return true
       if(scoped&&workspaces.has(scoped[1])&&method==='GET')return /^(command|model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another|ses_linked|ses_linked_next)(?:\/(permission|form))?$/.test(scoped[2])
       const owned=p.match(/^\/api\/workspaces\/([^/]+)(?:\/(.*))?$/)
       if(!owned||!workspaces.has(owned[1]))return false
       if(method==='GET'&&owned[2]==='worktrees')return true
       if(method==='POST'&&['session-history/window','session-history/outline'].includes(owned[2]))return ['ses_existing','ses_another','ses_linked','ses_linked_next'].includes(body?.sessionID)
+      if(method==='POST'&&owned[2]==='session-history/query')return body?.sessionID==='ses_existing'&&body.purpose==='search'
+      if(method==='POST'&&owned[2]==='session-history/ranked')return body?.version===1&&body.limit===40
       if(method==='POST'&&owned[2]==='creation/release')return claim(body)&&owners.get(owned[1])===body.requestId
       return method==='DELETE'&&!owned[2]&&!forbidRelease
     },

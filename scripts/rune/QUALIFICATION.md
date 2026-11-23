@@ -48,6 +48,8 @@ node packages/rune-app/fixtures/history-rail-web.mjs "$CARGO_TARGET_DIR/browser-
 
 Le raccord conversation est testé par `cargo test --locked -p codenomad-rune-app timeline::tests` et, avec le bundle produit WASM et le serveur Rust de qualification, par `node packages/rune-app/fixtures/launcher-fixture.mjs --web-timeline`. Ce scénario demande une fenêtre `around` pour un bloc hors fenêtre, puis clique un repère de la fenêtre chargée sans requête.
 
+La recherche utilise le même banc Rust, via `node packages/rune-app/fixtures/launcher-fixture.mjs --web-history-search` avec les routes `query` et `ranked`. Le scénario vérifie un résultat résident sans fenêtre, le rang d'un résultat d'une autre session, sa lecture unitaire et son ouverture au moyen d'une fenêtre `around`. Les tests `codenomad-client search::tests` couvrent les continuations et le redémarrage classé.
+
 ## Parité par composant
 
 Les composants Solid et Rune demandent des paires de captures exécutées à géométrie identique, dans chaque palette, avec références d'accessibilité et interactions dédiées. Le statut de parité reste à qualifier pour les composants de l'inventaire.

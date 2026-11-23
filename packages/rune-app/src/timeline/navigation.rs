@@ -32,6 +32,17 @@ pub(crate) fn cancel_jump(s: &mut State) {
     j.locked = false;
 }
 
+pub(super) fn cancel_search(s: &mut State) {
+    if owner(s)
+        .jump
+        .flight
+        .as_ref()
+        .is_some_and(|(_, target)| target.id.is_empty())
+    {
+        cancel_jump(s);
+    }
+}
+
 pub(super) fn select(s: &mut State, id: &str, tx: &mut Tx) {
     let target = owner(s).markers.iter().find(|m| m.id == id).cloned();
     if let Some(target) = target {
@@ -43,6 +54,21 @@ pub(super) fn retry(s: &mut State, tx: &mut Tx) {
     if let Some(target) = owner(s).jump.retry.take() {
         start(s, target, tx);
     }
+}
+
+pub(super) fn seek_message(s: &mut State, message: &str, tx: &mut Tx) {
+    start(
+        s,
+        Marker {
+            id: String::new(),
+            message: message.into(),
+            kind: super::MarkerKind::User,
+            ordinal: 0,
+            continued: false,
+            tool: None,
+        },
+        tx,
+    );
 }
 
 fn start(s: &mut State, target: Marker, tx: &mut Tx) {
@@ -89,6 +115,9 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
 }
 
 fn locate(s: &State, row: &crate::history::Row, m: &Marker) -> Option<(String, usize)> {
+    if m.id.is_empty() {
+        return Some((row.id.clone(), 0));
+    }
     let steps = anchors::steps(s, &row.id);
     let block = anchors::blocks(row, steps, true).into_iter().find(|b| {
         b.marker.kind == m.kind
@@ -110,12 +139,15 @@ fn settle(s: &mut State, m: &Marker, (key, steps): (String, usize)) {
     let t = owner(s);
     t.changed = true;
     t.jump.align = Some((m.message.clone(), key));
-    t.jump.active = Some(m.id.clone());
+    t.jump.active = (!m.id.is_empty()).then(|| m.id.clone());
     t.jump.locked = true;
 }
 
 pub(crate) fn admit(s: &mut State, serial: u64, page: Page, admit: Admission) {
-    if !super::demanded(s) || owner(s).jump.serial != serial || gesture(s) {
+    if !(super::demanded(s) || super::search::is_open(s))
+        || owner(s).jump.serial != serial
+        || gesture(s)
+    {
         return;
     }
     let Some((_cancel, target)) = owner(s).jump.flight.take() else {

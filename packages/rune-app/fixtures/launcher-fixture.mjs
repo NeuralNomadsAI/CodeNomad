@@ -18,8 +18,9 @@ import {webLiveFixture} from './web-live-fixture.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
 const sameOriginPairing=process.argv.includes('--same-origin-pairing')
 const webTimeline=process.argv.includes('--web-timeline')
+const webSearch=process.argv.includes('--web-history-search')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
-const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile||webTimeline,root=path.resolve(import.meta.dirname,'../../..')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
 if(!web)requireTestSupport()
 const gitPanel=process.argv.includes('--git-panel'),gitOutput=gitPanel?process.env.RUNE_TEST_GIT_OUTPUT:undefined
 if(gitOutput)assert(path.isAbsolute(gitOutput),'Git fixture output must be absolute')
@@ -157,6 +158,7 @@ if(webTimeline){
 if(webMobile)for(let i=0;i<(webAndroid?70:210);i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
 stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
 add('ses_another','Another session',gitPanel?review:project)
+if(webSearch)stores.get('ses_another').append('user','Existing ranked destination')
 if(gitPanel)for(let i=0;i<50;i++)stores.get('ses_another').append('assistant',`Reading position ${i}\n\nA second paragraph in the fixture.`)
 if(linked){
   add('ses_linked','Linked checkout session',linked)
@@ -240,6 +242,24 @@ const upstream=createServer(async(req,res)=>{
       return json({data:created})
     }
     if(url.pathname==='/api/plugin')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
+    if(webSearch&&url.pathname==='/api/rpc/codenomad.session-pruning/history'){
+      const {input}=JSON.parse(raw)
+      assert.deepEqual(input,{sessionID:'ses_existing',query:'Existing',purpose:'search',includeTechnical:false})
+      const hit={sessionID:input.sessionID,messageID:stores.get(input.sessionID).rows.at(-1).id,role:'assistant',partIndex:0,kind:'text',excerpt:'Existing answer'}
+      return json({output:{status:'page',scanned:2,tools:0,reasoning:0,skipped:0,hits:[hit],candidates:[],cursor:null,
+        sessions:[{sessionID:input.sessionID,directory:project,scanned:2,tools:0,reasoning:0,skipped:0}]}})
+    }
+    if(webSearch&&url.pathname==='/api/rpc/codenomad.session-pruning/historyRanked'){
+      const {input}=JSON.parse(raw)
+      assert.equal(input.query,'Existing')
+      const shape=(sessionID,excerpt)=>({sessionID,messageID:stores.get(sessionID).rows.at(-1).id,
+        role:'assistant',partIndex:0,kind:'text',excerpt,createdAt:100})
+      const hits=[shape('ses_another','Existing ranked destination'),shape('ses_existing','Existing answer')]
+      const sessions=hits.map(({sessionID})=>({sessionID,directory:project,title:records.get(sessionID).title,
+        scanned:1,candidates:1,judged:1,matchedMessages:1,tools:0,reasoning:0,skipped:0,prefilterBypassed:0}))
+      return json({output:{version:1,status:'ranked',scanned:2,candidates:2,judged:2,skipped:0,prefilterBypassed:0,
+        matchedSessions:2,capped:false,examinedBefore:0,cursor:null,exclusions:[],caps:[],hits,sessions}})
+    }
     if(url.pathname==='/api/rpc/codenomad.session-pruning/outlineLayout'){
       const {input}=JSON.parse(raw),rows=stores.get(input.sessionID).rows
       assert(!input.cursor)
@@ -267,6 +287,11 @@ const upstream=createServer(async(req,res)=>{
     if(match){
       const [,id,action]=match,record=records.get(id),store=stores.get(id);assert(record,'known fixture session')
       if(!action)return json({data:record})
+      if(webSearch&&action.startsWith('message/')){
+        const row=store.rows.find(row=>row.id===action.split('/')[1])
+        assert(row,'preview requests exactly one known history row')
+        return json({data:row})
+      }
       if(action==='message')return json({data:store.rows.slice(-Number(url.searchParams.get('limit'))),cursor:url.searchParams.get('order')==='asc'?{next:'future-read-anchor'}:{}})
       if(action==='environment'){res.statusCode=204;res.end();return}
       if(gitPanel&&id==='ses_another'&&action==='move'){
@@ -324,6 +349,10 @@ await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
 if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
+if(webSearch){
+  delete env.GIT_CEILING_DIRECTORIES
+  await promisify(execFile)('git',['init','-q',project],{windowsHide:true,env})
+}
 if(web)env.CNRS_FIXTURE_UI_DIR=ui
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 let server,exited,log='',client,result=1,http,staticProof,diagnostic='',runLog=''
@@ -378,6 +407,7 @@ try{
     const androidEnv=webAndroid?Object.fromEntries(['RUNE_ANDROID_ADB','RUNE_ANDROID_SERIAL','RUNE_ANDROID_ADB_PORT'].map(key=>[key,process.env[key]])):{}
     if(webAndroid)androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
     if(webTimeline)args.push('--timeline')
+    if(webSearch)args.push('--history-search')
     client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
     if(mobile)client.on('message',async action=>{
       try{

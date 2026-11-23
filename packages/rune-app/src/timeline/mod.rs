@@ -1,6 +1,7 @@
 //! The visible conversation owns structure and selection; the reader owns bodies.
 mod navigation;
 mod reading_line;
+pub(crate) mod search;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -62,6 +63,7 @@ pub(crate) struct Timeline {
     detached: bool,
     pub(crate) older: Option<Sender<()>>,
     reading_line: reading_line::Blocks,
+    search: search::Search,
 }
 
 fn owner(s: &mut State) -> &mut Timeline {
@@ -78,6 +80,7 @@ fn cancel_scan(t: &mut Timeline) {
 }
 
 pub(crate) fn suspend(s: &mut State) {
+    search::close(s);
     cancel_jump(s);
     let t = owner(s);
     t.visible = false;
@@ -116,6 +119,7 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
             t.refresh = true;
             t.changed = true;
             cancel_jump(s);
+            search::invalidate(s);
         }
         Event::ConnectionLost
         | Event::Reconnecting
@@ -125,6 +129,7 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
             t.online = false;
             t.refresh = true;
             cancel_jump(s);
+            search::invalidate(s);
         }
         Event::ReaderSync { .. } | Event::Sync(_) => {
             t.refresh |= !t.online;
@@ -221,9 +226,14 @@ fn reproject(s: &mut State) -> bool {
 pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     if !demanded(s) {
         if std::mem::take(&mut owner(s).visible) {
-            suspend(s);
+            if search::is_open(s) {
+                cancel_scan(owner(s));
+                owner(s).refresh = true;
+            } else {
+                suspend(s);
+            }
         }
-        return false;
+        return search::is_open(s) && navigation::poll(s, tx);
     }
     let reads = s.reads.clone();
     let wake = s.wake.clone();

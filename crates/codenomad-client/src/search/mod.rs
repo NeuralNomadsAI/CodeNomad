@@ -99,6 +99,30 @@ enum Literal {
 }
 
 impl Backend {
+    /// Fetch the single message behind an explicitly selected preview.
+    pub async fn history_search_preview(&self, message: &str) -> Result<crate::Message> {
+        if !valid_id(&self.workspace) || !valid_id(&self.session) || !valid_id(message) {
+            return Err("invalid history preview target".into());
+        }
+        let wire = read_json_limited(
+            self.client
+                .get(format!(
+                    "{}workspaces/{}/instance/api/session/{}/message/{message}",
+                    self.base, self.workspace, self.session
+                ))
+                .send()
+                .await?
+                .error_for_status()?,
+            crate::history::MAX_BYTES,
+        )
+        .await?;
+        let record = wire.get("data").unwrap_or(&wire);
+        if record["id"] != message {
+            return Err("history preview returned another message".into());
+        }
+        crate::history::decode_message(record)
+    }
+
     /// Publish incremental results up to one UI page; keep the last batch in full.
     pub async fn search_history(
         &self,
@@ -149,7 +173,11 @@ impl Backend {
             }
             result.scanned = add(result.scanned, page.scanned)?;
             result.skipped = add(result.skipped, page.skipped)?;
-            if page.hits.iter().any(|hit| result.hits.iter().any(|old| old.message == hit.message)) {
+            if page
+                .hits
+                .iter()
+                .any(|hit| result.hits.iter().any(|old| old.message == hit.message))
+            {
                 return Err(Blocked::Conflict.into());
             }
             result.hits.extend(page.hits);

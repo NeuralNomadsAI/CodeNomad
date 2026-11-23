@@ -1,5 +1,6 @@
 //! Fixed-geometry timeline rail. Its caller supplies identities and active state.
 pub mod icons;
+pub mod search;
 use crate::{catalogue, generated_layout::TIMELINE_MIN_WIDTH, layout, palettes, tokens};
 use rune::{El, GrowthSpec, Icon, ScrollSpec, Tx};
 use std::{borrow::Cow, rc::Rc};

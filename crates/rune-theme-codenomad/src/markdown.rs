@@ -8,6 +8,7 @@ pub fn prose<S: 'static>(
     source: &str,
     streaming: bool,
     highlight: bool,
+    search_terms: &[String],
     link: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
     wrapped: impl Fn(usize, &str) -> bool + 'static,
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
@@ -17,8 +18,11 @@ pub fn prose<S: 'static>(
         .code_block(kit.c.bg_deep, kit.c.border_base)
         .link(kit.c.text_accent)
         .syntax_highlight(highlight);
-    Markdown::new(literal_breaks(source).into_owned())
+    let source = literal_breaks(source).into_owned();
+    let matches = crate::timeline::search::ranges(&source, search_terms);
+    Markdown::new(source)
         .style(style)
+        .highlights(matches)
         .selectable(true)
         .tasks_read_only()
         .scroll_wide(true)

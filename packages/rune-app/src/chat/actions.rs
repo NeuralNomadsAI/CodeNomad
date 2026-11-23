@@ -17,6 +17,7 @@ pub struct Display {
     live_ansi: RefCell<VecDeque<(String, rune_theme_codenomad::ansi::Stream)>>,
     pub(super) diffs: super::tool_diff::Cache,
     pub(crate) timeline: crate::timeline::Timeline,
+    pub(crate) search_highlight: Option<(String, Vec<String>)>,
 }
 
 #[derive(Default)]
@@ -57,6 +58,7 @@ impl Display {
             };
         } else if self.session != session {
             self.timeline = Default::default();
+            self.search_highlight = None;
             let next = self.saved.remove(session).unwrap_or_default();
             self.saved.insert(
                 std::mem::replace(&mut self.session, session.into()),
@@ -126,7 +128,7 @@ impl Display {
     }
 
     pub fn poll(s: &mut State, changed: bool, now: f64, tx: &mut rune::Tx) -> bool {
-        let timeline = crate::timeline::poll(s, tx);
+        let timeline = crate::timeline::poll(s, tx) | crate::timeline::search::poll(s, now, tx);
         let stream = &mut s.transcript_display.stream;
         if changed {
             stream.pending = s.messages.last().is_some_and(|row| {

@@ -9,10 +9,11 @@ import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction} from './web-mobile.mjs'
 import {mobileLive, revokedLauncher} from './web-live.mjs'
+import {historySearch} from './web-history-search.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},timeline:{type:'boolean'},'same-origin-pairing':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},timeline:{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
@@ -46,7 +47,7 @@ const connectedPalettes = values.connected
 try {
   const android=mobileContext(browser)
   const sizes=values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
-    [['desktop',values.timeline?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
+    [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
   for (const [name, width, height, touch] of sizes) {
     const control=name==='phone-dpr1-control'
     for (const colorScheme of control?['light']:['light','dark']) {
@@ -345,8 +346,9 @@ try {
             if(values.mobile||values.timeline)assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
             else assert.deepEqual(bodies,['Existing project history','Existing answer'])
           }
-          assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===0))
+          assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===(values['history-search']?1:0)))
           assert(routes.some(row=>row.query.includes('cursor=')))
+          if(values['history-search']&&name==='desktop')await historySearch(page,messages)
           const inventory=async()=>{const response=await context.request.get(new URL('/api/workspaces',url).href);assert(response.ok());const rows=await response.json();assert(Array.isArray(rows)&&rows.length<=128);return rows.map(row=>row.id)}
           const before=await inventory(),owned=[...policy.workspaces],retained=before.filter(id=>!policy.workspaces.has(id))
           assert(owned.length>0&&owned.every(id=>before.includes(id)),'Browser must own its admitted occurrences')
