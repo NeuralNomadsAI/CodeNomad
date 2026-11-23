@@ -373,6 +373,28 @@ fn a_native_command_401_with_a_live_backend_session_has_one_rejection_and_no_rel
 }
 
 #[test]
+fn retry_waits_for_the_opening_stream_to_report_authentication() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let (stream, commands, events) = start(&listener, prefs.backend.take().unwrap()).await;
+        drop(stream);
+        let opening = request(&listener).await;
+        assert!(opening.first.starts_with("GET /api/events?"));
+        commands.send(Command::Retry).await.unwrap();
+        assert!(
+            timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+        opening.reply(401, json!({})).await;
+        until(&events, |event| {
+            matches!(event, Event::AuthenticationRequired(_))
+        })
+        .await;
+    });
+}
+
+#[test]
 fn settings_send_during_a_stream_outage_preserves_the_unsubmitted_draft() {
     assert_direct_recovery(None);
 }

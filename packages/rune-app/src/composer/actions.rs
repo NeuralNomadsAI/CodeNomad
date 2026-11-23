@@ -335,7 +335,7 @@ mod tests {
         let id = prompt.id.unwrap();
         let row = rt.state.messages.pop().unwrap();
         acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
-        assert!(rt.state.draft.text.is_empty());
+        assert_eq!(rt.state.draft.text, "attempt");
         assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
         rt.state.draft = TextEdit::new("new draft");
         rt.state.messages.push(

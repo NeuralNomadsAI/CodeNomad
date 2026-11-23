@@ -427,7 +427,6 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Done => s.phase = Phase::Ready,
             Event::AuthenticationRequired(_) | Event::Failed => {
-                s.composer.picker.set_attachments_supported(false);
                 #[cfg(target_arch = "wasm32")]
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
@@ -443,6 +442,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     #[cfg(not(target_arch = "wasm32"))]
                     chat::authentication::expired(s, expired);
                 }
+                s.composer.picker.set_attachments_supported(false);
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
