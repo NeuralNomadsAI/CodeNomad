@@ -188,6 +188,15 @@ pub(super) fn run() {
     wait(&mut rt, "linked checkout history", |rt| {
         visible_text(rt, "/git-history-list", "Initial Git panel fixture")
     });
+    let project = std::path::PathBuf::from(std::env::var_os("RUNE_TEST_FOLDER").unwrap());
+    let linked = project.with_file_name("review");
+    assert!(rt.elements().iter().any(|element| {
+        !element.exiting
+            && element.key.as_deref() == Some("git-worktree-trigger")
+            && element.help.as_deref().is_some_and(|directory| {
+                codenomad_client::same_server_path(directory, &linked.to_string_lossy())
+            })
+    }));
     assert!(!crate::git::has_preview(&rt.state));
     assert!(rt.find("composer").is_some());
 
