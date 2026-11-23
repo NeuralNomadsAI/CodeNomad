@@ -17,7 +17,10 @@ function controller(win: ReturnType<typeof window>, manager: { isPrimary: boolea
 }
 function managerHarness(t: test.TestContext) {
   const directory = mkdtempSync(join(tmpdir(), "codenomad-navigation-"))
-  const manager = new ClientStateManager(directory, undefined, { crossHostElectionDirectory: join(directory, "election") })
+  const manager = new ClientStateManager(directory, undefined, {
+    crossHostElectionDirectory: join(directory, "election"),
+    processOwner: { pid: process.pid, runToken: "navigation-test", processStartIdentity: "navigation-test-start" },
+  })
   t.after(async () => { await manager.drainAndReleasePrimary().catch(() => {}); rmSync(directory, { recursive: true, force: true }) })
   return manager
 }
@@ -35,7 +38,7 @@ test("renderer access resets only for trusted full main-frame navigation", () =>
 test("immediate reload flushes latest state before rotating document access", async (t) => {
   const manager = managerHarness(t)
   t.mock.getter(CrossHostRegistration.prototype, "isPrimary", () => assert.fail("navigation used synchronous lease verification"))
-  await manager.setRestoreEnabled(true)
+  assert.equal(await manager.setRestoreEnabled(true), true)
   manager.claimClientStateAccess("outgoing")
   const load = (token: string) => { manager.assertRendererAccessToken(token); return manager.loadClientState() }
   const save = (token: string, state: unknown) => { manager.assertRendererAccessToken(token); return manager.saveClientState(state) }
