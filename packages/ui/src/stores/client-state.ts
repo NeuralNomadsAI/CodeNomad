@@ -299,7 +299,7 @@ export async function refreshWorkspaceFileDraft(key: string) {
   const base = nativeDraftBase.get(key)
   const expected = base?.value
   const reading = (async () => {
-    const fresh = await loadNativeFileDrafts()?.catch(() => undefined)
+    const fresh = await loadNativeFileDrafts(key)?.catch(() => undefined)
     const pending = pendingFileDrafts.has(key) || inflightFileDrafts.has(key)
     if (fresh && !pending && !refusedFileDrafts.has(key) && nativeDraftBase.get(key) === base && base?.value === expected) {
       const next = normalizeWorkspaceFileDrafts(fresh).find(entry => entry.key === key)

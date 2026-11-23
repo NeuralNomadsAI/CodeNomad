@@ -518,6 +518,25 @@ test("file drafts survive secondary window removal and a corrupt draft store lea
   assert.deepEqual(manager.loadClientState(primary).snapshot, { tabs: ["project"] })
 })
 
+test("a draft observed by one renderer survives another renderer's discard until the first releases access", async t => {
+  const h = harness(t, { version: 1, restoreEnabled: true })
+  const manager = h.create()
+  const primary = manager.activeWindowId
+  const secondary = "11111111-1111-4111-8111-111111111111"
+  await manager.addWindow(secondary)
+  manager.claimClientStateAccess("a", primary)
+  manager.claimClientStateAccess("b", secondary)
+  const key = "file"
+  const draft = { fingerprint: "0".repeat(64), text: "draft" }
+  assert.equal(await manager.saveFileDraft({ key, expected: null, draft }, "b", secondary), true)
+  assert.deepEqual(await manager.loadFileDrafts("a", primary, key), [{ key, ...draft }])
+  assert.equal(await manager.saveFileDraft({ key, expected: draft, draft: null }, "b", secondary), true)
+  assert.deepEqual(await manager.loadFileDrafts("b", secondary), [{ key, ...draft }])
+  manager.resetRendererAccessToken(primary)
+  assert.equal(await manager.saveFileDraft({ key, expected: draft, draft: null }, "b", secondary), true)
+  assert.deepEqual(await manager.loadFileDrafts("b", secondary), [])
+})
+
 test("concurrent window list mutations preserve the limit and a valid active cursor", async (t) => {
   const h = harness(t, { version: 1, restoreEnabled: true })
   const manager = h.create()

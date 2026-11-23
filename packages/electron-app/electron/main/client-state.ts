@@ -135,6 +135,7 @@ export class ClientStateManager {
   private unsupportedFutureEnvelope = false
   private frozen = false
   private rendererAccessTokens = new Map<string, string>()
+  private fileDraftReaders = new Map<string, Set<string>>()
 
   constructor(
     userDataPath: string,
@@ -315,12 +316,25 @@ export class ClientStateManager {
     } finally { await file.close() }
   }
 
-  async loadFileDrafts(rendererToken: unknown, windowId: string) {
-    this.assertReplacementAllowed(rendererToken, windowId)
-    if (!this.windowRecord(windowId).restoreEnabled) return []
-    await this.writeQueue.catch(() => {})
-    this.assertReplacementAllowed(rendererToken, windowId)
-    return this.readFileDrafts()
+  private retainFileDraft(windowId: string, key: string) {
+    const keys = this.fileDraftReaders.get(windowId) ?? new Set<string>()
+    keys.add(key)
+    this.fileDraftReaders.set(windowId, keys)
+  }
+
+  loadFileDrafts(rendererToken: unknown, windowId: string, key?: unknown) {
+    const operation = this.writeQueue.catch(() => {}).then(async () => {
+      this.assertReplacementAllowed(rendererToken, windowId)
+      if (!this.windowRecord(windowId).restoreEnabled) return []
+      const drafts = await this.readFileDrafts()
+      this.assertReplacementAllowed(rendererToken, windowId)
+      if (key === undefined) return drafts
+      const found = drafts.filter(row => row.key === key)
+      if (found.length && typeof key === "string") this.retainFileDraft(windowId, key)
+      return found
+    })
+    this.writeQueue = operation.then(() => {}, () => {})
+    return operation
   }
 
   saveFileDraft(raw: unknown, rendererToken: unknown, windowId: string): Promise<boolean> {
@@ -334,14 +348,20 @@ export class ClientStateManager {
       const value = draft === null ? null : draft as { fingerprint: string; text: string }
       if (value !== null && !record.restoreEnabled) return false
       const drafts = await this.readFileDrafts()
+      this.assertReplacementAllowed(rendererToken, windowId)
       const previous = drafts.find(row => row.key === key)
+      if (!value) {
+        this.fileDraftReaders.get(windowId)?.delete(key)
+        if (Array.from(this.fileDraftReaders.values()).some(keys => keys.has(key))) return true
+      }
       if (previous?.fingerprint !== expected?.fingerprint || previous?.text !== expected?.text) return value === null
       const next = changeWorkspaceFileDrafts(drafts, key, value)
       if (!next) return false
       await this.writeAtomically(JSON.stringify(next), rendererToken, windowId, this.fileDraftsPath)
+      if (value && this.rendererAccessTokens.get(windowId) === rendererToken) this.retainFileDraft(windowId, key)
       return true
     })
-    this.writeQueue = operation.then(() => {})
+    this.writeQueue = operation.then(() => {}, () => {})
     return operation
   }
 
@@ -389,6 +409,7 @@ export class ClientStateManager {
 
   resetRendererAccessToken(windowId = this.activeWindowId): void {
     this.rendererAccessTokens.delete(windowId)
+    this.fileDraftReaders.delete(windowId)
   }
 
   saveClientState(snapshot: unknown, rendererToken?: unknown, windowId = this.activeWindowId): Promise<boolean> {
@@ -509,7 +530,7 @@ export class ClientStateManager {
     () => this.partitions.sweep(retainedPartitionKeys(this.state), () => this.assertReplacementAllowed()))
       .then((removed) => {
         if (removed) {
-          this.rendererAccessTokens.delete(windowId)
+          this.resetRendererAccessToken(windowId)
           this.persistenceSuppressed.delete(windowId)
         }
         return removed

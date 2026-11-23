@@ -90,9 +90,9 @@ export const loadNativeClientStatePartition = async (key: string): Promise<strin
   if (!nativeAccessClaimed) return null
   return await dispatchNative((api) => api?.loadClientStatePartition?.(accessToken, key), "client_state_load_partition", { key }) ?? null
 }
-export function loadNativeFileDrafts(): Promise<WorkspaceFileDraft[]> | undefined {
+export function loadNativeFileDrafts(key?: string): Promise<WorkspaceFileDraft[]> | undefined {
   if (!nativeAccessClaimed) return
-  return dispatchNative(api => api?.loadFileDrafts?.(accessToken), "client_state_load_file_drafts")
+  return dispatchNative(api => api?.loadFileDrafts?.(accessToken, key), "client_state_load_file_drafts", { key })
 }
 export type FileDraftChange = {
   key: string

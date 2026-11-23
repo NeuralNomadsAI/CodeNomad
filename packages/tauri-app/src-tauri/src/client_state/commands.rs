@@ -103,9 +103,10 @@ pub fn client_state_load_file_drafts(
     webview: Webview,
     state: State<'_, ClientState>,
     access_token: String,
+    key: Option<String>,
 ) -> Result<Vec<super::file_drafts::Draft>, String> {
-    let (window_id, _) = validate_access(&webview, &state, &access_token)?;
-    state.load_file_drafts(&window_id)
+    let (window_id, generation) = validate_access(&webview, &state, &access_token)?;
+    state.load_file_drafts_for(&window_id, key.as_deref(), generation)
 }
 
 #[tauri::command]
@@ -116,7 +117,7 @@ pub fn client_state_save_file_draft(
     change: super::file_drafts::Change,
 ) -> Result<bool, String> {
     let (window_id, generation) = validate_access(&webview, &state, &access_token)?;
-    state.save_file_draft(&window_id, change, || {
+    state.save_file_draft_for(&window_id, change, Some(generation), || {
         state.renderer_access.is_generation_current_for(&window_id, generation)
     })
 }

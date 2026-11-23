@@ -109,6 +109,7 @@ pub struct ClientState {
     renderer_access: access::RendererAccess,
     ephemeral_windows: Mutex<HashSet<String>>,
     renderer_flush: RendererFlush,
+    file_draft_readers: file_drafts::Readers,
     startup_commands: startup_command::StartupCommands,
     write_state: StateWriter,
 }
@@ -244,6 +245,7 @@ impl ClientState {
             renderer_access: access::RendererAccess::default(),
             ephemeral_windows: Mutex::new(HashSet::new()),
             renderer_flush: RendererFlush::default(),
+            file_draft_readers: file_drafts::Readers::default(),
             startup_commands: startup_command::StartupCommands::default(),
             write_state,
         }

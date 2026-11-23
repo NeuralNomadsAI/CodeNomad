@@ -55,7 +55,7 @@ export function setupClientStateIPC(
   })
   handle("client-state:load", (_argument, _token, windowId) => clientState.loadClientState(windowId))
   handle("client-state:save", (snapshot, token, windowId) => clientState.saveClientState(snapshot, token, windowId))
-  handle("client-state:loadFileDrafts", (_argument, token, windowId) => clientState.loadFileDrafts(token, windowId))
+  handle("client-state:loadFileDrafts", (key, token, windowId) => clientState.loadFileDrafts(token, windowId, key))
   handle("client-state:saveFileDraft", (change, token, windowId) => clientState.saveFileDraft(change, token, windowId))
   handle("client-state:commitPartitions", (payload, token, windowId) => clientState.commitClientStatePartitions(payload, token, windowId))
   handle("client-state:loadPartition", (key, token, windowId) => clientState.loadClientStatePartition(key, token, windowId))

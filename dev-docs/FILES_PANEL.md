@@ -155,6 +155,9 @@ a mismatch alongside the retained draft. Only explicit Save admits a file write.
 Local desktop close, quit and reload wait for draft persistence. A refused update
 keeps the reader available so the user can save or discard their edits. A text
 file stays read-only while its draft identity is unavailable; Refresh retries it.
+The desktop host serializes draft reads and changes. Discard releases the
+requesting window's copy; an active renderer that read or wrote the draft keeps
+its stored copy until its renderer access ends.
 
 Clicked readers have a reserved one-request lane beside the two background scan
 slots. Start the local Monaco load alongside the content read; preview Git work
