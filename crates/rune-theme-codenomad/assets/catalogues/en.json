@@ -477,6 +477,7 @@
   "hotkeys.reset": "Reset",
   "hotkeys.resetAll": "Reset all",
   "hotkeys.saveFailed": "Could not save keyboard shortcuts. Try again.",
+  "hotkeys.unavailable": "This action has no configurable shortcut in Rune yet.",
   "imagesConversation.title": "Images",
   "infoView.logs.actions.back": "Back to conversation",
   "infoView.logs.actions.clear": "Clear logs",

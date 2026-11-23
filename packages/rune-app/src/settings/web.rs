@@ -18,6 +18,7 @@ enum Section {
     General,
     OpenCode,
     Notifications,
+    Shortcuts,
     Providers,
     Remote,
 }
@@ -28,6 +29,7 @@ impl Section {
             Self::General => "settings.nav.general",
             Self::OpenCode => "settings.nav.opencode",
             Self::Notifications => "settings.nav.notifications",
+            Self::Shortcuts => "settings.nav.hotkeys",
             Self::Providers => "settings.nav.providers",
             Self::Remote => "settings.nav.remote",
         })
@@ -53,6 +55,9 @@ pub(super) struct Panel {
     opencode: opencode::Status,
     logging: opencode::logging::Logging,
     remote: remote::Remote,
+    recording_shortcut: bool,
+    recording_target: Option<&'static str>,
+    shortcut_filter: rune::TextEdit,
     notification_permission: Rc<Cell<PermissionRequest>>,
 }
 
@@ -203,6 +208,7 @@ fn close(s: &mut State) {
     prefs.hide_opencode();
     panel.logging.close();
     panel.remote.close();
+    panel.recording_shortcut = false;
     if panel.notification_permission.get() != PermissionRequest::Pending {
         panel.notification_permission.set(PermissionRequest::Idle);
     }
@@ -251,11 +257,17 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             Section::General,
             Section::OpenCode,
             Section::Notifications,
+            Section::Shortcuts,
             Section::Providers,
             Section::Remote,
         ][..]
     } else {
-        &[Section::General, Section::Notifications, Section::Providers][..]
+        &[
+            Section::General,
+            Section::Notifications,
+            Section::Shortcuts,
+            Section::Providers,
+        ][..]
     };
     let labels: Vec<_> = sections.iter().map(|section| section.label()).collect();
     let navigation = chrome::segments(
@@ -275,6 +287,7 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 return;
             }
             panel.section = section;
+            panel.recording_shortcut = false;
             if section != Section::OpenCode {
                 prefs.hide_opencode();
                 panel.logging.close();
@@ -323,6 +336,22 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 s.settings.web.catalog.toggle()
             })
         }
+        Section::Shortcuts => super::shortcuts::editor::view(
+            &s.settings.shared,
+            &panel.shortcut_filter,
+            |s: &mut State| &mut s.settings.web.shortcut_filter,
+            panel.recording_target.filter(|_| panel.recording_shortcut),
+            |s| {
+                let panel = &mut s.settings.web;
+                (panel.shown && panel.section == Section::Shortcuts)
+                    .then_some((&mut panel.recording_shortcut, &mut panel.recording_target))
+            },
+        )
+        .on_window_focus(|s: &mut State, focused, _| {
+            if !focused {
+                s.settings.web.recording_shortcut = false;
+            }
+        }),
         Section::Notifications => col()
             .full_width()
             .child(notification_settings::view(

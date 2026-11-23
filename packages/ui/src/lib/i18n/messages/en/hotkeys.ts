@@ -12,6 +12,7 @@ export const hotkeyMessages = {
   "hotkeys.conflict": "{shortcut} is also assigned to: {actions}",
   "hotkeys.saveFailed": "Could not save keyboard shortcuts. Try again.",
   "hotkeys.noResults": "No shortcuts found.",
+  "hotkeys.unavailable": "This action has no configurable shortcut in Rune yet.",
   "hotkeys.action.session-new": "New session",
   "hotkeys.action.instance-prev": "Previous app tab",
   "hotkeys.action.instance-next": "Next app tab",

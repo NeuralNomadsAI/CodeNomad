@@ -84,6 +84,7 @@ jobs:
           node scripts/rune/generate-theme.mjs --check
           node scripts/rune/generate-palettes.mjs --check
           node scripts/rune/generate-catalogues.mjs --check
+          node scripts/rune/generate-hotkeys.mjs --check
           node scripts/rune/component-inventory.mjs --check
           node --test scripts/rune/*.test.mjs
           node --test packages/rune-app/fixtures/*.test.mjs

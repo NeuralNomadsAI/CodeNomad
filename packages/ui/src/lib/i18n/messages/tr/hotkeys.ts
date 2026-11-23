@@ -1,4 +1,5 @@
 export const hotkeyMessages = {
+  "hotkeys.unavailable": "Bu işlem için Rune’da henüz yapılandırılabilir bir kısayol yok.",
   "settings.nav.hotkeys": "Klavye kısayolları",
   "hotkeys.filter": "Kısayolları filtrele",
   "hotkeys.resetAll": "Tümünü sıfırla",

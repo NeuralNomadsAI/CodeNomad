@@ -1,4 +1,5 @@
 export const hotkeyMessages = {
+  "hotkeys.unavailable": "Cette action n’a pas encore de raccourci configurable dans Rune.",
   "settings.nav.hotkeys": "Raccourcis clavier",
   "hotkeys.filter": "Filtrer les raccourcis",
   "hotkeys.resetAll": "Tout réinitialiser",

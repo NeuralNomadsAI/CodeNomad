@@ -1,5 +1,4 @@
 mod general;
-mod shortcuts;
 #[cfg(test)]
 mod tests;
 
@@ -37,6 +36,7 @@ pub(super) struct Window {
     section: Section,
     recording_shortcut: bool,
     recording_target: Option<&'static str>,
+    shortcut_filter: rune::TextEdit,
     pub(super) opencode: opencode::Status,
     logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
@@ -400,7 +400,19 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             rune::el()
         };
         let (key, controls) = match s.section {
-            Section::Shortcuts => ("hotkeys", shortcuts::view(s, &prefs)),
+            Section::Shortcuts => (
+                "hotkeys",
+                super::shortcuts::editor::view(
+                    &s.shared,
+                    &s.shortcut_filter,
+                    |s: &mut Window| &mut s.shortcut_filter,
+                    s.recording_target.filter(|_| s.recording_shortcut),
+                    |s| {
+                        (s.section == Section::Shortcuts && !s.closing && !s.confirm_close)
+                            .then_some((&mut s.recording_shortcut, &mut s.recording_target))
+                    },
+                ),
+            ),
             Section::OpenCode => (
                 "opencode",
                 col()

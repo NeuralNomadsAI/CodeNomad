@@ -9,6 +9,7 @@ pub(super) enum Choice {
     Locale,
     Contrast,
     Shortcut(&'static str),
+    ShortcutReset,
     NewConversationPermissions,
     LogLevel,
     NotificationRoute(Category, Destination),
@@ -19,6 +20,10 @@ pub(super) enum Choice {
 
 impl Choice {
     fn put(self, patch: &mut Value, value: &ChoiceValue) {
+        if self == Self::ShortcutReset {
+            patch["settings"]["hotkeyOverrides"] = Value::Null;
+            return;
+        }
         if let Self::Shortcut(id) = self {
             if let ChoiceValue::Shortcut(binding) = value {
                 patch["settings"]["hotkeyOverrides"][id] = binding.clone();
@@ -43,7 +48,7 @@ impl Choice {
                 patch["settings"]["newConversationPermissions"] = json!(value)
             }
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
-            Self::Shortcut(_) => (),
+            Self::Shortcut(_) | Self::ShortcutReset => (),
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 patch["appearancePreferences"][mode] = json!({
@@ -54,6 +59,10 @@ impl Choice {
     }
 
     fn confirmed(self, value: &ChoiceValue, snapshot: &Value) -> bool {
+        if self == Self::ShortcutReset {
+            let overrides = &snapshot["settings"]["hotkeyOverrides"];
+            return overrides.is_null() || overrides.as_object().is_some_and(|map| map.is_empty());
+        }
         if let Self::Shortcut(id) = self {
             return matches!(value, ChoiceValue::Shortcut(binding)
                 if &snapshot["settings"]["hotkeyOverrides"][id] == binding);
@@ -77,7 +86,7 @@ impl Choice {
                 snapshot["settings"]["newConversationPermissions"] == value
             }
             Self::Mode => appearance["mode"] == value,
-            Self::Shortcut(_) => false,
+            Self::Shortcut(_) | Self::ShortcutReset => false,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 let slot = &appearance[mode];
@@ -202,9 +211,38 @@ impl Document {
         self.stage_value(choice, ChoiceValue::Text(value));
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn stage_shortcut(&mut self, id: &'static str, binding: Value) {
         self.stage_value(Choice::Shortcut(id), ChoiceValue::Shortcut(binding));
+    }
+
+    pub(super) fn reset_shortcuts(&mut self) {
+        if !self.shortcuts_pending() {
+            self.write
+                .requested
+                .retain(|k, _| !matches!(k, Choice::Shortcut(_)));
+            self.write
+                .failed
+                .retain(|k| !matches!(k, Choice::Shortcut(_)));
+            self.stage_value(Choice::ShortcutReset, ChoiceValue::Shortcut(Value::Null));
+        }
+    }
+
+    pub(super) fn shortcuts_pending(&self) -> bool {
+        self.write.requested.keys().any(|choice| {
+            matches!(choice, Choice::Shortcut(_) | Choice::ShortcutReset)
+                && !self.choice_failed(*choice)
+        })
+    }
+
+    pub(super) fn shortcuts_failed(&self) -> bool {
+        self.write
+            .failed
+            .iter()
+            .any(|choice| matches!(choice, Choice::Shortcut(_) | Choice::ShortcutReset))
+    }
+
+    pub(super) fn resetting_shortcuts(&self) -> bool {
+        self.write.requested.contains_key(&Choice::ShortcutReset)
     }
 
     fn stage_value(&mut self, choice: Choice, value: ChoiceValue) {
@@ -216,6 +254,7 @@ impl Document {
                 | Choice::NotificationRoute(..)
                 | Choice::NotificationsFocused
                 | Choice::Shortcut(_)
+                | Choice::ShortcutReset
         ) {
             self.write.failed.remove(&choice);
         }
@@ -228,12 +267,6 @@ impl Document {
             ChoiceValue::Text(value) => Some(*value),
             ChoiceValue::Shortcut(_) => None,
         }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn shortcut_pending(&self, id: &'static str) -> bool {
-        self.write.requested.contains_key(&Choice::Shortcut(id))
-            && !self.choice_failed(Choice::Shortcut(id))
     }
 
     pub(super) fn choice_failed(&self, choice: Choice) -> bool {

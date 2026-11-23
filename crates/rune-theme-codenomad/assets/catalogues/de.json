@@ -477,6 +477,7 @@
   "hotkeys.reset": "Zurücksetzen",
   "hotkeys.resetAll": "Alle zurücksetzen",
   "hotkeys.saveFailed": "Tastenkürzel konnten nicht gespeichert werden. Erneut versuchen.",
+  "hotkeys.unavailable": "Für diese Aktion gibt es in Rune noch kein konfigurierbares Tastenkürzel.",
   "imagesConversation.title": "Bilder",
   "infoView.logs.actions.back": "Zurück zur Unterhaltung",
   "infoView.logs.actions.clear": "Protokolle löschen",

@@ -1,14 +1,10 @@
-use super::State;
+use super::{Preferences, State};
 use rune::{Chord, ChordKey, ChordMod, Key, KeyEvent, Keybind, PhysicalKeyCode, Tx};
 use serde_json::Value;
 
 pub(crate) const FILE_SAVE: &str = "file-save";
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) const ACTIONS: [(&str, char, &str); 3] = [
-    (FILE_SAVE, 's', "hotkeys.action.file-save"),
-    ("new-instance", 'n', "hotkeys.action.new-instance"),
-    ("close-instance", 'w', "hotkeys.action.close-instance"),
-];
+pub(super) mod catalog;
+pub(super) mod editor;
 const fn primary(key: char) -> Chord {
     Chord::new(ChordKey::Char(key)).with(ChordMod::Primary)
 }
@@ -72,44 +68,24 @@ pub(super) fn binding_label(overrides: Option<&[Value]>) -> String {
 }
 
 pub(super) fn label_for(overrides: Option<&[Value]>, default: char) -> String {
+    format_chords(&bindings(overrides, default))
+}
+
+fn format_chords(bindings: &[Chord]) -> String {
     let platform = rune::KeyPlatform::current();
-    bindings(overrides, default)
+    bindings
         .iter()
         .map(|chord| Keybind::from(*chord).label_on(platform))
         .collect::<Vec<_>>()
         .join(" / ")
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn conflict_label(
-    preferences: &super::Preferences,
-    action: &str,
-    default: char,
-) -> Vec<&'static str> {
-    let platform = rune::KeyPlatform::current();
-    let current = bindings(preferences.shortcut(action), default);
-    ACTIONS
-        .into_iter()
-        .filter_map(|(id, default, label)| {
-            (id != action
-                && bindings_conflict(
-                    &current,
-                    &bindings(preferences.shortcut(id), default),
-                    platform,
-                ))
-            .then_some(label)
-        })
-        .collect()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn bindings_conflict(first: &[Chord], second: &[Chord], platform: rune::KeyPlatform) -> bool {
     first
         .iter()
         .any(|a| second.iter().any(|b| a.same_keys(b, platform)))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn record(event: &KeyEvent, tx: &Tx) -> Option<Value> {
     use serde_json::json;
     let name = if let Some(c) = physical_slot(tx) {

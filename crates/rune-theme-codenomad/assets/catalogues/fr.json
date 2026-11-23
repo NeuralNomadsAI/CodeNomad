@@ -477,6 +477,7 @@
   "hotkeys.reset": "Réinitialiser",
   "hotkeys.resetAll": "Tout réinitialiser",
   "hotkeys.saveFailed": "Impossible d’enregistrer les raccourcis. Réessayez.",
+  "hotkeys.unavailable": "Cette action n’a pas encore de raccourci configurable dans Rune.",
   "imagesConversation.title": "Images",
   "infoView.logs.actions.back": "Retour à la conversation",
   "infoView.logs.actions.clear": "Effacer les journaux",

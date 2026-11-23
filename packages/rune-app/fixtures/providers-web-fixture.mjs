@@ -11,6 +11,7 @@ const opencodeMode = process.argv.find(arg => arg === '--local-opencode' || arg 
 const remoteAccess = process.argv.includes('--remote-access')
 const remoteReceipts = process.argv.includes('--remote-receipts')
 const notifications = process.argv.includes('--notifications')
+const shortcuts = process.argv.includes('--shortcuts')
 const noDeviceRegistry = process.argv.includes('--no-device-registry')
 const local = opencodeMode === '--local-opencode' || remoteAccess
 const files = await bundleAssetPaths(bundle)
@@ -24,6 +25,7 @@ const mime = {'.html':'text/html','.js':'text/javascript','.wasm':'application/w
 let account = 'First fixture account', detached = false
 let contrast = 'on', permissions = 'autonomous'
 let notificationRouting, notifyFocused
+let hotkeyOverrides = { 'new-instance': [{key:'n',mod:true}], 'file-save': [{key:'n',mod:true}] }
 const writes = []
 const memoryRequests = []
 const opencodeRequests = []
@@ -139,9 +141,14 @@ const server = createServer(async (req,res) => {
           }
         }
         notifyFocused = patch.settings.osNotificationsAllowWhenVisible ?? notifyFocused
+        if (patch.settings.hotkeyOverrides === null) hotkeyOverrides = {}
+        else for (const [id, binding] of Object.entries(patch.settings.hotkeyOverrides ?? {})) {
+          if (binding === null) delete hotkeyOverrides[id]
+          else hotkeyOverrides[id] = binding
+        }
       }
       return json({settings:{locale:'en',highContrast:contrast,newConversationPermissions:permissions,
-        notificationRouting,osNotificationsAllowWhenVisible:notifyFocused}})
+        notificationRouting,osNotificationsAllowWhenVisible:notifyFocused,hotkeyOverrides}})
     }
     if (p === '/api/storage/state/ui') {
       await stateReady
@@ -283,10 +290,41 @@ try {
   releaseState()
   await click(directory)
   await visible('No session selected')
-  if (notifications) await checkNotifications()
+  if (shortcuts) await checkShortcuts()
+  else if (notifications) await checkNotifications()
   else if (remoteAccess) await checkRemoteAccess()
   else if (opencodeMode) await checkOpenCode()
   else await checkProviders()
+
+  async function checkShortcuts() {
+    await click('Settings')
+    await radio('Keyboard shortcuts').press('Enter')
+    const save = page.getByRole('group',{name:'Save file',exact:true})
+    const edit = save.getByRole('button',{name:'Edit',exact:true})
+    await edit.waitFor({state:'attached'})
+    assert.match(await save.innerText(),/is also assigned to: New instance/)
+    const inactive = page.getByRole('group',{name:'Open command palette',exact:true})
+    assert.equal(await inactive.getAttribute('aria-description'),'This action has no configurable shortcut in Rune yet.')
+    assert.equal(await inactive.getByRole('button',{name:'Edit',exact:true}).count(),0)
+    const filter = page.getByRole('textbox',{name:'Filter shortcuts',exact:true})
+    // The canvas bridges edits through its focused browser text field.
+    await filter.click()
+    await page.keyboard.insertText('Save file')
+    await inactive.waitFor({state:'detached'})
+    const confirm = expect => page.waitForResponse(response=>response.request().method()==='PATCH'
+      && expect(response.request().postDataJSON()?.settings?.hotkeyOverrides))
+    const recorded = confirm(overrides=>overrides?.['file-save']?.[0]?.key==='f8')
+    await edit.press('Enter')
+    await page.getByRole('button',{name:'Press a key combination',exact:true}).waitFor({state:'attached'})
+    await page.keyboard.press('F8')
+    await recorded
+    await save.getByText('F8',{exact:true}).waitFor({state:'attached'})
+    const reset = confirm(overrides=>overrides===null)
+    await page.getByRole('button',{name:'Reset all',exact:true}).press('Enter')
+    await reset
+    assert.deepEqual(hotkeyOverrides,{})
+    console.log(JSON.stringify({fixture:'shortcuts-preferences',catalogue:true,conflict:true,recorded:true,reset:true}))
+  }
 
   async function checkNotifications() {
     await click('Settings')

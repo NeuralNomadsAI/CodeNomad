@@ -2,6 +2,26 @@ use super::{fixture, request, wait_until};
 use serde_json::{Value, json};
 
 #[test]
+fn reset_all_clears_the_map_without_writing_other_settings() {
+    crate::platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        prefs.fixture_shortcuts(json!({"file-save": [], "session-search": [{"key":"f8"}]}));
+        prefs.reset_shortcuts();
+        prefs.stage_shortcut("file-save", json!([{"key":"f9"}]));
+        assert!(prefs.shortcuts_pending());
+        prefs.poll();
+        let write = request(&listener).await;
+        assert_eq!(write.body, json!({"settings":{"hotkeyOverrides":null}}));
+        write.reply(200, json!({"settings":{"locale":"fr"}})).await;
+        wait_until(|| prefs.poll()).await;
+        assert!(!prefs.shortcuts_pending());
+        assert!(prefs.shortcut("file-save").is_none());
+        assert!(prefs.shortcut("session-search").is_none());
+        assert_eq!(prefs.locale(), Some("fr"));
+    });
+}
+
+#[test]
 fn tab_shortcuts_save_independently_and_keep_the_file_binding() {
     crate::platform::block_on(async {
         let (listener, mut prefs) = fixture().await;

@@ -477,6 +477,7 @@
   "hotkeys.reset": "リセット",
   "hotkeys.resetAll": "すべてリセット",
   "hotkeys.saveFailed": "ショートカットを保存できませんでした。もう一度お試しください。",
+  "hotkeys.unavailable": "この操作のショートカットは Rune ではまだ設定できません。",
   "imagesConversation.title": "画像",
   "infoView.logs.actions.back": "会話に戻る",
   "infoView.logs.actions.clear": "ログをクリア",
