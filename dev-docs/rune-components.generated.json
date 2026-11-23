@@ -22879,7 +22879,7 @@
     "packages/ui/tests/browser/fixtures/render-cost-mount.tsx": "a2c0d1ebc46fe7fbba10cfc97d037d13a9dd388fa7017fafe0b0247a59aad30b",
     "packages/ui/tests/browser/fixtures/render-cost-timeline.tsx": "d825cccf5784d4af0eab4dca8f7786666c29ce0cd602f1244cae2ec0b0ca116a",
     "packages/ui/tests/browser/fixtures/render-cost.tsx": "3e936a835e960f08e8d38754653788859f32232c1db5c833c6f92e48049ffd9e",
-    "packages/ui/tests/browser/fixtures/reveal-truncated-text.tsx": "78ba5f98a95fdc307d6c60188384bc001795161809c8300461319e26f9cad86c",
+    "packages/ui/tests/browser/fixtures/reveal-truncated-text.tsx": "b14c86bcf9bdf570c60ee860d299afbb37b242d973c493906ef57dbadc449a53",
     "packages/ui/tests/browser/fixtures/rune-window-close.tsx": "2d0a7bdae9f59c76a43970bb6cfdd27016a08497592dd27e875a4e280971304a",
     "packages/ui/tests/browser/fixtures/scroll-input.tsx": "6ff532fa5a41ebfce0bf5dcdd44467d2ae03b4d4d9d0cfa804c37bb6fc004db3",
     "packages/ui/tests/browser/fixtures/scroll-pipeline.tsx": "3110c3290e586610df21321683d9f0e169b4c289729c1e27acf125f1f5e12a9d",
@@ -23745,7 +23745,7 @@
     {
       "source": "packages/ui/src/components/instance/shell/HostedDrawer.tsx",
       "sheet": "target/rune-inventory/components__instance__shell__HostedDrawer.json",
-      "sheetSha256": "3d2fa9fea8a48928cef3a1c7ec4ceb97289c1301ce1eacf4eabf2a243ae96fb2",
+      "sheetSha256": "195655c88eadcfc40327da6966f972bd740bef021010008031a1daac1862881d",
       "components": [
         {
           "id": "packages/ui/src/components/instance/shell/HostedDrawer.tsx#HostedDrawer",
@@ -24701,7 +24701,7 @@
     {
       "source": "packages/ui/src/components/mission-source-select.tsx",
       "sheet": "target/rune-inventory/components__mission-source-select.json",
-      "sheetSha256": "eee6f5048385e88abb406502292a4338a8f876c0a242ba945aa8b6388765ed99",
+      "sheetSha256": "e025bb8c3dcfa0f60145e03c90dab92e61bc06bc7b3b9e6d7b06dfea531fd12b",
       "components": [
         {
           "id": "packages/ui/src/components/mission-source-select.tsx#MissionSourceSelect",
@@ -24794,7 +24794,7 @@
     {
       "source": "packages/ui/src/components/mission-task-tree.tsx",
       "sheet": "target/rune-inventory/components__mission-task-tree.json",
-      "sheetSha256": "797a797725cae628f3d5cca62704aacc636350ceaf2f903c4979238317ed4ae0",
+      "sheetSha256": "515d42bd4d6b7f82be663da621b79e65eaeaecbe672e433b87ee5830f92de1c2",
       "components": [
         {
           "id": "packages/ui/src/components/mission-task-tree.tsx#MissionTaskTree",
