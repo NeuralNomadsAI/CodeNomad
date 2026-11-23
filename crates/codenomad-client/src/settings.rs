@@ -2,6 +2,7 @@
 pub mod memory;
 mod opencode_actions;
 mod providers;
+pub mod remote;
 use crate::{
     Wake,
     backend::{Backend, read_json},

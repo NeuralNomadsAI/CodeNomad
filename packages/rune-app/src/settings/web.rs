@@ -1,6 +1,7 @@
 use super::{
     Preferences, opencode,
     providers::{self, Catalog, Target},
+    remote,
 };
 use crate::{State, platform, screen, strings::t};
 use codenomad_client::{Receiver, Sender, bounded, settings::opencode_local};
@@ -16,6 +17,7 @@ enum Section {
     General,
     OpenCode,
     Providers,
+    Remote,
 }
 
 impl Section {
@@ -24,6 +26,7 @@ impl Section {
             Self::General => "settings.nav.general",
             Self::OpenCode => "settings.nav.opencode",
             Self::Providers => "settings.nav.providers",
+            Self::Remote => "settings.nav.remote",
         })
     }
 }
@@ -46,6 +49,7 @@ pub(super) struct Panel {
     scope: Option<HostScope>,
     opencode: opencode::Status,
     logging: opencode::logging::Logging,
+    remote: remote::Remote,
 }
 
 struct HostScope {
@@ -70,6 +74,9 @@ impl Panel {
         editor
             | scope_changed
             | opencode
+            | (self.section == Section::Remote
+                && self.local(prefs)
+                && self.remote.poll(prefs, wake))
             | (self.shown
                 && self.section == Section::Providers
                 && self.catalog.poll(
@@ -87,8 +94,9 @@ impl Panel {
             let backend = backend.cloned();
             prefs.hide_opencode();
             self.logging.close();
+            self.remote.close();
             self.opencode = opencode::Status::default();
-            if self.section == Section::OpenCode {
+            if matches!(self.section, Section::OpenCode | Section::Remote) {
                 self.section = Section::General;
                 prefs.memory.show(true);
             }
@@ -163,9 +171,10 @@ fn close(s: &mut State) {
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.hide_opencode();
     panel.logging.close();
+    panel.remote.close();
     panel.opencode = opencode::Status::default();
     panel.scope = None;
-    if panel.section == Section::OpenCode {
+    if matches!(panel.section, Section::OpenCode | Section::Remote) {
         panel.section = Section::General;
     }
     prefs.provider_target = None;
@@ -180,7 +189,12 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
     }
     let local = panel.local(prefs);
     let sections = if local {
-        &[Section::General, Section::OpenCode, Section::Providers][..]
+        &[
+            Section::General,
+            Section::OpenCode,
+            Section::Providers,
+            Section::Remote,
+        ][..]
     } else {
         &[Section::General, Section::Providers][..]
     };
@@ -196,7 +210,9 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             let panel = &mut s.settings.web;
             let mut prefs = s.settings.shared.borrow_mut();
             let section = sections[index];
-            if !panel.shown || (section == Section::OpenCode && !panel.local(&prefs)) {
+            if !panel.shown
+                || (matches!(section, Section::OpenCode | Section::Remote) && !panel.local(&prefs))
+            {
                 return;
             }
             panel.section = section;
@@ -207,6 +223,9 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             }
             if panel.section != Section::Providers {
                 panel.catalog.suspend();
+            }
+            if panel.section != Section::Remote {
+                panel.remote.close();
             }
             panel.contrast_help = false;
             panel.permissions.close();
@@ -273,7 +292,14 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                         &mut s.settings.web.logging
                     }),
             ),
-        Section::OpenCode => rune::el(),
+        Section::Remote if local => panel.remote.view(&s.settings.shared, |s: &mut State| {
+            let panel = &mut s.settings.web;
+            (panel.shown
+                && panel.section == Section::Remote
+                && panel.local(&s.settings.shared.borrow()))
+            .then_some(&mut panel.remote)
+        }),
+        Section::OpenCode | Section::Remote => rune::el(),
     };
     if let Some(editor) = prefs.memory.editor_view(
         &panel.memory_editor,

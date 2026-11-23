@@ -5,6 +5,7 @@ mod memory;
 mod opencode;
 mod preferences;
 mod providers;
+mod remote;
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
