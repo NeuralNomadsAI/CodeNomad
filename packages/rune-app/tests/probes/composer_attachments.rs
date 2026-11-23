@@ -78,14 +78,21 @@ pub fn run() {
     });
     enter(&mut rt);
     assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+    for _ in 0..24 {
+        rt.frame(1.0 / 60.0);
+    }
     let here = std::env::current_dir().expect("private fixture directory");
     let (button_x, button_y) = rt
         .find("attach-device-files")
         .expect("enabled device chooser");
     rt.pointer_down(button_x, button_y);
     rt.pointer_up(button_x, button_y);
-    rt.frame(0.0);
-    assert!(rt.file_dialog().is_some());
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        rt.file_dialog().map(|(kind, _)| kind),
+        Some(rune::file_dialog::FileDialogKind::Open),
+        "the device button opens the owned file dialog",
+    );
     assert!(!crate::composer::can_send(&rt.state));
     rt.resolve_file_dialog(Some(here.join("selected.txt")))
         .unwrap();

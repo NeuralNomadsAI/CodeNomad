@@ -177,7 +177,7 @@ impl Choice {
             .add_event_listener_with_callback("cancel", choice.cancel.as_ref().unchecked_ref())
             .ok()?;
         document.body()?.append_child(&choice.input).ok()?;
-        choice.input.click();
+        choice.input.show_picker().ok()?;
         Some(choice)
     }
 }
