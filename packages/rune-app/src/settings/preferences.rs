@@ -98,9 +98,11 @@ impl Preferences {
         self.stage_shortcut(super::shortcuts::FILE_SAVE, binding);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn stage_shortcut(&mut self, id: &'static str, binding: Value) {
-        if self.can_retry() && self.saved(Owner::Config).is_some() {
+        if self.can_retry()
+            && self.saved(Owner::Config).is_some()
+            && !self.config.resetting_shortcuts()
+        {
             self.config.stage_shortcut(id, binding);
             self.revision += 1;
         }
@@ -108,12 +110,26 @@ impl Preferences {
 
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn file_save_pending(&self) -> bool {
-        self.shortcut_pending(super::shortcuts::FILE_SAVE)
+        self.shortcuts_pending()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn shortcut_pending(&self, id: &'static str) -> bool {
-        self.config.shortcut_pending(id)
+    pub(super) fn shortcuts_pending(&self) -> bool {
+        self.config.shortcuts_pending()
+    }
+
+    pub(super) fn shortcuts_failed(&self) -> bool {
+        self.config.shortcuts_failed()
+    }
+
+    pub(super) fn resetting_shortcuts(&self) -> bool {
+        self.config.resetting_shortcuts()
+    }
+
+    pub(super) fn reset_shortcuts(&mut self) {
+        if self.can_retry() && self.saved(Owner::Config).is_some() {
+            self.config.reset_shortcuts();
+            self.revision += 1;
+        }
     }
 
     #[cfg(test)]

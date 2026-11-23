@@ -1,4 +1,5 @@
 export const hotkeyMessages = {
+  "hotkeys.unavailable": "עדיין אין קיצור מקשים שניתן להגדיר לפעולה זו ב־Rune.",
   "settings.nav.hotkeys": "קיצורי מקלדת",
   "hotkeys.filter": "סינון קיצורים",
   "hotkeys.resetAll": "איפוס הכול",

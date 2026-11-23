@@ -479,6 +479,7 @@
   "hotkeys.reset": "Sıfırla",
   "hotkeys.resetAll": "Tümünü sıfırla",
   "hotkeys.saveFailed": "Klavye kısayolları kaydedilemedi. Tekrar deneyin.",
+  "hotkeys.unavailable": "Bu işlem için Rune’da henüz yapılandırılabilir bir kısayol yok.",
   "imagesConversation.title": "Görseller",
   "infoView.logs.actions.back": "Sohbete geri dön",
   "infoView.logs.actions.clear": "Logları temizle",

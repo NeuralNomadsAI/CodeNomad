@@ -479,6 +479,7 @@
   "hotkeys.reset": "איפוס",
   "hotkeys.resetAll": "איפוס הכול",
   "hotkeys.saveFailed": "לא ניתן לשמור את קיצורי המקלדת. נסו שוב.",
+  "hotkeys.unavailable": "עדיין אין קיצור מקשים שניתן להגדיר לפעולה זו ב־Rune.",
   "imagesConversation.title": "תמונות",
   "infoView.logs.actions.back": "חזור לשיחה",
   "infoView.logs.actions.clear": "נקה לוגים",

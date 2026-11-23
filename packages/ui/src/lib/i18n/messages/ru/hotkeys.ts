@@ -1,4 +1,5 @@
 export const hotkeyMessages = {
+  "hotkeys.unavailable": "Для этого действия в Rune пока нельзя настроить сочетание клавиш.",
   "settings.nav.hotkeys": "Горячие клавиши",
   "hotkeys.filter": "Фильтр сочетаний",
   "hotkeys.resetAll": "Сбросить все",

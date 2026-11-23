@@ -479,6 +479,7 @@
   "hotkeys.reset": "Restablecer",
   "hotkeys.resetAll": "Restablecer todos",
   "hotkeys.saveFailed": "No se pudieron guardar los atajos. Inténtalo de nuevo.",
+  "hotkeys.unavailable": "Esta acción aún no tiene un atajo configurable en Rune.",
   "imagesConversation.title": "Imágenes",
   "infoView.logs.actions.back": "Volver a la conversación",
   "infoView.logs.actions.clear": "Borrar registros",

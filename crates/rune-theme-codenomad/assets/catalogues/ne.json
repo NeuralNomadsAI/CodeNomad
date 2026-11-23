@@ -479,6 +479,7 @@
   "hotkeys.reset": "रिसेट",
   "hotkeys.resetAll": "सबै रिसेट गर्नुहोस्",
   "hotkeys.saveFailed": "किबोर्ड सर्टकटहरू सुरक्षित गर्न सकिएन। फेरि प्रयास गर्नुहोस्।",
+  "hotkeys.unavailable": "यो कार्यको सर्टकट Rune मा अझै कन्फिगर गर्न सकिँदैन।",
   "imagesConversation.title": "छविहरू",
   "infoView.logs.actions.back": "कुराकानीमा फर्कनुहोस्",
   "infoView.logs.actions.clear": "लगहरू सफा गर्नुहोस्",
