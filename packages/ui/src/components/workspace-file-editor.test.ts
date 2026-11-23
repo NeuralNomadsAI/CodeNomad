@@ -5,7 +5,7 @@ import type { FilePreviewTarget } from "../stores/files-preview"
 
 type StoredDraft = { fingerprint: string; text: string }
 const fixture = { disk: "baseline", gate: null as Promise<void> | null, writing: false, fail: false,
-  reads: [] as Array<(value: StoredDraft) => void>, durable: false }
+  reads: [] as Array<(value: StoredDraft | undefined) => void>, durable: false, installed: true }
 ;(globalThis as any).__workspaceEditorFixture = fixture
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -22,8 +22,9 @@ const hooks = registerHooks({
       "../lib/notifications": "export const showToastNotification = () => {}",
       "../stores/alerts": "export const showConfirmDialog = async () => true",
       "../stores/instances": `const f = globalThis.__workspaceEditorFixture;
-        export const instances = () => f.durable ? new Map([["test", { folder: "/repo" }]]) : new Map();`,
-      "../lib/server-meta": `export const localServerMeta = { meta: () => ({ serverId: "fixture" }) };
+        export const instances = () => f.durable ? new Map([["test", { id: "test", folder: "/repo" }]]) : new Map();`,
+      "../lib/server-meta": `const f = globalThis.__workspaceEditorFixture;
+        export const localServerMeta = { meta: () => f.installed ? { serverId: "fixture" } : undefined };
         export const getServerMeta = async () => localServerMeta.meta();`,
       "../stores/client-state": `const f = globalThis.__workspaceEditorFixture;
         export const restoredWorkspaceFileDraft = () => undefined;
@@ -84,6 +85,30 @@ test("a late recovery joins the shared editor instead of replacing newer text", 
     assert.equal(first.editor.text(), "edit from the second reader")
     second.editor.discard()
   } finally { first.close(); second.close(); fixture.durable = false }
+})
+
+test("a file stays read-only until its durable identity can be resolved", async () => {
+  fixture.durable = true
+  fixture.installed = false
+  const { editor, close } = setup("unknown-installation.txt")
+  try {
+    editor.reset()
+    await editor.recover()
+    editor.adopt("disk contents")
+    assert.equal(editor.editable(), false)
+    editor.change("unscoped edit")
+    assert.equal(editor.text(), "disk contents")
+    fixture.installed = true
+    const recovered = editor.recover()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    fixture.reads.shift()!(undefined)
+    await recovered
+    assert.equal(editor.editable(), true)
+    editor.adopt("disk contents")
+    editor.change("scoped edit")
+    assert.equal(editor.text(), "scoped edit")
+    editor.discard()
+  } finally { close(); fixture.durable = false; fixture.installed = true }
 })
 
 for (const transition of ["mounted", "reopen-after", "reopen-before"] as const) {

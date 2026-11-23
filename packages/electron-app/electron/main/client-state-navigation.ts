@@ -46,6 +46,7 @@ export class ClientStateNavigationController {
       )
     } catch (error) {
       this.dependencies.reportFlushError(error)
+      return
     }
 
     if (this.lifecycle.stopped || window.isDestroyed() || window.webContents.isDestroyed()) return

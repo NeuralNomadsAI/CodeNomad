@@ -66,7 +66,8 @@ export function useWorkspaceFileEditor(options: {
   const original = () => draft()?.value().original ?? localOriginal()
   const saving = () => localSaving() || (draft()?.value().pending ?? false)
   const dirty = () => draft() !== undefined && text() !== original()
-  let persistenceKey: string | undefined
+  const [persistenceKey, setPersistenceKey] = createSignal<string>()
+  const editable = () => !!persistenceKey() || !instances().has(options.instanceId)
   let identity = ""
   function attach(identity: string | undefined, next?: Draft) {
     const previous = draft()
@@ -86,11 +87,11 @@ export function useWorkspaceFileEditor(options: {
     setSaving(false)
     setConflict(false)
     const target = options.target()
-    persistenceKey = fileIdentity(options.instanceId, target, localServerMeta.meta()?.serverId)
+    setPersistenceKey(fileIdentity(options.instanceId, target, localServerMeta.meta()?.serverId))
     const fallback = JSON.stringify([options.instanceId, target.directory, target.path])
-    if (drafts.has(fallback)) persistenceKey = undefined
-    identity = persistenceKey ?? fallback
-    const saved = persistenceKey ? restoredWorkspaceFileDraft(persistenceKey) : undefined
+    identity = persistenceKey() ?? fallback
+    const key = persistenceKey()
+    const saved = key ? restoredWorkspaceFileDraft(key) : undefined
     const existing = drafts.get(identity)
     const retained = existing ?? (saved && createDraft(saved.fingerprint, saved.text))
     if (retained && !existing) drafts.set(identity, retained)
@@ -106,15 +107,15 @@ export function useWorkspaceFileEditor(options: {
     const target = options.target()
     const instance = instances().get(options.instanceId)
     if (!instance || dirty()) return
-    if (!persistenceKey) {
+    if (!persistenceKey()) {
       const [meta] = await Promise.all([
         backendIdOf(instance) === LOCAL_BACKEND_ID ? getServerMeta().catch(() => undefined) : undefined,
-        loadInstanceProjectMetadata(instance),
+        loadInstanceProjectMetadata(instance).catch(() => undefined),
       ])
       if (disposed || ticket !== generation || target !== options.target() || dirty()) return
-      persistenceKey = fileIdentity(options.instanceId, target, meta?.serverId)
+      setPersistenceKey(fileIdentity(options.instanceId, target, meta?.serverId))
     }
-    const durable = persistenceKey
+    const durable = persistenceKey()
     if (!durable) return
     if (draft() && attachedKey === durable) return
     const entry = await refreshWorkspaceFileDraft(durable)
@@ -162,21 +163,23 @@ export function useWorkspaceFileEditor(options: {
     else if (instances().has(options.instanceId)) mark(text === original)
   }
   function change(value: string) {
+    if (!editable()) return
     setText(value)
     const retained = draft()
     if (!retained) return
     retained.update(previous => ({ ...previous, text: value }))
-    checkpoint(persistenceKey, retained)
+    checkpoint(persistenceKey(), retained)
   }
   function discard() {
     const shared = draft()
     if (shared) shared.update(previous => ({ ...previous, original: previous.original ?? "", text: previous.original ?? "", limited: false }))
-    if (persistenceKey) updateWorkspaceFileDraft(persistenceKey, null, () => {})
+    const persisted = persistenceKey()
+    if (persisted) updateWorkspaceFileDraft(persisted, null, () => {})
     attach(undefined); setOriginal(undefined); setConflict(false); setNeedsVerification(false)
   }
   async function save(value = text()) {
-    if (saving() || !options.active() || !dirty()) return
-    const target = options.target(), owned = identity, persisted = persistenceKey, version = generation
+    if (saving() || !options.active() || !dirty() || !editable()) return
+    const target = options.target(), owned = identity, persisted = persistenceKey(), version = generation
     const operation = options.captureOperation?.(options.instanceId)
     const current = () => !disposed && version === generation && target === options.target() && options.active() && (operation?.current() ?? true)
     if (!current()) return
@@ -221,5 +224,5 @@ export function useWorkspaceFileEditor(options: {
       if (!disposed && generation === version) setSaving(false)
     }
   }
-  return { text, dirty, saving, reset, recover, adopt, verify, change, discard, save, needsVerification, conflict, limited }
+  return { text, dirty, editable, saving, reset, recover, adopt, verify, change, discard, save, needsVerification, conflict, limited }
 }

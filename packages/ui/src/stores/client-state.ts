@@ -31,8 +31,10 @@ export class WorkspaceDraftFlushError extends Error {}
 type DraftValue = Omit<WorkspaceFileDraft, "key"> | null
 type DraftWrite = { value: DraftValue; base: { value: DraftValue }; finish: (ok: boolean) => void }
 const nativeDraftBase = new Map<string, { value: DraftValue }>()
+const nativeDraftReads = new Map<string, Promise<WorkspaceFileDraft | undefined>>()
 const pendingFileDrafts = new Map<string, DraftWrite>()
 const inflightFileDrafts = new Map<string, DraftWrite>()
+const keptFileDrafts = new Map<string, DraftWrite>()
 const refusedFileDrafts = new Set<string>()
 let draftTimer: ReturnType<typeof setTimeout> | undefined
 let draftWrites = Promise.resolve()
@@ -292,23 +294,30 @@ export function restoredWorkspaceFileDraft(key: string) {
 
 export async function refreshWorkspaceFileDraft(key: string) {
   if (!snapshotOwnsLayout || !clientStateIsPrimary() || !restorePreviousStateEnabled()) return restoredWorkspaceFileDraft(key)
+  const existing = nativeDraftReads.get(key)
+  if (existing) return existing
   const base = nativeDraftBase.get(key)
   const expected = base?.value
-  const fresh = await loadNativeFileDrafts()?.catch(() => undefined)
-  const pending = pendingFileDrafts.has(key) || inflightFileDrafts.has(key)
-  if (fresh && !pending && !refusedFileDrafts.has(key) && nativeDraftBase.get(key) === base && base?.value === expected) {
-    const next = normalizeWorkspaceFileDrafts(fresh).find(entry => entry.key === key)
-    if (next) nativeDraftBase.set(key, { value: { fingerprint: next.fingerprint, text: next.text } })
-    else nativeDraftBase.delete(key)
-    return next
-  }
-  return restoredWorkspaceFileDraft(key)
+  const reading = (async () => {
+    const fresh = await loadNativeFileDrafts()?.catch(() => undefined)
+    const pending = pendingFileDrafts.has(key) || inflightFileDrafts.has(key)
+    if (fresh && !pending && !refusedFileDrafts.has(key) && nativeDraftBase.get(key) === base && base?.value === expected) {
+      const next = normalizeWorkspaceFileDrafts(fresh).find(entry => entry.key === key)
+      if (next) nativeDraftBase.set(key, { value: { fingerprint: next.fingerprint, text: next.text } })
+      else nativeDraftBase.delete(key)
+      return next
+    }
+    return restoredWorkspaceFileDraft(key)
+  })().finally(() => nativeDraftReads.delete(key))
+  nativeDraftReads.set(key, reading)
+  return reading
 }
 
 /** Keep admitted drafts intact if a new or larger draft exceeds the storage budget. */
 export function updateWorkspaceFileDraft(key: string, value: DraftValue, finish: (ok: boolean) => void): boolean {
   if (!initialized || !clientStateIsPrimary()) return false
   if (value && !changeWorkspaceFileDrafts([], key, value)) {
+    keptFileDrafts.delete(key)
     pendingFileDrafts.delete(key)
     inflightFileDrafts.delete(key)
     refusedFileDrafts.add(key)
@@ -322,6 +331,7 @@ export function updateWorkspaceFileDraft(key: string, value: DraftValue, finish:
       return false
     }
     refusedFileDrafts.delete(key)
+    keptFileDrafts.delete(key)
     pendingFileDrafts.set(key, { value, base, finish })
     return true
   }
@@ -341,6 +351,7 @@ export function updateWorkspaceFileDraft(key: string, value: DraftValue, finish:
   // The host decides the shared profile limit under its ownership lock.
   if (!refusedFileDrafts.has(key)
     && previous?.text === value?.text && previous?.fingerprint === value?.fingerprint) return true
+  keptFileDrafts.delete(key)
   nativeDraftBase.set(key, base)
   pendingFileDrafts.set(key, { value, base, finish })
   clearTimeout(draftTimer)
@@ -358,7 +369,10 @@ function flushWorkspaceFileDrafts() {
   }
   for (const [key] of changes) pendingFileDrafts.delete(key)
   if (!changes.length) return draftWrites
-  for (const [key, change] of changes) inflightFileDrafts.set(key, change)
+  for (const [key, change] of changes) {
+    inflightFileDrafts.set(key, change)
+    nativeDraftBase.set(key, change.base)
+  }
   draftWrites = draftWrites.then(async () => {
     for (const [key, change] of changes) {
       const { value, base, finish } = change
@@ -369,11 +383,15 @@ function flushWorkspaceFileDrafts() {
         if (!pendingFileDrafts.has(key)) {
           if (accepted) {
             refusedFileDrafts.delete(key)
+            if (value) keptFileDrafts.set(key, change)
             if (!value && nativeDraftBase.get(key) === base) nativeDraftBase.delete(key)
           } else if (value && !restorePreviousStateEnabled()) {
             pendingFileDrafts.set(key, change)
             continue
-          } else refusedFileDrafts.add(key)
+          } else {
+            refusedFileDrafts.add(key)
+            if (!value) pendingFileDrafts.set(key, change)
+          }
           finish(accepted)
         }
       }
@@ -440,7 +458,21 @@ export function removeClientLayoutValue(key: string): void {
 export async function flushWorkspaceFileDraftsForClose(): Promise<void> {
   if (!snapshotOwnsLayout) return
   await flushWorkspaceFileDrafts()
-  if (refusedFileDrafts.size && restorePreviousStateEnabled()) throw new WorkspaceDraftFlushError("Workspace file drafts could not be retained")
+  if (!restorePreviousStateEnabled()) return
+  if (refusedFileDrafts.size) throw new WorkspaceDraftFlushError("Workspace file drafts could not be retained")
+  if (!keptFileDrafts.size) return
+  const fresh = await loadNativeFileDrafts()?.catch(() => undefined)
+  if (!fresh) throw new WorkspaceDraftFlushError("Workspace file drafts could not be checked")
+  const latest = new Map(normalizeWorkspaceFileDrafts(fresh).map(draft => [draft.key, draft]))
+  for (const [key, change] of keptFileDrafts) {
+    const stored = latest.get(key)
+    const { value } = change
+    if (stored?.fingerprint === value?.fingerprint && stored?.text === value?.text) continue
+    if (!stored && keptFileDrafts.get(key) === change
+      && await saveNativeFileDraft({ key, draft: value, expected: null })?.catch(() => false)) continue
+    change.finish(false)
+    throw new WorkspaceDraftFlushError("A workspace file draft changed in another window")
+  }
 }
 
 export async function flushClientState(): Promise<void> {

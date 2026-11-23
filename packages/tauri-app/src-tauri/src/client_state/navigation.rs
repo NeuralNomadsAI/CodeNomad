@@ -190,7 +190,10 @@ fn run_navigation_queue(window_label: String) {
         if let (Some(state), Some(window_id)) =
             (app.try_state::<ClientState>(), window_id.as_deref())
         {
-            state.wait_for_renderer_flush(&app, &window_label, window_id, true);
+            if !state.wait_for_renderer_flush(&app, &window_label, window_id, true) {
+                complete_active(&window_label);
+                continue;
+            }
         }
         if !is_current() {
             complete_active(&window_label);

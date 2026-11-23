@@ -63,7 +63,7 @@ test("failed navigation retains current document access", async (t) => {
   })
 })
 
-test("hung renderer flush is bounded without rotating access or blocking navigation", async () => {
+test("hung renderer flush cancels navigation without rotating access", async () => {
   const manager = { isPrimary: true, resets: 0, resetRendererAccessToken() { this.resets++ } }
   let navigated = false, reported = false
   const started = Date.now()
@@ -71,8 +71,20 @@ test("hung renderer flush is bounded without rotating access or blocking navigat
   const elapsed = Date.now() - started
   assert.equal(reported, true)
   assert.equal(manager.resets, 0)
-  assert.equal(navigated, true)
+  assert.equal(navigated, false)
   assert.ok(elapsed >= 900 && elapsed < 2_000, `unexpected timeout: ${elapsed}ms`)
+})
+
+test("a refused draft flush keeps the renderer until a later successful reload", async () => {
+  let refused = true, navigated = 0, reported = 0
+  const navigation = controller(window(async () => {
+    if (refused) throw new Error("Workspace file drafts could not be retained")
+  }), { isPrimary: true }, () => reported++)
+  await navigation.navigate(() => { navigated++ })
+  assert.deepEqual([navigated, reported], [0, 1])
+  refused = false
+  await navigation.navigate(() => { navigated++ })
+  assert.deepEqual([navigated, reported], [1, 1])
 })
 
 test("queued navigation preserves order and distinct generations", async () => {

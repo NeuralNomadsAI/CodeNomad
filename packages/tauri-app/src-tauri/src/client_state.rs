@@ -936,17 +936,17 @@ impl ClientState {
         window_label: &str,
         window_id: &str,
         require_claim: bool,
-    ) {
+    ) -> bool {
         let _request = self
             .renderer_flush
             .request_lock
             .lock()
             .unwrap_or_else(|err| err.into_inner());
         if require_claim && !self.renderer_access.is_claimed_for(window_id) {
-            return;
+            return true;
         }
         let Some(webview) = app.get_webview(window_label) else {
-            return;
+            return false;
         };
         let generation = {
             let mut windows = self
@@ -964,7 +964,7 @@ impl ClientState {
             RendererFlushRequest { generation, prepare_generation: None },
         ) {
             eprintln!("[client-state] failed to request renderer flush: {err}");
-            return;
+            return false;
         }
 
         let deadline = Instant::now() + RENDERER_FLUSH_TIMEOUT;
@@ -979,6 +979,12 @@ impl ClientState {
         {
             std::thread::sleep(Duration::from_millis(10));
         }
+        self.renderer_flush
+            .windows
+            .lock()
+            .ok()
+            .and_then(|windows| windows.get(window_id).copied())
+            .is_some_and(|state| state == (generation, generation))
     }
 
     fn acknowledge_renderer_flush(&self, window_id: &str, generation: u64) {

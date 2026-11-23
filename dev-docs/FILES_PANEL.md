@@ -152,8 +152,9 @@ installation, project folder and available native project ID, checkout path and
 relative file path. On reopening a file,
 the reader compares its SHA-256 fingerprint with the stored baseline and reports
 a mismatch alongside the retained draft. Only explicit Save admits a file write.
-Local desktop close and quit wait for draft persistence. A refused update leaves
-the window open so the user can save or discard their edits.
+Local desktop close, quit and reload wait for draft persistence. A refused update
+keeps the reader available so the user can save or discard their edits. A text
+file stays read-only while its draft identity is unavailable; Refresh retries it.
 
 Clicked readers have a reserved one-request lane beside the two background scan
 slots. Start the local Monaco load alongside the content read; preview Git work

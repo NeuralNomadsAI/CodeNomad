@@ -93,6 +93,51 @@ describe("client state ownership and persistence", () => {
     release.resolve(true)
     await assert.rejects(closing, state.WorkspaceDraftFlushError)
   })
+  it("shares an in-flight draft recovery with the replacement reader", async () => {
+    const key = "checkout/file", kept = { key, fingerprint: "0".repeat(64), text: "newer than disk" }
+    const read = deferred<unknown>()
+    let reads = 0
+    const state = await boot({
+      loadClientState: async () => loadResult(),
+      loadFileDrafts: () => { reads++; return read.promise },
+    })
+    const departed = state.refreshWorkspaceFileDraft(key)
+    const reopened = state.refreshWorkspaceFileDraft(key)
+    read.resolve([kept])
+    assert.deepEqual(await Promise.all([departed, reopened]), [kept, kept])
+    assert.equal(reads, 1)
+  })
+
+  it("rechecks authored drafts before close and retries a refused discard", async () => {
+    const key = "checkout/file", value = { fingerprint: "0".repeat(64), text: "latest edit" }
+    let stored: typeof value | null = null, failDelete = false
+    const state = await boot({
+      loadClientState: async () => loadResult(),
+      setClientStateRestoreEnabled: async () => true,
+      loadFileDrafts: async () => stored ? [{ key, ...stored }] : [],
+      saveFileDraft: async (_token, change) => {
+        if (!change.draft && failDelete) throw new Error("store briefly unavailable")
+        if (stored?.text !== change.expected?.text) return false
+        stored = change.draft
+        return true
+      },
+    })
+    await state.setRestorePreviousStateEnabled(false)
+    state.updateWorkspaceFileDraft(key, { ...value, text: "first edit" }, () => {})
+    await state.setRestorePreviousStateEnabled(true)
+    state.updateWorkspaceFileDraft(key, value, () => {})
+    await state.flushWorkspaceFileDraftsForClose()
+    assert.deepEqual(stored, value)
+    stored = null // Another renderer discarded its recovered copy.
+    await state.flushWorkspaceFileDraftsForClose()
+    assert.deepEqual(stored, value)
+    failDelete = true
+    state.updateWorkspaceFileDraft(key, null, () => {})
+    await assert.rejects(state.flushWorkspaceFileDraftsForClose(), state.WorkspaceDraftFlushError)
+    failDelete = false
+    await state.flushWorkspaceFileDraftsForClose()
+    assert.equal(stored, null)
+  })
   for (const localCopy of [false, true]) it(`retains occurrence browser resources when the shared layout is full (${localCopy ? "matching local copy" : "new key"}) and retries on reload`, async () => {
     const browser = { mode: "preview", targetUrl: "https://example.com/saved", viewport: "mobile",
       history: { urls: ["https://example.com/start", "https://example.com/saved"], index: 1 } }
