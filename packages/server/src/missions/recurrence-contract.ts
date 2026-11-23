@@ -115,6 +115,7 @@ export function recurrenceDispatchAllowed(doc: RecurrenceDocument): boolean {
   return control?.action === "run-now" && control.requestID === due.requestID && control.expectedRevision === due.expectedRevision
 }
 
+/** Raw prefix used to recognize the exact configuration of stored creation receipts. */
 export function recurrenceTitle(instructions: string): string {
   return instructions.split(/\r?\n/).find(line => line.trim())?.trim().slice(0, 120) ?? ""
 }

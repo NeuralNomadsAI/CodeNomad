@@ -1,4 +1,5 @@
 //! Conversation Status provider usage: owned native session, projected credentials and bounded quota reads.
+mod accounts;
 mod google;
 mod plans;
 mod shared;
@@ -150,7 +151,9 @@ fn resolve(id: &str) -> Option<&'static Provider> {
         .find(|p| p.id.eq_ignore_ascii_case(id) || p.aliases.iter().any(|a| a.eq_ignore_ascii_case(id)))
 }
 pub fn routes() -> Router<Shared> {
-    Router::new().route("/api/usage/{provider}", get(route))
+    Router::new()
+        .route("/api/usage/{provider}", get(route))
+        .route("/api/workspaces/{id}/provider-accounts/{integration}", get(accounts::route))
 }
 
 struct Query {

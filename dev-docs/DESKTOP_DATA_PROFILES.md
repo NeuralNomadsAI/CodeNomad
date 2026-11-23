@@ -38,6 +38,11 @@ limit applies to the complete graph. Publication and partition collection are
 serialized across windows, retaining the union of their roots. A failed delta
 retries once with all partition bodies.
 
+Workspace file drafts use a separate `workspace-file-drafts.json` beside the
+profile's client-state envelope. Both hosts serialize atomic draft changes under
+the existing profile ownership guard. Closing an individual window removes its
+tab state while the profile retains file drafts; profile deletion removes both.
+
 The default profile with the default config uses the unscoped locations (`~/.codenomad/client-state/v2`, Electron's `userData`, Tauri's stable identifier and WebView directory). Every other profile/config pair uses `<scope> = <key>-sha256(key + "\0" + configIdentity)[0..16]`, i.e. `%APPDATA%/CodeNomad/scopes/<scope>` (Electron `userData` and both hosts' client state) and `…-v2/scopes/<scope>` (Tauri WebView), plus a scoped Tauri identifier. The default profile's key is `stable`, so existing folders such as `dev-<hash>` and `dev-v2-<hash>` are reached with `CODENOMAD_PROFILE=dev` / `dev-v2`.
 
 On Windows, Tauri runs each profile under its identifier as AppUserModelID, and its system notifications carry that ID. Windows shows a desktop app's notifications only under an ID it knows, and the installer's Start menu shortcut carries the stable one, so every launch registers the running ID under `HKCU\Software\Classes\AppUserModelId\<identifier>` (`DisplayName` CodeNomad, `IconUri` the bundled web app icon `resources\server\public\pwa-192x192.png`; `windows_notification_identity.rs`). Electron always uses the stable ID.
@@ -47,6 +52,13 @@ The alias uses each host's own normalization (Electron lowercases Unicode and tu
 Non-ASCII config paths on Windows: each host folds the config identity's case differently (Electron uses Unicode lowercase, Tauri ASCII lowercase), so for a path such as `C:\Users\Émile\…` the two hosts compute different scope hashes. Keep this divergence: changing either fold would move scoped folders. The choices file uses one shared fold (see below).
 
 Every backend launch (the default profile included, as key `stable`) receives the resolved scope that the backend uses as its Mission profile scope: `CODENOMAD_UPDATE_CHANNEL=<profile key>`, `CODENOMAD_PROFILE_CONFIG_IDENTITY=<config identity>` and the selected `CLI_CONFIG`. Tauri applies these only to the backend `Command`, never through a process-wide `set_var`. They are backend-only: the backend strips them and `CODENOMAD_PROFILE` from the environment of the shared OpenCode daemon it starts (`workspaces/host-opencode-service.ts`), so agent shells never pin a desktop launched from them to this profile.
+
+The local desktop renderer confirms session loss with `/api/auth/status`. The
+host requests renewal on its current backend's stdin and matches the private
+stdout response by process generation and request ID. The backend issues a
+fresh session for the expired passwordless desktop bootstrap lineage. The host
+installs the HttpOnly cookie and the renderer verifies it before reconnecting.
+Sign-out or password revocation retires that lineage.
 
 ## Automatic choice
 
@@ -86,7 +98,7 @@ Every other profile has a delete button, disabled while the profile is in use or
 | Profile | Removed | Never touched |
 |---|---|---|
 | Named scope | `<appData>/CodeNomad/scopes/<scope>` (Electron data and both hosts' client state), `<localData>/ai.neuralnomads.codenomad.client-v2/scopes/<scope>` (WebView), `<dataDir>/ai.neuralnomads.codenomad.client.scope.s<hash>` (Tauri locks) | other scopes, `scopes/` itself, `profile-selection/` |
-| Default | Electron `developer-mode-browser-v2/` and legacy `client-state.json` in `<appData>/CodeNomad`; `~/.codenomad/client-state/v2/client-state.json` and `v2/partitions/`; legacy `~/.codenomad/client-state/client-state.json`; WebView `developer-mode/`, `local/`, `remote/`, `browser/` in `client-v2`; legacy Tauri `client-state.json` | `scopes/`, `profile-selection/`, the election folders, lock/marker files; any other entry is kept and reported as not recognized |
+| Default | Electron `developer-mode-browser-v2/` and legacy `client-state.json` in `<appData>/CodeNomad`; `~/.codenomad/client-state/v2/client-state.json`, `v2/workspace-file-drafts.json` and `v2/partitions/`; legacy `~/.codenomad/client-state/client-state.json`; WebView `developer-mode/`, `local/`, `remote/`, `browser/` in `client-v2`; legacy Tauri `client-state.json` | `scopes/`, `profile-selection/`, the election folders, lock/marker files; any other entry is kept and reported as not recognized |
 | Unused lock folder | the folder | — |
 
 The default profile's folders are parents of other roots, so they are never removed recursively: only the children above, which the host code creates, are deleted. Every target must be a plain direct child of a link-free root with the planned name; symlinks and junctions are neither listed nor followed. Links nested inside a removed folder are unlinked without traversal (Node's `fs.rm` and Rust's `remove_dir_all` both treat junctions and symlinks as links; regression tests cover a nested junction/symlink on both hosts).

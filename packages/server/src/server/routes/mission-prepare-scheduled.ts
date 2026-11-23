@@ -10,6 +10,7 @@ import { automaticMissionStartID, type PreparationResult } from "../../missions/
 import { missionScheduleID, missionSchedulePayloadDigest, missionScheduleRefusalSchema } from "../../missions/mission-schedule-contract"
 import type { MissionScheduleRead } from "../../missions/mission-schedule-view"
 import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../../missions/recurrence-control-proof"
+import { truncateMissionText } from "../../missions/truncate-text"
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import type { NativeScheduleSettingsActivation } from "../../opencode/native-schedule-settings-activation"
 import { PluginControlsError } from "../../opencode/plugin-controls"
@@ -88,7 +89,7 @@ export async function prepareScheduledCoordinatorMission(args: {
     }
     await assertAuthor()
     const configuration = missionConfigurationSchema.parse({
-      title: input.title ?? input.objective.trim().replace(/\s+/g, " ").slice(0, 60), objective: input.objective,
+      title: input.title ?? truncateMissionText(input.objective.trim().replace(/\s+/g, " "), 60), objective: input.objective,
       ...(input.notes === undefined ? {} : { notes: input.notes }), template: input.template,
       profiles: input.profiles, taskMode: input.taskMode, launch: input.launch,
       watchedConversationIDs: [...input.watchedConversationIDs ?? []].sort(),

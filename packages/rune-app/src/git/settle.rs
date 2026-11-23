@@ -126,6 +126,7 @@ impl Ui {
                     }
                 }
                 self.history.page = Some(page);
+                *self.history.dates.get_mut() = None;
             }
             Value::Details(details) => self.history.details = Some(details),
             Value::Preview(content) => {

@@ -821,17 +821,12 @@ fn build_local_window(
     }
     let backend_target = app.state::<LocalWindows>().backend_target();
     if let Some(target) = &backend_target {
-        let cookie = app
+        let result = app
             .state::<crate::AppState>()
             .manager
-            .ready_local_access()
-            .and_then(|access| access.session_cookie_for(target));
-        if let Some(cookie) = cookie {
-            if let Err(error) = window.set_cookie(cookie) {
-                eprintln!(
-                    "[tauri] failed to sign a new local window in to the local server: {error}"
-                );
-            }
+            .install_local_window_cookie(window.as_ref(), target);
+        if let Err(error) = result {
+            eprintln!("[tauri] failed to sign a new local window in to the local server: {error}");
         }
     }
     let destination = local_window_initial_destination(backend_target.as_deref());

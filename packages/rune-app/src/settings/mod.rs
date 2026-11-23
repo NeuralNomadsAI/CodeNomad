@@ -3,7 +3,6 @@ mod behavior;
 mod contrast;
 mod memory;
 pub(crate) mod notification_routing;
-#[cfg(test)]
 mod notification_settings;
 mod opencode;
 mod preferences;
@@ -19,7 +18,6 @@ mod web_contrast;
 use crate::{State, strings};
 use preferences::Preferences;
 use rune::{Cx, El};
-#[cfg(not(target_arch = "wasm32"))]
 use std::cell::Cell;
 use std::{cell::RefCell, rc::Rc};
 
@@ -145,6 +143,52 @@ pub(crate) fn poll(s: &mut State) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
     changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))
+}
+
+pub(crate) enum Delivery {
+    Suppressed,
+    WaitingForSettings,
+    Body(String),
+}
+
+pub(crate) fn system_notification(
+    s: &State,
+    target: &crate::shell::notifications::Target,
+    category: notification_routing::Category,
+    focused: bool,
+    label: &str,
+) -> Delivery {
+    let prefs = s.settings.shared.borrow();
+    if !prefs.backend.as_ref().is_some_and(|backend| {
+        backend.base == target.backend_url
+            && backend.client.server_identity() == target.server.as_deref()
+    }) {
+        return Delivery::Suppressed;
+    }
+    if prefs.notification_config_refreshing() {
+        return Delivery::WaitingForSettings;
+    }
+    let config = prefs.notification_config();
+    if crate::shell::notifications::system_allowed(config, category, focused) {
+        let key = match category {
+            notification_routing::Category::NeedsInput => "sessionEvents.notify.needsInput",
+            notification_routing::Category::SessionDone => "sessionEvents.notify.done",
+            _ => return Delivery::Suppressed,
+        };
+        Delivery::Body(strings::with_locale(
+            prefs.locale().unwrap_or_else(strings::locale),
+            || strings::t(key).replace("{label}", label),
+        ))
+    } else {
+        Delivery::Suppressed
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn notification_fixture(s: &State) {
+    let mut prefs = s.settings.shared.borrow_mut();
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    prefs.reset_notification_fixture();
 }
 
 pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {
@@ -477,7 +521,8 @@ fn launch_preferences(
     let host = &s.settings;
     let token = Rc::new(Cell::new(false));
     let state = view::Window::new(host.shared.clone(), token.clone())
-        .with_close_request(request.clone(), editor);
+        .with_close_request(request.clone(), editor)
+        .with_notification_permission(notification_settings::native_permission(s));
     let locale = host
         .shared
         .borrow()

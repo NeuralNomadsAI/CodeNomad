@@ -12,6 +12,7 @@ use rune_kit::{
 pub enum ButtonLook {
     Neutral,
     Flat,
+    FlatWithHelp(String),
     Submit,
     WithIcon(&'static Glyph),
 }
@@ -26,6 +27,7 @@ pub fn button<S: 'static>(
     button = match look {
         ButtonLook::Neutral => button,
         ButtonLook::Flat => button.variant(ButtonVariant::Ghost),
+        ButtonLook::FlatWithHelp(help) => button.variant(ButtonVariant::Ghost).help(help),
         ButtonLook::Submit => button.variant(ButtonVariant::Submit),
         ButtonLook::WithIcon(glyph) => button.variant(ButtonVariant::Ghost).icon(glyph),
     };
@@ -211,6 +213,7 @@ pub fn worktree_picker<S: 'static>(
     labels: &[String],
     current: Option<&str>,
     name: &str,
+    directory: Option<&str>,
     width: f32,
     open: bool,
     disabled: bool,
@@ -229,7 +232,37 @@ pub fn worktree_picker<S: 'static>(
         .on_toggle(toggle)
         .on_close(close)
         .on_choose(choose);
-    crate::settings::build_picker(picker, overlay)
+    let trigger = crate::settings::build_picker(picker, overlay);
+    // Select has no help builder; set the accessible description on its trigger explicitly.
+    match directory {
+        Some(directory) => trigger.help(directory).description(directory),
+        None => trigger,
+    }
+}
+
+pub fn session_worktree_picker<S: 'static>(
+    labels: &[String],
+    current: Option<&str>,
+    name: &str,
+    unavailable: &str,
+    open: bool,
+    disabled: bool,
+    toggle: impl Fn(&mut S) + 'static,
+    close: impl Fn(&mut S) + 'static,
+    choose: impl Fn(&mut S, &str, &mut Tx) + Clone + 'static,
+    overlays: &mut Vec<El>,
+) -> El {
+    Select::new("session-worktree", labels)
+        .label(name)
+        .placeholder(unavailable)
+        .current(current)
+        .open(open)
+        .disabled(disabled)
+        .on_toggle(toggle)
+        .on_close(close)
+        .on_choose(choose)
+        .build(kit(dark()), overlays)
+        .shrink()
 }
 
 pub fn commit_message<S: 'static>(

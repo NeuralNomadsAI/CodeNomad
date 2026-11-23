@@ -13,7 +13,7 @@ pub fn valid(schema: &Value, value: &Value) -> bool {
     let string = value.as_str();
     for (key, rule) in schema.as_object().unwrap() {
         let ok = match key.as_str() {
-            "$schema" | "properties" | "additionalProperties" => true,
+            "$schema" | "properties" | "additionalProperties" | "default" => true,
             "type" => match rule.as_str() {
                 Some("object") => value.is_object(),
                 Some("array") => value.is_array(),
@@ -96,6 +96,10 @@ pub fn get(name: &str, output: bool) -> &Value {
         ("outlinePreview", true) => schema!("outlinePreview-output"),
         ("window", false) => schema!("window-input"),
         ("window", true) => schema!("window-output"),
+        ("query", false) => schema!("query-input"),
+        ("query", true) => schema!("query-output"),
+        ("ranked", false) => schema!("ranked-input"),
+        ("ranked", true) => schema!("ranked-output"),
         _ => unreachable!("fixed route"),
     }
 }

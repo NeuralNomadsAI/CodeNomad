@@ -160,3 +160,45 @@ fn defaults_and_legacy_flags_follow_the_solid_table() {
     assert!(route(Some(&saved), Category::SessionDone).unwrap().system);
     assert!(route(None, Category::SessionDone).is_none());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_saved_table_overrides_legacy_flags_without_changing_other_destinations() {
+        let config = |settings| json!({ "settings": settings });
+        let legacy = config(json!({"osNotificationsEnabled": true, "notifyOnIdle": false}));
+        assert!(route(None, Category::NeedsInput).is_none());
+        assert!(route(Some(&legacy), Category::NeedsInput).unwrap().system);
+        assert!(!route(Some(&legacy), Category::SessionDone).unwrap().system);
+        let saved = config(json!({
+            "notifyOnIdle": false,
+            "osNotificationsEnabled": false,
+            "osNotificationsAllowWhenVisible": true,
+            "notificationRouting": {
+                "needsInput": {"screen": true, "history": true, "system": false},
+                "sessionDone": {"system": null}
+            }
+        }));
+        assert_eq!(
+            route(Some(&saved), Category::NeedsInput),
+            Some(Route {
+                screen: true,
+                history: true,
+                system: false
+            })
+        );
+        assert_eq!(
+            route(Some(&saved), Category::SessionDone),
+            Some(Route {
+                screen: false,
+                history: false,
+                system: true
+            })
+        );
+        assert!(allow_focused(Some(&saved)));
+        assert!(!allow_focused(Some(&legacy)));
+    }
+}

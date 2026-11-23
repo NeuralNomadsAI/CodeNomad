@@ -2,12 +2,18 @@
 use crate::history::Result;
 use serde_json::Value;
 use std::{mem::size_of, sync::Arc};
+mod reasoning;
+mod tool_live;
 mod user;
+pub use reasoning::{Reasoning, ReasoningEvent, apply_window as apply_reasoning};
+pub use tool_live::install as install_tool;
+pub(crate) use tool_live::{Fit as ToolFit, apply as apply_tool};
 pub(crate) use user::digest as attachment_digest;
 pub use user::{File, Reference, Skill};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part {
     Text(Text),
+    Reasoning(Reasoning),
     Tool(Arc<Tool>),
     Skill(Skill),
     File(File),
@@ -192,7 +198,23 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
         let source_keys = part_keys(&prior.parts);
         let mut keys = part_keys(&row.parts);
         for (i, part) in prior.parts.iter().enumerate() {
-            if !matches!(part, Part::Text(_)) || keys.contains(&source_keys[i]) {
+            if let Some(target) = keys.iter().position(|key| key == &source_keys[i]) {
+                match (part, &mut row.parts[target]) {
+                    (Part::Tool(live), Part::Tool(fetched)) => tool_live::merge(live, fetched),
+                    (Part::Reasoning(live), Part::Reasoning(fetched))
+                        if fetched.provenance != TextProvenance::Closed
+                            && live.text.starts_with(&fetched.text)
+                            && (live.text.len() > fetched.text.len()
+                                || live.units > fetched.units) =>
+                    {
+                        *fetched = live.clone();
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            if matches!(part, Part::Tool(tool) if !matches!(tool.status.as_str(), "streaming" | "running"))
+            {
                 continue;
             }
             let after = source_keys[..i]
@@ -224,6 +246,7 @@ fn part_keys(parts: &[Part]) -> Vec<String> {
                 key
             }
             Part::Tool(t) => format!("tool:{}", t.id),
+            Part::Reasoning(part) => format!("reasoning:{}", part.ordinal),
             Part::Skill(s) => format!("skill:{}", s.id),
             Part::File(f) => format!("file:{}", f.id),
         })
@@ -255,6 +278,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
     let mut resident = parts.len() * size_of::<Part>();
     let mut tool_text = 0usize;
     let mut ids = std::collections::HashSet::new();
+    let mut reasoning_ordinal = 0;
     for part in parts {
         if part["type"] == "text" {
             if let Some(text) = part["text"].as_str() {
@@ -273,6 +297,13 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                     },
                 }));
             }
+        } else if part["type"] == "reasoning" {
+            result.push(Part::Reasoning(reasoning::decode(
+                part,
+                reasoning_ordinal,
+                !v["time"]["completed"].is_null(),
+            )));
+            reasoning_ordinal += 1;
         } else if part["type"] == "tool" {
             let id = part["id"]
                 .as_str()
@@ -363,11 +394,22 @@ pub fn bytes(parts: &[Part]) -> usize {
             .iter()
             .map(|p| match p {
                 Part::Text(t) => t.text.len(),
+                Part::Reasoning(t) => t.text.len(),
                 Part::Tool(t) => t.bytes,
                 Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
                 Part::File(f) => file_bytes(f),
             })
             .sum::<usize>()
+}
+
+pub(crate) fn reasoning_bytes(parts: &[Part]) -> usize {
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            Part::Reasoning(part) => Some(part.text.len()),
+            _ => None,
+        })
+        .sum()
 }
 
 pub(crate) fn tool_text_bytes(parts: &[Part]) -> usize {

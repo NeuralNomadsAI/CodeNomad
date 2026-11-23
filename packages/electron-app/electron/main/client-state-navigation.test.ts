@@ -8,7 +8,7 @@ import { ClientStateNavigationController, shouldResetRendererAccessTokenForNavig
 import { SerializedLifecycle } from "./serialized-lifecycle"
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
-function window(executeJavaScript: () => Promise<unknown> = async () => {}) {
+function window(executeJavaScript: (source: string) => Promise<unknown> = async () => {}) {
   return { isDestroyed: () => false, webContents: { isDestroyed: () => false, getURL: () => "http://127.0.0.1:3000/app", executeJavaScript } }
 }
 function controller(win: ReturnType<typeof window>, manager: { isPrimary: boolean }, report: (error: unknown) => void = (error) => assert.fail(String(error)), lifecycle?: SerializedLifecycle) {
@@ -63,16 +63,33 @@ test("failed navigation retains current document access", async (t) => {
   })
 })
 
-test("hung renderer flush is bounded without rotating access or blocking navigation", async () => {
+test("hung renderer flush cancels navigation without rotating access", async () => {
   const manager = { isPrimary: true, resets: 0, resetRendererAccessToken() { this.resets++ } }
   let navigated = false, reported = false
   const started = Date.now()
-  await controller(window(() => new Promise(() => {})), manager, () => { reported = true }).navigate(() => { navigated = true })
+  await controller(window(source => source.includes('flush("navigation-cancel")') ? Promise.resolve() : new Promise(() => {})), manager, () => { reported = true }).navigate(() => { navigated = true })
   const elapsed = Date.now() - started
   assert.equal(reported, true)
   assert.equal(manager.resets, 0)
-  assert.equal(navigated, true)
+  assert.equal(navigated, false)
   assert.ok(elapsed >= 900 && elapsed < 2_000, `unexpected timeout: ${elapsed}ms`)
+})
+
+test("a refused draft flush keeps the renderer until a later successful reload", async () => {
+  let refused = true, navigated = 0, reported = 0
+  const phases: string[] = []
+  const navigation = controller(window(async source => {
+    if (source.includes('flush("navigation-cancel")')) { phases.push("unlock"); return }
+    assert.match(source, /flush\("navigation"\)/)
+    phases.push("lock and flush")
+    if (refused) throw new Error("Workspace file drafts could not be retained")
+  }), { isPrimary: true }, () => reported++)
+  await navigation.navigate(() => { navigated++ })
+  assert.deepEqual([navigated, reported], [0, 1])
+  refused = false
+  await navigation.navigate(() => { navigated++ })
+  assert.deepEqual([navigated, reported], [1, 1])
+  assert.deepEqual(phases, ["lock and flush", "unlock", "lock and flush"])
 })
 
 test("queued navigation preserves order and distinct generations", async () => {
@@ -112,7 +129,10 @@ test("shutdown authority cancels navigation dispatch after an in-flight renderer
   const started = new Promise<void>((resolve) => { flushStarted = resolve })
   const gate = new Promise<void>((resolve) => { releaseFlush = resolve })
   const lifecycle = new SerializedLifecycle()
-  const navigation = controller(window(async () => { calls.push("navigation-flush"); flushStarted(); await gate }), { isPrimary: true }, undefined, lifecycle)
+  const navigation = controller(window(async source => {
+    if (source.includes('flush("navigation-cancel")')) { calls.push("navigation-cancel"); return }
+    calls.push("navigation-flush"); flushStarted(); await gate
+  }), { isPrimary: true }, undefined, lifecycle)
   const pending = navigation.navigate(() => { calls.push("reload") })
   await started
 
@@ -120,7 +140,7 @@ test("shutdown authority cancels navigation dispatch after an in-flight renderer
   releaseFlush()
   await Promise.all([pending, shutdown])
 
-  assert.deepEqual(calls, ["navigation-flush", "shutdown-flush"])
+  assert.deepEqual(calls, ["navigation-flush", "navigation-cancel", "shutdown-flush"])
 })
 
 test("shutdown skips renderer flushes for navigation still queued", async () => {

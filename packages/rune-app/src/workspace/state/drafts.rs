@@ -80,7 +80,9 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
         return false;
     };
     saved.attachment_drafts.insert(id.into());
-    if let Some(parts) = SavedParts::capture(&s.composer.draft, s.composer.attachments_missing) {
+    if let Some(parts) =
+        SavedParts::capture(&s.composer.draft, s.composer.attachments_missing, &s.draft)
+    {
         saved.attachment_parts.insert(id.into(), parts);
     }
     if !s.draft.text.is_empty() && !oversized(&s.draft.text) {
@@ -121,14 +123,17 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
             if too_long || has_device_parts {
                 let live = item.live_drafts.entry(key.into()).or_default();
                 live.text = too_long.then(|| text.clone());
-                live.parts = Some((s.composer.draft.clone(), s.composer.attachments_missing));
+                let mut draft = s.composer.draft.clone();
+                draft.literal_spans = crate::composer::literal::ranges(&s.draft).collect();
+                live.parts = Some((draft, s.composer.attachments_missing));
             } else {
                 item.live_drafts.remove(key);
             }
             if too_long {
                 return false;
             }
-            let parts = SavedParts::capture(&s.composer.draft, s.composer.attachments_missing);
+            let parts =
+                SavedParts::capture(&s.composer.draft, s.composer.attachments_missing, &s.draft);
             changed |= if parts.is_some() {
                 saved.attachment_drafts.insert(key.into())
             } else {
@@ -166,6 +171,8 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
         !s.screen.is_launcher() && super::active_session(s) == Some(&backend.session);
     if !same_session {
         s.composer = Default::default();
+    } else {
+        s.composer.draft.literal_spans = crate::composer::literal::ranges(&s.draft).collect();
     }
     let Some(ui) = &mut s.workspace else {
         return String::new();

@@ -1,5 +1,5 @@
 use super::{
-    Preferences, opencode,
+    Preferences, notification_settings, opencode,
     providers::{self, Catalog, Target},
     remote,
 };
@@ -11,11 +11,13 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     settings as chrome,
 };
+use std::{cell::Cell, rc::Rc};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {
     General,
     OpenCode,
+    Notifications,
     Providers,
     Remote,
 }
@@ -25,6 +27,7 @@ impl Section {
         t(match self {
             Self::General => "settings.nav.general",
             Self::OpenCode => "settings.nav.opencode",
+            Self::Notifications => "settings.nav.notifications",
             Self::Providers => "settings.nav.providers",
             Self::Remote => "settings.nav.remote",
         })
@@ -50,6 +53,21 @@ pub(super) struct Panel {
     opencode: opencode::Status,
     logging: opencode::logging::Logging,
     remote: remote::Remote,
+    notification_permission: Rc<Cell<PermissionRequest>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PermissionRequest {
+    Idle,
+    Pending,
+    Finished(bool),
+    Refused,
+}
+
+impl Default for PermissionRequest {
+    fn default() -> Self {
+        Self::Idle
+    }
 }
 
 struct HostScope {
@@ -74,6 +92,7 @@ impl Panel {
         editor
             | scope_changed
             | opencode
+            | self.poll_notification_permission()
             | (self.section == Section::Remote
                 && self.local(prefs)
                 && self.remote.poll(prefs, wake))
@@ -83,6 +102,18 @@ impl Panel {
                     prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
                     Some(wake),
                 ))
+    }
+
+    fn poll_notification_permission(&self) -> bool {
+        let PermissionRequest::Finished(granted) = self.notification_permission.get() else {
+            return false;
+        };
+        self.notification_permission.set(if granted {
+            PermissionRequest::Idle
+        } else {
+            PermissionRequest::Refused
+        });
+        self.shown && self.section == Section::Notifications
     }
 
     fn poll_scope(&mut self, prefs: &mut Preferences, wake: &rune::Waker, paired: bool) -> bool {
@@ -172,6 +203,9 @@ fn close(s: &mut State) {
     prefs.hide_opencode();
     panel.logging.close();
     panel.remote.close();
+    if panel.notification_permission.get() != PermissionRequest::Pending {
+        panel.notification_permission.set(PermissionRequest::Idle);
+    }
     panel.opencode = opencode::Status::default();
     panel.scope = None;
     if matches!(panel.section, Section::OpenCode | Section::Remote) {
@@ -180,6 +214,30 @@ fn close(s: &mut State) {
     prefs.provider_target = None;
     prefs.memory.show(false);
     panel.memory_help_failed = false;
+}
+
+fn request_notification_permission(s: &mut State) {
+    let panel = &s.settings.web;
+    if !panel.shown
+        || panel.section != Section::Notifications
+        || panel.notification_permission.get() == PermissionRequest::Pending
+    {
+        return;
+    }
+    let Some(request) = platform::notifications::request_permission() else {
+        return;
+    };
+    let state = panel.notification_permission.clone();
+    state.set(PermissionRequest::Pending);
+    let wake = s.wake.clone();
+    wasm_bindgen_futures::spawn_local(async move {
+        use notification_settings::Permission;
+        let _ = wasm_bindgen_futures::JsFuture::from(request).await;
+        state.set(PermissionRequest::Finished(
+            notification_settings::web_permission() == Permission::Granted,
+        ));
+        wake();
+    });
 }
 
 pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<El> {
@@ -192,11 +250,12 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
         &[
             Section::General,
             Section::OpenCode,
+            Section::Notifications,
             Section::Providers,
             Section::Remote,
         ][..]
     } else {
-        &[Section::General, Section::Providers][..]
+        &[Section::General, Section::Notifications, Section::Providers][..]
     };
     let labels: Vec<_> = sections.iter().map(|section| section.label()).collect();
     let navigation = chrome::segments(
@@ -264,6 +323,23 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 s.settings.web.catalog.toggle()
             })
         }
+        Section::Notifications => col()
+            .full_width()
+            .child(notification_settings::view(
+                &s.settings.shared,
+                notification_settings::web_permission(),
+                request_notification_permission,
+            ))
+            .children(
+                (panel.notification_permission.get() == PermissionRequest::Refused
+                    && notification_settings::web_permission()
+                        == notification_settings::Permission::Ask)
+                    .then(|| {
+                        text(t("settings.notifications.messages.permissionNotGranted"))
+                            .role("alert")
+                            .wrap()
+                    }),
+            ),
         Section::OpenCode if local => col()
             .full_width()
             .child(opencode::view(

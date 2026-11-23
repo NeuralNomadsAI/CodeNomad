@@ -56,9 +56,12 @@ struct State {
     tool_diff_preferences: chat::ToolDiffPreferences,
     screen: Screen,
     settings: settings::Host,
+    notifications: shell::notifications::Host,
     #[cfg(not(target_arch = "wasm32"))]
     direct_authentication: chat::authentication::Recovery,
     input_scope: std::rc::Rc<()>,
+    #[cfg(target_arch = "wasm32")]
+    web_composer_input_epoch: u64,
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
     shell: shell::Panels,
@@ -107,9 +110,12 @@ fn init() -> State {
         tool_diff_preferences: Default::default(),
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),
+        notifications: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
         direct_authentication: Default::default(),
         input_scope: std::rc::Rc::new(()),
+        #[cfg(target_arch = "wasm32")]
+        web_composer_input_epoch: 0,
         rejected_edit: TextEdit::new(""),
         workspace: None,
         shell: Default::default(),
@@ -129,6 +135,8 @@ fn init() -> State {
     }
 }
 fn setup(s: &mut State, wake: rune::Waker) {
+    #[cfg(target_arch = "wasm32")]
+    let wake = shell::notifications::with_background_wake(s, wake);
     s.wake = wake.clone();
     #[cfg(feature = "test-support")]
     if platform::scene_is("transcript") {
@@ -189,6 +197,7 @@ fn latest(s: &mut State, tx: &mut Tx) {
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = poll_chat(s, 64);
+    shell::notifications::collect(s, workspace::notification_target);
     if !s.screen.is_launcher()
         && !git::has_preview(s)
         && !files::has_preview(s)
@@ -209,6 +218,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
     changed |= settings::poll(s) | settings::poll_memory_cleanup(s, tx);
+    changed |= shell::notifications::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
         changed |= launcher::reopen(s);

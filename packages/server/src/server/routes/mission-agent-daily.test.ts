@@ -6,7 +6,7 @@ import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import Fastify from "fastify"
 import { NativeMissionRecurrenceStore } from "../../missions/recurrence-store"
-import { recurrenceConfigDigest } from "../../opencode/missions/native-recurrence-create"
+import { recurrenceConfigDigest, recurrenceScheduleID } from "../../opencode/missions/native-recurrence-create"
 import { recurrenceControlRequestDigest, signNativeRecurrenceControl } from "../../missions/recurrence-control-proof"
 import { canonicalScope } from "../../host-lifetime/protocol"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
@@ -202,19 +202,38 @@ test("daily agent creation stays paused and exact creation replay never writes t
 
 test("daily creation recovery reads the original digest without dispatch, including an absent creation", async t => {
   const f = await fixture(t)
-  const read = { action: "read", requestID: "daily_lost_creation", creation: f.creation }
+  const ascii = "a".repeat(119)
+  const read = { action: "read", requestID: "daily_lost_creation", creation: { ...f.creation, instructions: ascii + "\u{1f600}" } }
   assert.equal((await f.agent(read)).pending, true)
   assert.equal(f.calls.length, 0)
   f.state.loseACK = true
   const lost = await f.agent({ ...read, action: "create" })
   assert.equal(lost.status, 503)
   assert.ok(lost.missionID)
+  assert.equal(f.calls[0].config.title, ascii)
   const writes = f.calls.length
   const recovered = await f.agent(read)
   assert.equal(recovered.status, 200)
   assert.equal(recovered.schedule.id, lost.missionID)
   assert.equal(f.calls.length, writes)
   assert.equal((await f.agent({ ...read, creation: { ...f.creation, instructions: "Another input" } })).status, 409)
+})
+
+test("daily creation recovers a stored receipt whose implicit title cut an emoji", async t => {
+  const f = await fixture(t), ascii = "a".repeat(119)
+  const creation = { ...f.creation, instructions: ascii + "\u{1f600}" }
+  const input = { requestID: "daily_unicode", creation }
+  const id = recurrenceScheduleID("project", f.directory, input.requestID)
+  const oldTitle = ascii + "\ud83d"
+  const original = (await f.store.read("daily_human"))!.config
+  await f.store.create(id, { ...original, title: oldTitle, consigne: creation.instructions }, Date.now(), () => true)
+  const read = { action: "read", ...input }
+  assert.equal((await f.agent({ ...read, creation: { ...creation, instructions: creation.instructions + "!" } })).status, 409)
+  const recovered = await f.agent(read)
+  assert.equal(recovered.status, 200)
+  assert.equal(recovered.schedule.id, id)
+  assert.equal(f.calls.length, 0)
+  assert.equal((await f.store.read(id))?.config.title, oldTitle)
 })
 
 test("lost daily ACK holds human concurrency and exact read settles without resending", async t => {

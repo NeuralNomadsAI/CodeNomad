@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "status": {
+          "type": "string",
+          "const": "ranked"
+        },
+        "scanned": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "candidates": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "judged": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "prefilterBypassed": {
+          "default": 0,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "matchedSessions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "capped": {
+          "type": "boolean"
+        },
+        "examinedBefore": {
+          "default": 0,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "cursor": {
+          "default": null,
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exclusions": {
+          "default": [],
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "foreign_directory",
+              "unknown_directory"
+            ]
+          }
+        },
+        "caps": {
+          "maxItems": 6,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "scan_time",
+              "message_limit",
+              "candidate_limit",
+              "session_limit",
+              "judge_limit",
+              "total_time"
+            ]
+          }
+        },
+        "hits": {
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "messageID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "role": {
+                "type": "string",
+                "maxLength": 32
+              },
+              "partIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "tool",
+                  "reasoning"
+                ]
+              },
+              "excerpt": {
+                "type": "string",
+                "maxLength": 320
+              },
+              "createdAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "sessionID",
+              "messageID",
+              "role",
+              "partIndex",
+              "kind",
+              "excerpt",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "sessions": {
+          "maxItems": 600,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "directory": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "workspaceID": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "scanned": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "tools": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "reasoning": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "skipped": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "candidates": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "judged": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "matchedMessages": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "prefilterBypassed": {
+                "default": 0,
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "sessionID",
+              "directory",
+              "scanned",
+              "tools",
+              "reasoning",
+              "skipped",
+              "title",
+              "candidates",
+              "judged",
+              "matchedMessages",
+              "prefilterBypassed"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "version",
+        "status",
+        "scanned",
+        "candidates",
+        "judged",
+        "skipped",
+        "prefilterBypassed",
+        "matchedSessions",
+        "capped",
+        "examinedBefore",
+        "cursor",
+        "exclusions",
+        "caps",
+        "hits",
+        "sessions"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "blocked"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "unavailable",
+            "maintenance_required",
+            "conflict",
+            "not_deletable",
+            "unsupported_storage"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "restart_required"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

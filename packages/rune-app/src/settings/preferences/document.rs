@@ -109,6 +109,22 @@ pub(super) struct Document {
 }
 
 impl Document {
+    pub(super) fn refreshing(&self) -> bool {
+        self.read.queued || self.read.reattach || self.flight.is_some() || self.barrier.is_some()
+    }
+
+    pub(super) fn confirmed(&self) -> Option<&Value> {
+        if self.read.queued
+            || self.read.reattach
+            || self.read.failed
+            || self.flight.is_some()
+            || self.barrier.is_some()
+        {
+            return None;
+        }
+        self.snapshot.as_ref()
+    }
+
     pub(super) fn rebind(&mut self, same_address: bool) {
         if !same_address {
             *self = Self::default();
@@ -330,6 +346,18 @@ impl Document {
         });
         true
     }
+}
+
+#[cfg(test)]
+#[test]
+fn notification_routes_do_not_read_an_invalidated_document() {
+    let mut document = Document {
+        snapshot: Some(json!({"settings":{"osNotificationsAllowWhenVisible":true}})),
+        ..Document::default()
+    };
+    assert!(document.confirmed().is_some());
+    document.invalidate();
+    assert!(document.confirmed().is_none());
 }
 
 impl Flight {

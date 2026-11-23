@@ -19,6 +19,36 @@ pub(super) enum Permission {
     Granted,
 }
 
+impl Default for Permission {
+    fn default() -> Self {
+        Self::Unsupported
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn native_permission(_state: &crate::State) -> Permission {
+    #[cfg(target_os = "windows")]
+    if let Some(delivery) = &_state.notifications.native {
+        return match delivery.enabled() {
+            Ok(true) => Permission::Granted,
+            Ok(false) => Permission::Denied,
+            Err(_) => Permission::Unsupported,
+        };
+    }
+    Permission::Unsupported
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(super) fn web_permission() -> Permission {
+    use web_sys::NotificationPermission;
+    match crate::platform::notifications::permission() {
+        Some(NotificationPermission::Granted) => Permission::Granted,
+        Some(NotificationPermission::Denied) => Permission::Denied,
+        Some(NotificationPermission::Default) => Permission::Ask,
+        _ => Permission::Unsupported,
+    }
+}
+
 pub(super) fn view<S: 'static>(
     shared: &Rc<RefCell<Preferences>>,
     permission: Permission,
@@ -106,7 +136,8 @@ pub(super) fn view<S: 'static>(
                             let enabled = !prefs.notifications_focused();
                             prefs.set_notifications_focused(enabled);
                         },
-                    ),
+                    )
+                    .key("notifications-allow-focused"),
                 ))
                 .children(match permission {
                     Permission::Unsupported => {

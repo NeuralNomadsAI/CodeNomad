@@ -3,6 +3,7 @@
 pub mod contracts;
 pub mod favorites;
 pub mod history;
+mod history_search;
 pub mod pending;
 pub mod permission_mode;
 pub mod receipts;

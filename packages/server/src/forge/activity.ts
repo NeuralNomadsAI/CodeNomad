@@ -2,10 +2,11 @@ import { z } from "zod"
 import { forgeWebUrl } from "./providers"
 import type { ForgeResponse } from "./transport"
 import type { MissionRepositoryCondition } from "../missions/mission-repository-condition"
+import { truncateMissionText } from "../missions/truncate-text"
 
 export const ACTIVITY_PAGE_SIZE = 50
 const timestamp = z.string().datetime({ offset: true }).transform(value => new Date(value).toISOString())
-const common = { title: z.string().min(1).max(4096).transform(value => value.slice(0, 240)), created_at: timestamp, updated_at: timestamp }
+const common = { title: z.string().min(1).max(4096).transform(value => truncateMissionText(value, 240)), created_at: timestamp, updated_at: timestamp }
 const user = z.object({ login: z.string().min(1).max(100) }).nullable()
 const github = z.object({ ...common, number: z.number().int().positive().safe(), html_url: z.string(), user,
   pull_request: z.object({ merged_at: timestamp.nullable().optional() }).optional() })

@@ -39,6 +39,7 @@ function native(scene, theme, stem, script, mark = "end", width, locale = "fr", 
   for (const key of Object.keys(env)) if (key.startsWith("RUNE_") && key !== "RUNE_LOCALE") delete env[key]
   if (width) env.RUNE_GIT_PANEL_WIDTH = String(width)
   if (detail === "commit" || detail === "hash") env.RUNE_GIT_COMMIT_DETAIL = detail
+  else if (detail === "subject") env.RUNE_GIT_LONG_SUBJECT = "1"
   else if (detail) env.RUNE_GIT_PANEL_STATE = detail
   const args = ["--scene", scene, "--theme", theme, "--tree", tree, "--snap", png,
     "--size", `${viewport.width}x${viewport.height}`, "--scale", "1"]
@@ -67,7 +68,7 @@ try {
   browser = await chromium.launch({ headless: true, executablePath: process.env.CODENOMAD_BROWSER_PATH })
   const settle = path.join(out, "settle.json")
   await writeFile(settle, JSON.stringify({ events: [{ t: 0.6, type: "mark", name: "end" }] }))
-  for (const [theme, locale] of [["light", "fr"], ["dark", "fr"], ["dark", "tr"]]) {
+  for (const [theme, locale] of [["light", "fr"], ["dark", "fr"], ["dark", "tr"], ["dark", "es"], ["dark", "de"], ["dark", "he"]]) {
     const page = await browser.newPage({ viewport })
     page.on("pageerror", error => console.error(error))
     page.on("requestfailed", request => console.error(request.url(), request.failure()))
@@ -88,7 +89,8 @@ try {
       for (const name of [...style]) if (name.startsWith("--")) style.removeProperty(name)
     })
     const solidModes = page.locator(".git-panel-switch button")
-    for (const mode of locale === "fr" ? ["changes", "commits"] : ["changes"]) {
+    const dateOnly = !["fr", "tr"].includes(locale)
+    for (const mode of dateOnly ? ["commits"] : locale === "fr" ? ["changes", "commits"] : ["changes"]) {
       if (mode === "commits") {
         await solidModes.nth(2).click()
         await page.getByText("Make Git history the starting point").waitFor()
@@ -100,11 +102,32 @@ try {
       const tree = JSON.parse(await readFile(native(`git-${mode}`, theme, `rune-${name}`, settle, "end", undefined, locale), "utf8"))
       const nodes = elements(tree)
       assert.equal(tree.dark_system, theme === "dark")
+      const worktree = tree.elements.find(node => node.key === "git-worktree-trigger")
+      const directory = await page.locator(".git-panel-worktree").getAttribute("title")
+      assert(directory)
+      assert.equal(worktree?.help, directory)
+      assert.equal(nodes.find(node => node.key === "git-worktree-trigger")?.description, directory)
       assert(nodes.some(node => node.name?.includes("src/components/git-panel.tsx")))
       assert(nodes.some(node => node.key === "git-diff-mode" && node.role === "button" && node.name))
       const firstCommit = nodes.find(node => node.role === "button" && node.name?.startsWith("Make Git history"))
-      if (mode === "commits") assert(firstCommit?.key)
-      else assert(nodes.some(node => node.key === "git-section-staged" && node.states.includes("expanded")))
+      if (mode === "commits") {
+        assert(firstCommit?.key)
+        const author = await page.locator(".git-history-meta > span").first().textContent()
+        assert(author && firstCommit.name.includes(author), `${name}: Solid ${author}; Rune ${firstCommit.name}`)
+        if (dateOnly) {
+          report.push({ theme, locale, mode, author })
+          continue
+        }
+      }
+      else {
+        assert(nodes.some(node => node.key === "git-section-staged" && node.states.includes("expanded")))
+        const bulk = tree.elements.find(node => node.key === "git-bulk-unstaged")
+        const source = page.locator(".git-change-commit-box button[title]").first()
+        const paths = await source.getAttribute("title")
+        assert(paths)
+        assert.equal(bulk?.help, paths)
+        assert.equal(nodes.find(node => node.key === "git-bulk-unstaged")?.description, paths)
+      }
       const solidPanel = await page.locator(".git-panel").boundingBox()
       const runePanel = tree.elements.find(node => node.key === "git-panel")?.rect
       assert(solidPanel && runePanel)
@@ -223,6 +246,13 @@ try {
   assert(menu.some(node => node.role === "menu-item" && node.key?.endsWith(":item:stage") && node.states.includes("focused")))
   const narrowModes = narrow.elements.find(node => node.key === "git-mode")?.rect
   assert(narrowModes && narrowModes[2] < 180, "The mode selector must fit a compact panel")
+  const long = JSON.parse(await readFile(native("git-commits", "dark", "long-subject-180", settle, "end", 180, "fr", "subject"), "utf8"))
+  const panel = long.elements.find(node => node.key === "git-panel")
+  const firstRow = `/git-commit-${"1".repeat(40)}/`
+  const subject = long.elements.find(node => node.path.includes(firstRow) && /^[0-9a-f]{64}$/.test(node.text))
+  const shortId = long.elements.find(node => node.path.includes(firstRow) && node.text === "1111111")
+  assert(panel && subject && shortId && subject.rect[3] > 2 * shortId.rect[3], "Long commit subjects must wrap at 180 px")
+  assert(subject.rect[0] + subject.rect[2] <= panel.rect[0] + panel.rect[2], "The subject must stay inside the panel")
   const catalogue = JSON.parse(await readFile(path.join(root, "crates/rune-theme-codenomad/assets/catalogues/fr.json"), "utf8"))
   for (const [mode, emptyKey, failure] of [
     ["changes", "instanceShell.gitChanges.empty", "fixture status refused"],

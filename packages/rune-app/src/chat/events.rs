@@ -29,6 +29,8 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         let content = observation.is_none();
         let event = observation.or_else(|| s.reader.as_ref().and_then(chat::reader::Reader::next));
         let Some(event) = event else { break };
+        let stale_activity = matches!(&event, Event::ReaderSync { version, .. }
+            if s.reader.as_ref().is_some_and(|reader| reader.activity_after(*version)));
         settings::connection_event(s, &event);
         match event {
             Event::Connected(backend) => {
@@ -91,24 +93,47 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     agent.observe_running(running);
                 }
             }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionRequest {
+                form,
+                id,
+            }) => {
+                if let Some(agent) = &mut s.agent {
+                    agent.notice_request(form, id);
+                }
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionExecution {
+                notice,
+            }) => {
+                if let Some(agent) = &mut s.agent {
+                    let verify = notice.is_some();
+                    agent.attention.execution(notice);
+                    if verify {
+                        agent.refresh(false);
+                    }
+                }
+            }
             Event::Workspace(event) => {
+                if matches!(
+                    event,
+                    codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
+                ) {
+                    chat::reader::suspend(s);
+                    s.composer.picker.set_attachments_supported(false);
+                    s.attachments.cancel();
+                    s.messages.clear();
+                    s.history_detached = false;
+                    s.can_older = false;
+                    if let Some(agent) = &mut s.agent {
+                        agent.attention.disconnected();
+                    }
+                }
                 git::event(s, &event);
                 if let Some(files) = &mut s.files {
                     files.event(event);
                 }
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
-            Event::Sync(_) | Event::ReaderSync { .. } => {
-                let (page, stale_activity) = match event {
-                    Event::Sync(page) => (page, false),
-                    Event::ReaderSync { page, version } => (
-                        page,
-                        s.reader
-                            .as_ref()
-                            .is_some_and(|reader| reader.activity_after(version)),
-                    ),
-                    _ => continue,
-                };
+            Event::Sync(page) | Event::ReaderSync { page, .. } => {
                 chat::reader::reconcile_bookmark(s, &page.rows);
                 if let Some(reader) = &mut s.reader {
                     reader.install(page.newer.is_some());
@@ -179,6 +204,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.attachments.cancel();
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
+                    a.attention.disconnected();
                 }
             }
             Event::PagingFailed => {
@@ -228,6 +254,18 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
             }
+            Event::Reasoning(id, event) => {
+                content::apply_reasoning(&mut s.messages, &id, &event);
+            }
+            Event::Tool(id, tool) => {
+                if let Some(row) = s
+                    .messages
+                    .iter_mut()
+                    .find(|row| row.id == id && !row.completed)
+                {
+                    content::install_tool(std::sync::Arc::make_mut(row), tool);
+                }
+            }
             Event::Done => s.phase = Phase::Ready,
             Event::Failed if content => {
                 if let Some(reader) = &mut s.reader {
@@ -255,6 +293,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.phase = Phase::Failed;
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
+                    a.attention.disconnected();
                 }
             }
         }

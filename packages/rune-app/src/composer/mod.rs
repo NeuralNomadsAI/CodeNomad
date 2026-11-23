@@ -5,6 +5,8 @@ mod clipboard;
 pub(crate) mod device;
 pub(crate) mod draft;
 pub(crate) mod draft_storage;
+pub(crate) mod literal;
+mod long_paste;
 mod picker;
 mod tokens;
 pub(crate) mod view;

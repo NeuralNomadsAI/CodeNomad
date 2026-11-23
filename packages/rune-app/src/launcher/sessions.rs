@@ -229,6 +229,7 @@ pub fn can_change_session(s: &State) -> bool {
         && crate::workspace::input_ready(s)
         && !crate::agent::navigation_blocked(s)
 }
+
 pub(super) fn can_rebind(s: &State, id: &str) -> bool {
     !s.screen.is_launcher()
         && s.phase == Phase::Failed
@@ -329,6 +330,7 @@ pub(super) fn bind(
         }
     }
     s.draft = TextEdit::new(draft);
+    crate::composer::literal::restore(&mut s.draft, &s.composer.draft.literal_spans);
     s.phase = Phase::Loading;
     crate::git::online(s, false);
     crate::git::connected_placed(s, &b, slug);

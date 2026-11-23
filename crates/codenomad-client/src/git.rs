@@ -130,7 +130,61 @@ impl fmt::Display for Refusal {
 }
 impl std::error::Error for Refusal {}
 
+impl Refusal {
+    pub fn placement_answered(&self) -> bool {
+        (400..500).contains(&self.status) && self.status != 408 && self.message.is_some()
+    }
+}
+
+fn placement_members(value: &Value, session: &str) -> Result<Vec<String>> {
+    let root = value["rootSessionId"]
+        .as_str()
+        .filter(|id| valid_id(id))
+        .ok_or("invalid family root")?;
+    let mut seen = HashSet::new();
+    let members = rows(&value["sessionIds"], 512)?
+        .iter()
+        .map(|id| {
+            id.as_str()
+                .filter(|id| valid_id(id) && seen.insert(*id))
+                .map(str::to_owned)
+                .ok_or_else(|| "invalid family member".into())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if !seen.contains(root) || !seen.contains(session) {
+        return Err("incomplete placement family".into());
+    }
+    Ok(members)
+}
+
 impl Backend {
+    pub async fn placement_activity(&self, directory: &str) -> Result<Value> {
+        let mut query = Url::parse(&self.base)?;
+        query.query_pairs_mut().append_pair("directory", directory);
+        self.control_get(&format!(
+            "session/active?{}",
+            query.query().unwrap_or_default()
+        ))
+        .await
+    }
+
+    pub async fn place_session(&self, slug: &str) -> Result<Vec<String>> {
+        if !valid_id(&self.session) || !valid_slug(slug) {
+            return Err("invalid session placement".into());
+        }
+        let result = read(
+            self.client
+                .post(self.git_route(&["sessions", &self.session, "worktree"])?)
+                .json(&json!({"worktreeSlug":slug})),
+            256 * 1024,
+        )
+        .await?;
+        if result["worktreeSlug"] != slug {
+            return Err("invalid session placement acknowledgement".into());
+        }
+        placement_members(&result, &self.session)
+    }
+
     pub async fn git_hide_whitespace(&self) -> Result<bool> {
         let data = read(
             self.client

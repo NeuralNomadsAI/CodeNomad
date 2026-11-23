@@ -159,6 +159,8 @@ export const instanceMessages = {
   "filesPanel.viewer": "文件预览",
   "filesPanel.readOnly": "只读",
   "filesPanel.binary": "无法预览此二进制文件。",
+  "filesPanel.draftConflict": "磁盘上的文件已更改。你的草稿已保留。",
+  "filesPanel.draftLimit": "无法保留草稿。请在关闭前保存或复制最新的修改。",
   "filesPanel.image.before": "之前",
   "filesPanel.image.after": "之后",
   "gitPanel.changes": "更改",

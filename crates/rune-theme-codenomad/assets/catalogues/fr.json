@@ -262,6 +262,8 @@
   "expandButton.toggleAriaLabel": "Basculer la hauteur de la zone de saisie",
   "filesPanel.binary": "Aperçu indisponible pour ce fichier binaire.",
   "filesPanel.commits": "Commits",
+  "filesPanel.draftConflict": "Le fichier a changé sur le disque. Votre brouillon a été conservé.",
+  "filesPanel.draftLimit": "Impossible de conserver ce brouillon. Enregistrez ou copiez vos dernières modifications avant de fermer.",
   "filesPanel.gitInit.action": "Initialiser Git",
   "filesPanel.gitInit.deleting": "Ce dossier est en cours de suppression.",
   "filesPanel.gitInit.error": "Impossible d'initialiser Git : {message}",

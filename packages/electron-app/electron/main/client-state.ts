@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { closeSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { open, rename, rm } from "node:fs/promises"
 import { dirname, join } from "node:path"
+import { ClientStateFileDrafts } from "./client-state-file-drafts"
 import {
   electClientStateProcess,
   getRunningMarkerPath,
@@ -134,6 +135,7 @@ export class ClientStateManager {
   private unsupportedFutureEnvelope = false
   private frozen = false
   private rendererAccessTokens = new Map<string, string>()
+  private readonly fileDrafts: ClientStateFileDrafts
 
   constructor(
     userDataPath: string,
@@ -153,6 +155,7 @@ export class ClientStateManager {
       : resolveCrossHostStatePath()
     mkdirSync(dirname(this.statePath), { recursive: true })
     this.partitions = new ClientStatePartitionStore(dirname(this.statePath))
+    this.fileDrafts = new ClientStateFileDrafts(join(dirname(this.statePath), "workspace-file-drafts.json"))
     this.lockPath = join(userDataPath, PRIMARY_LOCK_FILENAME)
     const registrationLockPath = join(userDataPath, REGISTRATION_LOCK_FILENAME)
 
@@ -298,6 +301,28 @@ export class ClientStateManager {
     }
   }
 
+  loadFileDrafts(rendererToken: unknown, windowId: string, key?: unknown) {
+    const operation = this.writeQueue.catch(() => {}).then(async () => {
+      this.assertReplacementAllowed(rendererToken, windowId)
+      if (!this.windowRecord(windowId).restoreEnabled) return []
+      return this.fileDrafts.load(windowId, key, () => this.assertReplacementAllowed(rendererToken, windowId))
+    })
+    this.writeQueue = operation.then(() => {}, () => {})
+    return operation
+  }
+
+  saveFileDraft(raw: unknown, rendererToken: unknown, windowId: string): Promise<boolean> {
+    const operation = this.writeQueue.catch(() => {}).then(async () => {
+      this.assertReplacementAllowed(rendererToken, windowId)
+      return this.fileDrafts.save(raw, windowId, this.windowRecord(windowId).restoreEnabled,
+        () => this.assertReplacementAllowed(rendererToken, windowId),
+        (path, contents) => this.writeAtomically(contents, rendererToken, windowId, path),
+        () => this.rendererAccessTokens.get(windowId) === rendererToken)
+    })
+    this.writeQueue = operation.then(() => {}, () => {})
+    return operation
+  }
+
   loadClientStatePartition(key: unknown, rendererToken?: unknown, windowId = this.activeWindowId): Promise<string | null> {
     if (!isPartitionKey(key)) return Promise.reject(new TypeError("Invalid client state partition key"))
     this.windowRecord(windowId)
@@ -342,6 +367,7 @@ export class ClientStateManager {
 
   resetRendererAccessToken(windowId = this.activeWindowId): void {
     this.rendererAccessTokens.delete(windowId)
+    this.fileDrafts.release(windowId)
   }
 
   saveClientState(snapshot: unknown, rendererToken?: unknown, windowId = this.activeWindowId): Promise<boolean> {
@@ -462,6 +488,7 @@ export class ClientStateManager {
     () => this.partitions.sweep(retainedPartitionKeys(this.state), () => this.assertReplacementAllowed()))
       .then((removed) => {
         if (removed) {
+          // Workspace release can still delay destruction after the record is removed.
           this.rendererAccessTokens.delete(windowId)
           this.persistenceSuppressed.delete(windowId)
         }
@@ -679,7 +706,7 @@ export class ClientStateManager {
     return operation
   }
 
-  private async writeAtomically(serializedState: string, rendererToken?: unknown, windowId = this.activeWindowId): Promise<void> {
+  private async writeAtomically(serializedState: string, rendererToken?: unknown, windowId = this.activeWindowId, target = this.statePath): Promise<void> {
     const temporaryPath = join(
       dirname(this.statePath),
       `.${CLIENT_STATE_FILENAME}.${this.owner.pid}.${this.owner.runToken}.tmp`,
@@ -687,7 +714,7 @@ export class ClientStateManager {
     try {
       await this.writeState(temporaryPath, serializedState)
       this.assertReplacementAllowed(rendererToken, windowId)
-      await rename(temporaryPath, this.statePath)
+      await rename(temporaryPath, target)
       await syncDirectory(dirname(this.statePath))
     } catch (error) {
       await rm(temporaryPath, { force: true }).catch(() => {})

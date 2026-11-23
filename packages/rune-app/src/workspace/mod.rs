@@ -2,23 +2,29 @@ use std::collections::{BTreeMap, BTreeSet};
 mod cache;
 pub(crate) mod opening;
 mod persistence;
+mod save_snapshot;
+mod snapshot_budget;
 mod state;
 pub(crate) use persistence::finish;
-#[cfg(target_arch = "wasm32")]
-pub(crate) use state::active_workspace;
 pub(crate) use state::contains_project;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use state::evict_for_probe;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use state::native_window_store;
 pub(crate) use state::{
+    Activation, notification_target, observes_notification, open_notification, owns_notification,
+};
+pub(crate) use state::{
     Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
     close, connected, draft_changed, files_tab, has_conversation_stream, input_ready, new_tab,
     opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume, retry,
     schedule_catalogue, select, set_files_tab, status, strip, unselect_missing,
 };
+#[cfg(target_arch = "wasm32")]
+pub(crate) use state::{active_workspace, poll_cached_notifications};
 
 use crate::composer::draft_storage::SavedParts;
+use save_snapshot::encode_for_save;
 use serde_json::{Map, Value, json};
 
 pub(crate) const MAX_BYTES: usize = 1024 * 1024;
@@ -140,6 +146,14 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
 
 pub fn encode(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
     validate(snapshot)?;
+    let bytes = snapshot_bytes(snapshot)?;
+    if bytes.len() > MAX_BYTES {
+        return Err(Error::Limit);
+    }
+    Ok(bytes)
+}
+
+fn snapshot_bytes(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
     let tabs: Vec<Value> = snapshot
         .tabs
         .iter()
@@ -193,42 +207,7 @@ pub fn encode(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
         .collect();
     let value = json!({"version": 1, "revision": snapshot.revision, "savedAt": snapshot.saved_at,
         "layout": layout, "session": {"tabs": tabs, "activeTabIndex": active}});
-    let bytes = serde_json::to_vec(&value).map_err(|_| Error::Malformed)?;
-    if bytes.len() > MAX_BYTES {
-        return Err(Error::Limit);
-    }
-    Ok(bytes)
-}
-
-fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Error> {
-    if let Ok(bytes) = encode(snapshot) {
-        return Ok((bytes, false));
-    }
-    let mut valid = snapshot.clone();
-    valid.tabs = vec![Tab::Blank; snapshot.tabs.len()];
-    // Keep the live tab untouched. Invalid attachment metadata falls back to its missing-parts guard.
-    for (index, tab) in snapshot.tabs.iter().enumerate() {
-        let mut tab = tab.clone();
-        if let Tab::Workspace(saved) = &mut tab {
-            saved
-                .attachment_drafts
-                .extend(saved.attachment_parts.keys().cloned());
-            saved.attachment_parts.retain(|_, parts| parts.valid());
-            saved.drafts.retain(|id, text| {
-                if !draft_id(id) || text.encode_utf16().nth(MAX_DRAFT).is_some() {
-                    saved.attachment_parts.remove(id);
-                    false
-                } else {
-                    true
-                }
-            });
-        }
-        valid.tabs[index] = tab;
-        if encode(&valid).is_err() {
-            valid.tabs[index] = Tab::Blank;
-        }
-    }
-    encode(&valid).map(|bytes| (bytes, true))
+    serde_json::to_vec(&value).map_err(|_| Error::Malformed)
 }
 
 fn tab(value: &Value) -> Result<Tab, Error> {
@@ -373,6 +352,13 @@ fn view_state(value: Option<&Value>) -> Result<ViewState, Error> {
 }
 
 fn validate(snapshot: &Snapshot) -> Result<(), Error> {
+    if snapshot_string_units(snapshot)? > MAX_STRINGS {
+        return Err(Error::Limit);
+    }
+    Ok(())
+}
+
+fn snapshot_string_units(snapshot: &Snapshot) -> Result<usize, Error> {
     if snapshot.revision > MAX_SAFE
         || snapshot.saved_at > MAX_SAFE
         || snapshot.tabs.len() > MAX_TABS
@@ -394,7 +380,7 @@ fn validate(snapshot: &Snapshot) -> Result<(), Error> {
         Some(index) if index < snapshot.tabs.len() => {}
         _ => return Err(Error::Malformed),
     }
-    let mut remaining = MAX_STRINGS;
+    let mut remaining = usize::MAX;
     for tab in &snapshot.tabs {
         let Tab::Workspace(workspace) = tab else {
             continue;
@@ -451,7 +437,7 @@ fn validate(snapshot: &Snapshot) -> Result<(), Error> {
             return Err(Error::Malformed);
         }
     }
-    Ok(())
+    Ok(usize::MAX - remaining)
 }
 
 fn take(value: &str, max: usize, empty: bool, remaining: &mut usize) -> Result<(), Error> {
