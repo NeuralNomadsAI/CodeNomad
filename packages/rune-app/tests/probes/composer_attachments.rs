@@ -41,10 +41,10 @@ pub fn run() {
         assert_eq!(file.name.as_deref(), Some("sample.txt"));
         let reference = file.reference.as_ref().expect("stored file reference");
         let bytes = platform::block_on(async {
-            platform::configured_backend()
-                .await?
-                .attachment_bytes(reference)
-                .await
+            let backend = platform::configured_target(false)?;
+            let password = platform::setting("RUNE_PASSWORD").unwrap_or_default();
+            backend.authenticate(&password, None).await?;
+            backend.attachment_bytes(reference).await
         })
         .expect("download through the Rust relay");
         assert_eq!(
