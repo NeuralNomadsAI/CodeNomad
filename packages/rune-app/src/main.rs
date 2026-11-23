@@ -411,16 +411,24 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
     .on_layout_tx(chat::ToolDiffPreferences::layout)
 }
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
+    conversation_view(s, cx, |expanded| {
+        shell::reader(s, || history_view(s, expanded))
+    })
+}
+
+fn conversation_view(s: &State, cx: &mut Cx<State>, reader: impl FnOnce(bool) -> El) -> El {
     let expanded = interruption_expanded(s);
     rune_theme_codenomad::interruption::session_surface(expanded)
-        .child(shell::reader(s, || {
-            rune_theme_codenomad::interruption::history(expanded)
-                .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
-                .on_layout_tx(chat::ToolDiffPreferences::history_layout)
-                .child(transcript::rows(s))
-        }))
+        .child(reader(expanded))
         .child(agent_view::view(s, cx))
         .child(composer(s))
+}
+
+fn history_view(s: &State, expanded: bool) -> El {
+    rune_theme_codenomad::interruption::history(expanded)
+        .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
+        .on_layout_tx(chat::ToolDiffPreferences::history_layout)
+        .child(transcript::rows(s))
 }
 
 fn composer(s: &State) -> El {

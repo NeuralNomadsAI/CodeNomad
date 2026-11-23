@@ -73,7 +73,7 @@ fn arrived(rt: &mut Runtime<State>) {
 fn return_after_native_stream_and_resize_restores_anchor_on_every_frame() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;
-        let mut rt = runtime(http.ui(Store::default(), "reader-resize-anchor"));
+        let mut rt = with_view(http.ui(Store::default(), "reader-resize-anchor"), english);
         history(&mut rt);
         rt.wheel(300.0, 300.0, 1200.0);
         frames(&mut rt);
@@ -106,7 +106,7 @@ fn return_after_native_stream_and_resize_restores_anchor_on_every_frame() {
 fn return_from_blank_message_padding_keeps_the_same_passage() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;
-        let mut rt = runtime(http.ui(Store::default(), "reader-padding-anchor"));
+        let mut rt = with_view(http.ui(Store::default(), "reader-padding-anchor"), english);
         history(&mut rt);
         rt.update(|_, tx| {
             tx.instant();
@@ -157,7 +157,7 @@ fn return_from_blank_message_padding_keeps_the_same_passage() {
 fn return_to_following_bottom_includes_native_arrivals() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;
-        let mut rt = runtime(http.ui(Store::default(), "reader-follow"));
+        let mut rt = with_view(http.ui(Store::default(), "reader-follow"), english);
         history(&mut rt);
         assert_eq!(rt.scroll_at_bottom("history"), Some(true));
         open(&mut rt, &http, "main.rs", "Zm4gbWFpbigpIHt9").await;

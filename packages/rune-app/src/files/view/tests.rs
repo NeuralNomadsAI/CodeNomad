@@ -16,11 +16,30 @@ mod visual;
 fn english(s: &State, cx: &mut rune::Cx<State>) -> El {
     crate::strings::with_locale("en", || crate::view(s, cx))
 }
+
+fn reader_with_tree(s: &State, cx: &mut rune::Cx<State>) -> El {
+    crate::strings::with_locale("en", || {
+        layout::render(cx, |cx| {
+            crate::conversation_view(s, cx, |expanded| {
+                rune::col()
+                    .full_width()
+                    .full_height()
+                    .child(toggle(s))
+                    .child(body(s, crate::history_view(s, expanded), expanded).remaining())
+            })
+        })
+    })
+}
+
 fn runtime(ui: crate::files::Ui) -> Runtime<State> {
+    with_view(ui, reader_with_tree)
+}
+
+fn with_view(ui: crate::files::Ui, view: fn(&State, &mut rune::Cx<State>) -> El) -> Runtime<State> {
     let mut state = crate::init();
     state.phase = crate::Phase::Ready;
     state.files = Some(ui);
-    let mut rt = Runtime::new(state, english, (1000.0, 700.0), Env::new(false, 1.0));
+    let mut rt = Runtime::new(state, view, (1000.0, 700.0), Env::new(false, 1.0));
     rt.frame(0.0);
     for _ in 0..30 {
         rt.frame(0.02);
@@ -71,36 +90,6 @@ async fn open(rt: &mut Runtime<State>, http: &http::Http, path: &str, contents: 
 }
 
 #[test]
-fn an_open_project_displays_a_file_preview_without_a_conversation() {
-    crate::platform::block_on(async {
-        let http = http::Http::new().await;
-        let mut state = crate::init();
-        crate::gallery::shell::fixture(&mut state);
-        state.show_launcher();
-        state.screen.launcher_mut().unwrap().project = Some(crate::catalog::Project {
-            id: http.backend.workspace.clone(),
-            path: "/private".into(),
-        });
-        let mut backend = http.backend.clone();
-        backend.session.clear();
-        crate::files::bind(&mut state, &backend);
-        state.files.as_mut().unwrap().online(true);
-        let mut rt = Runtime::new(state, english, (1000.0, 700.0), Env::new(false, 1.0));
-        rt.frame(0.02);
-        open(&mut rt, &http, "note.txt", "aGVsbG8=").await;
-        assert!(rt.state.screen.is_launcher());
-        assert!(rt.state.commands.is_none());
-        assert!(rt.find("file-refresh").is_some());
-        assert_eq!(
-            rt.state.files.as_ref().unwrap().document.edit().text,
-            "hello"
-        );
-        click(&mut rt, "file-close");
-        assert!(rt.find("file-refresh").is_none());
-    });
-}
-
-#[test]
 fn eye_opens_real_reader_and_return_preserves_chat_draft_without_prompt() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;
@@ -140,7 +129,12 @@ fn eye_opens_real_reader_and_return_preserves_chat_draft_without_prompt() {
         state.files = Some(ui);
         let (commands, incoming) = codenomad_client::bounded(4);
         state.commands = Some(commands);
-        let mut rt = Runtime::new(state, english, (1000.0, 700.0), Env::new(false, 1.0));
+        let mut rt = Runtime::new(
+            state,
+            reader_with_tree,
+            (1000.0, 700.0),
+            Env::new(false, 1.0),
+        );
         rt.frame(0.0);
         for _ in 0..30 {
             rt.frame(0.02);

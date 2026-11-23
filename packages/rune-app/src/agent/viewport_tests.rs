@@ -46,9 +46,20 @@ fn visible(rt: &Runtime<State>, key: &str) {
     }
     assert!(
         node.rect[3] > 0.0 && node.visible[2] > 0.0 && node.visible[3] >= node.rect[3] - 1.0,
-        "{key} must be a usable visible control: rect={:?} visible={:?}",
+        "{key} must be a usable visible control: rect={:?} visible={:?}, layout={:?}",
         node.rect,
-        node.visible
+        node.visible,
+        rt.elements()
+            .iter()
+            .filter_map(|e| {
+                let key = e.key.as_deref()?;
+                matches!(
+                    key,
+                    "application-shell" | "session-shell" | "session-stack" | "session-composer"
+                )
+                .then_some((key, e.rect, e.visible))
+            })
+            .collect::<Vec<_>>()
     );
 }
 fn reveal(rt: &mut Runtime<State>, key: &str) {
@@ -107,22 +118,11 @@ fn workspace_chat_keeps_history_agent_and_composer_inside_the_viewport() {
 }
 #[test]
 fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
-    for with_files in [false, true] {
+    for right_wanted in [false, true] {
         for size in [(1400.0, 900.0), (390.0, 740.0), (390.0, 320.0)] {
             let mut state = state();
-            if with_files {
-                let backend = crate::platform::block_on(crate::backend::Backend::connect(
-                    "http://127.0.0.1:9",
-                    "",
-                ))
-                .unwrap();
-                state.files = Some(crate::files::Ui::new(
-                    backend,
-                    "/private".into(),
-                    crate::platform::reads::Reads::default(),
-                    std::sync::Arc::new(|| {}),
-                ));
-            }
+            crate::gallery::shell::fixture(&mut state);
+            state.shell.wanted = [Some([false, right_wanted]); 2];
             let ui = state.agent.as_mut().unwrap();
             ui.selected = "permission-fixture".into();
             ui.permissions.push(Permission {
@@ -136,6 +136,10 @@ fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
             });
             ui.reasons.insert(ui.selected.clone(), TextEdit::new(""));
             let mut rt = runtime(state, size);
+            assert_eq!(
+                rt.find("right-panel").is_some(),
+                right_wanted && size.0 > 390.0
+            );
             for key in ["allow_once", "allow_always", "reject"] {
                 if size.1 == 320.0 {
                     reveal(&mut rt, key);
@@ -144,7 +148,15 @@ fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
                 }
             }
             reveal(&mut rt, "reason-permission-fixture");
-            reveal(&mut rt, "composer");
+            rt.update(|_, tx| tx.scroll_to_bottom_instant("session-stack"));
+            settle(&mut rt);
+            visible(&rt, "composer");
+            let (x, y) = rt.find("composer").unwrap();
+            rt.pointer_down(x, y);
+            rt.pointer_up(x, y);
+            rt.paste("draft through the dock");
+            rt.frame(0.02);
+            assert_eq!(rt.state.draft.text, "draft through the dock");
             reveal(&mut rt, "history");
             reveal(&mut rt, "allow_once");
         }
