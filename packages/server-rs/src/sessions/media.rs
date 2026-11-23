@@ -219,6 +219,7 @@ pub(super) async fn route(
             .into_response())
     };
     tokio::select! {
+        biased;
         _ = principal.0.cancelled() => Err(crate::auth::unauthorized()),
         result = tokio::time::timeout(Duration::from_secs(30), request) => result.unwrap_or_else(|_| Err(unavailable())),
     }

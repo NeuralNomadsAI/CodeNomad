@@ -95,14 +95,24 @@ impl Placement {
         } else {
             dunce::canonicalize(directory).map_err(|_| unavailable())?
         };
-        let anchor = if media { directory_anchor(&path).ok_or_else(forbidden)?.to_owned() } else { path.clone() };
+        let anchor = if media {
+            directory_anchor(&path).map_err(|_| unavailable())?.ok_or_else(forbidden)?.to_owned()
+        } else {
+            path.clone()
+        };
         let physical = same_file::Handle::from_path(&anchor).map_err(|_| unavailable())?;
         let checkout = if references || media {
             if path != workspace.path {
                 displays.push(display(&path));
             }
             let proof = if media {
-                crate::worktrees::ownership::media_directory(app, &workspace, &endpoint, &path, &anchor).await?
+                let proof = crate::worktrees::ownership::media_directory(app, &workspace, &endpoint, &path, &anchor)
+                    .await
+                    .map_err(|_| crate::opencode::upstream_error())?;
+                if !current() {
+                    return Err(crate::opencode::upstream_error());
+                }
+                proof
             } else {
                 crate::worktrees::ownership::capture_directory(app, &workspace, &path).await
             };
@@ -154,11 +164,12 @@ impl Placement {
                 &self.path,
                 &self.anchor,
             )
-            .await?
-            .ok_or_else(changed)?;
+            .await
+            .map_err(|_| crate::opencode::upstream_error())?;
             if !self.operation_current(app, id) {
                 return Err(crate::opencode::upstream_error());
             }
+            let current = current.ok_or_else(changed)?;
             if !self.checkout.as_ref().is_some_and(|proof| proof.same_checkout(&current)) || !self.live(app, id) {
                 return Err(changed());
             }
@@ -179,7 +190,7 @@ impl Placement {
                 })
                 .as_ref()
                 == Some(&self.path)
-            && (!self.media || directory_anchor(&self.path) == Some(self.anchor.as_path()))
+            && (!self.media || directory_anchor(&self.path) == Ok(Some(self.anchor.as_path())))
             && same_file::Handle::from_path(&self.anchor).is_ok_and(|physical| physical == self.physical)
             && self.checkout.as_ref().is_none_or(|checkout| {
                 if self.media {
@@ -218,16 +229,16 @@ fn same_identity(path: &std::path::Path, expected: Option<&same_file::Handle>) -
 }
 
 /// A missing child is owned through its nearest existing directory, never
-/// through a file, an unreadable path or an unresolved link.
-fn directory_anchor(path: &std::path::Path) -> Option<&std::path::Path> {
+/// through a file or an unresolved link. I/O failures stay indeterminate (`Err`).
+fn directory_anchor(path: &std::path::Path) -> Result<Option<&std::path::Path>, ()> {
     for ancestor in path.ancestors() {
         match std::fs::symlink_metadata(ancestor) {
-            Ok(metadata) => return metadata.is_dir().then_some(ancestor),
+            Ok(metadata) => return Ok(metadata.is_dir().then_some(ancestor)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-            Err(_) => return None,
+            Err(_) => return Err(()),
         }
     }
-    None
+    Ok(None)
 }
 
 pub(super) async fn prepare(app: &App, directory: &str, deadline: tokio::time::Instant) -> Option<()> {
@@ -470,4 +481,16 @@ pub async fn attachment(
         _ = principal.0.cancelled() => Err(crate::auth::unauthorized()),
         result = tokio::time::timeout(Duration::from_secs(15), request) => result.unwrap_or_else(|_| Err(missing())),
     }
+}
+
+#[test]
+fn directory_anchor_accepts_existing_or_missing_descendant_and_rejects_files() {
+    let dir = crate::shared::test_dir("media-anchor");
+    let file = dir.join("leaf.txt");
+    std::fs::write(&file, "x").unwrap();
+    assert_eq!(directory_anchor(&dir), Ok(Some(dir.as_path())));
+    assert_eq!(directory_anchor(&dir.join("missing").join("nested")), Ok(Some(dir.as_path())));
+    assert_eq!(directory_anchor(&file), Ok(None));
+    assert_eq!(directory_anchor(&file.join("child")), Ok(None));
+    std::fs::remove_dir_all(dir).unwrap();
 }

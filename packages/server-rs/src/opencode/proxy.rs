@@ -162,6 +162,7 @@ fn defer_message_list(id: &str, session: &str, bytes: Vec<u8>) -> Body {
     if let Ok(mut native) = serde_json::from_slice::<Value>(&bytes)
         && native.get_mut("data").is_some_and(|data| crate::sessions::media::defer(id, session, data))
     {
+        drop(bytes);
         return Body::from(native.to_string());
     }
     Body::from(bytes)
@@ -252,11 +253,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         .map(|(_, v)| v.into_owned());
     let session_path = route.strip_prefix("/api/session/").or_else(|| route.strip_prefix("/api/experimental/session/"));
     let session = session_path.and_then(|path| path.split('/').next()).filter(|v| !matches!(*v, "active" | "global"));
-    let defer_media = head.method == Method::GET
-        && session.is_some_and(|s| {
-            route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
+    let defer_media = (head.method == Method::GET && crate::sessions::media::wants_deferred(&head.headers))
+        .then(|| {
+            session.filter(|s| {
+                route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(*s)
+            })
         })
-        && crate::sessions::media::wants_deferred(&head.headers);
+        .flatten();
     let actual = if let Some(session) = session {
         Some(super::session_record_at(&app, &endpoint, session).await?)
     } else {
@@ -731,7 +734,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         return Ok(Json(native).into_response());
     }
-    if defer_media && response.status().is_success() && is_json_content_type(response.headers()) {
+    if let Some(session) = defer_media
+        && response.status().is_success()
+        && is_json_content_type(response.headers())
+    {
         let builder = relayed(&response);
         let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
         let bytes = tokio::select! {
@@ -741,10 +747,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 read.map_err(|_| interrupted())?.map_err(|_| interrupted())?
             }
         };
-        let body = match session {
-            Some(session) => defer_message_list(id, session, bytes),
-            None => Body::from(bytes),
-        };
+        let body = defer_message_list(id, session, bytes);
         if !app.native.current(&endpoint) {
             return Err(upstream_error());
         }

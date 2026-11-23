@@ -158,11 +158,20 @@ pub(crate) async fn media_directory(
     }
     let external = !within(&workspace.path, path);
     if path == workspace.path || !external && super::root_only(workspace).await? == Some(true) {
+        if !current() {
+            return Err(native_error());
+        }
         let proof = DirectoryProof { tree: None, source: None, external, media: true };
         return Ok(proof.history_live(&workspace.path, path).then_some(proof));
     }
     if external && !shares_common_directory(&workspace.path, anchor).await.map_err(|_| native_error())? {
+        if !current() {
+            return Err(native_error());
+        }
         return Ok(None);
+    }
+    if !current() {
+        return Err(native_error());
     }
     // Refresh on a miss; an invalidated snapshot cannot grant ownership.
     let mut refresh = false;
