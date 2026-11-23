@@ -70,6 +70,10 @@
 }
 
 @media (max-width: 639px) {
-  .folder-home-shell { height: auto; padding-block-start: 1rem; }
-  .folder-home-main { grid-template-columns: minmax(0, 1fr); }
+  .folder-home-shell { padding-block-start: 1rem; }
+  .folder-home-main {
+    grid-template-columns: minmax(0, 1fr);
+    /* Two 16rem panels and the 1rem gap. */
+    min-height: 33rem;
+  }
 }

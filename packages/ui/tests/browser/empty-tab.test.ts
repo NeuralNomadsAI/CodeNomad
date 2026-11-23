@@ -21,7 +21,7 @@ const profiles = ["Beta", "Alpha"].map(name => ({
   createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
 }))
 
-async function openApp(page: Page, remoteServers = profiles) {
+async function openApp(page: Page, remoteServers = profiles, recentFolders: { path: string; lastAccessed: number }[] = []) {
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname
     if (path === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
@@ -29,7 +29,7 @@ async function openApp(page: Page, remoteServers = profiles) {
     const data: Record<string, unknown> = {
       "/api/workspaces": [],
       "/api/storage/config/ui": { settings: { locale: "en" } },
-      "/api/storage/state/ui": { remoteServers },
+      "/api/storage/state/ui": { remoteServers, recentFolders },
       "/api/meta": { serversUsable: true, serversManageable: true, secretEntryAllowed: true },
       "/api/opencode/update": { state: "ready", serviceState: "ready" },
       "/api/opencode/login/start": { state: "off" },
@@ -75,7 +75,7 @@ for (const mode of ["desktop", "web", "phone"]) {
       }
       const browse = (await blank.getByRole("region", { name: "Browse", exact: true }).boundingBox())!
       const recent = (await blank.getByRole("region", { name: "Recent tabs", exact: true }).boundingBox())!
-      assert.ok(browse.height >= 512)
+      assert.ok(browse.height >= 256)
       assert.equal(browse.height, recent.height)
       if (mode === "phone") assert.ok(browse.y + browse.height < recent.y)
       else {
@@ -125,6 +125,41 @@ for (const mode of ["desktop", "web", "phone"]) {
     }
   })
 }
+
+test("long recent lists stay bounded while panels switch between columns and stacked rows", async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 850 } })
+  try {
+    const recents = Array.from({ length: 20 }, (_, index) => ({ path: `/project-${index}`, lastAccessed: 20 - index }))
+    await openApp(page, profiles, recents)
+    const root = page.locator(".folder-home-root:visible")
+    const browse = root.getByRole("region", { name: "Browse", exact: true })
+    const recent = root.getByRole("region", { name: "Recent tabs", exact: true })
+    await recent.getByRole("listitem").nth(19).waitFor()
+    let narrowHeight = 0
+    for (const [width, height] of [[1280, 850], [390, 850], [390, 1319], [390, 620], [639, 620], [640, 620], [1280, 850]]) {
+      await page.setViewportSize({ width, height })
+      const first = (await browse.boundingBox())!
+      const second = (await recent.boundingBox())!
+      assert.ok(first.height >= 256, JSON.stringify({ width, height, first }))
+      assert.equal(first.height, second.height)
+      if (width <= 639) {
+        assert.ok(first.y + first.height < second.y)
+        assert.ok(second.height <= Math.max(256, height / 2), JSON.stringify({ width, height, second }))
+        if (height === 850) narrowHeight = second.height
+        if (height === 1319) assert.ok(second.height > narrowHeight, "stacked panels still grow with available height")
+        if (height === 620) assert.equal(second.height, 256)
+      } else {
+        assert.equal(first.y, second.y)
+        assert.ok(first.x + first.width < second.x)
+      }
+      const list = recent.getByRole("list")
+      assert.ok(await list.evaluate(el => el.scrollHeight > el.clientHeight), "recents scroll inside the panel")
+      const footer = (await root.locator(".folder-home-shell > .text-center").boundingBox())!
+      assert.ok(footer.y >= second.y + second.height, "the footer follows both panels")
+      assert.ok(await root.evaluate(el => el.scrollWidth <= el.clientWidth), "the page fits horizontally")
+    }
+  } finally { await page.close() }
+})
 
 for (const width of [1280, 390]) {
   test(`direct HTTPS sign-in fits the Browse panel at ${width} pixels`, async () => {
