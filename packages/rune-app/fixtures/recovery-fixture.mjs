@@ -10,15 +10,22 @@ import {textStream} from './fixture-response.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requireTestSupport()
+const suspend=process.argv.includes('--suspend')
 const here=path.resolve(import.meta.dirname,'..')
 const profile=path.join(here,'fixture-profile',`recovery-${randomUUID()}`)
 const project=path.join(profile,'projects','synthetic')
 await mkdir(project,{recursive:true})
 const session='ses_recovery_synthetic'
 const store=new FixtureStore(600)
+if(suspend)store.rows[410].content.push({type:'tool',id:'reveal',name:'read',state:{
+  status:'completed',input:{filePath:'reveal.txt'},output:'Output retained after eviction',
+}})
 const nativeStreams=new Set(),proxyStreams=new Set()
 const stats={pages:0,latestReads:0,prompts:0,transportConnections:0,nativeConnections:0,blockedPages:0,stalePages:0}
-let blockOlder=false,staleOlder=false,liveRow,liveText,busy=0,idle=1
+let blockOlder=false,staleOlder=false,holdWindow=false,hiddenPermission=false,recoveredPermission=false,afterCutsPermission=false,hiddenQuestion=false,liveRow,liveText,busy=0,idle=1
+const permission={id:'permission-suspended',sessionID:session,action:'read',resources:['synthetic.txt'],message:'Permission sent while hidden'}
+const form={id:'form-suspended',sessionID:session,title:'Question received while hidden',fields:[{key:'hidden-answer',type:'string'}]}
+if(suspend)Object.assign(stats,{heldReadStarted:0,heldReadCancelled:0,aroundReads:0,gapPermissionReads:0})
 const record=()=>({id:session,projectID:'global',location:{directory:project},time:{created:1,busy,idle}})
 const emit=(type,data)=>{
   const event={id:randomUUID(),type,created:Date.now(),location:{directory:project},data:{sessionID:session,...data}}
@@ -38,10 +45,18 @@ const native=createServer(async(req,res)=>{
   }
   if(url.pathname==='/api/location')return json({data:{directory:project}})
   if(url.pathname===`/api/session/${session}`)return json({data:record()})
+  if(suspend&&url.pathname===`/api/session/${session}/permission`){
+    if(recoveredPermission&&stats.nativeConnections>=2)stats.gapPermissionReads++
+    return json({data:[...(hiddenPermission?[permission]:[]),...(recoveredPermission?[{...permission,id:'permission-during-gap'}]:[]),
+      ...(afterCutsPermission?[{...permission,id:'permission-after-reopens'}]:[])]})
+  }
+  if(suspend&&url.pathname===`/api/session/${session}/form`)return json({data:hiddenQuestion?[form]:[]})
+  if(suspend&&url.pathname==='/api/model')return json({data:[]})
   if(url.pathname==='/api/plugin')return json({location:{directory:project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
   if(['/api/rpc/codenomad.session-pruning/window','/api/rpc/codenomad.session-pruning/windowUserFilesV1'].includes(url.pathname)){
     const {input}=JSON.parse(raw);assert.equal(input.sessionID,session)
     stats.pages++;if(input.target.kind==='latest')stats.latestReads++
+    if(suspend&&input.target.kind==='around'){stats.aroundReads++;stats.resumedAnchor=input.target.messageID}
     if(input.target.kind==='before'&&blockOlder){blockOlder=false;stats.blockedPages++;return json({output:{status:'blocked',reason:'anchor_missing'}})}
     const snapshot=store.window(input.target)
     if(url.pathname.endsWith('windowUserFilesV1')&&snapshot.status==='window')snapshot.userFiles='reference-v1'
@@ -82,6 +97,32 @@ try{
     if(req.url.startsWith('/__test__/')){
       const action=req.url.slice('/__test__/'.length)
       if(action==='block-older')blockOlder=true
+      if(action==='hold-window')holdWindow=true
+      if(action==='permission-while-hidden'){
+        hiddenPermission=true
+        emit('permission.asked',{permissionID:permission.id,action:permission.action,resources:permission.resources})
+      }
+      if(action==='question-while-hidden'){
+        hiddenQuestion=true
+        emit('form.created',{form})
+      }
+      if(action==='permission-during-gap'){
+        for(const stream of nativeStreams)stream.destroy()
+        recoveredPermission=true
+      }
+      if(action==='cut-observer')cutTransport()
+      if(action==='step-while-hidden'){
+        busy=Date.now()
+        emit('session.step.started',{assistantMessageID:'message-00600',agent:'fixture',model:{providerID:'fixture',id:'fixture'}})
+      }
+      if(action==='finish-hidden-step'){
+        idle=Date.now()+1
+        emit('session.execution.succeeded',{})
+      }
+      if(action==='permission-after-reopens'){
+        afterCutsPermission=true
+        emit('permission.asked',{permissionID:'permission-after-reopens',action:permission.action,resources:permission.resources})
+      }
       if(action==='stale-older')staleOlder=true
       if(action==='revert-in-history'){
         store.rows[598].content[0].text='authoritative after revert'
@@ -107,6 +148,15 @@ try{
       res.setHeader('content-type','application/json')
       res.end(JSON.stringify(action==='expected'?store.rows.map(row=>({id:row.id,body:row.type==='user'?row.text:row.content.map(p=>p.text).join('\n')})):stats));return
     }
+    if(holdWindow&&req.url.includes('/session-history/window')){
+      holdWindow=false
+      stats.heldReadStarted++
+      res.on('close',()=>{if(!res.writableEnded)stats.heldReadCancelled++})
+      res.writeHead(200,{'content-type':'application/json'})
+      res.write('{"status":')
+      req.resume()
+      return
+    }
     const target=new URL(req.url,origin)
     const up=request(target,{method:req.method,headers:{...req.headers,host:target.host}},response=>{
       res.writeHead(response.statusCode,response.headers);response.pipe(res)
@@ -126,7 +176,7 @@ try{
   const opened=await fetch(`${base}/api/workspaces`,{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({path:project})})
   const workspace=await opened.json();assert.equal(opened.status,201)
   for(const end=Date.now()+10000;nativeStreams.size===0;){assert(Date.now()<end);await new Promise(r=>setTimeout(r,25))}
-  child=spawn(clientBinary,['--probe-recovery'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,
+  child=spawn(clientBinary,[suspend?'--probe-suspend':'--probe-recovery'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,
     RUNE_BACKEND:`${base}/`,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_TEST_CONTROL:`${base}/__test__/`}})
   let clientLog=''
   child.stdout.on('data',chunk=>clientLog+=chunk)
@@ -135,8 +185,15 @@ try{
   await writeFile(path.join(profile,'client.log'),clientLog)
   console.log(clientLog)
   assert.equal(result,0,'Headless Rune recovery probe')
-  assert.equal(stats.blockedPages,1);assert.equal(stats.stalePages,1)
-  assert(stats.transportConnections>=4);assert(stats.nativeConnections>=2)
+  if(suspend){
+    assert.equal(stats.heldReadStarted,1);assert.equal(stats.heldReadCancelled,1)
+    assert.equal(stats.aroundReads,1);assert.equal(stats.prompts,0)
+    assert.equal(stats.transportConnections,8)
+    assert(stats.nativeConnections>=2)
+  }else{
+    assert.equal(stats.blockedPages,1);assert.equal(stats.stalePages,1)
+    assert(stats.transportConnections>=4);assert(stats.nativeConnections>=2)
+  }
   console.log(JSON.stringify({fixture:'real-rust-recovery-synthetic-opencode',result:'ok',stats}))
 }finally{
   console.log(JSON.stringify({type:'recovery-fixture-stats',...stats}))

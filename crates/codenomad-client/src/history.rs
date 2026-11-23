@@ -18,6 +18,19 @@ pub struct Page {
     pub running: bool,
     pub user_file_references: bool,
 }
+
+pub fn retained_bytes(rows: &[Row]) -> usize {
+    rows.iter().fold(0usize, |total, row| {
+        total.saturating_add(
+            size_of::<Message>()
+                + row.id.len()
+                + row.role.len()
+                + row.body.len()
+                + crate::content::bytes(&row.parts)
+                + crate::content::tool_text_bytes(&row.parts),
+        )
+    })
+}
 pub fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 256
@@ -54,7 +67,19 @@ fn cursor(v: &Value, kind: &str) -> Result<Option<Value>> {
     }
     Ok(Some(v.clone()))
 }
+#[derive(Debug)]
+pub(crate) struct AnchorMissing;
+impl std::fmt::Display for AnchorMissing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("history anchor missing")
+    }
+}
+impl std::error::Error for AnchorMissing {}
+
 pub fn decode(v: Value) -> Result<Page> {
+    if v["status"] == "blocked" && v["reason"] == "anchor_missing" {
+        return Err(AnchorMissing.into());
+    }
     if v["status"] != "window" {
         return Err("history unavailable or anchor changed".into());
     }

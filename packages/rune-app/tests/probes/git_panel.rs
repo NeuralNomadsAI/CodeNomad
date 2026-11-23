@@ -178,14 +178,42 @@ pub(super) fn run() {
         workspace::active_session(&rt.state) == Some("ses_another")
             && rt.state.phase == Phase::Ready
     });
+    rt.set_viewport((1100.0, 920.0), 1.0);
+    rt.frame(1.0 / 60.0);
     tap_mode(&mut rt, 0);
     wait(&mut rt, "linked Workspace row", |rt| {
-        rt.find(&eye).is_some()
+        rt.find(&eye).is_some() && rt.state.messages.len() == 50
     });
-    let (x, y) = rt.find(&eye).unwrap();
-    rt.pointer_move(x, y);
-    rt.frame(1.0 / 60.0);
-    tap(&mut rt, &eye);
+    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 1600.0));
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    let reading = super::recovery::anchor(&rt);
+    let open = |rt: &mut Runtime<State>| {
+        let (x, y) = rt.find(&eye).unwrap();
+        rt.pointer_move(x, y);
+        rt.frame(1.0 / 60.0);
+        tap(rt, &eye);
+        wait(rt, "linked file replaces the transcript", |rt| {
+            rt.find("file-editor").is_some() && rt.find("history").is_none()
+        });
+    };
+    for close in ["file-close", eye.as_str(), "Escape"] {
+        open(&mut rt);
+        if close == "Escape" {
+            rt.key(rune::KeyEvent {
+                key: rune::Key::Escape,
+                mods: Default::default(),
+            });
+        } else {
+            tap(&mut rt, close);
+        }
+        wait(&mut rt, "linked transcript remounted", |rt| {
+            rt.find(&reading.0).is_some()
+        });
+        super::recovery::check_anchor(&rt, &reading);
+    }
+    open(&mut rt);
     wait(&mut rt, "linked editor", |rt| {
         rt.find("file-editor").is_some()
             && rt
