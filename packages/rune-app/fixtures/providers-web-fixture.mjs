@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {readFile} from 'node:fs/promises'
 import path from 'node:path'
-import {chromium} from 'playwright'
+import {activateControl,launchChromium} from '../../../scripts/rune/web-chromium.mjs'
 import {bundleAssetPaths} from '../../../scripts/rune/web-workspace-policy.mjs'
 
 const bundle = path.resolve(process.argv[2] ?? 'target/rune-web-settings-providers')
@@ -180,9 +180,9 @@ const server = createServer(async (req,res) => {
 await new Promise(resolve => server.listen(0,'127.0.0.1',resolve))
 let browser, page
 try {
-  browser = await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
+  browser = await launchChromium(process.env.CODENOMAD_BROWSER_PATH||undefined)
   page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true})
-  const click = name => page.getByRole('button',{name,exact:true}).click({force:true,timeout:15000})
+  const click = name => activateControl(page,page.getByRole('button',{name,exact:true}),{timeout:15000})
   const radio = name => page.getByRole('radio',{name,exact:true})
   const visible = name => page.getByText(name,{exact:true}).waitFor({state:'attached',timeout:15000})
   await page.goto(`http://127.0.0.1:${server.address().port}/?locale=en`)

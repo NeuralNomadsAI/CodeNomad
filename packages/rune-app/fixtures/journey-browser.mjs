@@ -1,32 +1,30 @@
 import assert from 'node:assert/strict'
 import {readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {chromium, request} from 'playwright'
 import {mobileClientHints, mobileContext} from '../../../scripts/rune/web-mobile.mjs'
-import {commit, edited, filename, initial, prompt, reply, title, until} from './journey-host.mjs'
+import {activateControl,launchOwnedChromium} from '../../../scripts/rune/web-chromium.mjs'
+import {commit, edited, filename, initial, prompt, reply, title, assertPrivateChild} from './journey-host.mjs'
+import {signInFixture,until} from './fixture-host.mjs'
+import {guardJourney} from './journey-web-policy.mjs'
 
-export async function journeyBrowser(host, web, report){
-  const {origin,password,profile,project}=host
+export async function journeyBrowser(host, web, report, executablePath){
+  const {origin,password,profile,project,env}=host
   const labels=JSON.parse(await readFile(new URL('../../../crates/rune-theme-codenomad/assets/catalogues/en.json',import.meta.url),'utf8'))
   const manifest=JSON.parse(await readFile(path.join(web,'bundle-manifest.json'),'utf8'))
   assert.equal(manifest.testSupport,false,'Use a product WASM artifact')
-  const http=await request.newContext({baseURL:origin,timeout:15000})
+  const http=await signInFixture(origin,password)
   let storageState
   try{
-    assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password}})).status(),200)
     storageState=await http.storageState()
   }finally{await http.dispose()}
-  const browser=await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined,
-    args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
+  const owned=await launchOwnedChromium({executablePath,profile,env:assertPrivateChild(env)})
+  const {browser}=owned
+  report.chromiumPID=owned.pid
   try{
     const context=await browser.newContext({...mobileContext(browser),storageState,serviceWorkers:'block',colorScheme:'light'})
     const refused=[], errors=[]
-    await context.route('**/*',route=>{
-      const url=new URL(route.request().url())
-      if(url.origin===origin)return route.continue()
-      refused.push(url.origin)
-      return route.abort()
-    })
+    report.refused=refused
+    await guardJourney(context,{origin,project,web,refused})
     const page=await context.newPage()
     const boot=async()=>{
       page.setDefaultTimeout(20000)
@@ -55,7 +53,7 @@ export async function journeyBrowser(host, web, report){
         if(next&&['x','y','width','height'].every(key=>Math.abs(first[key]-next[key])<0.5))return next
         return false
       },`stable, enabled ${locator}`,20000)
-      await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
+      await activateControl(page,locator,{touch:true,rect:box})
     }
     async function editor(name){
       const field=page.locator('textarea:focus')
@@ -84,10 +82,10 @@ export async function journeyBrowser(host, web, report){
       report.steps.push(entry)
       try{
         await action()
-        assert.deepEqual(refused,[],'No request may leave the private Rust origin')
+        assert.deepEqual(refused,[],'No unadmitted browser request')
         assert.deepEqual(errors,[])
       }catch(error){entry.error=error.message}
-      const base=path.join(profile,`web-${name}`)
+      const base=path.join(report.output,`web-${name}`)
       const proof=await Promise.allSettled([
         mirror().ariaSnapshot({timeout:3000}).catch(()=>page.locator('body').ariaSnapshot({timeout:3000}))
           .then(snapshot=>writeFile(`${base}.aria.yml`,snapshot)),
@@ -166,7 +164,14 @@ export async function journeyBrowser(host, web, report){
       const change=named('group',label('gitPanel.changes'))
       const loaded=response('GET',/\/git-diff$/);void loaded.catch(()=>{})
       await press(change.getByRole('button',{name:`${label('filesPanel.viewer')} · ${filename}`,exact:true}))
-      await loaded
+      const result=await loaded
+      const url=new URL(result.url())
+      assert.equal(url.searchParams.get('path'),filename)
+      assert.equal(url.searchParams.get('scope'),'unstaged')
+      const diffBody=await result.json()
+      assert.equal(diffBody.path,filename)
+      assert.equal(diffBody.before,initial)
+      assert.equal(diffBody.after,edited)
       await panel(right,false)
       const diff=named('region',label('gitPanel.diff'))
       await diff.getByText(initial.trim()).first().waitFor()
@@ -217,5 +222,8 @@ export async function journeyBrowser(host, web, report){
       await named('heading',title).waitFor()
       await text(reply).waitFor()
     })
-  }finally{await browser.close()}
+  }finally{
+    try{report.chromiumClosedGracefully=await owned.close()}
+    catch(error){report.stage='browser-cleanup';throw error}
+  }
 }

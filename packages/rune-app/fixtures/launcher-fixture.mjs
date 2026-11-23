@@ -16,6 +16,7 @@ import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.m
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {webLiveFixture} from './web-live-fixture.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
+import {launchFixture,rustOrigin,signInFixture} from './fixture-host.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
 const webMissions=process.argv.includes('--web-missions')
@@ -397,32 +398,20 @@ Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http
 if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
-let server,exited,log='',client,clientClosed,mobileAction,deviceLease,androidCleanup,result=1,http,staticProof,diagnostic='',runLog='',expired=false
+let host,server,log='',client,clientClosed,mobileAction,deviceLease,androidCleanup,result=1,http,staticProof,diagnostic='',expired=false
 async function startServer(){
-  runLog=''
-  server=spawn(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-  server.stdout.on('data',d=>{if(log.length<1048576)log+=d;if(runLog.length<1048576)runLog+=d})
-  server.stderr.on('data',d=>{if(log.length<1048576)log+=d})
-  server.stdin.on('error',()=>{})
-  exited=new Promise(resolve=>{server.once('close',resolve);server.once('error',resolve)})
-  for(const until=Date.now()+20000;;){
-    assert(Date.now()<until&&server.exitCode===null,`${ts?'TypeScript':'Rust'} startup: ${log.slice(-1000)}`)
-    const origin=ts?ts.ready(runLog):runLog.match(/^http:\/\/127\.0\.0\.1:\d+(?=\r?$)/m)?.[0]
-    if(origin)return origin
-    await new Promise(r=>setTimeout(r,50))
-  }
+  host=launchFixture(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],
+    {cwd:profile,env,shutdown:ts?'codenomad:shutdown\n':'shutdown\n',graceMs:ts?15000:3000})
+  server=host.child
+  return host.ready(ts?stdout=>ts.ready(stdout):rustOrigin)
 }
 async function stopServer(){
-  if(!server || server.exitCode!==null)return
-  server.stdin.end(ts?'codenomad:shutdown\n':'shutdown\n')
-  await Promise.race([exited,new Promise(r=>setTimeout(r,ts?15000:3000).unref())])
-  if(server.exitCode===null){server.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,5000))])}
+  if(!host)return
+  try{await host.stop()}finally{log=(log+host.output()).slice(-1048576);host=undefined}
 }
 async function signIn(origin){
   await http?.dispose()
-  http=await request.newContext({baseURL:origin,timeout:15000})
-  assert.equal((await http.get('/api/workspaces')).status(),401,'Workspace inventory requires authentication')
-  assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200)
+  http=await signInFixture(origin,'fixture-backend')
 }
 try{
   const origin=await startServer()
@@ -431,7 +420,7 @@ try{
     const storage=path.join(profile,'browser-storage.json')
     let uiOrigin=origin, paired
     if(webMobile){
-      uiOrigin=ts?.https??runLog.match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1];assert(uiOrigin,'HTTPS fixture missing')
+      uiOrigin=ts?.https??host.stdout().match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1];assert(uiOrigin,'HTTPS fixture missing')
       if(!webAndroid){
         const issue=await http.post('/api/remote-control/pairings')
         assert.equal(issue.status(),200)
@@ -466,7 +455,7 @@ try{
           assert.equal(server.exitCode,0,'The original listener must actually exit')
           if(!ts)env.CNRS_HTTPS_BIND=new URL(uiOrigin).host
           await signIn(await startServer())
-          if(!ts)assert(runLog.includes(`HTTPS ${uiOrigin}`))
+          if(!ts)assert(host.stdout().includes(`HTTPS ${uiOrigin}`))
           assert.equal((await (await http.get('/api/meta')).json()).serverId,serverId)
           const opened=await http.post('/api/workspaces',{data:{path:project}})
           assert(opened.ok())

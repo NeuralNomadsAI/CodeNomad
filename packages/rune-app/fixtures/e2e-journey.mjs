@@ -1,14 +1,14 @@
 // OpenCode executes a real permitted edit through an exclusively loopback model.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
-import {writeFile, readFile} from 'node:fs/promises'
+import {mkdir, mkdtemp, writeFile, readFile} from 'node:fs/promises'
 import path from 'node:path'
 import {parseArgs} from 'node:util'
 import {setTimeout as delay} from 'node:timers/promises'
-import {stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 import {clientBinary, requireTestSupport, serverBinary} from './fixture-binaries.mjs'
 import {journeyBrowser} from './journey-browser.mjs'
-import {withJourneyHost} from './journey-host.mjs'
+import {withJourneyHost,assertPrivateChild} from './journey-host.mjs'
+import {fixtureSystemEnvironment} from './private-profile.mjs'
+import {launchFixture} from './fixture-host.mjs'
 
 const {values}=parseArgs({options:{opencode:{type:'string'},mode:{type:'string',default:'both'}}})
 assert(values.opencode&&path.isAbsolute(values.opencode),'Pass --opencode <absolute executable>; the shared service is forbidden')
@@ -16,37 +16,43 @@ assert(process.env.RUNE_SERVER_EXE,'Pass RUNE_SERVER_EXE from this checkout')
 assert(['both','windows','web'].includes(values.mode),'Use --mode both, windows, or web')
 const modes=values.mode==='both'?['windows','web']:[values.mode]
 assert(!modes.includes('windows')||process.platform==='win32','The native journey needs Windows; use --mode web on other hosts')
-const web=path.resolve(import.meta.dirname,'../../..',process.env.RUNE_WEB_DIR??'target/rune-web-journey')
+const root=path.resolve(import.meta.dirname,'../../..')
+const web=path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-journey')
+const browserExecutable=process.env.CODENOMAD_BROWSER_PATH||undefined
+const codenomad=path.basename(path.dirname(root))==='worktrees'?path.resolve(root,'../..'):path.join(root,'.codenomad')
+const evidence=path.join(codenomad,'cargo-targets','e2e-journey')
+// esbuild's worker and any OS helper inherit only this allowlist.
+const system=assertPrivateChild(fixtureSystemEnvironment())
+for(const key of Object.keys(process.env))if(!Object.hasOwn(system,key))delete process.env[key]
+await mkdir(evidence,{recursive:true})
 
 async function journeyDesktop({origin,password,project,profile,env},report){
-  requireTestSupport(clientBinary)
+  const probe='--probe-e2e-journey'
+  requireTestSupport(clientBinary,{probe,env:assertPrivateChild(env),cwd:profile,output:profile})
   const state=path.join(profile,'rune-state')
   const session=path.join(profile,'session.txt')
   for(const phase of ['start','reopen']){
-    const child=spawn(clientBinary,['--probe-e2e-journey'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{
+    const child=launchFixture(clientBinary,[probe],{cwd:profile,env:assertPrivateChild({
       ...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:password,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'en',
-      RUNE_STATE_DIR:state,RUNE_JOURNEY_OUTPUT:profile,RUNE_JOURNEY_PHASE:phase,RUNE_JOURNEY_SESSION_FILE:session,
-    }})
-    let output='',diagnostics='',spawnError,windowClosed=false
-    const closed=new Promise(resolve=>{child.once('close',resolve);child.once('error',error=>{spawnError=error;resolve(1)})})
-    child.stdout.on('data',data=>{output=(output+data).slice(-65536)})
-    child.stderr.on('data',data=>{diagnostics=(diagnostics+data).slice(-65536)})
+      RUNE_STATE_DIR:state,RUNE_JOURNEY_OUTPUT:report.output,RUNE_JOURNEY_PHASE:phase,RUNE_JOURNEY_SESSION_FILE:session,
+    },{RUNE_PASSWORD:password})})
+    let windowClosed=false
     try{
-      const result=await Promise.race([closed,delay(220000,124,{ref:false})])
-      await writeFile(path.join(profile,`windows-${phase}.log`),diagnostics.replaceAll(password,'<private>'))
-      for(const line of output.split(/\r?\n/)){
+      const result=await Promise.race([child.closed,delay(220000,124,{ref:false})])
+      await writeFile(path.join(report.output,`windows-${phase}.log`),child.output().replaceAll(password,'<private>'))
+      for(const line of child.stdout().split(/\r?\n/)){
         let event
         try{event=JSON.parse(line)}catch{continue}
         if(event.step)report.steps.push(event)
         if(event.nativeWindowClosed)windowClosed=true
       }
-      assert.equal(result,0,spawnError?.message??`Native journey ${phase} failed (${result}); see windows-${phase}.log`)
+      assert.equal(result,0,`Native journey ${phase} failed (${result}); see windows-${phase}.log`)
       if(phase==='start'){
         assert(windowClosed,'The hidden Windows close callback did not run')
         report.nativeWindowClosed=true
       }
     }finally{
-      if(child.pid&&child.exitCode===null&&child.signalCode===null)await stopFixtureChild(child,closed)
+      await child.stop()
     }
   }
   report.sessionID=await readFile(session,'utf8')
@@ -55,12 +61,12 @@ async function journeyDesktop({origin,password,project,profile,env},report){
 
 const reports=[]
 for(const mode of modes){
-  const report={mode,ok:false,steps:[]}
+  const report={mode,ok:false,steps:[],output:await mkdtemp(path.join(evidence,`journey-${mode}-`))}
   report.stage='private-host'
   try{
     await withJourneyHost({cli:values.opencode,rust:serverBinary,web,mode},report,host=>{
       report.stage=mode==='windows'?'native-runtime':'browser-launch'
-      return mode==='windows'?journeyDesktop(host,report):journeyBrowser(host,web,report)
+      return mode==='windows'?journeyDesktop(host,report):journeyBrowser(host,web,report,browserExecutable)
     })
     report.ok=true
     delete report.stage
@@ -68,7 +74,7 @@ for(const mode of modes){
     report.error=error.message
     report.failedStep=report.steps.findLast(row=>!row.ok)?.name??report.stage
   }
-  if(report.profile)await writeFile(path.join(report.profile,'journey-report.json'),JSON.stringify(report,null,2)+'\n')
+  await writeFile(path.join(report.output,'journey-report.json'),JSON.stringify(report,null,2)+'\n')
   reports.push(report)
   console.log(JSON.stringify(report))
 }

@@ -221,7 +221,9 @@ pub(super) fn run() {
     });
     step(&mut rt, &path, "search-history", |rt| {
         tap(rt, "git-mode/segment2");
-        ui(rt, COMMIT, |rt| text(rt, COMMIT));
+        ui(rt, "both commits before filtering", |rt| {
+            text(rt, COMMIT) && text(rt, "Journey start")
+        });
         type_text(rt, "git-filter", COMMIT);
         assert!(text(rt, COMMIT) && !text(rt, "Journey start"));
     });

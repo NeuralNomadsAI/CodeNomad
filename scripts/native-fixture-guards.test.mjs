@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { fixturePaginationGuard, stopFixtureChild, clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
-import { execFileSync } from "node:child_process"
+import { execFileSync, spawn } from "node:child_process"
+import { once } from "node:events"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -22,6 +23,25 @@ test("fixture cleanup accepts an owned child closing after forced termination", 
   const child = { kill: signal => { signals.push(signal ?? "SIGTERM"); if (signal === "SIGKILL") closed() } }
   await stopFixtureChild(child, stopped, 5, 5)
   assert.deepEqual(signals, ["SIGTERM", "SIGKILL"])
+})
+
+test("Windows fixture cleanup stops a descendant even after graceful parent exit", { skip: process.platform !== "win32", timeout: 75_000 }, async () => {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(path|systemroot|windir)$/i.test(key)))
+  const root = spawn(process.execPath, ["-e", `
+    const { spawn } = require("node:child_process")
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" })
+    child.once("spawn", () => console.log(child.pid))
+    process.stdin.resume()
+    process.stdin.once("end", () => process.exit(0))
+  `], { env, windowsHide: true, stdio: ["pipe", "pipe", "inherit"] })
+  const startedBy = new Date()
+  const stopped = once(root, "close")
+  const [message] = await once(root.stdout, "data")
+  const descendant = Number(message.toString().trim())
+  assert.ok(Number.isSafeInteger(descendant) && descendant > 0)
+  await stopFixtureChild(root, stopped, 3000, 2000, { close: () => root.stdin.end(), startedBy })
+  assert.equal(root.exitCode, 0)
+  assert.throws(() => process.kill(descendant, 0), { code: "ESRCH" })
 })
 
 test("Missions native fixtures stop their owned serve with bounded escalation", () => {
