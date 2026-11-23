@@ -8,8 +8,8 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-rune = { git = "https://github.com/anomalyco/rune", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4", default-features = false, features = ["embedded-fonts", "accessibility", "tooling", "segmenter-dictionaries"] }
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4", default-features = false }
+rune = { git = "https://github.com/anomalyco/rune", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4", default-features = false, features = ["embedded-fonts", "accessibility", "tooling", "segmenter-dictionaries", "svg", "avif"] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4", default-features = false, features = ["markdown", "mermaid"] }
 serde_json = "1"
 codenomad-client = { path = "crates/codenomad-client" }
 rune-theme-codenomad = { path = "crates/rune-theme-codenomad" }

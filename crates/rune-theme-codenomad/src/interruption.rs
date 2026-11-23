@@ -22,13 +22,15 @@ pub fn session_surface(expanded: bool) -> El {
 }
 pub fn history(expanded: bool) -> El {
     let area = rune::col().key("history").w_full().grow(1.0);
-    let minimum = if expanded {
+    area.min_h(history_minimum(expanded))
+        .scroll(ScrollSpec { stick_bottom: true })
+}
+pub(crate) fn history_minimum(expanded: bool) -> f32 {
+    if expanded {
         tokens(layout::dark()).length(Length::TouchTarget).px()
     } else {
         0.0
-    };
-    area.min_h(minimum)
-        .scroll(ScrollSpec { stick_bottom: true })
+    }
 }
 fn input_minimum() -> f32 {
     let t = tokens(layout::dark());

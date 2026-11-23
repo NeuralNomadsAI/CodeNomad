@@ -192,5 +192,25 @@ impl Drop for Reader {
     }
 }
 
+#[cfg(feature = "test-support")]
+impl Reader {
+    pub fn scene(&mut self, preview: Result<Preview>) {
+        self.cancel();
+        self.dirty = false;
+        self.sequence += 1;
+        self.settled = (self.sequence, preview.is_ok());
+        match preview {
+            Ok(preview) => {
+                self.preview = Some(preview);
+                self.error = None;
+            }
+            Err(error) => {
+                self.preview = None;
+                self.error = Some(error.to_string());
+            }
+        }
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

@@ -7,6 +7,21 @@ use std::{borrow::Cow, cell::Cell};
 thread_local! { static APPEARANCE: Cell<bool> = const { Cell::new(false) }; }
 pub type DrawnRect = rune::Live<[f32; 4]>;
 
+thread_local! { static SOURCE_PALETTE: Cell<bool> = const { Cell::new(false) }; }
+pub(crate) fn source_palette() -> bool {
+    SOURCE_PALETTE.get()
+}
+/// Render a qualified subtree in Solid's product-default palette.
+pub fn with_source_palette<T>(render: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SOURCE_PALETTE.set(self.0);
+        }
+    }
+    let _restore = Restore(SOURCE_PALETTE.replace(true));
+    crate::palettes::with_palette(None, render)
+}
 pub fn dark() -> bool {
     APPEARANCE.get()
 }
@@ -115,21 +130,35 @@ pub fn transcript_rows<S: 'static>(
             },
         )
 }
-pub fn composer(editor: El) -> El {
-    composer_bounds(editor, 104.0)
+pub fn composer<S>(editor: El, scroll_stack: Option<&rune::Cx<S>>) -> El {
+    composer_bounds(editor, 104.0, scroll_stack)
 }
-pub fn compact_composer(editor: El) -> El {
+pub fn compact_composer<S>(editor: El, scroll_stack: Option<&rune::Cx<S>>) -> El {
     let t = tokens(dark());
     composer_bounds(
         editor,
         t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0,
+        scroll_stack,
     )
 }
-fn composer_bounds(editor: El, minimum: f32) -> El {
+fn composer_bounds<S>(editor: El, minimum: f32, scroll_stack: Option<&rune::Cx<S>>) -> El {
+    const MAX_HEIGHT: f32 = 320.0;
+    let editor = editor.min_h(minimum);
+    if scroll_stack.is_some_and(|cx| {
+        cx.layout_size("composer")
+            .is_none_or(|size| size[1] <= MAX_HEIGHT)
+    }) {
+        return rune::col()
+            .key("scroll")
+            .w_full()
+            .min_h(minimum)
+            .max_h(MAX_HEIGHT)
+            .child(editor);
+    }
     // The editor owns the whole painted space, including blank lines above the minimum.
-    rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
+    rune::auto_grow(editor, 1, usize::MAX)
         .min_h(minimum)
-        .max_h(320.0)
+        .max_h(MAX_HEIGHT)
 }
 pub trait Layout {
     fn locale_direction(self, locale: &str) -> Self;

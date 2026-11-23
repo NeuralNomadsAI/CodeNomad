@@ -286,7 +286,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     {
         changed |= chat::authentication::poll(s);
     }
-    changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
+    changed |= files::poll(s, now, tx);
     changed |= git::poll(s, now, tx);
     workspace::capture_files_mode(s);
     if changed {
@@ -471,16 +471,17 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let expanded = interruption_expanded(s);
     rune_theme_codenomad::interruption::session_surface(expanded)
         .child(shell::reader(s, || {
-            rune_theme_codenomad::interruption::history(expanded)
+            let history = rune_theme_codenomad::interruption::history(expanded)
                 .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
                 .on_layout_tx(chat::ToolDiffPreferences::history_layout)
-                .child(transcript::rows(s))
+                .child(transcript::rows(s));
+            files::view::body(s, chat::reading::history(s, history), expanded)
         }))
         .child(agent_view::view(s, cx))
-        .child(composer(s))
+        .child(composer(s, expanded.then_some(cx)))
 }
 
-fn composer(s: &State) -> El {
+fn composer(s: &State, scroll_stack: Option<&Cx<State>>) -> El {
     let scope = s.input_scope.clone();
     let field = if interruption_expanded(s) {
         layout::compact_composer
@@ -508,6 +509,7 @@ fn composer(s: &State) -> El {
                     .on_edit(screen::edit(&scope, screen::Editor::Composer))
                     .on_input_change(crate::screen::action_tx(&scope, workspace::draft_changed))
                     .on_submit(crate::screen::action_tx(&scope, send)),
+                scroll_stack,
             )
             .field_surface(),
         )
@@ -572,6 +574,11 @@ fn main() {
     #[cfg(feature = "test-support")]
     if platform::has_flag("--gallery-action-menu") {
         gallery::action_menu::run();
+        return;
+    }
+    #[cfg(feature = "test-support")]
+    if platform::has_flag("--gallery-reader") {
+        gallery::reader::run();
         return;
     }
     #[cfg(feature = "test-support")]

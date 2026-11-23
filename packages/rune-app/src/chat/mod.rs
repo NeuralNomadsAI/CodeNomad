@@ -5,6 +5,7 @@ pub(crate) mod authentication;
 mod content_tests;
 mod document;
 mod links;
+pub(crate) mod reading;
 #[cfg(test)]
 mod rtl_tests;
 #[cfg(test)]

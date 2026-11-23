@@ -40,6 +40,19 @@ pub fn absolute(path: &str) -> bool {
     style(path).is_some()
 }
 
+pub fn basename(path: &str) -> &str {
+    let separators = if style(path) == Some(Style::Windows) {
+        &['/', '\\'][..]
+    } else {
+        &['/'][..]
+    };
+    path.trim_end_matches(separators)
+        .rsplit(separators)
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(path)
+}
+
 pub fn same(left: &str, right: &str) -> bool {
     match (style(left), style(right)) {
         (Some(Style::Windows), Some(Style::Windows)) => {
@@ -57,6 +70,13 @@ pub fn same(left: &str, right: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn basename_preserves_literal_posix_backslashes_and_windows_separators() {
+        assert_eq!(basename(r"/work/project\sub"), r"project\sub");
+        assert_eq!(basename(r"D:\work\project\"), "project");
+        assert_eq!(basename(r"\\host\share\project\"), "project");
+        assert_eq!(basename("/"), "/");
+    }
     #[test]
     fn windows_drive_and_unc_match_on_every_client_target() {
         assert!(absolute(r"D:\CodeNomad"));

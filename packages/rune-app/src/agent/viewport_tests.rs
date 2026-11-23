@@ -108,32 +108,104 @@ fn workspace_chat_keeps_history_agent_and_composer_inside_the_viewport() {
 }
 #[test]
 fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
-    for size in [(1400.0, 900.0), (390.0, 740.0), (390.0, 320.0)] {
-        let mut state = state();
-        let ui = state.agent.as_mut().unwrap();
-        ui.selected = "permission-fixture".into();
-        ui.permissions.push(Permission {
-            id: ui.selected.clone(),
-            action: "read".into(),
-            resources: (0..40)
-                .map(|i| format!("/synthetic/resource-{i}"))
-                .collect(),
-            message: String::new(),
-            supported: true,
-        });
-        ui.reasons.insert(ui.selected.clone(), TextEdit::new(""));
-        let mut rt = runtime(state, size);
-        for key in ["allow_once", "allow_always", "reject"] {
-            if size.1 == 320.0 {
-                reveal(&mut rt, key);
-            } else {
-                visible(&rt, key);
+    for files_wanted in [None, Some(false), Some(true)] {
+        for size in [
+            (1920.0, 900.0),
+            (1400.0, 900.0),
+            (390.0, 740.0),
+            (390.0, 320.0),
+        ] {
+            let mut state = state();
+            crate::gallery::shell::fixture(&mut state);
+            state.workspace = Some(crate::workspace::Ui::new());
+            if let Some(wanted) = files_wanted {
+                let mut backend = crate::platform::block_on(crate::backend::Backend::connect(
+                    "http://127.0.0.1:9",
+                    "",
+                ))
+                .unwrap();
+                let project = state.screen.launcher().unwrap().project.as_ref().unwrap();
+                backend.workspace.clone_from(&project.id);
+                backend.session = "session".into();
+                crate::files::bind(&mut state, &backend);
+                state.files.as_mut().unwrap().show(wanted);
             }
+            let ui = state.agent.as_mut().unwrap();
+            ui.selected = "permission-fixture".into();
+            ui.permissions.push(Permission {
+                id: ui.selected.clone(),
+                action: "read".into(),
+                resources: (0..40)
+                    .map(|i| format!("/synthetic/resource-{i}"))
+                    .collect(),
+                message: String::new(),
+                supported: true,
+            });
+            ui.reasons.insert(ui.selected.clone(), TextEdit::new(""));
+            let mut rt = runtime(state, size);
+            visible(&rt, "session-header");
+            if let Some(wanted) = files_wanted {
+                let files = rt.state.files.as_ref().unwrap();
+                assert_eq!(files.panel, wanted);
+                if size.0 == 390.0 {
+                    assert!(!files.drawer().pinned);
+                } else if size.0 == 1920.0 {
+                    assert_eq!(files.drawer().pinned, wanted);
+                }
+            }
+            for key in ["allow_once", "allow_always", "reject"] {
+                if size.1 == 320.0 {
+                    reveal(&mut rt, key);
+                } else {
+                    visible(&rt, key);
+                }
+            }
+            reveal(&mut rt, "reason-permission-fixture");
+            reveal(&mut rt, "composer");
+            if size == (390.0, 320.0) && files_wanted == Some(true) {
+                let (x, y) = rt.find("composer").unwrap();
+                rt.pointer_down(x, y);
+                rt.pointer_up(x, y);
+                rt.paste("short viewport draft");
+                rt.frame(0.02);
+                assert_eq!(rt.state.draft.text, "short viewport draft");
+                let long = "Long draft line\n".repeat(60);
+                let (commands, received) = bounded(1);
+                rt.update(|s, _| {
+                    s.commands = Some(commands);
+                    s.draft.replace_text(&long);
+                });
+                settle(&mut rt);
+                let editor = rt
+                    .elements()
+                    .into_iter()
+                    .find(|node| node.key.as_deref() == Some("composer"))
+                    .unwrap();
+                let viewport = rt
+                    .elements()
+                    .into_iter()
+                    .find(|node| node.path.ends_with("/session-composer/scroll"))
+                    .unwrap();
+                assert!(editor.rect[3] > 320.0, "fixture must overflow the editor");
+                assert!(
+                    viewport.rect[3] <= 320.0,
+                    "long draft must not grow the viewport"
+                );
+                rt.update(|_, tx| tx.scroll_to_bottom_instant("session-composer/scroll"));
+                rt.frame(0.02);
+                assert_eq!(rt.scroll_at_bottom("session-composer/scroll"), Some(true));
+                reveal(&mut rt, "send");
+                let (x, y) = rt.find("send").unwrap();
+                rt.pointer_down(x, y);
+                rt.pointer_up(x, y);
+                rt.frame(0.02);
+                assert!(
+                    matches!(received.try_recv().unwrap(), crate::transport::Command::Send(text) if text == long)
+                );
+            }
+            reveal(&mut rt, "history");
+            reveal(&mut rt, "allow_once");
         }
-        reveal(&mut rt, "reason-permission-fixture");
-        reveal(&mut rt, "composer");
-        reveal(&mut rt, "history");
-        reveal(&mut rt, "allow_once");
     }
 }
 #[test]
