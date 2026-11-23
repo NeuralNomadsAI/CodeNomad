@@ -1,6 +1,6 @@
 use crate::{Phase, State, content::Part, init, platform, poll, setup, view};
 use rune::{
-    Env, Key, KeyEvent, Mods, Runtime,
+    Env, Key, KeyEvent, Mods, PhysicalInput, PhysicalKeyCode, Runtime,
     clipboard::{ClipboardContent, ClipboardImage},
 };
 use std::time::{Duration, Instant};
@@ -21,6 +21,20 @@ fn enter(rt: &mut Runtime<State>) {
     };
     rt.key(key.clone());
     rt.key_up(key);
+    rt.frame(0.0);
+}
+
+fn paste(rt: &mut Runtime<State>) {
+    rt.physical_input(PhysicalInput::Key {
+        key: PhysicalKeyCode::KeyV,
+        mods: Mods {
+            cmd: true,
+            ctrl: !cfg!(target_os = "macos"),
+            ..Mods::default()
+        },
+        pressed: true,
+        repeat: false,
+    });
     rt.frame(0.0);
 }
 
@@ -117,26 +131,33 @@ pub fn run() {
     rt.pointer_up(x, y);
     rt.frame(0.0);
     let clipboard = rune::clipboard::memory();
-    rt.use_clipboard(&clipboard);
     clipboard.set_content(
         ClipboardContent::new("must not replace the draft").with_files([here.join("pasted.txt")]),
     );
-    rt.state.composer.picker.set_attachments_supported(false);
-    rt.update(|_, tx| tx.request_paste());
-    rt.frame(0.0);
-    assert_eq!(rt.state.composer.draft.attachments.len(), 3);
-    assert!(!rt.state.composer.device.busy());
-    rt.state.composer.picker.set_attachments_supported(true);
-    rt.update(|_, tx| tx.request_paste());
-    rt.frame(0.0);
-    wait(&mut rt, "native clipboard file", |s| {
+    // Keep the owned read queued until the fixture installs the clipboard.
+    paste(&mut rt);
+    assert!(rt.state.composer.device.busy());
+    assert!(!crate::composer::can_send(&rt.state));
+    enter(&mut rt);
+    assert!(!rt.state.composer.pending());
+    assert_eq!(rt.state.draft.text, "@./sample.txt ");
+    rt.use_clipboard(&clipboard);
+    wait(&mut rt, "delayed native clipboard file", |s| {
         s.composer.draft.attachments.len() == 4
     });
+    rt.state.composer.picker.set_attachments_supported(false);
+    paste(&mut rt);
+    wait(
+        &mut rt,
+        "clipboard refusal without the history capability",
+        |s| !s.composer.device.busy(),
+    );
+    assert_eq!(rt.state.composer.draft.attachments.len(), 4);
+    rt.state.composer.picker.set_attachments_supported(true);
     let capture =
         ClipboardImage::from_png(std::fs::read(here.join("capture.png")).unwrap()).unwrap();
     clipboard.set_content(ClipboardContent::default().with_image(capture));
-    rt.update(|_, tx| tx.request_paste());
-    rt.frame(0.0);
+    paste(&mut rt);
     wait(&mut rt, "native clipboard capture", |s| {
         s.composer.draft.attachments.len() == 5
     });

@@ -22,6 +22,7 @@ pub fn view(s: &State, compact: bool) -> El {
     #[cfg(not(target_arch = "wasm32"))]
     let editor = {
         let paste_scope = scope.clone();
+        let menu_scope = scope.clone();
         let drop_scope = scope.clone();
         let input = layout::native_composer_input(&s.draft, t("promptInput.placeholder.default"))
             .key("input")
@@ -32,8 +33,17 @@ pub fn view(s: &State, compact: bool) -> El {
             .on_input_key(move |s: &mut State, event, tx| {
                 s.current_scope(&edit_scope) && key(s, event, tx)
             })
-            .on_input_paste(move |s: &mut State, content, _| {
-                s.current_scope(&paste_scope) && platform::device_picker::paste(s, content)
+            .on_physical_input(move |s: &mut State, event, tx| {
+                s.current_scope(&paste_scope) && super::clipboard::physical(s, event, tx)
+            })
+            .on_input_paste(|_: &mut State, content, _| {
+                // File/image reads must enter through the owned gesture, never by focus at delivery.
+                !content.files().is_empty() || content.image().is_some()
+            })
+            .on_secondary_press(move |s: &mut State, point, tx| {
+                if s.current_scope(&menu_scope) {
+                    super::clipboard::menu(s, (point.x, point.y), tx);
+                }
             })
             .on_drop_files(move |s: &mut State, paths, _| {
                 if s.current_scope(&drop_scope) {
@@ -256,7 +266,11 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
     .build(kit(layout::dark()), layer);
 }
 
-fn changed(s: &mut State, tx: &mut Tx) {
+pub(super) fn changed(s: &mut State, tx: &mut Tx) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(read) = &s.composer.device.clipboard {
+        read.set(false);
+    }
     s.composer.picker.changed(&s.draft, &s.reads, &s.wake);
     crate::workspace::draft_changed(s, tx);
 }
@@ -295,6 +309,14 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
 }
 
 fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    if event.edit_command() == Some('v') {
+        super::clipboard::request(s, tx);
+        return true;
+    }
+    if event.key == Key::Enter && s.composer.device.busy() {
+        return true;
+    }
     if event.key == Key::Enter
         && tx.key_repeat()
         && (s.composer.picker.open() || s.composer.picker.selected_command(&s.draft.text).is_some())

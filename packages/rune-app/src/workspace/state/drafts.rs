@@ -1,5 +1,11 @@
 use super::{Backend, State, Tab, Tx, Ui, same_project};
-use crate::composer::{draft::Draft, draft_storage::SavedParts};
+use crate::composer::{
+    draft::{Draft, MAX_FILES},
+    draft_storage::SavedParts,
+};
+
+const MAX_WINDOW_DEVICE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_WINDOW_DEVICE_FILES: usize = super::super::MAX_DRAFTS * MAX_FILES;
 
 #[derive(Default)]
 pub(super) struct LiveDraft {
@@ -11,7 +17,7 @@ impl Ui {
     pub(crate) fn has_unsaved_large_drafts(&self) -> bool {
         self.entries
             .iter()
-            .any(|entry| entry.live_drafts.values().any(|draft| draft.text.is_some()))
+            .any(super::Entry::has_unsaved_large_drafts)
     }
 }
 
@@ -30,8 +36,7 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
     let Some(id) = super::active_session(s) else {
         return false;
     };
-    const MAX_WINDOW_DEVICE_BYTES: usize = 64 * 1024 * 1024;
-    let retained: usize = ui
+    let (files, bytes) = ui
         .entries
         .iter()
         .enumerate()
@@ -42,9 +47,14 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
                 .filter(move |(key, _)| index != ui.active || key.as_str() != id)
         })
         .filter_map(|(_, draft)| draft.parts.as_ref())
-        .map(|(draft, _)| draft.inline_usage().1)
-        .sum();
-    if retained.saturating_add(s.composer.draft.inline_usage().1) > MAX_WINDOW_DEVICE_BYTES {
+        .fold(
+            s.composer.draft.inline_usage(),
+            |(files, bytes), (draft, _)| {
+                let (count, len) = draft.inline_usage();
+                (files.saturating_add(count), bytes.saturating_add(len))
+            },
+        );
+    if files > MAX_WINDOW_DEVICE_FILES || bytes > MAX_WINDOW_DEVICE_BYTES {
         return false;
     }
     let Some(Tab::Workspace(active)) = ui.entries.get(ui.active).map(|entry| &entry.saved) else {

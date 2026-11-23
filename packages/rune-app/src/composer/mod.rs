@@ -1,5 +1,7 @@
 //! Session composer view and input ownership.
 mod actions;
+#[cfg(not(target_arch = "wasm32"))]
+mod clipboard;
 pub(crate) mod device;
 pub(crate) mod draft;
 pub(crate) mod draft_storage;

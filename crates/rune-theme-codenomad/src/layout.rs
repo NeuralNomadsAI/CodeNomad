@@ -89,6 +89,22 @@ pub fn composer_field(edit: &TextEdit, placeholder: &str, compact: bool) -> rune
 pub fn native_composer_input(edit: &TextEdit, placeholder: &str) -> El {
     input(edit).hint(placeholder)
 }
+pub fn editor_menu<S: 'static>(
+    tx: &mut rune::Tx,
+    point: (f32, f32),
+    selected: bool,
+    pick: impl FnOnce(&mut S, Option<&str>, &mut rune::Tx) + 'static,
+) {
+    use rune::{Label, PopupItem, PopupMenu, labels::label};
+    let mut menu = PopupMenu::new()
+        .item(PopupItem::new("cut", label(Label::Cut)).enabled(selected))
+        .item(PopupItem::new("copy", label(Label::Copy)).enabled(selected))
+        .item(PopupItem::new("paste", label(Label::Paste)));
+    if !cfg!(target_os = "macos") {
+        menu = menu.item(PopupItem::new("select-all", label(Label::SelectAll)));
+    }
+    tx.popup_menu(menu, point, pick);
+}
 pub fn native_composer_field(editor: El, compact: bool) -> El {
     let t = tokens(dark());
     let minimum = if compact {

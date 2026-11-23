@@ -20,6 +20,8 @@ type Read = Receiver<(Offer, Result<Arc<[u8]>, Error>)>;
 
 #[derive(Default)]
 pub struct Device {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) clipboard: Option<super::clipboard::Read>,
     queued: VecDeque<Offer>,
     read: Option<Read>,
     pub(crate) choosing: bool,
@@ -31,6 +33,14 @@ pub struct Device {
 
 impl Device {
     pub fn busy(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.clipboard.is_some() {
+            return true;
+        }
+        self.file_work()
+    }
+
+    fn file_work(&self) -> bool {
         self.choosing || self.read.is_some() || !self.queued.is_empty()
     }
 
@@ -68,7 +78,7 @@ pub fn enqueue(s: &mut State, offers: impl IntoIterator<Item = Offer>) {
 
 pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     if !available(s) {
-        if s.composer.device.busy() {
+        if s.composer.device.file_work() {
             s.composer.device.cancel();
             return true;
         }

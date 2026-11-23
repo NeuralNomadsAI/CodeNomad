@@ -1,6 +1,64 @@
 use super::*;
 
 #[test]
+fn a_late_clipboard_read_cannot_attach_to_another_conversation_in_the_same_tab() {
+    use rune::{Mods, PhysicalInput, PhysicalKeyCode, clipboard::ClipboardContent};
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries[0] = entry("tab-0".into(), Tab::Workspace(workspace("alpha", "same")));
+    ui.entries[0].binding = Some(backend("alpha"));
+    s.workspace = Some(ui);
+    s.phase = Phase::Ready;
+    s.draft = TextEdit::new("same");
+    s.composer.picker.set_attachments_supported(true);
+    let mut rt = runtime(s);
+    rt.update(|_, tx| tx.focus("composer", false));
+    let paste = |rt: &mut rune::Runtime<State>| {
+        rt.physical_input(PhysicalInput::Key {
+            key: PhysicalKeyCode::KeyV,
+            mods: Mods {
+                cmd: true,
+                ctrl: !cfg!(target_os = "macos"),
+                ..Mods::default()
+            },
+            pressed: true,
+            repeat: false,
+        });
+        rt.frame(0.0);
+    };
+    paste(&mut rt);
+    assert!(rt.state.composer.device.busy());
+    rt.update(|s, tx| {
+        let ui = s.workspace.as_mut().unwrap();
+        let Tab::Workspace(saved) = &mut ui.entries[0].saved else {
+            panic!("workspace")
+        };
+        saved.drafts.insert("beta".into(), "same".into());
+        s.draft = TextEdit::new(bound(s, &backend("beta")));
+        s.show_chat();
+        s.composer.picker.set_attachments_supported(true);
+        tx.focus("composer", false);
+    });
+    let clipboard = rune::clipboard::memory();
+    let png = [
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+    ];
+    let image = rune::clipboard::ClipboardImage::from_png(png.as_slice()).unwrap();
+    clipboard.set_content(ClipboardContent::default().with_image(image));
+    rt.use_clipboard(&clipboard);
+    rt.frame(0.0);
+    rt.frame(0.0);
+    assert_eq!(active_session(&rt.state), Some("beta"));
+    assert!(!rt.state.composer.device.busy());
+    assert!(rt.state.composer.draft.attachments.is_empty());
+    clipboard.set_text("still editing B");
+    paste(&mut rt);
+    rt.frame(0.0);
+    assert!(rt.state.draft.text.contains("still editing B"));
+}
+
+#[test]
 fn switching_conversation_restores_the_exact_device_bytes() {
     let mut s = init();
     let mut ui = Ui::new();
@@ -25,6 +83,42 @@ fn switching_conversation_restores_the_exact_device_bytes() {
     assert_eq!(s.draft.text, "read it");
     assert_eq!(s.composer.draft.attachments, [file]);
     assert!(!s.composer.attachments_missing);
+}
+
+#[test]
+fn retained_empty_device_files_consume_the_window_file_budget() {
+    use crate::composer::draft::{Attachment, MAX_FILES};
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries[0] = entry("tab-0".into(), Tab::Workspace(workspace("alpha", "")));
+    ui.entries[0].binding = Some(backend("alpha"));
+    let mut other = workspace("beta", "");
+    other.folder = "/different".into();
+    let mut item = entry("tab-1".into(), Tab::Workspace(other));
+    item.binding = Some(backend("beta"));
+    ui.entries.push(item);
+    s.workspace = Some(ui);
+    let empty = Attachment::Device {
+        name: "empty.txt".into(),
+        mime: "text/plain".into(),
+        bytes: std::sync::Arc::from([]),
+        token: None,
+    };
+    for i in 0..crate::workspace::MAX_DRAFTS {
+        let session = format!("retained-{i}");
+        bound(&mut s, &backend(&session));
+        for _ in 0..MAX_FILES {
+            assert!(s.composer.draft.attach(empty.clone()));
+            assert!(attachment_draft_admissible(&s));
+        }
+        capture(&mut s);
+    }
+    s.workspace.as_mut().unwrap().active = 1;
+    s.composer = Default::default();
+    bound(&mut s, &backend("beta"));
+    assert!(s.composer.draft.attach(empty));
+    assert!(!attachment_draft_admissible(&s));
 }
 
 #[test]
