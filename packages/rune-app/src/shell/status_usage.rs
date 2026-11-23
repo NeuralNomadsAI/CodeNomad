@@ -246,6 +246,26 @@ mod tests {
                 usage.windows["requests:example"].reset_at,
                 Some(1800000000000.0)
             );
+
+            let backend = http.backend.clone();
+            let read =
+                tokio::spawn(async move { backend.provider_usage("opencode-console", "").await });
+            let request = http.accept().await;
+            let name = "用".repeat(256);
+            let usage = json!({
+                "requestedProviderId":"opencode-console", "providerName":"Console",
+                "supported":true, "configured":true, "ok":true, "windows":{},
+                "console":{
+                    "requests":{"30d":1000},
+                    "models":vec![json!({"provider":name,"model":name,"requests":1}); 1000],
+                    "budgets":{"status":"unavailable","items":[]}
+                }
+            });
+            assert!(usage.to_string().len() > 1024 * 1024);
+            request.reply(200, usage).await;
+            let console = wait(read).await.unwrap().unwrap().console.unwrap();
+            assert_eq!(console.requests["30d"], 1000);
+            assert_eq!(console.models.len(), 1000);
         });
     }
 

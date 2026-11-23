@@ -18,16 +18,40 @@ fn received_credentials_revoke_quota_authority_before_a_full_recovery_queue() {
                 .with_provider_usage(Some(watch.clone()));
             assert!(out.try_send(Input::Opened(1)).is_ok());
             let before = watch.current();
-            let payload = json!({
-        "type":"instance.event", "instanceId":"project", "event":{"type":"credential.switched"}
-    })
-    .to_string();
-            let mut routed = std::pin::pin!(dispatch(
-                &backend, 1, &out, &state, "stream", "message", &payload
-            ));
+            let payload = |kind| {
+                json!({
+                    "type":"instance.event", "instanceId":"project", "event":{"type":kind}
+                })
+            };
+            let chunk = format!(
+                "data: {}\n\ndata: {}\n\n",
+                payload("provider.updated"),
+                payload("credential.switched")
+            );
+            let mut frames = Vec::new();
+            native::collect(
+                &mut frames::Parser::default(),
+                chunk.as_bytes(),
+                state.quota_ingress(&backend).as_ref(),
+                &mut frames,
+            )
+            .unwrap();
+            assert_eq!(frames.len(), 2);
+            let frames::Parsed::Data(kind, payload) = &frames[0] else {
+                panic!("provider event missing")
+            };
+            let mut routed =
+                std::pin::pin!(dispatch(&backend, 1, &out, &state, "stream", kind, payload));
             assert!(futures_lite::future::poll_once(&mut routed).await.is_none());
             assert_eq!(watch.current(), (before.0 + 1, true));
+            state.quota_ingress(&backend).unwrap().transport(false);
+            assert!(!watch.current().1);
             assert!(matches!(recovery.try_recv().unwrap(), Input::Opened(1)));
+            assert!(futures_lite::future::poll_once(&mut routed).await.is_none());
+            assert!(matches!(
+                recovery.try_recv().unwrap(),
+                Input::Workspace(_, WorkspaceEvent::ProviderUsageRefresh(_))
+            ));
             routed.await.unwrap();
         });
 }

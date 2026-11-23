@@ -41,7 +41,7 @@ impl Watch {
         true
     }
 
-    pub(crate) fn observe(&self, hint: &Hint) -> bool {
+    fn observe(&self, hint: Hint) -> bool {
         let mut authority = self.0.lock().unwrap();
         match hint {
             Hint::Revoke => {}
@@ -49,13 +49,12 @@ impl Watch {
                 generation,
                 connected,
             } => {
-                let status = Some((*generation, *connected));
+                let status = Some((generation, connected));
                 if authority.upstream == status {
                     return false;
                 }
                 authority.upstream = status;
             }
-            Hint::Refresh(_) => return false,
         }
         authority.generation += 1;
         true
@@ -63,33 +62,90 @@ impl Watch {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Hint {
-    Refresh(Option<String>),
+enum Hint {
     Revoke,
     Upstream { generation: u64, connected: bool },
 }
 
-pub(crate) fn hint(event: &serde_json::Value) -> Option<Hint> {
-    match event["type"].as_str()? {
-        "instance.eventStatus" => Some(Hint::Upstream {
-            generation: event["generation"].as_u64()?,
-            connected: event["status"] == "connected",
-        }),
-        "instance.event" => {
-            let native = &event["event"];
-            match native["type"].as_str()? {
-                "provider.updated" => Some(Hint::Refresh(
-                    native["location"]["directory"].as_str().map(str::to_owned),
-                )),
-                "credential.updated"
-                | "credential.switched"
-                | "integration.updated"
-                | "config.updated"
-                | "server.connected" => Some(Hint::Revoke),
-                _ => None,
-            }
+#[derive(Deserialize)]
+struct Envelope<'a> {
+    #[serde(rename = "type")]
+    kind: &'a str,
+    #[serde(rename = "instanceId")]
+    workspace: Option<&'a str>,
+    status: Option<&'a str>,
+    generation: Option<u64>,
+    #[serde(borrow)]
+    event: Option<NativeEvent<'a>>,
+}
+
+#[derive(Deserialize)]
+struct NativeEvent<'a> {
+    #[serde(rename = "type")]
+    kind: &'a str,
+}
+
+#[derive(Clone)]
+pub(crate) struct Ingress {
+    watch: Watch,
+    wake: crate::Wake,
+    workspace: String,
+}
+
+impl Ingress {
+    pub fn new(watch: Watch, wake: crate::Wake, workspace: String) -> Self {
+        Self {
+            watch,
+            wake,
+            workspace,
         }
-        _ => None,
+    }
+
+    pub fn transport(&self, online: bool) {
+        if self.watch.transport(online) {
+            (self.wake)();
+        }
+    }
+
+    pub fn frame(&self, data: &str) {
+        // Ignore native payloads in the authority observer; the router decodes them separately.
+        let Ok(frame) = serde_json::from_str::<Envelope<'_>>(data) else {
+            return;
+        };
+        if frame.workspace != Some(self.workspace.as_str()) {
+            return;
+        }
+        let change = match frame.kind {
+            "instance.eventStatus" => frame.generation.map(|generation| Hint::Upstream {
+                generation,
+                connected: frame.status == Some("connected"),
+            }),
+            "instance.event"
+                if frame.event.is_some_and(|event| {
+                    matches!(
+                        event.kind,
+                        "credential.updated"
+                            | "credential.switched"
+                            | "integration.updated"
+                            | "config.updated"
+                            | "server.connected"
+                    )
+                }) =>
+            {
+                Some(Hint::Revoke)
+            }
+            _ => None,
+        };
+        if let Some(change) = change
+            && self.watch.observe(change)
+        {
+            (self.wake)();
+        }
+    }
+
+    pub fn skipped(&self) {
+        self.watch.observe(Hint::Revoke);
+        (self.wake)();
     }
 }
 
@@ -213,7 +269,8 @@ impl Backend {
             .await?
             .error_for_status()?;
         snapshot(
-            read_json_limited(response, 1024 * 1024).await?,
+            // Console can return 1,000 rows with two 256-unit model identifiers each.
+            read_json_limited(response, 4 * 1024 * 1024).await?,
             provider,
             model,
         )
@@ -274,17 +331,22 @@ fn console_preserves_counts_at_the_server_model_limit() {
 #[cfg(test)]
 #[test]
 fn only_catalogue_churn_is_a_passive_quota_refresh() {
-    let native = |kind| {
+    let watch = Watch::default();
+    let ingress = Ingress::new(watch.clone(), Arc::new(|| {}), "project".into());
+    ingress.transport(true);
+    let native = |workspace, kind| {
         serde_json::json!({
             "type": "instance.event",
+            "instanceId": workspace,
             "event": {"type": kind, "location": {"directory": "/fixture/checkout"}},
         })
+        .to_string()
     };
-    assert_eq!(
-        hint(&native("provider.updated")),
-        Some(Hint::Refresh(Some("/fixture/checkout".into())))
-    );
-    assert_eq!(hint(&native("model.updated")), None);
+    let current = watch.current();
+    ingress.frame(&native("project", "provider.updated"));
+    ingress.frame(&native("project", "model.updated"));
+    ingress.frame(&native("unrelated", "credential.switched"));
+    assert_eq!(watch.current(), current);
     for kind in [
         "credential.updated",
         "credential.switched",
@@ -292,17 +354,10 @@ fn only_catalogue_churn_is_a_passive_quota_refresh() {
         "config.updated",
         "server.connected",
     ] {
-        assert_eq!(hint(&native(kind)), Some(Hint::Revoke));
+        let before = watch.current();
+        ingress.frame(&native("project", kind));
+        assert_eq!(watch.current(), (before.0 + 1, true));
     }
-    assert_eq!(
-        hint(
-            &serde_json::json!({"type":"instance.eventStatus","generation":3,"status":"connected"})
-        ),
-        Some(Hint::Upstream {
-            generation: 3,
-            connected: true
-        })
-    );
 }
 
 #[cfg(test)]
@@ -314,15 +369,21 @@ fn identical_native_status_preserves_authority_but_new_generations_revoke_it() {
         generation: 7,
         connected: true,
     };
-    assert!(watch.observe(&first));
+    assert!(watch.observe(first.clone()));
     let current = watch.current();
-    assert!(!watch.observe(&first));
+    assert!(!watch.observe(first));
     assert_eq!(watch.current(), current);
-    assert!(watch.observe(&Hint::Upstream {
+    assert!(watch.observe(Hint::Upstream {
         generation: 8,
         connected: true
     }));
     assert_eq!(watch.current(), (current.0 + 1, true));
     assert!(watch.transport(false));
     assert!(!watch.current().1);
+    let closed = watch.current();
+    assert!(watch.observe(Hint::Upstream {
+        generation: 9,
+        connected: true
+    }));
+    assert_eq!(watch.current(), (closed.0 + 1, false));
 }

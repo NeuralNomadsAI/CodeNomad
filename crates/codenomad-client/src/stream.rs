@@ -47,10 +47,12 @@ impl State {
         self
     }
 
-    fn provider_usage_changed(&self, changed: bool) {
-        if changed && let Some((_, wake)) = &self.preferences {
-            wake();
-        }
+    fn quota_ingress(&self, backend: &Backend) -> Option<crate::provider_usage::Ingress> {
+        Some(crate::provider_usage::Ingress::new(
+            self.provider_usage.clone()?,
+            self.preferences.as_ref()?.1.clone(),
+            backend.workspace.clone(),
+        ))
     }
 
     pub(crate) fn observing_preferences(
@@ -119,12 +121,9 @@ pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>
         state.alive.store(false, SeqCst);
         state.running.store(false, SeqCst);
         state.version.fetch_add(1, SeqCst);
-        state.provider_usage_changed(
-            state
-                .provider_usage
-                .as_ref()
-                .is_some_and(|watch| watch.transport(false)),
-        );
+        if let Some(quota) = state.quota_ingress(&backend) {
+            quota.transport(false);
+        }
         let expired = result
             .as_ref()
             .is_err_and(crate::http::authentication_expired);
@@ -169,12 +168,6 @@ pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Re
     }
     state.alive.store(true, SeqCst);
     state.upstream.store(true, SeqCst);
-    state.provider_usage_changed(
-        state
-            .provider_usage
-            .as_ref()
-            .is_some_and(|watch| watch.transport(true)),
-    );
     out.send(Input::Opened(epoch)).await?;
     if state.preferences.is_some() {
         state
