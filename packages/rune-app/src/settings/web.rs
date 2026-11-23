@@ -137,18 +137,19 @@ impl Panel {
     }
 }
 
-pub(super) fn entry() -> El {
-    layout::button(t("settings.title"), false, |s: &mut State| {
-        let target = Target::capture(s);
-        let mut prefs = s.settings.shared.borrow_mut();
-        prefs.provider_target = target;
-        prefs
-            .memory
-            .show(s.settings.web.section == Section::General);
-        s.settings.web.shown = true;
-        (s.wake)();
-    })
-    .key("open-preferences")
+pub(super) fn entry(touch: bool) -> El {
+    rune_theme_codenomad::tabs::BarAction::Settings
+        .button(touch, t("settings.title"), |s: &mut State| {
+            let target = Target::capture(s);
+            let mut prefs = s.settings.shared.borrow_mut();
+            prefs.provider_target = target;
+            prefs
+                .memory
+                .show(s.settings.web.section == Section::General);
+            s.settings.web.shown = true;
+            (s.wake)();
+        })
+        .key("open-preferences")
 }
 
 fn close(s: &mut State) {

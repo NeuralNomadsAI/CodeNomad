@@ -414,41 +414,47 @@ fn effective_contrast(preference: &str, system: bool) -> bool {
     preference == "on" || preference == "auto" && system
 }
 
-pub(crate) fn entry() -> El {
+pub(crate) fn entries(touch: bool) -> impl IntoIterator<Item = El> {
     #[cfg(not(target_arch = "wasm32"))]
-    return rune_theme_codenomad::layout::button(strings::t("settings.title"), false, open)
-        .key("open-preferences");
+    return [rune_theme_codenomad::tabs::BarAction::Settings
+        .button(touch, strings::t("settings.title"), open)
+        .key("open-preferences")];
     #[cfg(target_arch = "wasm32")]
-    return rune_theme_codenomad::layout::action_row()
-        .child(web::entry())
-        .child(conversation::web_entry())
-        .child(notification_permission_entry());
+    return [
+        Some(web::entry(touch)),
+        Some(conversation::web_entry(touch)),
+        notification_permission_entry(touch),
+    ]
+    .into_iter()
+    .flatten();
 }
 
 #[cfg(target_arch = "wasm32")]
-fn notification_permission_entry() -> El {
-    {
-        use web_sys::NotificationPermission;
-        if crate::platform::notifications::permission() != Some(NotificationPermission::Default) {
-            return rune::el();
-        }
-        rune_theme_codenomad::layout::button(
-            strings::t("settings.notifications.requestPermission.action"),
-            false,
-            |s: &mut State| {
-                if let Some(permission) = crate::platform::notifications::request_permission() {
-                    let changed = s.settings.notification_permission_changed.clone();
-                    let wake = s.wake.clone();
-                    wasm_bindgen_futures::spawn_local(async move {
-                        let _ = wasm_bindgen_futures::JsFuture::from(permission).await;
-                        changed.set(true);
-                        wake();
-                    });
-                }
-            },
-        )
-        .key("notification-permission")
-    }
+fn notification_permission_entry(touch: bool) -> Option<El> {
+    use web_sys::NotificationPermission;
+    (crate::platform::notifications::permission() == Some(NotificationPermission::Default)).then(
+        || {
+            rune_theme_codenomad::tabs::BarAction::NotificationPermission
+                .button(
+                    touch,
+                    strings::t("settings.notifications.requestPermission.action"),
+                    |s: &mut State| {
+                        if let Some(permission) =
+                            crate::platform::notifications::request_permission()
+                        {
+                            let changed = s.settings.notification_permission_changed.clone();
+                            let wake = s.wake.clone();
+                            wasm_bindgen_futures::spawn_local(async move {
+                                let _ = wasm_bindgen_futures::JsFuture::from(permission).await;
+                                changed.set(true);
+                                wake();
+                            });
+                        }
+                    },
+                )
+                .key("notification-permission")
+        },
+    )
 }
 
 pub(crate) fn matches_shortcut(
@@ -535,9 +541,9 @@ fn shell_shortcuts_use_confirmed_overrides_without_changing_the_default() {
     assert!(matches_shortcut(&s, "new-instance", &f(10, false), 'n'));
 }
 
-pub(crate) fn direct_entry(s: &State) -> El {
+pub(crate) fn direct_entry(s: &State, touch: bool) -> El {
     if s.workspace.is_none() && s.settings.shared.borrow().backend.is_some() {
-        entry()
+        rune_theme_codenomad::layout::action_row().children(entries(touch))
     } else {
         rune::el()
     }

@@ -104,6 +104,34 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
   } finally { await browser.close() }
 }
 
+export async function mobileTabBar(page, labels) {
+  const viewport = page.viewportSize()
+  const buttons = labels.map(name => page.getByRole('button', {name, exact: true}))
+  await Promise.all(buttons.map(button => button.waitFor({state: 'attached'})))
+  const measure = async width => {
+    await page.setViewportSize({...viewport, width})
+    await page.waitForFunction(width => Math.abs(document.querySelector('canvas').getBoundingClientRect().width - width) < 1, width)
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    const boxes = await Promise.all(buttons.map(button => button.boundingBox()))
+    for (const [i, a] of boxes.entries()) {
+      const name = labels[i]
+      assert(a && a.width >= 43.99 && a.height >= 43.99, `${width}px: ${name} needs a 44px touch target: ${JSON.stringify(a)}`)
+      assert(a.x >= 0 && a.y >= 0 && a.x + a.width <= width + 0.01, `${width}px: ${name} is outside the viewport`)
+      for (const [j, b] of boxes.slice(0, i).entries()) {
+        assert(a.x >= b.x + b.width - 0.01 || b.x >= a.x + a.width - 0.01 ||
+          a.y >= b.y + b.height - 0.01 || b.y >= a.y + a.height - 0.01,
+        `${width}px: ${name} overlaps ${labels[j]}: ${JSON.stringify([a, b])}`)
+      }
+    }
+    return {width, boxes}
+  }
+  const measured = []
+  for (const width of [...[320, 390, 430].filter(width => width !== viewport.width), viewport.width]) {
+    measured.push(await measure(width))
+  }
+  return measured
+}
+
 export async function mobileInteraction(page, labels, imagePage, theme, colors) {
   const cdp = await page.context().newCDPSession(page)
   const evidence = {}

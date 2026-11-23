@@ -127,13 +127,6 @@ pub fn placed_window<S: 'static>(
     .map_app(|app| app.maximized(maximized))
 }
 
-pub fn shell_entry(tabs: El, entry: El) -> El {
-    row()
-        .full_width()
-        .child(tabs.grow(1.0).shrink())
-        .child(entry)
-}
-
 pub fn nav<S: 'static>(
     title: &str,
     label: &str,
