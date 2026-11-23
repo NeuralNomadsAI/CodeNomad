@@ -1,7 +1,8 @@
 import { ContextMenu } from "@kobalte/core/context-menu"
-import { Component, Show, createMemo, createSignal, onCleanup } from "solid-js"
+import { Component, Show, createMemo } from "solid-js"
 import type { Instance } from "../types/instance"
-import { getInstanceIdleFadeClass, getInstanceSessionIndicatorStatus } from "../stores/session-status"
+import { getInstanceStatusPresentation } from "../stores/session-status"
+import { createDeadlineMemo } from "../lib/deadline-memo"
 import { FolderCheck, FolderOpen, Hourglass, Pencil, Server, ShieldAlert, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
@@ -23,23 +24,16 @@ interface InstanceTabProps {
 const InstanceTab: Component<InstanceTabProps> = (props) => {
   const { t } = useI18n()
   const { preferences, remoteServers } = useConfig()
-  const [now, setNow] = createSignal(Date.now())
-
-  if (typeof window !== "undefined") {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    onCleanup(() => window.clearInterval(timer))
-  }
-
-  const aggregatedStatus = createMemo(() =>
-    getInstanceSessionIndicatorStatus(props.instance.id, now(), preferences().keepUnseenSubagentIdleStatus),
+  const statusPresentation = createDeadlineMemo((now, wakeAt) =>
+    getInstanceStatusPresentation(props.instance.id, now, preferences().keepUnseenSubagentIdleStatus, wakeAt),
   )
+  const aggregatedStatus = () => statusPresentation().status
   const statusClassName = createMemo(() => {
     const status = aggregatedStatus()
     if (!status) return null
     if (status === "permission") return "session-permission"
     const base = `session-${status}`
-    const fadeClass =
-      status === "idle" ? getInstanceIdleFadeClass(props.instance.id, now(), preferences().keepUnseenSubagentIdleStatus) : ""
+    const fadeClass = statusPresentation().fade
     return fadeClass ? `${base} ${fadeClass}` : base
   })
   const statusTitle = createMemo(() => {

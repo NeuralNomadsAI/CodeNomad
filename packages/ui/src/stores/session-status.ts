@@ -69,32 +69,15 @@ export function clearSessionIdleFade(instanceId: string, sessionId: string, idle
 }
 
 export function getSessionIdleFadeClass(instanceId: string, sessionId: string): string {
-  const session = getSession(instanceId, sessionId)
-  return idleFadeClassForSession(instanceId, session)
+  return idleFadeClassForSession(instanceId, getSession(instanceId, sessionId))
 }
 
-function idleFadeClassForSession(instanceId: string, session: Session | null): string {
+export function idleFadeClassForSession(instanceId: string, session: Session | null): string {
   if (!session || session.status !== "idle") return ""
   const fadingIdleSince = idleFades().get(idleFadeKey(instanceId, session.id))
   if (fadingIdleSince === undefined) return ""
   if (typeof session.idleSince === "number" && session.idleSince !== fadingIdleSince) return ""
   return "session-status-fading"
-}
-
-export function getInstanceIdleFadeClass(instanceId: string, now = Date.now(), keepUnseenSubagentIdleStatus = false): string {
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return ""
-
-  let hasVisibleIdle = false
-  for (const session of idleIndicatorRows(instanceId, instanceSessions)) {
-    if (!isSessionInWorkspaceScope(instanceId, session.id)) continue
-    const isFading = Boolean(idleFadeClassForSession(instanceId, session))
-    if (!isFading && !shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)) continue
-    hasVisibleIdle = true
-    if (!isFading) return ""
-  }
-
-  return hasVisibleIdle ? "session-status-fading" : ""
 }
 
 function* idleIndicatorRows(instanceId: string, rows: Map<string, Session>): Iterable<Session> {
@@ -114,6 +97,7 @@ export function shouldShowIdleStatus(
   session: Pick<Session, "status" | "idleSince" | "parentId"> | null | undefined,
   now = Date.now(),
   keepUnseenSubagentIdleStatus = false,
+  wakeAt?: (deadline: number) => void,
 ): boolean {
   if (!session || session.status !== "idle") {
     return false
@@ -124,7 +108,9 @@ export function shouldShowIdleStatus(
   }
 
   if (session.parentId && !keepUnseenSubagentIdleStatus) {
-    return now - session.idleSince < IDLE_STATUS_VISIBILITY_MS
+    const deadline = session.idleSince + IDLE_STATUS_VISIBILITY_MS
+    if (!(deadline > now)) return false
+    wakeAt?.(deadline)
   }
 
   return true
@@ -144,6 +130,7 @@ export function shouldShowSessionStatusForRow(
   session: Session | null,
   now: number,
   keepUnseenSubagentIdleStatus: boolean,
+  wakeAt?: (deadline: number) => void,
 ): boolean {
   if (!session) {
     return false
@@ -157,11 +144,14 @@ export function shouldShowSessionStatusForRow(
     return true
   }
 
-  return session.status !== "idle" || shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)
+  return session.status !== "idle" || shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus, wakeAt)
 }
 
-export function getRetrySeconds(next: number, now = Date.now()): number {
-  return Math.max(0, Math.round((next - now) / 1000))
+export function getRetrySeconds(next: number, now = Date.now(), wakeAt?: (deadline: number) => void): number {
+  const seconds = Math.max(0, Math.round((next - now) / 1000))
+  // Math.round keeps the higher count at exactly the half-second boundary.
+  if (seconds > 0) wakeAt?.(Math.floor(next - (seconds - 0.5) * 1000) + 1)
+  return seconds
 }
 
 export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
@@ -171,27 +161,45 @@ export function getInstanceSessionIndicatorStatus(
   now = Date.now(),
   keepUnseenSubagentIdleStatus = false,
 ): InstanceSessionIndicatorStatus | null {
+  return getInstanceStatusPresentation(instanceId, now, keepUnseenSubagentIdleStatus).status
+}
+
+export function getInstanceStatusPresentation(
+  instanceId: string,
+  now: number,
+  keepUnseenSubagentIdleStatus: boolean,
+  wakeAt?: (deadline: number) => void,
+): { status: InstanceSessionIndicatorStatus | null; fade: string } {
   const aggregated = getInstanceSessionIndicatorStatusCached(instanceId)
   if (aggregated !== "idle") {
-    return aggregated
+    return { status: aggregated, fade: "" }
   }
 
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) {
-    return null
+    return { status: null, fade: "" }
   }
 
+  let fading = false
+  let lastDeadline = 0
   for (const session of idleIndicatorRows(instanceId, instanceSessions)) {
     if (!isSessionInWorkspaceScope(instanceId, session.id)) continue
-    if (session.id && idleFadeClassForSession(instanceId, session)) {
-      return "idle"
+    if (idleFadeClassForSession(instanceId, session)) {
+      fading = true
+      continue
     }
-    if (shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)) {
-      return "idle"
+    let deadline = 0
+    if (shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus, value => { deadline = value })) {
+      if (!deadline) return { status: "idle", fade: "" }
+      lastDeadline = Math.max(lastDeadline, deadline)
     }
   }
 
-  return null
+  if (lastDeadline) {
+    wakeAt?.(lastDeadline)
+    return { status: "idle", fade: "" }
+  }
+  return fading ? { status: "idle", fade: "session-status-fading" } : { status: null, fade: "" }
 }
 
 export function isSessionBusy(instanceId: string, sessionId: string): boolean {

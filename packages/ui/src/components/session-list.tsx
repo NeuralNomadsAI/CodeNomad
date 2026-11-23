@@ -6,7 +6,8 @@ import { observeListEnd } from "../lib/list-end-observer"
 import { preserveListFocus } from "../lib/preserve-list-focus"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
-import { clearSessionIdleFade, getRetrySeconds, getSessionIdleFadeClass, shouldShowSessionStatus, shouldShowSessionStatusForRow } from "../stores/session-status"
+import { clearSessionIdleFade, getRetrySeconds, idleFadeClassForSession, shouldShowSessionStatusForRow } from "../stores/session-status"
+import { createDeadlineMemo } from "../lib/deadline-memo"
 import { Archive, ArchiveRestore, Bot, User, Copy, Trash2, Pencil, ShieldAlert, Search, Square, CheckSquare, MinusSquare, Split, RotateCw, Star } from "lucide-solid"
 import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
@@ -124,7 +125,6 @@ const SessionList: Component<SessionListProps> = (props) => {
 
   const [selectedSessionIds, setSelectedSessionIds] = createSignal<Set<string>>(new Set())
   const [reloadingSessionIds, setReloadingSessionIds] = createSignal<Set<string>>(new Set())
-  const [now, setNow] = createSignal(Date.now())
   const [listEl, setListEl] = createSignal<HTMLDivElement>()
   preserveListFocus(listEl)
   const [listViewportAttached, setListViewportAttached] = createSignal(false)
@@ -153,12 +153,6 @@ const SessionList: Component<SessionListProps> = (props) => {
 
   onCleanup(() => {
     if (attachmentFrame !== undefined) cancelAnimationFrame(attachmentFrame)
-  })
-
-  createEffect(() => {
-    if (typeof window === "undefined") return
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    onCleanup(() => window.clearInterval(timer))
   })
 
   const [sentinelEl, setSentinelEl] = createSignal<HTMLDivElement | null>(null)
@@ -789,18 +783,20 @@ const SessionList: Component<SessionListProps> = (props) => {
 
     const isActive = () => props.activeSessionId === sessionId()
     // A parent's chevron carries its subsessions' visible status, expanded or not.
-    const descendantActivity = createMemo(() => rowProps.hasChildren ? getDescendantActivity(
+    const descendantActivity = createDeadlineMemo((now, wakeAt) => rowProps.hasChildren ? getDescendantActivity(
       listedSessions(), sessionId(),
       session => !session.retry && session.generationRecovery !== "interrupted"
-        && shouldShowSessionStatusForRow(props.instanceId, session, now(), preferences().keepUnseenSubagentIdleStatus),
+        && shouldShowSessionStatusForRow(props.instanceId, session, now, preferences().keepUnseenSubagentIdleStatus, wakeAt),
     ) : undefined)
     const childActivity = () => rowProps.hasChildren ? descendantActivity() : undefined
     // The row and descendants whose Idle or Interrupted badge "Mark as read" clears.
-    const readableHierarchy = () => [rowProps.session, ...getDescendantSessions(props.instanceId, sessionId())]
+    const readableHierarchy = (now: number, wakeAt?: (deadline: number) => void) => [rowProps.session, ...getDescendantSessions(props.instanceId, sessionId())]
       .filter(session => session.status === "idle" && !session.pendingPermission && !session.pendingForm
         && (isSessionInterruptionUnseen(props.instanceId, session)
-          || shouldShowSessionStatus(props.instanceId, session.id, now(), preferences().keepUnseenSubagentIdleStatus)))
+          || shouldShowSessionStatusForRow(props.instanceId, session, now, preferences().keepUnseenSubagentIdleStatus, wakeAt)))
       .map(session => session.id)
+    const markReadDisabled = createDeadlineMemo((now, wakeAt) =>
+      expanderMenuSessionId() !== sessionId() || readableHierarchy(now, wakeAt).length === 0)
     // Observe activity independently of expansion: folding a busy branch is not
     // a new activity transition. Visible descendants follow the same rule.
     const activityKind = createMemo(() => {
@@ -833,11 +829,12 @@ const SessionList: Component<SessionListProps> = (props) => {
     const status = () => rowProps.session.status
     const interrupted = () => isSessionInterruptionUnseen(props.instanceId, rowProps.session)
     const retry = () => rowProps.session.retry
-    const statusLabel = () => {
+    const statusLabel = createDeadlineMemo((now, wakeAt) => {
       if (interrupted()) return t("sessionList.status.interrupted")
+      if (rowProps.session.pendingPermission || rowProps.session.pendingForm) return ""
       const retryState = retry()
       if (retryState) {
-        const seconds = getRetrySeconds(retryState.next, now())
+        const seconds = getRetrySeconds(retryState.next, now, wakeAt)
         return seconds > 0 ? t("sessionList.status.retryingIn", { seconds: String(seconds) }) : t("sessionList.status.retrying")
       }
       switch (formatSessionStatus(status())) {
@@ -848,7 +845,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         default:
           return t("sessionList.status.idle")
       }
-    }
+    })
     const needsPermission = () => Boolean(rowProps.session.pendingPermission)
     const needsQuestion = () => Boolean(rowProps.session.pendingForm)
     const needsInput = () => needsPermission() || needsQuestion()
@@ -856,18 +853,19 @@ const SessionList: Component<SessionListProps> = (props) => {
       if (needsInput()) return "session-permission"
       if (interrupted()) return "session-interrupted"
       const base = `session-${retry() ? "retrying" : status()}`
-      const fadeClass = getSessionIdleFadeClass(props.instanceId, sessionId())
+      const fadeClass = idleFadeClassForSession(props.instanceId, rowProps.session)
       return fadeClass ? `${base} ${fadeClass}` : base
     }
-    const showStatus = () =>
+    const showStatus = createDeadlineMemo((now, wakeAt) =>
       interrupted() ||
       needsInput() ||
       shouldShowSessionStatusForRow(
         props.instanceId,
         rowProps.session,
-        now(),
+        now,
         preferences().keepUnseenSubagentIdleStatus,
-      )
+        wakeAt,
+      ))
     const statusText = () =>
       needsPermission()
         ? t("sessionList.status.needsPermission")
@@ -1011,9 +1009,9 @@ const SessionList: Component<SessionListProps> = (props) => {
               label={expanderLabel(rowProps.expanded ? "collapseAriaLabel" : "expandAriaLabel")}
               title={expanderLabel(rowProps.expanded ? "collapseTitle" : "expandTitle")}
               markReadLabel={t("sessionList.expand.markRead")}
-              markReadDisabled={readableHierarchy().length === 0}
+              markReadDisabled={markReadDisabled()}
               onToggle={() => rowProps.onToggleExpand?.()}
-              onMarkRead={() => batch(() => readableHierarchy().forEach(clearSessionStatus))}
+              onMarkRead={() => batch(() => readableHierarchy(Date.now()).forEach(clearSessionStatus))}
               onOpenChange={(open) => setExpanderMenuSessionId(open ? sessionId() : undefined)}
             />
           </Show>

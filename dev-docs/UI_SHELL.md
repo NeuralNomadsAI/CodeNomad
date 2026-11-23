@@ -3,6 +3,7 @@
 ## Agent conventions
 
 - Session and connection status dots use static state colors and retain their accessible labels.
+- Session badges subscribe to their own retry or idle expiry deadline. Header status reads the selected row directly; row and tab deadlines belong to their mounted presentation, independent of list ordering.
 
 - View stores read the active conversation identity from `stores/session-selection-state.ts`. Session selection actions, catalog refresh and restoration authority remain in `stores/session-state.ts`; keep those UI-effect dependencies out of the view-state import graph.
 
