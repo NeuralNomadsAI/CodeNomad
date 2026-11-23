@@ -363,6 +363,13 @@ fn commit_box(s: &State, ui: &Ui) -> El {
                 button(s, name, Flat, !ui.can_change_index(), move |ui, tx| {
                     ui.move_paths(&target, tx.focused())
                 })
+                .help(
+                    actions
+                        .iter()
+                        .map(|row| row.id.path.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
                 .key(format!("git-bulk-{}", section.key())),
             );
         }

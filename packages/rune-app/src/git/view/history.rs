@@ -42,7 +42,7 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
         let content = col()
             .full_width()
             .separate(Space::Xs)
-            .child(text(subject).text_role(TextRole::Button).wrap())
+            .child(text(subject).text_role(TextRole::Button).wrap_anywhere())
             .child(if refs.is_empty() {
                 el()
             } else {
