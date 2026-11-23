@@ -121,6 +121,19 @@ async function provider(){
   return server
 }
 
+async function removeExecutable(file){
+  const deadline=Date.now()+3000
+  for(;;){
+    try{await unlink(file);return}
+    catch(error){
+      if(error.code==='ENOENT')return
+      // Closing a Windows job starts termination before all image mappings are released.
+      if(process.platform!=='win32'||!['EPERM','EBUSY'].includes(error.code)||Date.now()>=deadline)throw error
+      await delay(50)
+    }
+  }
+}
+
 export async function withNative(run,{profile,pruning=true}={}){
   const cli=requirePrivateCli()
   const fresh=!profile
@@ -179,7 +192,7 @@ export async function withNative(run,{profile,pruning=true}={}){
       try{
         const log=daemon?.output()??''
         await writeFile(path.join(profile,'daemon.log'),password?log.replaceAll(password,'<fixture password>'):log)
-        if(executable)await unlink(executable).catch(error=>{if(error.code!=='ENOENT')throw error})
+        if(executable)await removeExecutable(executable)
       } finally {
         await lock.close()
         if(!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null)await unlink(lease)
