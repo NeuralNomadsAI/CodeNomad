@@ -26,14 +26,18 @@ pub(crate) struct DirectoryProof {
 
 impl DirectoryProof {
     pub(crate) fn live(&self, physical: &Path) -> bool {
-        self.source.as_ref().is_none_or(|source| source.contains_live(&source.path))
+        let no_nested_git = |path: &Path, root: &Path| {
+            path.starts_with(root)
+                && path.ancestors().take_while(|ancestor| *ancestor != root).all(|ancestor| {
+                    std::fs::symlink_metadata(ancestor.join(".git"))
+                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+                })
+        };
+        self.source
+            .as_ref()
+            .is_none_or(|source| source.contains_live(&source.path) && no_nested_git(&source.path, source.registered()))
             && self.tree.as_ref().is_none_or(|tree| {
-                tree.contains_live(physical)
-                    && (self.source.is_none()
-                        || physical.ancestors().take_while(|ancestor| *ancestor != tree.registered()).all(|ancestor| {
-                            std::fs::symlink_metadata(ancestor.join(".git"))
-                                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-                        }))
+                tree.contains_live(physical) && (self.source.is_none() || no_nested_git(physical, tree.registered()))
             })
     }
 }

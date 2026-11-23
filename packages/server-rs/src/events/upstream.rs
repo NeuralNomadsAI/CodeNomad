@@ -46,28 +46,43 @@ impl Decoder {
 
     /// Adds a chunk and appends the payloads of the blocks it completes to `payloads`.
     pub fn push(&mut self, chunk: &[u8], payloads: &mut VecDeque<String>) -> Result<(), Error> {
-        let carriage_return = usize::from(self.carriage_return);
-        if self.block_bytes + self.line.len() + carriage_return + chunk.len() > MAX_EVENT_BYTES {
-            return Err(Error::EventTooLarge);
-        }
         let mut rest = chunk;
         if self.carriage_return && !rest.is_empty() {
             self.carriage_return = false;
+            let crlf = rest.starts_with(b"\n");
+            self.check_bytes(1 + usize::from(crlf))?;
             rest = rest.strip_prefix(b"\n").unwrap_or(rest);
             self.end_line(&[], payloads);
+            if crlf && self.block_bytes != 0 {
+                self.block_bytes += 1;
+            }
         }
         while let Some(index) = memchr::memchr2(b'\n', b'\r', rest) {
             if rest[index] == b'\r' && index + 1 == rest.len() {
+                self.check_bytes(index + 1)?;
                 self.line.extend_from_slice(&rest[..index]);
                 self.carriage_return = true;
                 return Ok(());
             }
             let crlf = rest[index] == b'\r' && rest[index + 1] == b'\n';
+            self.check_bytes(index + 1 + usize::from(crlf))?;
             self.end_line(&rest[..index], payloads);
+            if crlf && self.block_bytes != 0 {
+                self.block_bytes += 1;
+            }
             rest = &rest[index + 1 + usize::from(crlf)..];
         }
+        self.check_bytes(rest.len())?;
         self.line.extend_from_slice(rest);
         Ok(())
+    }
+
+    fn check_bytes(&self, additional: usize) -> Result<(), Error> {
+        if self.block_bytes + self.line.len() + additional > MAX_EVENT_BYTES {
+            Err(Error::EventTooLarge)
+        } else {
+            Ok(())
+        }
     }
 
     /// Ends the stream: an unterminated last block still counts, as in the TypeScript reader.
@@ -379,5 +394,13 @@ mod tests {
         assert!(push(&mut decoder, format!("data:{}", "x".repeat(MAX_EVENT_BYTES - quarter - 6)).as_bytes()).is_ok());
         assert_eq!(push(&mut decoder, b"\r"), Ok(Vec::new()));
         assert_eq!(push(&mut decoder, b"\n"), Err(Error::EventTooLarge));
+    }
+
+    #[test]
+    fn a_fragment_can_end_one_bounded_frame_and_start_the_next() {
+        let mut decoder = Decoder::new();
+        let text = "x".repeat(MAX_EVENT_BYTES - 7);
+        assert!(push(&mut decoder, format!("data:{text}").as_bytes()).unwrap().is_empty());
+        assert_eq!(push(&mut decoder, b"\n\ndata:next\n\n").unwrap(), [text, "next".into()]);
     }
 }
