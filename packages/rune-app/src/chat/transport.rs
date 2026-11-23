@@ -70,19 +70,47 @@ async fn run_configured(
     bootstrap: bool,
 ) {
     if crate::platform::setting("RUNE_BACKEND").is_some() && !crate::local_stress() {
-        run_bound(
-            crate::platform::configured_backend(bootstrap).await,
-            out,
-            input,
-            wake,
-        )
-        .await;
+        match crate::platform::configured_target(bootstrap) {
+            Ok(target) => {
+                let password = crate::platform::setting("RUNE_PASSWORD").unwrap_or_default();
+                let token = bootstrap
+                    .then(|| crate::platform::setting("RUNE_BOOTSTRAP_TOKEN"))
+                    .flatten();
+                authenticate_and_run(target, password, token, out, input, wake).await;
+            }
+            Err(error) => run_bound(Err(error), out, input, wake).await,
+        }
         return;
     }
     #[cfg(feature = "test-support")]
     run_synthetic(out, input, wake).await;
     #[cfg(not(feature = "test-support"))]
     publish(&out, &wake, Event::Failed).await;
+}
+
+pub(crate) async fn authenticate_and_run(
+    target: crate::backend::Backend,
+    password: String,
+    token: Option<String>,
+    out: Sender<Event>,
+    input: Receiver<Command>,
+    wake: rune::Waker,
+) {
+    let result = target.authenticate(&password, token.as_deref()).await;
+    drop((password, token));
+    match result {
+        Ok(()) => {
+            #[cfg(not(target_arch = "wasm32"))]
+            let _ = target.attest_server().await;
+            run_bound(Ok(target), out, input, wake).await;
+        }
+        Err(error) if codenomad_client::http::authentication_expired(&error) => {
+            publish(&out, &wake, Event::AuthenticationRequired(target)).await;
+            drop(out);
+            wake();
+        }
+        Err(error) => run_bound(Err(error), out, input, wake).await,
+    }
 }
 
 async fn run_bound(

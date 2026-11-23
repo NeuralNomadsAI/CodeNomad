@@ -34,7 +34,6 @@ pub struct Launcher {
     pub visits: Visits,
     pub connection: Option<Backend>,
     pub(crate) authentication_required: bool,
-    reauthenticated_session: Option<String>,
     pub(crate) catalogue_watch: Option<codenomad_client::stream::CatalogueWatch>,
     pub(crate) catalogue_generation: u64,
     pub server_id: Option<String>,
@@ -123,7 +122,6 @@ impl Launcher {
             visits: Visits::default(),
             connection: None,
             authentication_required: false,
-            reauthenticated_session: None,
             catalogue_watch: None,
             catalogue_generation: 0,
             server_id: None,
@@ -192,11 +190,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.server_id = Some(server_id);
             l.projects = projects;
             l.password = TextEdit::new("");
+            if reauthenticated {
+                connection::watch_catalogue(l);
+            }
             crate::workspace::connected(s);
             if reauthenticated && let Some(id) = selected {
-                if let Some(launcher) = s.screen.launcher_mut() {
-                    launcher.reauthenticated_session = Some(id.clone());
-                }
                 s.show_chat();
                 choose(s, id, tx);
             } else {
@@ -212,15 +210,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.folder = TextEdit::new(&project.path);
             l.project = Some(project.clone());
-            if cfg!(target_os = "windows")
-                && l.catalogue_watch.is_none()
-                && let Some(backend) = &l.connection
-            {
-                let (watch, task) =
-                    codenomad_client::stream::CatalogueWatch::new(backend.clone(), l.wake.clone());
-                l.catalogue_watch = Some(watch);
-                crate::platform::spawn(task);
-            }
+            connection::watch_catalogue(l);
             l.apply_listing(rows, false, None);
             l.search = TextEdit::new("");
             crate::workspace::opened(s, &project);

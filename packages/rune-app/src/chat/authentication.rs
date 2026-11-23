@@ -20,6 +20,7 @@ pub(crate) struct Recovery {
 
 struct Challenge {
     expired: Backend,
+    initial: bool,
     flight: Option<Receiver<Reply>>,
     required: bool,
     error: Option<&'static str>,
@@ -39,6 +40,7 @@ pub(crate) fn expired(s: &mut State, expired: Backend) {
     s.direct_authentication = Recovery {
         challenge: Some(Challenge {
             expired,
+            initial: crate::settings::bound_backend(s).is_none(),
             flight: None,
             required: false,
             error: None,
@@ -78,11 +80,11 @@ fn request(challenge: &mut Challenge, wake: &rune::Waker, password: Option<Strin
     let (output, input) = bounded(1);
     challenge.flight = Some(input);
     challenge.error = None;
-    let (expired, wake) = (challenge.expired.clone(), wake.clone());
+    let (expired, initial, wake) = (challenge.expired.clone(), challenge.initial, wake.clone());
     platform::spawn(async move {
         let reply = match password {
-            Some(password) => sign_in(expired, password).await,
-            None => check(expired).await,
+            Some(password) => sign_in(expired, initial, password).await,
+            None => check(expired, initial).await,
         };
         if output.send(reply).await.is_ok() {
             wake();
@@ -90,7 +92,7 @@ fn request(challenge: &mut Challenge, wake: &rune::Waker, password: Option<Strin
     });
 }
 
-async fn check(mut expired: Backend) -> Reply {
+async fn check(mut expired: Backend, initial: bool) -> Reply {
     let response = expired
         .client
         .get(format!("{}api/auth/status", expired.base))
@@ -101,7 +103,9 @@ async fn check(mut expired: Backend) -> Reply {
     {
         match status["authenticated"].as_bool() {
             Some(true) => {
-                if expired.attest_server().await.is_err() {
+                if (!initial && expired.client.server_identity().is_none())
+                    || expired.attest_server().await.is_err()
+                {
                     return Reply::Failed("authRecovery.unavailable");
                 }
                 let Ok(client) = codenomad_client::http::client_id() else {
@@ -118,17 +122,13 @@ async fn check(mut expired: Backend) -> Reply {
     Reply::Failed("authRecovery.unavailable")
 }
 
-async fn sign_in(mut expired: Backend, password: String) -> Reply {
+async fn sign_in(mut expired: Backend, initial: bool, password: String) -> Reply {
     match Backend::connect(&expired.base, &password).await {
         Ok(backend) => {
             let Ok(id) = backend.attest_server().await else {
                 return Reply::Failed("authRecovery.unavailable");
             };
-            if expired
-                .client
-                .server_identity()
-                .is_some_and(|previous| previous != id)
-            {
+            if !initial && expired.client.server_identity() != Some(id.as_str()) {
                 return Reply::Failed("authRecovery.unavailable");
             }
             expired.client = backend.client;
@@ -136,12 +136,7 @@ async fn sign_in(mut expired: Backend, password: String) -> Reply {
             expired.fresh_mode = false;
             Reply::Connected(expired)
         }
-        Err(error)
-            if error
-                .downcast_ref::<reqwest::Error>()
-                .and_then(reqwest::Error::status)
-                == Some(reqwest::StatusCode::UNAUTHORIZED) =>
-        {
+        Err(error) if codenomad_client::http::authentication_expired(&error) => {
             Reply::Failed("authRecovery.credentials")
         }
         Err(_) => Reply::Failed("authRecovery.unavailable"),
@@ -166,6 +161,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
         Reply::Connected(backend) => {
             s.direct_authentication = Recovery::default();
             s.phase = crate::Phase::Reconnecting;
+            crate::settings::connected(s, &backend);
             if let Some(agent) = &mut s.agent {
                 agent.reauthenticate(crate::agent::start(backend.clone(), s.wake.clone()));
             }

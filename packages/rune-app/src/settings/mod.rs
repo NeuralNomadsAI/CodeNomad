@@ -63,22 +63,30 @@ pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {
     }
 }
 
+pub(crate) fn bound_backend(s: &State) -> Option<crate::backend::Backend> {
+    s.settings.shared.borrow().backend.clone()
+}
+
 pub(crate) fn stop_before_conversation(s: &State) -> Option<codenomad_client::Receiver<()>> {
     s.settings.shared.borrow_mut().stop_before_conversation()
 }
 
-pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::Backend) {
+pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::Backend) -> bool {
     let mut prefs = s.settings.shared.borrow_mut();
     let current = match s.screen.launcher() {
         Some(launcher) => launcher.connection.as_ref(),
         None => prefs.backend.as_ref(),
     };
-    if current.is_some_and(|current| current.client.same_connection(&expired.client)) {
+    if let Some(current) = current {
+        if !current.client.same_connection(&expired.client) {
+            return false;
+        }
         prefs.require_authentication();
         if let Some(launcher) = s.screen.launcher_mut() {
             launcher.authentication_required = true;
         }
     }
+    true
 }
 
 pub(crate) fn invalidate(s: &State, owner: codenomad_client::settings::Owner) {

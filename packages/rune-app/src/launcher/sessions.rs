@@ -277,9 +277,7 @@ pub(super) fn bind(
 ) {
     let same_session =
         !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
-    let mut reauthenticated = false;
     if let Some(l) = s.screen.launcher_mut() {
-        reauthenticated = l.reauthenticated_session.take().as_deref() == Some(b.session.as_str());
         l.visits
             .record(&b.session, visit, l.listed_sessions.contains(&b.session));
         if let Some(row) = l.sessions.iter_mut().find(|row| row.id == b.session) {
@@ -303,7 +301,7 @@ pub(super) fn bind(
         s.messages.clear();
         s.can_older = false;
     } else if let Some(agent) = &mut s.agent {
-        if reauthenticated {
+        if !agent.uses_connection(&b) {
             agent.reauthenticate(crate::agent::start(b.clone(), s.wake.clone()));
             crate::files::bind(s, &b);
         } else {

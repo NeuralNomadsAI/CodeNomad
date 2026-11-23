@@ -200,7 +200,11 @@ fn retry_connection(s: &mut State, tx: &mut Tx) {
             launcher::choose(s, id, tx);
         } else if s.screen.launcher().is_none() && s.incoming.is_some() {
             s.phase = Phase::Reconnecting;
-            transport::start(s, false);
+            if let Some(backend) = settings::bound_backend(s) {
+                transport::start_bound(s, backend);
+            } else {
+                transport::start(s, false);
+            }
         }
     } else if s
         .commands
@@ -330,8 +334,12 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::Done => s.phase = Phase::Ready,
             Event::AuthenticationRequired(_) | Event::Failed => {
                 if let Event::AuthenticationRequired(expired) = event {
+                    if !settings::authentication_required(s, &expired)
+                        && s.screen.launcher().is_none()
+                    {
+                        continue;
+                    }
                     s.commands = None;
-                    settings::authentication_required(s, &expired);
                     #[cfg(not(target_arch = "wasm32"))]
                     chat::authentication::expired(s, expired);
                 }

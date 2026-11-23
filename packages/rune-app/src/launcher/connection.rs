@@ -1,5 +1,18 @@
 use super::{Backend, Launcher, Reply, State, TextEdit, Tx};
 
+pub(super) fn watch_catalogue(l: &mut Launcher) {
+    if cfg!(target_os = "windows")
+        && l.project.is_some()
+        && l.catalogue_watch.is_none()
+        && let Some(backend) = &l.connection
+    {
+        let (watch, task) =
+            codenomad_client::stream::CatalogueWatch::new(backend.clone(), l.wake.clone());
+        l.catalogue_watch = Some(watch);
+        crate::platform::spawn(task);
+    }
+}
+
 pub fn connect(s: &mut State, _: &mut Tx) {
     let Some(l) = s.screen.launcher_mut() else {
         return;

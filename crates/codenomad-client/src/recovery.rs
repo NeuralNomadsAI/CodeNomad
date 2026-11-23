@@ -189,7 +189,16 @@ pub async fn run(
                     busy = true;
                     repairs = 0;
                     settlement_reads = 0;
-                    if backend.send(body).await.is_err() {
+                    if let Err(error) = backend.send(body).await {
+                        if crate::http::authentication_expired(&error) {
+                            wire.cancelled.store(true, SeqCst);
+                            while wire.alive.load(SeqCst) {
+                                runtime::sleep(Duration::from_millis(25)).await;
+                            }
+                            publish(&out, &wake, Event::AuthenticationRequired(backend.clone()))
+                                .await;
+                            return Ok(());
+                        }
                         eprintln!("Rune prompt delivery failed");
                         publish(&out, &wake, Event::Failed).await;
                     }

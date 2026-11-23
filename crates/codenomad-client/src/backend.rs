@@ -27,8 +27,25 @@ impl Backend {
         password: &str,
         bootstrap_token: Option<&str>,
     ) -> Result<Self> {
-        let base = endpoint(address)?;
-        let client = Http::new()?;
+        let backend = Self::unauthenticated(address)?;
+        backend.authenticate(password, bootstrap_token).await?;
+        Ok(backend)
+    }
+
+    pub fn unauthenticated(address: &str) -> Result<Self> {
+        Ok(Self {
+            client: Http::new()?,
+            base: endpoint(address)?,
+            workspace: String::new(),
+            session: String::new(),
+            client_id: client_id()?,
+            fresh_mode: false,
+        })
+    }
+
+    pub async fn authenticate(&self, password: &str, bootstrap_token: Option<&str>) -> Result<()> {
+        let base = &self.base;
+        let client = &self.client;
         if let Some(token) = bootstrap_token.filter(|v| !v.is_empty()) {
             client
                 .post(format!("{base}api/auth/token"))
@@ -45,14 +62,7 @@ impl Backend {
                 .await?
                 .error_for_status()?;
         }
-        Ok(Self {
-            client,
-            base,
-            workspace: String::new(),
-            session: String::new(),
-            client_id: client_id()?,
-            fresh_mode: false,
-        })
+        Ok(())
     }
     pub async fn page(&self, target: Value) -> Result<Page> {
         // Match the broker's window envelope; other endpoints retain their own limits.
