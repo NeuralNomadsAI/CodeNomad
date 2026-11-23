@@ -60,7 +60,6 @@ const NO_SESSION_ROWS: SessionRows = new Map()
 const capturedSessionData = new WeakMap<object, {
   rows: SessionRows
   seenRevision: ReturnType<typeof seenInterruptionsRevision>
-  sessionIds: ReadonlySet<string>
   runtime: ReturnType<typeof captureRuntimeState>
   catalogRows: SessionRows
   catalog: ReturnType<typeof captureSessionCatalog>
@@ -78,16 +77,16 @@ function captureScrollSnapshots(instanceId: string): Record<string, ScrollSnapsh
     .map(({ sessionId, snapshot }) => [sessionId, { ...snapshot }]))
 }
 function captureRuntimeState(
-  instanceId: string, sessions: ReturnType<typeof getSessions>,
+  instanceId: string, rows: SessionRows,
 ): Pick<RestorableWorkspaceTabState, "unseenIdleSince" | "generationRecovery" | "seenInterruptions"> {
   const unseenIdleSince: Record<string, number> = {}
   const generationRecovery: Record<string, PersistedGenerationRecovery> = {}
-  for (const session of sessions) {
+  for (const session of rows.values()) {
     if (session.status === "idle" && typeof session.idleSince === "number") unseenIdleSince[session.id] = session.idleSince
     const recovery = getPersistedGenerationRecovery(session.status, session.generationRecovery)
     if (recovery) generationRecovery[session.id] = recovery
   }
-  const seenInterruptions = captureSeenInterruptions(instanceId, sessions)
+  const seenInterruptions = captureSeenInterruptions(instanceId, rows.values())
   return { unseenIdleSince, generationRecovery, ...(Object.keys(seenInterruptions).length ? { seenInterruptions } : {}) }
 }
 export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>, reuseCatalog = false) {
@@ -123,14 +122,13 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     let sessionData = capturedSessionData.get(tab)
     if (!sessionData || sessionData.rows !== rows || sessionData.seenRevision !== seenRevision
       || (!reuseCatalog && sessionData.catalogRows !== rows)) {
-      const sessions = [...rows.values()]
       const checkpoint = reuseCatalog || sessionData?.catalogRows === rows ? sessionData : undefined
       sessionData = {
-        rows, seenRevision, sessionIds: sessionData?.rows === rows ? sessionData.sessionIds : new Set(rows.keys()),
+        rows, seenRevision,
         runtime: sessionData?.rows === rows && sessionData.seenRevision === seenRevision
-          ? sessionData.runtime : captureRuntimeState(id, sessions),
+          ? sessionData.runtime : captureRuntimeState(id, rows),
         catalogRows: checkpoint?.catalogRows ?? rows,
-        catalog: checkpoint ? checkpoint.catalog : captureSessionCatalog(sessions, tab),
+        catalog: checkpoint ? checkpoint.catalog : captureSessionCatalog([...rows.values()], tab),
       }
       capturedSessionData.set(tab, sessionData)
     }
@@ -170,12 +168,12 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
   const authorities: Array<RestorableWorkspaceRuntimeAuthority | undefined> = tabs.map((tab) => {
     if (tab.kind !== "instance") return undefined
     const id = tab.instance.id
-    const sessionIds = capturedSessionData.get(tab)!.sessionIds
+    const rows = capturedSessionData.get(tab)!.rows
     const closed = closedDraftSnapshotAuthority(id)
     return {
       drafts: new Set([...getAuthoritativeDraftSessionIdsForInstance(id), ...closed]),
       attachments: new Set([...getAuthoritativeAttachmentSessionIdsForInstance(id), ...closed]),
-      scrollSnapshots: scrollAuthority.get(id), idleMarkers: sessionIds, generationRecovery: sessionIds,
+      scrollSnapshots: scrollAuthority.get(id), idleMarkers: rows, generationRecovery: rows,
       sessionExpansion: getAuthoritativeSessionExpansionIdsForInstance(id),
       deletedSessions: getAuthoritativelyDeletedSessionIdsForInstance(id),
       sessionSelection: hasAuthoritativeSessionSelection(id),
