@@ -7,9 +7,13 @@ fn source_reader_can_scroll_with_tab_and_page_down() {
         let mut rt = runtime(http.ui(Store::default(), "source-keyboard"));
         open(&mut rt, &http, "main.rs", &"bGV0IHggPSAxOwog".repeat(120)).await;
         let focused = |rt: &Runtime<State>| {
-            rt.elements()
-                .iter()
-                .any(|node| node.key.as_deref() == Some("file-source-scroll") && node.focused)
+            rt.elements().iter().any(|node| {
+                node.focused
+                    && node
+                        .key
+                        .as_deref()
+                        .is_some_and(|key| key.starts_with("file-source-scroll-"))
+            })
         };
         for _ in 0..20 {
             if focused(&rt) {
