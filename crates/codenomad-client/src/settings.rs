@@ -1,4 +1,5 @@
 //! Host-owned configuration and appearance, independent of any project location.
+pub mod memory;
 mod providers;
 use crate::{
     Wake,
@@ -12,7 +13,7 @@ pub use providers::{Provider, providers};
 use serde_json::Value;
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU8, Ordering::SeqCst},
     },
     time::Duration,
@@ -174,6 +175,7 @@ pub struct PreferencesWatch {
     _cancel: crate::Sender<()>,
     closed: crate::Receiver<()>,
     dirty: Arc<AtomicU8>,
+    missions: Arc<Mutex<Vec<crate::transport::WorkspaceEvent>>>,
 }
 impl PreferencesWatch {
     pub fn task(mut backend: Backend, wake: Wake) -> (Self, impl std::future::Future<Output = ()>) {
@@ -181,6 +183,8 @@ impl PreferencesWatch {
         let (close, closed) = crate::bounded(1);
         let dirty = Arc::new(AtomicU8::new(0));
         let notices = dirty.clone();
+        let missions = Arc::new(Mutex::new(Vec::new()));
+        let mission_notices = missions.clone();
         backend.workspace.clear();
         backend.session.clear();
         backend.client_id.push_str("-preferences");
@@ -198,9 +202,23 @@ impl PreferencesWatch {
                             async {
                                 while let Ok(event) = events.recv().await {
                                     let flag = match event {
-                                        Input::Opened(_) => 3,
+                                        Input::Opened(e) => if e > 1 { 11 | 16 } else { 11 },
                                         Input::Preferences(Owner::Config) => 1,
                                         Input::Preferences(Owner::State) => 2,
+                                        Input::Workspace(
+                                            _,
+                                            crate::transport::WorkspaceEvent::MemoryChanged,
+                                        ) => 8,
+                                        Input::Workspace(_, event @ (crate::transport::WorkspaceEvent::MissionChanged { .. }
+                                            | crate::transport::WorkspaceEvent::MissionsReconnected { .. }
+                                            | crate::transport::WorkspaceEvent::MissionActivityChanged { .. })) => {
+                                            let mut batch = mission_notices.lock().unwrap();
+                                            let overflow = if batch.len() == 128 { batch.clear(); true } else { false };
+                                            batch.push(event);
+                                            drop(batch);
+                                            wake();
+                                            if overflow { 16 } else { 0 }
+                                        }
                                         _ => 0,
                                     };
                                     if flag != 0 && notices.fetch_or(flag, SeqCst) & flag != flag {
@@ -234,6 +252,7 @@ impl PreferencesWatch {
                 _cancel: hold,
                 closed,
                 dirty,
+                missions,
             },
             run,
         )
@@ -246,6 +265,18 @@ impl PreferencesWatch {
 
     pub fn take_authentication_required(&self) -> bool {
         self.dirty.fetch_and(!4, SeqCst) & 4 != 0
+    }
+
+    pub fn take_memory_changed(&self) -> bool {
+        self.dirty.fetch_and(!8, SeqCst) & 8 != 0
+    }
+
+    pub fn take_missions(&self) -> (bool, Vec<crate::transport::WorkspaceEvent>) {
+        let reconnect = self.dirty.fetch_and(!16, SeqCst) & 16 != 0;
+        (
+            reconnect,
+            std::mem::take(&mut *self.missions.lock().unwrap()),
+        )
     }
 
     pub fn stop(self) -> crate::Receiver<()> {

@@ -54,6 +54,124 @@ fn save(ui: &mut Ui) {
     ui.save_document(ui.document.scope());
 }
 
+#[test]
+fn closing_a_peer_reader_keeps_the_save_check_owned_by_the_requesting_reader() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let store = Store::default();
+        let mut first = http.ui(store.clone(), "first");
+        let mut peer = http.ui(store, "peer");
+        open(&mut first, &http, "first.txt", "YQ==", "a").await;
+        peer.document.draft = first.document.draft.clone();
+        edit(&mut first, "edited");
+        save(&mut first);
+        let check = request(&mut first, &http, "GET", "first.txt").await;
+        peer.close_reader();
+        assert!(first.document.pending());
+        check.preview("first.txt", "YQ==", Some("v1")).await;
+        let put = request(&mut first, &http, "PUT", "first.txt").await;
+        assert_eq!(put.body["contents"], "edited");
+        put.reply(204, serde_json::Value::Null).await;
+        poll(&mut first, |ui| {
+            !ui.document.pending() && !ui.document.dirty()
+        })
+        .await;
+    });
+}
+
+#[test]
+fn reopening_requires_a_fresh_native_project_identity_after_git_init() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let mut ui = http.ui(Store::default(), "first");
+        ui.document.set_project(Project {
+            id: "owned".into(),
+            path: "/private".into(),
+        });
+        for (project, expected) in [("global", None), ("initialized", Some("initialized"))] {
+            ui.open("first.txt".into());
+            assert!(!ui.document.editable());
+            for _ in 0..2 {
+                let request = http.accept().await;
+                if request.header.contains("/instance/api/location") {
+                    request.reply(200, serde_json::json!({"data": {"directory": "/private", "project": {"id": project}}})).await;
+                } else {
+                    assert!(request.header.contains("/files/preview"));
+                    request.preview("first.txt", "YQ==", Some("v1")).await;
+                }
+                ui.poll(20.0);
+            }
+            poll(&mut ui, |ui| ui.document.editable()).await;
+            assert_eq!(
+                ui.document.key().unwrap().native_project.as_deref(),
+                expected
+            );
+            ui.close_reader();
+        }
+    });
+}
+
+#[test]
+fn a_detached_save_updates_the_fingerprint_of_edits_made_during_the_put() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let store = Store::default();
+        let mut ui = http.ui(store.clone(), "first");
+        open(&mut ui, &http, "first.txt", "YQ==", "a").await;
+        let key = ui.document.key.clone().unwrap();
+        let durable = SavedKey {
+            server: "installation".into(),
+            project: "/private".into(),
+            native_project: None,
+            directory: key.directory.clone(),
+            path: key.path.clone(),
+        };
+        ui.document.saved_key = Some(durable.clone());
+        edit(&mut ui, "b");
+        save(&mut ui);
+        request(&mut ui, &http, "GET", "first.txt")
+            .await
+            .preview("first.txt", "YQ==", Some("v1"))
+            .await;
+        let put = request(&mut ui, &http, "PUT", "first.txt").await;
+        edit(&mut ui, "c");
+        let shared = ui.document.draft.clone().unwrap();
+        ui.close_reader();
+        let fingerprint = format!("\"{}\"", "b".repeat(64));
+        put.send(
+            &format!("HTTP/1.1 204 No Content\r\nETag: {fingerprint}\r\nConnection: close\r\n\r\n"),
+            b"",
+        )
+        .await;
+        poll(&mut ui, |_| lock(&shared).pending.is_none()).await;
+        let (_, bytes) = store.file_draft_snapshot(0).unwrap();
+        let reopened = Store::default();
+        assert!(reopened.hydrate_file_drafts(&bytes));
+        let draft = reopened.open_saved(&key, Some(&durable));
+        assert_eq!(lock(&draft).version.as_deref(), Some(fingerprint.as_str()));
+        assert_eq!(lock(&draft).text, "c");
+        for (etag, contents, conflict) in
+            [(fingerprint.as_str(), "Yg==", false), ("v1", "YQ==", true)]
+        {
+            let fresh = Store::default();
+            assert!(fresh.hydrate_file_drafts(&bytes));
+            let mut editor = http.ui(fresh.clone(), "reopened");
+            editor.open("first.txt".into());
+            editor.document.draft = Some(fresh.open_saved(&key, Some(&durable)));
+            request(&mut editor, &http, "GET", "first.txt")
+                .await
+                .preview("first.txt", contents, Some(etag))
+                .await;
+            poll(&mut editor, |ui| ui.reader.receipt().1 && !ui.reader.busy()).await;
+            assert_eq!(
+                editor.document.error() == Some(Error::Conflict(None)),
+                conflict
+            );
+            assert!(editor.document.dirty());
+        }
+    });
+}
+
 #[cfg(feature = "test-support")]
 #[test]
 fn returning_to_sessions_keeps_the_file_draft_and_blocks_closing_its_tab() {

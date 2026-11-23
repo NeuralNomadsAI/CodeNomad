@@ -29,6 +29,8 @@ Bootstrap is accepted only from the host's own loopback listener, not from a LAN
 
 ## Browser sessions and revocation {#sessions}
 
+When Tauri or Electron launched the local server without a password, the app renews an expired session in place. Drafts stay open and failed actions are not replayed. Signing out or revoking the session prevents renewal.
+
 Direct sign-in creates an opaque in-memory backend session and a `codenomad_session` cookie (or the configured cookie name). Cookies are `HttpOnly`, `SameSite=Lax`, scoped to `/`, and marked `Secure` when issued over HTTPS. The cookie lasts seven days across browser restarts; backend restart invalidates the in-memory sessions. Reauthenticate in place when asked rather than resending failed mutations.
 
 Logout revokes the current direct session. A successful password change on the host revokes all that user's direct sessions, including the caller; sign in again. Sessions expire after 24 hours without authenticated requests or seven days from creation. Set `CODENOMAD_SESSION_IDLE_SECONDS` and `CODENOMAD_SESSION_ABSOLUTE_SECONDS` to positive integer seconds before starting the backend to adjust these limits. Remote Control devices are revoked separately.

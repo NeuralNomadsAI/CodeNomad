@@ -28,6 +28,21 @@ pub(super) fn search_limit(
 }
 
 pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streaming: bool) -> El {
+    prose_for(s, message, key, source, streaming, PROSE_LIMIT)
+}
+
+pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, limit: usize) -> El {
+    prose_for(s, "", key, source, streaming, limit)
+}
+
+fn prose_for(
+    s: &State,
+    message: &str,
+    key: String,
+    source: &str,
+    streaming: bool,
+    limit: usize,
+) -> El {
     let group = key.clone();
     let scope = s.input_scope.clone();
     let link_scope = scope.clone();
@@ -44,7 +59,7 @@ pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streami
             let q = hit.query(None);
             (q.terms, q.ranked)
         });
-    window(s, key, &[source], PROSE_LIMIT, |shown, units| {
+    window(s, key, &[source], limit, |shown, units| {
         let stamp = (
             version,
             steps,

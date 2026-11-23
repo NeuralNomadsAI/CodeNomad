@@ -6,11 +6,12 @@ import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
 import {chromium} from 'playwright'
 import {pendingBrowser} from './web-pending-open.mjs'
+import {fileWrapBrowser} from './web-file-wrap.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
-const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'}}})
+const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'},'file-wrap':{type:'boolean'}}})
 assert(values.url&&values.project&&values['storage-state']&&values.out,'Pass --url --project --storage-state --out')
 const url=new URL(values.url)
 assert(['127.0.0.1','localhost','[::1]'].includes(url.hostname)&&['http:','https:'].includes(url.protocol)&&!url.username&&!url.password&&url.pathname==='/'&&!url.hash,'Explicit isolated loopback root required')
@@ -20,6 +21,7 @@ const {profile,storage,inside}=await privateWebFixture({root,project:values.proj
 await mkdir(out,{recursive:true});assert(inside(profile,await realpath(out)),'Output link escapes fixture')
 const m=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/catalogues/fr.json'),'utf8'))
 if(values['pending-open']){await pendingBrowser({values,m,out,storage});process.exit(0)}
+if(values['file-wrap']){await fileWrapBrowser({values,m,out,storage,url,root});process.exit(0)}
 const KEY='codenomad.rune.alpha.client-state.v1',RELEASED='codenomad.rune.alpha.records-released'
 const PROOF='codenomad.fixture.rune.web-restore-proof.v1'
 const draftA='Brouillon Alpha\nété · 日本語 · 🦀',draftB='Brouillon Beta\nשלום · e\u0301 · 🧭'

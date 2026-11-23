@@ -9,7 +9,7 @@ use std::{
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
-pub struct Http(Client, Arc<OnceLock<String>>);
+pub struct Http(Client, Arc<OnceLock<String>>, Arc<crate::stream::Children>);
 impl Http {
     pub fn new() -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -21,10 +21,13 @@ impl Http {
             .build()?;
         #[cfg(target_arch = "wasm32")]
         let client = Client::new();
-        Ok(Self(client, Arc::new(OnceLock::new())))
+        Ok(Self(client, Arc::new(OnceLock::new()), Arc::default()))
     }
     pub fn same_connection(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.1, &other.1)
+    }
+    pub(crate) fn children(&self) -> &crate::stream::Children {
+        &self.2
     }
     pub fn server_identity(&self) -> Option<&str> {
         self.1.get().map(String::as_str)
@@ -142,4 +145,19 @@ pub fn client_id() -> Result<String> {
             bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
         ))
     }
+}
+/// Parse an external link without accepting credentials or active schemes.
+pub fn external_http_url(raw: &str) -> Option<(String, String)> {
+    let url = reqwest::Url::parse(raw).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return None;
+    }
+    let mut host = url.host_str()?.to_owned();
+    if let Some(port) = url.port() {
+        host.push_str(&format!(":{port}"));
+    }
+    Some((url.into(), host))
 }

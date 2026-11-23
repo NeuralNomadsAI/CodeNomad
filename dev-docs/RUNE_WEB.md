@@ -14,7 +14,7 @@ La liste de sessions publie la première page du dossier puis enrichit automatiq
 
 Après une rupture SSE et un historique indisponible, l'inventaire authentifié confirme l'absence de l'occurrence. Le navigateur revalide l'identité du serveur, ouvre le même dossier dans une nouvelle occurrence et relie la session native exacte. Il garde le document et le brouillon et relit l'historique sans réémettre d'action. Le catalogue ordinaire est rechargé même lorsque la recherche reste ouverte.
 
-**Fournisseurs** ouvre le catalogue en lecture seule du projet courant, même sans conversation. La coupure du flux retire les données et annule la lecture ; la reconnexion rafraîchit le même projet. `packages/rune-app/fixtures/providers-web-fixture.mjs` exerce ces transitions dans Chromium sur un bundle WASM.
+**Réglages → Général** écrit le contraste dans les préférences du serveur connecté ; **Auto** suit `prefers-contrast: more`. **Fournisseurs** ouvre le catalogue en lecture seule du projet courant, même sans conversation. La coupure du flux retire les données et annule la lecture ; la reconnexion rafraîchit le même projet. `packages/rune-app/fixtures/providers-web-fixture.mjs` exerce ces comportements dans Chromium sur un bundle WASM.
 
 ## Risques à qualifier
 

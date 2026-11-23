@@ -19,6 +19,12 @@ fn window() -> Runtime<State> {
                 .launcher()
                 .is_some_and(|l| l.connection.is_some() && !l.pending)
     });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while rt.find("folder-path").is_none() {
+        assert!(Instant::now() < deadline, "restore timeout: folder field");
+        rt.frame(1.0 / 60.0);
+        std::thread::sleep(Duration::from_millis(5));
+    }
     type_text(
         &mut rt,
         "folder-path",

@@ -26,6 +26,8 @@ Workspace `.mmd` files open as diagrams. Use **Show source** to edit and **Show 
 1. Open a Workspace text file with its eye action.
 2. For Markdown, choose **Show source** to edit, or **Preview Markdown** to read the rendering.
 3. Edit and choose **Save**, or press **Ctrl/Cmd+S** while the editor has focus.
+
+If the desktop app opens a draft recovery window, use **Copy** to keep each listed edit before closing it.
 4. If the file changed externally, review the overwrite confirmation; choose **Cancel** to keep your draft without overwriting that change.
 
 Save writes the actual file in the browsed checkout, including a linked worktree; it does not send a prompt or stage/commit the edit. The conflict dialog says **File was modified by the agent. Overwrite agent's changes?**; treat any external writer's changes with the same care.
@@ -35,6 +37,8 @@ With **Restore previous state** enabled, reopen the same file in the same projec
 Closing the reader with its trailing close button returns to the conversation; the composer remains available below the reader. Hiding the panel with **Right panel**, or a window too narrow for it, leaves the reader open with the freed width; showing the panel again keeps it as it was. Changing session/worktree clears the selected reader, not a promise to save its draft. Opening a browser preview replaces the reader; opening a file returns that view to chat mode.
 
 Reader replacement and closure affect only the current project tab. Duplicate tabs can read different files or keep a file beside chat/web/Mission content. Source/rendered choice, editor selection and scroll survive tab switches while their in-memory target/model is retained. Files mode is restored per tab; diff and wrap preferences remain shared.
+
+The source reader remembers word wrap across files and project tabs, and restores it with the saved window state.
 
 ## Read-only and bounded previews {#preview-limits}
 

@@ -19,6 +19,7 @@ pub(super) fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Er
             revision: snapshot.revision,
             saved_at: snapshot.saved_at,
             panel_widths: snapshot.panel_widths,
+            file_wrap: snapshot.file_wrap,
             tabs: vec![Tab::Workspace(shell)],
             active: Some(0),
         })

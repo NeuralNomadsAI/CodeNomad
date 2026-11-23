@@ -18,6 +18,7 @@ import {webLiveFixture} from './web-live-fixture.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
+const webMissions=process.argv.includes('--web-missions')
 const solid=webAndroid&&process.env.RUNE_ANDROID_SOLID_DIR
 const compare=webAndroid&&process.env.RUNE_ANDROID_COMPARE
 const probeGpu=webAndroid&&process.env.RUNE_ANDROID_GPU_PROBE==='only'
@@ -29,7 +30,10 @@ const webTouchHistory=process.argv.includes('--web-touch-history')
 const webTimeline=process.argv.includes('--web-timeline')||webTouchHistory
 const webSearch=process.argv.includes('--web-history-search')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
-const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
+const webFileWrap=process.argv.includes('--web-file-wrap')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending||webFileWrap,web=process.argv.includes('--web')||webRestore||webMobile||webMissions||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
+assert(!webFileWrap||(!webPending&&!webMobile),'File wrap uses the loopback Chromium restoration fixture')
+assert(!webMissions||!webRestore&&!webMobile)
 if(!web)requireTestSupport()
 const gitPanel=process.argv.includes('--git-panel'),gitOutput=gitPanel?process.env.RUNE_TEST_GIT_OUTPUT:undefined
 const placeWorktree=process.argv.includes('--place-worktree'),moves=[]
@@ -41,8 +45,12 @@ assert(!placeWorktree||gitPanel,'Placement uses the isolated Git panel fixture')
 assert(!placementAmbiguous||placeWorktree,'Ambiguity requires placement mode')
 assert(!placementBusy||placeWorktree&&!placementAmbiguous,'Busy refusal requires normal placement mode')
 if(gitOutput)assert(path.isAbsolute(gitOutput),'Git fixture output must be absolute')
-const here=path.resolve(import.meta.dirname,'..'),profile=path.join(gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile')),`launcher-${randomUUID()}`)
+const restoreFileDrafts=process.argv.includes('--file-draft-restart')
+const draftOutput=restoreFileDrafts?process.env.RUNE_TEST_FILES_OUTPUT:undefined
+if(draftOutput)assert(path.isAbsolute(draftOutput),'Files fixture output must be absolute')
+const here=path.resolve(import.meta.dirname,'..'),profile=path.join(draftOutput??gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile')),`launcher-${randomUUID()}`)
 const project=path.join(profile,'projects','synthetic');await mkdir(project,{recursive:true})
+if(webFileWrap)await writeFile(path.join(project,'wrap.txt'),'Workspace word wrap fixture: '+'wide source '.repeat(24)+'\n')
 const forbidden=path.join(profile,'forbidden');if(web)await mkdir(forbidden)
 const ui=path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected')
 const manifest=web?JSON.parse(await readFile(path.join(ui,'bundle-manifest.json'),'utf8')):null
@@ -91,6 +99,8 @@ assert(!filesState||(!web&&!controls&&!withTools&&!uncertain&&!workspaceClaims&&
 if(filesState){await mkdir(path.join(project,'src'));await writeFile(path.join(project,'initial.txt'),'initial');await writeFile(path.join(project,'src/initial.ts'),'initial')}
 assert(!workspaceClaims||(!web&&!controls&&!withTools&&!uncertain),'Workspace claims use their own qualification mode')
 assert(!restoreState||(!web&&!controls&&!withTools&&!uncertain&&!workspaceClaims),'Restore uses its own qualification mode')
+assert(!restoreFileDrafts||restoreState,'File draft restart requires --restore-state')
+if(restoreFileDrafts)await writeFile(path.join(project,'draft.txt'),'original')
 const gates=new Map(),visibleProof=[],restoreStages=[],restorePrompts=[]
 const filesStages=[],filesExpected=['reader-visible','create','rename','delete','collapsed','hidden','tabbed']
 if(documentState)filesExpected.push('document-external','document-cancelled','document-race','document-conflict','document-saved')
@@ -529,7 +539,7 @@ try{
       manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
     staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,backend:ts?'ts':'rust',serverBinary:ts?.args[0]??serverBinary,ui:solid||ui,paired}
     const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
-    const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()]
+    const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
     if(webTimeline)args.push(webTouchHistory?'--touch-history':'--timeline')
     if(webSearch)args.push('--history-search')
     const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
@@ -570,14 +580,22 @@ try{
   }else if(pendingOpen){
     await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0
   }else if(restoreState){
+    if(restoreFileDrafts)await signIn(origin)
     for(const stage of ['prepare','resume','verify']){
+      if(restoreFileDrafts&&stage==='verify')await writeFile(path.join(project,'draft.txt'),'external')
       clientLines=''
-      client=spawn(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage}})
+      client=spawn(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
       client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
       const timer=setTimeout(()=>client.kill(),120000)
-      try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
+      try{result=await new Promise((resolve,reject)=>{client.on('close',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
       assert.equal(result,0,`Restore stage ${stage}`)
       assert.equal(restoreStages.at(-1)?.stage,stage,'Each process publishes its stage proof')
+      if(restoreFileDrafts){
+        assert.equal(restoreStages.at(-1)?.fileDrafts,true)
+        assert.equal(restoreStages.at(-1)?.nativeWindow,process.platform==='win32')
+        assert.equal(await readFile(path.join(project,'draft.txt'),'utf8'),stage==='verify'?'external':'original')
+        assert.deepEqual(await (await http.get('/api/workspaces')).json(),[])
+      }
       assert.equal(stats.created,2,'Restore must not create native sessions');assert.equal(stats.prompts,stage==='prepare'?0:2,'Only explicit resumed sends submit prompts')
     }
   }else {
@@ -594,7 +612,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid?1:webTouchHistory?4:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid?1:webTouchHistory?4:webMissions?2:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
     if(!placeWorktree){
       await removeReview

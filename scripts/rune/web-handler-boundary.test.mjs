@@ -13,7 +13,7 @@ async function handler(file,assets,connected=true){
   assert.equal(callbacks.length,1);assert(ts.isArrowFunction(callbacks[0]))
   const policy=workspacePolicy({origin,project,assets}),input={path:project,requestId:'owned'}
   policy.allows('POST','/api/workspaces',input);policy.admit(input,{id:'one',requestId:'owned',location:{directory:project}},origin)
-  const callback=new Function('assert','url','values','policy','routes','errors','forbiddenRequests','fulfillWorkspaceCreation','record','stamp','forbidRelease',`return (${callbacks[0].getText(ast)})`)(assert,new URL(origin),{connected,project},policy,[],[],[],fulfillWorkspaceCreation,{requests:[],forbidden:[],errors:[]},()=>1,false)
+  const callback=new Function('assert','url','values','policy','routes','errors','forbiddenRequests','fulfillWorkspaceCreation','record','stamp','forbidRelease','missions',`return (${callbacks[0].getText(ast)})`)(assert,new URL(origin),{connected,project},policy,[],[],[],fulfillWorkspaceCreation,{requests:[],forbidden:[],errors:[]},()=>1,false,null)
   return async(method,pathname,{cookie='private=fixture',body,base=origin}={})=>{
     let disposition
     await callback({request:()=>({url:()=>new URL(pathname,base).href,method:()=>method,postDataJSON:()=>body,allHeaders:async()=>({cookie})}),continue:async()=>{disposition='continued'},abort:async()=>{disposition='aborted'},fetch:async()=>{throw Error('The boundary reproduction must never use the network')}})
@@ -32,7 +32,8 @@ for(const file of ['web-smoke.mjs','web-restore.mjs'])test(`${file}: real route 
   assert.equal(await route('GET','/api/meta'),'continued')
   assert.equal(await route('GET','/workspaces/one/instance/api/session/ses_existing'),'continued')
   assert.equal(await route('POST','/workspaces/one/instance/api/session/ses_existing/prompt',{body:{text:'forbidden'}}),'aborted')
-  assert.equal(await route('POST','/api/workspaces/one/session-history/window',{body:{sessionID:'ses_existing'}}),'continued')
+   assert.equal(await route('POST','/api/workspaces/one/session-history/window',{body:{sessionID:'ses_existing'}}),'continued')
+  assert.equal(await route('POST','/api/workspaces/one/missions/panel-page',{body:{source:'summaries',window:{offset:0}}}),'aborted')
   assert.equal(await route('POST','/api/workspaces/one/creation/release',{body:{requestId:'owned'}}),'continued')
   assert.equal(await route('DELETE','/api/workspaces/one'),'continued')
   assert.equal(await route('POST','/api/workspaces/one/creation/release',{body:{requestId:'foreign'}}),'aborted')

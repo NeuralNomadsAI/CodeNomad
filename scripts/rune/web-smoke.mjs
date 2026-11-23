@@ -9,17 +9,21 @@ import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction} from './web-mobile.mjs'
 import {mobileLive, revokedLauncher} from './web-live.mjs'
+import {focusRing, longPaste} from './web-paste.mjs'
+import {missionsFixture} from './web-missions.mjs'
 import {historySearch} from './web-history-search.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'paste-only':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
 if(values.connected){assert(values.workspace&&values.project&&values['storage-state']);url.searchParams.delete('scene')}
-else url.searchParams.set('scene', 'synthetic')
+else url.searchParams.set('scene', values['paste-only'] ? 'synthetic-paste' : 'synthetic')
 if(values.mobile)assert(values.connected && url.protocol==='https:')
+if(values['paste-only'])assert(!values.connected)
+if(values.missions)assert(values.connected&&!values.mobile&&url.protocol==='http:')
 url.searchParams.set('locale', values.locale)
 const catalogueIndex = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/catalogues.json'), 'utf8'))
 assert(catalogueIndex.locales.includes(values.locale), 'Select a supported locale from the generated catalogue')
@@ -46,7 +50,7 @@ const connectedPalettes = values.connected
   if(values.mobile)assets.add('/remote-pair')
 try {
   const android=mobileContext(browser)
-  const sizes=values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
+  const sizes=values.missions?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
     [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
   for (const [name, width, height, touch] of sizes) {
     const control=name==='phone-dpr1-control'
@@ -56,11 +60,13 @@ try {
         ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
       const page = await context.newPage()
       page.setDefaultTimeout(15000)
+      const missions=values.missions?missionsFixture({page,messages,artifact:path.join(out,`missions-${colorScheme}`),project:values.project}):null
+      if(missions)await context.addInitScript(()=>Object.defineProperty(Crypto.prototype,'subtle',{value:undefined}))
       const errors = [], forbiddenRequests = [], routes=[], history=[]
       let holdOlder
       let holdAnchor
       let measured
-      const policy=workspacePolicy({origin:url.origin,project:values.project,assets})
+      const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions})
       let eventSource=0
       let releaseLinked
       const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
@@ -96,6 +102,7 @@ try {
             try{Object.assign(entry,await fulfillWorkspaceCreation(route,policy));return}
             catch{errors.push({name:'WorkspaceAdmission',message:'Private workspace response was refused before delivery'});return route.abort('blockedbyclient')}
           }
+          if(missions&&await missions.route(route,p))return
         }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/worktrees')){
           markLinked()
@@ -125,7 +132,7 @@ try {
       const started = performance.now()
       try {
         let network
-        if(values.mobile){
+         if(values.mobile){
           const cdp=await mobileClientHints(page,browser)
           if(colorScheme==='dark'){
             network=cdp
@@ -371,20 +378,46 @@ try {
             // The text mirror updates before the newly mounted glyphs finish fading in.
             await page.waitForTimeout(250)
           }
-        }else{
-        // Keyboard input is scoped to this headless page and goes through Rune's DOM bridge.
-        let focused = false
-        for (let tab = 0; tab < 12; tab++) {
-          await page.keyboard.press('Tab')
-          await page.waitForTimeout(30)
-          focused = await page.evaluate(() => document.activeElement?.tagName === 'TEXTAREA')
-          if (focused) break
+          if(missions)await missions.check(press)
+         }else{
+        // The DOM editing proxy is ready before the browser presents the GPU handover.
+        // Start the synthetic interactions on the canvas that will be sampled.
+        const renderer = await page.waitForFunction(() => ['web.handover.done', 'web.gpu.failed', 'web.handover.failed']
+          .find(name => performance.getEntriesByName(name).length))
+        const rendererMark = await renderer.jsonValue()
+        await renderer.dispose()
+        // Enter from the field boundary: the transcript has its own variable number of Tab stops.
+        const group = await page.getByRole('group', {name: messages['rune.prompt'], exact: true}).boundingBox()
+        const action = await page.getByRole('button', {name: messages['promptInput.overlay.send'], exact: true}).boundingBox()
+        assert(group && action && action.y > group.y, 'Composer field must have a visible area above its actions')
+        const x = group.x + group.width / 2, y = (group.y + action.y) / 2
+        if (touch) await page.touchscreen.tap(x, y)
+        else await page.mouse.click(x, y)
+        await page.locator('textarea:focus').waitFor({state: 'attached'})
+        const captureFocus = async state => {
+          // The editing proxy can receive DOM focus before the canvas presents that frame.
+          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+          return page.screenshot({path:path.join(out, `${name}-${colorScheme}-${state}.png`),scale:'css'})
         }
-        assert(focused, 'Rune composer must be reachable through keyboard focus')
+        const focused = values['paste-only'] ? await captureFocus('focus') : null
+        await page.keyboard.press('Tab')
+        await page.waitForFunction(() => document.activeElement?.tagName !== 'TEXTAREA')
+        const unfocused = values['paste-only'] ? await captureFocus('blur') : null
+        await page.keyboard.press('Shift+Tab')
+        await page.locator('textarea:focus').waitFor({state: 'attached'})
         const text = 'Rune web\nDeuxième ligne 🦀'
         await page.locator('textarea:focus').fill(text)
-        await page.waitForFunction(expected => document.activeElement?.value === expected, text)
-        assert.equal(await page.locator('textarea:focus').getAttribute('aria-label'), messages['rune.prompt'])
+         await page.waitForFunction(expected => document.activeElement?.value === expected, text)
+         assert.equal(await page.locator('textarea:focus').getAttribute('aria-label'), messages['rune.prompt'])
+         if(values['paste-only']) {
+           const {['space-md']: inset} = palette.numbers[colorScheme]
+           const ring = await focusRing(imagePage, [unfocused, focused], group, inset, palette[colorScheme]['focus-ring-color'])
+           const paste = await longPaste(page, messages)
+           assert.deepEqual(forbiddenRequests, [])
+           assert.deepEqual(errors, [])
+           records.push({name, colorScheme, width, height, emulatedTouch: touch, renderer: rendererMark, longPaste: paste, focusRing: ring, pass: true})
+           continue
+         }
         }
         const canvas = await page.locator('canvas').first().boundingBox()
         assert(canvas && canvas.width > 0 && canvas.height > 0, 'Rune must draw an actual canvas')
@@ -403,7 +436,7 @@ try {
             return {name, rect: [box.x, box.y, box.width, box.height], surface, text}
           }
           return [...(title.connected?[crop('header', text => text==='Existing history','surface-shade-light','text-muted')]:[]),
-            crop('transcript', text => text.includes(title.connected?'Existing answer':'fn main()'))]
+            crop('transcript', text => text.includes(title.connected?'Existing answer':'Synthetic message 9998'))]
         }, {connected:values.connected})
         const composerBox = await page.getByRole('group', {name: messages['rune.prompt'], exact: true}).boundingBox()
         const sendBox = await page.getByRole('button', {name: messages['promptInput.overlay.send'], exact: true}).boundingBox()
@@ -437,8 +470,8 @@ try {
           assert.equal(measured.android.touchScroll.moved,true,'Physical touch dispatch must move the portrait transcript')
           measured.live=await mobileLive({page,context,url,messages,revoke:control,
             eventSources:()=>eventSource,workspaces:policy.workspaces,fromLink:!values['same-origin-pairing']})
-        }
-        assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
+         }
+         assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
         assert.equal(errors.length, 0, 'Web app must initialize and handle multiline input without JS exceptions')
         if(values.connected){
           assert(eventSource,'Real browser EventSource must connect')
@@ -485,9 +518,10 @@ try {
           ]}:{pass:true})})
       } catch (error) {
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
-        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot()}, null, 2))
+        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot(),
+          marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))}, null, 2))
         throw error
-      } finally {releaseLinked?.();await context.close()}
+       } finally {missions?.release();releaseLinked?.();await context.close()}
     }
   }
 } finally {

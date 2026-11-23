@@ -42,6 +42,9 @@ pub fn rows(s: &State) -> El {
 
 pub fn message(s: &State, i: usize) -> El {
     let m = &s.messages[i];
+    if matches!(m.parts.as_slice(), [Part::SubagentReport(_)]) {
+        return col().key(m.id.clone());
+    }
     let tracks = crate::timeline::demanded(s);
     let blocks = tracks
         .then(|| super::anchors::blocks(m, super::anchors::steps(s, &m.id), false))
@@ -203,6 +206,7 @@ pub fn message(s: &State, i: usize) -> El {
                     super::reasoning::view(s, &m.id, &m.parts[index..reasoning_end])
                 }
                 Part::Reasoning(_) => None,
+                Part::SubagentReport(_) => None,
                 Part::Skill(skill) if visible => Some(super::attachments::skill_chip(skill)),
                 Part::File(file) if visible => Some(super::attachments::file_chip(s, file)),
                 Part::Skill(_) | Part::File(_) => None,

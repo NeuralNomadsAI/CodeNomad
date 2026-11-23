@@ -13,11 +13,17 @@ pub(crate) use state::contains_project;
 pub(crate) use state::evict_for_probe;
 #[cfg(target_os = "windows")]
 pub(crate) use state::native_window_store;
+#[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
+pub(crate) use state::set_files_tab;
 pub(crate) use state::{
     Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
-    close, connected, draft_changed, files_tab, has_conversation_stream, input_ready, new_tab,
-    opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume, retry,
-    schedule_catalogue, select, set_files_tab, status, strip, unselect_missing,
+    close, connected, draft_changed, file_wrap, files_tab, has_conversation_stream, input_ready,
+    new_tab, opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume,
+    retry, schedule_catalogue, select, status, strip, toggle_file_wrap, unselect_missing,
+};
+pub(crate) use state::{
+    mission_event, mission_panel, mission_supported, right_panel_tab, set_right_panel_tab,
+    suspend_missions,
 };
 
 use crate::composer::draft_storage::SavedParts;
@@ -35,12 +41,14 @@ const PANEL_WIDTH_KEYS: [&str; 2] = [
     "opencode-session-sidebar-width-v8",
     "opencode-session-right-drawer-width-v1",
 ];
+pub(crate) const FILE_WRAP_KEY: &str = "opencode-session-right-panel-files-word-wrap-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub revision: u64,
     pub saved_at: u64,
     pub panel_widths: [Option<u16>; 2],
+    pub file_wrap: Option<bool>,
     pub tabs: Vec<Tab>,
     pub active: Option<usize>,
 }
@@ -67,8 +75,32 @@ pub struct Workspace {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ViewState {
-    files_tab: bool,
+    right_panel: RightPanelTab,
     files_mode: Option<&'static str>,
+    selected_mission: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RightPanelTab {
+    Status,
+    Files,
+    Missions,
+}
+
+impl Default for RightPanelTab {
+    fn default() -> Self {
+        Self::Status
+    }
+}
+
+impl RightPanelTab {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Files => "files",
+            Self::Missions => "missions",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,7 +126,15 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
         return Err(Error::Unsupported);
     }
     let layout = object(required(root, "layout")?)?;
-    fields(layout, &PANEL_WIDTH_KEYS)?;
+    fields(
+        layout,
+        &[PANEL_WIDTH_KEYS[0], PANEL_WIDTH_KEYS[1], FILE_WRAP_KEY],
+    )?;
+    let file_wrap = match layout.get(FILE_WRAP_KEY).and_then(Value::as_str) {
+        Some("on") => Some(true),
+        Some("off") => Some(false),
+        _ => None,
+    };
     let mut panel_widths = [None; 2];
     for (side, key) in PANEL_WIDTH_KEYS.iter().enumerate() {
         if let Some(raw) = layout.get(*key) {
@@ -134,6 +174,7 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
         revision,
         saved_at,
         panel_widths,
+        file_wrap,
         tabs,
         active,
     };
@@ -188,20 +229,26 @@ fn snapshot_bytes(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
                 if workspace.view != ViewState::default() {
                     value["viewState"] = json!({
                         "version": 1,
-                        "rightPanelTab": if workspace.view.files_tab { "files" } else { "status" },
+                        "rightPanelTab": workspace.view.right_panel.key(),
                         "filesMode": workspace.view.files_mode.unwrap_or("workspace"),
                     });
+                    if let Some(id) = &workspace.view.selected_mission {
+                        value["viewState"]["missions"] = json!({ "selected": id });
+                    }
                 }
                 value
             }
         })
         .collect();
     let active = snapshot.active.map(|index| index as i64).unwrap_or(-1);
-    let layout: Map<_, _> = PANEL_WIDTH_KEYS
+    let mut layout: Map<_, _> = PANEL_WIDTH_KEYS
         .into_iter()
         .zip(snapshot.panel_widths)
         .filter_map(|(key, width)| Some((key.into(), json!(width?.to_string()))))
         .collect();
+    if let Some(wrap) = snapshot.file_wrap {
+        layout.insert(FILE_WRAP_KEY.into(), json!(if wrap { "on" } else { "off" }));
+    }
     let value = json!({"version": 1, "revision": snapshot.revision, "savedAt": snapshot.saved_at,
         "layout": layout, "session": {"tabs": tabs, "activeTabIndex": active}});
     serde_json::to_vec(&value).map_err(|_| Error::Malformed)
@@ -325,13 +372,17 @@ fn view_state(value: Option<&Value>) -> Result<ViewState, Error> {
     if value.is_empty() {
         return Ok(ViewState::default());
     }
-    fields(value, &["version", "rightPanelTab", "filesMode"])?;
+    fields(
+        value,
+        &["version", "rightPanelTab", "filesMode", "missions"],
+    )?;
     if integer(value.get("version"))? != 1 {
         return Err(Error::Unsupported);
     }
-    let files_tab = match value.get("rightPanelTab").map(|key| key.as_str()) {
-        None | Some(Some("status")) => false,
-        Some(Some("files")) => true,
+    let right_panel = match value.get("rightPanelTab").map(|key| key.as_str()) {
+        None | Some(Some("status")) => RightPanelTab::Status,
+        Some(Some("files")) => RightPanelTab::Files,
+        Some(Some("missions")) => RightPanelTab::Missions,
         _ => return Err(Error::Unsupported),
     };
     let files_mode = match value.get("filesMode") {
@@ -342,9 +393,24 @@ fn view_state(value: Option<&Value>) -> Result<ViewState, Error> {
                 .key(),
         ),
     };
+    let selected_mission = match value.get("missions") {
+        None => None,
+        Some(missions) => {
+            let missions = object(missions)?;
+            fields(missions, &["selected"])?;
+            match missions.get("selected") {
+                None => None,
+                Some(Value::String(id)) if !id.is_empty() && id.encode_utf16().count() <= 240 => {
+                    Some(id.clone())
+                }
+                Some(_) => return Err(Error::Malformed),
+            }
+        }
+    };
     Ok(ViewState {
-        files_tab,
-        files_mode: files_mode.or(files_tab.then_some("workspace")),
+        right_panel,
+        files_mode: files_mode.or((right_panel == RightPanelTab::Files).then_some("workspace")),
+        selected_mission,
     })
 }
 

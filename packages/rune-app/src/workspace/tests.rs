@@ -32,6 +32,7 @@ fn saving_preserves_valid_siblings_of_an_invalid_tab() {
         revision: 1,
         saved_at: 1,
         panel_widths: [None; 2],
+        file_wrap: None,
         tabs: vec![Tab::Workspace(broken), Tab::Workspace(good.clone())],
         active: Some(1),
     };
@@ -136,6 +137,7 @@ fn snapshot(workspace: Workspace) -> Snapshot {
         revision: 7,
         saved_at: 1234,
         panel_widths: [None; 2],
+        file_wrap: None,
         tabs: vec![Tab::Workspace(workspace)],
         active: Some(0),
     }
@@ -156,15 +158,17 @@ fn canonical_round_trip_keeps_occurrences_and_text_separate() {
     first.workspace_id = Some("workspace-one".into());
     first.active_session_id = Some("ses_same".into());
     first.view = ViewState {
-        files_tab: true,
+        right_panel: RightPanelTab::Files,
         files_mode: Some("changes"),
+        selected_mission: None,
     };
     first.drafts.insert("ses_same".into(), "first\n🦀".into());
     let mut second = first.clone();
     second.occurrence = 1;
     second.view = ViewState {
-        files_tab: false,
+        right_panel: RightPanelTab::Missions,
         files_mode: Some("history"),
+        selected_mission: Some("mission-second".into()),
     };
     second.drafts.insert("ses_same".into(), "second".into());
     second
@@ -178,6 +182,7 @@ fn canonical_round_trip_keeps_occurrences_and_text_separate() {
         revision: MAX_SAFE,
         saved_at: MAX_SAFE,
         panel_widths: [None; 2],
+        file_wrap: None,
         tabs: vec![Tab::Blank, Tab::Workspace(first), Tab::Workspace(second)],
         active: Some(2),
     };
@@ -191,6 +196,10 @@ fn canonical_round_trip_keeps_occurrences_and_text_separate() {
         json!({
             "version": 1, "rightPanelTab": "files", "filesMode": "changes"
         })
+    );
+    assert_eq!(
+        json["session"]["tabs"][2]["viewState"]["missions"]["selected"],
+        "mission-second"
     );
     for key in [
         "attachments",
@@ -267,6 +276,7 @@ fn enforces_count_byte_path_identity_and_selection_bounds() {
         revision: 0,
         saved_at: 0,
         panel_widths: [None; 2],
+        file_wrap: None,
         tabs: vec![Tab::Blank; MAX_TABS],
         active: Some(31),
     };
@@ -313,6 +323,7 @@ fn enforces_count_byte_path_identity_and_selection_bounds() {
         revision: 0,
         saved_at: 0,
         panel_widths: [None; 2],
+        file_wrap: None,
         tabs: vec![],
         active: None,
     };
@@ -329,6 +340,7 @@ fn accepts_v1_null_session_and_safe_integer_json_numbers() {
         revision: 0,
         saved_at: 0,
         panel_widths: [None; 2],
+        file_wrap: None,
         tabs: vec![],
         active: None,
     });
@@ -340,6 +352,7 @@ fn accepts_v1_null_session_and_safe_integer_json_numbers() {
             revision: 1,
             saved_at: 0,
             panel_widths: [None; 2],
+            file_wrap: None,
             tabs: vec![],
             active: None
         }
@@ -358,4 +371,19 @@ fn native_store_preserves_panel_widths_under_the_solid_layout_keys() {
     assert_eq!(from_value(&raw), Ok(input.clone()));
     input.panel_widths[0] = Some(0);
     assert_eq!(encode(&input), Err(Error::Limit));
+}
+
+#[test]
+fn source_wrap_round_trips_the_solid_layout_key_without_affecting_window_state() {
+    let mut input = snapshot(workspace());
+    for (value_on_disk, wrap) in [("on", Some(true)), ("off", Some(false)), ("unknown", None)] {
+        let mut raw = value(&input);
+        raw["layout"][FILE_WRAP_KEY] = json!(value_on_disk);
+        input.file_wrap = wrap;
+        assert_eq!(from_value(&raw), Ok(input.clone()));
+        assert_eq!(
+            value(&input)["layout"][FILE_WRAP_KEY].as_str(),
+            wrap.map(|_| value_on_disk)
+        );
+    }
 }

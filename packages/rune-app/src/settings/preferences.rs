@@ -1,3 +1,4 @@
+pub(super) mod behavior;
 mod document;
 
 use crate::{backend::Backend, platform};
@@ -13,6 +14,7 @@ use serde_json::json;
 pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
     pub(super) provider_target: Option<super::providers::Target>,
+    pub(super) memory: super::memory::Setting,
     config: Document,
     state: Document,
     pub(super) window_wake: Option<rune::Waker>,
@@ -84,6 +86,7 @@ impl Preferences {
             });
         self.config.rebind(same_address);
         self.state.rebind(same_address);
+        self.memory.bind(same_address);
         self.backend = owner;
         self.authentication_required = false;
         self.unwatch();
@@ -97,7 +100,6 @@ impl Preferences {
         self.state.invalidate();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn retry(&mut self) {
         self.config.retry();
         self.state.retry();
@@ -105,6 +107,11 @@ impl Preferences {
 
     pub fn can_retry(&self) -> bool {
         self.backend.is_some() && !self.authentication_required
+    }
+
+    pub(super) fn awaiting_appearance(&self) -> bool {
+        self.can_retry()
+            && (self.config.awaiting_initial_read() || self.state.awaiting_initial_read())
     }
 
     pub fn watch(&mut self, wake: &rune::Waker) {
@@ -166,6 +173,14 @@ impl Preferences {
         }
     }
 
+    pub(super) fn mission_changes(
+        &self,
+    ) -> (bool, Vec<codenomad_client::transport::WorkspaceEvent>) {
+        self.stream
+            .as_ref()
+            .map_or_else(Default::default, PreferencesWatch::take_missions)
+    }
+
     pub fn invalidate(&mut self, owner: Owner) {
         self.doc_mut(owner).invalidate();
     }
@@ -193,7 +208,11 @@ impl Preferences {
             Some("rune.connect_error")
         } else if self.contrast_failed() {
             Some("settings.appearance.contrast.saveError")
-        } else if self.config.write_failed() || self.state.write_failed() {
+        } else if self
+            .config
+            .write_failed_other_than(Choice::NewConversationPermissions)
+            || self.state.write_failed()
+        {
             Some("settings.preferenceSaveFailed")
         } else if self.config.read_failed() || self.state.read_failed() {
             Some("rune.connect_error")
@@ -216,6 +235,9 @@ impl Preferences {
             if state {
                 self.state.invalidate();
             }
+            if stream.take_memory_changed() {
+                self.memory.invalidate();
+            }
         }
     }
 
@@ -228,7 +250,8 @@ impl Preferences {
         };
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         let changed = self.config.poll(backend, Owner::Config, &main, &window)
-            | self.state.poll(backend, Owner::State, &main, &window);
+            | self.state.poll(backend, Owner::State, &main, &window)
+            | self.memory.poll(backend, &main, &window);
         if changed {
             self.revision += 1;
         }
@@ -258,7 +281,6 @@ impl Preferences {
         self.config.choice_failed(Choice::Contrast)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn set_contrast(&mut self, contrast: &'static str) {
         if self.locale_ready()
             && self.can_retry()

@@ -26,6 +26,8 @@ Los archivos `.mmd` del Workspace se abren como diagramas. Usa **Mostrar código
 1. Abre un archivo de texto de Espacio de trabajo con su acción del ojo.
 2. Para Markdown, elige **Mostrar fuente** para editar o **Vista previa Markdown** para leer su representación.
 3. Edita y elige **Guardar**, o pulsa **Ctrl/Cmd+S** mientras el editor tenga el foco.
+
+Si la aplicación de escritorio abre una ventana de recuperación de borradores, usa **Copiar** para conservar los cambios antes de cerrarla.
 4. Si el archivo cambió externamente, revisa la confirmación de sobrescritura; elige **Cancelar** para conservar tu borrador sin sobrescribir ese cambio.
 
 Guardar escribe el archivo real en la copia de trabajo explorada, incluido un worktree vinculado; no envía un mensaje ni prepara/confirma la edición. El diálogo de conflicto dice **El archivo fue modificado por el agente. ¿Sobrescribir los cambios del agente?**; trata con el mismo cuidado los cambios de cualquier otro escritor externo.
@@ -35,6 +37,8 @@ Con **Restaurar el estado anterior** activado, vuelve a abrir el mismo archivo e
 Cerrar el lector con su botón de cierre final devuelve a la conversación; el editor de mensajes permanece disponible debajo del lector. Ocultar el panel con **Panel derecho**, o una ventana demasiado estrecha para él, deja el lector abierto con el ancho liberado; volver a mostrar el panel lo conserva tal cual. Cambiar de sesión/worktree borra el lector seleccionado, lo que no implica que se guarde su borrador. Abrir una vista previa de navegador reemplaza el lector; abrir un archivo devuelve esa vista al modo de chat.
 
 Reemplazar o cerrar el lector afecta solo a la pestaña de proyecto actual. Las pestañas duplicadas pueden leer archivos distintos o mantener un archivo junto al chat, la web o el contenido de una Misión. La elección entre fuente y vista renderizada, la selección del editor y el desplazamiento se conservan al cambiar de pestaña mientras su destino y modelo sigan en memoria. El modo de Archivos se restaura por pestaña; las preferencias de diff y ajuste de línea siguen compartidas.
+
+El lector de código conserva el ajuste de línea al cambiar de archivo o pestaña de proyecto y lo restaura con el estado de la ventana.
 
 ## Vistas previas de solo lectura y acotadas {#preview-limits}
 

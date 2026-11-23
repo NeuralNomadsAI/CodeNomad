@@ -1,5 +1,7 @@
 # Coquille web Rune
 
+`packages/rune-app/fixtures/launcher-fixture.mjs --web-missions` vérifie le panneau Missions monté avec le bundle produit (`RUNE_WEB_DIR`), un serveur Rust privé et des réponses de page déterministes. Chromium charge le WASM via HTTP avec WebCrypto désactivée. La sonde vérifie la reprise après refus d’ordre, la fiche sélectionnée, la pagination du répertoire et des tâches, l’activité et les tâches à examiner dans l’arborescence accessible.
+
 Compiler le même binaire `codenomad-rune` pour `wasm32-unknown-unknown`, puis empaqueter son fichier `.wasm` explicitement. Le cache Cargo reste celui du développeur. `bundle-web.mjs` utilise le contrat de `Rune/scripts/web-build.sh` : génération `wasm-bindgen --target web`, copie des snippets et des faces Inter complètes à côté de `app.js`.
 
 ```powershell
@@ -28,6 +30,8 @@ node packages/rune-app/fixtures/launcher-fixture.mjs --web
 Ces réglages s'appliquent à cette commande Cargo et à son environnement ; pour compiler ensuite un binaire natif avec les réglages par défaut, retirer les deux variables `CARGO_PROFILE_RELEASE_*` ou ouvrir un autre terminal.
 
 Cette fixture vérifie cookies, refus sans authentification, deux pages de sessions, conversation exacte, session vide et retour, EventSource et arrêt du serveur, sans création ni envoi. Les six contextes et preuves restent sous `target/rune-web-tests/launcher-*/`.
+
+`node packages/rune-app/fixtures/launcher-fixture.mjs --web-file-wrap` utilise le même bundle produit et le serveur isolé. Chromium headless ouvre deux onglets indépendants de même origine, bascule le retour à la ligne dans l’un, vérifie le contrôle à la réouverture du lecteur dans l’autre, puis après rechargement. Le scénario vérifie aussi la propagation de la désactivation.
 
 Avec le même bundle produit et `RUNE_SERVER_EXE` pointant vers le serveur Rust compilé, le smoke d'intégration se rejoue en une commande :
 
