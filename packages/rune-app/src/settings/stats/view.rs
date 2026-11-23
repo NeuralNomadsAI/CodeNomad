@@ -1,15 +1,16 @@
 use super::{Dashboard, dates};
 use crate::strings::{locale, t};
 use codenomad_client::settings::stats::{PERIODS, Stats};
-use rune::{El, col};
+use rune::{Cx, El, col};
 use rune_theme_codenomad::{
     Space,
-    layout::{self, Layout},
+    layout::Layout,
     settings::{self as chrome, stats as style},
     usage::numbers,
 };
 
 pub(in crate::settings) fn view<S: 'static>(
+    cx: &Cx<S>,
     stats: &Dashboard,
     layers: &mut Vec<El>,
     access: fn(&mut S) -> Option<&mut Dashboard>,
@@ -65,12 +66,11 @@ pub(in crate::settings) fn view<S: 'static>(
             }
         },
     );
-    body = body.child(
-        layout::action_row()
-            .child(style::caption(period))
-            .child(chrome::build_picker(picker, layers))
-            .child(refresh),
-    );
+    body = body.child(style::period(
+        period,
+        chrome::build_picker(picker, layers),
+        refresh,
+    ));
     if stats.busy && stats.snapshot.is_none() {
         body = body.child(status("settings.usage.loading", "status"));
     }
@@ -91,6 +91,8 @@ pub(in crate::settings) fn view<S: 'static>(
         body = body.children(contents(
             &snapshot.stats,
             stats.zone.as_deref().unwrap_or("UTC"),
+            cx.window_layout_with("stats-metrics", |rect| style::metric_columns(rect[2]))
+                .unwrap_or(2),
             help,
             stats.help.then(|| style::caption(hint)),
         ));
@@ -103,7 +105,13 @@ fn status(key: &str, role: &'static str) -> El {
     style::caption(label).role(role).label(label)
 }
 
-fn contents(stats: &Stats, timezone: &str, help: El, detail: Option<El>) -> [El; 5] {
+fn contents(
+    stats: &Stats,
+    timezone: &str,
+    columns: usize,
+    help: El,
+    detail: Option<El>,
+) -> [El; 5] {
     let locale = locale();
     let number = |value| numbers::exact(locale, value);
     let money = |value| numbers::dashboard_usd(locale, value);
@@ -157,13 +165,12 @@ fn contents(stats: &Stats, timezone: &str, help: El, detail: Option<El>) -> [El;
     });
     [
         style::caption(format!("{from} – {to} · {timezone}")),
-        style::metrics(metrics.into_iter().chain([cost])),
+        style::metrics(columns, metrics.into_iter().chain([cost])),
         style::heading(labels("models")),
         col()
             .full_width()
             .role("table")
             .label(labels("models"))
-            .separate(Space::Xs)
             .child(style::model_row(header, true))
             .children(models),
         col()

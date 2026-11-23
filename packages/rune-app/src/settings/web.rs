@@ -267,7 +267,12 @@ fn request_notification_permission(s: &mut State) {
     });
 }
 
-pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<El> {
+pub(super) fn view(
+    s: &State,
+    prefs: &Preferences,
+    system_more: bool,
+    cx: &rune::Cx<State>,
+) -> Option<El> {
     let panel = &s.settings.web;
     if !panel.shown || crate::platform::pairing::required(s) {
         return None;
@@ -362,7 +367,7 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 s.settings.web.catalog.toggle()
             })
         }
-        Section::Stats => super::stats::view(&panel.stats, &mut layers, |s: &mut State| {
+        Section::Stats => super::stats::view(cx, &panel.stats, &mut layers, |s: &mut State| {
             let panel = &mut s.settings.web;
             (panel.shown && panel.section == Section::Stats).then_some(&mut panel.stats)
         }),

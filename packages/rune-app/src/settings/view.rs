@@ -322,7 +322,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     let system_dark = cx.system_dark();
     let system_more = cx.system_increased_contrast();
     s.close_palette_on_slot_change(prefs.dark(system_dark));
-    render_with(cx, &prefs, system_more, |_| {
+    render_with(cx, &prefs, system_more, |cx| {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
         let notifications_label = t("settings.nav.notifications");
@@ -481,7 +481,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             ),
             Section::Stats => (
                 "stats",
-                super::stats::view(&s.stats, &mut layers, |s: &mut Window| {
+                super::stats::view(cx, &s.stats, &mut layers, |s: &mut Window| {
                     (s.section == Section::Stats && !s.closing && !s.confirm_close)
                         .then_some(&mut s.stats)
                 }),

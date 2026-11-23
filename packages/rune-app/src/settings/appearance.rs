@@ -21,7 +21,7 @@ pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<St
         let body = view(cx);
         #[cfg(target_arch = "wasm32")]
         if let Some(panel) =
-            conversation::web_view(s, &prefs).or_else(|| web::view(s, &prefs, more))
+            conversation::web_view(s, &prefs).or_else(|| web::view(s, &prefs, more, cx))
         {
             use rune_theme_codenomad::layout::Layout;
             return rune::col()
