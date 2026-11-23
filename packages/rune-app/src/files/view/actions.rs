@@ -135,7 +135,9 @@ pub(super) fn row(s: &State, ui: &Ui, row: &Row, width: f32, touch: bool) -> (El
         let run = screen::action_tx(scope, {
             let (directory, path) = (directory.to_owned(), path.clone());
             move |s, tx| {
-                if let Some(ui) = s.files.as_mut().filter(|ui| owns(ui, &directory, &path)) {
+                if has_session(s)
+                    && let Some(ui) = s.files.as_mut().filter(|ui| owns(ui, &directory, &path))
+                {
                     ui.toggle_preview(&directory, &path, tx);
                 }
             }
@@ -146,7 +148,7 @@ pub(super) fn row(s: &State, ui: &Ui, row: &Row, width: f32, touch: bool) -> (El
             &EYE,
             run,
         );
-        preview.disabled = !ready;
+        preview.disabled = !ready || !has_session(s);
         preview.checked = Some(ui.previews(path));
         items.push(Rc::new(preview));
     }
@@ -211,7 +213,7 @@ pub(super) fn row(s: &State, ui: &Ui, row: &Row, width: f32, touch: bool) -> (El
             if let Some(ui) = s
                 .files
                 .as_mut()
-                .filter(|ui| owns(ui, &copy_directory, &copy_path))
+                .filter(|ui| ui.tree_visible() && ui.tree.directory() == copy_directory)
             {
                 platform::workspace_open::copy_path(
                     &copy_path,
@@ -294,6 +296,11 @@ fn owns(ui: &Ui, directory: &str, path: &str) -> bool {
     ui.actions_ready()
         && ui.tree.directory() == directory
         && ui.rows.iter().any(|row| row.entry.path == path)
+}
+
+fn has_session(s: &State) -> bool {
+    !s.screen.is_launcher()
+        && crate::workspace::active_session(s).is_some_and(|id| !matches!(id, "" | "info"))
 }
 
 fn launch(s: &mut State, directory: &str, path: &str, slug: &str, target: Target) {

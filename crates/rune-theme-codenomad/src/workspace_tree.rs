@@ -93,11 +93,7 @@ pub fn action_glyph(glyph: &'static Icon) -> El {
 pub type ActionGlyph = &'static Icon;
 
 pub fn with_actions(tree: El, overlays: Vec<El>) -> El {
-    if overlays.is_empty() {
-        tree
-    } else {
-        rune_kit::root(tree, overlays)
-    }
+    rune_kit::root(tree, overlays)
 }
 
 pub fn row(dark: bool, rtl: bool, row: Row<'_>) -> El {
