@@ -1017,15 +1017,30 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         const current = resident.parts[id]
         return merged === current || (merged !== undefined && current !== undefined && partDataEqual(merged.data, current.data))
       })
-    const metadataUnchanged = resident.role === next.role
-      && resident.sessionId === next.sessionId
-      && resident.status === next.status
-      && resident.createdAt === next.createdAt
-      && resident.updatedAt === next.updatedAt
-      && resident.isEphemeral === next.isEphemeral
-      && samePromptDisplayMetadata(next.clientPromptDisplayMetadata, resident.clientPromptDisplayMetadata)
+    // Status and isEphemeral describe the message's end, so they come from
+    // the version whose end won: the side that ended while the other stayed
+    // open, else - both ended or both open - the later one by server time,
+    // the fetched page winning ties, like the part arbitration.
+    const endWinner = residentEnded !== snapshotEnded
+      ? (residentEnded ? resident : next)
+      : (ended(resident) && resident.updatedAt > next.updatedAt ? resident : next)
+    const merged: MessageRecord = {
+      ...next,
+      status: endWinner.status,
+      isEphemeral: endWinner.isEphemeral,
+      parts: mergedParts,
+      partIds: mergedIds,
+      revision: resident.revision + 1,
+    }
+    const metadataUnchanged = merged.role === resident.role
+      && merged.sessionId === resident.sessionId
+      && merged.status === resident.status
+      && merged.createdAt === resident.createdAt
+      && merged.updatedAt === resident.updatedAt
+      && merged.isEphemeral === resident.isEphemeral
+      && samePromptDisplayMetadata(merged.clientPromptDisplayMetadata, resident.clientPromptDisplayMetadata)
     if (partsUnchanged && metadataUnchanged) return resident
-    return { ...next, parts: mergedParts, partIds: mergedIds, revision: resident.revision + 1 }
+    return merged
   }
 
   // A chunked hydration computes its chunks across task boundaries but keeps

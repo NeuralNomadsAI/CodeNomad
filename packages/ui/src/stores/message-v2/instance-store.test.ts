@@ -992,6 +992,43 @@ describe("chunked hydration", () => {
     assert.equal(store.getMessage("msg_010")?.revision, revision, "a merge that changes nothing publishes nothing")
   })
 
+  const reply = (text: string, status: "streaming" | "complete", committed: boolean) => ({
+    status, isEphemeral: status === "streaming",
+    parts: [{ type: "text" as const, text: committed ? `${text} final` : text, ...(committed ? { native: { phase: "done" } } : {}) }],
+  })
+
+  it("takes status and isEphemeral from the resident version when its end wins", async () => {
+    const store = createInstanceMessageStore("chunked-status-resident")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    // SSE completes the reply between chunks while the fetched page still
+    // holds it open: the completed stream is the later version of the row.
+    const fetched = base.map((input, index) => index === 10 ? { ...input, ...reply("BASE par", "streaming", false) } : input)
+    const streamed = base.map((input, index) => index === 10 ? { ...input, ...reply("BASE par", "complete", true) } : input)
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const record = store.getMessage("msg_010")!
+    assert.equal((record.parts[record.partIds[0]]?.data as { text?: string })?.text, "BASE par final")
+    assert.equal(record.status, "complete", "the status comes from the same version as the winning end")
+    assert.equal(record.isEphemeral, false, "so does isEphemeral")
+  })
+
+  it("takes status and isEphemeral from the fetched version when its end wins", async () => {
+    const store = createInstanceMessageStore("chunked-status-snapshot")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    const fetched = base.map((input, index) => index === 10 ? { ...input, ...reply("BASE par", "complete", true) } : input)
+    const streamed = base.map((input, index) => index === 10 ? { ...input, ...reply("BASE par", "streaming", false) } : input)
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const record = store.getMessage("msg_010")!
+    assert.equal((record.parts[record.partIds[0]]?.data as { text?: string })?.text, "BASE par final")
+    assert.equal(record.status, "complete")
+    assert.equal(record.isEphemeral, false)
+  })
+
   it("keeps tokens published after the fetch through a same-window reload", async () => {
     const store = createInstanceMessageStore("chunked-usage-reload")
     const inputs = makeInputs(CHUNK_SIZE + 5)
