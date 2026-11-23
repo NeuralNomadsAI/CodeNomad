@@ -308,7 +308,8 @@ fn closing_active_or_cached_tab_keeps_a_draft_after_its_reader_closed() {
         "/fixture".into(),
         s.reads.clone(),
         s.wake.clone(),
-    );
+    )
+    .with_documents(s.documents.clone(), "tab-0".into());
     files.open("draft.txt".into());
     files.reader.scene(Ok(codenomad_client::files::Preview {
         workspace_id: "fixture".into(),
