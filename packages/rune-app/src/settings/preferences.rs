@@ -15,6 +15,7 @@ pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
     pub(super) provider_target: Option<super::providers::Target>,
     pub(super) memory: super::memory::Setting,
+    pub(super) opencode_install: super::opencode::install::Install,
     config: Document,
     state: Document,
     pub(super) window_wake: Option<rune::Waker>,
@@ -123,6 +124,7 @@ impl Preferences {
         self.config.rebind(same_address);
         self.state.rebind(same_address);
         self.memory.bind(same_address);
+        self.opencode_install.cancel_check();
         self.backend = owner;
         self.authentication_required = false;
         self.unwatch();
@@ -186,6 +188,7 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
+        self.opencode_install.cancel_check();
         if let Some(target) = &mut self.provider_target {
             target.transport(false);
         }
@@ -292,16 +295,21 @@ impl Preferences {
     }
 
     fn poll_documents(&mut self) -> bool {
+        let install = self.opencode_install.poll();
         if self.authentication_required {
-            return false;
+            return install;
         }
         let Some(backend) = &self.backend else {
-            return false;
+            return install;
         };
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         let changed = self.config.poll(backend, Owner::Config, &main, &window)
             | self.state.poll(backend, Owner::State, &main, &window)
-            | self.memory.poll(backend, &main, &window);
+            | self.memory.poll(backend, &main, &window)
+            | self
+                .memory
+                .poll_review(backend, self.provider_target.as_ref(), &main, &window)
+            | install;
         if changed {
             self.revision += 1;
         }

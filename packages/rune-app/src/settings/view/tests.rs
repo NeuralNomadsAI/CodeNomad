@@ -380,3 +380,106 @@ fn conversation_preferences_show_the_tokens_choice_on_a_new_profile() {
     let row = node(&tree, "usage-visibility-trigger").unwrap().to_string();
     assert!(row.contains("Tokens") && row.contains("Hidden"), "{row}");
 }
+
+#[test]
+fn pending_permissions_keep_tab_focus_and_refuse_new_selections() {
+    const KEY: &str = "new-conversation-permissions-trigger";
+    let state = Window::default();
+    let mut prefs = state.shared.borrow_mut();
+    prefs.fixture_locale("en");
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    drop(prefs);
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    rt.update(|_, tx| tx.focus(KEY, true));
+    rt.frame(0.02);
+    let focused = |rt: &Runtime<Window>| {
+        let a11y = rt.accessibility_json();
+        node(&a11y, KEY).unwrap()["states"]
+            .to_string()
+            .contains("focused")
+    };
+    assert!(focused(&rt));
+    rt.update(|s, _| {
+        s.shared
+            .borrow_mut()
+            .set_new_conversation_permissions("supervised")
+    });
+    rt.frame(0.02);
+    assert!(focused(&rt));
+    let trigger = rt
+        .elements()
+        .into_iter()
+        .find(|entry| entry.key.as_deref() == Some(KEY))
+        .unwrap();
+    assert!(trigger.focusable);
+
+    let press = |rt: &mut Runtime<Window>, key| {
+        rt.key(rune::KeyEvent {
+            key,
+            mods: Default::default(),
+        });
+        rt.frame(0.02);
+    };
+    press(&mut rt, rune::Key::Tab);
+    assert!(!focused(&rt));
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Tab,
+        mods: rune::Mods {
+            shift: true,
+            ..Default::default()
+        },
+    });
+    rt.frame(0.02);
+    assert!(
+        focused(&rt),
+        "Tab navigation still includes the pending control"
+    );
+    press(&mut rt, rune::Key::Enter);
+    let (x, y) = rt.find(KEY).unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(node(&rt.accessibility_json(), "listbox").is_none());
+    assert_eq!(
+        rt.state.shared.borrow().new_conversation_permissions(),
+        "autonomous"
+    );
+}
+
+#[test]
+fn native_preferences_close_requires_discard_consent_from_both_paths() {
+    let shared = Rc::new(RefCell::new(Preferences::default()));
+    shared.borrow_mut().fixture_locale("en");
+    let request = Rc::new(CloseRequest::default());
+    let mut state = Window::new(shared.clone(), Rc::new(Cell::new(false)))
+        .with_close_request(request.clone(), None);
+    state.memory_editor.fixture_dirty();
+    let mut runtime = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    // This is the same request the main-window Settings button enqueues.
+    request.requested.set(true);
+    runtime.update(|s, tx| {
+        spec().poll.unwrap()(s, 0.0, tx);
+    });
+    runtime.frame(0.02);
+    assert!(runtime.state.confirm_close);
+    assert!(runtime.find("file-decision-cancel").is_some());
+    let (x, y) = runtime.find("file-decision-cancel").unwrap();
+    runtime.pointer_down(x, y);
+    runtime.pointer_up(x, y);
+    runtime.frame(0.02);
+    assert!(!runtime.state.confirm_close && runtime.state.memory_editor.has_unsaved());
+    // Rune calls its OS close hook after hiding; the draft is held until the parent reopens.
+    assert!(runtime.state.retain_editor_on_native_close());
+    let editor = request.reopen.borrow_mut().take().unwrap();
+    let restored =
+        Window::new(shared, Rc::new(Cell::new(false))).with_close_request(request, Some(editor));
+    assert!(restored.confirm_close && restored.memory_editor.has_unsaved());
+    let mut runtime = Runtime::new(restored, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    runtime.frame(0.02);
+    let (x, y) = runtime.find("file-decision-confirm").unwrap();
+    runtime.pointer_down(x, y);
+    runtime.pointer_up(x, y);
+    runtime.frame(0.02);
+    assert!(!runtime.state.memory_editor.has_unsaved());
+}

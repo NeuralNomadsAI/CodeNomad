@@ -303,6 +303,18 @@ pub fn setting_switch<S: 'static>(
         .build(crate::kit(layout::dark()))
 }
 
+pub fn primary_action<S: 'static>(
+    label: &str,
+    disabled: bool,
+    press: impl Fn(&mut S) + 'static,
+) -> El {
+    rune_kit::Button::new(label)
+        .variant(rune_kit::ButtonVariant::Submit)
+        .disabled(disabled)
+        .on_press(press)
+        .build(crate::kit(layout::dark()))
+}
+
 pub fn color_scheme(title: &str, mode: &str, segments: El, contrast: El, picker: El) -> El {
     col()
         .full_width()

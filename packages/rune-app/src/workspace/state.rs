@@ -257,7 +257,7 @@ pub fn input_ready(s: &State) -> bool {
     s.workspace.as_ref().is_none_or(|ui| ui.ready)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn native_window_store(s: &State) -> Option<platform::storage::Store> {
     s.workspace.as_ref()?.persistence.store.clone()
 }

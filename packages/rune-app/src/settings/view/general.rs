@@ -164,6 +164,10 @@ pub(super) fn view(
                 super::super::memory::action(&mut s.shared.borrow_mut(), desired)
             },
             |s: &mut Window, failed| s.memory_help_failed = failed,
+            |s: &mut Window, edit| s.memory_editor.open(edit),
+            |s: &mut Window, action| {
+                super::super::memory::review_action(&mut s.shared.borrow_mut(), action);
+            },
         ))
         .child(
             s.permissions

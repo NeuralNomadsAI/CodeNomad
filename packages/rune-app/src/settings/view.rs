@@ -23,15 +23,25 @@ use std::{
 pub(super) struct Window {
     shared: Rc<RefCell<Preferences>>,
     token: Option<Rc<Cell<bool>>>,
+    close_request: Option<Rc<CloseRequest>>,
+    confirm_close: bool,
+    closing: bool,
     picker: Cell<Option<Picker>>,
     palette_choice: Cell<Option<&'static palettes::Palette>>,
     contrast_help: bool,
     permissions: super::behavior::Permissions,
     memory_help_failed: bool,
+    memory_editor: super::memory::editor::Editor,
     seen_revision: u64,
     section: Section,
     pub(super) opencode: opencode::Status,
     pub(super) providers: providers::Catalog,
+}
+
+#[derive(Default)]
+pub(super) struct CloseRequest {
+    pub requested: Cell<bool>,
+    pub reopen: RefCell<Option<super::memory::editor::Editor>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -50,14 +60,17 @@ impl Default for Section {
 
 impl Window {
     pub(super) fn check_opencode(&mut self, refresh: Option<bool>) {
-        let prefs = self.shared.borrow();
-        let backend = prefs.backend.as_ref().filter(|_| prefs.can_retry());
-        self.opencode
-            .read(backend, prefs.window_wake.as_ref(), refresh);
+        let mut prefs = self.shared.borrow_mut();
+        let wake = prefs.window_wake.clone();
+        self.opencode.read(&mut prefs, wake.as_ref(), refresh);
     }
 
-    pub(super) fn has_backend(&self) -> bool {
-        self.shared.borrow().can_retry()
+    fn start_opencode_install(&mut self) {
+        if self.section == Section::OpenCode && !self.confirm_close && !self.closing {
+            let mut prefs = self.shared.borrow_mut();
+            let wake = prefs.window_wake.clone();
+            self.opencode.start(&mut prefs, wake);
+        }
     }
 
     pub fn new(shared: Rc<RefCell<Preferences>>, token: Rc<Cell<bool>>) -> Self {
@@ -68,10 +81,51 @@ impl Window {
         }
     }
 
+    pub fn with_close_request(
+        mut self,
+        request: Rc<CloseRequest>,
+        editor: Option<super::memory::editor::Editor>,
+    ) -> Self {
+        self.close_request = Some(request);
+        if let Some(editor) = editor {
+            self.memory_editor = editor;
+            self.confirm_close = true;
+        }
+        self
+    }
+
+    fn request_close(&mut self, tx: &mut rune::Tx) {
+        self.shared.borrow_mut().opencode_install.cancel_check();
+        if self.memory_editor.has_unsaved() {
+            self.confirm_close = true;
+        } else {
+            self.closing = true;
+            tx.close_window();
+        }
+    }
+
+    fn retain_editor_on_native_close(&mut self) -> bool {
+        if !self.memory_editor.has_unsaved() || self.token.as_ref().is_some_and(|token| token.get())
+        {
+            return false;
+        }
+        let Some(request) = &self.close_request else {
+            return false;
+        };
+        *request.reopen.borrow_mut() = Some(std::mem::take(&mut self.memory_editor));
+        let mut prefs = self.shared.borrow_mut();
+        prefs.window_wake = None;
+        if let Some(wake) = &prefs.main_wake {
+            wake();
+        }
+        true
+    }
+
     pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
         {
             let mut prefs = self.shared.borrow_mut();
             prefs.window_wake = None;
+            prefs.opencode_install.cancel_check();
             prefs.memory.show(false);
             prefs.provider_target = None;
         }
@@ -84,7 +138,10 @@ impl Window {
 pub(super) fn closed(s: &mut Window, _: &mut rune::Tx) {
     #[cfg(target_os = "windows")]
     crate::platform::preferences_placement::closed();
-    s.close(super::warn_save_failed);
+    s.shared.borrow_mut().opencode_install.cancel_check();
+    if !s.retain_editor_on_native_close() {
+        s.close(super::warn_save_failed);
+    }
 }
 
 pub(super) fn save_warning(locale: &&'static str, cx: &mut Cx<&'static str>) -> El {
@@ -121,23 +178,35 @@ pub(super) fn spec() -> AppSpec<Window> {
             }
         }),
         poll: Some(|s, _, tx| {
+            let close_requested = s
+                .close_request
+                .as_ref()
+                .is_some_and(|request| request.requested.replace(false));
+            if close_requested {
+                s.request_close(tx);
+                return true;
+            }
             let mut prefs = s.shared.borrow_mut();
             let changed = prefs.poll();
             if changed && let Some(wake) = &prefs.main_wake {
                 wake();
             }
             let updated = prefs.revision != std::mem::replace(&mut s.seen_revision, prefs.revision);
+            let editor_changed = prefs.memory.poll_editor(&mut s.memory_editor);
             if updated {
                 tx.set_title(crate::strings::with_locale(
                     prefs.locale().unwrap_or_else(crate::strings::locale),
                     || t("settings.title"),
                 ));
             }
+            let status_changed = s.section == Section::OpenCode
+                && !s.confirm_close
+                && !s.closing
+                && prefs
+                    .window_wake
+                    .clone()
+                    .is_some_and(|wake| s.opencode.step(&mut prefs, &wake));
             drop(prefs);
-            let status_changed = s.opencode.poll();
-            if s.section == Section::OpenCode {
-                s.check_opencode(None);
-            }
             let providers_changed = if s.section == Section::Providers {
                 let prefs = s.shared.borrow();
                 let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
@@ -145,13 +214,22 @@ pub(super) fn spec() -> AppSpec<Window> {
             } else {
                 false
             };
-            updated | status_changed | providers_changed
+            updated | status_changed | providers_changed | editor_changed
         }),
-        on_key: Some(|_, event, tx| {
+        on_key: Some(|s, event, tx| {
             if event.key != rune::Key::Escape {
                 return false;
             }
-            tx.close_window();
+            if s.confirm_close {
+                s.confirm_close = false;
+            } else if s.memory_editor.shown() {
+                s.memory_editor.dismiss();
+            } else {
+                let cancelled = s.shared.borrow_mut().memory.cancel_cleanup_confirmation();
+                if !cancelled {
+                    s.request_close(tx);
+                }
+            }
             true
         }),
         #[cfg(any(test, feature = "test-support"))]
@@ -235,6 +313,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 };
                 if s.section != Section::OpenCode {
                     s.opencode = opencode::Status::default();
+                    s.shared.borrow_mut().opencode_install.cancel_check();
                 }
                 s.shared
                     .borrow_mut()
@@ -266,7 +345,16 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             rune::el()
         };
         let (key, controls) = match s.section {
-            Section::OpenCode => ("opencode", opencode::view(s)),
+            Section::OpenCode => (
+                "opencode",
+                opencode::view(
+                    &s.opencode,
+                    &prefs,
+                    Window::start_opencode_install,
+                    |s: &mut Window| s.check_opencode(Some(true)),
+                    |s| &mut s.opencode,
+                ),
+            ),
             Section::Conversation => (
                 "conversation",
                 super::conversation::row(
@@ -293,6 +381,30 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 ),
             ),
         };
+        if let Some(editor) = prefs.memory.editor_view(
+            &s.memory_editor,
+            |s: &mut Window| &mut s.memory_editor,
+            |s: &mut Window, action| {
+                super::memory::review_action(&mut s.shared.borrow_mut(), action)
+            },
+        ) {
+            layers.push(editor);
+        }
+        if s.confirm_close {
+            layers.push(rune_theme_codenomad::document_reader::editor::confirmation(
+                layout::dark(),
+                t("settings.memory.discard"),
+                t("settings.memory.cancel"),
+                t("settings.memory.discardConfirm"),
+                |s: &mut Window, accept, tx| {
+                    s.confirm_close = false;
+                    if accept {
+                        s.memory_editor = Default::default();
+                        s.request_close(tx);
+                    }
+                },
+            ));
+        }
         chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers).on_window_focus(
             |s: &mut Window, focused, _| {
                 if focused && s.section == Section::OpenCode {
