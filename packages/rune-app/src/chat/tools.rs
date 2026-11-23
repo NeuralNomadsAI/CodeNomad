@@ -90,7 +90,7 @@ fn title(tool: &Tool) -> String {
             .collect()
     };
     let summary = match name {
-        "read" | "edit" => path(tool).rsplit(['/', '\\']).next().unwrap_or_default(),
+        "read" | "edit" | "write" => path(tool).rsplit(['/', '\\']).next().unwrap_or_default(),
         "bash" | "shell" => string(&tool.input, &["description"]),
         "glob" | "grep" => string(&tool.input, &["pattern"]).trim(),
         _ => "",
@@ -143,7 +143,7 @@ fn error(tool: &Tool) -> &str {
     interrupted(tool).map_or(tool.error.as_str(), |(_, notice)| notice)
 }
 
-fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'static str {
+fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
     let live = string(&tool.metadata, &["output", "preview"]);
     if shell(tool) {
         let command = string(&tool.input, &["command"]);
@@ -190,6 +190,12 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'static str {
                     .unwrap_or_default()
             });
         "diff"
+    } else if tool.name == "write" {
+        parts[0] = tool.input["content"]
+            .as_str()
+            .or_else(|| tool.metadata["content"].as_str())
+            .unwrap_or_default();
+        markdown::language_for_path(path(tool))
     } else {
         parts[0] = if tool.output.is_empty() && tool.status != "completed" {
             live
@@ -228,7 +234,7 @@ pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
 
 fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     let expanded = s.transcript_display.toggled(&key)
-        ^ matches!(tool.name.as_str(), "bash" | "shell" | "edit");
+        ^ matches!(tool.name.as_str(), "bash" | "shell" | "edit" | "write");
     let status = match tool.status.as_str() {
         "completed" => "toolCall.status.completed",
         "error" => "toolCall.status.error",
@@ -373,7 +379,7 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                             markdown::code(shown, lang, highlight && units <= HIGHLIGHT_LIMIT, wrap)
                         }
                     }),
-                    tool.name == "edit",
+                    matches!(tool.name.as_str(), "edit" | "write"),
                 ))
         };
         block = block.child(if tool_diff::candidate(tool, parts[0]) {
