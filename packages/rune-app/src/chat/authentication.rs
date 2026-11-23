@@ -20,8 +20,8 @@ pub(crate) struct Recovery {
 }
 
 struct Challenge {
-    expired: Backend,
-    initial: bool,
+    backend: Backend,
+    expected_server: Option<String>,
     flight: Option<Receiver<Reply>>,
     required: bool,
     error: Option<&'static str>,
@@ -30,6 +30,7 @@ struct Challenge {
 enum Reply {
     Required,
     Connected(Backend),
+    AwaitingAttestation(Backend),
     Failed(&'static str),
 }
 
@@ -37,11 +38,15 @@ pub(crate) fn expired(s: &mut State, expired: Backend) {
     if s.screen.launcher().is_some() {
         return;
     }
+    let expected_server = expired.client.server_identity().map(str::to_owned);
+    if expected_server.is_none() && crate::settings::bound_backend(s).is_some() {
+        return;
+    }
     s.renew_scope();
     s.direct_authentication = Recovery {
         challenge: Some(Challenge {
-            expired,
-            initial: crate::settings::bound_backend(s).is_none(),
+            backend: expired,
+            expected_server,
             flight: None,
             required: false,
             error: None,
@@ -90,11 +95,15 @@ fn request(challenge: &mut Challenge, wake: &rune::Waker, credentials: Option<(S
     let (output, input) = bounded(1);
     challenge.flight = Some(input);
     challenge.error = None;
-    let (expired, initial, wake) = (challenge.expired.clone(), challenge.initial, wake.clone());
+    let backend = challenge.backend.clone();
+    let expected = challenge.expected_server.clone();
+    let wake = wake.clone();
     platform::spawn(async move {
         let reply = match credentials {
-            Some((username, password)) => sign_in(expired, initial, username, password).await,
-            None => check(expired, initial).await,
+            Some((username, password)) => {
+                sign_in(backend, expected.as_deref(), username, password).await
+            }
+            None => check(backend, expected.as_deref()).await,
         };
         if output.send(reply).await.is_ok() {
             wake();
@@ -102,29 +111,17 @@ fn request(challenge: &mut Challenge, wake: &rune::Waker, credentials: Option<(S
     });
 }
 
-async fn check(mut expired: Backend, initial: bool) -> Reply {
-    let response = expired
+async fn check(backend: Backend, expected: Option<&str>) -> Reply {
+    let response = backend
         .client
-        .get(format!("{}api/auth/status", expired.base))
+        .get(format!("{}api/auth/status", backend.base))
         .send()
         .await;
     if let Ok(response) = response.and_then(|r| r.error_for_status())
         && let Ok(status) = read_json(response).await
     {
         match status["authenticated"].as_bool() {
-            Some(true) => {
-                if (!initial && expired.client.server_identity().is_none())
-                    || expired.attest_server().await.is_err()
-                {
-                    return Reply::Failed("authRecovery.unavailable");
-                }
-                let Ok(client) = codenomad_client::http::client_id() else {
-                    return Reply::Failed("authRecovery.unavailable");
-                };
-                expired.client_id = client;
-                expired.fresh_mode = false;
-                return Reply::Connected(expired);
-            }
+            Some(true) => return attest(backend, expected).await,
             Some(false) => return Reply::Required,
             None => {}
         }
@@ -132,28 +129,40 @@ async fn check(mut expired: Backend, initial: bool) -> Reply {
     Reply::Failed("authRecovery.unavailable")
 }
 
-async fn sign_in(mut expired: Backend, initial: bool, username: String, password: String) -> Reply {
+async fn sign_in(
+    mut expired: Backend,
+    expected: Option<&str>,
+    username: String,
+    password: String,
+) -> Reply {
     let Ok(backend) = Backend::unauthenticated(&expired.base) else {
         return Reply::Failed("authRecovery.unavailable");
     };
     match backend.sign_in(&username, &password).await {
         Ok(()) => {
-            let Ok(id) = backend.attest_server().await else {
-                return Reply::Failed("authRecovery.unavailable");
-            };
-            if !initial && expired.client.server_identity() != Some(id.as_str()) {
-                return Reply::Failed("authRecovery.unavailable");
-            }
             expired.client = backend.client;
-            expired.client_id = backend.client_id;
-            expired.fresh_mode = false;
-            Reply::Connected(expired)
+            attest(expired, expected).await
         }
         Err(error) if codenomad_client::http::authentication_expired(&error) => {
             Reply::Failed("authRecovery.credentials")
         }
         Err(_) => Reply::Failed("authRecovery.unavailable"),
     }
+}
+
+async fn attest(mut backend: Backend, expected: Option<&str>) -> Reply {
+    let Ok(id) = backend.attest_server().await else {
+        return Reply::AwaitingAttestation(backend);
+    };
+    if expected.is_some_and(|expected| expected != id) {
+        return Reply::Failed("authRecovery.unavailable");
+    }
+    let Ok(client) = codenomad_client::http::client_id() else {
+        return Reply::Failed("authRecovery.unavailable");
+    };
+    backend.client_id = client;
+    backend.fresh_mode = false;
+    Reply::Connected(backend)
 }
 
 pub(crate) fn poll(s: &mut State) -> bool {
@@ -171,6 +180,10 @@ pub(crate) fn poll(s: &mut State) -> bool {
     match reply {
         Reply::Required => challenge.required = true,
         Reply::Failed(error) => challenge.error = Some(error),
+        Reply::AwaitingAttestation(backend) => {
+            challenge.backend = backend;
+            challenge.error = Some("authRecovery.unavailable");
+        }
         Reply::Connected(backend) => {
             s.direct_authentication = Recovery::default();
             s.phase = crate::Phase::Reconnecting;
@@ -237,7 +250,8 @@ pub(crate) fn dialog(s: &State) -> Option<El> {
                 request(challenge, &s.wake, None);
             }
         }),
-    );
+    )
+    .key("direct-recovery-check");
     Some(
         rune_theme_codenomad::settings::authentication_dialog::<State>(
             t("authRecovery.title"),

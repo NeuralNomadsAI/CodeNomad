@@ -131,12 +131,7 @@ pub async fn run(
                 }
             }
             Some(Input::AuthenticationRequired(e)) if e == epoch => {
-                publish(
-                    &out,
-                    &wake,
-                    Event::AuthenticationRequired(backend.clone(), None),
-                )
-                .await;
+                publish(&out, &wake, Event::AuthenticationRequired(backend.clone())).await;
                 return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {
@@ -194,24 +189,26 @@ pub async fn run(
                     busy = true;
                     repairs = 0;
                     settlement_reads = 0;
-                    if let Err(error) = backend.send(&body).await {
-                        if crate::http::authentication_expired(&error) {
+                    let result = backend.send(body).await;
+                    if let Err(error) = &result {
+                        if crate::http::authentication_expired(error) {
                             wire.cancelled.store(true, SeqCst);
                             while wire.alive.load(SeqCst) {
                                 runtime::sleep(Duration::from_millis(25)).await;
                             }
-                            publish(
-                                &out,
-                                &wake,
-                                Event::AuthenticationRequired(backend.clone(), Some(body)),
-                            )
-                            .await;
+                            publish(&out, &wake, Event::AuthenticationRequired(backend.clone()))
+                                .await;
                             return Ok(());
                         }
                         eprintln!("Rune prompt delivery failed");
+                    }
+                    // A non-401 HTTP failure can be ambiguous; do not offer an automatic retry.
+                    publish(&out, &wake, Event::PromptSettled { rejected: false }).await;
+                    if result.is_err() {
                         publish(&out, &wake, Event::Failed).await;
                     }
                 } else {
+                    publish(&out, &wake, Event::PromptSettled { rejected: true }).await;
                     publish(&out, &wake, Event::Failed).await;
                 }
             }

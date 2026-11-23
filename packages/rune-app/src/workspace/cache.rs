@@ -13,6 +13,7 @@ pub(super) struct Cache {
     title: String,
     messages: Vec<Message>,
     draft: TextEdit,
+    pending_prompt: Option<String>,
     incoming: Option<Receiver<Event>>,
     commands: Option<Sender<Command>>,
     phase: Phase,
@@ -31,9 +32,11 @@ impl Cache {
     }
 
     pub fn navigation_blocked(&self) -> bool {
-        self.agent
-            .as_ref()
-            .is_some_and(agent::Ui::navigation_blocked)
+        self.pending_prompt.is_some()
+            || self
+                .agent
+                .as_ref()
+                .is_some_and(agent::Ui::navigation_blocked)
     }
     pub fn status(&self) -> Option<rune_theme_codenomad::tabs::Status> {
         status(&self.phase, self.agent.as_ref())
@@ -47,6 +50,7 @@ impl Cache {
             title: std::mem::take(&mut s.chat_title),
             messages: std::mem::take(&mut s.messages),
             draft: std::mem::replace(&mut s.draft, TextEdit::new("")),
+            pending_prompt: s.pending_prompt.take(),
             incoming: s.incoming.take(),
             commands: s.commands.take(),
             phase: std::mem::replace(&mut s.phase, Phase::Ready),
@@ -66,6 +70,7 @@ impl Cache {
         s.chat_title = self.title;
         s.messages = self.messages;
         s.draft = self.draft;
+        s.pending_prompt = self.pending_prompt;
         s.incoming = self.incoming;
         s.commands = self.commands;
         s.phase = self.phase;

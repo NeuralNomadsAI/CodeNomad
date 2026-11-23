@@ -38,6 +38,7 @@ enum Startup {
 }
 
 fn launch(s: &mut crate::State, startup: Startup) {
+    s.pending_prompt = None;
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);
     s.incoming = Some(incoming);
@@ -101,13 +102,13 @@ pub(crate) async fn authenticate_and_run(
     #[cfg(not(target_arch = "wasm32"))]
     if result.is_ok() && target.attest_server().await.is_err() {
         // Keep the admitted cookie for Retry; the startup token was single-use.
-        publish(&out, &wake, Event::AuthenticationRequired(target, None)).await;
+        publish(&out, &wake, Event::AuthenticationRequired(target)).await;
         return;
     }
     match result {
         Ok(()) => run_bound(Ok(target), out, input, wake).await,
         Err(error) if codenomad_client::http::authentication_expired(&error) => {
-            publish(&out, &wake, Event::AuthenticationRequired(target, None)).await;
+            publish(&out, &wake, Event::AuthenticationRequired(target)).await;
             drop(out);
             wake();
         }
@@ -144,6 +145,7 @@ async fn run_synthetic(out: Sender<Event>, input: Receiver<Command>, wake: rune:
             publish(&out, &wake, Event::PagingFailed).await;
             continue;
         };
+        publish(&out, &wake, Event::PromptSettled { rejected: false }).await;
         turn += 1;
         let id = format!("assistant-{turn}");
         publish(

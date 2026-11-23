@@ -112,7 +112,7 @@ impl Backend {
             running: false,
         })
     }
-    pub async fn send(&self, text: &str) -> Result<()> {
+    pub async fn send(&self, text: String) -> Result<()> {
         self.client
             .post(format!(
                 "{}workspaces/{}/instance/api/session/{}/prompt",

@@ -210,7 +210,7 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
         return true;
     }
     if ui.active == index {
-        crate::agent::navigation_blocked(s)
+        s.pending_prompt.is_some() || crate::agent::navigation_blocked(s)
     } else {
         ui.entries[index]
             .cache

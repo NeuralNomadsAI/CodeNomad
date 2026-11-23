@@ -61,6 +61,7 @@ struct State {
     chat_title: String,
     messages: Vec<Message>,
     draft: TextEdit,
+    pending_prompt: Option<String>,
     incoming: Option<Receiver<Event>>,
     commands: Option<Sender<Command>>,
     phase: Phase,
@@ -101,6 +102,7 @@ fn init() -> State {
         chat_title: String::new(),
         messages: vec![],
         draft: TextEdit::new(""),
+        pending_prompt: None,
         incoming: None,
         commands: None,
         phase: Phase::Loading,
@@ -145,6 +147,7 @@ fn local_stress() -> bool {
 
 fn send(s: &mut State, tx: &mut Tx) {
     if s.phase != Phase::Ready
+        || s.pending_prompt.is_some()
         || s.screen
             .launcher()
             .is_some_and(launcher::Launcher::blocks_prompt)
@@ -158,6 +161,7 @@ fn send(s: &mut State, tx: &mut Tx) {
         .as_ref()
         .is_some_and(|c| c.try_send(Command::Send(body.clone())).is_ok())
     {
+        s.pending_prompt = Some(body.clone());
         s.messages.push(Message {
             completed: true,
             id: format!("rune-user-{}", s.revision),
@@ -169,6 +173,15 @@ fn send(s: &mut State, tx: &mut Tx) {
         s.draft = TextEdit::new("");
         s.phase = Phase::Streaming;
         workspace::draft_changed(s, tx);
+    }
+}
+fn settle_prompt(s: &mut State, rejected: bool) {
+    if let Some(text) = s.pending_prompt.take()
+        && rejected
+        && s.draft.text.is_empty()
+    {
+        s.draft = TextEdit::new(text);
+        workspace::capture(s);
     }
 }
 fn request_older(s: &mut State, _: &mut Tx) {
@@ -332,20 +345,16 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Done => s.phase = Phase::Ready,
+            Event::PromptSettled { rejected } => settle_prompt(s, rejected),
             Event::AuthenticationRequired(..) | Event::Failed => {
-                if let Event::AuthenticationRequired(expired, rejected) = event {
+                if let Event::AuthenticationRequired(expired) = event {
                     if !settings::authentication_required(s, &expired)
                         && s.screen.launcher().is_none()
                     {
                         continue;
                     }
                     s.commands = None;
-                    if let Some(text) = rejected
-                        && s.draft.text.is_empty()
-                    {
-                        s.draft = TextEdit::new(text);
-                        workspace::capture(s);
-                    }
+                    settle_prompt(s, true);
                     #[cfg(not(target_arch = "wasm32"))]
                     chat::authentication::expired(s, expired);
                 }
@@ -413,6 +422,7 @@ fn composer(s: &State) -> El {
                 input(&s.draft)
                     .key("composer")
                     .label(strings::t("rune.prompt"))
+                    .disabled(s.pending_prompt.is_some())
                     .full_width()
                     .pad(Space::Sm)
                     .field_surface()
@@ -449,6 +459,7 @@ fn composer(s: &State) -> El {
                     "send",
                     strings::t("promptInput.overlay.send"),
                     s.phase != Phase::Ready
+                        || s.pending_prompt.is_some()
                         || s.screen
                             .launcher()
                             .is_some_and(launcher::Launcher::blocks_prompt)

@@ -195,6 +195,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             crate::workspace::connected(s);
             if reauthenticated {
+                crate::workspace::renew_connection(s);
                 if let Some(id) = selected {
                     s.show_chat();
                     choose(s, id, tx);

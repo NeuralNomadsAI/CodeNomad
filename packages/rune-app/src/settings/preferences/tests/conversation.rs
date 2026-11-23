@@ -266,13 +266,23 @@ fn settings_sse_401_releases_the_transport_for_explicit_authentication() {
 
 #[test]
 fn settings_direct_authentication_accepts_a_rotated_password_and_keeps_the_draft() {
+    assert_direct_recovery(false);
+}
+
+#[test]
+fn settings_send_during_a_stream_outage_preserves_the_unsubmitted_draft() {
+    assert_direct_recovery(true);
+}
+
+fn assert_direct_recovery(stream_already_closed: bool) {
     platform::block_on(async {
         let (listener, mut prefs) = fixture().await;
         let mut backend = prefs.backend.take().unwrap();
         backend.workspace = "project".into();
         backend.session = "session".into();
         attest(&listener, &backend, "fixture-profile").await;
-        let (mut stream, commands, events) = start(&listener, backend.clone()).await;
+        let (stream, commands, events) = start(&listener, backend.clone()).await;
+        let mut stream = Some(stream);
         let mut root = crate::init();
         prefs.backend = Some(backend);
         *root.settings.shared.borrow_mut() = prefs;
@@ -286,29 +296,47 @@ fn settings_direct_authentication_accepts_a_rotated_password_and_keeps_the_draft
             (1100.0, 760.0),
             rune::Env::new(false, 1.0),
         );
+        let reconnect = if stream_already_closed {
+            drop(stream.take());
+            let reconnect = request(&listener).await;
+            assert!(reconnect.first.starts_with("GET /api/events?"));
+            Some(reconnect)
+        } else {
+            None
+        };
         runtime.update(crate::send);
         assert!(runtime.state.draft.text.is_empty());
-        let prompt = request(&listener).await;
-        assert_eq!(
-            prompt.first,
-            "POST /workspaces/project/instance/api/session/session/prompt HTTP/1.1"
-        );
-        assert_eq!(prompt.body["text"], "refused prompt");
-        prompt.reply(401, json!({})).await;
+        runtime.paste("a different draft");
+        runtime.frame(0.02);
+        assert!(runtime.state.draft.text.is_empty());
+        if let Some(reconnect) = reconnect {
+            reconnect.reply(401, json!({})).await;
+        } else {
+            let prompt = request(&listener).await;
+            assert_eq!(
+                prompt.first,
+                "POST /workspaces/project/instance/api/session/session/prompt HTTP/1.1"
+            );
+            assert_eq!(prompt.body["text"], "refused prompt");
+            prompt.reply(401, json!({})).await;
+        }
         wait_until(|| {
             runtime.update(|s, _| {
                 crate::poll_chat(s, 8);
             });
-            runtime.state.phase == crate::Phase::Failed
+            runtime.state.phase == crate::Phase::Failed && runtime.state.commands.is_none()
         })
         .await;
-        let closure = timeout(Duration::from_secs(2), stream.socket.read(&mut [0]))
-            .await
-            .unwrap();
-        assert!(
-            matches!(closure, Ok(0))
-                || closure.is_err_and(|error| error.kind() == std::io::ErrorKind::ConnectionReset)
-        );
+        if let Some(mut stream) = stream {
+            let closure = timeout(Duration::from_secs(2), stream.socket.read(&mut [0]))
+                .await
+                .unwrap();
+            assert!(
+                matches!(closure, Ok(0))
+                    || closure
+                        .is_err_and(|error| error.kind() == std::io::ErrorKind::ConnectionReset)
+            );
+        }
         let status = request(&listener).await;
         assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
         status.reply(200, json!({"authenticated":false})).await;
@@ -367,7 +395,30 @@ fn settings_direct_authentication_accepts_a_rotated_password_and_keeps_the_draft
                     .await;
             }
         }
-        let identity = request(&listener).await;
+        let mut identity = request(&listener).await;
+        if stream_already_closed {
+            assert_eq!(identity.first, "GET /api/meta HTTP/1.1");
+            identity.reply(503, json!({})).await;
+            wait_until(|| {
+                update(&mut runtime);
+                runtime.find("direct-recovery-error").is_some()
+            })
+            .await;
+            let (x, y) = runtime.find("direct-recovery-check").unwrap();
+            runtime.pointer_down(x, y);
+            runtime.pointer_up(x, y);
+            runtime.frame(0.02);
+            let status = request(&listener).await;
+            assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
+            assert!(
+                status
+                    .headers
+                    .to_ascii_lowercase()
+                    .contains("\r\ncookie: fixture=renewed\r\n")
+            );
+            status.reply(200, json!({"authenticated":true})).await;
+            identity = request(&listener).await;
+        }
         assert_eq!(identity.first, "GET /api/meta HTTP/1.1");
         assert!(
             identity
@@ -470,6 +521,60 @@ fn settings_renewed_connection_authenticates_git_reads_with_the_new_cookie() {
 }
 
 #[test]
+fn closing_project_without_conversation_uses_the_renewed_cookie() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let previous = prefs.backend.take().unwrap();
+        attest(&listener, &previous, "fixture-profile").await;
+        let renewed = Backend::unauthenticated(&previous.base).unwrap();
+        let login = renewed.clone();
+        platform::spawn(async move {
+            login
+                .sign_in("operator", "new-fixture-password")
+                .await
+                .unwrap();
+        });
+        request(&listener)
+            .await
+            .reply_with_headers(200, json!({}), "Set-Cookie: fixture=renewed; Path=/\r\n")
+            .await;
+        attest(&listener, &renewed, "fixture-profile").await;
+        let mut root = crate::init();
+        let mut launcher = crate::launcher::Launcher::fixture();
+        let project = crate::catalog::Project {
+            id: "project".into(),
+            path: "C:/fixture".into(),
+        };
+        launcher.project = Some(project.clone());
+        launcher.connection = Some(previous);
+        launcher.server_id = Some("fixture-profile".into());
+        root.screen = crate::Screen::Launcher(launcher);
+        root.workspace = Some(crate::workspace::Ui::new());
+        crate::workspace::opened(&mut root, &project);
+        let key = root.workspace.as_ref().unwrap().active_key().to_owned();
+        root.screen.launcher_mut().unwrap().connection = Some(renewed);
+        crate::workspace::connected(&mut root);
+        crate::workspace::renew_connection(&mut root);
+        let mut runtime = rune::Runtime::new(
+            root,
+            crate::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        runtime.update(|s, tx| crate::workspace::close(s, &key, tx));
+        let close = request(&listener).await;
+        assert_eq!(close.first, "DELETE /api/workspaces/project HTTP/1.1");
+        assert!(
+            close
+                .headers
+                .to_ascii_lowercase()
+                .contains("\r\ncookie: fixture=renewed\r\n")
+        );
+        close.reply(200, json!({})).await;
+    });
+}
+
+#[test]
 fn settings_stale_401_does_not_displace_the_current_connection() {
     platform::block_on(async {
         let (listener, mut prefs) = fixture().await;
@@ -480,7 +585,7 @@ fn settings_stale_401_does_not_displace_the_current_connection() {
         root.phase = crate::Phase::Ready;
         let (out, events) = bounded(1);
         root.incoming = Some(events);
-        out.send(Event::AuthenticationRequired(expired, None))
+        out.send(Event::AuthenticationRequired(expired))
             .await
             .unwrap();
         crate::poll_chat(&mut root, 1);
@@ -571,7 +676,7 @@ fn settings_launcher_retry_accepts_password_with_project_open() {
         };
         let (out, incoming) = bounded(2);
         root.incoming = Some(incoming);
-        out.send(Event::AuthenticationRequired(backend, None))
+        out.send(Event::AuthenticationRequired(backend))
             .await
             .unwrap();
         crate::poll_chat(&mut root, 2);
