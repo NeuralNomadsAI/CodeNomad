@@ -315,15 +315,21 @@ try {
             assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1)
             const reasoning=run.locator('xpath=following-sibling::button[1]')
             await reasoning.and(rail.getByRole('button',{name:'**Second fixture reasoning**',exact:true})).waitFor()
-            await reasoning.click({force:true})
+            const reasoningBox=await reasoning.boundingBox()
+            assert(reasoningBox)
+            await page.mouse.click(reasoningBox.x+reasoningBox.width/2,reasoningBox.y+reasoningBox.height/2)
             const group=page.getByText('Second fixture reasoning',{exact:true})
             await group.waitFor()
             assert(Math.abs((await group.boundingBox()).y-box.y)<16,'The second reasoning run must land on its own group')
             await reasoning.and(rail.locator(`[aria-description^="${messages['messageTimeline.current']}"]`)).waitFor()
             assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1,'A resident jump uses no window')
             await page.mouse.move(box.x-40,box.y+25)
-            await reasoning.focus()
             await page.keyboard.press('Shift+Tab')
+            // The mirror buttons are not DOM tab stops; Rune keeps focus on its canvas.
+            await page.waitForFunction(label=>{
+              const id=document.querySelector('canvas[aria-activedescendant]')?.getAttribute('aria-activedescendant')
+              return document.getElementById(id)?.getAttribute('aria-label')===label
+            },await run.textContent())
             const focusedPreview=run.and(rail.locator('[aria-description*="Exact position in the old message"]'))
             await focusedPreview.waitFor()
             await page.setViewportSize({width:width-40,height})

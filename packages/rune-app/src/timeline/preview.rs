@@ -111,7 +111,11 @@ pub(super) fn marker(s: &State, index: usize, button: El) -> El {
             p.dismissed = None;
         } else if p.hover.as_ref() == Some(&id) {
             p.hover = None;
+        } else {
+            return;
         }
+        // The hover action can arrive after this frame's poll on an idle web surface.
+        (s.wake)();
     })
 }
 
@@ -353,6 +357,7 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
             move |s: &mut State, inside, _| {
                 if s.current_scope(&scope) && owner(s).previews.target.as_ref() == Some(&id) {
                     owner(s).previews.over_preview = inside;
+                    (s.wake)();
                 }
             },
         ),
@@ -442,6 +447,18 @@ mod tests {
         }
         assert!(rt.find("timeline-peek").is_some());
         let (x, y) = rt.find("timeline-peek").unwrap();
+        rt.pointer_move(x, y);
+        for _ in 0..30 {
+            rt.frame(0.016);
+        }
+        assert!(rt.find("timeline-peek").is_some());
+        rt.key(KeyEvent {
+            key: Key::Escape,
+            mods: Default::default(),
+        });
+        rt.frame(0.016);
+        assert!(rt.find("timeline-peek").is_none());
+        let (x, y) = rt.find("marker-0").unwrap();
         rt.pointer_move(x, y);
         for _ in 0..30 {
             rt.frame(0.016);
