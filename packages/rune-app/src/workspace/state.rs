@@ -482,7 +482,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             let awaiting_prompt = s.composer.pending();
             let uncertain_prompt = s.composer.unconfirmed_id().is_some();
             changed |= crate::poll_chat(s, 8);
-            crate::shell::notifications::collect(s, notification::entry_target(item, s));
+            crate::shell::notifications::collect(s, |s| notification::entry_target(item, s));
             if awaiting_prompt && !s.composer.pending()
                 || uncertain_prompt && s.composer.unconfirmed_id().is_none()
             {

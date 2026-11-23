@@ -67,7 +67,7 @@ impl Attention {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Target {
     pub tab: Option<String>,
-    pub origin: String,
+    pub backend_url: String,
     pub server: Option<String>,
     pub occurrence: u64,
     pub workspace: String,
@@ -119,7 +119,8 @@ impl Default for Host {
 impl Host {
     #[cfg(target_os = "windows")]
     pub(crate) fn attach(&mut self, window: rune::WindowHandle) {
-        if !rune::is_headless() && !cfg!(any(test, feature = "test-support")) {
+        if rune_theme_codenomad::shell::live_caption() && !cfg!(any(test, feature = "test-support"))
+        {
             self.routes.clear();
             let profile = crate::platform::setting("CODENOMAD_PROFILE");
             let profile = profile
@@ -214,13 +215,19 @@ pub(crate) fn focus_changed(s: &mut State, focused: bool, _: &mut Tx) {
     s.notifications.focused = focused;
 }
 
-pub(crate) fn collect(s: &mut State, target: Option<(Target, String)>) {
+pub(crate) fn collect(s: &mut State, target: impl FnOnce(&State) -> Option<(Target, String)>) {
     let Some(agent) = &mut s.agent else { return };
+    if agent.attention.pending.is_empty() {
+        return;
+    }
     let pending = std::mem::take(&mut agent.attention.pending);
-    let Some((target, project)) = target.filter(|_| !pending.is_empty() && agent.online) else {
+    if !agent.online {
+        return;
+    }
+    let running = agent.running;
+    let Some((target, project)) = target(s) else {
         return;
     };
-    let running = agent.running;
     let label = if s.chat_title.trim().is_empty() {
         &target.session
     } else {

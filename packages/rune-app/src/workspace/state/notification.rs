@@ -13,7 +13,7 @@ pub(crate) fn notification_target(s: &State) -> Option<(Target, String)> {
     Some((
         Target {
             tab: None,
-            origin: backend.base,
+            backend_url: backend.base,
             server: None,
             occurrence: 0,
             workspace: backend.workspace,
@@ -32,7 +32,7 @@ pub(super) fn entry_target(entry: &Entry, s: &State) -> Option<(Target, String)>
     };
     let target = Target {
         tab: Some(entry.key.clone()),
-        origin: entry.binding.as_ref()?.base.clone(),
+        backend_url: entry.binding.as_ref()?.base.clone(),
         server: saved.server_id.clone(),
         occurrence: saved.occurrence,
         workspace: saved.workspace_id.clone()?,
@@ -64,7 +64,7 @@ pub(crate) fn owns_notification(s: &State, target: &Target) -> bool {
         if saved.workspace_id.as_ref() == Some(&target.workspace)
         && saved.occurrence == target.occurrence
         && saved.server_id == target.server
-        && entry.binding.as_ref().is_some_and(|backend| backend.base == target.origin)
+        && entry.binding.as_ref().is_some_and(|backend| backend.base == target.backend_url)
         && (saved.active_session_id.as_ref() == Some(&target.session)
             || entry.sessions.iter().any(|row| row.id == target.session)
             || (s.workspace.as_ref().is_some_and(|ui| ui.active_key() == tab)

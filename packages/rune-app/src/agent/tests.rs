@@ -42,7 +42,7 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
     s.notifications.record();
     let target = Target {
         tab: Some("tab-0".into()),
-        origin: "http://127.0.0.1:9/".into(),
+        backend_url: "http://127.0.0.1:9/".into(),
         server: None,
         occurrence: 0,
         workspace: "project".into(),
@@ -57,7 +57,7 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
         for _ in 0..2 {
             assert!(out.try_send(super::Result::Read(snapshot(), false)).is_ok());
             assert!(crate::poll_chat(s, 8));
-            notifications::collect(s, Some((target.clone(), "Private project".into())));
+            notifications::collect(s, |_| Some((target.clone(), "Private project".into())));
         }
         assert_eq!(
             s.notifications.recorded(),
@@ -78,11 +78,11 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
             incoming.try_recv(),
             Ok(super::Job::VerifyIdle(20))
         ));
-        notifications::collect(s, Some((target.clone(), "Private project".into())));
+        notifications::collect(s, |_| Some((target.clone(), "Private project".into())));
         assert_eq!(s.notifications.recorded().len(), 1);
         assert!(out.try_send(super::Result::VerifiedIdle(20, true)).is_ok());
         assert!(crate::poll_chat(s, 8));
-        notifications::collect(s, Some((target, "Private project".into())));
+        notifications::collect(s, |_| Some((target, "Private project".into())));
         assert_eq!(
             s.notifications.recorded()[1].2,
             "Session “Private conversation” finished"

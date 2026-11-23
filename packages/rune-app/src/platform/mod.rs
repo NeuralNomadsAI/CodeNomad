@@ -7,8 +7,9 @@ pub(crate) mod device_picker;
 #[cfg(target_os = "windows")]
 pub(crate) use codenomad_windows_notifications as notifications;
 #[cfg(target_arch = "wasm32")]
-#[path = "notifications_web.rs"]
-pub(crate) mod notifications;
+pub(crate) mod notifications_web;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use notifications_web as notifications;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod pairing;
 pub(crate) mod reads;

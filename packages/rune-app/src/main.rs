@@ -191,7 +191,7 @@ fn latest(s: &mut State, tx: &mut Tx) {
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = poll_chat(s, 64);
-    shell::notifications::collect(s, workspace::notification_target(s));
+    shell::notifications::collect(s, workspace::notification_target);
     if !s.screen.is_launcher()
         && !git::has_preview(s)
         && !files::has_preview(s)
