@@ -100,6 +100,8 @@ try {
       const tree = JSON.parse(await readFile(native(`git-${mode}`, theme, `rune-${name}`, settle, "end", undefined, locale), "utf8"))
       const nodes = elements(tree)
       assert.equal(tree.dark_system, theme === "dark")
+      const worktree = tree.elements.find(node => node.key === "git-worktree-trigger")
+      assert.equal(worktree?.help, await page.locator(".git-panel-worktree").getAttribute("title"))
       assert(nodes.some(node => node.name?.includes("src/components/git-panel.tsx")))
       assert(nodes.some(node => node.key === "git-diff-mode" && node.role === "button" && node.name))
       const firstCommit = nodes.find(node => node.role === "button" && node.name?.startsWith("Make Git history"))
