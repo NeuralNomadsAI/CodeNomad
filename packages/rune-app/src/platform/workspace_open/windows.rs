@@ -4,7 +4,7 @@ use std::{
     io,
     os::windows::process::CommandExt,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::Weak,
     time::Duration,
 };
@@ -64,23 +64,33 @@ fn launch_path(path: &Path) -> PathBuf {
 }
 
 fn confirm_chooser_start(mut child: Child) -> io::Result<()> {
+    if !chooser_started(|| child.try_wait(), std::thread::sleep)? {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
+    Ok(())
+}
+
+// True when the selector already exited successfully; false when it remains open.
+fn chooser_started(
+    mut status: impl FnMut() -> io::Result<Option<ExitStatus>>,
+    mut wait: impl FnMut(Duration),
+) -> io::Result<bool> {
     // Match the desktop hosts: report immediate failure without waiting for the chooser to close.
     for attempt in 0..=10 {
-        if let Some(status) = child.try_wait()? {
+        if let Some(status) = status()? {
             return if status.success() {
-                Ok(())
+                Ok(true)
             } else {
                 Err(io::Error::other(status.to_string()))
             };
         }
         if attempt < 10 {
-            std::thread::sleep(Duration::from_millis(25));
+            wait(Duration::from_millis(25));
         }
     }
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+    Ok(false)
 }
 
 fn launch(selected: &Path, target: Target) -> io::Result<()> {
@@ -197,23 +207,24 @@ mod tests {
     }
 
     #[test]
-    fn chooser_reports_an_immediate_failure_without_opening_a_window() {
-        const STATUS: &str = "CODENOMAD_CHOOSER_FIXTURE_EXIT";
-        if let Ok(status) = std::env::var(STATUS) {
-            std::thread::sleep(Duration::from_millis(40));
-            std::process::exit(status.parse().unwrap());
+    fn chooser_checks_the_exit_status_at_the_startup_deadline() {
+        use std::{cell::Cell, os::windows::process::ExitStatusExt};
+        for exit in [None, Some(0), Some(7)] {
+            let elapsed = Cell::new(Duration::ZERO);
+            let started = chooser_started(
+                || {
+                    Ok(exit
+                        .filter(|_| elapsed.get() >= Duration::from_millis(250))
+                        .map(ExitStatus::from_raw))
+                },
+                |wait| elapsed.set(elapsed.get() + wait),
+            );
+            assert_eq!(elapsed.get(), Duration::from_millis(250));
+            match exit {
+                Some(7) => assert!(started.is_err()),
+                Some(0) => assert!(started.unwrap()),
+                _ => assert!(!started.unwrap()),
+            }
         }
-        let spawn = |status| {
-            Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "platform::workspace_open::windows::tests::chooser_reports_an_immediate_failure_without_opening_a_window"])
-                .env(STATUS, status)
-                .creation_flags(0x0800_0000)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap()
-        };
-        assert!(confirm_chooser_start(spawn("0")).is_ok());
-        assert!(confirm_chooser_start(spawn("7")).is_err());
     }
 }
