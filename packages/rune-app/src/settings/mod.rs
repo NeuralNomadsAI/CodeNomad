@@ -3,6 +3,8 @@
 mod opencode;
 mod preferences;
 #[cfg(not(target_arch = "wasm32"))]
+mod providers;
+#[cfg(not(target_arch = "wasm32"))]
 mod view;
 
 use crate::{State, strings};
@@ -35,6 +37,29 @@ pub(crate) fn poll(s: &mut State) -> bool {
             launcher.authentication_required = true;
         }
         s.phase = crate::Phase::Failed;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let (changes, stopped) = s
+            .screen
+            .launcher()
+            .and_then(|l| l.catalogue_watch.as_ref())
+            .map_or_else(Default::default, |watch| watch.take_provider_changes());
+        if shared.provider_target.is_some() {
+            let backend = shared.backend.clone();
+            if let Some(target) = &mut shared.provider_target
+                && !target.validate(s, backend.as_ref(), &changes, &stopped)
+            {
+                shared.provider_target = None;
+            }
+            if (shared.provider_target.is_none()
+                || !matches!(changes, codenomad_client::stream::CatalogueChanges::None)
+                || bound)
+                && let Some(wake) = &shared.window_wake
+            {
+                wake();
+            }
+        }
     }
     if crate::workspace::has_conversation_stream(s)
         || s.screen
@@ -93,6 +118,48 @@ pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::B
 
 pub(crate) fn invalidate(s: &State, owner: codenomad_client::settings::Owner) {
     s.settings.shared.borrow_mut().invalidate(owner);
+}
+
+pub(crate) fn provider_stopped(s: &State, workspace: &str) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut prefs = s.settings.shared.borrow_mut();
+        if prefs
+            .provider_target
+            .as_ref()
+            .is_some_and(|target| target.is_workspace(workspace))
+        {
+            prefs.provider_target = None;
+            if let Some(wake) = &prefs.window_wake {
+                wake();
+            }
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = (s, workspace);
+}
+
+pub(crate) fn provider_changed(s: &State, workspace: &str) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if s.screen
+            .launcher()
+            .is_some_and(|l| l.catalogue_watch.is_some())
+        {
+            return;
+        }
+        let mut prefs = s.settings.shared.borrow_mut();
+        if prefs
+            .provider_target
+            .as_mut()
+            .is_some_and(|target| target.hint(workspace))
+            && let Some(wake) = &prefs.window_wake
+        {
+            wake();
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = (s, workspace);
 }
 
 pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<State>) -> El) -> El {
@@ -194,6 +261,8 @@ fn open(s: &mut State) {
         return;
     }
     let token = Rc::new(Cell::new(false));
+    let target = providers::Target::capture(s);
+    host.shared.borrow_mut().provider_target = target;
     let state = view::Window::new(host.shared.clone(), token.clone());
     let locale = host
         .shared

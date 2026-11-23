@@ -27,7 +27,7 @@ fn settings_opencode_focus_refreshes_without_forcing_a_registry_recheck() {
         ))
         .unwrap();
         let state = Window {
-            open_code_section: true,
+            section: Section::OpenCode,
             ..Window::default()
         };
         state.shared.borrow_mut().backend = Some(backend);

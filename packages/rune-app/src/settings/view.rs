@@ -5,7 +5,7 @@ mod tests;
 use super::{
     opencode,
     preferences::{Owner, Preferences},
-    render_with,
+    providers, render_with,
 };
 use crate::strings::t;
 use general::Picker;
@@ -26,8 +26,22 @@ pub(super) struct Window {
     picker: Cell<Option<Picker>>,
     palette_choice: Cell<Option<&'static palettes::Palette>>,
     seen_revision: u64,
-    open_code_section: bool,
+    section: Section,
     pub(super) opencode: opencode::Status,
+    pub(super) providers: providers::Catalog,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Section {
+    General,
+    OpenCode,
+    Providers,
+}
+
+impl Default for Section {
+    fn default() -> Self {
+        Self::General
+    }
 }
 
 impl Window {
@@ -51,7 +65,11 @@ impl Window {
     }
 
     pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
-        self.shared.borrow_mut().window_wake = None;
+        {
+            let mut prefs = self.shared.borrow_mut();
+            prefs.window_wake = None;
+            prefs.provider_target = None;
+        }
         if !self.token.take().is_some_and(|token| token.get()) {
             super::settle_close(&self.shared, warn);
         }
@@ -111,10 +129,17 @@ pub(super) fn spec() -> AppSpec<Window> {
             }
             drop(prefs);
             let status_changed = s.opencode.poll();
-            if s.open_code_section {
+            if s.section == Section::OpenCode {
                 s.check_opencode(None);
             }
-            updated | status_changed
+            let providers_changed = if s.section == Section::Providers {
+                let prefs = s.shared.borrow();
+                let target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
+                s.providers.poll(target, prefs.window_wake.as_ref())
+            } else {
+                false
+            };
+            updated | status_changed | providers_changed
         }),
         on_key: Some(|_, event, tx| {
             if event.key != rune::Key::Escape {
@@ -130,7 +155,7 @@ pub(super) fn spec() -> AppSpec<Window> {
                 s.shared
                     .borrow_mut()
                     .fixture_locale(crate::strings::locale());
-                s.open_code_section = true;
+                s.section = Section::OpenCode;
                 s.opencode.fixture();
             }),
         ],
@@ -138,7 +163,7 @@ pub(super) fn spec() -> AppSpec<Window> {
     }
 }
 
-fn view(s: &Window, cx: &mut Cx<Window>) -> El {
+pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     if let Some(palette) = s.palette_choice.take() {
         let mut prefs = s.shared.borrow_mut();
         // Pointer actions can be queued on the previous tree when the system appearance changes.
@@ -155,23 +180,44 @@ fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     render_with(cx, &prefs, |_| {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
-        let section = if s.open_code_section {
-            opencode_label
-        } else {
-            general_label
+        let providers_label = t("settings.nav.providers");
+        let section = match s.section {
+            Section::General => general_label,
+            Section::OpenCode => opencode_label,
+            Section::Providers => providers_label,
         };
         let nav = chrome::nav(
             t("settings.title"),
             t("settings.navigationAriaLabel"),
             [
-                ("settings-general", general_label, !s.open_code_section),
-                ("settings-opencode", opencode_label, s.open_code_section),
+                (
+                    "settings-general",
+                    general_label,
+                    s.section == Section::General,
+                ),
+                (
+                    "settings-opencode",
+                    opencode_label,
+                    s.section == Section::OpenCode,
+                ),
+                (
+                    "settings-providers",
+                    providers_label,
+                    s.section == Section::Providers,
+                ),
             ],
             |s: &mut Window, key| {
                 s.picker.set(None);
-                s.open_code_section = key == "settings-opencode";
-                if !s.open_code_section {
+                s.section = match key {
+                    "settings-opencode" => Section::OpenCode,
+                    "settings-providers" => Section::Providers,
+                    _ => Section::General,
+                };
+                if s.section != Section::OpenCode {
                     s.opencode = opencode::Status::default();
+                }
+                if s.section != Section::Providers {
+                    s.providers = providers::Catalog::default();
                 }
             },
         );
@@ -194,17 +240,20 @@ fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         } else {
             rune::el()
         };
-        let (key, controls) = if s.open_code_section {
-            ("opencode", opencode::view(s))
-        } else {
-            (
+        let (key, controls) = match s.section {
+            Section::OpenCode => ("opencode", opencode::view(s)),
+            Section::General => (
                 "general",
                 general::view(s, &prefs, system_dark, &mut layers),
-            )
+            ),
+            Section::Providers => (
+                "providers",
+                providers::view(s, prefs.can_retry() && prefs.provider_target.is_some()),
+            ),
         };
         chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers).on_window_focus(
             |s: &mut Window, focused, _| {
-                if focused && s.open_code_section {
+                if focused && s.section == Section::OpenCode {
                     s.check_opencode(Some(false));
                 }
             },
