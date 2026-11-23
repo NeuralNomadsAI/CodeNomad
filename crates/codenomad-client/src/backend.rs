@@ -68,6 +68,17 @@ impl Backend {
             .error_for_status()?;
         Ok(())
     }
+    pub async fn authentication_status(&self) -> Result<bool> {
+        let response = self
+            .client
+            .get(format!("{}api/auth/status", self.base))
+            .send()
+            .await?
+            .error_for_status()?;
+        read_json(response).await?["authenticated"]
+            .as_bool()
+            .ok_or_else(|| "Invalid authentication status".into())
+    }
     pub async fn page(&self, target: Value) -> Result<Page> {
         // Match the broker's window envelope; other endpoints retain their own limits.
         const HISTORY_WINDOW_BYTES: usize = 24 * 1024 * 1024;

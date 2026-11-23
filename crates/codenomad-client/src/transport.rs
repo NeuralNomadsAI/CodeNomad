@@ -35,6 +35,12 @@ pub enum Command {
     Close,
 }
 #[derive(Debug)]
+pub struct Authentication {
+    pub backend: crate::backend::Backend,
+    pub confirmed: bool,
+}
+
+#[derive(Debug)]
 pub enum Event {
     Connected(crate::backend::Backend),
     Workspace(WorkspaceEvent),
@@ -46,13 +52,22 @@ pub enum Event {
     Message(Message),
     Text(String, crate::content::TextEvent),
     Done,
-    AuthenticationRequired(crate::backend::Backend),
+    AuthenticationRequired(Authentication),
     PromptSettled { rejected: bool },
     Failed,
     ConnectionLost,
     WorkspaceMissing,
     Reconnecting,
     PagingFailed,
+}
+
+impl Event {
+    pub fn authentication_required(backend: crate::backend::Backend) -> Self {
+        Self::AuthenticationRequired(Authentication {
+            backend,
+            confirmed: false,
+        })
+    }
 }
 
 pub async fn publish(out: &Sender<Event>, wake: &Wake, event: Event) -> bool {

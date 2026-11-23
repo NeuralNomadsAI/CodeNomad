@@ -134,7 +134,7 @@ pub async fn run(
                 }
             }
             Some(Input::AuthenticationRequired(e)) if e == epoch => {
-                publish(&out, &wake, Event::AuthenticationRequired(backend.clone())).await;
+                publish(&out, &wake, Event::authentication_required(backend.clone())).await;
                 return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {
@@ -179,7 +179,24 @@ pub async fn run(
                             quiet = Instant::now() + Duration::from_millis(100);
                             publish(&out, &wake, Event::PagingFailed).await;
                         }
-                        Err(_) => {
+                        Err(error) => {
+                            if crate::http::authentication_expired(&error)
+                                && matches!(backend.authentication_status().await, Ok(false))
+                            {
+                                close_for_authentication(&wire).await;
+                                publish(
+                                    &out,
+                                    &wake,
+                                    Event::AuthenticationRequired(
+                                        crate::transport::Authentication {
+                                            backend: backend.clone(),
+                                            confirmed: true,
+                                        },
+                                    ),
+                                )
+                                .await;
+                                return Ok(());
+                            }
                             publish(&out, &wake, Event::PagingFailed).await;
                         }
                     }
@@ -195,11 +212,8 @@ pub async fn run(
                     let result = backend.send(body).await;
                     if let Err(error) = &result {
                         if crate::http::authentication_expired(error) {
-                            wire.cancelled.store(true, SeqCst);
-                            while wire.alive.load(SeqCst) {
-                                runtime::sleep(Duration::from_millis(25)).await;
-                            }
-                            publish(&out, &wake, Event::AuthenticationRequired(backend.clone()))
+                            close_for_authentication(&wire).await;
+                            publish(&out, &wake, Event::authentication_required(backend.clone()))
                                 .await;
                             return Ok(());
                         }
@@ -420,6 +434,13 @@ pub async fn run(
                 }
             }
         }
+    }
+}
+
+async fn close_for_authentication(wire: &stream::State) {
+    wire.cancelled.store(true, SeqCst);
+    while wire.alive.load(SeqCst) {
+        runtime::sleep(Duration::from_millis(25)).await;
     }
 }
 fn can_restart(row: &crate::Message) -> bool {

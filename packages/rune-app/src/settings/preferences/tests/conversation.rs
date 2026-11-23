@@ -61,6 +61,86 @@ async fn until(events: &Receiver<Event>, accept: impl Fn(&Event) -> bool) -> Eve
 }
 
 #[test]
+fn pagination_401_checks_authentication_without_replaying_the_page() {
+    platform::block_on(async {
+        for authenticated in [true, false] {
+            let (listener, mut prefs) = fixture().await;
+            let backend = prefs.backend.as_mut().unwrap();
+            backend.workspace = "project".into();
+            backend.session = "session".into();
+            attest(&listener, backend, "fixture-profile").await;
+            let (mut sse, commands, events) = start(&listener, backend.clone()).await;
+            commands.send(Command::Older).await.unwrap();
+            let page = request(&listener).await;
+            assert_eq!(
+                page.body["target"],
+                json!({"kind":"before","messageID":"recent"})
+            );
+            page.reply(401, json!({})).await;
+            let status = request(&listener).await;
+            assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
+            status
+                .reply(200, json!({"authenticated":authenticated}))
+                .await;
+            if authenticated {
+                assert!(matches!(
+                    timeout(Duration::from_secs(2), events.recv())
+                        .await
+                        .unwrap()
+                        .unwrap(),
+                    Event::PagingFailed
+                ));
+                // The same SSE is still able to answer the next server ping.
+                sse.socket
+                    .write_all(b"event: codenomad.client.ping\ndata: {}\n\n")
+                    .await
+                    .unwrap();
+                let pong = request(&listener).await;
+                assert_eq!(pong.first, "POST /api/client-connections/pong HTTP/1.1");
+                pong.reply(200, json!({})).await;
+                assert!(
+                    timeout(Duration::from_millis(100), listener.accept())
+                        .await
+                        .is_err()
+                );
+                commands.send(Command::Close).await.unwrap();
+            } else {
+                let auth = until(&events, |event| {
+                    matches!(event, Event::AuthenticationRequired(_))
+                })
+                .await;
+                let auth = match auth {
+                    Event::AuthenticationRequired(auth) => auth,
+                    other => panic!("unexpected pagination event: {other:?}"),
+                };
+                assert!(auth.confirmed && auth.backend.session == "session");
+                let closed = timeout(Duration::from_secs(2), sse.socket.read_u8())
+                    .await
+                    .unwrap()
+                    .unwrap_err();
+                assert!(matches!(
+                    closed.kind(),
+                    std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset
+                ));
+                let mut root = crate::init();
+                root.paging = true;
+                *root.settings.shared.borrow_mut() = prefs;
+                assert!(crate::settings::conversation_authentication(
+                    &mut root, auth
+                ));
+                assert!(!root.paging);
+                assert!(crate::chat::authentication::dialog(&root).is_some());
+                assert!(
+                    timeout(Duration::from_millis(100), listener.accept())
+                        .await
+                        .is_err()
+                );
+            }
+        }
+    });
+}
+
+#[test]
 fn settings_config_invalidation_during_pagination_keeps_the_valid_history_page() {
     platform::block_on(async {
         let (listener, mut prefs) = fixture().await;
@@ -661,7 +741,7 @@ fn settings_stale_401_does_not_displace_the_current_connection() {
         root.phase = crate::Phase::Ready;
         let (out, events) = bounded(1);
         root.incoming = Some(events);
-        out.send(Event::AuthenticationRequired(expired))
+        out.send(Event::authentication_required(expired))
             .await
             .unwrap();
         crate::poll_chat(&mut root, 1);
@@ -752,7 +832,7 @@ fn settings_launcher_retry_accepts_password_with_project_open() {
         };
         let (out, incoming) = bounded(2);
         root.incoming = Some(incoming);
-        out.send(Event::AuthenticationRequired(backend))
+        out.send(Event::authentication_required(backend))
             .await
             .unwrap();
         crate::poll_chat(&mut root, 2);

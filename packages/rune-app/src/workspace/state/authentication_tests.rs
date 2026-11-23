@@ -37,7 +37,7 @@ fn inactive_prompt_rejection_is_saved_before_closing_its_tab() {
         rune::Env::new(false, 1.0),
     );
     runtime.update(|s, tx| select(s, "tab-1", tx));
-    out.try_send(Event::AuthenticationRequired(backend))
+    out.try_send(Event::authentication_required(backend))
         .unwrap();
     runtime.update(|s, tx| {
         poll(s, 0.0, tx);

@@ -409,16 +409,10 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
                 }
-                if let Event::AuthenticationRequired(expired) = event {
-                    if !settings::authentication_required(s, &expired)
-                        && s.screen.launcher().is_none()
-                    {
-                        continue;
-                    }
-                    s.commands = None;
-                    settle_prompt(s, true);
-                    #[cfg(not(target_arch = "wasm32"))]
-                    chat::authentication::expired(s, expired);
+                if let Event::AuthenticationRequired(auth) = event
+                    && !settings::conversation_authentication(s, auth)
+                {
+                    continue;
                 }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
