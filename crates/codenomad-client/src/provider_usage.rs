@@ -48,19 +48,7 @@ impl Watch {
     }
 
     pub(crate) fn transport(&self, online: bool) -> bool {
-        let mut authority = self.0.lock().unwrap();
-        if authority.online == online {
-            return false;
-        }
-        authority.online = online;
-        authority.backpressure = false;
-        authority.publication_waiting = false;
-        authority.upstream = None;
-        authority.generation += 1;
-        if !online {
-            authority.model_generation += 1;
-        }
-        true
+        self.0.lock().unwrap().transport(online)
     }
 
     fn observe(&self, hint: Hint) -> bool {
@@ -86,6 +74,21 @@ impl Watch {
 }
 
 impl Authority {
+    fn transport(&mut self, online: bool) -> bool {
+        if self.online == online {
+            return false;
+        }
+        self.online = online;
+        self.backpressure = false;
+        self.publication_waiting = false;
+        self.upstream = None;
+        self.generation += 1;
+        if !online {
+            self.model_generation += 1;
+        }
+        true
+    }
+
     fn wait_for_ingress(&mut self) -> bool {
         self.publication_waiting |= self.backpressure;
         self.backpressure
@@ -103,14 +106,20 @@ impl Authority {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[test]
 fn congestion_parks_a_ready_quota_reply_without_changing_its_authority() {
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
     let watch = Watch::default();
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let observed = wakes.clone();
     let ingress = Ingress::new(
         watch.clone(),
-        Arc::new(|| {}),
+        Arc::new(move || {
+            observed.fetch_add(1, Relaxed);
+        }),
         "project".into(),
         "session".into(),
     );
     ingress.transport(true);
+    let before = wakes.load(Relaxed);
     let stamp = watch.current();
     let (send, reply) = crate::bounded(1);
     send.try_send(42).unwrap();
@@ -120,7 +129,8 @@ fn congestion_parks_a_ready_quota_reply_without_changing_its_authority() {
         None
     );
     assert!(!reply.is_empty());
-    drop(chunk);
+    chunk.finish();
+    assert_eq!(wakes.load(Relaxed), before + 1);
     assert_eq!(
         watch.publish_if_current(stamp, || reply.try_recv().unwrap()),
         Some(42)
@@ -170,19 +180,56 @@ pub(crate) struct Ingress {
     session: String,
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn abandoning_a_received_chunk_revokes_quota_authority_before_waking() {
+    use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+    let watch = Watch::default();
+    assert!(watch.transport(true));
+    let stamp = watch.current();
+    let saw_revocation = Arc::new(AtomicBool::new(false));
+    let observed = saw_revocation.clone();
+    let during_wake = watch.clone();
+    let ingress = Ingress::new(
+        watch.clone(),
+        Arc::new(move || {
+            assert!(!during_wake.current().1);
+            assert_eq!(during_wake.publish_if_current(stamp, || 42), None);
+            observed.store(true, Relaxed);
+        }),
+        "project".into(),
+        "session".into(),
+    );
+    let chunk = ingress.chunk();
+    assert_eq!(watch.publish_if_current(stamp, || 42), None);
+    drop(chunk);
+    assert!(saw_revocation.load(Relaxed));
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) struct Chunk<'a>(&'a Ingress);
+pub(crate) struct Chunk<'a>(Option<&'a Ingress>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Chunk<'_> {
+    pub fn finish(mut self) {
+        if let Some(ingress) = self.0.take() {
+            let wake = {
+                let mut authority = ingress.watch.0.lock().unwrap();
+                authority.backpressure = false;
+                std::mem::take(&mut authority.publication_waiting)
+            };
+            if wake {
+                (ingress.wake)();
+            }
+        }
+    }
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for Chunk<'_> {
     fn drop(&mut self) {
-        let wake = {
-            let mut authority = self.0.watch.0.lock().unwrap();
-            authority.backpressure = false;
-            std::mem::take(&mut authority.publication_waiting)
-        };
-        if wake {
-            (self.0.wake)();
+        if let Some(ingress) = self.0 {
+            ingress.transport(false);
         }
     }
 }
@@ -206,7 +253,7 @@ impl Ingress {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn chunk(&self) -> Chunk<'_> {
         self.watch.0.lock().unwrap().backpressure = true;
-        Chunk(self)
+        Chunk(Some(self))
     }
 
     pub fn frame(&self, data: &str) {

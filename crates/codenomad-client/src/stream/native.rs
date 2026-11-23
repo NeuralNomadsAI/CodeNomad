@@ -94,7 +94,7 @@ async fn receive_chunk(
     frames: &Sender<Parsed>,
 ) -> Result<()> {
     // Bytes already delivered by HTTP may still contain a revocation past the next queued frame.
-    let _unobserved = quota.map(crate::provider_usage::Ingress::chunk);
+    let unobserved = quota.map(crate::provider_usage::Ingress::chunk);
     for byte in chunk {
         if let Some(frame) = parser.byte(*byte)? {
             if let Some(quota) = quota {
@@ -108,6 +108,9 @@ async fn receive_chunk(
             }
             frames.send(frame).await?;
         }
+    }
+    if let Some(chunk) = unobserved {
+        chunk.finish();
     }
     Ok(())
 }
