@@ -39,11 +39,12 @@ const native=createServer(async(req,res)=>{
   if(url.pathname==='/api/location')return json({data:{directory:project}})
   if(url.pathname===`/api/session/${session}`)return json({data:record()})
   if(url.pathname==='/api/plugin')return json({location:{directory:project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
-  if(url.pathname==='/api/rpc/codenomad.session-pruning/window'){
+  if(['/api/rpc/codenomad.session-pruning/window','/api/rpc/codenomad.session-pruning/windowUserFilesV1'].includes(url.pathname)){
     const {input}=JSON.parse(raw);assert.equal(input.sessionID,session)
     stats.pages++;if(input.target.kind==='latest')stats.latestReads++
     if(input.target.kind==='before'&&blockOlder){blockOlder=false;stats.blockedPages++;return json({output:{status:'blocked',reason:'anchor_missing'}})}
     const snapshot=store.window(input.target)
+    if(url.pathname.endsWith('windowUserFilesV1')&&snapshot.status==='window')snapshot.userFiles='reference-v1'
     if(input.target.kind==='before'&&staleOlder){
       staleOlder=false;stats.stalePages++
       store.rows[250].content[0].text='edited during stale page\nété 🦀\nthird line'
