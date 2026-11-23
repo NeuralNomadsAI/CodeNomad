@@ -24,17 +24,25 @@ export async function openSessionSearch(page, sidebar, messages, tap) {
     assert(box&&box.width>0&&box.height>0)
     await tap(box.x+box.width/2,box.y+box.height/2)
   }
-  await touch(trigger)
   const field=sidebar.getByRole('group',{name,exact:true})
-  await field.waitFor()
-  assert.equal(await trigger.getAttribute('aria-expanded'),'true')
-  // A project without a conversation already shows the creation form.
-  assert.equal(await create.count(),before,
-    'Opening session search must not open New Session')
-  const editor=page.locator('textarea:focus').and(page.getByRole('textbox',{name,exact:true}))
-  assert.equal(await editor.count(),0,'Opening search must not focus the field')
-  await touch(field)
-  await editor.waitFor({state:'attached'})
+  await page.evaluate(()=>performance.clearMarks('session-search.activate'))
+  let stage='open'
+  try {
+    await touch(trigger)
+    await field.waitFor()
+    assert.equal(await trigger.getAttribute('aria-expanded'),'true')
+    // A project without a conversation already shows the creation form.
+    assert.equal(await create.count(),before,
+      'Opening session search must not open New Session')
+    stage='focus'
+    const editor=page.locator('textarea:focus').and(page.getByRole('textbox',{name,exact:true}))
+    assert.equal(await editor.count(),0,'Opening search must not focus the field')
+    await touch(field)
+    await editor.waitFor({state:'attached'})
+  } catch (error) {
+    const called=await page.evaluate(()=>performance.getEntriesByName('session-search.activate','mark').length>0)
+    throw new Error(`Session search ${stage}; Rust handler called: ${called}: ${error.message}`,{cause:error})
+  }
 }
 
 export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){

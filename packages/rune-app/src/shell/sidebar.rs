@@ -114,6 +114,13 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
             shell::control(&SEARCH, t("sessionList.filter.ariaLabel"), touch)
                 .expanded(l.show_search)
                 .on_press(screen::action(scope, |s| {
+                    #[cfg(target_arch = "wasm32")]
+                    if let Some(performance) =
+                        web_sys::window().and_then(|window| window.performance())
+                    {
+                        performance.clear_marks_with_mark_name("session-search.activate");
+                        let _ = performance.mark("session-search.activate");
+                    }
                     if let Some(l) = s.screen.launcher_mut() {
                         l.show_search = !l.show_search;
                         if !l.show_search {
