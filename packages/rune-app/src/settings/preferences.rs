@@ -174,6 +174,10 @@ impl Preferences {
         }
     }
 
+    pub(super) fn notification_config(&self) -> Option<&Value> {
+        self.config.confirmed()
+    }
+
     pub fn saved(&self, owner: Owner) -> Option<&Value> {
         self.doc(owner).snapshot.as_ref()
     }

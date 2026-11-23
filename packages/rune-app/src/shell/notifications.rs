@@ -97,7 +97,7 @@ pub(crate) struct Host {
     focused: bool,
     routes: VecDeque<(u64, Target, Presented)>,
     delivered: VecDeque<(Target, Category, String)>,
-    activation: Option<(Target, std::rc::Rc<()>)>,
+    activation: Option<(Target, std::rc::Rc<()>, bool)>,
     next_id: u64,
     clicks: codenomad_client::Receiver<u64>,
     send_click: codenomad_client::Sender<u64>,
@@ -260,8 +260,10 @@ pub(crate) fn with_background_wake(s: &mut State, wake: rune::Waker) -> rune::Wa
             handle.update_if(move |s, tx| {
                 scheduled.store(false, Relaxed);
                 let mut changed = crate::poll_chat(s, 64);
+                changed |= crate::settings::poll(s);
                 collect(s, crate::workspace::notification_target);
                 changed |= crate::workspace::poll_cached_notifications(s, tx);
+                changed |= crate::settings::poll(s);
                 changed | poll(s, tx)
             });
         }
@@ -298,12 +300,21 @@ pub(crate) fn collect(s: &mut State, target: impl FnOnce(&State) -> Option<(Targ
         {
             continue;
         }
+        if s.notifications.delivered.len() >= 4096 {
+            // Retain known requests so revisiting a session cannot replay them.
+            let Some(old) = s
+                .notifications
+                .delivered
+                .iter()
+                .position(|(_, category, _)| *category == Category::SessionDone)
+            else {
+                continue;
+            };
+            s.notifications.delivered.remove(old);
+        }
         s.notifications
             .delivered
             .push_back((target.clone(), category, id));
-        if s.notifications.delivered.len() > RETAINED * 2 {
-            s.notifications.delivered.pop_front();
-        }
         let Some(body) = crate::settings::system_notification(s, &target, category, focused, label)
         else {
             continue;
@@ -325,8 +336,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         .notifications
         .activation
         .take()
-        .filter(|(_, scope)| s.current_scope(scope))
-        .map(|(target, _)| target);
+        .filter(|(_, scope, _)| s.current_scope(scope))
+        .map(|(target, _, started)| (target, started));
     while let Ok(id) = s.notifications.clicks.try_recv() {
         let Some(index) = s
             .notifications
@@ -339,13 +350,15 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         let (_, clicked, presented) = s.notifications.routes.remove(index).unwrap();
         drop(presented);
         s.notifications.focus();
-        target = Some(clicked);
+        target = Some((clicked, false));
     }
-    let Some(target) = target else { return false };
+    let Some((target, mut started)) = target else {
+        return false;
+    };
     let before = s.workspace.as_ref().map(|ui| ui.active_key().to_owned());
-    match crate::workspace::open_notification(s, &target, tx) {
+    match crate::workspace::open_notification(s, &target, &mut started, tx) {
         Activation::Wait => {
-            s.notifications.activation = Some((target, s.input_scope.clone()));
+            s.notifications.activation = Some((target, s.input_scope.clone(), started));
             before.as_deref() != s.workspace.as_ref().map(|ui| ui.active_key())
         }
         Activation::Opened => true,

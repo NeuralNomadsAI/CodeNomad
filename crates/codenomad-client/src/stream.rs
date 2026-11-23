@@ -396,14 +396,13 @@ pub(super) async fn dispatch(
 
 fn execution_attention(event: &Value) -> Option<WorkspaceEvent> {
     let notice = match event["type"].as_str()? {
-        "session.execution.succeeded" => Some(event["id"].as_str()?),
+        "session.execution.succeeded" | "session.execution.failed" => Some(event["id"].as_str()?),
         "session.execution.interrupted" if event["data"]["reason"] == "inactivity" => {
             Some(event["id"].as_str()?)
         }
-        "session.execution.started"
-        | "session.step.started"
-        | "session.execution.failed"
-        | "session.execution.interrupted" => None,
+        "session.execution.started" | "session.step.started" | "session.execution.interrupted" => {
+            None
+        }
         _ => return None,
     };
     if notice.is_some_and(|id| !crate::history::valid_id(id)) {
@@ -415,7 +414,7 @@ fn execution_attention(event: &Value) -> Option<WorkspaceEvent> {
 }
 
 #[test]
-fn only_success_and_inactivity_are_notification_candidates() {
+fn terminal_notifications_include_failures_but_exclude_manual_stops_and_shutdown() {
     for (kind, reason, expected) in [
         ("session.execution.succeeded", "", Some("terminal")),
         (
@@ -425,7 +424,7 @@ fn only_success_and_inactivity_are_notification_candidates() {
         ),
         ("session.execution.interrupted", "manual", None),
         ("session.execution.interrupted", "shutdown", None),
-        ("session.execution.failed", "", None),
+        ("session.execution.failed", "", Some("terminal")),
         ("session.execution.started", "", None),
     ] {
         let event = json!({"id":"terminal","type":kind,"data":{"reason":reason}});

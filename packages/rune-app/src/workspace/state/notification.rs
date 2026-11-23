@@ -85,7 +85,12 @@ pub(crate) enum Activation {
     Gone,
 }
 
-pub(crate) fn open_notification(s: &mut State, target: &Target, tx: &mut Tx) -> Activation {
+pub(crate) fn open_notification(
+    s: &mut State,
+    target: &Target,
+    started: &mut bool,
+    tx: &mut Tx,
+) -> Activation {
     if !owns_notification(s, target) {
         return Activation::Gone;
     }
@@ -99,13 +104,21 @@ pub(crate) fn open_notification(s: &mut State, target: &Target, tx: &mut Tx) -> 
             return Activation::Wait;
         }
     }
-    if target.tab.is_some()
-        && super::active_session(s) != Some(&target.session)
-        && (!crate::launcher::can_change_session(s)
-            || s.screen
-                .launcher()
-                .is_none_or(|l| l.pending || l.connection.is_none() || l.project.is_none()))
-    {
+    if target.tab.is_some() && super::active_session(s) != Some(&target.session) {
+        let Some(launcher) = s.screen.launcher() else {
+            return Activation::Gone;
+        };
+        if launcher.pending || !crate::launcher::can_change_session(s) {
+            return Activation::Wait;
+        }
+        if launcher.connection.is_none() || launcher.project.is_none() {
+            return Activation::Wait;
+        }
+        if *started && launcher.error.is_some() {
+            return Activation::Gone;
+        }
+        crate::launcher::choose(s, target.session.clone(), tx);
+        *started = true;
         return Activation::Wait;
     }
     if s.files

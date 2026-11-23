@@ -104,6 +104,7 @@ impl Delivery {
         let presented = Presented {
             notification,
             activated,
+            notifier: self.notifier.clone(),
             _apartment: self.apartment.clone(),
         };
         self.notifier.Show(&presented.notification)?;
@@ -122,12 +123,14 @@ fn profile_identity(profile: Option<&str>) -> String {
 pub struct Presented {
     notification: ToastNotification,
     activated: i64,
+    notifier: ToastNotifier,
     _apartment: Rc<Apartment>,
 }
 
 impl Drop for Presented {
     fn drop(&mut self) {
         let _ = self.notification.RemoveActivated(self.activated);
+        let _ = self.notifier.Hide(&self.notification);
     }
 }
 

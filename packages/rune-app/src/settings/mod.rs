@@ -81,7 +81,7 @@ pub(crate) fn system_notification(
     {
         return None;
     }
-    let config = prefs.saved(codenomad_client::settings::Owner::Config);
+    let config = prefs.notification_config();
     crate::shell::notifications::system_allowed(config, category, focused).then(|| {
         let key = match category {
             notification_routing::Category::NeedsInput => "sessionEvents.notify.needsInput",

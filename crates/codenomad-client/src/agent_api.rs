@@ -86,11 +86,22 @@ impl Backend {
         else {
             return false;
         };
-        read_json(response).await.ok().is_some_and(|value| {
+        if !read_json(response).await.ok().is_some_and(|value| {
             value["data"]
                 .as_object()
                 .is_some_and(|active| !active.contains_key(&self.session))
-        })
+        }) {
+            return false;
+        }
+        // The relay can omit a member it could not scope during the active-list read.
+        let Ok(record) = self.control_get(&format!("session/{}", self.session)).await else {
+            return false;
+        };
+        let time = &record["data"]["time"];
+        root_directory(&record, &self.session)
+            .as_deref()
+            .is_some_and(|current| crate::same_server_path(current, directory))
+            && matches!((time["busy"].as_u64(), time["idle"].as_u64()), (Some(busy), Some(idle)) if busy <= idle)
     }
     async fn control_post(&self, path: &str, input: Value) -> Result<()> {
         self.client
