@@ -585,6 +585,11 @@ fn editing_or_sending_a_dismissed_command_releases_its_picker_marker() {
         &attempt,
         crate::transport::PromptOutcome::Confirmed(attempt.clone()),
     );
+    rt.frame(0.0);
+    let (x, y) = rt.find("composer").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
     rt.paste("/");
     rt.frame(0.0);
     assert!(rt.state.composer.picker.open());

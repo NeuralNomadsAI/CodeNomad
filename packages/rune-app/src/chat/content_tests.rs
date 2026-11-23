@@ -253,7 +253,7 @@ fn markdown_and_specialized_tools_use_native_content_in_the_runtime() {
 fn transcript_edit_switches_the_shared_diff_without_changing_the_copied_patch() {
     let mut state = init();
     let native = serde_json::from_str(include_str!("../../fixtures/transcript.json")).unwrap();
-    state.messages = vec![history::decode_message(&native).unwrap()];
+    state.messages = vec![history::decode_message(&native).unwrap().into()];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(
         state,
@@ -299,7 +299,7 @@ fn transcript_patch_with_out_of_range_lines_uses_the_raw_fallback() {
     state.messages = vec![history::decode_message(&json!({"id":"range","type":"assistant","time":{"completed":1},"content":[
         {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","input":{"filePath":"app.rs"},
             "metadata":{"diff":patch}}}
-    ]})).unwrap()];
+    ]})).unwrap().into()];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
     for _ in 0..12 {
@@ -319,7 +319,7 @@ fn transcript_keeps_and_copies_a_patch_with_long_unicode_headers() {
     state.messages = vec![history::decode_message(&json!({"id":"unicode","type":"assistant","time":{"completed":1},"content":[
         {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","input":{"filePath":path},
             "metadata":{"files":[{"file":path,"patch":patch}]},"content":[{"type":"text","text":"Edited …"}]}}
-    ]})).unwrap()];
+    ]})).unwrap().into()];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
     let clipboard = rune::clipboard::memory();
@@ -343,7 +343,7 @@ fn wrapped_update_patch_uses_the_shared_diff_and_copies_the_original() {
     let mut state = init();
     state.messages = vec![history::decode_message(&json!({"id":"wrapped","type":"assistant","time":{"completed":1},"content":[
         {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","metadata":{"diff":patch}}}
-    ]})).unwrap()];
+    ]})).unwrap().into()];
     state.phase = Phase::Ready;
     let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
     let clipboard = rune::clipboard::memory();
@@ -373,7 +373,8 @@ fn edit_cards(count: usize) -> State {
         history::decode_message(
             &json!({"id":"cards","type":"assistant","time":{"completed":1},"content":cards}),
         )
-        .unwrap(),
+        .unwrap()
+        .into(),
     ];
     state.phase = Phase::Ready;
     state

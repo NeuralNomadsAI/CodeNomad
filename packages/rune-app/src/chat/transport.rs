@@ -90,7 +90,7 @@ async fn run_configured(
 }
 
 pub(crate) async fn authenticate_and_run(
-    mut target: crate::backend::Backend,
+    target: crate::backend::Backend,
     password: String,
     token: Option<String>,
     out: Sender<Event>,
