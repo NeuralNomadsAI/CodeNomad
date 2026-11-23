@@ -1,0 +1,462 @@
+use crate::{
+    backend::Backend,
+    history::{Result, valid_id},
+    runtime::{Instant, sleep},
+};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use futures_lite::StreamExt;
+use reqwest::Url;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::{collections::HashSet, time::Duration};
+
+const ROWS: usize = 50;
+const RESPONSE: usize = 64 * 1024;
+const TRANSFERS: usize = 64 * 1024 * 1024;
+const REQUEST: usize = 16 * 1024;
+const DEADLINE: Duration = Duration::from_secs(30);
+const JS_MAX: u64 = (1 << 53) - 1;
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Source {
+    Summaries,
+    Cleanups,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Envelope {
+    available: bool,
+    version: u8,
+    #[serde(rename = "projectID")]
+    project_id: String,
+    source: Source,
+    finish_high_water: Option<u64>,
+    discarded_events: u64,
+    control_unavailable: bool,
+    notification_unavailable: bool,
+    cleanup_unavailable: bool,
+    window: Window,
+    page: Page,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Page {
+    digest: String,
+    total: usize,
+    pieces: Vec<Piece>,
+    next: Option<Cursor>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Piece {
+    index: usize,
+    offset: usize,
+    characters: usize,
+    text: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Cursor {
+    digest: String,
+    index: usize,
+    offset: usize,
+}
+
+struct Identity {
+    project: String,
+    window: Window,
+    digest: String,
+    finish_high_water: Option<u64>,
+}
+
+/// One logical directory window. The backend and selector remain fixed across its byte slices.
+/// The caller can release its I/O permit between `read_next` calls. Discard on cancellation;
+/// after any error, an explicit retry opens a new read from its first slice.
+pub struct DirectoryRead {
+    backend: Backend,
+    url: Url,
+    project: Option<String>,
+    source: Source,
+    offset: u64,
+    order: Option<String>,
+    initial: bool,
+    started: Instant,
+    bytes: usize,
+    characters: usize,
+    first: Option<Identity>,
+    cursor: Option<Cursor>,
+    rows: Vec<String>,
+    partial: String,
+    partial_units: usize,
+    row_units: usize,
+    closed: bool,
+}
+
+impl Backend {
+    pub fn mission_summaries(
+        &self,
+        project: Option<&str>,
+        offset: u64,
+        order: Option<&str>,
+        initial: bool,
+    ) -> Result<DirectoryRead> {
+        DirectoryRead::new(self, project, Source::Summaries, offset, order, initial)
+    }
+
+    pub fn mission_cleanups(
+        &self,
+        project: Option<&str>,
+        offset: u64,
+        order: Option<&str>,
+    ) -> Result<DirectoryRead> {
+        DirectoryRead::new(self, project, Source::Cleanups, offset, order, false)
+    }
+}
+
+impl DirectoryRead {
+    fn new(
+        backend: &Backend,
+        project: Option<&str>,
+        source: Source,
+        offset: u64,
+        order: Option<&str>,
+        initial: bool,
+    ) -> Result<Self> {
+        if !valid_id(&backend.workspace)
+            || project.is_some_and(|project| !panel_id(project))
+            || offset > JS_MAX
+            || order.is_some_and(|order| !digest_id(order))
+            || initial && offset != 0
+        {
+            return Err("invalid Mission directory selector".into());
+        }
+        let mut url = Url::parse(&backend.base)?.join("api/workspaces/")?;
+        url.path_segments_mut()
+            .map_err(|_| "invalid Mission backend URL")?
+            .pop_if_empty()
+            .extend([backend.workspace.as_str(), "missions", "panel-page"]);
+        Ok(Self {
+            backend: backend.clone(),
+            url,
+            project: project.map(str::to_owned),
+            source,
+            offset,
+            order: order.map(str::to_owned),
+            initial,
+            started: Instant::now(),
+            bytes: 0,
+            characters: 0,
+            first: None,
+            cursor: None,
+            rows: Vec::new(),
+            partial: String::new(),
+            partial_units: 0,
+            row_units: 0,
+            closed: false,
+        })
+    }
+
+    pub async fn read_next(&mut self) -> Result<Option<DirectoryPage>> {
+        if self.closed {
+            return Err("Mission directory read already closed".into());
+        }
+        // Close admission before awaiting, so cancellation cannot replay this slice.
+        self.closed = true;
+        let remaining = DEADLINE
+            .checked_sub(self.started.elapsed())
+            .ok_or("Mission read timed out")?;
+        let (result, bytes) = futures_lite::future::race(self.transfer(), async {
+            sleep(remaining).await;
+            Err("Mission read timed out".into())
+        })
+        .await?;
+        self.bytes += bytes;
+        let page = self.accept(result)?;
+        if self.started.elapsed() >= DEADLINE {
+            return Err("Mission read timed out".into());
+        }
+        self.closed = page.is_some();
+        Ok(page)
+    }
+
+    async fn transfer(&self) -> Result<(Value, usize)> {
+        let mut window = json!({ "offset": self.offset });
+        if let Some(order) = self
+            .order
+            .as_ref()
+            .or_else(|| self.first.as_ref().map(|i| &i.window.order))
+        {
+            window["order"] = json!(order);
+        }
+        let mut request = json!({ "source": self.source, "window": window });
+        if self.initial {
+            request["initial"] = json!(true);
+        }
+        if let Some(cursor) = &self.cursor {
+            request["cursor"] = serde_json::to_value(cursor)?;
+        }
+        if serde_json::to_vec(&request)?.len() > REQUEST {
+            return Err("oversized Mission request".into());
+        }
+        let response = self
+            .backend
+            .client
+            .post(self.url.clone())
+            .json(&request)
+            .send()
+            .await?;
+        // Known unavailable envelopes can use a non-success HTTP status.
+        let status = response.status();
+        let budget = RESPONSE.min(TRANSFERS - self.bytes);
+        let mut bytes = Vec::new();
+        let mut chunks = response.bytes_stream();
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk?;
+            if chunk.len() > budget - bytes.len() {
+                return Err("oversized Mission response".into());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let value: Value = serde_json::from_slice(&bytes)?;
+        if !status.is_success() && value["available"] != false {
+            return Err("Mission directory unavailable".into());
+        }
+        Ok((value, bytes.len()))
+    }
+
+    fn accept(&mut self, value: Value) -> Result<Option<DirectoryPage>> {
+        if value["available"] == false {
+            return Err(match value["reason"].as_str() {
+                Some("changed") => "Mission directory changed",
+                Some("damaged") => "Mission directory damaged",
+                Some("plugin-failed") => "Missions plugin failed",
+                Some("plugin-unavailable") => "Missions plugin unavailable",
+                _ => "Mission directory unavailable",
+            }
+            .into());
+        }
+        let envelope: Envelope = serde_json::from_value(value)?;
+        let window = &envelope.window;
+        let page = &envelope.page;
+        if !envelope.available
+            || envelope.version != 1
+            || envelope.source != self.source
+            || !panel_id(&envelope.project_id)
+            || self
+                .project
+                .as_ref()
+                .is_some_and(|id| id != &envelope.project_id)
+            || !digest_id(&window.order)
+            || !digest_id(&page.digest)
+            || window.total > JS_MAX
+            || window.offset != self.offset.min(window.total)
+            || window.end != (window.offset + ROWS as u64).min(window.total)
+            || (window.end - window.offset) as usize != page.total
+            || page.pieces.len() > ROWS
+            || self
+                .order
+                .as_ref()
+                .is_some_and(|order| order != &window.order)
+            || (self.initial && self.first.is_none()) != envelope.finish_high_water.is_some()
+            || envelope
+                .finish_high_water
+                .is_some_and(|count| count > JS_MAX)
+        {
+            return invalid();
+        }
+        if envelope.discarded_events != 0
+            || envelope.control_unavailable
+            || envelope.notification_unavailable
+            || envelope.cleanup_unavailable
+        {
+            return Err("Mission directory damaged".into());
+        }
+        if let Some(first) = &self.first {
+            if first.project != envelope.project_id
+                || first.window != *window
+                || first.digest != page.digest
+            {
+                return Err("Mission directory changed".into());
+            }
+        } else {
+            self.first = Some(Identity {
+                project: envelope.project_id.clone(),
+                window: window.clone(),
+                digest: page.digest.clone(),
+                finish_high_water: envelope.finish_high_water,
+            });
+        }
+        let units_limit: usize = match self.source {
+            Source::Summaries => 256 * 1024,
+            Source::Cleanups => 8 * 1024 * 1024,
+        };
+        for piece in &page.pieces {
+            let units = piece.text.encode_utf16().count();
+            if self.rows.len() >= page.total
+                || piece.index != self.rows.len()
+                || piece.offset != self.partial_units
+                || units == 0
+                || self.partial_units != 0 && piece.characters != self.row_units
+                || units > piece.characters.saturating_sub(piece.offset)
+                || piece.characters
+                    > units_limit.saturating_sub(self.characters - self.partial_units)
+            {
+                return invalid();
+            }
+            self.characters += units;
+            self.row_units = piece.characters;
+            self.partial_units += units;
+            self.partial.push_str(&piece.text);
+            if self.partial_units == self.row_units {
+                self.rows.push(std::mem::take(&mut self.partial));
+                self.partial_units = 0;
+            }
+        }
+        if let Some(cursor) = envelope.page.next {
+            if cursor.digest != envelope.page.digest
+                || cursor.index != self.rows.len()
+                || cursor.offset != self.partial_units
+                || cursor.index >= envelope.page.total
+                || self
+                    .cursor
+                    .as_ref()
+                    .map_or(cursor.index == 0 && cursor.offset == 0, |prior| {
+                        (cursor.index, cursor.offset) <= (prior.index, prior.offset)
+                    })
+            {
+                return invalid();
+            }
+            self.cursor = Some(cursor);
+            return Ok(None);
+        }
+        if self.rows.len() != envelope.page.total
+            || self.partial_units != 0
+            || digest(&self.rows) != envelope.page.digest
+        {
+            return invalid();
+        }
+        let first = self
+            .first
+            .take()
+            .ok_or("missing Mission directory identity")?;
+        let rows = match self.source {
+            Source::Summaries => DirectoryRows::Summaries(summaries(&self.rows)?),
+            Source::Cleanups => DirectoryRows::Cleanups(cleanups(&self.rows)?),
+        };
+        Ok(Some(DirectoryPage {
+            project_id: first.project,
+            finish_high_water: first.finish_high_water,
+            window: first.window,
+            rows,
+        }))
+    }
+}
+
+fn invalid<T>() -> Result<T> {
+    Err("invalid Mission directory page".into())
+}
+
+fn digest_id(digest: &str) -> bool {
+    digest.len() == 43
+        && digest
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
+fn panel_id(id: &str) -> bool {
+    !id.is_empty() && id.encode_utf16().count() <= 240
+}
+
+fn digest(rows: &[String]) -> String {
+    let mut hash = Sha256::new();
+    let mut buffer = [0; 2048];
+    hash.update([b'[', 0]);
+    for (index, row) in rows.iter().enumerate() {
+        if index != 0 {
+            hash.update([b',', 0]);
+        }
+        let mut written = 0;
+        for unit in row.encode_utf16() {
+            buffer[written..written + 2].copy_from_slice(&unit.to_le_bytes());
+            written += 2;
+            if written == buffer.len() {
+                hash.update(buffer);
+                written = 0;
+            }
+        }
+        hash.update(&buffer[..written]);
+    }
+    hash.update([b']', 0]);
+    URL_SAFE_NO_PAD.encode(hash.finalize())
+}
+
+fn summaries(rows: &[String]) -> Result<Vec<Summary>> {
+    let mut ids = HashSet::new();
+    rows.iter()
+        .map(|text| {
+            let row: Summary = serde_json::from_str(text)?;
+            if !panel_id(&row.id)
+                || !panel_id(&row.coordinator_session_id)
+                || !ids.insert(row.id.clone())
+                || row.objective.encode_utf16().count() > 1004
+                || row
+                    .title
+                    .as_ref()
+                    .is_some_and(|title| title.encode_utf16().count() > 60)
+                || row.revision > JS_MAX
+                || row.actor_count > JS_MAX
+                || row.task_count.is_some_and(|count| count > JS_MAX)
+                || row
+                    .finish_sequence
+                    .is_some_and(|count| count == 0 || count > JS_MAX)
+            {
+                return invalid();
+            }
+            Ok(row)
+        })
+        .collect()
+}
+
+fn cleanups(rows: &[String]) -> Result<Vec<Cleanup>> {
+    let mut ids = HashSet::new();
+    rows.iter()
+        .map(|text| {
+            let row: Cleanup = serde_json::from_str(text)?;
+            if [&row.mission_id, &row.deletion_id, &row.request_id]
+                .iter()
+                .any(|id| !panel_id(id))
+                || !ids.insert((row.mission_id.clone(), row.deletion_id.clone()))
+                || row.expected_revision == 0
+                || row.objective.encode_utf16().count() > 240
+                || [
+                    row.expected_revision,
+                    row.removed,
+                    row.retained,
+                    row.pending,
+                ]
+                .iter()
+                .any(|&count| count > JS_MAX)
+                || row.reasons.len() > 5
+                || row.reasons.iter().any(|reason| {
+                    !matches!(
+                        reason.as_str(),
+                        "children" | "shared" | "moved" | "identity" | "guarded"
+                    )
+                })
+            {
+                return invalid();
+            }
+            Ok(row)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests;
+use super::model::{Cleanup, DirectoryPage, DirectoryRows, Summary, Window};
