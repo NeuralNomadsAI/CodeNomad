@@ -1,11 +1,6 @@
 import type { ConfigGetOutput, PermissionRule } from "@opencode/client"
-import { z } from "zod"
-
-export const sessionPermissionRules = z.array(z.object({
-  action: z.string(),
-  resource: z.string(),
-  effect: z.enum(["allow", "ask", "deny"]),
-}).strict())
+import { sessionPermissionRules } from "../opencode/session-pruning/permission-rules-contract"
+export { sessionPermissionRules }
 
 function sameRule(a: PermissionRule, b: PermissionRule): boolean {
   return a.action === b.action && a.resource === b.resource && a.effect === b.effect

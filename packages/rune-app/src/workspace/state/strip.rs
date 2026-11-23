@@ -36,13 +36,20 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
             },
         )
         .collect();
+    let touch = cx.touch_controls();
+    let actions = crate::settings::entries(touch)
+        .into_iter()
+        .chain(std::iter::once(crate::shell::notifications::history_entry(
+            s, touch,
+        )));
     rune_theme_codenomad::tabs::strip(
-        cx,
+        touch,
         strings::locale(),
         &tabs,
         ui.entries.get(ui.active).map(|e| e.key.as_str()),
         select,
         close,
         new_tab,
+        actions,
     )
 }

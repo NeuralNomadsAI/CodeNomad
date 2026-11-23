@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-start-native-window-drag"
+description = "Enables the start_native_window_drag command without any pre-configured scope."
+commands.allow = ["start_native_window_drag"]
+
+[[permission]]
+identifier = "deny-start-native-window-drag"
+description = "Denies the start_native_window_drag command without any pre-configured scope."
+commands.deny = ["start_native_window_drag"]

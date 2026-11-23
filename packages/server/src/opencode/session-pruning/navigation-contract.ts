@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { pruningBlockedSchema } from "./contract"
-import { USER_FILES_REFERENCE, USER_FILE_BASE64, USER_FILE_COUNT } from "../user-file-contract"
+import { USER_FILES_REFERENCE, USER_FILE_BASE64, USER_FILE_COUNT } from "./user-file-contract"
 
 const id = z.string().min(1).max(256)
 export const navigationTargetSchema = z.discriminatedUnion("kind", [

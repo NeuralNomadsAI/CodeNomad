@@ -36,6 +36,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::Connected(backend) => {
                 s.renew_scope();
                 s.transcript_display.children.bind(backend.clone());
+                s.transcript_display.usage_family.bind(backend.clone());
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -48,6 +49,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::AgentHint(catalog) => {
                 if catalog {
                     workspace::mission_event(s, None);
+                    s.transcript_display.usage_family.refresh();
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
                     git::online(s, true);
@@ -60,6 +62,16 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                         a.online = true;
                     }
                     a.refresh(catalog)
+                }
+            }
+            Event::SessionUsage(usage) => {
+                if let Some(agent) = &mut s.agent {
+                    agent.observe_usage(usage);
+                }
+            }
+            Event::FamilyUsage(change) => {
+                if !s.transcript_display.usage_family.event(change) {
+                    continue;
                 }
             }
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::CommandsChanged) => {
@@ -95,6 +107,46 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     agent.observe_running(running);
                 }
             }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionRequest {
+                form,
+                id,
+            }) => {
+                if !uses_workspace_attention(s)
+                    && let Some(agent) = &mut s.agent
+                {
+                    agent.notice_request(form, id);
+                }
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionExecution {
+                notice,
+            }) => {
+                if !uses_workspace_attention(s)
+                    && let Some(agent) = &mut s.agent
+                {
+                    let verify = notice.is_some();
+                    agent.attention.execution(notice);
+                    if verify {
+                        agent.refresh(false);
+                    }
+                }
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionCompacted {
+                id,
+            }) => {
+                if !uses_workspace_attention(s)
+                    && let Some(agent) = &mut s.agent
+                {
+                    agent.attention.compacted(id);
+                    agent.refresh(false);
+                }
+            }
+            Event::Workspace(
+                event @ codenomad_client::transport::WorkspaceEvent::OpenCodeNotice { .. },
+            ) => {
+                if !uses_workspace_attention(s) {
+                    crate::shell::notifications::relay_notice(s, event);
+                }
+            }
             Event::Workspace(event) => {
                 if matches!(
                     event,
@@ -106,6 +158,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     s.messages.clear();
                     s.history_detached = false;
                     s.can_older = false;
+                    if let Some(agent) = &mut s.agent {
+                        agent.attention.disconnected();
+                    }
                 }
                 workspace::mission_event(s, Some(&event));
                 git::event(s, &event);
@@ -185,6 +240,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.attachments.cancel();
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
+                    a.attention.disconnected();
                 }
             }
             Event::PagingFailed => {
@@ -204,6 +260,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::WorkspaceMissing => {
                 s.transcript_display.children.clear();
+                s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
                 {
                     s.phase = Phase::WorkspaceMissing;
@@ -239,6 +296,15 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::Reasoning(id, event) => {
                 content::apply_reasoning(&mut s.messages, &id, &event);
             }
+            Event::StepUsage(id, usage) => {
+                if let Some(row) = s
+                    .messages
+                    .iter_mut()
+                    .find(|row| row.id == id && !row.completed)
+                {
+                    std::sync::Arc::make_mut(row).usage = Some(usage);
+                }
+            }
             Event::Tool(id, tool) => {
                 if let Some(row) = s
                     .messages
@@ -258,6 +324,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
                 s.transcript_display.children.clear();
+                s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
@@ -276,6 +343,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.phase = Phase::Failed;
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
+                    a.attention.disconnected();
                 }
             }
         }
@@ -295,5 +363,11 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         s.revision += 1;
         changed = true;
     }
-    changed
+    changed | super::usage::family::Totals::poll(s)
+}
+
+fn uses_workspace_attention(s: &State) -> bool {
+    s.screen
+        .launcher()
+        .is_some_and(|launcher| launcher.catalogue_watch.is_some())
 }

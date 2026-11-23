@@ -49,26 +49,7 @@ pub async fn providers(
     }
     let base = format!("{}workspaces/{workspace}/instance/api", backend.base);
     let location = if let Some(session) = session {
-        let value = read_json(
-            backend
-                .client
-                .get(format!("{base}/session/{session}"))
-                .send()
-                .await?
-                .error_for_status()?,
-        )
-        .await?;
-        let location = &value["data"]["location"];
-        if value["data"]["id"] != session || location.get("workspaceID").is_some() {
-            return Err("Invalid provider session Location".into());
-        }
-        Some(
-            location["directory"]
-                .as_str()
-                .filter(|path| crate::absolute_server_path(path))
-                .ok_or("Invalid provider session directory")?
-                .to_owned(),
-        )
+        Some(super::session_directory(backend, workspace, session).await?)
     } else {
         None
     };

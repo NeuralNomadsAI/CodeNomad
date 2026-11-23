@@ -150,6 +150,36 @@ fn pending_selection_cannot_consume_the_departing_draft() {
 }
 
 #[test]
+fn a_new_navigation_intent_invalidates_an_admitted_notification_selection() {
+    let mut s = crate::init();
+    crate::gallery::shell::fixture(&mut s);
+    s.phase = Phase::Ready;
+    let (out, input) = bounded(1);
+    let ticket = s.notifications.navigation_ticket();
+    let launcher = s.screen.launcher_mut().unwrap();
+    launcher.result = Some(input);
+    launcher.selection_ticket = Some(ticket);
+    launcher.pending = true;
+    let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    assert!(
+        out.try_send(Ok(Reply::Selected(
+            vec![],
+            Some((backend, "Stale".into(), None, Instant::now(), "root".into())),
+            None,
+        )))
+        .is_ok()
+    );
+    s.notifications.supersede_navigation();
+    let mut runtime =
+        rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+    runtime.update(|s, tx| {
+        assert!(poll(s, tx));
+        assert_eq!(s.chat_title, "Fixture conversation");
+        assert!(!s.screen.launcher().unwrap().pending);
+    });
+}
+
+#[test]
 fn a_selection_reply_cannot_replace_a_session_that_resumed_streaming() {
     let mut state = crate::init();
     crate::gallery::shell::fixture(&mut state);

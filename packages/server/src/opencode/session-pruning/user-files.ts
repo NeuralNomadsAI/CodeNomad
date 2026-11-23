@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite"
-import { readInlineUserFile, USER_FILE_BASE64, USER_FILE_BYTES, USER_FILE_COUNT, userFileDigest, userFileLabel } from "../user-file-reference"
+import { readInlineUserFile, USER_FILE_BASE64, USER_FILE_BYTES, USER_FILE_COUNT, userFileDigest, userFileLabel } from "./user-file-reference"
 import type { HistoryScope } from "./history-store"
 import { ownedSession } from "./navigation-scope"
 

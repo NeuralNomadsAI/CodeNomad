@@ -36,7 +36,9 @@ fn right_panel_exposes_only_the_actions_for_its_host_and_row_kind() {
         let long_name = format!("{}.txt", "long-name-".repeat(12));
         let mut rows = vec![
             entry("docs", EntryKind::Directory),
+            entry("manual.txt", EntryKind::File),
             entry("test.ps1", EntryKind::File),
+            entry("unknown.fixture", EntryKind::File),
         ];
         rows.extend((0..32).map(|i| entry(&format!("before{i:02}.txt"), EntryKind::File)));
         rows.push(entry(&long_name, EntryKind::File));
@@ -154,30 +156,39 @@ fn right_panel_exposes_only_the_actions_for_its_host_and_row_kind() {
                 tx.scroll_to_instant("workspace-tree-scroll", 0.0, 0.0);
             });
             settle_shell(&mut rt);
-            for key in [
+            let native_actions = [
                 "docs:inline:open-folder",
                 "docs:inline:open-terminal",
+                "manual.txt:inline:open-default",
                 "test.ps1:inline:open-default",
+                "unknown.fixture:inline:open-default",
                 "test.ps1:inline:show-in-folder",
-            ] {
+            ];
+            for key in native_actions {
                 assert!(shown(&rt, &format!("workspace-actions:{key}")), "{key}");
             }
-            assert!(
-                rt.accessibility_json()
-                    .to_string()
-                    .contains("Edit with default application")
-            );
+            let tree = rt.accessibility_json();
+            for (name, label) in [
+                ("manual.txt", "openDefault"),
+                ("test.ps1", "editDefault"),
+                ("unknown.fixture", "chooseApplication"),
+            ] {
+                let node = accessible(
+                    &tree,
+                    &format!("workspace-actions:{name}:inline:open-default"),
+                )
+                .unwrap();
+                let label = crate::strings::with_locale("en", || {
+                    crate::strings::t(&format!("instanceShell.filesShell.actions.{label}"))
+                });
+                assert!(node.to_string().contains(label), "{node}");
+            }
             assert!(!shown(&rt, "workspace-actions:docs:inline:show-in-folder"));
             assert!(!shown(
                 &rt,
                 "workspace-actions:test.ps1:inline:open-terminal"
             ));
-            for key in [
-                "docs:inline:open-folder",
-                "docs:inline:open-terminal",
-                "test.ps1:inline:open-default",
-                "test.ps1:inline:show-in-folder",
-            ] {
+            for key in native_actions {
                 let key = format!("workspace-actions:{key}");
                 let (x, y) = rt.find(&key).unwrap();
                 rt.pointer_move(x, y);

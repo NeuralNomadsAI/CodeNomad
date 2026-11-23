@@ -44,6 +44,8 @@ The merge preserves activity/recovery/admission/outcome as an authority group
 when newer SSE/local authority supersedes the captured baseline. Deletion,
 instance/client-generation and abort fences apply. Recovery never prompts,
 interrupts, updates a session or replays anything automatically.
+Deferred statuses sharing an in-flight metadata read publish only while their
+native lifecycle generation is current.
 
 ## Display acknowledgement
 

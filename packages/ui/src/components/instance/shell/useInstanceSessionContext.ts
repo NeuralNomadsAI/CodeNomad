@@ -55,12 +55,11 @@ export function useInstanceSessionContext(options: InstanceSessionContextOptions
     return activeParentSessionId().get(options.instanceId()) || null
   })
 
-  const activeSessions = createMemo(() => {
+  const activeFamily = createMemo(() => {
     const parentId = parentSessionIdForInstance()
-    if (!parentId) return EMPTY_INSTANCE_SESSIONS
-    const sessionFamily = getSessionFamily(options.instanceId(), parentId, allInstanceSessions())
-    return new Map(sessionFamily.map((s) => [s.id, s]))
-  })
+    return parentId ? getSessionFamily(options.instanceId(), parentId, allInstanceSessions()) : []
+  }, [], { equals: (a, b) => a.length === b.length && a.every((row, i) => row === b[i]) })
+  const activeSessions = createMemo(() => new Map(activeFamily().map(session => [session.id, session])))
 
   const activeSessionForInstance = createMemo(() => {
     const sessionId = activeSessionIdForInstance()

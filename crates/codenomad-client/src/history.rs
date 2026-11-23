@@ -55,6 +55,9 @@ pub fn decode_message(v: &Value) -> Result<Message> {
         role: role.into(),
         completed: role == "user" || !v["time"]["completed"].is_null(),
         body,
+        usage: (role == "assistant")
+            .then(|| crate::content::Usage::decode(v))
+            .flatten(),
         parts,
     })
 }

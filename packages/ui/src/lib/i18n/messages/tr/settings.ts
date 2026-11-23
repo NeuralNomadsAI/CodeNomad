@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "{line}. satırda söz dizimi hatası",
   "settings.nav.servers": "Sunucular",
   "settings.servers.open": "Aç",
   "settings.servers.dialog.name": "Ad",
@@ -245,6 +246,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "Çıktı",
   "contextUsagePanel.labels.cost": "Maliyet",
   "contextUsagePanel.included": "Dahil",
+  "contextUsagePanel.partialTotal": "Konuşmanın kısmi toplamı",
+  "contextUsagePanel.totalUnavailable": "Konuşmanın toplamı kullanılamıyor",
   "contextUsagePanel.labels.totalInput": "Toplam Girdi",
   "contextUsagePanel.labels.totalOutput": "Toplam Çıktı",
   "contextUsagePanel.labels.totalCost": "Toplam Maliyet",
@@ -725,6 +728,7 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": ".txt indir",
   "settings.info.diagnostics.reportBug": "Hata bildir",
   "settings.info.diagnostics.copied": "Tanılama bilgileri kopyalandı.",
+  "settings.info.actions.failed": "İşlem tamamlanamadı. Tekrar deneyin.",
 
   "settings.behavior.newConversationPermissions.title": "Yeni konuşmaların izinleri",
   "settings.behavior.newConversationPermissions.info": "CodeNomad’da oluşturulan yeni konuşmaların başlangıç modu.",

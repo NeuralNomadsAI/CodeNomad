@@ -251,6 +251,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "Output",
   "contextUsagePanel.labels.cost": "Cost",
   "contextUsagePanel.included": "Included",
+  "contextUsagePanel.partialTotal": "Partial conversation total",
+  "contextUsagePanel.totalUnavailable": "Conversation total unavailable",
   "contextUsagePanel.labels.totalInput": "Total In",
   "contextUsagePanel.labels.totalOutput": "Total Out",
   "contextUsagePanel.labels.totalCost": "Total Cost",
@@ -463,6 +465,7 @@ export const settingsMessages = {
   "settings.configFiles.errors.loadList": "Failed to load config files.",
   "settings.configFiles.errors.loadContent": "Failed to load config file.",
   "settings.configFiles.errors.save": "Failed to save config file.",
+  "settings.configFiles.syntaxLine": "Syntax error on line {line}",
   "settings.configFiles.toast.saveSuccess": "Config file saved.",
   "settings.configFiles.toast.saveError": "Failed to save config file.",
   "settings.configFiles.confirmDiscard.message": "Discard unsaved changes before continuing?",
@@ -751,4 +754,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "Download .txt",
   "settings.info.diagnostics.reportBug": "Report a bug",
   "settings.info.diagnostics.copied": "Diagnostics copied.",
+  "settings.info.actions.failed": "Could not complete the action. Try again.",
 } as const

@@ -5,6 +5,7 @@ use rune_theme_codenomad::catalogue::LANGUAGE_NAMES;
 pub(super) enum Picker {
     Locale,
     Palette(bool),
+    Usage,
 }
 
 impl Window {
@@ -26,6 +27,7 @@ impl Picker {
         match self {
             Self::Locale => "locale",
             Self::Palette(_) => "palette",
+            Self::Usage => "usage-visibility",
         }
     }
 }
@@ -162,6 +164,10 @@ pub(super) fn view(
                 super::super::memory::action(&mut s.shared.borrow_mut(), desired)
             },
             |s: &mut Window, failed| s.memory_help_failed = failed,
+            |s: &mut Window, edit| s.memory_editor.open(edit),
+            |s: &mut Window, action| {
+                super::super::memory::review_action(&mut s.shared.borrow_mut(), action);
+            },
         ))
         .child(
             s.permissions

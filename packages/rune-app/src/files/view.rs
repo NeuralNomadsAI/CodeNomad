@@ -9,6 +9,7 @@ use rune_theme_codenomad::{
 };
 
 mod actions;
+pub(super) use actions::poll_notices;
 mod editor;
 mod tree;
 pub(super) use actions::Actions;
@@ -279,6 +280,15 @@ fn reader_content(s: &State) -> El {
                         },
                     )
                     .key("file-rendered-scroll")
+                    .on_layout_tx({
+                        let arm = document_action_tx(s, |ui, tx| {
+                            if !ui.presentation.source {
+                                ui.document.restore_source_scroll();
+                            }
+                            tx.live_only();
+                        });
+                        move |s, _, tx| arm(s, tx)
+                    })
                     .on_scroll_offset({
                         let offset = ui.presentation.rendered_scroll.clone();
                         move |scroll| offset.set(scroll.offset[1] as f32)

@@ -411,6 +411,45 @@ fn only_live_history_with_a_different_head_revokes_index_authority() {
 }
 
 #[test]
+fn a_git_receipt_after_reattachment_does_not_notify_on_the_new_connection() {
+    use crate::files::test_http::{Http, wait};
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let mut ui = ui();
+        let (wake, settled) = codenomad_client::bounded(1);
+        ui.backend = http.backend.clone();
+        ui.requests = Requests::new(
+            ui.backend.clone(),
+            Reads::default(),
+            std::sync::Arc::new(move || {
+                let _ = wake.try_send(());
+            }),
+        );
+        let tree = ui.tree().unwrap().clone();
+        ui.requests.mutate(
+            ui.tree_epoch,
+            tree,
+            Mutation::Commit {
+                message: "fixture".into(),
+                draft: "fixture".into(),
+            },
+        );
+        let request = http.accept().await;
+        assert!(
+            request.header.starts_with("POST ") && request.header.contains("/git-commit HTTP/")
+        );
+        ui.backend.client = codenomad_client::http::Http::new().unwrap();
+        ui.requests.renew(ui.backend.clone());
+        request.reply(204, serde_json::Value::Null).await;
+        wait(settled.recv()).await.unwrap();
+        assert!(ui.poll_results());
+        assert!(ui.requests.mutation.is_none());
+        assert!(ui.take_files_invalidation());
+        assert!(ui.mutation_notice.is_none());
+    });
+}
+
+#[test]
 fn mutation_settlement_preserves_edits_and_cannot_clear_another_checkout() {
     let mut ui = ui();
     let epoch = ui.tree_epoch;
@@ -426,6 +465,11 @@ fn mutation_settlement_preserves_edits_and_cannot_clear_another_checkout() {
         Ok(()),
     );
     assert_eq!(ui.changes.draft.text, "different");
+    assert!(
+        ui.mutation_notice
+            .take()
+            .is_some_and(|(success, _)| success)
+    );
     assert!(ui.take_files_invalidation());
     ui.select_tree("other".into());
     ui.changes.draft = TextEdit::new("old");
@@ -440,6 +484,7 @@ fn mutation_settlement_preserves_edits_and_cannot_clear_another_checkout() {
     );
     assert_eq!(ui.changes.draft.text, "old");
     assert!(ui.mutation_message.is_none());
+    assert!(ui.mutation_notice.is_none());
     ui.select_tree("root".into());
     ui.changes.draft = TextEdit::new("old");
     ui.settle_mutation(
