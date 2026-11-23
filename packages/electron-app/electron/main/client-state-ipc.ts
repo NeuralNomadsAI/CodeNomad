@@ -53,7 +53,7 @@ export function setupClientStateIPC(
     const record = validate(event)
     return record.persisted === false ? false : clientState.claimClientStateAccess(token, record.id)
   })
-  handle("client-state:load", (_argument, _token, windowId) => clientState.loadClientState(windowId))
+  handle("client-state:load", (_argument, token, windowId) => clientState.loadClientStateForRenderer(windowId, token))
   handle("client-state:save", (snapshot, token, windowId) => clientState.saveClientState(snapshot, token, windowId))
   handle("client-state:loadFileDrafts", (key, token, windowId) => clientState.loadFileDrafts(token, windowId, key))
   handle("client-state:saveFileDraft", (change, token, windowId) => clientState.saveFileDraft(change, token, windowId))

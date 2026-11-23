@@ -36,10 +36,23 @@ function dispatchNative<T>(electronOperation: (api: ElectronAPI | undefined) => 
   if (isElectronHost()) return electronOperation(electronApi())
   if (isTauriHost()) return invoke<T>(command, { accessToken, ...args })
 }
+async function tauriDocumentChallenge(): Promise<string | undefined> {
+  const challenge = (window as Window & { __CODENOMAD_CLIENT_STATE_DOCUMENT__?: Promise<string> }).__CODENOMAD_CLIENT_STATE_DOCUMENT__
+  if (!challenge) return undefined
+  let timeout: number | undefined
+  try {
+    return await Promise.race([challenge, new Promise<never>((_, reject) => {
+      timeout = window.setTimeout(() => reject(new Error("Native client state document challenge unavailable")), 15_000)
+    })])
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
 async function claimNativeClientStateAccess(): Promise<boolean> {
   if (!isLocalWindow()) return false
   try {
-    const result = await dispatchNative<boolean | void>((api) => api?.claimClientStateAccess?.(accessToken), "client_state_claim_access")
+    const result = await dispatchNative<boolean | void>((api) => api?.claimClientStateAccess?.(accessToken),
+      "client_state_claim_access", isTauriHost() ? { documentChallenge: await tauriDocumentChallenge() } : {})
     nativeAccessClaimed = isTauriHost() || result === true
   } catch (error) {
     nativeAccessClaimed = false

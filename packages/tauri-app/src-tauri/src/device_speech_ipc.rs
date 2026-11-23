@@ -1,10 +1,15 @@
 use crate::{
-    device_speech::{DeviceSpeech, MicrophonePurpose, Request, SpeechError},
+    device_speech::{DeviceSpeech, MicrophonePurpose, Request, SpeechAdmission, SpeechError},
     local_windows::LocalWindows,
     preferences_window, AppState,
 };
 use serde_json::{json, Value};
-use tauri::{Manager, State, Webview};
+use tauri::{
+    ipc::{Invoke, InvokeBody},
+    Manager, Runtime, Webview,
+};
+
+type DocumentWitness = (std::sync::Arc<()>, u64);
 
 #[cfg(target_os = "linux")]
 #[path = "device_speech_remote_microphone.rs"]
@@ -97,13 +102,52 @@ pub(crate) fn bind_microphone(window: &tauri::WebviewWindow, remote: bool) {
     });
 }
 
-#[tauri::command]
-pub(crate) fn device_speech_request(
+pub(crate) fn with_document_ingress(
+    fallback: impl Fn(Invoke<tauri::Wry>) -> bool,
+) -> impl Fn(Invoke<tauri::Wry>) -> bool {
+    with_request_handler(run_request, fallback)
+}
+
+fn with_request_handler<R: Runtime>(
+    run: fn(Webview<R>, Request, DocumentWitness) -> Result<Value, String>,
+    fallback: impl Fn(Invoke<R>) -> bool,
+) -> impl Fn(Invoke<R>) -> bool {
+    move |invoke| {
+        if invoke.message.command() != "device_speech_request" {
+            return fallback(invoke);
+        }
+        let webview = invoke.message.webview_ref().clone();
+        // Bind the request to the sending document before handing it to any worker.
+        let witness = webview.app_handle().state::<DeviceSpeech>().document_witness(webview.label());
+        invoke.resolver.respond_async(async move {
+            tauri::async_runtime::spawn_blocking(move || {
+                #[derive(serde::Deserialize)]
+                struct Arguments {
+                    request: Request,
+                }
+                let InvokeBody::Json(body) = invoke.message.payload() else {
+                    return Err("Invalid device speech request".to_string());
+                };
+                let args: Arguments = serde::Deserialize::deserialize(body)
+                    .map_err(|error| format!("Invalid device speech request: {error}"))?;
+                run(webview, args.request, witness)
+            })
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(Into::into)
+        });
+        true
+    }
+}
+
+fn run_request(
     webview: Webview,
-    state: State<'_, AppState>,
-    speech: State<'_, DeviceSpeech>,
     request: Request,
+    witness: DocumentWitness,
 ) -> Result<Value, String> {
+    let app = webview.app_handle();
+    let state = app.state::<AppState>();
+    let speech = app.state::<DeviceSpeech>();
     let label = webview.label();
     let sheet = crate::remote_dictation::is_sheet(label);
     let registered = webview
@@ -148,33 +192,43 @@ pub(crate) fn device_speech_request(
     {
         return Err("Focus the local dictation sheet to start".into());
     }
-    let result = crate::shutdown::with_navigation_authority(webview.app_handle(), || {
+    let preflight = speech.preflight(witness, &request);
+    let result = crate::shutdown::with_navigation_authority(app, || {
         if sheet {
             crate::remote_dictation::with_trusted_sheet(
-                webview.app_handle(),
+                app,
                 label,
                 &current,
                 matches!(request, Request::Read {}),
-                || speech.request(label, request),
+                || speech.admit(label, request, preflight, false),
             )
         } else {
             Some(match request {
                 #[cfg(target_os = "linux")]
-                Request::AuthorizeApiMicrophone { id } => {
-                    speech.authorize_api_microphone(label, &current, id, preferences)
-                }
+                Request::AuthorizeApiMicrophone { id } => speech
+                    .authorize_api_microphone(label, &current, id, preferences, preflight)
+                    .map(SpeechAdmission::Complete),
                 #[cfg(target_os = "linux")]
-                Request::RevokeApiMicrophone { id } => {
-                    speech.revoke_api_microphone(label, &id);
-                    Ok(Value::Null)
-                }
-                request => speech.request(label, request),
+                Request::RevokeApiMicrophone { id } => speech
+                    .revoke_api_microphone(label, &id, preflight)
+                    .map(SpeechAdmission::Complete),
+                request => speech.admit(label, request, preflight, false),
             })
         }
     })
     .ok_or("Application is shutting down")?
     .ok_or("Device speech requires the registered local dictation sheet")?;
-    Ok(speech_response(result))
+    Ok(speech_response(result.and_then(
+        |admission| match admission {
+            SpeechAdmission::Complete(value) => Ok(value),
+            SpeechAdmission::Select(engine, caps, preflight) => {
+                speech.finish_selection(label, engine, caps, preflight, |admit| {
+                    crate::shutdown::with_navigation_authority(app, admit) == Some(true)
+                })
+            }
+            SpeechAdmission::CancelCommit(control) => speech.finish_cancel(label, control),
+        },
+    )))
 }
 
 pub(crate) fn speech_response(result: Result<Value, SpeechError>) -> Value {
@@ -188,6 +242,53 @@ pub(crate) fn speech_response(result: Result<Value, SpeechError>) -> Value {
 mod tests {
     use super::*;
     use crate::device_speech::Engine;
+
+    #[test]
+    fn delayed_ipc_cannot_admit_a_same_origin_successor_document() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tauri::{ipc::CallbackFn, test, webview::InvokeRequest, WebviewUrl, WebviewWindowBuilder};
+
+        let directory = tempfile::tempdir().unwrap();
+        let app = test::mock_builder()
+            .manage(DeviceSpeech::new(directory.path().join("speech.json"), None))
+            .manage(AtomicBool::new(true))
+            .invoke_handler(with_request_handler(|webview, request, witness| {
+                let app = webview.app_handle();
+                let speech = app.state::<DeviceSpeech>();
+                let label = webview.label();
+                // Model the navigation hook after ingress but before any work
+                // on the request, with the same label and trusted origin.
+                let _successor = app.state::<AtomicBool>().swap(false, Ordering::SeqCst).then(|| {
+                    speech.revoke(Some(label));
+                    speech.document_witness(label)
+                });
+                let preflight = speech.preflight(witness, &request);
+                let result = speech.admit(label, request, preflight, false).map(|admission| {
+                    let SpeechAdmission::Complete(value) = admission else { unreachable!() };
+                    value
+                });
+                Ok(speech_response(result))
+            }, |_| false))
+            .build(crate::app_context())
+            .unwrap();
+        let url = url::Url::parse("http://127.0.0.1:8100/").unwrap();
+        let window = WebviewWindowBuilder::new(&app, "dictation-test", WebviewUrl::External(url.clone()))
+            .build()
+            .unwrap();
+        let request = || test::get_ipc_response(&window, InvokeRequest {
+            cmd: "device_speech_request".into(),
+            callback: CallbackFn(0),
+            error: CallbackFn(1),
+            url: url.clone(),
+            body: json!({"request": {
+                "action": "claimMicrophone", "purpose": "dictation", "id": uuid::Uuid::new_v4()
+            }}).into(),
+            headers: Default::default(),
+            invoke_key: test::INVOKE_KEY.to_owned(),
+        }).unwrap().deserialize::<Value>().unwrap();
+        assert_eq!(request(), speech_response(Err(SpeechError::NotOwned)));
+        assert_eq!(request(), speech_response(Ok(json!({ "busy": null }))));
+    }
 
     #[test]
     fn labels_must_identify_the_registered_primary_webview() {

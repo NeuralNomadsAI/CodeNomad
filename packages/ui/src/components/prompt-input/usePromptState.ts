@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, on, onCleanup, onMount, type Accessor } from "solid-js"
+import { batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, type Accessor } from "solid-js"
 import { addToHistory, getHistory } from "../../stores/message-history"
 import {
   clearSessionDraftPrompt,
@@ -58,7 +58,7 @@ export function usePromptState(options: PromptStateOptions): PromptState {
   const [draftRevision, setDraftRevision] = createSignal(0)
   const draftKey = createMemo(() => `${options.instanceId()}:${options.sessionId()}`)
 
-  const setPrompt = (value: string) => {
+  const setPrompt = (value: string) => batch(() => {
     setDraftRevision(previous => previous + 1)
     setPromptInternal(value)
     // Persist drafts only when the user is at the "fresh" position (not browsing history).
@@ -66,7 +66,7 @@ export function usePromptState(options: PromptStateOptions): PromptState {
     if (historyIndex() === -1) {
       setSessionDraftPrompt(options.instanceId(), options.sessionId(), value)
     }
-  }
+  })
 
   const clearPrompt = () => {
     setDraftRevision(previous => previous + 1)
