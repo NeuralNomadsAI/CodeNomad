@@ -33,7 +33,7 @@ impl Capture {
             && let Some(id) = self.announced.take()
         {
             #[cfg(target_arch = "wasm32")]
-            if !prefs.shortcuts_failed()
+            if !prefs.shortcut_failed(Some(id))
                 && let Some(row) = catalog::rows(prefs, "")
                     .into_iter()
                     .find(|row| row.id == id)
@@ -103,19 +103,21 @@ pub(in crate::settings) fn view<S: 'static>(
         )
         .children(
             prefs
-                .shortcuts_failed()
+                .shortcut_failed(None)
                 .then(|| text(t("hotkeys.saveFailed")).role("alert")),
         );
     if rows.is_empty() {
         view = view.child(text(t("hotkeys.noResults")));
     }
     view.children(rows.into_iter().map(|row| {
+        let failed = prefs.shortcut_failed(Some(row.id));
         row_view(
             row,
             shared,
             capture.target(recording),
             capture.refused,
             row_locked,
+            failed,
             access,
         )
     }))
@@ -127,6 +129,7 @@ fn row_view<S: 'static>(
     recording: Option<&str>,
     refused: bool,
     locked: bool,
+    failed: bool,
     access: Access<S>,
 ) -> El {
     let id = row.id;
@@ -251,7 +254,8 @@ fn row_view<S: 'static>(
                 .iter()
                 .map(|message| text(message).role("status").wrap()),
         )
-        .children((editing && refused).then(|| text(t("hotkeys.reserved")).role("alert").wrap()));
+        .children((editing && refused).then(|| text(t("hotkeys.reserved")).role("alert").wrap()))
+        .children(failed.then(|| text(t("hotkeys.saveFailed")).role("alert").wrap()));
     if !warnings.is_empty() {
         group = group.description(warnings.join(" · "));
     }

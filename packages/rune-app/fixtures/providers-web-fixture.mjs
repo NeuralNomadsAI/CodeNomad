@@ -132,6 +132,9 @@ const server = createServer(async (req,res) => {
         for await (const chunk of req) body += chunk
         const patch = JSON.parse(body)
         writes.push(patch)
+        if (shortcuts && Array.isArray(patch.settings.hotkeyOverrides?.['close-instance'])) {
+          return res.writeHead(503).end()
+        }
         contrast = patch.settings.highContrast ?? contrast
         permissions = patch.settings.newConversationPermissions ?? permissions
         if (patch.settings.notificationRouting) {
@@ -297,6 +300,18 @@ try {
   else await checkProviders()
 
   async function checkShortcuts() {
+    await page.evaluate(() => {
+      window.shortcutAnnouncements = []
+      new MutationObserver(records => {
+        for (const record of records) {
+          if (record.target.getAttribute?.('aria-live') !== 'polite') continue
+          for (const node of record.addedNodes) {
+            const spoken = node.textContent.replaceAll('\u200b','')
+            if (spoken) window.shortcutAnnouncements.push(spoken)
+          }
+        }
+      }).observe(document.body,{childList:true,subtree:true})
+    })
     await click('Settings')
     await radio('Keyboard shortcuts').press('Enter')
     const save = page.getByRole('group',{name:'Save file',exact:true})
@@ -319,10 +334,13 @@ try {
     await page.mouse.click(caret.x + 4, caret.y + caret.height / 2)
     await capture.waitFor({state:'detached'})
     assert.deepEqual(writes,[])
-    for (let i=0;i<24 && !await filterFocused();i++) await page.keyboard.press('Tab')
-    assert(await filterFocused())
+    await edit.press('Enter')
+    await capture.waitFor({state:'attached'})
+    await page.mouse.click(caret.x + 4, caret.y + caret.height / 2)
     await page.keyboard.insertText('Save file')
+    await capture.waitFor({state:'detached'})
     await inactive.waitFor({state:'detached'})
+    assert.deepEqual(writes,[])
     const confirm = expect => page.waitForResponse(response=>response.request().method()==='PATCH'
       && expect(response.request().postDataJSON()?.settings?.hotkeyOverrides))
     const editFocused = () => page.evaluate(() => {
@@ -341,6 +359,17 @@ try {
       page.keyboard.press('Control+F8'),
     ])
     await save.getByText('Ctrl+F8',{exact:true}).waitFor({state:'attached'})
+    // An unrelated failed write must neither announce a conflict nor suppress the next one.
+    const filter = page.getByRole('textbox',{name:'Filter shortcuts',exact:true})
+    await page.mouse.click(caret.x + 4, caret.y + caret.height / 2)
+    await filter.press('Control+a')
+    await filter.press('Backspace')
+    const close = page.getByRole('group',{name:'Close app tab',exact:true})
+    const clear = close.getByRole('button',{name:'Clear shortcut',exact:true})
+    const failed = close.getByText('Could not save keyboard shortcuts. Try again.',{exact:true})
+    await clear.press('Enter')
+    await failed.waitFor({state:'attached'})
+    assert.deepEqual(await page.evaluate(()=>window.shortcutAnnouncements),[])
     await edit.press('Enter')
     await capture.waitFor({state:'attached'})
     await page.getByRole('application',{name:'CodeNomad',exact:true}).focus()
@@ -349,10 +378,13 @@ try {
       page.keyboard.press('Control+n'),
     ])
     await page.locator('[aria-live="polite"]').filter({hasText:'Ctrl+N is also assigned to: New instance'}).waitFor({state:'attached'})
+    assert.equal(await failed.count(),1)
     const reset = confirm(overrides=>overrides===null)
     await page.getByRole('button',{name:'Reset all',exact:true}).press('Enter')
     await reset
     assert.deepEqual(hotkeyOverrides,{})
+    await failed.waitFor({state:'detached'})
+    assert.deepEqual(await page.evaluate(()=>window.shortcutAnnouncements),['Ctrl+N is also assigned to: New instance'])
     console.log(JSON.stringify({fixture:'shortcuts-preferences',catalogue:true,conflict:true,recorded:true,reset:true}))
   }
 

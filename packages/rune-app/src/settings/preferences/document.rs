@@ -234,13 +234,6 @@ impl Document {
         })
     }
 
-    pub(super) fn shortcuts_failed(&self) -> bool {
-        self.write
-            .failed
-            .iter()
-            .any(|choice| matches!(choice, Choice::Shortcut(_) | Choice::ShortcutReset))
-    }
-
     pub(super) fn resetting_shortcuts(&self) -> bool {
         self.write.requested.contains_key(&Choice::ShortcutReset)
     }
