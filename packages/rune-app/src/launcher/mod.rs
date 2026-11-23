@@ -192,7 +192,6 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let browser_changed = cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s));
     let blocked = !can_change_session(s);
     let selected = crate::workspace::active_session(s).map(str::to_owned);
-    let latest = s.notifications.navigation_ticket();
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
@@ -209,7 +208,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.listing = false;
     if l.selection_ticket
         .take()
-        .is_some_and(|ticket| ticket != latest)
+        .is_some_and(|ticket| ticket != s.notifications.navigation_ticket())
     {
         tx.instant();
         return true;
