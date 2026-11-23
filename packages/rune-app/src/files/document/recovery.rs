@@ -6,8 +6,8 @@ use rune_theme_codenomad::{
 
 type Drafts = Vec<(String, String)>;
 
-pub(crate) fn show(drafts: Drafts) {
-    if drafts.is_empty() {
+pub(crate) fn show(drafts: Drafts, checkpoint_failed: bool) {
+    if drafts.is_empty() && !checkpoint_failed {
         return;
     }
     let spec = rune_theme_codenomad::settings::spec(
@@ -27,7 +27,14 @@ fn view(drafts: &Drafts, cx: &mut Cx<Drafts>) -> El {
             .reading_surface()
             .pad(Space::Lg)
             .separate(Space::Md)
-            .child(text(t("filesPanel.draftLimit")).role("alert"))
+            .child(
+                text(t(if drafts.is_empty() {
+                    "rune.save_error"
+                } else {
+                    "filesPanel.draftLimit"
+                }))
+                .role("alert"),
+            )
             .child(
                 col()
                     .full_width()

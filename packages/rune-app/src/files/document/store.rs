@@ -9,6 +9,7 @@ use std::{
 pub struct Key {
     pub server: String,
     pub instance: String,
+    pub native_project: Option<String>,
     pub directory: String,
     pub path: String,
 }
@@ -237,12 +238,22 @@ impl Store {
             }
             saved.push(row);
         }
-        lock(&self.0).saved = saved;
+        let mut store = lock(&self.0);
+        saved.retain(|row| !store.saved.iter().any(|local| local.key == row.key));
+        saved.extend(store.saved.iter().cloned());
+        if saved.len() > COUNT || Self::encode(&saved).len() > LIMIT {
+            return false;
+        }
+        store.saved = saved;
         true
     }
     pub(crate) fn file_draft_snapshot(&self, saved_revision: u64) -> Option<(u64, Vec<u8>)> {
         let store = lock(&self.0);
         (saved_revision != store.revision).then(|| (store.revision, Self::encode(&store.saved)))
+    }
+    pub(crate) fn has_unretained_file_drafts(&self) -> bool {
+        let drafts: Vec<_> = lock(&self.0).drafts.values().cloned().collect();
+        drafts.iter().any(|draft| lock(draft).not_retained)
     }
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn closing_drafts(&self, include_saved: bool) -> Vec<(String, String)> {
@@ -336,6 +347,7 @@ mod tests {
         let key = Key {
             server: "ephemeral".into(),
             instance: "tab".into(),
+            native_project: None,
             directory: "/link".into(),
             path: "file".into(),
         };
@@ -398,6 +410,7 @@ mod tests {
         let key = Key {
             server: "one".into(),
             instance: "tab-2".into(),
+            native_project: None,
             directory: "/project".into(),
             path: "main.rs".into(),
         };

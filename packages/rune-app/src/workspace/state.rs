@@ -345,6 +345,7 @@ pub fn resume(s: &mut State, tx: &mut Tx) {
 pub fn retry(s: &mut State, tx: &mut Tx) {
     if let Some(ui) = &mut s.workspace {
         ui.persistence.retry();
+        ui.persistence.retry_file_drafts(s.wake.clone());
     }
     connected(s);
     resume(s, tx);
@@ -476,7 +477,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         ui.ready = true;
     }
     let active = Cache::take(s);
-    let mut changed = false;
+    let mut changed = ui.persistence.poll_file_draft_retry(&s.documents);
     let mut drafts_changed = false;
     for item in &mut ui.entries {
         if let Some(cache) = item.cache.take() {
@@ -529,7 +530,10 @@ pub fn status(s: &State) -> Option<&'static str> {
     } else if ui.persistence.write_error || ui.persistence.partial || ui.has_unsaved_large_drafts()
     {
         Some("rune.save_error")
-    } else if ui.persistence.file_draft_error || ui.persistence.file_draft_read_error {
+    } else if ui.persistence.file_draft_error
+        || ui.persistence.file_draft_read_error
+        || s.documents.has_unretained_file_drafts()
+    {
         Some("filesPanel.draftLimit")
     } else {
         None

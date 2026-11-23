@@ -14,6 +14,7 @@ pub(super) struct Persistence {
     pub partial: bool,
     pub store: Option<Store>,
     loaded: Option<Receiver<Result<Loaded>>>,
+    retrying_file_drafts: Option<Receiver<Result<Option<Vec<u8>>>>>,
     saving: Option<Receiver<(u64, bool)>>,
     saved: u64,
     saved_file_drafts: u64,
@@ -32,6 +33,7 @@ impl Persistence {
             partial: false,
             store: None,
             loaded: None,
+            retrying_file_drafts: None,
             saving: None,
             saved: 0,
             saved_file_drafts: 0,
@@ -151,6 +153,39 @@ impl Persistence {
             self.attempted_file_drafts = self.saved_file_drafts;
         }
     }
+    pub fn retry_file_drafts(&mut self, wake: rune::Waker) {
+        if !self.file_draft_read_error || self.retrying_file_drafts.is_some() {
+            return;
+        }
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        let (out, input) = bounded(1);
+        self.retrying_file_drafts = Some(input);
+        crate::platform::spawn(async move {
+            let _ = out.send(store.load_file_drafts().await).await;
+            wake();
+        });
+    }
+    pub fn poll_file_draft_retry(
+        &mut self,
+        documents: &crate::files::document::store::Store,
+    ) -> bool {
+        let Some(Ok(result)) = self.retrying_file_drafts.as_ref().map(Receiver::try_recv) else {
+            return false;
+        };
+        self.retrying_file_drafts = None;
+        self.file_draft_read_error = match result {
+            Ok(Some(bytes)) => !documents.hydrate_file_drafts(&bytes),
+            Ok(None) => false,
+            Err(_) => true,
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.attempted_file_drafts = self.saved_file_drafts;
+        }
+        true
+    }
     pub fn flush(&mut self, snapshot: &Snapshot) -> bool {
         if self.read_error || self.loading {
             return false;
@@ -211,7 +246,10 @@ pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
         let snapshot = ui.snapshot();
         let drafts_saved = ui.persistence.flush_file_drafts(&s.documents);
         #[cfg(not(target_arch = "wasm32"))]
-        crate::files::document::recovery::show(s.documents.closing_drafts(!drafts_saved));
+        crate::files::document::recovery::show(
+            s.documents.closing_drafts(!drafts_saved),
+            !drafts_saved,
+        );
         if ui.persistence.flush(&snapshot) && drafts_saved && !ui.has_unsaved_large_drafts() {
             ui.release_all();
         } else {

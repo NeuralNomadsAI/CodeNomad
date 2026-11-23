@@ -80,6 +80,38 @@ fn closing_a_peer_reader_keeps_the_save_check_owned_by_the_requesting_reader() {
 }
 
 #[test]
+fn reopening_requires_a_fresh_native_project_identity_after_git_init() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let mut ui = http.ui(Store::default(), "first");
+        ui.document.set_project(Project {
+            id: "owned".into(),
+            path: "/private".into(),
+        });
+        for (project, expected) in [("global", None), ("initialized", Some("initialized"))] {
+            ui.open("first.txt".into());
+            assert!(!ui.document.editable());
+            for _ in 0..2 {
+                let request = http.accept().await;
+                if request.header.contains("/instance/api/location") {
+                    request.reply(200, serde_json::json!({"data": {"directory": "/private", "project": {"id": project}}})).await;
+                } else {
+                    assert!(request.header.contains("/files/preview"));
+                    request.preview("first.txt", "YQ==", Some("v1")).await;
+                }
+                ui.poll(20.0);
+            }
+            poll(&mut ui, |ui| ui.document.editable()).await;
+            assert_eq!(
+                ui.document.key().unwrap().native_project.as_deref(),
+                expected
+            );
+            ui.close_reader();
+        }
+    });
+}
+
+#[test]
 fn a_detached_save_updates_the_fingerprint_of_edits_made_during_the_put() {
     platform::block_on(async {
         let http = Http::new().await;

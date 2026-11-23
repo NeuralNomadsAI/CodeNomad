@@ -330,9 +330,16 @@ fn reader_content(s: &State) -> El {
     let status = if ui.document.dirty() {
         Some(t("settings.configFiles.state.unsaved"))
     } else {
-        (!matches!(kind, Some(Kind::Text(_)))).then(|| t("filesPanel.readOnly"))
+        (!matches!(kind, Some(Kind::Text(_))) || !ui.document.editable())
+            .then(|| t("filesPanel.readOnly"))
     };
-    let error =
+    let error = if ui.document.project_error() {
+        Some(format!(
+            "{} — {}",
+            t("directoryBrowser.load.errorFallback"),
+            t("instanceShell.rightPanel.actions.refresh")
+        ))
+    } else {
         match ui.document.error() {
             Some(super::document::store::Error::Conflict(Some(reason))) => Some(reason),
             Some(super::document::store::Error::Conflict(None)) => {
@@ -341,7 +348,8 @@ fn reader_content(s: &State) -> El {
             save_error => ui.reader.error().map(str::to_owned).or_else(|| {
                 save_error.map(|_| t("instanceShell.rightPanel.toast.saveError").into())
             }),
-        };
+        }
+    };
     theme::surface(dark)
         .key(format!("file-reader-{scope}"))
         .role("region")

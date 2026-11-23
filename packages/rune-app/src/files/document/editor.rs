@@ -47,6 +47,7 @@ pub struct Editor {
     project: Option<Project>,
     native_project: Option<Option<String>>,
     project_read: Option<Receiver<crate::history::Result<Option<String>>>>,
+    project_error: bool,
     wake: Wake,
     key: Option<Key>,
     saved_key: Option<SavedKey>,
@@ -74,6 +75,7 @@ impl Editor {
             project: None,
             native_project: None,
             project_read: None,
+            project_error: false,
             wake,
             key: None,
             saved_key: None,
@@ -141,6 +143,9 @@ impl Editor {
             .as_ref()
             .and_then(|draft| lock(draft).error.clone())
     }
+    pub(crate) fn project_error(&self) -> bool {
+        self.project_error
+    }
     pub fn confirmation(&self) -> Option<Confirmation> {
         match self.intent {
             Intent::Overwrite { id, .. } => Some(Confirmation {
@@ -198,10 +203,17 @@ impl Editor {
     }
     pub fn open(&mut self, directory: String, path: String) {
         self.close();
+        self.native_project = None;
+        self.project_read = None;
+        self.project_error = false;
         self.read_project();
+        self.attach(directory, path);
+    }
+    fn attach(&mut self, directory: String, path: String) {
         let key = Key {
             server: self.backend.base.clone(),
             instance: self.instance.clone(),
+            native_project: self.native_project.clone().flatten(),
             directory,
             path,
         };
@@ -218,7 +230,14 @@ impl Editor {
                 directory: key.directory.clone(),
                 path: key.path.clone(),
             });
-        let draft = self.store.open_saved(&key, saved_key.as_ref());
+        let draft = if self.project.is_some() && self.native_project.is_none() {
+            Shared::default()
+        } else {
+            self.store.open_saved(&key, saved_key.as_ref())
+        };
+        if saved_key.is_some() {
+            self.store.sync(&key, &draft);
+        }
         self.edit = TextEdit::new(&lock(&draft).text);
         self.revision = lock(&draft).revision;
         self.draft = Some(draft);
@@ -314,7 +333,9 @@ impl Editor {
         }
         let id = self.store.next();
         draft.pending = Some(Pending::Check(id));
-        draft.error = None;
+        if !matches!(draft.error, Some(Error::Conflict(_))) {
+            draft.error = None;
+        }
         self.intent = Intent::Checking {
             id,
             receipt: reader.reread(),
@@ -382,10 +403,12 @@ impl Editor {
     pub fn poll(&mut self, reader: &mut Reader) -> bool {
         if let Some(Ok(result)) = self.project_read.as_ref().map(Receiver::try_recv) {
             self.project_read = None;
+            self.project_error = result.is_err();
             if let Ok(project) = result {
                 self.native_project = Some(project);
                 if let Some(key) = self.key.clone() {
-                    self.open(key.directory, key.path);
+                    self.close();
+                    self.attach(key.directory, key.path);
                 }
             }
         }
