@@ -176,6 +176,7 @@ impl Backend {
             result.rows = joined;
             result.newer = next.newer;
             result.running = next.running;
+            result.user_file_references &= next.user_file_references;
         }
         Err("recovery page budget reached".into())
     }

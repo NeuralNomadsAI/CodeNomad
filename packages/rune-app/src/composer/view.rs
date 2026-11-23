@@ -220,6 +220,14 @@ fn changed(s: &mut State, tx: &mut Tx) {
 }
 
 fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) {
+    if !tab
+        && !s.composer.picker.slash()
+        && s.composer.picker.attachments_supported()
+        && !crate::workspace::attachment_draft_admissible(s)
+    {
+        layout::announce_selection(tx, t("promptInput.attachFiles.errorTitle"));
+        return;
+    }
     if s.composer
         .picker
         .choose(&mut s.draft, &mut s.composer.draft, index, tab, path_only)

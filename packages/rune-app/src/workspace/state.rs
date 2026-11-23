@@ -6,7 +6,7 @@ mod drafts;
 mod panel_state;
 mod strip;
 
-pub use drafts::{bound, capture, draft_changed};
+pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
 pub use panel_state::{
     capture_files_mode, files_tab, panel_width, restore_files_mode, set_files_tab,
 };

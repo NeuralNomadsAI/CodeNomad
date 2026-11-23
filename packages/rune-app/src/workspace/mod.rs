@@ -6,9 +6,9 @@ mod state;
 pub(crate) use persistence::finish;
 pub(crate) use state::panel_width;
 pub(crate) use state::{
-    Ui, active_session, bound, can_new, capture, close, connected, draft_changed, input_ready,
-    new_tab, opened, poll, prepare_open, resume, retry, schedule_catalogue, select, status, strip,
-    unselect_missing,
+    Ui, active_session, attachment_draft_admissible, bound, can_new, capture, close, connected,
+    draft_changed, input_ready, new_tab, opened, poll, prepare_open, resume, retry,
+    schedule_catalogue, select, status, strip, unselect_missing,
 };
 
 use serde_json::{Map, Value, json};

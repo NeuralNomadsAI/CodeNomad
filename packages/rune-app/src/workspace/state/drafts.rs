@@ -1,5 +1,38 @@
 use super::{Backend, State, Tab, Tx, Ui, same_project};
 
+pub fn attachment_draft_admissible(s: &State) -> bool {
+    let Some(ui) = &s.workspace else { return true };
+    let Some(id) = super::active_session(s) else {
+        return false;
+    };
+    let Some(Tab::Workspace(active)) = ui.entries.get(ui.active).map(|entry| &entry.saved) else {
+        return false;
+    };
+    let distinct: std::collections::BTreeSet<_> = ui
+        .entries
+        .iter()
+        .filter_map(|entry| match &entry.saved {
+            Tab::Workspace(saved) => Some(saved),
+            _ => None,
+        })
+        .chain(&ui.closed)
+        .filter(|saved| same_project(active, saved))
+        .flat_map(|saved| saved.attachment_drafts.iter().map(String::as_str))
+        .chain([id])
+        .collect();
+    if distinct.len() > super::super::MAX_DRAFTS {
+        return false;
+    }
+    let mut snapshot = ui.snapshot();
+    let Some(Tab::Workspace(saved)) = snapshot.tabs.get_mut(ui.active) else {
+        return false;
+    };
+    if !saved.attachment_drafts.insert(id.into()) {
+        return true;
+    }
+    super::super::encode(&snapshot).is_ok()
+}
+
 pub fn capture(s: &mut State) {
     let Some(ui) = &mut s.workspace else {
         return;

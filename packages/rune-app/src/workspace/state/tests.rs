@@ -84,6 +84,24 @@ fn reopening_a_saved_draft_without_its_files_blocks_every_send() {
 }
 
 #[test]
+fn attachment_only_drafts_reserve_a_slot_before_the_picker_can_attach() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    let mut saved = workspace("next", "");
+    saved.attachment_drafts = (0..super::super::MAX_DRAFTS)
+        .map(|i| format!("old-{i}"))
+        .collect();
+    ui.entries[0] = entry("tab-0".into(), Tab::Workspace(saved));
+    ui.entries[0].binding = Some(backend("next"));
+    s.workspace = Some(ui);
+    assert!(!attachment_draft_admissible(&s));
+    s.draft = TextEdit::new("a plain draft still saves");
+    capture(&mut s);
+    assert!(super::super::encode(&s.workspace.as_ref().unwrap().snapshot()).is_ok());
+}
+
+#[test]
 fn panel_visibility_returns_only_with_its_own_project_tab() {
     let mut s = init();
     let mut ui = Ui::new();

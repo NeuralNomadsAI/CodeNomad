@@ -165,6 +165,28 @@ fn commands_use_the_native_route_not_the_prompt_route() {
 }
 
 #[test]
+fn a_paginated_restore_requires_the_file_marker_on_each_window() {
+    run(async {
+        let mut first = window(vec![]);
+        first["userFiles"] = json!("reference-v1");
+        first["newer"] = json!({"kind":"after","messageID":"user-file"});
+        first["latest"] = json!(false);
+        let mut last = window(vec![]);
+        last["messages"].as_array_mut().unwrap().push(json!({
+            "id":"next", "type":"user", "text":"next"
+        }));
+        let server = Server::new(vec![
+            first,
+            last,
+            json!({"data":{"time":{"busy":0,"idle":1}}}),
+        ]);
+        let restored = server.backend.restore(None).await.unwrap();
+        assert_eq!(restored.rows.len(), 2);
+        assert!(!restored.user_file_references);
+    });
+}
+
+#[test]
 fn history_keeps_references_and_loads_only_the_requested_attachment() {
     run(async {
         let first: Vec<_> = (0..5 * MIB).map(|i| (i % 251) as u8).collect();
