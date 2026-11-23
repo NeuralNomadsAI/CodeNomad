@@ -298,7 +298,7 @@ pub async fn list(
         Err((Status::NOT_FOUND, _)) => return route_error(Status::NOT_FOUND, "Session not found"),
         Err((status, _)) => return route_error(status, "OpenCode is unavailable"),
     };
-    let Some(placement) = owned_location(&app, &open, &found["location"]).await else {
+    let Some(placement) = owned_location(&app, &open, &endpoint, &found["location"]).await else {
         return route_error(Status::FORBIDDEN, "Session does not belong to workspace");
     };
     let Ok(scope) = scope(&app, &endpoint).await else {
@@ -339,16 +339,13 @@ pub async fn list(
             && super::permission_mode::workspace_current(&app, &open)
             && same_file::Handle::from_path(&open.path).is_ok_and(|path| path == physical)
     };
-    let Some(fresh) = owned_location(&app, &open, &found["location"]).await else {
-        return route_error(Status::CONFLICT, "Workspace changed");
-    };
     if !live()
         || !crate::opencode::session_record_at(&app, &endpoint, &session)
             .await
             .is_ok_and(|current| current["location"] == found["location"] && current["projectID"] == found["projectID"])
         || !live()
-        || !placement.live(&open)
-        || !fresh.live(&open)
+        || !placement.live(&app, &open)
+        || !app.native.current(&endpoint)
     {
         return route_error(Status::CONFLICT, "Workspace changed");
     }
@@ -360,13 +357,14 @@ pub async fn list(
 }
 
 async fn owned_location(
-    app: &App,
+    app: &Shared,
     workspace: &Workspace,
+    endpoint: &std::sync::Arc<Endpoint>,
     location: &Value,
 ) -> Option<crate::worktrees::ownership::ReceiptLocation> {
     if location.get("workspaceID").is_some() {
         return None;
     }
     let directory = location["directory"].as_str()?;
-    crate::worktrees::ownership::receipt_location(app, workspace, directory).await
+    crate::worktrees::ownership::receipt_location(app, workspace, endpoint, directory).await
 }

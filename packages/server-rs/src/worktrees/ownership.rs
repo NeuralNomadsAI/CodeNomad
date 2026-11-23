@@ -80,53 +80,65 @@ pub(crate) struct ReceiptLocation {
     path: PathBuf,
     anchor: PathBuf,
     identity: same_file::Handle,
+    inventory: Option<u64>,
 }
 
 impl ReceiptLocation {
-    pub(crate) fn live(&self, workspace: &Workspace) -> bool {
+    pub(crate) fn live(&self, app: &App, workspace: &Workspace) -> bool {
         resolve_directory(&self.directory).as_ref() == Some(&self.path)
             && existing_directory(&self.path) == Some(self.anchor.as_path())
             && same_file::Handle::from_path(&self.anchor).is_ok_and(|handle| handle == self.identity)
             && self.proof.live_at(&self.path, self.proof.external.then_some(workspace.path.as_path()), true)
+            && self.inventory.is_none_or(|at| app.linked_events.lock().unwrap().0 == at)
     }
 }
 
-pub(crate) async fn receipt_location(app: &App, w: &Workspace, directory: &str) -> Option<ReceiptLocation> {
-    if !crate::files::paths::under(&app.scope, Path::new(directory)) {
+pub(crate) async fn receipt_location(
+    app: &crate::Shared,
+    w: &Workspace,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    directory: &str,
+) -> Option<ReceiptLocation> {
+    if !crate::files::paths::local_absolute(directory) {
         return None;
     }
     let path = resolve_directory(directory)?;
-    if !crate::files::paths::under(&app.scope, &path) {
-        return None;
-    }
     let anchor = existing_directory(&path)?.to_owned();
     let identity = same_file::Handle::from_path(&anchor).ok()?;
     let external = !within(&w.path, &path);
-    let proof = if path == w.path || !external && matches!(super::root_only(w).await, Ok(Some(true))) {
+    let mut revision = None;
+    let proof = if path == w.path {
         DirectoryProof { tree: None, source: None, external }
     } else {
-        let mut result = None;
-        for refresh in [false, true] {
-            let inventory = super::inventory::catalogue(app, w, refresh).await.ok()?;
-            let root = inventory.get("root").ok()?;
-            if let Some(tree) = inventory
-                .trees
-                .iter()
-                .filter(|t| t.contains_receipt_location(&path))
-                .max_by_key(|t| t.path.as_os_str().len())
-            {
-                let source = (tree.registered() != root.registered()).then(|| root.clone());
-                result = Some(DirectoryProof { tree: Some(tree.clone()), source, external });
-                break;
+        revision = Some(app.linked_events.lock().unwrap().0);
+        match super::inventory::receipt_catalogue(app, w, endpoint).await {
+            Some(inventory) => registered_proof(&inventory, &path, external)?,
+            None if !external && matches!(super::root_only(w).await, Ok(Some(true))) => {
+                DirectoryProof { tree: None, source: None, external }
             }
+            None => return None,
         }
-        result?
     };
-    let result = ReceiptLocation { proof, directory: directory.into(), path, anchor, identity };
-    result.live(w).then_some(result)
+    let result = ReceiptLocation { proof, directory: directory.into(), path, anchor, identity, inventory: revision };
+    result.live(app, w).then_some(result)
 }
 
-fn existing_directory(path: &Path) -> Option<&Path> {
+pub(super) fn registered_proof(
+    inventory: &super::inventory::Catalogue,
+    path: &Path,
+    external: bool,
+) -> Option<DirectoryProof> {
+    let root = inventory.get("root").ok()?;
+    let tree = inventory
+        .trees
+        .iter()
+        .filter(|tree| tree.contains_receipt_location(path))
+        .max_by_key(|tree| tree.path.as_os_str().len())?;
+    let source = (tree.registered() != root.registered()).then(|| root.clone());
+    Some(DirectoryProof { tree: Some(tree.clone()), source, external })
+}
+
+pub(super) fn existing_directory(path: &Path) -> Option<&Path> {
     for ancestor in path.ancestors() {
         match std::fs::symlink_metadata(ancestor) {
             Ok(metadata) => return metadata.is_dir().then_some(ancestor),

@@ -2,6 +2,7 @@
 use super::linked::{conflict, git, missing, native, native_error, physical};
 use crate::{App, Error, Workspace, files};
 use axum::http::Method;
+use futures_util::future::{BoxFuture, FutureExt, Shared};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -199,12 +200,10 @@ impl Tree {
             && identity(&self.path).ok() == self.identity
     }
     pub(super) fn contains_receipt_location(&self, dir: &Path) -> bool {
-        if !self.nested_missing {
-            return self.contains_live(dir);
-        }
         super::ownership::within(&self.path, dir)
             && self.layout.live()
-            && std::fs::symlink_metadata(&self.path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            && self.path.to_str().and_then(super::ownership::resolve_directory).as_deref() == Some(&self.path)
+            && super::ownership::existing_directory(&self.path).is_some()
     }
 }
 #[derive(Clone)]
@@ -239,8 +238,10 @@ pub fn scope(mut w: Workspace, tree: &Tree) -> Workspace {
 pub struct EventEntry {
     at: Instant,
     value: Option<Arc<Catalogue>>,
-    refreshing: bool,
+    endpoint: Arc<crate::opencode::Endpoint>,
+    loading: Option<(Uuid, InventoryRead)>,
 }
+type InventoryRead = Shared<BoxFuture<'static, Option<Arc<Catalogue>>>>;
 pub type EventCache = std::sync::Mutex<(u64, HashMap<Uuid, EventEntry>)>;
 /// Event routing reuses an inventory for 4 s, then refreshes it in the
 /// background while still serving it, up to the TS worktree cache TTL
@@ -250,21 +251,15 @@ pub type EventCache = std::sync::Mutex<(u64, HashMap<Uuid, EventEntry>)>;
 const EVENT_FRESH: Duration = Duration::from_secs(4);
 const EVENT_STALE_LIMIT: Duration = Duration::from_secs(10);
 const EVENT_ENTRIES: usize = 64;
-fn store(cache: &mut (u64, HashMap<Uuid, EventEntry>), id: Uuid, value: Option<Arc<Catalogue>>) {
-    if cache.1.len() >= EVENT_ENTRIES {
-        cache.1.retain(|_, e| e.at.elapsed() < EVENT_STALE_LIMIT);
-    }
-    if cache.1.len() < EVENT_ENTRIES || cache.1.contains_key(&id) {
-        cache.1.insert(id, EventEntry { at: Instant::now(), value, refreshing: false });
-    }
-}
 /// Drops one workspace's inventory, or every one; a running refresh never stores after it.
 fn drop_entries(app: &App, id: Option<Uuid>) {
     let mut cache = app.linked_events.lock().unwrap();
-    cache.0 = cache.0.wrapping_add(1);
     match id {
         Some(id) => _ = cache.1.remove(&id),
-        None => cache.1.clear(),
+        None => {
+            cache.0 = cache.0.wrapping_add(1);
+            cache.1.clear();
+        }
     }
 }
 pub fn invalidate(app: &App) {
@@ -274,54 +269,102 @@ pub fn forget(app: &App, id: Uuid) {
     drop_entries(app, Some(id))
 }
 pub async fn event_catalogue(app: &crate::Shared, w: &Workspace) -> Option<Arc<Catalogue>> {
-    let epoch = {
+    cached_catalogue(app, w, &app.native.endpoint()?, true).await
+}
+
+pub(super) async fn receipt_catalogue(
+    app: &crate::Shared,
+    w: &Workspace,
+    endpoint: &Arc<crate::opencode::Endpoint>,
+) -> Option<Arc<Catalogue>> {
+    cached_catalogue(app, w, endpoint, false).await
+}
+
+async fn cached_catalogue(
+    app: &crate::Shared,
+    w: &Workspace,
+    endpoint: &Arc<crate::opencode::Endpoint>,
+    for_event: bool,
+) -> Option<Arc<Catalogue>> {
+    let (epoch, loading) = {
         let mut cache = app.linked_events.lock().unwrap();
+        if !app.native.current(endpoint) {
+            return None;
+        }
         let epoch = cache.0;
+        if cache.1.get(&w.id).is_some_and(|e| !Arc::ptr_eq(&e.endpoint, endpoint)) {
+            cache.1.remove(&w.id);
+        }
+        let mut background = None;
         if let Some(entry) = cache.1.get_mut(&w.id) {
             let age = entry.at.elapsed();
-            if age < EVENT_FRESH {
+            if age < if for_event { EVENT_FRESH } else { EVENT_STALE_LIMIT }
+                && (entry.value.is_some() || entry.loading.is_none())
+            {
                 return entry.value.clone();
             }
-            if age < EVENT_STALE_LIMIT && entry.value.is_some() {
-                if !entry.refreshing {
-                    entry.refreshing = true;
-                    let (app, w) = (app.clone(), w.clone());
-                    tokio::spawn(async move {
-                        let started = Instant::now();
-                        let result = catalogue(&app, &w, false).await.ok().map(Arc::new);
-                        crate::bench::trace_elapsed("event-catalogue background", started);
-                        let mut cache = app.linked_events.lock().unwrap();
-                        if cache.0 != epoch {
-                            return;
-                        }
-                        match result {
-                            Some(value) => store(&mut cache, w.id, Some(value)),
-                            // A failed refresh never extends the old inventory.
-                            None => _ = cache.1.remove(&w.id),
-                        }
-                    });
-                }
-                return entry.value.clone();
+            if for_event && age < EVENT_STALE_LIMIT {
+                background = entry.value.clone();
             }
         }
-        epoch
+        if cache.1.len() >= EVENT_ENTRIES {
+            cache.1.retain(|_, e| e.loading.is_some() || e.at.elapsed() < EVENT_STALE_LIMIT);
+        }
+        let admitted = cache.1.len() < EVENT_ENTRIES || cache.1.contains_key(&w.id);
+        let loading =
+            cache.1.get(&w.id).and_then(|entry| entry.loading.as_ref().map(|(_, read)| read.clone())).unwrap_or_else(
+                || {
+                    let (done, receive) = tokio::sync::oneshot::channel();
+                    let loading = async move { receive.await.ok().flatten() }.boxed().shared();
+                    let flight = Uuid::new_v4();
+                    if admitted {
+                        let entry = cache.1.entry(w.id).or_insert_with(|| EventEntry {
+                            at: Instant::now(),
+                            value: None,
+                            endpoint: endpoint.clone(),
+                            loading: None,
+                        });
+                        entry.loading = Some((flight, loading.clone()));
+                    }
+                    let (app, w, endpoint) = (app.clone(), w.clone(), endpoint.clone());
+                    tokio::spawn(async move {
+                        let started = Instant::now();
+                        let result = catalogue_in(&app, &w, false, false).await.ok().map(Arc::new);
+                        crate::bench::trace_elapsed("registered-catalogue", started);
+                        let mut cache = app.linked_events.lock().unwrap();
+                        let owns_flight =
+                            cache.1.get(&w.id).and_then(|e| e.loading.as_ref()).is_some_and(|(id, _)| *id == flight);
+                        if cache.0 != epoch || !app.native.current(&endpoint) || admitted && !owns_flight {
+                            if owns_flight {
+                                cache.1.remove(&w.id);
+                            }
+                            return;
+                        }
+                        if admitted {
+                            cache.1.insert(
+                                w.id,
+                                EventEntry { at: Instant::now(), value: result.clone(), endpoint, loading: None },
+                            );
+                        }
+                        let _ = done.send(result);
+                    });
+                    loading
+                },
+            );
+        if background.is_some() {
+            return background;
+        }
+        (epoch, loading)
     };
-    let started = Instant::now();
-    let result = catalogue(app, w, false).await.ok().map(Arc::new);
-    crate::bench::trace_elapsed("event-catalogue blocking", started);
-    let mut cache = app.linked_events.lock().unwrap();
-    if cache.0 != epoch {
-        return None;
-    }
-    store(&mut cache, w.id, result.clone());
-    result
+    let result = loading.await?;
+    (app.native.current(endpoint) && app.linked_events.lock().unwrap().0 == epoch).then_some(result)
 }
 struct Root {
     project: String,
     local: Physical,
     main: Physical,
 }
-async fn root(app: &App, w: &Workspace) -> Result<Root, Error> {
+async fn root(app: &App, w: &Workspace, scoped: bool) -> Result<Root, Error> {
     let native_dir = w.location["directory"].as_str().ok_or_else(native_error)?;
     let here =
         native(app, Method::GET, "/api/location", &[("location[directory]", native_dir)], None, 128 * 1024).await?;
@@ -335,8 +378,7 @@ async fn root(app: &App, w: &Workspace) -> Result<Root, Error> {
         || main.admin != main.common
         || main.common != local.common
         || main.common_id != local.common_id
-        || !main_path.starts_with(&app.scope)
-        || !local.root.starts_with(&app.scope)
+        || scoped && (!main_path.starts_with(&app.scope) || !local.root.starts_with(&app.scope))
     {
         return Err(conflict("Workspace and native project do not share a checkout"));
     }
@@ -347,10 +389,14 @@ async fn root(app: &App, w: &Workspace) -> Result<Root, Error> {
 }
 /// Root-only session mutations need the opened checkout's proof, independent of sibling inventory size.
 pub async fn root_supported(app: &App, w: &Workspace) -> bool {
-    root(app, w).await.is_ok()
+    root(app, w, true).await.is_ok()
 }
 pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalogue, Error> {
-    let Root { project, local, main } = root(app, w).await?;
+    catalogue_in(app, w, refresh, true).await
+}
+
+async fn catalogue_in(app: &App, w: &Workspace, refresh: bool, scoped: bool) -> Result<Catalogue, Error> {
+    let Root { project, local, main } = root(app, w, scoped).await?;
     let native_dir = w.location["directory"].as_str().ok_or_else(native_error)?;
     let project = project.as_str();
     let tail = w.path.strip_prefix(&local.root).map_err(|_| native_error())?;
@@ -371,7 +417,7 @@ pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalo
     for entry in entries {
         let service_root = entry["directory"].as_str().ok_or_else(native_error)?;
         let Some(root) = physical(service_root) else { continue };
-        if !root.starts_with(&app.scope) || !seen.insert(root.clone()) {
+        if scoped && !root.starts_with(&app.scope) || !seen.insert(root.clone()) {
             continue;
         }
         let Some(meta) = snapshot.get(&root) else { continue };
@@ -389,7 +435,8 @@ pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalo
                     crate::bench::route_trace(format_args!("worktree-omitted layout-gone"));
                     continue;
                 }
-                Err(error) => return Err(error),
+                Err(error) if root.starts_with(&app.scope) => return Err(error),
+                Err(_) => continue,
             }
         };
         if check.root != root || check.common != local.common || check.common_id != local.common_id || !check.live() {
@@ -397,13 +444,15 @@ pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalo
         }
         let opened = root == local.root;
         let projected = if tail.as_os_str().is_empty() { root.clone() } else { root.join(tail) };
-        let id = if let Ok(real) = dunce::canonicalize(&projected) {
-            if real != projected || !real.is_dir() {
-                return Err(conflict("Projected worktree directory is not physically owned"));
-            }
-            Some(identity(&projected)?)
-        } else {
-            None
+        let id = match dunce::canonicalize(&projected) {
+            Ok(real) if real == projected && real.is_dir() => match identity(&projected) {
+                Ok(value) => Some(value),
+                Err(_) if !opened && !root.starts_with(&app.scope) => None,
+                Err(error) => return Err(error),
+            },
+            Ok(real) if !opened && (real == projected && real.is_file() || !root.starts_with(&app.scope)) => None,
+            Ok(_) => return Err(conflict("Projected worktree directory is not physically owned")),
+            Err(_) => None,
         };
         let service = if opened {
             native_dir.to_string()
