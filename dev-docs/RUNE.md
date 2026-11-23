@@ -121,4 +121,6 @@ Tests use isolated `trial-*` profiles, owned processes and existing Cargo caches
 
 Browser/mobile risks and physical-device gates are in [RUNE_WEB.md](RUNE_WEB.md). The latency guard reuses `scripts/perf/` markers and TUI budgets. Webview and PTY capabilities require a short decision before implementation.
 
+The Rune web bridge exposes its hidden `Password input` editing proxy in the accessibility tree ([Rune #594](https://github.com/anomalyco/rune/issues/594)). The paired-browser smoke records the proxy as a known gap and requires the HTTPS launcher and pairing recovery to remain free of an application password field.
+
 Published switchover requires signed updates using the current [Tauri updater contract](TAURI_UPDATER.md), rollback, and qualification on Windows/macOS/Linux. Reuse `packages/server-rs/install/` where applicable. The final Tauri version must install the first Rune package without user action, preserving identity and data; incompatible installation contracts require a decision before switchover.

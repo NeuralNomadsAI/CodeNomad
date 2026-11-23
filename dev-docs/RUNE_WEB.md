@@ -10,7 +10,7 @@ Les capacités du bureau sont isolées par la plateforme. La sélection d'un dos
 
 La page d'appairage embarque le thème et les dix catalogues ; le code à usage unique disparaît du fragment avant l'échange HTTPS. En cas de rupture du flux, le client sonde le statut d'authentification. Une réponse `pairingRequired` présente les étapes d'appairage sans remplacer le document ni le brouillon. Le bouton de vérification ou le retour au premier plan relit le statut ; la confirmation HTTP réutilise `retry_connection` pour relire l'historique sur la même conversation.
 
-La liste de sessions publie la première page du dossier puis enrichit automatiquement la liste en suivant les curseurs des worktrees déclarés. Chaque curseur appartient à son dossier. La recherche interroge les mêmes dossiers indépendamment des pages affichées ; changer de projet ou de requête annule la recherche précédente.
+La liste de sessions publie la première page du dossier puis enrichit automatiquement la liste en suivant les curseurs des worktrees déclarés. La collecte et ses résultats appartiennent à l'onglet ; « Actualiser » reprend un curseur interrompu sans retirer les pages acquises. La recherche interroge les mêmes dossiers indépendamment des pages affichées ; changer de projet ou de requête annule la recherche précédente.
 
 Après une rupture SSE et un historique indisponible, l'inventaire authentifié confirme l'absence de l'occurrence. Le navigateur revalide l'identité du serveur, ouvre le même dossier dans une nouvelle occurrence et relie la session native exacte. Il garde le document et le brouillon et relit l'historique sans réémettre d'action. Le catalogue ordinaire est rechargé même lorsque la recherche reste ouverte.
 

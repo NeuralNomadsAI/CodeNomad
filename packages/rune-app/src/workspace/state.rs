@@ -32,7 +32,7 @@ pub(super) struct Entry {
     listed_sessions: HashSet<String>,
     creation_uncertain: bool,
     next: Option<String>,
-    linked: Option<crate::launcher::linked::Pages>,
+    linked: crate::launcher::linked::Linked,
     consumed_cursors: HashSet<u64>,
     visits: crate::launcher::Visits,
     catalogue: catalogue::Refresh,
@@ -41,6 +41,15 @@ pub(super) struct Entry {
     binding: Option<Backend>,
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
+}
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
+    let ui = s.workspace.as_ref()?;
+    let entry = &ui.entries[ui.active];
+    let Tab::Workspace(saved) = &entry.saved else {
+        return None;
+    };
+    Some((&entry.key, saved))
 }
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
@@ -169,15 +178,6 @@ impl Ui {
         self.staged_revision = Some(self.revision);
     }
 }
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
-    let ui = s.workspace.as_ref()?;
-    let entry = &ui.entries[ui.active];
-    let Tab::Workspace(saved) = &entry.saved else {
-        return None;
-    };
-    Some((&entry.key, saved))
-}
 fn same_project(a: &Workspace, b: &Workspace) -> bool {
     same_folder(&a.folder, &b.folder)
         && a.backend_id == b.backend_id
@@ -204,7 +204,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         listed_sessions: HashSet::new(),
         creation_uncertain: false,
         next: None,
-        linked: None,
+        linked: Default::default(),
         consumed_cursors: HashSet::new(),
         visits: Default::default(),
         catalogue: Default::default(),

@@ -71,7 +71,7 @@ enum Reply {
     Created(Backend, String, String, String, Option<u64>),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
     #[cfg(target_arch = "wasm32")]
-    Reopened(crate::workspace::opening::Opening, Backend, String),
+    Reopened(crate::workspace::opening::Opening, Backend, String, String),
 }
 type Selection = (Backend, String, Option<usize>, Instant, String);
 enum Restored {
@@ -181,14 +181,13 @@ impl Launcher {
 }
 
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
-    let mut changed = search::poll(s);
-    changed |= linked::poll(s);
+    let browser_changed = cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s));
     let blocked = !can_change_session(s);
     let selected = crate::workspace::active_session(s).map(str::to_owned);
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
-    changed |= !l.pending && l.visits.poll_checks();
+    let mut changed = browser_changed | (!l.pending && l.visits.poll_checks());
     changed |= connection::poll_boot(l);
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
         if changed {
@@ -234,6 +233,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.folder = TextEdit::new(&project.path);
             set_project(l, Some(project.clone()));
+            l.linked = Default::default();
             connection::watch_catalogue(l);
             l.apply_listing(rows, false, None);
             l.search = TextEdit::new("");
@@ -252,6 +252,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     crate::workspace::restore_files_mode(s);
                 }
             }
+            #[cfg(target_arch = "wasm32")]
             linked::load(s);
         }
         Ok(Reply::Listed(rows, cursor)) => {
@@ -264,12 +265,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             } else if cfg!(target_os = "windows") {
                 l.apply_directory_refresh(rows, selected.as_deref());
                 crate::workspace::schedule_catalogue(s);
-                linked::load(s);
             } else {
                 l.apply_listing(rows, false, selected.as_deref());
                 if l.next.is_none() {
                     l.check_omitted_visits();
                 }
+                #[cfg(target_arch = "wasm32")]
                 linked::load(s);
             }
         }
@@ -293,13 +294,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Ok(Reply::Selected(missing, selection, dismiss)) => {
             l.sessions.retain(|row| !missing.contains(&row.id));
-            l.listed_sessions.retain(|id| !missing.contains(id));
             if let Some(pages) = &mut l.linked.pages {
                 pages.rows.retain(|row| !missing.contains(&row.id));
             }
             l.search_results
                 .rows
                 .retain(|row| !missing.contains(&row.id));
+            l.listed_sessions.retain(|id| !missing.contains(id));
             l.visits.forget(&missing);
             if let Some((backend, _, _, verified, _)) = &selection {
                 l.visits.verified(&backend.session, *verified);
@@ -324,8 +325,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         #[cfg(target_arch = "wasm32")]
-        Ok(Reply::Reopened(opening, backend, title)) => {
-            reopen::apply(s, opening, backend, title);
+        Ok(Reply::Reopened(opening, backend, title, slug)) => {
+            reopen::apply(s, opening, backend, title, &slug)
         }
         Err(error) => {
             let key = match error.to_string().as_str() {

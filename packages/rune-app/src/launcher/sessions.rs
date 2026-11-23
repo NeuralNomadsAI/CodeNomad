@@ -137,6 +137,10 @@ pub fn list(s: &mut State, more: bool) {
     if more && !l.can_page() {
         return;
     }
+    #[cfg(target_arch = "wasm32")]
+    if !more && l.show_search && !l.search.text.trim().is_empty() {
+        l.search_results = Default::default();
+    }
     l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
