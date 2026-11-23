@@ -24,7 +24,10 @@ const slash = process.argv.includes('--probe-slash')
 const attachments = process.argv.includes('--probe-attachments')
 const bytes = Buffer.from('Rune attachment fixture 🦀\r\n')
 const sha256 = createHash('sha256').update(bytes).digest('hex')
-if(attachments) await writeFile(path.join(project,'sample.txt'),bytes)
+if(attachments) {
+  for(const file of [path.join(project,'sample.txt'),path.join(profile,'selected.txt'),path.join(profile,'dropped.txt')])
+    await writeFile(file,bytes)
+}
 const store = new FixtureStore(fresh||slash||attachments?0:10000)
 const upstreamStreams = new Set()
 const requests = []
@@ -67,7 +70,7 @@ const upstream = createServer(async(req,res)=>{
     const {input}=JSON.parse(raw)
     assert.equal(input.sessionID,session)
     assert.equal(input.messageID,store.rows[0]?.id)
-    assert.equal(input.fileIndex,0)
+    assert(Number.isInteger(input.fileIndex)&&input.fileIndex>=0&&input.fileIndex<3)
     assert.equal(input.sha256,sha256)
     if(input.confirm) return json({output:{status:'current'}})
     attachmentReads++
@@ -90,12 +93,15 @@ const upstream = createServer(async(req,res)=>{
     if(attachments) {
       const input=JSON.parse(raw)
       assert.equal(input.text,'./sample.txt')
-      assert.equal(input.files.length,1)
+      assert.equal(input.files.length,3)
       assert.equal(input.files[0].name,'sample.txt')
       assert.match(input.files[0].uri,/^file:\/\/\/.*\/sample\.txt$/)
+      assert.deepEqual(input.files.slice(1),['selected.txt','dropped.txt'].map(name=>({
+        name,uri:`data:text/plain;base64,${bytes.toString('base64')}`
+      })))
       attachmentPrompts++
       const row=store.append('user',input.text);row.id=input.id
-      row.files=[{name:'sample.txt',mime:'text/plain',source:{type:'deferred',sha256}}]
+      row.files=input.files.map(({name})=>({name,mime:'text/plain',source:{type:'deferred',sha256}}))
       const receipt={id:input.id,sessionID:session,type:'user',payload:{text:input.text,files:row.files}}
       emit('session.inbox.enqueued',{item:receipt})
       emit('session.inbox.delivered',{item:receipt})
@@ -159,7 +165,7 @@ try {
   }
   if(attachments) {
     assert.equal(attachmentPrompts,1)
-    assert.equal(attachmentReads,1)
+    assert.equal(attachmentReads,3)
     assert(projectionReads>=2,'Both Rune boots must negotiate the attachment history')
   }
   assert.equal(result,0,'Rune client exit')

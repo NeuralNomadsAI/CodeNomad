@@ -9,6 +9,7 @@ use rune::{Tx, edit::TextEdit};
 
 #[derive(Default)]
 pub struct Owner {
+    pub device: super::device::Device,
     pub draft: Draft,
     pub picker: super::picker::Picker,
     sending: Option<Send>,
@@ -58,6 +59,7 @@ pub fn can_send(s: &State) -> bool {
         && !s.history_detached
         && s.composer.sending.is_none()
         && !s.composer.picker.open()
+        && !s.composer.device.busy()
         && !s.composer.picker.command_pending(&s.draft.text)
         && !s.composer.attachments_missing
         && (s.composer.picker.attachments_supported() || s.composer.draft.attachments.is_empty())

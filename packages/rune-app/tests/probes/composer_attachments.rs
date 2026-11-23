@@ -35,22 +35,30 @@ pub fn run() {
             .iter()
             .find(|row| row.body == "./sample.txt")
             .expect("stored prompt");
-        let [Part::File(file)] = row.parts.as_slice() else {
-            panic!("one file in the reopened message")
-        };
-        assert_eq!(file.name.as_deref(), Some("sample.txt"));
-        let reference = file.reference.as_ref().expect("stored file reference");
-        let bytes = platform::block_on(async {
+        assert_eq!(row.parts.len(), 3);
+        platform::block_on(async {
             let backend = platform::configured_target(false)?;
             let password = platform::setting("RUNE_PASSWORD").unwrap_or_default();
             backend.authenticate(&password, None).await?;
-            backend.attachment_bytes(reference).await
+            for (part, name) in row
+                .parts
+                .iter()
+                .zip(["sample.txt", "selected.txt", "dropped.txt"])
+            {
+                let Part::File(file) = part else {
+                    panic!("expected file")
+                };
+                assert_eq!(file.name.as_deref(), Some(name));
+                let reference = file.reference.as_ref().expect("stored file reference");
+                let bytes = backend.attachment_bytes(reference).await?;
+                assert_eq!(
+                    bytes.as_slice(),
+                    "Rune attachment fixture 🦀\r\n".as_bytes()
+                );
+            }
+            Ok::<_, crate::history::Error>(())
         })
         .expect("download through the Rust relay");
-        assert_eq!(
-            bytes.as_slice(),
-            "Rune attachment fixture 🦀\r\n".as_bytes()
-        );
         println!("attachment probe: reopened references and downloaded identical bytes");
         return;
     }
@@ -70,6 +78,29 @@ pub fn run() {
     });
     enter(&mut rt);
     assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+    let here = std::env::current_dir().expect("private fixture directory");
+    let (button_x, button_y) = rt
+        .find("attach-device-files")
+        .expect("enabled device chooser");
+    rt.pointer_down(button_x, button_y);
+    rt.pointer_up(button_x, button_y);
+    rt.frame(0.0);
+    assert!(rt.file_dialog().is_some());
+    assert!(!crate::composer::can_send(&rt.state));
+    rt.resolve_file_dialog(Some(here.join("selected.txt")))
+        .unwrap();
+    wait(&mut rt, "selected device bytes", |s| {
+        s.composer.draft.attachments.len() == 2
+    });
+    let (x, y) = rt.find("composer").expect("composer drop target");
+    rt.drop_files(vec![here.join("dropped.txt")], Some((x, y)));
+    rt.frame(0.0);
+    wait(&mut rt, "dropped device bytes", |s| {
+        s.composer.draft.attachments.len() == 3 && !s.composer.device.busy()
+    });
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
     enter(&mut rt);
     wait(&mut rt, "authoritative stored reference", |s| {
         s.messages.iter().any(|row| {
@@ -78,5 +109,5 @@ pub fn run() {
                 .any(|part| matches!(part, Part::File(file) if file.reference.is_some()))
         })
     });
-    println!("attachment probe: sent exactly one project file");
+    println!("attachment probe: sent one project and two device files");
 }

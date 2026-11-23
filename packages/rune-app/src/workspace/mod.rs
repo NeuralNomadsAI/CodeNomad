@@ -197,6 +197,29 @@ pub fn encode(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
     Ok(bytes)
 }
 
+fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Error> {
+    if let Ok(bytes) = encode(snapshot) {
+        return Ok((bytes, false));
+    }
+    let mut valid = snapshot.clone();
+    valid.tabs = vec![Tab::Blank; snapshot.tabs.len()];
+    // Keep the live tab untouched. Invalid attachment metadata falls back to its missing-parts guard.
+    for (index, tab) in snapshot.tabs.iter().enumerate() {
+        let mut tab = tab.clone();
+        if let Tab::Workspace(saved) = &mut tab {
+            saved
+                .attachment_drafts
+                .extend(saved.attachment_parts.keys().cloned());
+            saved.attachment_parts.retain(|_, parts| parts.valid());
+        }
+        valid.tabs[index] = tab;
+        if encode(&valid).is_err() {
+            valid.tabs[index] = Tab::Blank;
+        }
+    }
+    encode(&valid).map(|bytes| (bytes, true))
+}
+
 fn tab(value: &Value) -> Result<Tab, Error> {
     let value = object(value)?;
     match required(value, "kind")?.as_str() {

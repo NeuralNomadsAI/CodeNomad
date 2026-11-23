@@ -1,5 +1,5 @@
-use super::{can_send, send};
-use crate::{Phase, State, screen, strings::t};
+use super::{can_send, device, picker::Item, send};
+use crate::{Phase, State, platform, screen, strings::t};
 use rune::{El, Key, KeyEvent, Tx, col, text};
 use rune_theme_codenomad::{
     Space, attachment, field_kit, kit,
@@ -18,6 +18,15 @@ pub fn view(s: &State, compact: bool) -> El {
         .on_key(move |s: &mut State, event, tx| s.current_scope(&edit_scope) && key(s, event, tx))
         .build(field_kit(layout::dark()))
         .key("composer");
+    #[cfg(not(target_arch = "wasm32"))]
+    let editor = editor.on_drop_files({
+        let scope = scope.clone();
+        move |s: &mut State, paths, _| {
+            if s.current_scope(&scope) {
+                platform::device_picker::drop_files(s, paths);
+            }
+        }
+    });
     let mut actions = layout::action_row()
         .children(
             (s.can_older || s.history_error && s.phase != Phase::Failed).then(|| {
@@ -133,6 +142,15 @@ pub fn view(s: &State, compact: bool) -> El {
             .key("attachments-disabled")
             .description_static(t("rune.attachments_unavailable")),
         );
+    } else {
+        actions = actions.child(
+            layout::button_tx(
+                t("promptInput.attachFiles.ariaLabel"),
+                !device::available(s) || s.composer.device.busy(),
+                screen::action_tx(&scope, platform::device_picker::choose),
+            )
+            .key("attach-device-files"),
+        );
     }
     if s.composer.attachments_missing {
         actions = actions.child(
@@ -150,6 +168,13 @@ pub fn view(s: &State, compact: bool) -> El {
         );
     }
     body.child(actions)
+        .children(
+            s.composer
+                .device
+                .notice
+                .as_ref()
+                .map(|notice| text(notice).role("alert")),
+        )
         .children(
             s.composer
                 .attachments_missing
@@ -222,9 +247,17 @@ fn changed(s: &mut State, tx: &mut Tx) {
 }
 
 fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) {
-    let previous =
-        (!tab && !s.composer.picker.slash() && s.composer.picker.attachments_supported())
-            .then(|| (s.draft.clone(), s.composer.draft.clone()));
+    let adds_part = s.composer.picker.attachments_supported()
+        && match s.composer.picker.entries.get(index) {
+            Some(Item::File(_)) => !tab,
+            Some(Item::Agent(_) | Item::Skill(_)) => true,
+            _ => false,
+        };
+    if adds_part && s.composer.draft.attachments.len() >= super::draft::MAX_PARTS {
+        layout::announce_selection(tx, t("promptInput.attachFiles.errorTitle"));
+        return;
+    }
+    let previous = adds_part.then(|| (s.draft.clone(), s.composer.draft.clone()));
     if s.composer
         .picker
         .choose(&mut s.draft, &mut s.composer.draft, index, tab, path_only)

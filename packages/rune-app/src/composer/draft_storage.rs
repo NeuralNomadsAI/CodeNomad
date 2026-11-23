@@ -1,4 +1,4 @@
-use super::draft::{Attachment, Draft};
+use super::draft::{Attachment, Draft, MAX_PARTS};
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,7 +45,9 @@ impl SavedParts {
             return None;
         }
         let complete = raw["complete"].as_bool()?;
-        let rows = raw["parts"].as_array().filter(|rows| rows.len() <= 64)?;
+        let rows = raw["parts"]
+            .as_array()
+            .filter(|rows| rows.len() <= MAX_PARTS)?;
         let parts = rows
             .iter()
             .map(|row| {
@@ -143,7 +145,7 @@ impl SavedParts {
                             .all(|segment| !matches!(segment, "" | "." | ".."))
                 })
         };
-        self.parts.len() <= 64
+        self.parts.len() <= MAX_PARTS
             && (!self.complete || !self.parts.is_empty())
             && self.parts.iter().all(|part| match part {
                 Part::Project {

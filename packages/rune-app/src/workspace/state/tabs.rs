@@ -6,6 +6,7 @@ fn stash(s: &mut State) {
     capture(s);
     s.attachments.cancel();
     s.composer.picker.reset();
+    s.composer.device.cancel();
     if let Some(files) = &mut s.files {
         files.activate(false);
     }

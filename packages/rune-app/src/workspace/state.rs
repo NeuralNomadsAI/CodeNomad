@@ -156,8 +156,11 @@ impl Ui {
         let Some(store) = &self.persistence.store else {
             return;
         };
-        let bytes = match super::encode(&self.snapshot()) {
-            Ok(bytes) => bytes,
+        let bytes = match super::encode_for_save(&self.snapshot()) {
+            Ok((bytes, partial)) => {
+                self.persistence.partial = partial;
+                bytes
+            }
             Err(_) => {
                 store.stage(&[], &[]);
                 self.persistence.write_error = true;
@@ -497,10 +500,11 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         ui.changed();
     }
     ui.stage();
-    let previous_error = ui.persistence.read_error || ui.persistence.write_error;
+    let previous_error =
+        ui.persistence.read_error || ui.persistence.write_error || ui.persistence.partial;
     let snapshot = ui.snapshot();
     ui.persistence.poll_save(&snapshot, now, tx, s.wake.clone());
-    let error = ui.persistence.read_error || ui.persistence.write_error;
+    let error = ui.persistence.read_error || ui.persistence.write_error || ui.persistence.partial;
     s.workspace = Some(ui);
     if became_ready {
         resume(s, tx);
@@ -512,7 +516,7 @@ pub fn status(s: &State) -> Option<&'static str> {
     let ui = s.workspace.as_ref()?;
     if ui.persistence.read_error {
         Some("rune.restore_error")
-    } else if ui.persistence.write_error {
+    } else if ui.persistence.write_error || ui.persistence.partial {
         Some("rune.save_error")
     } else {
         None

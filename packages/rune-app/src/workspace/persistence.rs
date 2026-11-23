@@ -1,4 +1,4 @@
-use super::{Snapshot, decode, encode};
+use super::{Snapshot, decode, encode_for_save};
 use crate::{history::Result, platform::storage::Store};
 use codenomad_client::{Receiver, bounded};
 use std::path::PathBuf;
@@ -7,6 +7,7 @@ pub(super) struct Persistence {
     pub loading: bool,
     pub read_error: bool,
     pub write_error: bool,
+    pub partial: bool,
     pub store: Option<Store>,
     loaded: Option<Receiver<Result<(Store, Option<Snapshot>)>>>,
     saving: Option<Receiver<(u64, bool)>>,
@@ -19,6 +20,7 @@ impl Persistence {
             loading: false,
             read_error: false,
             write_error: false,
+            partial: false,
             store: None,
             loaded: None,
             saving: None,
@@ -108,8 +110,11 @@ impl Persistence {
             tx.wake_at(self.due);
             return;
         }
-        let bytes = match encode(snapshot) {
-            Ok(bytes) => bytes,
+        let bytes = match encode_for_save(snapshot) {
+            Ok((bytes, partial)) => {
+                self.partial = partial;
+                bytes
+            }
             Err(_) => {
                 self.write_error = true;
                 return;
@@ -136,10 +141,11 @@ impl Persistence {
         let Some(store) = &self.store else {
             return true;
         };
-        let Ok(bytes) = encode(snapshot) else {
+        let Ok((bytes, partial)) = encode_for_save(snapshot) else {
             self.write_error = true;
             return false;
         };
+        self.partial = partial;
         let ok = store.save_exit(bytes).is_ok();
         self.write_error = !ok;
         if ok {
@@ -190,7 +196,7 @@ mod tests {
             tabs: vec![super::super::Tab::Blank],
             active: Some(0),
         };
-        store.stage(&encode(&snapshot).unwrap(), &[]);
+        store.stage(&super::super::encode(&snapshot).unwrap(), &[]);
         let mut persistence = Persistence::new();
         persistence.store = Some(store);
         let wakes = Arc::new(AtomicUsize::new(0));
