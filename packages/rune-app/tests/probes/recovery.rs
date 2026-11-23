@@ -65,6 +65,99 @@ pub(crate) fn check_anchor(rt: &Runtime<State>, anchor: &(String, f32)) -> f32 {
     assert!(delta < 0.5, "reading anchor jumped by {delta} points");
     delta
 }
+pub fn suspend() {
+    let backend = crate::platform::block_on(crate::platform::configured_backend()).unwrap();
+    let mut rt = Runtime::new(init(), view, (960.0, 760.0), Env::new(true, 1.0));
+    rt.poll = Some(poll);
+    rt.update(move |s, _| crate::transport::start_reader(s, backend));
+    wait(&mut rt, "initial observed transcript", |s| {
+        s.messages.len() == 200 && s.phase == Phase::Ready
+    });
+    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 1600.0));
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    let viewport_relative = |rt: &Runtime<State>, y: f32| {
+        y - rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("history"))
+            .unwrap()
+            .rect[1]
+    };
+    let (id, y) = anchor(&rt);
+    let offset = viewport_relative(&rt, y);
+    control("hold-window");
+    rt.update(request_older);
+    assert!(rt.state.paging);
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        if control("stats")["heldReadStarted"] == 1 {
+            break;
+        }
+        assert!(Instant::now() < until, "history body dispatched");
+        rt.frame(0.02);
+    }
+    rt.update(|s, tx| {
+        crate::chat::suspend(s, tx);
+        s.messages = Vec::new();
+        s.draft = rune::TextEdit::new("keep this draft");
+    });
+    let pages = control("permission-while-hidden")["pages"].clone();
+    wait(
+        &mut rt,
+        "permission observed with transcript suspended",
+        |s| {
+            s.agent.as_ref().is_some_and(|agent| {
+                agent
+                    .permissions
+                    .iter()
+                    .any(|p| p.id == "permission-suspended")
+            })
+        },
+    );
+    assert!(rt.state.messages.is_empty());
+    assert_eq!(control("stats")["pages"], pages);
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        if control("stats")["heldReadCancelled"] == 1 {
+            break;
+        }
+        assert!(Instant::now() < until, "suspension cancels the HTTP body");
+        rt.frame(0.02);
+    }
+    rt.update(crate::chat::resume);
+    wait(&mut rt, "resume on the native anchor", |s| {
+        s.messages.iter().any(|row| row.id == id)
+    });
+    let restored = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some(id.as_str()))
+        .unwrap();
+    let shift = (viewport_relative(&rt, restored.rect[1]) - offset).abs();
+    assert!(shift < 0.5, "reading anchor shifted by {shift} points");
+    assert_eq!(control("stats")["resumedAnchor"], id);
+    assert!(
+        rt.state
+            .agent
+            .as_ref()
+            .unwrap()
+            .permissions
+            .iter()
+            .any(|p| p.id == "permission-suspended")
+    );
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("synthetic.txt")
+    );
+    assert_eq!(rt.state.draft.text, "keep this draft");
+    println!(
+        "{}",
+        json!({"kind":"suspended-reader", "anchor":id, "shift":shift, "permissionVisible":true})
+    );
+}
 fn canonical(rt: &Runtime<State>, count: usize) {
     assert_eq!(rt.state.messages.len(), count);
     for (i, row) in rt.state.messages.iter().enumerate() {

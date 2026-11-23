@@ -2,6 +2,31 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::{CODE, Message};
 pub use codenomad_client::transport::{Command, Event, publish, run_backend};
+
+pub(crate) fn start_reader(s: &mut crate::State, backend: crate::backend::Backend) {
+    use codenomad_client::bounded;
+    let (out, incoming) = bounded(64);
+    let (commands, input) = bounded(1);
+    let (reader, lane) = super::reader::Reader::open();
+    s.incoming = Some(incoming);
+    s.commands = Some(commands);
+    s.reader = Some(reader);
+    let wake = s.wake.clone();
+    crate::platform::spawn(async move {
+        if codenomad_client::transport::run_backend_reading(
+            backend,
+            out.clone(),
+            input,
+            wake.clone(),
+            lane,
+        )
+        .await
+        .is_err()
+        {
+            publish(&out, &wake, Event::Failed).await;
+        }
+    });
+}
 #[cfg(test)]
 pub use codenomad_client::wire::decode_event;
 use codenomad_client::{Receiver, Sender};

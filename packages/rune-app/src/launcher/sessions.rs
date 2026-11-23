@@ -255,6 +255,7 @@ pub(super) fn retire_session(s: &mut State, id: &str) {
     }
     s.commands = None;
     s.incoming = None;
+    s.reader = None;
     s.agent = None;
     s.files = None;
     s.messages.clear();
@@ -313,19 +314,7 @@ pub(super) fn bind(
     s.paging = false;
     s.history_error = false;
     s.revision += 1;
-    let (out, incoming) = bounded(64);
-    let (commands, input) = bounded(1);
-    s.incoming = Some(incoming);
-    s.commands = Some(commands);
-    let wake = s.wake.clone();
-    crate::platform::spawn(async move {
-        if crate::transport::run_backend(b, out.clone(), input, wake.clone())
-            .await
-            .is_err()
-        {
-            crate::transport::publish(&out, &wake, crate::transport::Event::Failed).await;
-        }
-    });
+    crate::transport::start_reader(s, b);
     s.show_chat();
     crate::workspace::capture(s);
     if !same_session {
@@ -345,6 +334,7 @@ pub fn back(s: &mut State) {
     s.agent = None;
     s.commands = None;
     s.incoming = None;
+    s.reader = None;
     s.files = None;
     if let Some(git) = &mut s.git.owner {
         git.online(false);

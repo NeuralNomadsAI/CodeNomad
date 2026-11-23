@@ -35,6 +35,7 @@ pub enum Event {
     Connected(crate::backend::Backend),
     Workspace(WorkspaceEvent),
     AgentHint(bool),
+    ObservedRunning(bool),
     History(Vec<Message>),
     Sync(Page),
     Older(Page),
@@ -64,4 +65,17 @@ pub async fn run_backend(
         return Ok(());
     }
     crate::recovery::run(backend, out, input, wake).await
+}
+
+pub async fn run_backend_reading(
+    backend: crate::backend::Backend,
+    out: Sender<Event>,
+    input: Receiver<Command>,
+    wake: Wake,
+    reading: crate::recovery::ReadingLane,
+) -> crate::history::Result<()> {
+    if !publish(&out, &wake, Event::Connected(backend.clone())).await {
+        return Ok(());
+    }
+    crate::recovery::run_with_reading(backend, out, input, wake, Some(reading)).await
 }

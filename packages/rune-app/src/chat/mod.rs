@@ -3,7 +3,9 @@ pub(crate) mod actions;
 mod content_tests;
 mod document;
 mod links;
+pub(crate) mod reader;
 pub(crate) mod reading;
+pub(crate) use reader::{resume, suspend};
 #[cfg(test)]
 mod rtl_tests;
 #[cfg(test)]

@@ -51,6 +51,7 @@ pub fn dispatch() -> bool {
         ("--probe-real-history", real_history::run),
         ("--probe-fresh", session_transport::fresh),
         ("--probe-recovery", recovery::run),
+        ("--probe-suspend", recovery::suspend),
         ("--probe-contract", session_transport::contract),
     ] {
         if crate::platform::has_flag(flag) {

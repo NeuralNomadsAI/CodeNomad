@@ -14,6 +14,7 @@ pub(super) struct Cache {
     messages: Vec<Message>,
     draft: TextEdit,
     incoming: Option<Receiver<Event>>,
+    reader: Option<crate::chat::reader::Reader>,
     commands: Option<Sender<Command>>,
     phase: Phase,
     revision: u64,
@@ -24,6 +25,21 @@ pub(super) struct Cache {
     input_scope: std::rc::Rc<()>,
 }
 impl Cache {
+    pub(super) fn history_weight(&self) -> (usize, usize) {
+        (
+            self.messages.len(),
+            crate::history::retained_bytes(&self.messages),
+        )
+    }
+    pub(super) fn history_protected(&self) -> bool {
+        self.phase == Phase::Streaming || self.navigation_blocked()
+    }
+    pub(super) fn evict_history(&mut self) {
+        self.messages = Vec::new();
+        self.can_older = false;
+        self.paging = false;
+        self.transcript_display.evict_rendered();
+    }
     pub fn navigation_blocked(&self) -> bool {
         self.agent
             .as_ref()
@@ -42,6 +58,7 @@ impl Cache {
             messages: std::mem::take(&mut s.messages),
             draft: std::mem::replace(&mut s.draft, TextEdit::new("")),
             incoming: s.incoming.take(),
+            reader: s.reader.take(),
             commands: s.commands.take(),
             phase: std::mem::replace(&mut s.phase, Phase::Ready),
             revision: s.revision,
@@ -62,6 +79,7 @@ impl Cache {
         s.messages = self.messages;
         s.draft = self.draft;
         s.incoming = self.incoming;
+        s.reader = self.reader;
         s.commands = self.commands;
         s.phase = self.phase;
         s.revision = self.revision;
@@ -83,7 +101,7 @@ pub(super) fn status(
     use rune_theme_codenomad::tabs::Status;
     if agent.is_some_and(|a| !a.ids().is_empty()) {
         Some(Status::Permission)
-    } else if *phase == Phase::Streaming {
+    } else if *phase == Phase::Streaming || agent.is_some_and(|a| a.online && a.running) {
         Some(Status::Working)
     } else if matches!(phase, Phase::Failed | Phase::Reconnecting) {
         Some(Status::Unavailable)

@@ -14,6 +14,19 @@ pub struct Page {
     pub newer: Option<Value>,
     pub running: bool,
 }
+
+pub fn retained_bytes(rows: &[Message]) -> usize {
+    rows.iter().fold(0usize, |total, row| {
+        total.saturating_add(
+            size_of::<Message>()
+                + row.id.len()
+                + row.role.len()
+                + row.body.len()
+                + crate::content::bytes(&row.parts)
+                + crate::content::tool_text_bytes(&row.parts),
+        )
+    })
+}
 pub fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 256
