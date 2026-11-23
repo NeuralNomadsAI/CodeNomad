@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { after, before, describe, it } from "node:test"
+import { setImmediate } from "node:timers/promises"
 import { encodeClientSnapshotV2 } from "./client-state-partitions.ts"
 import { normalizePersistedOutline } from "./session-outline-persistence.ts"
 import { compactMissionKey } from "./tab-view-state-migration.ts"
@@ -488,6 +489,33 @@ describe("flush behavior", () => {
     release.resolve(true)
     await closing
     assert.deepEqual(writes, ["in flight", "latest"])
+  })
+
+  it("closes successfully after waiting for a retry that supersedes a failed autosave", async t => {
+    const started = deferred<void>(), release = deferred<boolean>()
+    const writes: string[] = []
+    const state = await boot({
+      loadClientState: async () => loadResult(),
+      saveClientState: async (_token, snapshot) => {
+        writes.push(snapshot.session.tabs[0].sidecarId)
+        if (writes.length === 1) throw new Error("transient save failure")
+        started.resolve()
+        return release.promise
+      },
+    })
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    state.updateRestorableSession(session("first"))
+    t.mock.timers.tick(500)
+    await setImmediate()
+    assert.deepEqual(writes, ["first"])
+
+    state.updateRestorableSession(session("latest"))
+    t.mock.timers.tick(500)
+    await started.promise
+    const closing = state.flushClientState()
+    release.resolve(true)
+    await closing
+    assert.deepEqual(writes, ["first", "latest"])
   })
 
   it("waits for replacement writes, retries once, and bounds persistent failures", async () => {

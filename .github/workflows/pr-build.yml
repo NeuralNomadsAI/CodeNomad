@@ -777,6 +777,10 @@ jobs:
           packages/ui/src/stores/temporary-instances.test.ts
           packages/ui/src/stores/closed-workspace-drafts.test.ts
 
+      - name: Test compaction and verify natural exit
+        timeout-minutes: 1
+        run: node --conditions=browser --import tsx --test packages/ui/src/stores/opencode-compaction.test.ts
+
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"
 

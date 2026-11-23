@@ -14,13 +14,8 @@ const deadlineMs = 30_000
 // successful cleanup: the imported application must release its own resources.
 function run(args: string[]): Promise<{ code: number | null; signal: string | null; timedOut: boolean; output: string }> {
   return new Promise((resolve, reject) => {
-    // Node's parent test-child marker otherwise suppresses a nested --test
-    // runner. The child owns its own runner.
-    const env = { ...process.env }
-    delete env.NODE_TEST_CONTEXT
     const child = spawn(process.execPath, args, {
       cwd: root,
-      env,
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
     })
@@ -58,17 +53,6 @@ test("importing the actual serverEvents singleton without a browser exits natura
   ])
   assert.match(result.output, /serverEvents import complete/)
   assertNaturalExit(result)
-})
-
-test("the compaction store tests pass and exit naturally without force-exit", async () => {
-  const result = await run(["--conditions=browser", "--import", "tsx", "--test", "--test-reporter=tap",
-    "packages/ui/src/stores/opencode-compaction.test.ts",
-  ])
-  assertNaturalExit(result)
-  assert.match(result.output, /^# pass [1-9]\d*$/m)
-  assert.match(result.output, /^# fail 0$/m)
-  assert.match(result.output, /^# cancelled 0$/m)
-  assert.match(result.output, /^# skipped 0$/m)
 })
 
 test("applies messages in one frame in stream order and flushes before a disconnect", async t => {

@@ -154,7 +154,10 @@ function enqueuePendingSave(republish = false): Promise<void> {
     session: partitionProtocolVersion === 1 ? loadedRestorableSession() : withoutPartitionCaches(loadedRestorableSession()),
   }
   const normalizedSnapshot = decodeClientSnapshot(snapshot)
-  if (!normalizedSnapshot) return Promise.reject(new Error("Client snapshot normalization failed"))
+  if (!normalizedSnapshot) {
+    lastSaveError = new Error("Client snapshot normalization failed")
+    return Promise.reject(lastSaveError)
+  }
   layout = { ...normalizedSnapshot.layout }
   dirty = false
   const save = async () => {
@@ -510,33 +513,26 @@ export async function flushWorkspaceFileDraftsForClose(): Promise<void> {
 export async function flushClientState(): Promise<void> {
   cancelSaveTimer()
   if (!snapshotOwnsLayout) return enqueuePendingSave(true)
-  let lastError = lastSaveError
-  for (let attempts = 0; attempts < FLUSH_MAX_ATTEMPTS; attempts += 1) {
+  for (let attempts = 0; ; attempts += 1) {
     while (true) {
       const pending = writeQueue
       await pending
       if (pending === writeQueue) break
     }
     if (republishOnFlush && canWriteSnapshot()) dirty = true
-    if (!dirty) {
-      if (lastError !== undefined) throw lastError
+    if (!dirty || !canWriteSnapshot()) {
+      if (lastSaveError !== undefined) throw lastSaveError
       return
     }
-    if (!canWriteSnapshot()) {
-      const writeError = lastSaveError ?? lastError
-      if (writeError !== undefined) throw writeError
-      return
+    if (attempts === FLUSH_MAX_ATTEMPTS) {
+      throw lastSaveError ?? new Error("Client state remained dirty after the final flush attempt")
     }
     try {
       await enqueuePendingSave(true)
-      lastError = undefined
-    } catch (error) {
-      lastError = error
+    } catch {
+      // Re-read the outcome after the queue settles: a newer write can supersede this attempt.
     }
   }
-  await writeQueue
-  if (!dirty) return
-  throw lastError ?? new Error("Client state remained dirty after the final flush attempt")
 }
 
 export async function clearRestoredClientState(): Promise<void> {
