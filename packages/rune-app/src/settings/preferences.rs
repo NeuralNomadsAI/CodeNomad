@@ -192,6 +192,20 @@ impl Preferences {
         }
     }
 
+    pub(super) fn notification_config(&self) -> Option<&Value> {
+        self.config.confirmed()
+    }
+
+    pub(super) fn notification_config_refreshing(&self) -> bool {
+        self.config.refreshing()
+    }
+
+    #[cfg(test)]
+    pub(super) fn reset_notification_fixture(&mut self) {
+        self.config = Default::default();
+        self.fixture();
+    }
+
     pub fn saved(&self, owner: Owner) -> Option<&Value> {
         self.doc(owner).snapshot.as_ref()
     }

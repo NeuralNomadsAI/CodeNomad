@@ -177,6 +177,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         return;
     };
     let removed = ui.entries.remove(index);
+    s.notifications.forget_tab(id);
     if let Tab::Workspace(mut saved) = removed.saved {
         // Undelivered copies still belong to their closed source.
         saved
