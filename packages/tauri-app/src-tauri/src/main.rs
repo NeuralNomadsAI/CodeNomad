@@ -779,7 +779,10 @@ fn cli_restart(
     .unwrap_or_else(|| Err("Application shutdown is in progress".to_string()))
 }
 
-#[tauri::command(async)]
+// Windows keepawake uses SetThreadExecutionState: acquire, release and window
+// destruction must use the same thread. Unix uses OS service requests instead.
+#[cfg_attr(windows, tauri::command)]
+#[cfg_attr(not(windows), tauri::command(async))]
 fn wake_lock_start(
     webview: tauri::Webview,
     state: tauri::State<AppState>,
@@ -809,7 +812,8 @@ fn wake_lock_start(
     Ok(())
 }
 
-#[tauri::command(async)]
+#[cfg_attr(windows, tauri::command)]
+#[cfg_attr(not(windows), tauri::command(async))]
 fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<AppState>) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
     let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
