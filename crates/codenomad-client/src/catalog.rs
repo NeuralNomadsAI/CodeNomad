@@ -6,6 +6,9 @@ use crate::{
 use futures_lite::StreamExt;
 use serde_json::{Value, json};
 
+mod inventory;
+pub use inventory::{InventoryPage, InventoryScope, Member};
+
 #[derive(Debug)]
 pub struct CreationRefused;
 impl std::fmt::Display for CreationRefused {
@@ -234,29 +237,19 @@ impl Backend {
             }
         };
         let data = read_json(request.send().await?.error_for_status()?).await?;
-        let rows = data["data"]
-            .as_array()
-            .filter(|v| v.len() <= 200)
-            .ok_or("invalid session list")?;
-        let mut ids = std::collections::HashSet::new();
+        let page = inventory::decode_page(&data)?;
         let mut sessions = vec![];
-        for row in rows {
-            let item = session_at(row, directory)?;
-            if !ids.insert(item.id.clone()) {
-                return Err("duplicate session".into());
+        for member in page.members {
+            if !crate::server_path::same(&member.directory, directory) {
+                return Err("foreign session location".into());
             }
-            if row["parentID"].is_null() && !item.id.starts_with("ses_cn_schedule_") {
-                sessions.push(item);
+            if member.parent.is_none() && !member.session.id.starts_with("ses_cn_schedule_") {
+                sessions.push(member.session);
             }
         }
-        let next = match &data["cursor"]["next"] {
-            Value::Null => None,
-            Value::String(v) if !v.is_empty() && v.len() <= 65536 => Some(v.clone()),
-            _ => return Err("invalid session cursor".into()),
-        };
         Ok(Sessions {
             rows: sessions,
-            next,
+            next: page.next,
         })
     }
     async fn session_directories(&self, project: &Project) -> Result<Vec<String>> {
@@ -342,21 +335,58 @@ impl Backend {
     pub async fn bind(&self, project: &Project, id: &str, fresh: bool) -> Result<Self> {
         Ok(self.bind_session(project, id, fresh).await?.0)
     }
+    // A session can move across a live cursor without leaving the workspace.
+    pub async fn confirm_missing_sessions(
+        &self,
+        project: &Project,
+        ids: Vec<String>,
+        missing: async_channel::Sender<(String, crate::runtime::Instant)>,
+        notify: impl Fn(),
+    ) {
+        futures_lite::future::race(
+            async {
+                for id in ids {
+                    let started = crate::runtime::Instant::now();
+                    let confirmed = futures_lite::future::race(
+                        async {
+                            self.bind_session(project, &id, false)
+                                .await
+                                .is_err_and(|error| error.is::<SessionMissing>())
+                        },
+                        async {
+                            crate::runtime::sleep(std::time::Duration::from_secs(1)).await;
+                            false
+                        },
+                    )
+                    .await;
+                    if confirmed {
+                        if missing.send((id, started)).await.is_err() {
+                            return;
+                        }
+                        notify();
+                    }
+                }
+            },
+            missing.closed(),
+        )
+        .await;
+    }
     pub async fn bind_session(
         &self,
         project: &Project,
         id: &str,
         fresh: bool,
     ) -> Result<(Self, Session)> {
-        self.bind_at(project, id, Some(&project.path), fresh).await
+        let (backend, session, _) = self.bind_session_placed(project, id, fresh).await?;
+        Ok((backend, session))
     }
-    pub async fn bind_at(
+
+    pub async fn bind_session_placed(
         &self,
         project: &Project,
         id: &str,
-        expected: Option<&str>,
         fresh: bool,
-    ) -> Result<(Self, Session)> {
+    ) -> Result<(Self, Session, String)> {
         if !valid_id(id) || id.starts_with("ses_cn_schedule_") {
             return Err("invalid session".into());
         }
@@ -366,6 +396,7 @@ impl Backend {
                 "{}workspaces/{}/instance/api/session/{id}",
                 self.base, project.id
             ))
+            .header("x-codenomad-session-placement", "1")
             .send()
             .await?;
         let status = response.status();
@@ -386,21 +417,25 @@ impl Backend {
             });
         }
         let data = read_json(response.error_for_status()?).await?;
-        let directory = data["data"]["location"]["directory"]
+        let row = &data["data"];
+        let placement = row["listWorktreeSlug"]
             .as_str()
-            .ok_or("missing session directory")?;
-        if expected.is_some_and(|d| !crate::server_path::same(d, directory))
-            || (!crate::server_path::same(&project.path, directory)
-                && (fresh
-                    || !self
-                        .session_directories(project)
-                        .await?
-                        .iter()
-                        .any(|d| crate::server_path::same(d, directory))))
+            .filter(|slug| valid_id(slug));
+        let info = if placement.is_some()
+            && let Some(path) = row["location"]["directory"]
+                .as_str()
+                .filter(|path| crate::absolute_server_path(path))
         {
-            return Err("foreign session location".into());
-        }
-        let info = session_at(&data["data"], directory)?;
+            session(
+                row,
+                &Project {
+                    id: project.id.clone(),
+                    path: path.into(),
+                },
+            )?
+        } else {
+            session(row, project)?
+        };
         if info.id != id {
             return Err("session response identity mismatch".into());
         }
@@ -409,7 +444,7 @@ impl Backend {
         backend.session = id.into();
         backend.fresh_mode = fresh;
         backend.client_id = crate::http::client_id()?;
-        Ok((backend, info))
+        Ok((backend, info, placement.unwrap_or("root").into()))
     }
 }
 fn server_id(data: &Value) -> Result<String> {

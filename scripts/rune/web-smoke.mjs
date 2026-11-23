@@ -8,7 +8,7 @@ import {chromium} from 'playwright'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction} from './web-mobile.mjs'
-import {mobileLive} from './web-live.mjs'
+import {mobileLive, revokedLauncher} from './web-live.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
@@ -57,9 +57,12 @@ try {
       let eventSource=0
       let releaseLinked
       const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
+      let markLinked
+      const linkedRequested=values.mobile?new Promise(resolve=>{markLinked=resolve}):null
       const failLinkedPage=values.mobile&&!control&&colorScheme==='light'
       const linkedReads=[]
       let linkedContinuationRecovered
+      let linkedAcrossSwitch
       page.on('response',async response=>{
         if(!values.connected)return
         const request=response.request(),pathname=new URL(response.url()).pathname
@@ -84,7 +87,10 @@ try {
             catch{errors.push({name:'WorkspaceAdmission',message:'Private workspace response was refused before delivery'});return route.abort('blockedbyclient')}
           }
         }
-        if(values.mobile&&req.method()==='GET'&&p.endsWith('/worktrees'))await beforeLinked
+        if(values.mobile&&req.method()==='GET'&&p.endsWith('/worktrees')){
+          markLinked()
+          await beforeLinked
+        }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/instance/api/session')&&
           requested.searchParams.get('directory')===path.join(path.dirname(values.project),'linked')){
           const cursor=requested.searchParams.get('cursor')
@@ -145,7 +151,24 @@ try {
           await openSessions()
           if(values.mobile){
             await row('Existing history').waitFor()
-            releaseLinked()
+            if(colorScheme==='dark'){
+              await linkedRequested
+              await press(messages['instanceTabs.new.ariaLabel'])
+              const blank=page.getByRole('tab',{name:messages['instanceTabs.new.ariaLabel'],exact:true})
+              await page.waitForFunction(tab=>[...document.querySelectorAll('[role=tab][aria-selected=true]')].some(el=>el.textContent===tab),messages['instanceTabs.new.ariaLabel'])
+              assert.equal(await blank.getAttribute('aria-selected'),'true')
+              const continuation=page.waitForResponse(response=>{
+                const requested=new URL(response.url())
+                return requested.pathname.endsWith('/instance/api/session')&&requested.searchParams.has('cursor')&&
+                  requested.searchParams.get('directory')===path.join(path.dirname(values.project),'linked')&&response.ok()
+              })
+              void continuation.catch(()=>{})
+              releaseLinked()
+              await continuation
+              await press(values.project,'tab')
+              await openSessions()
+              linkedAcrossSwitch=true
+            }else releaseLinked()
             await row('Linked checkout session').waitFor()
             if(failLinkedPage){
               await sessions.getByText(messages['rune.list_error'],{exact:true}).waitFor()
@@ -225,9 +248,10 @@ try {
         if(values.mobile)measured.android=await mobileInteraction(page,{
           prompt:messages['rune.prompt'], send:messages['promptInput.overlay.send'],
           latest:messages['rune.latest'],
-        },imagePage)
+        },imagePage,{numbers:palette.numbers[colorScheme],colors:palette[colorScheme]})
         if(values.mobile){
           measured.linkedContinuationRecovered=linkedContinuationRecovered
+          measured.linkedAcrossSwitch=linkedAcrossSwitch
           measured.network=colorScheme==='dark'?{rttMs:80,downloadBytesPerSecond:2_500_000,uploadBytesPerSecond:625_000}:'loopback'
           assert.deepEqual(measured.viewport,{width,height,touch:true,dpr:control?1:android.deviceScaleFactor,platform:'Android',mobile:true})
           const {width:backingWidth,height:backingHeight}=measured.canvases[0]
@@ -270,6 +294,10 @@ try {
           assert(retained.every(id=>after.includes(id)),'Departure must preserve every unowned fixture record')
           if(values.mobile)assert.equal(await page.evaluate(()=>sessionStorage.getItem('codenomad.rune.alpha.records-released')),'1')
           measured.departure={owned,retained,ownedRemoved:true,unownedPreserved:true}
+          if(values.mobile&&control){
+            measured.revokedLauncherNoPassword=await revokedLauncher({context,url,messages})
+            assert.equal(forbiddenRequests.length,0,'Launcher recovery may not submit a password')
+          }
         }
         records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,...measured,
           ...(values.mobile?{requiredChecksPassed:true,knownGaps:measured.live.older.status==='known-gap'?['older-button-disabled-state']:[]}:{pass:true})})

@@ -86,7 +86,7 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
   } finally { await browser.close() }
 }
 
-export async function mobileInteraction(page, labels, imagePage) {
+export async function mobileInteraction(page, labels, imagePage, theme) {
   const cdp = await page.context().newCDPSession(page)
   const evidence = {}
   async function probe(name, check) {
@@ -96,6 +96,36 @@ export async function mobileInteraction(page, labels, imagePage) {
   const composer = role('group', labels.prompt)
   const send = role('button', labels.send)
   const editor = page.locator('textarea:focus')
+  const pad=theme.numbers['space-md'],gap=theme.numbers['space-sm']
+  async function fieldRect(){
+    const group=await composer.boundingBox()
+    const actions=await composer.getByRole('button').evaluateAll(buttons=>Math.min(...buttons.map(button=>button.getBoundingClientRect().top)))
+    assert(group&&Number.isFinite(actions))
+    const x=Math.ceil(group.x+pad),y=Math.ceil(group.y+pad)
+    const width=Math.floor(group.x+group.width-pad)-x,height=Math.floor(actions-gap)-y
+    assert(width>0&&height>0)
+    return {x,y,width,height}
+  }
+  const capture=async clip=>`data:image/png;base64,${(await page.screenshot({clip,scale:'css'})).toString('base64')}`
+  async function glyphMatch(baseline, reference, candidate){
+    return imagePage.evaluate(async ([baseline,reference,candidate])=>{
+      const [a,b,c]=await globalThis.__codenomadReadPngs([baseline,reference,candidate])
+      let referencePixels=0,matched=0,minX=a.width,maxX=0,minY=a.height,maxY=0
+      for(let i=0;i<a.pixels.length;i+=4){
+        if(![0,1,2].some(k=>Math.abs(a.pixels[i+k]-b.pixels[i+k])>28))continue
+        referencePixels++
+        if(![0,1,2].every(k=>Math.abs(c.pixels[i+k]-b.pixels[i+k])<=36)||
+           ![0,1,2].some(k=>Math.abs(c.pixels[i+k]-a.pixels[i+k])>20))continue
+        const x=i/4%a.width,y=Math.floor(i/4/a.width)
+        minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y)
+        matched++
+      }
+      return {matched,referencePixels,width:maxX-minX+1,height:maxY-minY+1}
+    },[baseline,reference,candidate])
+  }
+  function looksLikeGlyphs(match){
+    return match.matched>=25&&match.matched>=match.referencePixels*0.5&&match.width>=8&&match.height>=4
+  }
   const center = async locator => {
     const rect = await locator.boundingBox()
     assert(rect && rect.width && rect.height)
@@ -108,6 +138,7 @@ export async function mobileInteraction(page, labels, imagePage) {
   const waitValue = value => page.waitForFunction(value =>
     document.activeElement?.tagName === 'TEXTAREA' && document.activeElement.value === value, value, {timeout:2500})
   const text = 'été 日本語 🦀'
+  let blank
   try {
     await probe('touchScroll', async () => {
       const before = await rowSample()
@@ -139,48 +170,53 @@ export async function mobileInteraction(page, labels, imagePage) {
       const focus = await center(composer)
       await page.touchscreen.tap(focus.x,focus.y)
       await editor.waitFor({state:'attached',timeout:2500})
+      blank=await capture(await fieldRect())
       await cdp.send('Input.insertText',{text})
       await waitValue(text)
       return {...await editor.evaluate(el => ({focused:true,name:el.getAttribute('aria-label'),inputMode:el.inputMode,
         autocapitalize:el.autocapitalize,spellcheck:el.spellcheck})),tap:'center'}
     })
     await probe('compositionAndReplacement', async () => {
-      const bounds=await composer.boundingBox()
-      assert(bounds)
-      const clip={x:Math.ceil(bounds.x+2),y:Math.ceil(bounds.y+2),width:Math.floor(bounds.width-4),height:Math.floor(bounds.height/2)-4}
-      const capture=async()=>`data:image/png;base64,${(await page.screenshot({clip,scale:'css'})).toString('base64')}`
-      const before=await capture()
-      await cdp.send('Input.imeSetComposition',{text:'かな',selectionStart:2,selectionEnd:2})
-      await waitValue(`${text}かな`)
-      let preedit
+      const clip=await fieldRect()
+      const before=await capture(clip)
+      const composing='かな'
+      await cdp.send('Input.imeSetComposition',{text:composing,selectionStart:2,selectionEnd:2})
+      await waitValue(text+composing)
+      // Keep samples taken before commit; the committed glyphs provide an underline-free reference.
+      const samples=[]
+      for(let probe=0;probe<3;probe++)samples.push(await capture(clip))
+      await cdp.send('Input.insertText',{text:composing})
+      await waitValue(text+composing)
+      let preedit,reference
       for(const until=Date.now()+2500;;){
-        preedit=await imagePage.evaluate(async ([before, after])=>{
-          const [a,b]=await globalThis.__codenomadReadPngs([before,after])
-          let first=a.width,last=0,changed=0
-          for(let i=0;i<a.pixels.length;i+=4){
-            if(![0,1,2].some(c=>Math.abs(a.pixels[i+c]-b.pixels[i+c])>16))continue
-            const x=i/4%a.width
-            first=Math.min(first,x);last=Math.max(last,x);changed++
-          }
-          return {changedInkPixels:changed,inkWidth:last-first+1}
-        },[before,await capture()])
-        if(preedit.changedInkPixels>=25&&preedit.inkWidth>=8)break
-        assert(Date.now()<until,'Rune must paint the preedit before the browser commits it')
+        reference=await capture(clip)
+        const matches=await Promise.all(samples.map(sample=>glyphMatch(before,reference,sample)))
+        preedit=matches.find(looksLikeGlyphs)
+        if(preedit)break
+        assert(Date.now()<until,`Rune must paint the committed glyph shapes during preedit: ${JSON.stringify(matches)}`)
       }
-      await cdp.send('Input.insertText',{text:'仮名'})
-      await waitValue(`${text}仮名`)
+      assert(!looksLikeGlyphs(await glyphMatch(before,reference,before)),'The no-glyph control must fail')
       // An external text service can replace a range without emitting key strokes.
       await editor.evaluate(el => {
         el.setRangeText('Été',0,3,'end')
         el.dispatchEvent(new InputEvent('input',{inputType:'insertReplacementText',data:'Été',bubbles:true}))
       })
-      await waitValue('Été 日本語 🦀仮名')
+      const draft='Été 日本語 🦀かな'
+      await waitValue(draft)
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+      const edited=await capture(clip)
       await page.keyboard.press('Tab')
       await page.waitForFunction(()=>!document.querySelector('textarea:focus')&&[...document.querySelectorAll('textarea')].every(el=>!el.value))
       const point=await center(composer)
       await page.touchscreen.tap(point.x,point.y)
-      await waitValue('Été 日本語 🦀仮名')
-      return {composed:true,replaced:true,preedit,restoredAfterBlur:true}
+      await waitValue(draft)
+      let refocused
+      for(const until=Date.now()+2500;;){
+        refocused=await glyphMatch(blank,edited,await capture(clip))
+        if(looksLikeGlyphs(refocused))break
+        assert(Date.now()<until,'The committed glyphs must reappear in the painted editor after refocus')
+      }
+      return {composed:true,replaced:true,preedit,restoredAfterBlur:true,refocused}
     })
     await probe('visualOcclusion', async () => {
       const value = await editor.inputValue()
@@ -192,7 +228,7 @@ export async function mobileInteraction(page, labels, imagePage) {
         const canvas = document.querySelector('canvas'), height = visualViewport.height
         return Math.abs(canvas.getBoundingClientRect().height-height)<1 && Math.abs(canvas.height-height*devicePixelRatio)<=1
       })
-      const field = await composer.boundingBox(), button = await send.boundingBox()
+      const field = await fieldRect(), button = await send.boundingBox()
       const shown = await canvas.boundingBox()
       const viewportBounds = await page.evaluate(() => ({top:visualViewport.offsetTop,bottom:visualViewport.offsetTop+visualViewport.height,
         left:visualViewport.offsetLeft,right:visualViewport.offsetLeft+visualViewport.width}))
@@ -200,6 +236,14 @@ export async function mobileInteraction(page, labels, imagePage) {
       await waitValue(value)
       assert(field&&field.height>0&&field.y>=top-1&&field.y+field.height<=bottom+1&&field.x>=left-1&&field.x+field.width<=right+1,
         'The composer field must stay visible in the smaller viewport')
+      const painted=await imagePage.evaluate(async ([source,hex])=>{
+        const [image]=await globalThis.__codenomadReadPngs([source])
+        const surface=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16))
+        const {width,height,pixels}=image
+        return [[2,2],[width-3,2],[2,height-3],[width-3,height-3]].every(([x,y])=>
+          surface.every((channel,i)=>Math.abs(channel-pixels[(y*width+x)*4+i])<=12))
+      },[await capture(field),theme.colors['surface-field']])
+      assert(painted,'Sample the actual field surface inside the smaller viewport')
       assert(button?.y>=top && button?.y+button?.height<=bottom+1,'Send must stay within the smaller viewport')
       await page.setViewportSize(viewport)
       return {resized:true,canvas:shown,field,button,viewportBounds,retainedDraft:true,fieldVisible:true,sendReachable:true}

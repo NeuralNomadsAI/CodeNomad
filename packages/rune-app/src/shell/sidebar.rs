@@ -16,6 +16,36 @@ use rune_theme_codenomad::{
     },
 };
 
+fn session_rows(
+    l: &launcher::Launcher,
+    remote_search: bool,
+) -> (&[crate::catalog::Session], &[crate::catalog::Session]) {
+    if remote_search {
+        (&l.search_results.rows, &[])
+    } else {
+        (
+            &l.sessions,
+            l.linked
+                .pages
+                .as_ref()
+                .map_or(&[], |page| page.rows.as_slice()),
+        )
+    }
+}
+
+fn session_row(
+    l: &launcher::Launcher,
+    remote_search: bool,
+    index: usize,
+) -> Option<&crate::catalog::Session> {
+    let (first, linked) = session_rows(l, remote_search);
+    if index < first.len() {
+        first.get(index)
+    } else {
+        linked.get(index - first.len())
+    }
+}
+
 pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     let Some(l) = s.screen.launcher() else {
         return col();
@@ -109,51 +139,74 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     }
     let searching = l.show_search && !l.search.text.trim().is_empty();
     let mut seen = std::collections::HashSet::new();
-    let sessions: Vec<_> = if searching {
-        l.search_results.rows.iter().collect()
-    } else {
-        l.sessions
+    let remote_search = cfg!(target_arch = "wasm32") && searching;
+    let (first, linked) = session_rows(l, remote_search);
+    let filter = l.search.text.to_lowercase();
+    let filtered = std::rc::Rc::new(
+        first
             .iter()
-            .chain(l.linked.pages.iter().flat_map(|page| &page.rows))
-            .filter(|row| seen.insert(row.id.as_str()))
-            .collect()
-    };
-    let count = sessions.len();
-    let selected = workspace::active_session(s);
-    let mut items = col().full_width().role("list").label(title).focus_group();
-    for session in sessions {
-        let id = session.id.clone();
-        let title = if session.title.is_empty() {
-            t("sessionList.session.untitled")
-        } else {
-            &session.title
-        };
-        let key = format!("session-{id}");
-        items = items.child(
+            .chain(linked)
+            .enumerate()
+            .filter_map(|(index, row)| {
+                ((remote_search || filter.is_empty() || row.title.to_lowercase().contains(&filter))
+                    && seen.insert(row.id.as_str()))
+                .then_some(index)
+            })
+            .collect::<Vec<_>>(),
+    );
+    let count = filtered.len();
+    let for_key = filtered.clone();
+    let items = layout::transcript_rows(
+        filtered.len(),
+        move |s: &State, i| {
+            s.screen
+                .launcher()
+                .and_then(|l| session_row(l, remote_search, for_key[i]))
+                .map_or_else(
+                    || std::borrow::Cow::Owned(format!("row-{i}")),
+                    |row| std::borrow::Cow::Owned(format!("session-{}", row.id)),
+                )
+        },
+        move |s: &State, i| {
+            let Some(session) = s
+                .screen
+                .launcher()
+                .and_then(|l| session_row(l, remote_search, filtered[i]))
+            else {
+                return rune::el();
+            };
+            let title = if session.title.is_empty() {
+                t("sessionList.session.untitled")
+            } else {
+                &session.title
+            };
+            let id = session.id.clone();
             shell::session_row(
                 title,
-                selected == Some(id.as_str()),
+                workspace::active_session(s) == Some(id.as_str()),
                 disabled,
-                screen::action_tx(scope, move |s, tx| {
-                    launcher::choose(s, id.clone(), tx);
+                screen::action_tx(&s.input_scope, move |s, tx| {
+                    launcher::choose(s, id.clone(), tx)
                 }),
             )
-            .key(key),
-        );
-    }
+        },
+    )
+    .role("list")
+    .label(title)
+    .focus_group();
     let mut items = col().full_width().child(items);
-    if searching && l.search_results.pending() {
+    if remote_search && l.search_results.pending() {
         items = items.child(text(t("rune.loading")).role("status"));
-    } else if searching && l.search_results.failed || !searching && l.linked.failed {
+    } else if remote_search && l.search_results.failed || !searching && l.linked.failed {
         items = items.child(text(t("rune.list_error")).role("alert"));
     } else if !searching && count == 0 && !l.pending && !l.linked.pending() {
         items = items.child(text(t("rune.empty_sessions")).pad(Space::Sm));
     }
-    if !searching && l.next.is_some() {
+    if !remote_search && l.next.is_some() {
         items = items.child(button(
             "more-sessions",
             t("rune.more"),
-            disabled || l.sessions.len() >= launcher::MAX_BROWSED_SESSIONS,
+            disabled || !l.can_page(),
             screen::action(scope, |s| launcher::list(s, true)),
         ));
     }

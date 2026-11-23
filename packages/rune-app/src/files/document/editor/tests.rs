@@ -53,6 +53,47 @@ fn edit(ui: &mut Ui, text: &str) {
 fn save(ui: &mut Ui) {
     ui.save_document(ui.document.scope());
 }
+
+#[cfg(feature = "test-support")]
+#[test]
+fn returning_to_sessions_keeps_the_file_draft_and_blocks_closing_its_tab() {
+    use crate::workspace;
+    let (mut s, http) = platform::block_on(async {
+        let http = Http::new().await;
+        let mut s = crate::init();
+        crate::gallery::shell::fixture(&mut s);
+        s.workspace = Some(workspace::Ui::new());
+        workspace::connected(&mut s);
+        let project = s.screen.launcher().unwrap().project.clone().unwrap();
+        workspace::opened(&mut s, &project);
+        let mut files = http.ui(s.documents.clone(), "tab-0");
+        open(&mut files, &http, "first.txt", "YQ==", "a").await;
+        edit(&mut files, "unsaved edit");
+        s.files = Some(files);
+        (s, http)
+    });
+    crate::launcher::back(&mut s);
+    assert!(s.screen.is_launcher() && s.files.is_none());
+    let mut rt = rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+    rt.update(|s, tx| workspace::close(s, "tab-0", tx));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_key(), "tab-0");
+    rt.update(|s, tx| workspace::new_tab(s, tx));
+    rt.update(|s, tx| workspace::close(s, "tab-0", tx));
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().snapshot().tabs.len(),
+        2
+    );
+    platform::block_on(async {
+        let mut files = http.ui(rt.state.documents.clone(), "tab-0");
+        open(&mut files, &http, "first.txt", "YQ==", "unsaved edit").await;
+        edit(&mut files, "a");
+    });
+    rt.update(|s, tx| workspace::close(s, "tab-0", tx));
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().snapshot().tabs.len(),
+        1
+    );
+}
 fn cached_listing(ui: &mut Ui) {
     use codenomad_client::files::{Entry, EntryKind};
     ui.tree.activate(true);
@@ -188,6 +229,7 @@ fn save_requires_a_post_gesture_read_and_retains_edits_after_departure() {
             assert!(Instant::now() < deadline);
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
+        assert!(store.has_tab_edits("tab-a"));
         assert_eq!(ui.document.edit().text, "x");
         ui.close_reader();
         let mut another_session = http.backend.clone();
@@ -198,7 +240,7 @@ fn save_requires_a_post_gesture_read_and_retains_edits_after_departure() {
             Reads::default(),
             Arc::new(|| {}),
         )
-        .with_documents(store, "tab-a".into());
+        .with_documents(store.clone(), "tab-a".into());
         resumed.online(true);
         resumed.open("first.txt".into());
         assert_eq!(resumed.document.edit().text, "c");
@@ -224,6 +266,9 @@ fn save_requires_a_post_gesture_read_and_retains_edits_after_departure() {
         put.reply(204, serde_json::Value::Null).await;
         poll(&mut resumed, |ui| !ui.document.pending()).await;
         assert!(!resumed.document.dirty());
+        // Closing the reader synchronizes the latest clean baseline in the registry.
+        resumed.close_reader();
+        assert!(!store.has_tab_edits("tab-a"));
         http.quiet().await;
     });
 }

@@ -22,7 +22,7 @@ pub fn view(
         .full_height()
         .reading_surface();
     if crate::platform::titlebar::available() {
-        root = root.child(crate::platform::titlebar::view(cx));
+        root = root.child(crate::platform::titlebar::view(s, cx));
     }
     if let Some(ui) = &s.workspace {
         root = root.child(workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside));
@@ -54,12 +54,25 @@ fn body(
     let has_project = s.screen.launcher().is_some_and(|l| l.project.is_some());
     let body = match &s.screen {
         Screen::Launcher(_) if !has_project => return launcher_view::view(s),
+        Screen::Launcher(_) if crate::git::has_preview(s) => crate::git::reader(s),
         Screen::Launcher(_) => {
             rune_theme_codenomad::shell::empty_conversation(t("instanceShell.empty.title"))
         }
         Screen::Chat { .. } => conversation(s, cx),
     };
     panels::view(s, cx.touch_controls(), has_project, body)
+}
+
+pub fn reader(s: &State, history: impl FnOnce() -> El) -> El {
+    if crate::git::has_preview(s) {
+        crate::git::reader(s)
+    } else {
+        history()
+    }
+}
+
+pub fn sync(s: &mut State) {
+    crate::git::show(s, s.shell.visible(1) && workspace::files_tab(s));
 }
 
 fn connection(s: &State) -> &'static str {
@@ -87,7 +100,12 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     }
     if event.mods == Mods::default() {
         return match event.key {
-            Key::Escape => s.shell.close_floating(tx),
+            Key::Escape if s.shell.close_floating(tx) => true,
+            Key::Escape if crate::git::has_preview(s) => {
+                crate::git::close_preview(s);
+                tx.instant();
+                true
+            }
             Key::Function(11) if crate::platform::titlebar::available() => {
                 tx.toggle_full_screen();
                 true

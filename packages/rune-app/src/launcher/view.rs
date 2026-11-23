@@ -10,6 +10,10 @@ pub fn view(s: &State) -> El {
     let crate::Screen::Launcher(l) = &s.screen else {
         return rune::el();
     };
+    #[cfg(target_arch = "wasm32")]
+    if l.connection.is_none() && crate::platform::pairing::required(s) {
+        return rune::el();
+    }
     let scope = s.input_scope.clone();
     let waiting = !crate::workspace::input_ready(s);
     let mut body = col().full_width().separate(Space::Md);

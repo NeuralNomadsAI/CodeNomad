@@ -120,6 +120,23 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
   return evidence
 }
 
+export async function revokedLauncher({context,url,messages}){
+  const page=await context.newPage()
+  try {
+    await page.goto(url.href,{waitUntil:'domcontentloaded'})
+    const connect=page.getByRole('button',{name:messages['folderSelection.servers.dialog.connect'],exact:true})
+    await connect.waitFor()
+    await command('revoke')
+    const box=await connect.boundingBox();assert(box)
+    await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
+    await page.getByRole('dialog',{name:messages['authRecovery.pairingTitle'],exact:true}).waitFor()
+    assert.equal(await page.getByText(messages['authRecovery.password'],{exact:true}).count(),0)
+    assert.equal(await page.getByRole('textbox',{name:messages['authRecovery.password'],exact:true}).count(),0)
+    assert.equal(await connect.count(),0,'Pairing replaces the launcher form instead of covering it')
+    return true
+  } finally { await page.close() }
+}
+
 export async function navigatePair(tab, url, {fromLink=false}={}){
   const pairPath='/api/remote-control/pair'
   const referrer='https://rune-pair-source.test/'
