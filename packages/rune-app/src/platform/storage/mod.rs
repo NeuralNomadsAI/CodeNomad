@@ -2,6 +2,13 @@ use crate::history::Result;
 use crate::workspace::MAX_BYTES;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn configured_directory() -> Option<std::path::PathBuf> {
+    crate::platform::setting("CODENOMAD_PROFILE")
+        .filter(|profile| profile.starts_with("trial-"))?;
+    crate::platform::setting("RUNE_STATE_DIR").map(std::path::PathBuf::from)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
     use std::{
