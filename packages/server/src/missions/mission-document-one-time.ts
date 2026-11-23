@@ -14,6 +14,7 @@ import type { QualifiedDocumentSourceSnapshot } from "../opencode/missions/nativ
 import { automaticMissionStartID, type CreationAcknowledgement } from "./preparation-result"
 import { missionCreationChoices } from "./creation-defaults"
 import { normalizedPreparationOptions } from "./preparation-input"
+import { truncateMissionText } from "./truncate-text"
 
 /** The owner keeps every operation inside its current native invocation graph. */
 export type MissionDocumentSources = (document: MissionDocument, current: () => true) => Promise<QualifiedDocumentSourceSnapshot>
@@ -49,7 +50,7 @@ export async function prepareMissionOneTimeDocument(access: MissionDocumentAcces
       return { acknowledgement: "recovered", value: previous }
     }
     const location = input.expectedCoordinatorLocation ?? project.location
-    const value = await store.create(id, { title: input.title ?? input.objective.trim().replace(/\s+/g, " ").slice(0, 60),
+    const value = await store.create(id, { title: input.title ?? truncateMissionText(input.objective.trim().replace(/\s+/g, " "), 60),
       objective: input.objective, ...(input.notes === undefined ? {} : { notes: input.notes }), template: input.template,
       ...(input.profiles === undefined ? {} : { profiles: input.profiles }), taskMode: input.taskMode ?? "native",
       // One-time admission resolves the owning backend/profile afresh at each send.

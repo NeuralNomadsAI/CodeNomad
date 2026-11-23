@@ -5,6 +5,8 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { Context, Effect } from "effect"
 import { compareEvents } from "../../missions/model"
+import { projectMissionCleanups } from "../../missions/cleanup-projection"
+import { foldJournalRange } from "../../missions/journal-range-view"
 import { stableToken } from "../../missions/receipt-identity"
 import { acquireNativeJournalRange } from "./native-journal-range"
 
@@ -58,6 +60,37 @@ function createKV(db: DatabaseSync) {
 const makeEvent = (id: string, createdAt: number, objective = "Prepare") => ({
   version: 1 as const, id, createdAt, missionID, projectID: project.id, type: "mission.updated" as const, objective,
   requestID: id, expectedRevision: 1, notesSpecified: false,
+})
+
+test("cleanup projections keep complete emoji within the UTF-16 budget", async () => {
+  const db = new DatabaseSync(":memory:")
+  try {
+    createKV(db)
+    const ascii = "a".repeat(239), emoji = "\u{1f600}"
+    const base = { version: 1 as const, missionID, projectID: project.id }
+    const creation = { ...base, id: "evt_create", createdAt: 1, type: "mission.created" as const,
+      projectCanonical: project.canonical, coordinator: { sessionID: "ses_coordinator", title: "Coordinator", location: { directory: project.canonical } },
+      template: "custom" as const, objective: ascii + emoji }
+    const deletion = { ...base, id: "evt_delete", createdAt: 3, type: "mission.deleted" as const,
+      requestID: "delete", expectedRevision: 2 }
+    const insert = db.prepare("INSERT OR REPLACE INTO kv VALUES (?, ?, 1, 1)")
+    const range = await fixture(db).acquire()
+    const history = [creation, deletion]
+    for (const event of history) insert.run(prefix + event.id, JSON.stringify(event))
+    const check = async (expected: string, update?: ReturnType<typeof makeEvent>) => {
+      if (update) insert.run(prefix + update.id, JSON.stringify(update))
+      const folded = await foldJournalRange(range, missionID)
+      assert.ok(!folded.unchanged && !folded.advanced)
+      for (const [cleanup] of [folded.cleanups, projectMissionCleanups(update ? [...history, update] : history)]) {
+        assert.equal(cleanup?.objective, expected)
+        assert.doesNotMatch(JSON.stringify(cleanup), /\\ud83d/i)
+      }
+    }
+    await check(ascii)
+    await check(ascii, makeEvent("evt_update", 2, ascii + emoji))
+    const fits = ascii.slice(1) + emoji
+    await check(fits, makeEvent("evt_update", 2, fits + "!"))
+  } finally { db.close() }
 })
 
 test("reads over 10,000 legacy events in replay order without transferring a full range's values at once", async () => {

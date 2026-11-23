@@ -8,6 +8,7 @@ import { dailyClockSchema, dailyOccurrence } from "./recurrence-clock"
 import { compareModelError, missionProfileRoles, missionProfilesInputSchema, validateMissionProfiles } from "./playbook-profiles"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "./lifecycle-input"
+import { truncateMissionText } from "./truncate-text"
 
 export const RECURRENCE_STORAGE_PREFIX = "codenomad-missions/recurrence-v1"
 export const RECURRENCE_HISTORY_LIMIT = 30
@@ -116,7 +117,7 @@ export function recurrenceDispatchAllowed(doc: RecurrenceDocument): boolean {
 }
 
 export function recurrenceTitle(instructions: string): string {
-  return instructions.split(/\r?\n/).find(line => line.trim())?.trim().slice(0, 120) ?? ""
+  return truncateMissionText(instructions.split(/\r?\n/).find(line => line.trim())?.trim() ?? "", 120)
 }
 
 export function recurrencePassageID(projectToken: string, scheduleID: string, scheduleRevision: number, due: RecurrenceDue): string {

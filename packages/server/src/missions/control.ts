@@ -33,6 +33,7 @@ import {
 import { COMPLETED_FINAL_ONLY, buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionRecipeCatalog } from "./recipes"
 import { assignmentInput, reportInput } from "./inputs"
 import { reportNotificationID } from "./receipt-identity"
+import { truncateMissionText } from "./truncate-text"
 import { isMissionTaskSession, missionCoordinatorSessionID, missionTaskSessionID } from "./session-identity"
 import { nativeDecisionProvenance, resolveDebuggingImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
 import type { HumanDecisionDiscovery, NativeHumanAnswerGate } from "./human-answer"
@@ -1997,7 +1998,7 @@ export class MissionControl {
     }
     return {
       sessionID: missionTaskSessionID(mission.id, task.id, this.options.now?.() ?? Date.now()),
-      title: `Mission · ${task.role}: ${task.title}`.slice(0, 160),
+      title: truncateMissionText(`Mission · ${task.role}: ${task.title}`, 160),
       location: (await this.ownedRootSession(coordinatorID)).location,
       managed: true,
     }
