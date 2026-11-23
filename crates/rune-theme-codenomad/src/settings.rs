@@ -1,4 +1,5 @@
 //! Preferences geometry follows settings-screen.css and the native Preferences bounds.
+pub mod stats;
 use crate::{
     Space, TextRole,
     layout::{self, Layout},

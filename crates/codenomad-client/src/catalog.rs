@@ -75,16 +75,25 @@ pub struct Sessions {
 
 impl Backend {
     pub async fn server_id(&self) -> Result<String> {
-        server_id(
-            &read_json(
-                self.client
-                    .get(format!("{}api/meta", self.base))
-                    .send()
-                    .await?
-                    .error_for_status()?,
-            )
-            .await?,
+        let meta = read_json(
+            self.client
+                .get(format!("{}api/meta", self.base))
+                .send()
+                .await?
+                .error_for_status()?,
         )
+        .await?;
+        let id = server_id(&meta)?;
+        if self
+            .client
+            .server_identity()
+            .is_none_or(|current| current == id)
+            && let Some(capabilities) = meta["capabilities"].as_array()
+        {
+            self.client
+                .observe_service_usage(capabilities.iter().any(|cap| cap == "service-usage"));
+        }
+        Ok(id)
     }
 
     pub async fn attest_server(&self) -> Result<String> {

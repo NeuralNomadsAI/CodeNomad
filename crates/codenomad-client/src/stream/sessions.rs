@@ -14,6 +14,19 @@ pub(super) async fn relay(
     let native = &value["event"];
     if own && value["type"] == "instance.event" {
         children::observe(b, native);
+        if let Some(urgent) = native["type"]
+            .as_str()
+            .and_then(crate::settings::stats::event)
+        {
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::StatsChanged {
+                    workspace_id: b.workspace.clone(),
+                    urgent,
+                },
+            ))
+            .await?;
+        }
         if (native["data"]["sessionID"] == b.session || native["type"] == "tui.toast.show")
             && let Some(event) = super::notifications::other_notice(native)
         {

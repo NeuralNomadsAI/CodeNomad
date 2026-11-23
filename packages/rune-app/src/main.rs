@@ -224,6 +224,10 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= workspace::poll(s, now, tx);
     changed |= settings::poll(s) | settings::poll_window_actions(s, tx);
     #[cfg(target_arch = "wasm32")]
+    {
+        changed |= settings::poll_stats(s, now, tx);
+    }
+    #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
         changed |= launcher::reopen(s);
     }

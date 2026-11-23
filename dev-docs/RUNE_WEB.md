@@ -16,6 +16,8 @@ Après une rupture SSE et un historique indisponible, l'inventaire authentifié 
 
 **Réglages → Général** écrit le contraste dans les préférences du serveur connecté ; **Auto** suit `prefers-contrast: more`. **Fournisseurs** ouvre le catalogue en lecture seule du projet courant, même sans conversation. La coupure du flux retire les données et annule la lecture ; la reconnexion rafraîchit le même projet. `packages/rune-app/fixtures/providers-web-fixture.mjs` exerce ces comportements dans Chromium sur un bundle WASM.
 
+**Statistiques** lit le cache et l’agrégat du service OpenCode par le backend du projet, dans le fuseau du navigateur. Masquer le document annule la lecture et la demande en attente ; le retour au premier plan revalide. Les nombres d’activité restent lisibles dans le miroir accessible. Le banc `packages/rune-app/fixtures/providers-web-fixture.mjs <bundle> --stats` exerce le panneau sur un bundle WASM.
+
 ## Risques à qualifier
 
 La révision Rune est celle épinglée dans le manifeste de l'application. Les références suivantes décrivent les mécanismes présents dans ses sources. La qualification utilisateur exige les essais indiqués dans la dernière colonne.

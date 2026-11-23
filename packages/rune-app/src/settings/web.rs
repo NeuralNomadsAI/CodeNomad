@@ -19,6 +19,7 @@ enum Section {
     Notifications,
     Shortcuts,
     Providers,
+    Stats,
     Remote,
     ConfigFiles,
     Advanced,
@@ -33,6 +34,7 @@ impl Section {
             Self::Notifications => "settings.nav.notifications",
             Self::Shortcuts => "settings.nav.hotkeys",
             Self::Providers => "settings.nav.providers",
+            Self::Stats => "settings.usage.title",
             Self::Remote => "settings.nav.remote",
             Self::ConfigFiles => "settings.nav.configFiles",
             Self::Advanced => "settings.nav.advanced",
@@ -61,6 +63,7 @@ pub(super) struct Panel {
     environment: super::advanced::environment::Editor,
     advanced_help: Option<super::advanced::Toggle>,
     confirm_config_close: bool,
+    stats: super::stats::Dashboard,
     opencode: opencode::Status,
     logging: opencode::logging::Logging,
     remote: remote::Remote,
@@ -95,6 +98,28 @@ impl Panel {
             && self
                 .shortcut_capture
                 .poll(&mut self.recording_shortcut, prefs, tx)
+    }
+
+    pub fn poll_stats(
+        &mut self,
+        prefs: &mut Preferences,
+        wake: &rune::Waker,
+        paired: bool,
+        now: f64,
+        tx: &mut rune::Tx,
+    ) -> bool {
+        let leave = self.section == Section::Stats && !super::stats::supported(prefs);
+        if leave {
+            self.section = Section::General;
+            prefs.memory.show(self.shown && paired);
+        }
+        self.stats.poll(
+            prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
+            self.shown && paired && self.section == Section::Stats,
+            wake,
+            now,
+            tx,
+        ) | leave
     }
 
     pub fn shown(&self) -> bool {
@@ -202,6 +227,7 @@ fn close(s: &mut State) {
     panel.advanced_help = None;
     panel.permissions.close();
     panel.catalog.suspend();
+    panel.stats.suspend();
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.hide_opencode();
     prefs.show_environment(false);
@@ -252,7 +278,12 @@ fn request_notification_permission(s: &mut State) {
     });
 }
 
-pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<El> {
+pub(super) fn view(
+    s: &State,
+    prefs: &Preferences,
+    system_more: bool,
+    cx: &rune::Cx<State>,
+) -> Option<El> {
     let panel = &s.settings.web;
     if !panel.shown || crate::platform::pairing::required(s) {
         return None;
@@ -264,6 +295,7 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
         Section::Notifications,
         Section::Shortcuts,
         Section::Providers,
+        Section::Stats,
         Section::Remote,
         Section::ConfigFiles,
         Section::Advanced,
@@ -273,6 +305,7 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
     .filter(|section| match section {
         Section::OpenCode | Section::Remote => local,
         Section::ConfigFiles => panel.scope.config_files(prefs),
+        Section::Stats => super::stats::supported(prefs),
         _ => true,
     })
     .collect();
@@ -291,6 +324,7 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 return;
             };
             if !panel.shown
+                || (section == Section::Stats && !super::stats::supported(&prefs))
                 || (matches!(section, Section::OpenCode | Section::Remote) && !panel.local(&prefs))
                 || section == Section::ConfigFiles && !panel.scope.config_files(&prefs)
                 || panel.config_files.busy()
@@ -368,6 +402,10 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             if !focused {
                 s.settings.web.recording_shortcut = false;
             }
+        }),
+        Section::Stats => super::stats::view(cx, &panel.stats, &mut layers, |s: &mut State| {
+            let panel = &mut s.settings.web;
+            (panel.shown && panel.section == Section::Stats).then_some(&mut panel.stats)
         }),
         Section::Notifications => col()
             .full_width()

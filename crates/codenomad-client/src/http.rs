@@ -2,14 +2,22 @@
 use crate::history::Result;
 use reqwest::{Client, RequestBuilder};
 use std::{
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
-pub struct Http(Client, Arc<OnceLock<String>>, Arc<crate::stream::Children>);
+pub struct Http(
+    Client,
+    Arc<OnceLock<String>>,
+    Arc<crate::stream::Children>,
+    Arc<AtomicBool>,
+);
 impl Http {
     pub fn new() -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -21,7 +29,12 @@ impl Http {
             .build()?;
         #[cfg(target_arch = "wasm32")]
         let client = Client::new();
-        Ok(Self(client, Arc::new(OnceLock::new()), Arc::default()))
+        Ok(Self(
+            client,
+            Arc::new(OnceLock::new()),
+            Arc::default(),
+            Arc::new(AtomicBool::new(true)),
+        ))
     }
     pub fn same_connection(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.1, &other.1)
@@ -34,6 +47,12 @@ impl Http {
     }
     pub(crate) fn verify_server_identity(&self, id: &str) -> bool {
         self.1.get_or_init(|| id.to_owned()) == id
+    }
+    pub fn supports_service_usage(&self) -> bool {
+        self.3.load(Ordering::Relaxed)
+    }
+    pub(crate) fn observe_service_usage(&self, advertised: bool) {
+        self.3.store(advertised, Ordering::Relaxed);
     }
     fn request(&self, method: reqwest::Method, url: impl reqwest::IntoUrl) -> RequestBuilder {
         let request = self.0.request(method, url).timeout(REQUEST_TIMEOUT);

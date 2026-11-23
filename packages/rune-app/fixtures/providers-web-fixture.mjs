@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {readFile} from 'node:fs/promises'
 import path from 'node:path'
+import {setTimeout as delay} from 'node:timers/promises'
 import {chromium} from 'playwright'
 import {bundleAssetPaths} from '../../../scripts/rune/web-workspace-policy.mjs'
 
@@ -15,6 +16,7 @@ const shortcuts = process.argv.includes('--shortcuts')
 const about = process.argv.includes('--info')
 const configFiles = process.argv.includes('--config-files')
 const releasePage = 'https://github.com/NeuralNomadsAI/CodeNomad/releases/tag/v9.1.0-dev'
+const stats = process.argv.includes('--stats')
 const noDeviceRegistry = process.argv.includes('--no-device-registry')
 const local = opencodeMode === '--local-opencode' || remoteAccess
 const files = await bundleAssetPaths(bundle)
@@ -24,6 +26,22 @@ const base = '/workspaces/catalogue/instance/api/'
 const streams = new Map()
 const unexpected = []
 const reads = []
+const aggregates = []
+let statsRead
+let selectedPeriod = 7
+let startHeld, closeHeld
+const held = new Promise(resolve => {startHeld = resolve})
+const heldClosed = new Promise(resolve => {closeHeld = resolve})
+const usageRoute = `/api/workspaces/${project.id}/service-usage`
+const proof = {owner:'fixture-owner',identity:'fixture-root',connection:'fixture-live'}
+const day = 86_400_000
+function snapshot(to, days, id) {
+  const tokens = {input:12345,output:102,reasoning:44,cache:{read:12,write:3}}
+  return {scope:'service',...proof,stats:{range:{from:to-days*day,to},sessions:12,subagents:3,prompts:38,
+    steps:52,tokens,cost:0.0025,tools:{mode:'none'},activeDays:2,streak:1,
+    models:id ? [{model:{providerID:'fixture',id,variant:'fast'},steps:52,tokens,cost:0.0025}]:[],
+    activity:id ? [{date:'2026-11-20',steps:52}]:[]}}
+}
 const mime = {'.html':'text/html','.js':'text/javascript','.wasm':'application/wasm','.css':'text/css','.json':'application/json','.woff2':'font/woff2'}
 let account = 'First fixture account', detached = false
 const configPath = '/api/config-files'
@@ -55,6 +73,7 @@ const personal = {...entry,id:'global-entry',title:'Personal memory',text:'Perso
 let projectEntries = [entry]
 let cleanupCreates = 0, cleanupPrompts = 0, cleanupSession
 const promptIds = new Set()
+const projectClaims = new Set()
 let memoryEnabled = false
 let releaseState
 const stateReady = new Promise(resolve => { releaseState = resolve })
@@ -64,7 +83,8 @@ const server = createServer(async (req,res) => {
   const json = value => res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(value))
   try {
     if (p === '/api/meta') {
-      const meta = {apiContract:1,serverId:'fixture-settings',capabilities:configFiles?['integrations','config-files']:['integrations'],localRequest:local}
+      const meta = {apiContract:1,serverId:'fixture-settings',
+        capabilities:['integrations',...(configFiles?['config-files']:[]),...(stats?['service-usage']:[])],localRequest:local}
       if (!about) return json(meta)
       infoReads++
       return json({...meta,updateFeed,serverVersion:'9.0.1',ui:{version:'9.0.2',source:'fixture'},
@@ -112,6 +132,31 @@ const server = createServer(async (req,res) => {
         latestVersion:'2.3.2',updateAvailable:!installed,canUpgrade:!installed,binaryPath:'/fixture/opencode'})
     }
     if (p === '/api/auth/status') return json({authenticated:true})
+    if (stats && p.startsWith(usageRoute)) {
+      assert.equal(req.method,'GET')
+      if (p === `${usageRoute}/owner`) return json(proof)
+      assert.equal(url.searchParams.get('timezone'),'Europe/Paris')
+      if (p === `${usageRoute}/cache`) {
+        const days = Number(url.searchParams.get('days') ?? selectedPeriod)
+        const id = days === 90 ? 'other-window' : days === 7 ? 'cached' : undefined
+        return json({days,...proof,...(id && {snapshot:snapshot(1_800_000_000_000,days,id)})})
+      }
+      assert.equal(p,usageRoute)
+      const query = url.searchParams
+      const to = Number(query.get('to')), days = (to-Number(query.get('from')))/day
+      const restore = query.get('restorePeriod') === 'true'
+      assert([7,30,90,365].includes(days))
+      const index = aggregates.push({days,restore}) - 1
+      if (index === 0) return statsRead = () => json(snapshot(to,7,'fresh'))
+      if (index === 2) return res.writeHead(503).end()
+      if (index === 4) {
+        res.on('close',()=>closeHeld(!res.writableEnded))
+        startHeld()
+        return
+      }
+      if (!restore) selectedPeriod = days
+      return json(snapshot(to,restore ? selectedPeriod : days,index === 1 ? 'updated' : undefined))
+    }
     if (p.startsWith('/api/remote-control/')) {
       assert(remoteAccess && local)
       remoteRequests.push(`${req.method} ${p.slice('/api/remote-control/'.length)}`)
@@ -156,7 +201,14 @@ const server = createServer(async (req,res) => {
       for await (const chunk of req) body += chunk
       const {path:requested,requestId} = JSON.parse(body)
       assert.equal(requested,directory)
+      projectClaims.add(requestId)
       return json({...project,requestId})
+    }
+    if (p === `/api/workspaces/${project.id}/creation/release` && req.method === 'POST') {
+      let body = ''
+      for await (const chunk of req) body += chunk
+      assert(projectClaims.delete(JSON.parse(body).requestId),'Release must match a fixture project claim')
+      return res.writeHead(204).end()
     }
     if (p === '/api/workspaces/catalogue' && req.method === 'DELETE') return res.writeHead(204).end()
     if (p === '/api/events') {
@@ -328,7 +380,8 @@ await new Promise(resolve => server.listen(0,'127.0.0.1',resolve))
 let browser, page
 try {
   browser = await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
-  page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true})
+  page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true,
+    ...(stats && {timezoneId:'Europe/Paris'})})
   if (configFiles) {
     // Drop the page's receipt after the PUT settles. A socket reset on a reused
     // connection would instead make Chromium retry the idempotent PUT itself.
@@ -393,6 +446,7 @@ try {
   if (configFiles) await checkConfigFiles()
   else if (about) await checkInfo()
   else if (shortcuts) await checkShortcuts()
+  else if (stats) await checkStats()
   else if (notifications) await checkNotifications()
   else if (remoteAccess) await checkRemoteAccess()
   else if (opencodeMode) await checkOpenCode()
@@ -601,6 +655,75 @@ try {
     await failed.waitFor({state:'detached'})
     assert.deepEqual(await page.evaluate(()=>window.shortcutAnnouncements),['Ctrl+N is also assigned to: New instance'])
     console.log(JSON.stringify({fixture:'shortcuts-preferences',catalogue:true,conflict:true,recorded:true,reset:true}))
+  }
+
+  async function checkStats() {
+    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
+    assert(stream,'Project catalogue stream must be attached')
+    const emit = value => stream.write(`data: ${JSON.stringify({instanceId:project.id,...value})}\n\n`)
+    const hint = type => emit({type:'instance.event',event:{type,data:{sessionID:'ses_unselected'}}})
+    const model = id => page.getByRole('rowheader',{name:`fixture/${id} · fast`,exact:true})
+    const dialog = page.getByRole('dialog',{name:'Settings',exact:true})
+    const stale = dialog.getByText('Previous statistics · awaiting refresh',{exact:true})
+    await click('Settings')
+    assert.equal(aggregates.length,0)
+    await Promise.all([
+      page.waitForRequest(request=>new URL(request.url()).pathname===usageRoute),
+      radio('Stats').press('Enter'),
+    ])
+    await model('cached').waitFor({state:'attached'})
+    assert.deepEqual(aggregates,[{days:30,restore:true}])
+    await stale.waitFor({state:'attached'})
+    assert(statsRead)
+    statsRead()
+    await model('fresh').waitFor({state:'attached'})
+    assert.equal(await model('cached').count(),0)
+    assert.equal(await page.getByRole('columnheader',{name:'Model'}).count(),1)
+    await visible('12,345')
+    const activity = page.getByRole('group',{name:'2026-11-20 · Steps: 52'})
+    await activity.waitFor({state:'attached'})
+    if (process.env.RUNE_STATS_SCREENSHOT) await page.screenshot({path:process.env.RUNE_STATS_SCREENSHOT})
+    hint('session.deleted')
+    await model('updated').waitFor({state:'attached'})
+    await stale.waitFor({state:'detached'})
+    emit({type:'instance.eventStatus',status:'disconnected',generation:2})
+    await stale.waitFor({state:'attached'})
+    assert.equal(await model('updated').count(),1)
+    selectedPeriod = 90 // The other window's successful aggregate selected this period on the backend.
+    emit({type:'instance.eventStatus',status:'connected',generation:2})
+    await dialog.getByText('Could not refresh statistics. Check the OpenCode connection.',{exact:true}).waitFor({state:'attached'})
+    await model('other-window').waitFor({state:'attached'})
+    assert.equal(await model('updated').count(),0)
+    assert.deepEqual(aggregates[2],{days:7,restore:true})
+    const period = page.getByRole('button',{name:'Period · Last 90 days',exact:true})
+    await period.press('Enter')
+    await page.getByRole('option',{name:'Last 365 days',exact:true}).press('Enter')
+    await model('other-window').waitFor({state:'detached'})
+    await visible('Daily activity')
+    assert.deepEqual(aggregates.at(-1),{days:365,restore:false})
+    assert.equal(await page.getByRole('rowheader').count(),0)
+    assert.equal(await activity.count(),0)
+    const setVisibility = state => page.evaluate(state => {
+      Object.defineProperty(document, 'visibilityState', {configurable:true, get:()=>state})
+      document.dispatchEvent(new Event('visibilitychange'))
+    },state)
+    hint('session.deleted')
+    await Promise.race([held, delay(10000,undefined,{ref:false}).then(()=>assert.fail('In-flight aggregate did not start'))])
+    await setVisibility('hidden')
+    await stale.waitFor({state:'attached'})
+    assert.equal(await Promise.race([heldClosed,delay(10000,false,{ref:false})]),true,'Hiding the document aborts the HTTP request')
+    hint('session.execution.succeeded')
+    hint('session.deleted')
+    assert.equal(aggregates.length,5)
+    await setVisibility('visible')
+    await stale.waitFor({state:'detached'})
+    assert.equal(aggregates.length,6)
+    await radio('General').press('Enter')
+    hint('session.deleted')
+    await page.waitForFunction(()=>!document.body.innerText.includes('Daily activity'))
+    assert.equal(aggregates.length,6)
+    assert.deepEqual(unexpected,[])
+    console.log(JSON.stringify({fixture:'settings-stats',mobile:true,aggregates,restoredOtherWindow:true,emptyBreakdowns:true,hiddenAbort:true,hiddenRefresh:false}))
   }
 
   async function checkNotifications() {

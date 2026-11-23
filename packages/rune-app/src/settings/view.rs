@@ -42,6 +42,7 @@ pub(super) struct Window {
     pub(super) opencode: opencode::Status,
     logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
+    stats: super::stats::Dashboard,
     remote: remote::Remote,
     info: info::Info,
     host_support: super::host_support::HostSupport,
@@ -67,6 +68,7 @@ enum Section {
     Notifications,
     Providers,
     Shortcuts,
+    Stats,
     Remote,
     ConfigFiles,
     Advanced,
@@ -211,11 +213,12 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     let system_dark = cx.system_dark();
     let system_more = cx.system_increased_contrast();
     s.close_palette_on_slot_change(prefs.dark(system_dark));
-    render_with(cx, &prefs, system_more, |_| {
+    render_with(cx, &prefs, system_more, |cx| {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
         let notifications_label = t("settings.nav.notifications");
         let providers_label = t("settings.nav.providers");
+        let stats_label = t("settings.usage.title");
         let conversation_label = t("settings.nav.chat");
         let shortcuts_label = t("settings.nav.hotkeys");
         let remote_label = t("settings.nav.remote");
@@ -229,6 +232,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::Notifications => notifications_label,
             Section::Providers => providers_label,
             Section::Shortcuts => shortcuts_label,
+            Section::Stats => stats_label,
             Section::Remote => remote_label,
             Section::ConfigFiles => config_label,
             Section::Advanced => advanced_label,
@@ -263,6 +267,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     providers_label,
                     s.section == Section::Providers,
                 ),
+                ("settings-stats", stats_label, s.section == Section::Stats),
                 (
                     "settings-hotkeys",
                     shortcuts_label,
@@ -280,6 +285,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 ),
             ]
             .into_iter()
+            .filter(|(key, _, _)| *key != "settings-stats" || super::stats::supported(&prefs))
             .chain(s.host_support.config_files(&prefs).then_some((
                 "settings-config-files",
                 config_label,
@@ -307,6 +313,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-notifications" => Section::Notifications,
                     "settings-providers" => Section::Providers,
                     "settings-hotkeys" => Section::Shortcuts,
+                    "settings-stats" if super::stats::supported(&s.shared.borrow()) => {
+                        Section::Stats
+                    }
                     "settings-remote" => Section::Remote,
                     "settings-config-files" => Section::ConfigFiles,
                     "settings-advanced" => Section::Advanced,
@@ -419,6 +428,13 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             .as_ref()
                             .is_some_and(providers::Target::online),
                 ),
+            ),
+            Section::Stats => (
+                "stats",
+                super::stats::view(cx, &s.stats, &mut layers, |s: &mut Window| {
+                    (s.section == Section::Stats && !s.closing && !s.confirm_close)
+                        .then_some(&mut s.stats)
+                }),
             ),
             Section::Remote => (
                 "remote",

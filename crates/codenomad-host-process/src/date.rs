@@ -1,6 +1,19 @@
 //! Safe interface to Windows locale and local civil time.
 mod icu;
 
+pub fn local_time_zone() -> Option<String> {
+    icu::timezone()
+}
+
+pub fn local_date_time(millis: u64, locale: &str, zone: &str) -> Option<String> {
+    icu::format(
+        millis as f64,
+        locale,
+        "yMdjms",
+        (zone == "UTC").then_some("UTC"),
+    )
+}
+
 use std::ptr::null;
 use windows_sys::Win32::{
     Foundation::{FILETIME, SYSTEMTIME},

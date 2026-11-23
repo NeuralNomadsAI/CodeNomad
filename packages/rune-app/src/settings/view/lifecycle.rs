@@ -12,7 +12,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                 prefs.refresh();
             }
         }),
-        poll: Some(|s, _, tx| {
+        poll: Some(|s, now, tx| {
             let locale = s
                 .shared
                 .borrow()
@@ -85,6 +85,21 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         .window_wake
                         .as_ref()
                         .is_some_and(|wake| s.info.poll(&prefs, wake));
+                let stats_changed = prefs.window_wake.clone().is_some_and(|wake| {
+                    let leave =
+                        s.section == Section::Stats && !super::super::stats::supported(&prefs);
+                    if leave {
+                        s.section = Section::General;
+                        prefs.memory.show(true);
+                    }
+                    s.stats.poll(
+                        prefs.provider_target.as_ref().filter(|_| prefs.can_retry()),
+                        s.section == Section::Stats && !s.confirm_close && !s.closing,
+                        &wake,
+                        now,
+                        tx,
+                    ) | leave
+                });
                 drop(prefs);
                 let providers_changed = if s.section == Section::Providers {
                     let prefs = s.shared.borrow();
@@ -97,6 +112,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     | status_changed
                     | remote_changed
                     | info_changed
+                    | stats_changed
                     | providers_changed
                     | editor_changed
                     | environment
