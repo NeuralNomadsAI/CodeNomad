@@ -6,9 +6,11 @@ import "../../../src/index.css"
 const [items, setItems] = createSignal(Array.from({ length: 30 }, (_, i) => `row-${i}`))
 const [pinIntent, setPinIntent] = createSignal<VirtualExplicitBottomPinIntent | null>(null)
 let api: VirtualFollowListApi | undefined
+let reachedBottomCount = 0
 render(() => <VirtualFollowList items={items} getKey={item => item}
   registerApi={value => { api = value }}
   explicitBottomPinIntent={pinIntent}
+  onUserReachedBottom={() => { reachedBottomCount += 1 }}
   renderItem={item => item === "nested"
     ? <div style={{ height: "300px" }}>
       <pre data-nested-output tabIndex={0} style={{ height: "200px", width: "600px", overflow: "auto", margin: "0" }}>
@@ -34,4 +36,5 @@ render(() => <VirtualFollowList items={items} getKey={item => item}
   pin: (token: number) => setPinIntent({ token }),
   stopFollow: () => api?.setAutoScroll(false),
   scrollTop: () => api?.getScrollElement()?.scrollTop,
+  reachedBottom: () => reachedBottomCount,
 }

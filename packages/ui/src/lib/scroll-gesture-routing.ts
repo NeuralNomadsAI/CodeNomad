@@ -29,7 +29,7 @@ interface NestedScrollerProbe {
 
 const nestedScrollerProbes = new WeakMap<Element, NestedScrollerProbe>()
 
-/** A cached probe still stands by its answer while the ancestor chain is the same nodes and no consulted member's geometry moved. */
+/** A cached probe still stands by its answer while the ancestor chain is the same nodes and no consulted member's geometry moved (measured live, never through the shared per-epoch cache: an unobserved resize — a delayed image shrinking a nested report — must invalidate the answer). */
 function nestedScrollerProbeValid(probe: NestedScrollerProbe, target: Element, root: HTMLElement): boolean {
   let node: Element | null = target
   let index = 0
@@ -41,8 +41,7 @@ function nestedScrollerProbeValid(probe: NestedScrollerProbe, target: Element, r
   if (index !== probe.chain.length) return false
   for (const { element, scrollTop, scrollHeight, clientHeight } of probe.consulted) {
     if (!element.isConnected) return false
-    const metrics = scrollElementMetrics(element)
-    if (metrics.offset !== scrollTop || metrics.scrollHeight !== scrollHeight || metrics.clientHeight !== clientHeight) return false
+    if (element.scrollTop !== scrollTop || element.scrollHeight !== scrollHeight || element.clientHeight !== clientHeight) return false
   }
   return true
 }
@@ -59,6 +58,9 @@ export function findNestedScroller(root: HTMLElement, target: EventTarget | null
   if (!(target instanceof Element)) return null
   const cached = nestedScrollerProbes.get(target)
   if (cached && cached.root === root && cached.direction === direction && nestedScrollerProbeValid(cached, target, root)) return cached.result
+  // The walk decides on live geometry: content may have changed since the
+  // last measured epoch without anything observing it.
+  markScrollMetricsStale()
   const chain: Element[] = []
   const consulted: NestedScrollerProbe["consulted"] = []
   for (let node: Element | null = target; node && node !== root; node = node.parentElement) {

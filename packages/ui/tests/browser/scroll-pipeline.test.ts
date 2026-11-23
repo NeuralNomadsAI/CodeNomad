@@ -182,7 +182,10 @@ test("wheel routing probes the ancestor chain once per scroll change, not per ev
     })
     assert.ok(stats.probeReads[0] > 0, "the first wheel event must probe the chain")
     for (let index = 1; index < stats.probeReads.length; index++) {
-      assert.ok(stats.probeReads[index] <= 2, `wheel event ${index} must not re-probe ancestors (${stats.probeReads[index]} layout reads)`)
+      // Later events revalidate the consulted members' extents live (the walk
+      // itself and its style resolution happen once per geometry change, not
+      // per event).
+      assert.ok(stats.probeReads[index] <= 6, `wheel event ${index} must not re-probe the chain (${stats.probeReads[index]} layout reads)`)
     }
     assert.deepEqual(errors, [])
   } finally {
@@ -236,6 +239,42 @@ test("End reaches a nested report's new bottom after unannounced growth", async 
     })
     assert.ok(landed.reportGap <= 2 && landed.reportTop > 0, `End must reach the report's new bottom (scrollTop ${landed.reportTop}, gap ${landed.reportGap})`)
     assert.ok(Math.abs(landed.streamTop - parked) <= 2, `the transcript must stay parked (${parked} -> ${landed.streamTop})`)
+    assert.deepEqual(errors, [])
+  } finally {
+    await page.close()
+  }
+})
+
+test("a boundary wheel pages on the first tick after a report shrinks unannounced", async () => {
+  // Locks the boundary routing the review regression reported: the wheel
+  // owner must be chosen against the nested extents as they stand now, so a
+  // report that silently stopped overflowing hands the very first boundary
+  // tick to the transcript (its paging path), not to a stale owner.
+  const { page, errors } = await open()
+  try {
+    await page.evaluate(() => {
+      const w = window as any
+      w.fixture.addReport()
+      w.fixture.bottom()
+    })
+    await frames(page, 30)
+    await page.evaluate(() => {
+      const w = window as any
+      // The report overflows; warm the nested-scroller probe with a synthetic
+      // wheel (no scroll, no epoch advance) while it can still scroll down,
+      // then shrink it until it fits in the same task — no clamp moves its
+      // offset, so nothing in the pipeline observes the change.
+      w.fixture.growReport(1200)
+      document.querySelector("[data-report-body]")!.dispatchEvent(new WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true }))
+      w.fixture.growReport(150)
+    })
+    const report = page.locator("[data-subagent-report]")
+    const box = (await report.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.wheel(0, 120)
+    await frames(page, 10)
+    const paging = await page.evaluate(() => (window as any).fixture.reachedBottom())
+    assert.ok(paging >= 1, `the first wheel tick at the boundary must page the transcript (paging=${paging})`)
     assert.deepEqual(errors, [])
   } finally {
     await page.close()
