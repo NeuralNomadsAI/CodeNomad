@@ -76,6 +76,13 @@ fn document_state_action_tx(
         }
     })
 }
+
+#[cfg(target_arch = "wasm32")]
+fn refresh_browser_file_wrap(s: &mut State) {
+    if let Some(wrap) = crate::platform::storage::browser_file_wrap() {
+        s.shell.file_wrap = wrap;
+    }
+}
 fn reader_action(
     s: &State,
     key: &str,

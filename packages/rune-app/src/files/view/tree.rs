@@ -43,14 +43,15 @@ fn tree_content(s: &State, width: f32, touch: bool) -> El {
                 let invoke = std::rc::Rc::new(screen::action_tx(&scope, {
                     let path = path.clone();
                     let directory = ui.tree.directory().to_owned();
-                    move |s, tx| {
-                        if s.files
-                            .as_mut()
-                            .and_then(|ui| ui.toggle_preview(&directory, &path))
-                            == Some(false)
-                        {
-                            crate::chat::reading::restore_position(s, tx);
-                        }
+                    move |s, tx| match s
+                        .files
+                        .as_mut()
+                        .and_then(|ui| ui.toggle_preview(&directory, &path))
+                    {
+                        #[cfg(target_arch = "wasm32")]
+                        Some(true) => super::refresh_browser_file_wrap(s),
+                        Some(false) => crate::chat::reading::restore_position(s, tx),
+                        _ => {}
                     }
                 }));
                 let click = invoke.clone();

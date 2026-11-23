@@ -6,6 +6,8 @@ pub fn file_wrap(s: &State) -> bool {
 
 pub fn toggle_file_wrap(s: &mut State) {
     s.shell.file_wrap = !s.shell.file_wrap;
+    #[cfg(target_arch = "wasm32")]
+    crate::platform::storage::set_browser_file_wrap(s.shell.file_wrap);
     if let Some(ui) = &mut s.workspace {
         ui.file_wrap = Some(s.shell.file_wrap);
         ui.changed();

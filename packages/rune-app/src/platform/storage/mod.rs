@@ -1,6 +1,32 @@
 use crate::history::Result;
 use crate::workspace::MAX_BYTES;
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn browser_file_wrap() -> Option<bool> {
+    let storage = web_sys::window()?.local_storage().ok()??;
+    match storage
+        .get_item(crate::workspace::FILE_WRAP_KEY)
+        .ok()??
+        .as_str()
+    {
+        "on" => Some(true),
+        "off" => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn set_browser_file_wrap(wrap: bool) {
+    if let Some(storage) =
+        web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+    {
+        let _ = storage.set_item(
+            crate::workspace::FILE_WRAP_KEY,
+            if wrap { "on" } else { "off" },
+        );
+    }
+}
+
 const FILE_DRAFT_BYTES: usize = 256 * 1024;
 
 #[cfg(not(target_arch = "wasm32"))]

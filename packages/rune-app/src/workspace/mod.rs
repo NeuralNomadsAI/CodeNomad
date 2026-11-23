@@ -35,7 +35,7 @@ const PANEL_WIDTH_KEYS: [&str; 2] = [
     "opencode-session-sidebar-width-v8",
     "opencode-session-right-drawer-width-v1",
 ];
-const FILE_WRAP_KEY: &str = "opencode-session-right-panel-files-word-wrap-v1";
+pub(crate) const FILE_WRAP_KEY: &str = "opencode-session-right-panel-files-word-wrap-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {

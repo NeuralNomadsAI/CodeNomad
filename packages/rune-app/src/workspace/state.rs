@@ -486,6 +486,10 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let became_ready = loading && !ui.persistence.loading;
     if became_ready {
         ui.ready = true;
+        #[cfg(target_arch = "wasm32")]
+        if let Some(wrap) = platform::storage::browser_file_wrap() {
+            s.shell.file_wrap = wrap;
+        }
     }
     let active = Cache::take(s);
     let mut changed = ui.persistence.poll_file_draft_retry(&s.documents);
