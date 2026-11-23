@@ -112,6 +112,8 @@ interface ReadContext {
 
 interface ResolvedTarget extends PluginControlTarget {
   ioPath: string
+  requestedIoPath: string
+  ioPaths: path.PlatformPath
 }
 
 interface ConfigDocumentView {
@@ -413,9 +415,10 @@ export class PluginControls {
         await this.verifyDiscoveredEntrypoints(workspaceId, context)
         // The response snapshot classifies orphan IDs with the same discovery proof as reads.
         context.discoveryLoaders = await this.discoveryLoaders(workspaceId, context)
+        const exact = request.scope === "global" && request.pluginId === MISSIONS_PLUGIN_ID && request.managedBy === "codenomad"
         let document
         try {
-          document = await readPluginControlDocument(target.ioPath, context.fileSystem)
+          document = await readPluginControlDocument(exact ? target.requestedIoPath : target.ioPath, context.fileSystem)
         } catch (error) {
           throw mapDocumentError(error)
         }
@@ -442,10 +445,13 @@ export class PluginControls {
         if (!control || request.managedBy && control.managedBy !== request.managedBy) {
           throw new PluginControlsError("Plugin ID is not present in the authorized inventory", "forbidden")
         }
+        // OpenCode does not observe replacement of the destination of a linked config.
+        if (exact && !samePath(target.ioPaths, target.requestedIoPath, document.writePath)) {
+          throw new PluginControlsError("Missions activation requires a direct OpenCode global configuration file", "unavailable")
+        }
 
         const desired: PluginScopeRuleState = request.enabled ? "enabled" : "disabled"
         const rule = request.enabled ? request.pluginId : `-${request.pluginId}`
-        const exact = request.scope === "global" && request.pluginId === MISSIONS_PLUGIN_ID && request.managedBy === "codenomad"
         const exactGlobal = (snapshot: PluginControlsSnapshot, plugins: readonly PluginConfigEntry[]) => {
           const deciding = snapshot.configured.rules.filter(rule => rule.scope === "global" && matchesSelector(rule.selector, request.pluginId)).at(-1)
           return deciding?.path && samePath(context.paths, deciding.path, target.path) && plugins[deciding.entryIndex] === rule
@@ -651,7 +657,7 @@ export class PluginControls {
           throw new PluginControlsError("OpenCode configuration changed: JSON and JSONC coexist in one layer", "conflict")
       }
     }
-    const globalTarget = selectTarget("global", globalCandidates, inspected.slice(0, globalCandidates.length))
+    const globalTarget = selectTarget("global", globalCandidates, inspected.slice(0, globalCandidates.length), ioPaths)
     // Every inherited .opencode document follows every direct document. Keep
     // the write inside this location, creating its higher-precedence layer
     // when an existing direct file cannot override the inherited rules.
@@ -664,8 +670,8 @@ export class PluginControls {
     })
     const projectInspected = inspected.slice(globalCandidates.length)
     const projectTarget = inheritedProjectLayer
-      ? selectTarget("project", projectCandidates.slice(2), projectInspected.slice(2))
-      : selectTarget("project", projectCandidates, projectInspected)
+      ? selectTarget("project", projectCandidates.slice(2), projectInspected.slice(2), ioPaths)
+      : selectTarget("project", projectCandidates, projectInspected, ioPaths)
     // An opened global config directory can make the direct project candidate
     // resolve to the global document. Never expose two scopes backed by one
     // file: a Project write would otherwise mutate Global configuration.
@@ -1041,23 +1047,17 @@ function selectTarget(
   scope: PluginControlScope,
   candidates: readonly TargetCandidate[],
   inspected: readonly { writePath: string; exists: boolean }[],
+  ioPaths: path.PlatformPath,
 ): ResolvedTarget {
   if (candidates.length !== inspected.length) {
     throw new PluginControlsError("OpenCode configuration target inspection was incomplete", "unavailable")
   }
-  let selected = candidates.at(-1)!
-  let exists = false
+  let selectedIndex = candidates.length - 1
   candidates.forEach((candidate, index) => {
-    const result = inspected[index]!
-    if (result.exists) {
-      selected = { ...candidate, ioPath: result.writePath }
-      exists = true
-    }
+    if (inspected[index]!.exists) selectedIndex = index
   })
-  if (!exists) {
-    selected = { ...selected, ioPath: inspected.at(-1)!.writePath }
-  }
-  return { scope, path: selected.servicePath, ioPath: selected.ioPath, exists }
+  const selected = candidates[selectedIndex]!, resolved = inspected[selectedIndex]!
+  return { scope, path: selected.servicePath, ioPath: resolved.writePath, requestedIoPath: selected.ioPath, ioPaths, exists: resolved.exists }
 }
 
 function normalizeRuntimeEntry(plugin: PluginInfo, index: number, packageVersions: ReadContext["packageVersions"]): PluginRuntimeInventoryEntry {

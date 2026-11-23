@@ -25,7 +25,7 @@ interface RightPanelCustomizationPopoverProps {
   visibleStatusSectionCount: Accessor<number>
   customization: Accessor<RightPanelCustomization>
   onCustomizationChange: (updater: (current: RightPanelCustomization) => RightPanelCustomization) => void
-  onMissionsToggle: (enabled: boolean, setVisible: () => void) => void
+  onMissionsToggle: (enabled: boolean, setVisible: () => void, checkbox: HTMLInputElement) => void
 }
 
 /** Visibility and order of the right panel's tabs and Status sections. Up/Down reorders the focused Status section. */
@@ -111,7 +111,7 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                         }))
                         if (tab.id === "missions") {
                           event.currentTarget.checked = visible()
-                          props.onMissionsToggle(enabled, setVisible)
+                          props.onMissionsToggle(enabled, setVisible, event.currentTarget)
                           return
                         }
                         setVisible()

@@ -1099,11 +1099,33 @@ describe("CodeNomad-managed plugin re-enable with an exact disabling rule", () =
     const pluginId = "codenomad.missions", wildcard = "-codenomad.*"
     const fixture = createFixture({ globalPlugins: [pluginId, wildcard] })
     await installManaged(fixture, "missions", pluginId)
-    fs.writeFileSync(fixture.globalFile, `{\n  "plugins": [\n    "${pluginId}",\n    // Disable other bundled plugins\n    "${wildcard}"\n  ]\n}\n`)
+    fs.writeFileSync(fixture.globalFile, `{\n  "plugins": [\n    "${pluginId}",\n    // Disable other bundled plugins\n    "${wildcard}" // Applies to all CodeNomad plugins\n  ]\n}\n`)
     await fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled: false, managedBy: "codenomad" })
     const text = fs.readFileSync(fixture.globalFile, "utf8")
     assert.deepEqual(parse(text).plugins, [wildcard, `-${pluginId}`])
     assert.match(text, /\/\/ Disable other bundled plugins\r?\n\s*"-codenomad\.\*"/)
+    assert.match(text, /"-codenomad\.\*", \/\/ Applies to all CodeNomad plugins\r?\n\s*"-codenomad\.missions"/)
+  })
+
+  it("reports a linked Global Missions target without editing its destination", async t => {
+    const pluginId = "codenomad.missions"
+    const fixture = createFixture({ globalPlugins: [pluginId] })
+    await installManaged(fixture, "missions", pluginId)
+    const destination = path.join(path.dirname(fixture.projectFile), "linked-config.jsonc")
+    const original = fs.readFileSync(fixture.globalFile, "utf8")
+    fs.renameSync(fixture.globalFile, destination)
+    try {
+      fs.symlinkSync(destination, fixture.globalFile, "file")
+    } catch (error) {
+      if (!["EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error
+      t.skip("file symbolic links unavailable")
+      return
+    }
+    await assert.rejects(fixture.controls.mutate("workspace", {
+      location: fixture.location, pluginId, scope: "global", enabled: false, managedBy: "codenomad",
+    }), { kind: "unavailable" })
+    assert.equal(fs.readFileSync(destination, "utf8"), original)
+    assert.equal(fs.lstatSync(fixture.globalFile).isSymbolicLink(), true)
   })
 
   it("removes the exact disabling rule instead of appending a positive ID", async () => {

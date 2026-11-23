@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, untrack, type Accessor, type Component } from "solid-js"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack, type Accessor, type Component } from "solid-js"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -146,10 +146,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     writeClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, JSON.stringify(next))
   }
 
-  const toggleMissions = async (enabled: boolean, setVisible: () => void) => {
+  const panelLifetime = new AbortController()
+  onCleanup(() => panelLifetime.abort())
+  const toggleMissions = async (enabled: boolean, setVisible: () => void, checkbox: HTMLInputElement) => {
     const instanceId = props.instanceId, location = { directory: props.instance.folder }
-    const operation = captureBackendOperation(instanceId, undefined, () => props.instanceId === instanceId && props.isActive())
-    if (!enabled && !await showConfirmDialog(props.t("missions.activation.disableConfirm"), { variant: "warning" }, operation.signal)) return
+    const operation = captureBackendOperation(instanceId, panelLifetime.signal, () => props.instanceId === instanceId && props.isActive())
+    if (!enabled && !await showConfirmDialog(props.t("missions.activation.disableConfirm"), {
+      variant: "warning",
+      returnFocus: () => checkbox.focus(),
+    }, operation.signal)) return
     if (!operation.current()) return
     setVisible()
     try {

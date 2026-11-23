@@ -22,8 +22,10 @@ The **Missions** checkbox in **Customize right panel** uses the regular tab
 visibility preference. The gesture also writes `codenomad.missions` when shown
 or `-codenomad.missions` after confirming hide, in the connected OpenCode
 server's Global configuration. The checkbox takes direct input outside the
-visibility sweep. A failed write sends an app notification and retains the layout
-choice. Reset only changes the layout. Project rules still take precedence.
+visibility sweep. Closing the panel cancels an open confirmation. A failed write
+sends an app notification and retains the layout choice. The gesture requires a
+direct Global file so OpenCode can observe the write. Reset only changes the
+layout. Project rules still take precedence.
 Other Missions surfaces use their ordinary availability handling.
 
 ## Backend routing

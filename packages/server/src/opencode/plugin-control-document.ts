@@ -100,7 +100,9 @@ export function appendPluginControlRule(document: PluginControlDocument, rule: s
   const value = editPath.length === 1 ? [rule] : rule
   let updated: string
   try {
-    updated = applyEdits(document.text, modify(document.text, editPath, value, { formattingOptions }))
+    updated = editPath.length === 2
+      ? appendPluginEntry(document.text, document.plugins.length, rule, formattingOptions)
+      : applyEdits(document.text, modify(document.text, editPath, value, { formattingOptions }))
   } catch (error) {
     throw new PluginControlDocumentError("Unable to update OpenCode plugins without replacing the document", "invalid", { cause: error })
   }
@@ -135,7 +137,7 @@ export function replacePluginControlRules(
   try {
     updated = deletePluginEntries(updated, removed)
     if (rule !== undefined) {
-      updated = applyEdits(updated, modify(updated, ["plugins", document.plugins.length - removed.length], rule, { formattingOptions }))
+      updated = appendPluginEntry(updated, document.plugins.length - removed.length, rule, formattingOptions)
     }
   } catch (error) {
     throw new PluginControlDocumentError("Unable to update OpenCode plugins without replacing the document", "invalid", { cause: error })
@@ -150,6 +152,25 @@ export function replacePluginControlRules(
   }
   if (!updated.endsWith("\n")) updated += formattingOptions.eol
   return document.byteOrderMark ? `﻿${updated}` : updated
+}
+
+function appendPluginEntry(text: string, index: number, rule: string, formattingOptions: FormattingOptions): string {
+  const array = parseTree(text, [], { allowTrailingComma: true })?.children
+    ?.find(property => property.children?.[0]?.value === "plugins")?.children?.[1]
+  const last = array?.children?.at(-1)
+  if (last) {
+    const end = last.offset + last.length
+    const lineEnd = text.indexOf("\n", end)
+    const tail = /^([ \t]*,)?[ \t]*\/\/[^\r\n]*\r?$/.exec(text.slice(end, lineEnd))
+    if (lineEnd !== -1 && tail) {
+      const start = text.lastIndexOf("\n", last.offset - 1) + 1
+      const indent = /^[ \t]*/.exec(text.slice(start, last.offset))![0]
+      // Insert the comma before the comment so it remains attached to the original entry.
+      return text.slice(0, end) + (tail[1] ? "" : ",") + text.slice(end, lineEnd + 1)
+        + indent + JSON.stringify(rule) + (tail[1] ? "," : "") + formattingOptions.eol + text.slice(lineEnd + 1)
+    }
+  }
+  return applyEdits(text, modify(text, ["plugins", index], rule, { formattingOptions }))
 }
 
 /**
