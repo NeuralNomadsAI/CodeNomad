@@ -143,3 +143,18 @@ pub fn client_id() -> Result<String> {
         ))
     }
 }
+/// Parse an external link without accepting credentials or active schemes.
+pub fn external_http_url(raw: &str) -> Option<(String, String)> {
+    let url = reqwest::Url::parse(raw).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return None;
+    }
+    let mut host = url.host_str()?.to_owned();
+    if let Some(port) = url.port() {
+        host.push_str(&format!(":{port}"));
+    }
+    Some((url.into(), host))
+}

@@ -359,6 +359,13 @@ pub(super) async fn dispatch(
         out.send(Input::Hint(epoch, version)).await?;
     } else if own
         && value["type"] == "instance.event"
+        && native["type"] == "session.synthetic"
+        && native["data"]["sessionID"] == b.session
+    {
+        let version = state.version.fetch_add(1, SeqCst) + 1;
+        out.send(Input::Hint(epoch, version)).await?;
+    } else if own
+        && value["type"] == "instance.event"
         && !matches!(
             native["type"].as_str(),
             Some(

@@ -3,9 +3,11 @@ use crate::history::Result;
 use serde_json::Value;
 use std::{mem::size_of, sync::Arc};
 mod reasoning;
+mod subagent;
 mod tool_live;
 mod user;
 pub use reasoning::{Reasoning, ReasoningEvent, apply_window as apply_reasoning};
+pub use subagent::SubagentReport;
 pub use tool_live::install as install_tool;
 pub(crate) use tool_live::{Fit as ToolFit, apply as apply_tool};
 pub(crate) use user::digest as attachment_digest;
@@ -14,6 +16,7 @@ pub use user::{File, Reference, Skill};
 pub enum Part {
     Text(Text),
     Reasoning(Reasoning),
+    SubagentReport(SubagentReport),
     Tool(Arc<Tool>),
     Skill(Skill),
     File(File),
@@ -247,6 +250,7 @@ fn part_keys(parts: &[Part]) -> Vec<String> {
             }
             Part::Tool(t) => format!("tool:{}", t.id),
             Part::Reasoning(part) => format!("reasoning:{}", part.ordinal),
+            Part::SubagentReport(report) => format!("report:{}", report.child),
             Part::Skill(s) => format!("skill:{}", s.id),
             Part::File(f) => format!("file:{}", f.id),
         })
@@ -261,12 +265,18 @@ pub struct Tool {
     pub metadata: Value,
     pub output: String,
     pub error: String,
+    pub started: Option<u64>,
     bytes: usize,
     output_bytes: usize,
 }
 pub fn decode(v: &Value) -> Result<Vec<Part>> {
     if v["type"] == "user" {
         return user::decode(v);
+    }
+    if v["type"] == "synthetic"
+        && let Some(report) = subagent::decode(v)
+    {
+        return Ok(vec![Part::SubagentReport(report)]);
     }
     let Some(parts) = v["content"].as_array() else {
         return Ok(vec![]);
@@ -354,6 +364,10 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 metadata: state["metadata"].clone(),
                 output: text_parts.collect::<Vec<_>>().join("\n"),
                 error: error.into(),
+                started: part["time"]["ran"]
+                    .as_u64()
+                    .or_else(|| part["time"]["created"].as_u64())
+                    .or_else(|| v["time"]["created"].as_u64()),
                 bytes,
                 output_bytes,
             })));
@@ -395,6 +409,7 @@ pub fn bytes(parts: &[Part]) -> usize {
             .map(|p| match p {
                 Part::Text(t) => t.text.len(),
                 Part::Reasoning(t) => t.text.len(),
+                Part::SubagentReport(_) => 0,
                 Part::Tool(t) => t.bytes,
                 Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
                 Part::File(f) => file_bytes(f),
@@ -417,6 +432,9 @@ pub(crate) fn tool_text_bytes(parts: &[Part]) -> usize {
         .iter()
         .filter_map(|part| match part {
             Part::Tool(tool) => Some(tool.output_bytes),
+            Part::SubagentReport(report) => {
+                Some(report.body.len() + report.child.len() + report.state.len())
+            }
             _ => None,
         })
         .sum()

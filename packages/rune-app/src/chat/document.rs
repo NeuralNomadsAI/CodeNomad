@@ -17,6 +17,10 @@ pub(super) const HIGHLIGHT_LIMIT: usize = 100_000;
 const STEP: usize = 250_000;
 
 pub(super) fn prose(s: &State, key: String, source: &str, streaming: bool) -> El {
+    prose_at(s, key, source, streaming, PROSE_LIMIT)
+}
+
+pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, limit: usize) -> El {
     let group = key.clone();
     let scope = s.input_scope.clone();
     let link_scope = scope.clone();
@@ -24,7 +28,7 @@ pub(super) fn prose(s: &State, key: String, source: &str, streaming: bool) -> El
     let steps = s.transcript_display.steps(&key);
     let version = s.transcript_display.stream_version();
     let memo_key = format!("{group}-markdown");
-    window(s, key, &[source], PROSE_LIMIT, |shown, units| {
+    window(s, key, &[source], limit, |shown, units| {
         let stamp = (
             version,
             steps,

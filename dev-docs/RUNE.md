@@ -109,6 +109,8 @@ Live tool input appends native deltas until its full input arrives. Progress rep
 
 Code Mode cards show the native `metadata.toolCalls` snapshots with localized statuses and bounded input disclosures. The completed result can be indented within the JSON size and nesting limits; Copy retains the native output, including warnings and logs.
 
+Write cards display and copy the file content from input or metadata; read and edit use the file path for syntax or the diff label. Running shell cards read the native output snapshot; an interruption separates the partial output and notice. Websearch recognizes bounded HTTP(S) result lists and keeps unknown output as text. Todo cards display the bounded native list and copy its complete metadata. Task cards disclose the prompt, bounded legacy steps and output; a completed background launch uses the matching synthetic report, which stays outside the transcript's visible rows.
+
 Reasoning fragments retain a separate native ordinal, including empty fragments, in history and on the scoped live stream. Completed fragments keep their authoritative text and timestamps. The transcript groups adjacent visible reasoning, with a disclosure, latest summary and completed duration. Group placement uses the first displayed fragment's native key; expanded fragments retain their own keys and text windows.
 
 Reasoning-heavy pages retain a smaller contiguous window around the requested anchor, with cursors at its retained edges. The client budgets reasoning separately from prose, counts UTF-16 units even after the live prefix reaches its byte ceiling, and coalesces rendering of revealed windows beyond 10,000 units at 200 ms. Reveal and completion update the rendered text immediately.
