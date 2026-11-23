@@ -173,13 +173,19 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         }
         return cors(next.run(req).await, None);
     }
+    let direct = channel.ingress || devices::direct_origin(&channel.origin);
+    let entry = direct
+        && !server
+        && matches!(*req.method(), Method::GET | Method::HEAD)
+        && matches!(path.as_str(), "/" | "/remote-pair");
     if supplied.is_some() && !origin_ok
-        || h.get(header::REFERER).is_some_and(|v| {
-            !v.to_str()
-                .ok()
-                .and_then(|s| reqwest::Url::parse(s).ok())
-                .is_some_and(|u| u.origin().ascii_serialization() == channel.origin)
-        })
+        || !entry
+            && h.get(header::REFERER).is_some_and(|v| {
+                !v.to_str()
+                    .ok()
+                    .and_then(|s| reqwest::Url::parse(s).ok())
+                    .is_some_and(|u| u.origin().ascii_serialization() == channel.origin)
+            })
     {
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
@@ -195,8 +201,7 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
             !id.is_empty() && !id.contains('/') && crate::missions::human_answer::form_reply(route, &method).is_some()
         });
     let backend_ui = !server && crate::previews::backend::enabled(&app) && preview_control(&path, &method);
-    let direct = channel.ingress || devices::direct_origin(&channel.origin);
-    if path == "/remote-pair" && matches!(method, Method::GET | Method::HEAD) && direct && !server {
+    if entry && path == "/remote-pair" {
         return cors(next.run(req).await, supplied);
     }
     if path == "/api/remote-control/pair" && method == Method::POST && !server {
@@ -217,7 +222,8 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     if !server && !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok {
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
-    if !backend_ui
+    if !entry
+        && !backend_ui
         && !form_reply
         && !CATALOG.iter().any(|(methods, pat)| {
             methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
@@ -238,6 +244,19 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     });
     if path == "/api/auth/status" && owner.is_none() {
         return cors(status(false), supplied);
+    }
+    if owner.is_none()
+        && entry
+        && path == "/"
+        && h.get(header::ACCEPT).and_then(|v| v.to_str().ok()).is_some_and(|v| {
+            let accept = v.to_ascii_lowercase();
+            accept.contains("text/html") || accept.contains("application/xhtml")
+        })
+    {
+        return cors(
+            (Status::FOUND, [(header::LOCATION, "/remote-pair"), (header::CONNECTION, "close")]).into_response(),
+            supplied,
+        );
     }
     let Some((id, principal)) = owner else {
         return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
