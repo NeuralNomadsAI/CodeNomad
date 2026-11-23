@@ -118,7 +118,7 @@ pub(super) async fn dispatch(
         state.upstream.store(ready, SeqCst);
         let version = state.version.fetch_add(1, SeqCst) + 1;
         out.send(if ready {
-            Input::Hint(epoch, version)
+            Input::Available(epoch, version)
         } else {
             Input::Unavailable(epoch)
         })

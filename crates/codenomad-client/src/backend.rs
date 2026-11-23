@@ -214,6 +214,14 @@ impl Backend {
         target: &crate::recovery::demand::Target,
     ) -> Result<Page> {
         use crate::recovery::demand::Target;
+        if self.fresh_mode {
+            return self
+                .fresh(match target {
+                    Target::Latest => None,
+                    Target::Around(id) => Some(id),
+                })
+                .await;
+        }
         let request = match target {
             Target::Latest => json!({"kind":"latest"}),
             Target::Around(id) => json!({"kind":"around", "messageID":id}),

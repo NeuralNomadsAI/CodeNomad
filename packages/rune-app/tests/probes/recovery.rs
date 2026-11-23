@@ -67,7 +67,17 @@ pub(crate) fn check_anchor(rt: &Runtime<State>, anchor: &(String, f32)) -> f32 {
 }
 pub fn suspend() {
     let backend = crate::platform::block_on(crate::platform::configured_backend()).unwrap();
-    let mut rt = Runtime::new(init(), view, (960.0, 760.0), Env::new(true, 1.0));
+    let mut state = init();
+    crate::gallery::shell::fixture(&mut state);
+    let mut project = state.screen.launcher().unwrap().project.clone().unwrap();
+    project.id.clone_from(&backend.workspace);
+    state.screen.launcher_mut().unwrap().project = Some(project.clone());
+    state.workspace = Some(crate::workspace::Ui::new());
+    crate::workspace::connected(&mut state);
+    crate::workspace::opened(&mut state, &project);
+    crate::workspace::bound(&mut state, &backend);
+    let tab = state.workspace.as_ref().unwrap().active_key().to_owned();
+    let mut rt = Runtime::new(state, view, (960.0, 760.0), Env::new(true, 1.0));
     rt.poll = Some(poll);
     rt.update(move |s, _| crate::transport::start_reader(s, backend));
     wait(&mut rt, "initial observed transcript", |s| {
@@ -98,24 +108,10 @@ pub fn suspend() {
         assert!(Instant::now() < until, "history body dispatched");
         rt.frame(0.02);
     }
-    rt.update(|s, tx| {
-        crate::chat::suspend(s, tx);
-        s.messages = Vec::new();
-        s.draft = rune::TextEdit::new("keep this draft");
-    });
+    rt.update(|s, _| s.draft = rune::TextEdit::new("keep this draft"));
+    rt.update(crate::workspace::new_tab);
+    assert_ne!(rt.state.workspace.as_ref().unwrap().active_key(), tab);
     let pages = control("permission-while-hidden")["pages"].clone();
-    wait(
-        &mut rt,
-        "permission observed with transcript suspended",
-        |s| {
-            s.agent.as_ref().is_some_and(|agent| {
-                agent
-                    .permissions
-                    .iter()
-                    .any(|p| p.id == "permission-suspended")
-            })
-        },
-    );
     assert!(rt.state.messages.is_empty());
     assert_eq!(control("stats")["pages"], pages);
     let until = Instant::now() + Duration::from_secs(5);
@@ -126,9 +122,28 @@ pub fn suspend() {
         assert!(Instant::now() < until, "suspension cancels the HTTP body");
         rt.frame(0.02);
     }
-    rt.update(crate::chat::resume);
+    control("permission-during-gap");
+    let until = Instant::now() + Duration::from_secs(20);
+    loop {
+        if control("stats")["gapPermissionReads"].as_u64().unwrap() > 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "hidden tab must reconcile permissions"
+        );
+        rt.frame(0.02);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(control("stats")["pages"], pages);
+    let (x, y) = rt.find(&format!("t-{tab}")).unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
     wait(&mut rt, "resume on the native anchor", |s| {
-        s.messages.iter().any(|row| row.id == id)
+        s.messages
+            .first()
+            .is_some_and(|row| row.id.as_str() < "message-00400")
+            && s.messages.iter().any(|row| row.id == id)
     });
     let restored = rt
         .elements()
@@ -138,14 +153,17 @@ pub fn suspend() {
     let shift = (viewport_relative(&rt, restored.rect[1]) - offset).abs();
     assert!(shift < 0.5, "reading anchor shifted by {shift} points");
     assert_eq!(control("stats")["resumedAnchor"], id);
-    assert!(
-        rt.state
-            .agent
-            .as_ref()
-            .unwrap()
-            .permissions
-            .iter()
-            .any(|p| p.id == "permission-suspended")
+    wait(
+        &mut rt,
+        "both permissions are available after returning to the tab",
+        |s| {
+            s.agent.as_ref().is_some_and(|agent| {
+                agent.online
+                    && ["permission-suspended", "permission-during-gap"]
+                        .iter()
+                        .all(|id| agent.permissions.iter().any(|p| p.id == *id))
+            })
+        },
     );
     assert!(
         rt.accessibility_json()

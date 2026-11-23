@@ -292,7 +292,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     files.online(true);
                 }
                 if let Some(a) = s.agent.as_mut() {
-                    if !a.online {
+                    if !a.online || a.running != page.running {
                         a.online = true;
                         a.refresh(false);
                     }
@@ -351,6 +351,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Done => s.phase = Phase::Ready,
             Event::Failed if content => {
+                if let Some(reader) = &mut s.reader {
+                    reader.failed();
+                }
                 s.paging = false;
                 s.history_error = true;
             }

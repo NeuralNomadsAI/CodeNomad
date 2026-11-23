@@ -22,6 +22,7 @@ pub enum Input {
     Native(u64, u64, Value),
     Workspace(u64, crate::transport::WorkspaceEvent),
     Hint(u64, u64),
+    Available(u64, u64),
     Unavailable(u64),
     Closed(u64),
 }
@@ -214,6 +215,16 @@ pub(crate) async fn run_with_reading(
                 dirty = true;
                 publish(&out, &wake, Event::Reconnecting).await;
             }
+            Some(Input::Available(e, v)) if e == epoch => {
+                if reading.is_some() {
+                    publish(&out, &wake, Event::AgentHint(true)).await;
+                } else if v > fence {
+                    publish(&out, &wake, Event::Reconnecting).await;
+                }
+                dirty = true;
+                parked = false;
+                quiet = Instant::now() + Duration::from_millis(100);
+            }
             Some(Input::Hint(e, v)) if e == epoch && v > fence => {
                 dirty = true;
                 quiet = Instant::now() + Duration::from_millis(100);
@@ -270,8 +281,9 @@ pub(crate) async fn run_with_reading(
                 }
             }
             Some(Input::Command(Command::Send(body))) => {
-                if opened && wire.upstream.load(SeqCst) && (reading.is_some() || !dirty && !parked)
-                {
+                // Rune admitted this gesture before the reader might suspend or
+                // the SSE might drop. Give the owned POST its one attempt.
+                if reading.is_some() || opened && wire.upstream.load(SeqCst) && !dirty && !parked {
                     busy = true;
                     repairs = 0;
                     settlement_reads = 0;
@@ -406,6 +418,7 @@ pub(crate) async fn run_with_reading(
                     | "session.execution.failed"
                     | "session.execution.interrupted" => {
                         terminal = busy;
+                        parked = false;
                         dirty = true;
                         quiet = Instant::now() + Duration::from_millis(100);
                     }

@@ -18,6 +18,7 @@ pub(crate) struct Reader {
     resume_pending: bool,
     pending_scroll: bool,
     gap: bool,
+    parked: bool,
 }
 
 impl Reader {
@@ -34,6 +35,7 @@ impl Reader {
                 resume_pending: false,
                 pending_scroll: false,
                 gap: false,
+                parked: false,
             },
             ReadingLane {
                 demand,
@@ -63,7 +65,7 @@ impl Reader {
     }
 
     pub(crate) fn blocks_send(&self) -> bool {
-        self.hidden || self.resume_pending || self.gap
+        self.hidden || self.resume_pending || self.gap || self.parked
     }
 
     pub(crate) fn needs_latest(&self) -> bool {
@@ -88,8 +90,13 @@ impl Reader {
 
     pub(crate) fn install(&mut self, gap: bool) {
         self.gap = gap;
+        self.parked = false;
         self.pending_scroll |= self.resume_pending;
         self.resume_pending = false;
+    }
+
+    pub(crate) fn failed(&mut self) {
+        self.parked = true;
     }
 
     pub(crate) fn renderer_ready(&mut self, tx: &mut Tx) {
@@ -101,7 +108,9 @@ impl Reader {
 
 pub(crate) fn suspend(s: &mut State, _tx: &mut Tx) {
     if let Some(reader) = &mut s.reader {
-        reader.bookmark = s.transcript_display.reading_mut().bookmark();
+        if !reader.resume_pending && !reader.hidden {
+            reader.bookmark = s.transcript_display.reading_mut().bookmark(reader.gap);
+        }
         reader.stop_content();
         s.paging = false;
         s.transcript_display.evict_rendered();
