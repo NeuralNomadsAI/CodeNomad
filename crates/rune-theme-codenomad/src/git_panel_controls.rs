@@ -6,7 +6,7 @@ pub use rune::Icon as Glyph;
 use rune::{El, Phase, Tx, edit::TextEdit, row, text};
 use rune_kit::{
     Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, SegmentedControl, Select,
-    State,
+    SelectAppearance, State,
 };
 
 pub enum ButtonLook {
@@ -219,16 +219,17 @@ pub fn worktree_picker<S: 'static>(
     choose: impl Fn(&mut S, &str, &mut Tx) + Clone + 'static,
     overlay: &mut Vec<El>,
 ) -> El {
-    Select::new("git-worktree", labels)
+    let picker = Select::new("git-worktree", labels)
         .current(current)
         .label(name)
+        .appearance(SelectAppearance::Field)
         .width(super::selector_width(width))
         .open(open)
         .disabled(disabled)
         .on_toggle(toggle)
         .on_close(close)
-        .on_choose(choose)
-        .build(kit(dark()), overlay)
+        .on_choose(choose);
+    crate::settings::build_picker(picker, overlay)
 }
 
 pub fn commit_message<S: 'static>(

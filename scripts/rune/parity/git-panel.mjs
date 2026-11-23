@@ -111,6 +111,7 @@ try {
       const geometry = {}
       for (const [label, query, key] of [
         ["context", ".git-panel-context", "git-context"],
+        ["worktree", ".git-panel-worktree", "git-worktree-trigger"],
         ["tools", ".git-panel-tools", "git-tools"],
         ["modes", ".git-panel-switch", "git-mode"],
         mode === "changes"
@@ -127,6 +128,8 @@ try {
       }
       const row = geometry[mode === "changes" ? "stagedHeader" : "firstCommit"]
       assert(Math.abs(row.solid[3] - row.rune[3]) <= 2, `${mode}/${theme}: row height differs by more than 2 px`)
+      assert(Math.abs(geometry.worktree.solid[2] - geometry.worktree.rune[2]) <= 2, `${name}: worktree control must span the panel`)
+      assert(Math.abs(geometry.worktree.solid[3] - geometry.worktree.rune[3]) <= 2, `${name}: worktree control height differs by more than 2 px`)
       const [solidWidth, runeWidth] = [geometry.modes.solid[2], geometry.modes.rune[2]]
       // Allow font raster/measurement differences, not a full-width or equal-column selector.
       assert(Math.abs(solidWidth - runeWidth) <= 8, `${name}: selector width ${runeWidth} vs ${solidWidth} px`)
