@@ -1,4 +1,5 @@
 //! Scoped workspace files; directory ownership and physical paths stay with the server.
+pub mod images;
 use crate::{
     backend::{Backend, read_json, read_json_limited},
     history::{Result, valid_id},
@@ -36,13 +37,22 @@ pub struct Preview {
     pub version: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WriteResult {
     Saved,
-    Conflict,
+    Conflict(Option<String>),
 }
 
 impl Backend {
+    /// Workspace Markdown uses the application URL as its base, rather than a checkout path.
+    pub fn file_link(&self, destination: &str) -> Option<String> {
+        #[cfg(target_arch = "wasm32")]
+        let page = web_sys::window().and_then(|window| window.location().href().ok());
+        #[cfg(not(target_arch = "wasm32"))]
+        let page: Option<String> = None;
+        file_link(page.as_deref().unwrap_or(&self.base), destination)
+    }
+
     pub async fn write_file(
         &self,
         directory: &str,
@@ -72,7 +82,14 @@ impl Backend {
             .send()
             .await?;
         if response.status() == reqwest::StatusCode::CONFLICT {
-            return Ok(WriteResult::Conflict);
+            let reason = read_json_limited(response, 4096)
+                .await
+                .ok()
+                .and_then(|body| {
+                    let reason = body["error"].as_str()?.trim();
+                    (!reason.is_empty()).then(|| reason.to_owned())
+                });
+            return Ok(WriteResult::Conflict(reason));
         }
         let response = response.error_for_status()?;
         if !response.status().is_success() {
@@ -180,6 +197,29 @@ impl Backend {
         relative(path, listing, directory)
     }
 }
+fn file_link(base: &str, destination: &str) -> Option<String> {
+    if destination.trim().is_empty() {
+        return None;
+    }
+    let url = reqwest::Url::parse(base).ok()?.join(destination).ok()?;
+    matches!(url.scheme(), "http" | "https" | "mailto").then(|| url.into())
+}
+
+#[cfg(test)]
+#[test]
+fn reader_links_preserve_the_base_page_context() {
+    let base = "https://example.invalid/app/?locale=he";
+    assert_eq!(
+        file_link(base, "#reader").as_deref(),
+        Some("https://example.invalid/app/?locale=he#reader")
+    );
+    assert_eq!(
+        file_link(base, "./notes.md").as_deref(),
+        Some("https://example.invalid/app/notes.md")
+    );
+    assert!(file_link(base, "file:///C:/secret.md").is_none());
+}
+
 // The listing contract emits relative slash paths. The server owns OS-specific admission.
 pub(crate) fn relative(path: &str, listing: bool, directory: &str) -> Result<()> {
     if listing && path == "." {

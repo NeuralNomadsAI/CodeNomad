@@ -6,6 +6,8 @@ use rune_theme_codenomad::layout::Layout;
 pub mod action_menu;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub mod shell;
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub mod reader;
 
 #[derive(Default)]
 pub struct Gallery {

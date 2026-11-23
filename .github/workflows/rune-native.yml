@@ -57,7 +57,20 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libvulkan1
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libvulkan1 nasm
+      - name: Windows AVIF assembler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+            choco install nasm --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'NASM installation failed' }
+            Add-Content -LiteralPath $env:GITHUB_PATH -Value 'C:\Program Files\NASM'
+          }
+      - name: macOS x86 AVIF assembler
+        if: runner.os == 'macOS'
+        run: |
+          if [[ "$(uname -m)" == x86_64 ]] && ! command -v nasm >/dev/null; then brew install nasm; fi
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install generator browser
         run: npx --workspace @codenomad/ui playwright install --with-deps chromium

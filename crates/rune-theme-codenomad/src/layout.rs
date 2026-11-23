@@ -7,6 +7,21 @@ use std::{borrow::Cow, cell::Cell};
 thread_local! { static APPEARANCE: Cell<bool> = const { Cell::new(false) }; }
 pub type DrawnRect = rune::Live<[f32; 4]>;
 
+thread_local! { static SOURCE_PALETTE: Cell<bool> = const { Cell::new(false) }; }
+pub(crate) fn source_palette() -> bool {
+    SOURCE_PALETTE.get()
+}
+/// Render a qualified subtree in Solid's product-default palette.
+pub fn with_source_palette<T>(render: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SOURCE_PALETTE.set(self.0);
+        }
+    }
+    let _restore = Restore(SOURCE_PALETTE.replace(true));
+    render()
+}
 pub fn dark() -> bool {
     APPEARANCE.get()
 }

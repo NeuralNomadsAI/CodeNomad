@@ -516,6 +516,11 @@ fn main() {
         return;
     }
     #[cfg(feature = "test-support")]
+    if platform::has_flag("--gallery-reader") {
+        gallery::reader::run();
+        return;
+    }
+    #[cfg(feature = "test-support")]
     if platform::has_flag("--gallery-window-close") {
         gallery::run();
         return;

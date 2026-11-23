@@ -277,6 +277,7 @@
   "filesPanel.image.before": "До",
   "filesPanel.readOnly": "Только чтение",
   "filesPanel.viewer": "Просмотр файла",
+  "filesPanel.widenWindow": "Файлы — расширьте окно",
   "filesPanel.workspace": "Рабочая область",
   "filesystemBrowser.actions.close": "Закрыть",
   "filesystemBrowser.actions.retry": "Повторить",

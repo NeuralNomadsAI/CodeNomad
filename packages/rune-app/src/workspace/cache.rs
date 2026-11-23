@@ -34,6 +34,10 @@ impl Cache {
         self.agent
             .as_ref()
             .is_some_and(agent::Ui::navigation_blocked)
+            || self
+                .files
+                .as_ref()
+                .is_some_and(|files| files.document.has_edits())
     }
     pub fn status(&self) -> Option<rune_theme_codenomad::tabs::Status> {
         status(&self.phase, self.agent.as_ref())

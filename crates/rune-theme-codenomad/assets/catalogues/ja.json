@@ -277,6 +277,7 @@
   "filesPanel.image.before": "変更前",
   "filesPanel.readOnly": "読み取り専用",
   "filesPanel.viewer": "ファイルのプレビュー",
+  "filesPanel.widenWindow": "ファイル — ウィンドウを広げる",
   "filesPanel.workspace": "ワークスペース",
   "filesystemBrowser.actions.close": "閉じる",
   "filesystemBrowser.actions.retry": "再試行",

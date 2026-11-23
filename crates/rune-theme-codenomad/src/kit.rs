@@ -6,15 +6,21 @@ use rune_kit::{Elevation, Kit, Motion, Palette, Radius, StateColors, Type, css, 
 use std::sync::OnceLock;
 
 pub fn kit(dark: bool) -> &'static Kit {
-    if let Some(palette) = crate::palettes::active(dark) {
+    if !crate::layout::source_palette()
+        && let Some(palette) = crate::palettes::active(dark)
+    {
         return palette.kit.get_or_init(|| build(dark));
     }
-    static KITS: [OnceLock<Kit>; 2] = [const { OnceLock::new() }; 2];
-    KITS[dark as usize].get_or_init(|| build(dark))
+    static KITS: [OnceLock<Kit>; 4] = [const { OnceLock::new() }; 4];
+    KITS[crate::palette_index(dark)].get_or_init(|| build(dark))
 }
 pub fn field_kit(dark: bool) -> &'static Kit {
-    static FIELDS: [OnceLock<Kit>; 2] = [const { OnceLock::new() }; 2];
-    let cache = crate::palettes::active(dark).map_or(&FIELDS[dark as usize], |p| &p.field);
+    static FIELDS: [OnceLock<Kit>; 4] = [const { OnceLock::new() }; 4];
+    let cache = if crate::layout::source_palette() {
+        &FIELDS[crate::palette_index(dark)]
+    } else {
+        crate::palettes::active(dark).map_or(&FIELDS[dark as usize], |p| &p.field)
+    };
     cache.get_or_init(|| {
         let mut kit = kit(dark).clone();
         kit.c.bg_base = kit.c.surface_base;
@@ -101,16 +107,20 @@ fn build(dark: bool) -> Kit {
         std_icon_strong: c("text-primary"),
         std_text: c("text-primary"),
     };
+    let shadows = if crate::layout::source_palette() {
+        &document()["product"][t.mode()]["shadows"]
+    } else {
+        &document()["shadows"][t.mode()]
+    };
     let shadow = |name| {
         css::box_shadows(
-            crate::palettes::active(dark).map_or_else(
-                || {
-                    document()["shadows"][t.mode()][name]
-                        .as_str()
-                        .expect("generated CSS shadow")
-                },
-                |p| p.shadow(name),
-            ),
+            (!crate::layout::source_palette())
+                .then(|| crate::palettes::active(dark))
+                .flatten()
+                .map_or_else(
+                    || shadows[name].as_str().expect("generated CSS shadow"),
+                    |p| p.shadow(name),
+                ),
             |color| color,
         )
     };
