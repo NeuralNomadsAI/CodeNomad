@@ -1,4 +1,5 @@
 //! Native qualification entry points, enabled exclusively by `test-support`.
+mod composer_attachments;
 mod controls;
 mod files_document;
 mod files_reader;
@@ -56,6 +57,7 @@ pub fn dispatch() -> bool {
         ("--probe-recovery", recovery::run),
         ("--probe-contract", session_transport::contract),
         ("--probe-slash", slash::run),
+        ("--probe-attachments", composer_attachments::run),
     ] {
         if crate::platform::has_flag(flag) {
             run();

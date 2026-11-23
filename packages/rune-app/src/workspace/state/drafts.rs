@@ -1,4 +1,5 @@
 use super::{Backend, State, Tab, Tx, Ui, same_project};
+use crate::composer::draft_storage::SavedParts;
 
 pub fn attachment_draft_admissible(s: &State) -> bool {
     let Some(ui) = &s.workspace else { return true };
@@ -27,8 +28,12 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
     let Some(Tab::Workspace(saved)) = snapshot.tabs.get_mut(ui.active) else {
         return false;
     };
-    if !saved.attachment_drafts.insert(id.into()) {
-        return true;
+    saved.attachment_drafts.insert(id.into());
+    if let Some(parts) = SavedParts::capture(&s.composer.draft, s.composer.attachments_missing) {
+        saved.attachment_parts.insert(id.into(), parts);
+    }
+    if !s.draft.text.is_empty() {
+        saved.drafts.insert(id.into(), s.draft.text.clone());
     }
     super::super::encode(&snapshot).is_ok()
 }
@@ -43,14 +48,18 @@ pub fn capture(s: &mut State) {
     if capture_draft(
         item,
         &s.draft.text,
-        s.composer.attachments_missing || !s.composer.draft.attachments.is_empty(),
+        SavedParts::capture(&s.composer.draft, s.composer.attachments_missing),
     ) {
         ui.changed();
     }
     ui.stage();
 }
 
-pub(super) fn capture_draft(item: &mut super::Entry, text: &str, has_attachments: bool) -> bool {
+pub(super) fn capture_draft(
+    item: &mut super::Entry,
+    text: &str,
+    parts: Option<SavedParts>,
+) -> bool {
     let mut changed = false;
     if let Tab::Workspace(saved) = &mut item.saved {
         let key = saved
@@ -61,11 +70,19 @@ pub(super) fn capture_draft(item: &mut super::Entry, text: &str, has_attachments
             b.session == key || b.session.is_empty() && key == "__no_session_draft__"
         });
         if owns_draft {
-            changed |= if has_attachments {
+            changed |= if parts.is_some() {
                 saved.attachment_drafts.insert(key.into())
             } else {
                 saved.attachment_drafts.remove(key)
             };
+            match parts {
+                Some(parts) if saved.attachment_parts.get(key) != Some(&parts) => {
+                    saved.attachment_parts.insert(key.into(), parts);
+                    changed = true;
+                }
+                None => changed |= saved.attachment_parts.remove(key).is_some(),
+                _ => {}
+            }
             if text.is_empty() {
                 if saved.drafts.remove(key).is_some() {
                     item.cleared.insert(key.into());
@@ -101,8 +118,12 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
         return String::new();
     };
     saved.active_session_id = Some(backend.session.clone());
-    s.composer.attachments_missing |= saved.attachment_drafts.contains(&backend.session)
-        && s.composer.draft.attachments.is_empty();
+    if !same_session && let Some(parts) = saved.attachment_parts.get(&backend.session) {
+        (s.composer.draft, s.composer.attachments_missing) = parts.restore();
+    } else {
+        s.composer.attachments_missing |= saved.attachment_drafts.contains(&backend.session)
+            && s.composer.draft.attachments.is_empty();
+    }
     let draft = saved
         .drafts
         .get(&backend.session)
@@ -127,7 +148,13 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         .filter(|w| same_project(&scope, w))
         .find_map(|w| {
             let missing = w.attachment_drafts.contains(id);
-            (missing || w.drafts.contains_key(id)).then(|| (w.drafts.get(id).cloned(), missing))
+            (missing || w.drafts.contains_key(id)).then(|| {
+                (
+                    w.drafts.get(id).cloned(),
+                    missing,
+                    w.attachment_parts.get(id).cloned(),
+                )
+            })
         });
     for (index, item) in ui.entries.iter_mut().enumerate() {
         if !matches!(&item.saved, Tab::Workspace(w) if same_project(&scope, w))
@@ -140,12 +167,16 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         };
         saved.drafts.remove(id);
         saved.attachment_drafts.remove(id);
+        saved.attachment_parts.remove(id);
         item.cleared.remove(id);
         if index == ui.active {
-            if current.as_ref().is_some_and(|(_, missing)| *missing) {
+            if current.as_ref().is_some_and(|(_, marked, _)| *marked) {
                 saved.attachment_drafts.insert(id.into());
             }
-            match current.as_ref().and_then(|(text, _)| text.as_ref()) {
+            if let Some(parts) = current.as_ref().and_then(|(_, _, parts)| parts.as_ref()) {
+                saved.attachment_parts.insert(id.into(), parts.clone());
+            }
+            match current.as_ref().and_then(|(text, _, _)| text.as_ref()) {
                 Some(text) if !text.is_empty() => {
                     saved.drafts.insert(id.into(), text.clone());
                 }
@@ -159,5 +190,6 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
     for w in ui.closed.iter_mut().filter(|w| same_project(&scope, w)) {
         w.drafts.remove(id);
         w.attachment_drafts.remove(id);
+        w.attachment_parts.remove(id);
     }
 }

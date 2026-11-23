@@ -9,14 +9,7 @@ fn reopening_a_saved_draft_without_its_files_blocks_every_send() {
     ui.entries[0].binding = Some(backend("alpha"));
     s.workspace = Some(ui);
     s.draft = TextEdit::new("from the attached file");
-    s.composer
-        .draft
-        .attach(crate::composer::draft::Attachment::Project {
-            name: "report.txt".into(),
-            path: "./report.txt".into(),
-            uri: "file:///fixture/report.txt".into(),
-            directory: false,
-        });
+    s.composer.attachments_missing = true;
     capture(&mut s);
     let bytes = crate::workspace::encode(&s.workspace.as_ref().unwrap().snapshot()).unwrap();
 
@@ -68,6 +61,52 @@ fn attachment_only_drafts_reserve_a_slot_before_the_picker_can_attach() {
     s.draft = TextEdit::new("a plain draft still saves");
     capture(&mut s);
     assert!(crate::workspace::encode(&s.workspace.as_ref().unwrap().snapshot()).is_ok());
+}
+
+#[test]
+fn reopening_a_draft_restores_its_project_reference_before_sending() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries[0] = entry("tab-0".into(), Tab::Workspace(workspace("alpha", "")));
+    ui.entries[0].binding = Some(backend("alpha"));
+    s.workspace = Some(ui);
+    s.draft = TextEdit::new("read @./report.txt");
+    let file = crate::composer::draft::Attachment::Project {
+        name: "report.txt".into(),
+        path: "./report.txt".into(),
+        uri: "file:///fixture/report.txt".into(),
+        directory: false,
+    };
+    s.composer.draft.attach(file.clone());
+    capture(&mut s);
+    s.draft = TextEdit::new(bound(&mut s, &backend("beta")));
+    assert!(s.composer.draft.attachments.is_empty());
+    let bytes = crate::workspace::encode(&s.workspace.as_ref().unwrap().snapshot()).unwrap();
+    let mut restored = init();
+    let mut ui = Ui::new();
+    ui.hydrate(crate::workspace::decode(&bytes).unwrap());
+    ui.ready = true;
+    restored.workspace = Some(ui);
+    restored.draft = TextEdit::new(bound(&mut restored, &backend("alpha")));
+    assert_eq!(restored.composer.draft.attachments, [file]);
+    assert!(!restored.composer.attachments_missing);
+    restored.phase = Phase::Ready;
+    let (sender, commands) = bounded(1);
+    restored.commands = Some(sender);
+    let mut rt = runtime(restored);
+    rt.update(crate::send);
+    assert!(commands.try_recv().is_err(), "wait for server capability");
+    rt.update(|s, tx| {
+        s.composer.picker.set_attachments_supported(true);
+        crate::send(s, tx);
+    });
+    let crate::transport::Command::Prompt(prompt) = commands.try_recv().unwrap() else {
+        panic!("native prompt");
+    };
+    assert_eq!(prompt.text, "read ./report.txt");
+    assert_eq!(prompt.files.len(), 1);
+    assert_eq!(prompt.files[0].uri, "file:///fixture/report.txt");
 }
 
 fn closed(session: &str, text: &str) -> Workspace {

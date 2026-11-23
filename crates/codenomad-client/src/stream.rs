@@ -379,7 +379,11 @@ async fn read_native(b: &Backend, epoch: u64, out: &Sender<Input>, state: &State
     let response = b
         .client
         .get(format!("{}api/events", b.base))
-        .query(&[("clientId", &b.client_id), ("connectionId", &connection)])
+        .query(&[
+            ("clientId", b.client_id.as_str()),
+            ("connectionId", connection.as_str()),
+            ("userFiles", crate::attachments::USER_FILES_REFERENCE),
+        ])
         .timeout(Duration::from_secs(86400))
         .send()
         .await?

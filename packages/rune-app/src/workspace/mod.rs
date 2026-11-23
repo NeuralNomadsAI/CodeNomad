@@ -15,6 +15,7 @@ pub(crate) use state::{
     schedule_catalogue, select, set_files_tab, status, strip, unselect_missing,
 };
 
+use crate::composer::draft_storage::SavedParts;
 use serde_json::{Map, Value, json};
 
 pub(crate) const MAX_BYTES: usize = 1024 * 1024;
@@ -54,6 +55,7 @@ pub struct Workspace {
     pub active_session_id: Option<String>,
     pub drafts: BTreeMap<String, String>,
     pub(crate) attachment_drafts: BTreeSet<String>,
+    pub(crate) attachment_parts: BTreeMap<String, SavedParts>,
     pub(crate) view: ViewState,
 }
 
@@ -160,6 +162,15 @@ pub fn encode(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
                 if !workspace.attachment_drafts.is_empty() {
                     value["attachmentDrafts"] = json!(workspace.attachment_drafts);
                 }
+                if !workspace.attachment_parts.is_empty() {
+                    value["attachmentParts"] = Value::Object(
+                        workspace
+                            .attachment_parts
+                            .iter()
+                            .map(|(id, parts)| (id.clone(), parts.encode()))
+                            .collect(),
+                    );
+                }
                 if workspace.view != ViewState::default() {
                     value["viewState"] = json!({
                         "version": 1,
@@ -207,6 +218,7 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                     "drafts",
                     "attachments",
                     "attachmentDrafts",
+                    "attachmentParts",
                     "scrollSnapshots",
                     "unseenIdleSince",
                     "generationRecovery",
@@ -277,6 +289,16 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                 active_session_id: optional_string(value, "activeSessionId")?,
                 drafts,
                 attachment_drafts,
+                attachment_parts: if let Some(parts) = value.get("attachmentParts") {
+                    object(parts)?
+                        .iter()
+                        .map(|(id, raw)| {
+                            Ok((id.clone(), SavedParts::decode(raw).ok_or(Error::Malformed)?))
+                        })
+                        .collect::<Result<_, Error>>()?
+                } else {
+                    BTreeMap::new()
+                },
                 view: view_state(value.get("viewState"))?,
             }))
         }
@@ -386,6 +408,13 @@ fn validate(snapshot: &Snapshot) -> Result<(), Error> {
             if !draft_id(id) {
                 return Err(Error::Malformed);
             }
+        }
+        if workspace
+            .attachment_parts
+            .iter()
+            .any(|(id, parts)| !workspace.attachment_drafts.contains(id) || !parts.valid())
+        {
+            return Err(Error::Malformed);
         }
     }
     Ok(())

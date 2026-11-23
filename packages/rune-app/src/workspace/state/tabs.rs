@@ -173,6 +173,9 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         saved
             .attachment_drafts
             .retain(|id| !removed.pending_drafts.contains(id));
+        saved
+            .attachment_parts
+            .retain(|id, _| !removed.pending_drafts.contains(id));
         // Clear authority belongs to this occurrence's live lifetime, outside text budgets.
         saved.drafts.extend(
             removed

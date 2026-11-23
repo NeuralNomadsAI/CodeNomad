@@ -141,6 +141,7 @@ pub fn view(s: &State, compact: bool) -> El {
                 false,
                 screen::action_tx(&scope, |s, tx| {
                     s.composer.attachments_missing = false;
+                    s.composer.draft.attachments.clear();
                     crate::workspace::draft_changed(s, tx);
                 }),
             )
@@ -221,18 +222,22 @@ fn changed(s: &mut State, tx: &mut Tx) {
 }
 
 fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) {
-    if !tab
-        && !s.composer.picker.slash()
-        && s.composer.picker.attachments_supported()
-        && !crate::workspace::attachment_draft_admissible(s)
-    {
-        layout::announce_selection(tx, t("promptInput.attachFiles.errorTitle"));
-        return;
-    }
+    let previous =
+        (!tab && !s.composer.picker.slash() && s.composer.picker.attachments_supported())
+            .then(|| (s.draft.clone(), s.composer.draft.clone()));
     if s.composer
         .picker
         .choose(&mut s.draft, &mut s.composer.draft, index, tab, path_only)
     {
+        if let Some((edit, draft)) = previous
+            && !crate::workspace::attachment_draft_admissible(s)
+        {
+            s.draft = edit;
+            s.composer.draft = draft;
+            s.composer.picker.changed(&s.draft, &s.reads, &s.wake);
+            layout::announce_selection(tx, t("promptInput.attachFiles.errorTitle"));
+            return;
+        }
         if tab && s.composer.picker.open() {
             changed(s, tx);
         } else {

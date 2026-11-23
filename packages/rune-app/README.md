@@ -56,6 +56,7 @@ node packages/rune-app/fixtures/launcher-fixture.mjs --with-tools
 node packages/rune-app/fixtures/launcher-fixture.mjs --controls
 node packages/rune-app/fixtures/recovery-fixture.mjs
 node packages/rune-app/fixtures/rust-fixture.mjs --probe-slash
+node packages/rune-app/fixtures/rust-fixture.mjs --probe-attachments
 node scripts/rune/headless.mjs --binary $env:RUNE_CLIENT_EXE
 ```
 

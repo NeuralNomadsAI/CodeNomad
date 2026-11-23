@@ -375,6 +375,7 @@ pub fn opened(s: &mut State, project: &Project) {
     } else {
         let mut drafts = std::collections::BTreeMap::new();
         let mut attachment_drafts = std::collections::BTreeSet::new();
+        let mut attachment_parts = std::collections::BTreeMap::new();
         item.cleared.clear();
         for w in ui.closed.iter().filter(|w| {
             same_folder(&w.folder, &project.path)
@@ -383,6 +384,7 @@ pub fn opened(s: &mut State, project: &Project) {
         }) {
             for (id, text) in &w.drafts {
                 attachment_drafts.remove(id);
+                attachment_parts.remove(id);
                 if text.is_empty() {
                     drafts.remove(id);
                     item.cleared.insert(id.clone());
@@ -392,6 +394,10 @@ pub fn opened(s: &mut State, project: &Project) {
                 }
             }
             attachment_drafts.extend(w.attachment_drafts.iter().cloned());
+            for id in &w.attachment_drafts {
+                attachment_parts.remove(id);
+            }
+            attachment_parts.extend(w.attachment_parts.clone());
         }
         item.pending_drafts = drafts
             .keys()
@@ -412,6 +418,7 @@ pub fn opened(s: &mut State, project: &Project) {
             active_session_id: None,
             drafts,
             attachment_drafts,
+            attachment_parts,
             view: Default::default(),
         });
     }
@@ -474,7 +481,10 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                 drafts_changed |= drafts::capture_draft(
                     item,
                     &s.draft.text,
-                    s.composer.attachments_missing || !s.composer.draft.attachments.is_empty(),
+                    crate::composer::draft_storage::SavedParts::capture(
+                        &s.composer.draft,
+                        s.composer.attachments_missing,
+                    ),
                 );
             }
             changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
