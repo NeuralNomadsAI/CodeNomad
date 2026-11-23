@@ -822,6 +822,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
    * or cost the newer writer did not publish. */
   function snapshotInfoExtends(current: MessageInfo | undefined, fetched: MessageInfo): boolean {
     if (!current) return true
+    // Content first: a fetched end the resident entry lacks (or that is at
+    // least as recent) lands regardless of usage size.
+    const fetchedCompleted = fetched.time?.completed
+    const currentCompleted = current.time?.completed
+    if (fetchedCompleted !== undefined && (currentCompleted === undefined || fetchedCompleted >= currentCompleted)) return true
+    if (currentCompleted !== undefined && fetchedCompleted === undefined) return false
     const currentTokens = current.tokens
     const fetchedTokens = fetched.tokens
     const currentTotal = (currentTokens?.input ?? 0) + (currentTokens?.output ?? 0) + (currentTokens?.reasoning ?? 0)
@@ -847,7 +853,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
    * open one, an open prose fragment keeps text the fetched page only
    * prefixes (the stream continued past the fetch), and committed versions
    * order by the records' server timestamps, the fetched page winning ties. */
-  function residentPartWins(resident: ClientPart, snapshot: ClientPart, residentUpdatedAt: number, snapshotUpdatedAt: number): boolean {
+  function residentPartWins(resident: ClientPart, snapshot: ClientPart, residentUpdatedAt: number, snapshotUpdatedAt: number, residentRecordComplete = false, snapshotRecordComplete = false): boolean {
     if (resident.type !== snapshot.type) return false
     if (resident.type === "tool") {
       const residentTerminal = isTerminalToolStatus((resident as { state?: { status?: unknown } }).state?.status)
@@ -857,12 +863,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       return residentUpdatedAt > snapshotUpdatedAt
     }
     if (resident.type === "text" || resident.type === "reasoning") {
-      // Completion evidence orders before any prefix reasoning: a committed
-      // fetched fragment is the final version even when it is shorter than
-      // what the open stream displayed (`updatedAt` may hold the creation
-      // time and cannot order these).
-      const residentCommitted = isCommittedProsePart(resident)
-      const snapshotCommitted = isCommittedProsePart(snapshot)
+      // Completion evidence orders before any prefix reasoning, read like
+      // the native merge's test: a fragment is committed by its own ending
+      // or by its message's end, even when only the message carries
+      // `time.completed`. A committed fetched fragment is the final
+      // version even when it is shorter than what the open stream
+      // displayed (`updatedAt` may hold the creation time and cannot order
+      // these).
+      const residentCommitted = isCommittedProsePart(resident) || residentRecordComplete
+      const snapshotCommitted = isCommittedProsePart(snapshot) || snapshotRecordComplete
       if (snapshotCommitted && !residentCommitted) return false
       if (!residentCommitted) {
         if (!snapshotCommitted) {
@@ -906,7 +915,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
    * to pair on - and every other part pairs by id. The winner above decides
    * each pair; parts only one side holds stay. Returns the resident record
    * when nothing of the snapshot survives. */
-  function mergeSnapshotRecord(resident: MessageRecord, next: MessageRecord): MessageRecord {
+  function mergeSnapshotRecord(resident: MessageRecord, next: MessageRecord, keepResidentExtras: boolean): MessageRecord {
     type ProseSide = { id: string; part: MessageRecord["parts"][string]; ordinal: number }
     const proseOf = (record: MessageRecord): Map<string, ProseSide[]> => {
       const byKind = new Map<string, ProseSide[]>()
@@ -927,24 +936,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const residentProse = proseOf(resident)
     const snapshotProse = proseOf(next)
     const residentProseUsed = new Set<string>()
-    const snapshotProseUsed = new Set<string>()
+    const snapshotProseUsedSet = new Set<string>()
     const mergedParts: MessageRecord["parts"] = {}
     const mergedIds: string[] = []
     let snapshotSurvives = false
-    const resolveProsePair = (snapshotId: string, residentSide: ProseSide | undefined, snapshotSide: ProseSide) => {
-      snapshotProseUsed.add(snapshotId)
-      if (!residentSide) {
-        mergedParts[snapshotId] = snapshotSide.part
-        snapshotSurvives = true
-        return
-      }
-      residentProseUsed.add(residentSide.id)
-      if (residentPartWins(residentSide.part.data, snapshotSide.part.data, resident.updatedAt, next.updatedAt)) {
-        mergedParts[snapshotId] = { ...residentSide.part, data: prosePartWithFetchedEnd(residentSide.part.data, snapshotSide.part.data) }
-      } else {
-        mergedParts[snapshotId] = snapshotSide.part
-        snapshotSurvives = true
-      }
+    const residentComplete = resident.status === "complete"
+    const snapshotComplete = next.status === "complete"
+    const canonicalize = (part: MessageRecord["parts"][string], id: string): MessageRecord["parts"][string] => {
+      if (part.id === id && (part.data as { id?: unknown }).id === id) return part
+      return { ...part, id, data: { ...part.data, id } as ClientPart }
     }
     for (const id of next.partIds) {
       const snapshotPart = next.parts[id]
@@ -952,7 +952,20 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       if (snapshotPart && (snapshotKind === "text" || snapshotKind === "reasoning")) {
         const ordinal = snapshotProse.get(snapshotKind)?.find((side) => side.id === id)?.ordinal
         const residentSide = ordinal === undefined ? undefined : residentProse.get(snapshotKind)?.find((side) => side.ordinal === ordinal)
-        resolveProsePair(id, residentSide, { id, part: snapshotPart, ordinal: ordinal ?? 0 })
+        // A resident part won through pairing keeps the pair's canonical
+        // id: transcript lookups resolve parts by data.id.
+        const snapshotProseUsed = snapshotProseUsedSet
+        const residentWon = residentSide !== undefined
+          && residentPartWins(residentSide.part.data, snapshotPart.data, resident.updatedAt, next.updatedAt, residentComplete, snapshotComplete)
+        if (residentSide) residentProseUsed.add(residentSide.id)
+        snapshotProseUsed.add(id)
+        if (residentWon) {
+          const data = prosePartWithFetchedEnd(residentSide!.part.data, snapshotPart.data)
+          mergedParts[id] = canonicalize({ ...residentSide!.part, data }, id)
+        } else {
+          mergedParts[id] = snapshotPart
+          snapshotSurvives = true
+        }
         mergedIds.push(id)
         continue
       }
@@ -964,28 +977,31 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         snapshotSurvives = true
         continue
       }
-      if (residentPartWins(residentPart.data, snapshotPart.data, resident.updatedAt, next.updatedAt)) {
+      if (residentPartWins(residentPart.data, snapshotPart.data, resident.updatedAt, next.updatedAt, residentComplete, snapshotComplete)) {
         mergedParts[id] = residentPart
       } else {
         mergedParts[id] = snapshotPart
         snapshotSurvives = true
       }
     }
-    for (const id of resident.partIds) {
-      if (mergedIds.includes(id) || residentProseUsed.has(id)) continue
-      const residentPart = resident.parts[id]
-      if (!residentPart) continue
-      const kind = residentPart.data.type
-      if (kind === "text" || kind === "reasoning") {
-        // Unpaired resident prose beyond the snapshot's ordinals: kept at
-        // the tail in resident order.
-        mergedIds.push(id)
-        mergedParts[id] = residentPart
-        continue
-      }
-      if (!next.parts[id]) {
-        mergedIds.push(id)
-        mergedParts[id] = residentPart
+    if (keepResidentExtras) {
+      for (const id of resident.partIds) {
+        if (mergedIds.includes(id) || residentProseUsed.has(id)) continue
+        const residentPart = resident.parts[id]
+        if (!residentPart) continue
+        const kind = residentPart.data.type
+        if (kind === "text" || kind === "reasoning") {
+          // Unpaired resident prose beyond the snapshot's ordinals: kept at
+          // the tail in resident order - a live stream the fetched page has
+          // not reached yet. An authoritative history page drops it.
+          mergedIds.push(id)
+          mergedParts[id] = residentPart
+          continue
+        }
+        if (!next.parts[id]) {
+          mergedIds.push(id)
+          mergedParts[id] = residentPart
+        }
       }
     }
     if (!snapshotSurvives) return resident
@@ -1105,7 +1121,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         let record = entry.record
         const resident = state.messages[entry.id]
         if (resident !== undefined && resident !== entry.previous) {
-          record = mergeSnapshotRecord(resident, entry.record)
+          record = mergeSnapshotRecord(resident, entry.record, options?.keepStreamedArrivals === true)
           if (record === resident) continue
         }
         setState("messages", entry.id, record)

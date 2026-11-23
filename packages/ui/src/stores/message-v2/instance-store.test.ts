@@ -828,12 +828,20 @@ describe("chunked hydration", () => {
   it("keeps an open streamed fragment the fetched page only prefixes", async () => {
     const store = createInstanceMessageStore("chunked-stream-continues")
     const base = makeInputs(CHUNK_SIZE + 5)
-    const streamed = base.map((input, index) =>
+    // The fetched page holds the message still open (status streaming), so
+    // neither side carries completion evidence and the longer open stream
+    // keeps its text.
+    const fetched = base.map((input, index) =>
       index === 10
-        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "body-10 continues" }] }
+        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "body-10" }] }
         : input,
     )
-    const result = store.hydrateMessages("session", base, undefined, { chunked: true })
+    const streamed = fetched.map((input, index) =>
+      index === 10
+        ? { ...input, parts: [{ type: "text" as const, text: "body-10 continues" }] }
+        : input,
+    )
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
     store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
 
     assert.equal(await result, true)
