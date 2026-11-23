@@ -37,8 +37,11 @@ pub struct Summary {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Cleanup {
+    #[serde(rename = "missionID")]
     pub mission_id: String,
+    #[serde(rename = "deletionID")]
     pub deletion_id: String,
+    #[serde(rename = "requestID")]
     pub request_id: String,
     pub expected_revision: u64,
     pub delete_managed_sessions: bool,
