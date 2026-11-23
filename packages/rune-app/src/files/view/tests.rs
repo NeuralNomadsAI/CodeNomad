@@ -15,6 +15,106 @@ mod visual;
 fn english(s: &State, cx: &mut rune::Cx<State>) -> El {
     crate::strings::with_locale("en", || crate::view(s, cx))
 }
+
+#[test]
+fn create_controls_target_the_selected_folder_and_refresh_after_create() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut ui = http.ui(Store::default(), "entry-create");
+        ui.tree.activate(true);
+        let root = ui.tree.take_refresh().pop().unwrap();
+        ui.tree.complete(
+            root,
+            Ok(vec![Entry {
+                name: "src".into(),
+                path: "src".into(),
+                kind: EntryKind::Directory,
+                absolute_path: None,
+                directory_identity: None,
+                size: None,
+                modified_at: None,
+            }]),
+            Ok,
+        );
+        ui.tree.select("src".into());
+        ui.panel = true;
+        let mut rt = runtime(ui);
+        assert!(
+            rt.find("file-new").is_none(),
+            "remote browser must not show local creation"
+        );
+        rt.update(|state, _| state.files.as_mut().unwrap().create.local = true);
+        rt.frame(0.02);
+        for (button, kind, name, status) in [
+            ("file-new", "file", "新規.txt", 201),
+            ("file-new-directory", "directory", "docs", 201),
+            ("file-new-directory", "directory", "docs", 409),
+        ] {
+            click(&mut rt, button);
+            rt.frame(0.02);
+            assert!(rt.find("file-create-dialog").is_some(), "{button}");
+            rt.paste(name);
+            rt.frame(0.02);
+            click(&mut rt, "file-create-confirm");
+            let request = http.accept().await;
+            assert!(
+                request
+                    .header
+                    .starts_with("POST /api/workspaces/owned/files/entries?directory=%2Fprivate ")
+            );
+            assert_eq!(
+                request.body,
+                serde_json::json!({"parent":"src","name":name,"kind":kind})
+            );
+            request.reply(status, serde_json::Value::Null).await;
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while rt.state.files.as_ref().unwrap().create.pending {
+                rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
+                assert!(Instant::now() < deadline);
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            http.request("GET", "src")
+                .await
+                .reply(
+                    200,
+                    serde_json::json!([
+                        {"path":format!("src/{name}"),"name":name,"type":kind}
+                    ]),
+                )
+                .await;
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while rt.find(&format!("file-row-src/{name}")).is_none() {
+                rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
+                rt.frame(0.02);
+                assert!(Instant::now() < deadline);
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            if status == 409 {
+                rt.frame(0.02);
+                assert!(
+                    rt.accessibility_json()
+                        .to_string()
+                        .contains("That name is already in use.")
+                );
+                assert_eq!(
+                    rt.state
+                        .files
+                        .as_ref()
+                        .unwrap()
+                        .create
+                        .form
+                        .as_ref()
+                        .unwrap()
+                        .edit
+                        .text,
+                    name
+                );
+                click(&mut rt, "file-create-cancel");
+            }
+        }
+        http.quiet().await;
+    });
+}
 fn runtime(ui: crate::files::Ui) -> Runtime<State> {
     let mut state = crate::init();
     state.phase = crate::Phase::Ready;

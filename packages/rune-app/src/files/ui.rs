@@ -10,6 +10,7 @@ use codenomad_client::{
     transport::WorkspaceEvent,
 };
 use std::collections::BTreeSet;
+pub(super) mod entry_create;
 
 type Changes = Option<BTreeSet<(String, String)>>;
 
@@ -25,6 +26,7 @@ pub struct Ui {
     pub reader_close: crate::window_control::WindowCloseState,
     pub presentation: super::presentation::Presentation,
     pub document: Editor,
+    pub(super) create: entry_create::Create,
     pub reader: Reader,
     pub tree: Tree,
     pub rows: Vec<Row>,
@@ -58,6 +60,7 @@ impl Ui {
                 wake.clone(),
             ),
             reader: Reader::new(backend.clone(), reads.clone(), wake.clone()),
+            create: Default::default(),
             tree: Tree::new(directory),
             rows: vec![],
             panel: false,
@@ -81,6 +84,9 @@ impl Ui {
         self.active = active;
         if !active {
             self.host_width = None;
+            if !self.create.pending {
+                self.create.form = None;
+            }
         }
         self.document.activate(active);
         self.reader.activate(active);
@@ -91,10 +97,16 @@ impl Ui {
             return;
         }
         self.panel = show;
+        if !show && !self.create.pending {
+            self.create.form = None;
+        }
         self.demand();
     }
     pub fn browse(&mut self, directory: String) {
         if self.tree.directory() != directory {
+            if !self.create.pending {
+                self.create.form = None;
+            }
             self.close_reader();
             self.tree.switch(directory);
             self.demand();
@@ -109,12 +121,17 @@ impl Ui {
         }
         let was_pinned = self.drawer().pinned;
         self.host_width = Some(width);
+        if !self.drawer().pinned && !self.create.pending {
+            self.create.form = None;
+        }
         if was_pinned
             && !self.drawer().pinned
             && tx.focused().is_some_and(|key| {
                 key.starts_with("file-row-")
                     || key.starts_with("file-eye-")
                     || key.starts_with("file-retry-")
+                    || key.starts_with("file-create-")
+                    || key.starts_with("file-new")
             })
         {
             tx.focus("files-toggle", true);
@@ -342,7 +359,7 @@ impl Ui {
     }
     pub fn poll(&mut self, now: f64) -> bool {
         self.clock = now;
-        let mut changed = false;
+        let mut changed = self.poll_create();
         if self.document.take_write() && !self.stopped {
             self.tree.invalidate_all();
             self.pending = None;

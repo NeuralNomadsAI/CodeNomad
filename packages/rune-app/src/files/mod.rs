@@ -35,6 +35,7 @@ pub fn bind(s: &mut crate::State, backend: &crate::backend::Backend) {
                 s.reads.clone(),
                 s.wake.clone(),
             )
+            .with_local_entries(launcher.local_connection())
             .with_documents(
                 s.documents.clone(),
                 s.workspace

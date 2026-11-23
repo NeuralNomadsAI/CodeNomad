@@ -153,5 +153,7 @@ fn tree_content(s: &State) -> El {
     );
     theme::surface(dark)
         .key("files-panel")
+        .children(super::create::toolbar(s, ui))
         .child(theme::viewport(contents, true).key("workspace-tree-scroll"))
+        .children(super::create::dialog(s, ui))
 }

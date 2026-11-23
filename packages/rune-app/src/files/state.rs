@@ -116,7 +116,7 @@ impl Tree {
             )
             .collect()
     }
-    fn stale(&self, path: &str) -> bool {
+    pub(super) fn stale(&self, path: &str) -> bool {
         self.state.loaded.get(path).copied() != Some(self.state.version(path))
     }
     pub fn activate(&mut self, active: bool) {

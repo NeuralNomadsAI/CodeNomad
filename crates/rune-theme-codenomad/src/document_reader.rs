@@ -5,6 +5,8 @@ use rune_kit::{Markdown, MarkdownStyle, syntax};
 
 mod toolbar;
 pub use toolbar::wrap_button;
+mod entry_dialog;
+pub use entry_dialog::entry_dialog;
 
 pub fn surface(dark: bool) -> El {
     rune::col()

@@ -31,6 +31,7 @@ pub enum EntryKind {
 pub enum CreateEntry {
     Created,
     NameTaken,
+    Rejected,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
@@ -86,6 +87,11 @@ impl Backend {
         match response.status() {
             reqwest::StatusCode::CREATED => Ok(CreateEntry::Created),
             reqwest::StatusCode::CONFLICT => Ok(CreateEntry::NameTaken),
+            status
+                if status.is_client_error() && status != reqwest::StatusCode::REQUEST_TIMEOUT =>
+            {
+                Ok(CreateEntry::Rejected)
+            }
             _ => {
                 response.error_for_status()?;
                 Err("unexpected file creation response".into())
