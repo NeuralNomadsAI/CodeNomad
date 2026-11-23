@@ -39,6 +39,7 @@ pub struct State {
     pub upstream: AtomicBool,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
     catalogue: Option<Arc<catalogue::Signals>>,
+    placement: Option<(Sender<()>, crate::Receiver<()>)>,
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -111,7 +112,16 @@ impl State {
     ) -> Self {
         Self {
             preferences: Some((out, wake)),
+            placement: Some(crate::bounded(1)),
             ..Self::default()
+        }
+    }
+
+    pub(crate) async fn placement_changed(&self) {
+        if let Some((_, changed)) = &self.placement {
+            let _ = changed.recv().await;
+        } else {
+            std::future::pending::<()>().await;
         }
     }
 
@@ -153,6 +163,44 @@ impl State {
             && self.upstream.load(SeqCst)
             && !self.cancelled.load(SeqCst)
     }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn a_matching_move_cancels_the_body_before_waiting_for_queue_space() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut backend = Backend::connect("http://127.0.0.1:9/", "").await.unwrap();
+            backend.workspace = "project".into();
+            backend.session = "session".into();
+            let (out, inbox) = crate::bounded(1);
+            let (events, _receiver) = crate::bounded(1);
+            let state = State::observing_preferences(events, Arc::new(|| {}));
+            out.try_send(Input::Opened(1)).ok().unwrap();
+            let move_event = json!({"type":"instance.event","instanceId":"project","event":{
+                "type":"session.moved","data":{"sessionID":"session"}
+            }});
+            let payload = move_event.to_string();
+            let mut dispatch_move = std::pin::pin!(dispatch(
+                &backend, 1, &out, &state, "stream", "message", &payload
+            ));
+            assert!(
+                futures_lite::future::poll_once(&mut dispatch_move)
+                    .await
+                    .is_none()
+            );
+            assert!(
+                futures_lite::future::poll_once(state.placement_changed())
+                    .await
+                    .is_some()
+            );
+            assert!(matches!(inbox.try_recv().unwrap(), Input::Opened(1)));
+            dispatch_move.await.unwrap();
+            assert!(matches!(inbox.try_recv().unwrap(), Input::Native(1, _, _)));
+        });
 }
 
 pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>) {
@@ -301,7 +349,7 @@ pub(super) async fn dispatch(
         }
         let version = state.version.fetch_add(1, SeqCst) + 1;
         out.send(if ready {
-            Input::Hint(epoch, version)
+            Input::Available(epoch, version)
         } else {
             Input::Unavailable(epoch)
         })
@@ -327,6 +375,13 @@ pub(super) async fn dispatch(
             || native["type"] == "server.connected")
     {
         let version = state.version.fetch_add(1, SeqCst) + 1;
+        if native["type"] == "session.moved"
+            && native["data"]["sessionID"] == b.session
+            && let Some((cancel, _)) = &state.placement
+        {
+            // Closing the signal fences the current body and every later read on this wire.
+            cancel.close();
+        }
         out.send(Input::Native(epoch, version, native.clone()))
             .await?;
     }

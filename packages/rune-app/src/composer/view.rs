@@ -52,9 +52,10 @@ pub fn view(s: &State, compact: bool) -> El {
             });
         layout::native_composer_field(input, compact).key("composer")
     };
+    let retry = s.reader.as_ref().is_some_and(|reader| reader.can_retry());
     let mut actions = layout::action_row()
         .children(
-            (s.can_older || s.history_error && s.phase != Phase::Failed).then(|| {
+            (s.can_older || retry || s.history_error && s.phase != Phase::Failed).then(|| {
                 rune_theme_codenomad::shell::older_button(
                     t(if s.paging {
                         "rune.loading"
@@ -63,8 +64,17 @@ pub fn view(s: &State, compact: bool) -> El {
                     } else {
                         "rune.older"
                     }),
-                    s.paging || matches!(s.phase, Phase::Reconnecting | Phase::Failed),
-                    screen::action_tx(&scope, crate::request_older),
+                    s.paging
+                        || s.phase == Phase::Failed
+                        || !retry && s.phase == Phase::Reconnecting,
+                    screen::action_tx(
+                        &scope,
+                        if retry {
+                            crate::chat::reader::retry
+                        } else {
+                            crate::request_older
+                        },
+                    ),
                 )
             }),
         )

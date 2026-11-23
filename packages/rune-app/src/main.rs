@@ -65,6 +65,7 @@ struct State {
     draft: TextEdit,
     composer: composer::Owner,
     incoming: Option<Receiver<Event>>,
+    reader: Option<chat::reader::Reader>,
     commands: Option<Sender<Command>>,
     phase: Phase,
     revision: u64,
@@ -115,6 +116,7 @@ fn init() -> State {
         draft: TextEdit::new(""),
         composer: Default::default(),
         incoming: None,
+        reader: None,
         commands: None,
         phase: Phase::Loading,
         revision: 0,
@@ -227,10 +229,11 @@ fn retry_connection(s: &mut State, tx: &mut Tx) {
         .is_some_and(|c| c.try_send(Command::Retry).is_ok())
     {
         s.phase = Phase::Reconnecting;
+        chat::resume(s, tx);
     }
 }
 fn latest(s: &mut State, tx: &mut Tx) {
-    if s.history_detached {
+    if s.reader.is_none() && s.history_detached {
         if s.commands
             .as_ref()
             .is_some_and(|c| c.try_send(Command::Latest).is_ok())
@@ -240,10 +243,17 @@ fn latest(s: &mut State, tx: &mut Tx) {
         }
         return;
     }
-    tx.scroll_to_bottom_instant("history");
+    chat::reader::latest(s, tx);
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = poll_chat(s, 64);
+    if !s.screen.is_launcher()
+        && !git::has_preview(s)
+        && !files::has_preview(s)
+        && let Some(reader) = &mut s.reader
+    {
+        reader.renderer_ready(tx);
+    }
     let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
     changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
@@ -275,10 +285,27 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 }
 fn poll_chat(s: &mut State, limit: usize) -> bool {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
-    for _ in 0..limit {
-        let Some(event) = s.incoming.as_ref().and_then(|r| r.try_recv().ok()) else {
-            break;
+    if changed
+        && s.reader
+            .as_ref()
+            .is_some_and(chat::reader::Reader::independent_status)
+        && let Some(agent) = &s.agent
+        && agent.online
+        && agent.known
+        && s.phase != Phase::Failed
+    {
+        let running = s.reader.as_ref().and_then(chat::reader::Reader::running);
+        s.phase = if running.unwrap_or(agent.running) {
+            Phase::Streaming
+        } else {
+            Phase::Ready
         };
+    }
+    for _ in 0..limit {
+        let observation = s.incoming.as_ref().and_then(|r| r.try_recv().ok());
+        let content = observation.is_none();
+        let event = observation.or_else(|| s.reader.as_ref().and_then(chat::reader::Reader::next));
+        let Some(event) = event else { break };
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
@@ -295,6 +322,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if catalog {
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
+                    git::online(s, true);
                 }
                 if catalog && let Some(files) = &mut s.files {
                     files.online(true);
@@ -318,6 +346,27 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.composer.picker.commands_changed(&s.reads, &s.wake);
                 s.composer.picker.mentions_changed(&s.reads, &s.wake);
             }
+            Event::ObservedRunning { running, version } => {
+                if let Some(reader) = &mut s.reader {
+                    reader.observed_running(running, version);
+                }
+                if s.phase != Phase::Reconnecting
+                    && s.phase != Phase::Failed
+                    && (running
+                        || s.reader
+                            .as_ref()
+                            .is_none_or(chat::reader::Reader::independent_status))
+                {
+                    s.phase = if running {
+                        Phase::Streaming
+                    } else {
+                        Phase::Ready
+                    };
+                }
+                if let Some(agent) = &mut s.agent {
+                    agent.observe_running(running);
+                }
+            }
             Event::Workspace(event) => {
                 git::event(s, &event);
                 if let Some(files) = &mut s.files {
@@ -325,7 +374,21 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
-            Event::Sync(page) => {
+            Event::Sync(_) | Event::ReaderSync { .. } => {
+                let (page, stale_activity) = match event {
+                    Event::Sync(page) => (page, false),
+                    Event::ReaderSync { page, version } => (
+                        page,
+                        s.reader
+                            .as_ref()
+                            .is_some_and(|reader| reader.activity_after(version)),
+                    ),
+                    _ => unreachable!(),
+                };
+                if let Some(reader) = &mut s.reader {
+                    reader.install(page.newer.is_some());
+                    reader.sync_activity(stale_activity);
+                }
                 s.composer
                     .picker
                     .set_attachments_supported(page.user_file_references);
@@ -334,19 +397,27 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     files.online(true);
                 }
                 if let Some(a) = s.agent.as_mut() {
-                    if !a.online {
+                    if !a.online || a.running != page.running {
                         a.online = true;
                         s.composer.picker.refresh_commands(&s.reads, &s.wake);
                         a.refresh(false);
                     }
                 }
                 s.messages = page.rows;
-                s.history_detached = false;
+                s.history_detached = s.reader.is_some() && page.newer.is_some();
                 composer::reconcile(s);
                 s.can_older = page.older.is_some();
                 s.paging = false;
                 s.history_error = false;
-                s.phase = if page.running {
+                // A newer activity event can run ahead of a snapshot in the content lane.
+                let running = if stale_activity {
+                    s.reader.as_ref().is_some_and(|reader| {
+                        !reader.independent_status() || reader.running() == Some(true)
+                    })
+                } else {
+                    page.running
+                };
+                s.phase = if running {
                     Phase::Streaming
                 } else {
                     Phase::Ready
@@ -356,6 +427,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if !page.rows.is_empty() {
                     s.attachments.cancel();
                     s.history_detached = page.newer.is_some();
+                    if let Some(reader) = &mut s.reader {
+                        reader.install(s.history_detached);
+                    }
                     s.messages = page.rows;
                 }
                 s.can_older = page.older.is_some();
@@ -364,6 +438,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Reconnecting | Event::ConnectionLost => {
                 s.composer.picker.set_attachments_supported(false);
+                chat::reader::reconnecting(s);
                 #[cfg(target_arch = "wasm32")]
                 if matches!(event, Event::ConnectionLost) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
@@ -385,6 +460,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.history_error = true;
             }
             Event::HistoryInvalidated => {
+                chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();
                 s.messages.clear();
@@ -427,7 +503,14 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Done => s.phase = Phase::Ready,
-            Event::AuthenticationRequired(_) | Event::Failed => {
+            Event::Failed if content => {
+                if let Some(reader) = &mut s.reader {
+                    reader.failed();
+                }
+                s.paging = false;
+                s.history_error = true;
+            }
+            Event::AuthenticationRequired(..) | Event::Failed => {
                 #[cfg(target_arch = "wasm32")]
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
@@ -444,6 +527,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     chat::authentication::expired(s, expired);
                 }
                 s.composer.picker.set_attachments_supported(false);
+                chat::reader::suspend(s);
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
@@ -504,13 +588,10 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let expanded = interruption_expanded(s);
     rune_theme_codenomad::interruption::session_surface(expanded)
         .child(shell::reader(s, || {
-            chat::reading::history(
-                s,
-                rune_theme_codenomad::interruption::history(expanded)
-                    .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
-                    .on_layout_tx(chat::ToolDiffPreferences::history_layout)
-                    .child(transcript::rows(s)),
-            )
+            let history = rune_theme_codenomad::interruption::history(expanded)
+                .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
+                .child(transcript::rows(s));
+            chat::reading::viewport(s, history)
         }))
         .child(agent_view::view(s, cx))
         .children(chat::attachments::error(s))

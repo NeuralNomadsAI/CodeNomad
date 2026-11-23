@@ -18,6 +18,19 @@ pub struct Page {
     pub running: bool,
     pub user_file_references: bool,
 }
+
+pub fn retained_bytes(rows: &[Row]) -> usize {
+    rows.iter().fold(0usize, |total, row| {
+        total.saturating_add(
+            size_of::<Message>()
+                + row.id.len()
+                + row.role.len()
+                + row.body.len()
+                + crate::content::bytes(&row.parts)
+                + crate::content::tool_text_bytes(&row.parts),
+        )
+    })
+}
 pub fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 256
