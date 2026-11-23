@@ -38,6 +38,12 @@ limit applies to the complete graph. Publication and partition collection are
 serialized across windows, retaining the union of their roots. A failed delta
 retries once with all partition bodies.
 
+Tauri admits client-state IPC to a FIFO worker before yielding the event loop,
+so writes and renderer flush acknowledgements keep delivery order. Electron
+serializes publication, including asynchronous ownership checks, on its write
+queue. Explicit quit waits for the renderer flush and native durable writes
+before releasing ownership.
+
 Workspace file drafts use a separate `workspace-file-drafts.json` beside the
 profile's client-state envelope. Both hosts serialize atomic draft changes under
 the existing profile ownership guard. Closing an individual window removes its
