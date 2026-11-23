@@ -75,18 +75,7 @@ pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
 pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
     rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
 }
-pub fn composer_field(edit: &TextEdit, placeholder: &str, compact: bool) -> rune_kit::TextArea {
-    let field = rune_kit::TextArea::new(edit)
-        .width(None)
-        .max_height(320.0)
-        .placeholder(placeholder);
-    if compact {
-        field.auto_grow(1, usize::MAX)
-    } else {
-        field.rows(5)
-    }
-}
-pub fn native_composer_input(edit: &TextEdit, placeholder: &str) -> El {
+pub fn composer_input(edit: &TextEdit, placeholder: &str) -> El {
     input(edit).hint(placeholder)
 }
 pub fn editor_menu<S: 'static>(
@@ -105,7 +94,7 @@ pub fn editor_menu<S: 'static>(
     }
     tx.popup_menu(menu, point, pick);
 }
-pub fn native_composer_field(editor: El, compact: bool) -> El {
+pub fn composer_field(editor: El, compact: bool) -> El {
     let t = tokens(dark());
     let minimum = if compact {
         t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0
