@@ -275,6 +275,7 @@
   "filesPanel.gitInit.unsupported": "Diese OpenCode-Version kann hier kein Git-Repository initialisieren.",
   "filesPanel.image.after": "Nachher",
   "filesPanel.image.before": "Vorher",
+  "filesPanel.listingTooLarge": "{path}: mehr als 4.096 Einträge.",
   "filesPanel.readOnly": "Schreibgeschützt",
   "filesPanel.viewer": "Dateivorschau",
   "filesPanel.widenWindow": "Dateien — Fenster verbreitern",

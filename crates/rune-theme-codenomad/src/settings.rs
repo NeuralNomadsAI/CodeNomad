@@ -33,6 +33,21 @@ pub fn save_warning_spec<S: 'static>(
     }
 }
 
+#[cfg(target_os = "windows")]
+pub fn placed_window<S: 'static>(
+    spec: rune::WindowSpec<S>,
+    position: (i32, i32),
+    dimensions: (u32, u32),
+    maximized: bool,
+) -> rune::WindowSpec<S> {
+    spec.options(rune::WindowOptions {
+        position: Some(position),
+        physical_size: Some(dimensions),
+        ..Default::default()
+    })
+    .map_app(|app| app.maximized(maximized))
+}
+
 pub fn shell_entry(tabs: El, entry: El) -> El {
     row()
         .full_width()

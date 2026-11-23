@@ -275,6 +275,7 @@
   "filesPanel.gitInit.unsupported": "Эта версия OpenCode не может инициализировать здесь Git-репозиторий.",
   "filesPanel.image.after": "После",
   "filesPanel.image.before": "До",
+  "filesPanel.listingTooLarge": "{path}: больше 4 096 элементов.",
   "filesPanel.readOnly": "Только чтение",
   "filesPanel.viewer": "Просмотр файла",
   "filesPanel.widenWindow": "Файлы — расширьте окно",

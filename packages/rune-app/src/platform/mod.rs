@@ -6,6 +6,7 @@ pub(crate) mod pairing;
 pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;
+pub(crate) mod workspace_open;
 pub(crate) use connection::configured_backend;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod host;
@@ -151,16 +152,25 @@ pub fn has_flag(flag: &str) -> bool {
 }
 #[cfg(not(target_arch = "wasm32"))]
 pub fn preferences_window<S: 'static>(
+    owner: &crate::State,
     spec: rune::AppSpec<S>,
     state: S,
     close: fn(&mut S, &mut rune::Tx),
 ) -> rune::WindowHandle {
-    rune::open_window(
-        rune::WindowSpec::new("preferences", spec)
-            .state(state)
-            .on_close(close),
-    )
+    let spec = rune::WindowSpec::new("preferences", spec)
+        .state(state)
+        .on_close(close);
+    #[cfg(target_os = "windows")]
+    return preferences_placement::open(spec, crate::workspace::native_window_store(owner));
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = owner;
+        rune::open_window(spec)
+    }
 }
+
+#[cfg(target_os = "windows")]
+pub(crate) mod preferences_placement;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn preferences_save_warning(

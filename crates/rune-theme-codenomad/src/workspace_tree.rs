@@ -57,13 +57,43 @@ pub fn root(dark: bool, name: &str, directory: &str) -> El {
         )
 }
 
-pub fn workspace_body(header: El, tree: El, status: Option<El>) -> El {
+pub fn workspace_body(header: El, tree: El, status: Vec<El>) -> El {
     rune::col()
         .py(tokens(crate::layout::dark()).space(Space::Sm).px())
         .full_width()
         .child(header)
         .child(tree)
         .children(status)
+}
+
+pub fn action_budget(label: &str, depth: usize, busy: bool, actions: f32) -> f32 {
+    let t = tokens(crate::layout::dark());
+    let m = |name| t.metric("workspaceRow", name).px();
+    // Use the same estimated text advance as the Git rows until Rune exposes intrinsic width.
+    m("base")
+        + depth as f32 * m("step")
+        + m("paddingInlineEnd")
+        + m("chevron")
+        + m("icon")
+        + (3.0 + f32::from(u8::from(busy))) * m("columnGap")
+        + if busy { m("busy") } else { 0.0 }
+        + label.chars().count() as f32 * m("fontSize") * 0.55
+        + actions
+}
+
+pub fn action_glyph(glyph: &'static Icon) -> El {
+    icon(
+        glyph,
+        tokens(crate::layout::dark())
+            .metric("fileRowActionGlyph", "width")
+            .px(),
+    )
+}
+
+pub type ActionGlyph = &'static Icon;
+
+pub fn with_actions(tree: El, overlays: Vec<El>) -> El {
+    rune_kit::root(tree, overlays)
 }
 
 pub fn row(dark: bool, rtl: bool, row: Row<'_>) -> El {
@@ -87,6 +117,7 @@ pub fn row(dark: bool, rtl: bool, row: Row<'_>) -> El {
         .label(row.label)
         .level(row.depth)
         .focus_selected(row.selected)
+        .busy(row.busy)
         .w_full()
         .min_h(m("minHeight"))
         .pt(m("paddingTop"))

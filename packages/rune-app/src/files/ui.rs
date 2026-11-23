@@ -30,14 +30,17 @@ pub struct Ui {
     pub tree: Tree,
     pub rows: Vec<Row>,
     pub panel: bool,
+    pub(super) shell_managed: bool,
+    pub(super) local: bool,
+    pub(super) actions: super::view::Actions,
     pub host_width: Option<f32>,
     pub(super) reader_width: Option<f32>,
-    backend: Backend,
+    pub(super) backend: Backend,
     reads: Reads,
     collation: std::result::Result<Collation, String>,
     incoming: Receiver<(Read, Result<Vec<Entry>>)>,
     out: Sender<(Read, Result<Vec<Entry>>)>,
-    wake: Wake,
+    pub(super) wake: Wake,
     active: bool,
     online: bool,
     due: Option<f64>,
@@ -64,6 +67,9 @@ impl Ui {
             tree: Tree::new(directory),
             rows: vec![],
             panel: false,
+            shell_managed: false,
+            local: false,
+            actions: Default::default(),
             host_width: None,
             reader_width: None,
             backend,
@@ -81,12 +87,28 @@ impl Ui {
             stopped: false,
         }
     }
+    pub(super) fn with_shell(mut self, local: bool) -> Self {
+        self.shell_managed = true;
+        self.local = local;
+        self
+    }
+    pub(super) fn tree_visible(&self) -> bool {
+        if self.shell_managed {
+            self.panel
+        } else {
+            self.drawer().pinned
+        }
+    }
+    pub(super) fn actions_ready(&self) -> bool {
+        self.tree_visible() && self.active && self.online && !self.stopped
+    }
     pub fn activate(&mut self, active: bool) {
         self.active = active;
         if !active {
             self.host_width = None;
             self.reader_width = None;
             self.pictures.suspend();
+            self.actions.revoke();
         }
         self.document.activate(active);
         self.reader.activate(active);
@@ -101,6 +123,7 @@ impl Ui {
     }
     pub fn browse(&mut self, directory: String) {
         if self.tree.directory() != directory {
+            self.actions.revoke();
             self.close_reader();
             self.tree.switch(directory);
             self.demand();
@@ -115,7 +138,8 @@ impl Ui {
         }
         let was_pinned = self.drawer().pinned;
         self.host_width = Some(width);
-        if was_pinned
+        if !self.shell_managed
+            && was_pinned
             && !self.drawer().pinned
             && tx.focused().is_some_and(|key| {
                 key.starts_with("file-row-")
@@ -137,12 +161,14 @@ impl Ui {
             self.tree.invalidate_all();
             self.pending = None;
         }
+        if !online && self.online {
+            self.actions.revoke();
+        }
         self.online = online;
         self.demand();
     }
     fn demand(&mut self) {
-        self.tree
-            .activate(self.active && self.drawer().pinned && self.online);
+        self.tree.activate(self.actions_ready());
         self.due = Some(0.0);
         self.snapshot();
     }
@@ -176,9 +202,33 @@ impl Ui {
                 self.reader.close();
                 self.pending = None;
                 self.stopped = true;
+                self.actions.revoke();
                 self.snapshot();
             }
             _ => {}
+        }
+    }
+    pub(super) fn listing_errors(
+        &self,
+    ) -> impl Iterator<Item = (&str, &codenomad_client::history::Error)> {
+        self.tree.errors().iter().filter_map(|(path, error)| {
+            self.listing_visible(path).then_some((path.as_str(), error))
+        })
+    }
+    fn listing_visible(&self, path: &str) -> bool {
+        path == "."
+            || self
+                .rows
+                .iter()
+                .any(|row| row.expanded.is_some() && row.entry.path == path)
+    }
+    pub(super) fn retry_listing(&mut self, directory: &str, path: &str) {
+        if !self.stopped
+            && directory == self.tree.directory()
+            && self.listing_visible(path)
+            && self.tree.errors().contains_key(path)
+        {
+            self.refresh(Some(path));
         }
     }
     pub fn refresh(&mut self, path: Option<&str>) {
@@ -198,6 +248,25 @@ impl Ui {
             let requests = self.tree.toggle(&path);
             self.launch(requests);
         }
+    }
+    pub(super) fn sync_tree_focus(&mut self, tx: &mut rune::Tx) -> bool {
+        if self.stopped || !self.active || !self.tree_visible() {
+            return false;
+        }
+        // Rune polls before input and has no element focus callback. Read the resulting
+        // focus once on the next frame, leaving Tab order and scrolling to Rune.
+        if tx.input_waiting() {
+            tx.wake_after(std::time::Duration::ZERO);
+        }
+        let Some(path) = tx.focused().and_then(|key| key.strip_prefix("file-row-")) else {
+            return false;
+        };
+        if self.tree.selected() == Some(path) || !self.rows.iter().any(|row| row.entry.path == path)
+        {
+            return false;
+        }
+        self.tree.select(path.into());
+        true
     }
     pub fn navigate(&mut self, path: &str, key: &rune::Key, rtl: bool, tx: &mut rune::Tx) -> bool {
         use rune::Key;
@@ -259,6 +328,22 @@ impl Ui {
         tx.focus(&key, true);
         tx.scroll_into_view_in("workspace-tree-scroll", key);
         self.tree.select(path);
+    }
+    pub(super) fn previews(&self, path: &str) -> bool {
+        self.reader
+            .target()
+            .is_some_and(|target| target.directory == self.tree.directory() && target.path == path)
+    }
+    pub(super) fn toggle_preview(&mut self, directory: &str, path: &str, tx: &mut rune::Tx) {
+        if self.stopped || self.tree.directory() != directory {
+            return;
+        }
+        if self.previews(path) {
+            self.close_reader();
+            self.reading.restore(tx);
+        } else {
+            self.open(path.into());
+        }
     }
     pub fn open(&mut self, path: String) {
         if !self.stopped {
@@ -345,7 +430,7 @@ impl Ui {
             (self.wake)();
         }
         if self.active
-            && self.drawer().pinned
+            && self.tree_visible()
             && self.online
             && self.due.is_some_and(|due| now >= due)
         {
@@ -417,6 +502,9 @@ impl Ui {
                 busy: self.tree.busy(&row.entry.path),
             })
             .collect();
+        if self.shell_managed {
+            self.actions.retain_rows(&self.rows);
+        }
     }
 }
 

@@ -275,6 +275,7 @@
   "filesPanel.gitInit.unsupported": "גרסת OpenCode זו אינה יכולה לאתחל כאן מאגר Git.",
   "filesPanel.image.after": "אחרי",
   "filesPanel.image.before": "לפני",
+  "filesPanel.listingTooLarge": "{path}: יותר מ־4,096 פריטים.",
   "filesPanel.readOnly": "לקריאה בלבד",
   "filesPanel.viewer": "תצוגה מקדימה של קובץ",
   "filesPanel.widenWindow": "קבצים — הרחבת החלון",

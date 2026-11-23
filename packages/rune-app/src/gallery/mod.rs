@@ -4,10 +4,10 @@ use rune::{Cx, El};
 use rune_theme_codenomad::layout::Layout;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub mod action_menu;
-#[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
-pub mod shell;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub mod reader;
+#[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
+pub mod shell;
 
 #[derive(Default)]
 pub struct Gallery {

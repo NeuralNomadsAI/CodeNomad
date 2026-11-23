@@ -44,14 +44,20 @@ impl Http {
     }
     pub async fn request(&self, method: &str, path: &str) -> Request {
         let request = self.accept().await;
-        let header = &request.header;
         assert!(
-            header.starts_with(&format!("{method} /api/workspaces/owned/files/")),
-            "{header}"
+            ['/', '?'].into_iter().any(|suffix| {
+                request
+                    .header
+                    .starts_with(&format!("{method} /api/workspaces/owned/files{suffix}"))
+            }),
+            "{}",
+            request.header
         );
         assert!(
-            header.contains(&format!("path={path}")) && header.contains("directory=%2Fprivate"),
-            "{header}"
+            request.header.contains(&format!("path={path}"))
+                && request.header.contains("directory=%2Fprivate"),
+            "{}",
+            request.header
         );
         request
     }

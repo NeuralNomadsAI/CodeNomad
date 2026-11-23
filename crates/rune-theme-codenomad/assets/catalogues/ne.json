@@ -275,6 +275,7 @@
   "filesPanel.gitInit.unsupported": "यो OpenCode संस्करणले यहाँ Git रिपोजिटरी सुरु गर्न सक्दैन।",
   "filesPanel.image.after": "पछि",
   "filesPanel.image.before": "अघि",
+  "filesPanel.listingTooLarge": "{path}: ४,०९६ भन्दा धेरै प्रविष्टिहरू।",
   "filesPanel.readOnly": "पढ्न मात्र",
   "filesPanel.viewer": "फाइल पूर्वावलोकन",
   "filesPanel.widenWindow": "फाइलहरू — सञ्झ्याल फराकिलो बनाउनुहोस्",

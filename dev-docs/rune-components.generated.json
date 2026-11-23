@@ -13149,6 +13149,24 @@
     },
     {
       "specifier": "solid-js",
+      "file": "packages/ui/tests/browser/fixtures/file-row-actions.tsx",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js/web",
+      "file": "packages/ui/tests/browser/fixtures/file-row-actions.tsx",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "lucide-solid",
+      "file": "packages/ui/tests/browser/fixtures/file-row-actions.tsx",
+      "line": 3,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js",
       "file": "packages/ui/tests/browser/fixtures/file-search-retry.tsx",
       "line": 1,
       "resolution": "external-dependency-requires-installed-contract"
@@ -18057,6 +18075,24 @@
     },
     {
       "specifier": "node:assert/strict",
+      "file": "packages/ui/tests/browser/positioner-motion.test.ts",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:test",
+      "file": "packages/ui/tests/browser/positioner-motion.test.ts",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "playwright",
+      "file": "packages/ui/tests/browser/positioner-motion.test.ts",
+      "line": 3,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:assert/strict",
       "file": "packages/ui/tests/browser/preferences-backends.test.ts",
       "line": 1,
       "resolution": "external-dependency-requires-installed-contract"
@@ -21439,7 +21475,7 @@
     "packages/ui/src/lib/i18n/messages/de/folderSelection.ts": "49305536328c346b9aa81c30e73f6031e2511928cac9170b3a435064579f4a0d",
     "packages/ui/src/lib/i18n/messages/de/hotkeys.ts": "9cafd88f40f387bae4733441181b2aacbb0dc4b6963aed8f70b8c920e5d23daf",
     "packages/ui/src/lib/i18n/messages/de/index.ts": "97abe998a815f7a7753908e60a9df56b966cd6fe13c1e483def2dae05853189c",
-    "packages/ui/src/lib/i18n/messages/de/instance.ts": "f9f9e8c646c78eca40dfa21b3c62c7e4e9289b62633fa785d2a4c062f3580c66",
+    "packages/ui/src/lib/i18n/messages/de/instance.ts": "e7dd8d33ae6e3bf1da22177869956e87914f4db9ecdfff8b6f1fccbee181dd09",
     "packages/ui/src/lib/i18n/messages/de/integrations.ts": "0cf27155e10b8e14acda454a41da5e17c3390aa850d1b917e7dfe9c4d44a49c3",
     "packages/ui/src/lib/i18n/messages/de/loadingScreen.ts": "ec5be186b59e635eac1071f57fe6a03004a9f8f333d9e97ed40f385cf249ee4a",
     "packages/ui/src/lib/i18n/messages/de/logs.ts": "99c4d9dd684ee71c7a9942ad63faf2042f643f12073131ee625838be8f796c47",
@@ -21469,7 +21505,7 @@
     "packages/ui/src/lib/i18n/messages/en/folderSelection.ts": "c58a61084aaa9b6a4d0bc23a612c2b9f346e4b360f0bfbdfcf499a6492c0d0d3",
     "packages/ui/src/lib/i18n/messages/en/hotkeys.ts": "50cbd719632268ceb1b8f5d98ad2cbd62b5a44e324a73ed5a674c46935da12fe",
     "packages/ui/src/lib/i18n/messages/en/index.ts": "f351c3274b4b35f946ac082aa9c9b28028e801aa268f55aa9068f05dae761dc2",
-    "packages/ui/src/lib/i18n/messages/en/instance.ts": "4c8920202e86c25de24c1d6bc1f47607ac2540713c65798fce61da2a352c5268",
+    "packages/ui/src/lib/i18n/messages/en/instance.ts": "e7b350d8dab13be92e950f040daf69b797fe07934ab16f83beb7b9864c90472f",
     "packages/ui/src/lib/i18n/messages/en/integrations.ts": "602d46afdf3b1050b0c77a0207d3c4387ee1b0296ecd9d4f680e0b3712aa36e1",
     "packages/ui/src/lib/i18n/messages/en/loadingScreen.ts": "3c6465e9c38c5624a1c88cd59a30bbcb0b539e6801d8e743f3ef44e7f1fbd2b9",
     "packages/ui/src/lib/i18n/messages/en/logs.ts": "c2f8bf44ff1c1cfdbaa4ae8ac444d641d627b5572282416948808080068a7a3e",
@@ -21499,7 +21535,7 @@
     "packages/ui/src/lib/i18n/messages/es/folderSelection.ts": "f9138965590f5dfc59a81ece097c7c8d68137d73097ebcc13e74ecd040835abc",
     "packages/ui/src/lib/i18n/messages/es/hotkeys.ts": "29cb2405c371437199f268a240ad1311dc350e956b33cb91086f0868eeca602e",
     "packages/ui/src/lib/i18n/messages/es/index.ts": "1fd06977f99be2fe7dcbdbe971cad0ce43830adecaee83c280ca789e8ac94260",
-    "packages/ui/src/lib/i18n/messages/es/instance.ts": "1426e90a01c47cb0edb488a03215a61c7e270f6bdcfb0c3d2bc6d7b6ff6f3683",
+    "packages/ui/src/lib/i18n/messages/es/instance.ts": "474e2d2458636dcc6d78e60771caa7f396ba1d9da6247b0e44b482e3245929ee",
     "packages/ui/src/lib/i18n/messages/es/integrations.ts": "df83cd22d874e6dca8b34c2cf337d52b81970acc938f50907c6c9f7c59269e96",
     "packages/ui/src/lib/i18n/messages/es/loadingScreen.ts": "b7693d859a736c32abcbc9dc0c32a264da512c6d3e5f8de2489559a1bdc264e1",
     "packages/ui/src/lib/i18n/messages/es/logs.ts": "b573b1a156ca0d7dfb950b7294770eb119b0845d16b7eea6547256e8d98b3bd7",
@@ -21529,7 +21565,7 @@
     "packages/ui/src/lib/i18n/messages/fr/folderSelection.ts": "f23355f1784523cbe5e3d3c4306e74557ef5e9e11aa8b36d9454ef43ac085d36",
     "packages/ui/src/lib/i18n/messages/fr/hotkeys.ts": "e9cbda9f267cc1bbef824f4f9e5ffabfbe9aeb8a289ebe215c2f939c96ae20c0",
     "packages/ui/src/lib/i18n/messages/fr/index.ts": "801d453af143de43f9703f764b4a47d90757c3fd7511aceb7c8d6f2b98db52de",
-    "packages/ui/src/lib/i18n/messages/fr/instance.ts": "17ffa72886e116a093526658f0b50b196eddf20ca5989ef907d1b3a5c0ae8f6a",
+    "packages/ui/src/lib/i18n/messages/fr/instance.ts": "843c5a806ce35d054dbe7d6c40761754044a46694f2ba7d25df7def00d9ea87b",
     "packages/ui/src/lib/i18n/messages/fr/integrations.ts": "3e40e842095959f778a0de95777624d4133c5118e4e4cbb0e7124c3ae61b9f67",
     "packages/ui/src/lib/i18n/messages/fr/loadingScreen.ts": "d9534a17b1f0a342c42352565701970892c4c8c1928469aa0f0b43c91a233ee1",
     "packages/ui/src/lib/i18n/messages/fr/logs.ts": "fbf08ac0ec1716fb73493fa308cbb4e289b0dc68cd2c0962b49b1f2394d283c8",
@@ -21559,7 +21595,7 @@
     "packages/ui/src/lib/i18n/messages/he/folderSelection.ts": "a7717f9e4cb5df56aaed34892ef6f1c3075bfbff22592f98c93a44a1081bcc35",
     "packages/ui/src/lib/i18n/messages/he/hotkeys.ts": "ee54bdb75ccf11fe725118aa92206e31ba306c0bf217f3b168a64f108972c8eb",
     "packages/ui/src/lib/i18n/messages/he/index.ts": "07d064a99978164fed1ba3b06d1d8d0acccdcc7af59b77482d69515f0b061289",
-    "packages/ui/src/lib/i18n/messages/he/instance.ts": "4df72758a4de232b8e26bed0e27d37a594c42b4c0509cd2faa1c02fe26fe717a",
+    "packages/ui/src/lib/i18n/messages/he/instance.ts": "acb9d4f8e4a2b957c4a640954076a662fd3505a959fb2f4ac0550c8abba6d62b",
     "packages/ui/src/lib/i18n/messages/he/integrations.ts": "68bb92eb2590a1fab93d251c5b8b9549aacbd368623dd317de3cbd0266a1d6d4",
     "packages/ui/src/lib/i18n/messages/he/loadingScreen.ts": "d474bf35b5b736c58e65fa424337c732f127542b06b177d3ac16fb0c317b522e",
     "packages/ui/src/lib/i18n/messages/he/logs.ts": "f40fbe476cce03c65719b7f4a10bcb0fba1f0ff75cb56871f21fa9e6d3bf24d9",
@@ -21590,7 +21626,7 @@
     "packages/ui/src/lib/i18n/messages/ja/folderSelection.ts": "492b1d4daef74189640ada199256cf39b35bd0b7a59d424aefb69daf6e110530",
     "packages/ui/src/lib/i18n/messages/ja/hotkeys.ts": "33fc8dbc245b870278e78831a29392de742b3843d17b12f62b878d61afbddd7c",
     "packages/ui/src/lib/i18n/messages/ja/index.ts": "6254381ac0643d89326a53b18ba696bd2ea59dc2f479765eba77aeb2ef167314",
-    "packages/ui/src/lib/i18n/messages/ja/instance.ts": "5bc92602efd65ace6ac7e48174191c7ff854dbf710b094a0fb2dec5d68d6d57d",
+    "packages/ui/src/lib/i18n/messages/ja/instance.ts": "9c0da31f467ebe091e1e1885fec5ebf67c2b83c7949905cb72761cf7a33b4934",
     "packages/ui/src/lib/i18n/messages/ja/integrations.ts": "9978545cf09198404345aba7298eccea67c492bc0403ae17357403c0a9015353",
     "packages/ui/src/lib/i18n/messages/ja/loadingScreen.ts": "c9c072694cd64f78b2d3e53dd3df329d621488d9867febdc50084837e50809c3",
     "packages/ui/src/lib/i18n/messages/ja/logs.ts": "19cd71f31e25e2e5e27eeaa69cff4861bd3feb39c96fe2a4e35b11f65da0d8a4",
@@ -21624,7 +21660,7 @@
     "packages/ui/src/lib/i18n/messages/ne/folderSelection.ts": "be2e87a00388eaa25fa4792c9f49ab977954ff4609f3762c3366f067d68f1763",
     "packages/ui/src/lib/i18n/messages/ne/hotkeys.ts": "63a8f19c0a8958cd6c2616f5bd7f99230b29538538c8a120c65802d295e14f25",
     "packages/ui/src/lib/i18n/messages/ne/index.ts": "aaff33164d6460dd7fbb02b2413984417cc4061e475f7813fcd2ee7ca49c223f",
-    "packages/ui/src/lib/i18n/messages/ne/instance.ts": "dd6ec11bec8fe5d014d30780b739112d510244dc95aa46e31f80ea3d7f1ad237",
+    "packages/ui/src/lib/i18n/messages/ne/instance.ts": "841a8d491ead7ec89cfbbcc7f68aaa427eab5bdda8f0c2ad6508f2b9ec4d4041",
     "packages/ui/src/lib/i18n/messages/ne/integrations.ts": "ce84067fa657af3dbb90939aca29fab4008bdd9b1a1810eb4b8b29f41a4c2db1",
     "packages/ui/src/lib/i18n/messages/ne/loadingScreen.ts": "2cd3e3cab986a544c1eeefb15fd7062f5a2c8b56e94814744e5b5471fcbbe250",
     "packages/ui/src/lib/i18n/messages/ne/logs.ts": "ebad18b56d58f9c3caa73c8705be048ee6e72a40588b231f245af0f219269938",
@@ -21655,7 +21691,7 @@
     "packages/ui/src/lib/i18n/messages/ru/folderSelection.ts": "a74f3efefe1ef5a783dc27ddb89ced814a76caa893b0d59f5d1e7850498c1e6a",
     "packages/ui/src/lib/i18n/messages/ru/hotkeys.ts": "52a3192ba0bd2ea1941748a93f1fdb850c9d11cd22dd76c6dd5bfd4ff6af7dd1",
     "packages/ui/src/lib/i18n/messages/ru/index.ts": "ae69b59d829719b5b3d113c0f32114ae394f3ee796fc38c4f4d113163d273f8a",
-    "packages/ui/src/lib/i18n/messages/ru/instance.ts": "667c203250953a58454a4a2ae1b8c37e7824a29b19a5257a2c3cb998654ff6f8",
+    "packages/ui/src/lib/i18n/messages/ru/instance.ts": "0cbb91e1cf775890e92999e87b752d9275a470b162d4f4072e1aaadf42cbad05",
     "packages/ui/src/lib/i18n/messages/ru/integrations.ts": "6e64ddd964d9fe2eee6f04cf8f8fea75b6ed12bde6771cbce4ce8369473bd528",
     "packages/ui/src/lib/i18n/messages/ru/loadingScreen.ts": "449dd9e2e8e509443bbf8bf592d81457777cbcdc4073e53b9f95520db16736f2",
     "packages/ui/src/lib/i18n/messages/ru/logs.ts": "2757c603749c541e484f66a3be413954775016e6860ffcd5da3d1abc10dff292",
@@ -21685,7 +21721,7 @@
     "packages/ui/src/lib/i18n/messages/tr/folderSelection.ts": "fe3b4db047e5a5d96c653d0566212a2babc4cd3fb6753c5e697226b1482959e5",
     "packages/ui/src/lib/i18n/messages/tr/hotkeys.ts": "7334696bf77bdc6ec7545a8c61f6f2e1405478f9e4542ece2367182bd3e99972",
     "packages/ui/src/lib/i18n/messages/tr/index.ts": "dd879a8454893d2b25b1fbbf09b7bcc46e917cc8784f3097a9c64d628b0b4878",
-    "packages/ui/src/lib/i18n/messages/tr/instance.ts": "32593ef5d531e3640950b133a04c2843fcc397259bf687466ff00893c444c5c7",
+    "packages/ui/src/lib/i18n/messages/tr/instance.ts": "d44fd0fe4d4d3d9292e800df4d793a2480863804ffe78dfa4ed75fb4ebe2a491",
     "packages/ui/src/lib/i18n/messages/tr/integrations.ts": "f5587dd4b00472f30703b24df481250662f63ae8b114698cb72dab34a985610a",
     "packages/ui/src/lib/i18n/messages/tr/loadingScreen.ts": "956fefee128ee4754df8b8fcc8a2df4f5a1c5f313b9eb462b9285107eb53c49f",
     "packages/ui/src/lib/i18n/messages/tr/logs.ts": "d1f15ff7485838591fd75ab312da33f0e0881f8b3af4d09169c67bf3649e227c",
@@ -21716,7 +21752,7 @@
     "packages/ui/src/lib/i18n/messages/zh-Hans/folderSelection.ts": "51c7215b5e9708eb6984e50783a18f9fc4087ee0488c7abb21d6c78c28ba99e7",
     "packages/ui/src/lib/i18n/messages/zh-Hans/hotkeys.ts": "502e26e6c95a4187a94c742022b8e03811230f23be511adb0476e1f124e69a07",
     "packages/ui/src/lib/i18n/messages/zh-Hans/index.ts": "ce29fa71314af919e95275cf68026e9a97c6eae307f20266703a640e07307660",
-    "packages/ui/src/lib/i18n/messages/zh-Hans/instance.ts": "ca625cfa5160b65014d742188e0812294d36a3b4c6f8cc84fdc827738e222c30",
+    "packages/ui/src/lib/i18n/messages/zh-Hans/instance.ts": "90bdbc4cf48fc52b48fa8cc6b687bbb59950a134c927cda974deaa7cb2b191a1",
     "packages/ui/src/lib/i18n/messages/zh-Hans/integrations.ts": "81cca2be6bf45dd31b4e815e059da1e85889b4dfef2eb202d51a44dc73f4ee86",
     "packages/ui/src/lib/i18n/messages/zh-Hans/loadingScreen.ts": "a7a7a3c4b7adeca9b365dfdff37007bbc6cb44e453f2f5744655868fbefd8baa",
     "packages/ui/src/lib/i18n/messages/zh-Hans/logs.ts": "b079d4d1e99578139dae4ab67091fd5892bb06d4338ec75eb97bfb747a782232",
@@ -22387,6 +22423,7 @@
     "packages/ui/src/styles/components/plugin-package-action.css": "fde5fd20fd4b155eaf9ca1f385153926596a6f7e1296d4a6870d45f586daaa27",
     "packages/ui/src/styles/components/plugin-source-add.css": "0c2d73801860f2b16343a4a0a8510b4a6b1542f8dcfdef9d62eefe2c3eb18c54",
     "packages/ui/src/styles/components/plugin-system-attention.css": "ba9d6f61f54a1a026a931e015eedf8656313fec7776521d451ad995990256d49",
+    "packages/ui/src/styles/components/positioner.css": "cf0adb9204d4849d7d4d77c023672a0d4568ec436bdd19a5b69f9581a0bd75c0",
     "packages/ui/src/styles/components/profile-manager.css": "f96d5abcb15cfa6611c9944ed98435c38382445a1bd285b54760c1e3e68ec503",
     "packages/ui/src/styles/components/prompt-context-controls.css": "f60caa15d742f5dfeb37765599c1d4297a8e844d4512e1114c4c7421e257d4b3",
     "packages/ui/src/styles/components/prompt-help.css": "2c81d4521ee1d568bf98c9262d9bbaa5bb555032372385c526fe2eb0a4f333d2",
@@ -22416,7 +22453,7 @@
     "packages/ui/src/styles/components/usage-metrics.css": "df551e69ed9dddd46fd61f0237b70dff10be0361d63aa60fbaf89768f87bf734",
     "packages/ui/src/styles/components/websearch-settings.css": "e90b18ca3cb0bd6a30a27ff3f331a936808b86b9596370906a682423d84c26d1",
     "packages/ui/src/styles/components/window.css": "8822d4ca58809457be862473895d96f41fb5ff66509eee8e613785e950999026",
-    "packages/ui/src/styles/controls.css": "ad19642fce1d39b56e0c2cc1608c0e43880bd18bd129fca37802819dec605982",
+    "packages/ui/src/styles/controls.css": "dec22749dcd99face0a0f540946006dec6ff0556d0185d7472fc8815e3f14008",
     "packages/ui/src/styles/markdown.css": "2b5c5a6b33ec437951d8acf7c1da1f231287905cc60022851c0557fbadc554f2",
     "packages/ui/src/styles/messaging.css": "827ce7714f2c374baf200445406488c3aba5488810de61a30ea8ef08c87245d8",
     "packages/ui/src/styles/messaging/delete-overlays.css": "ec2f533cff61dd85f871884e5ff4195b6e1be87337cc2aa44557602a5a8600bb",
@@ -22628,6 +22665,7 @@
     "packages/ui/tests/browser/fixtures/event-subscriber-isolation.tsx": "027d77aa0ceec1961c51709bf64cac19b1b7adc2dcfc712156cf81401dc8b593",
     "packages/ui/tests/browser/fixtures/external-link-clicks.ts": "c4b48ccd38f798c766b0f43e56cb510f55d040fadbadcab6f6d3b45699a91165",
     "packages/ui/tests/browser/fixtures/file-preview-panel.tsx": "a9793f66152469f6e90e36f8b45ffc006151c59b99cda3fee4c21cf5dca6feb2",
+    "packages/ui/tests/browser/fixtures/file-row-actions.tsx": "1b6795fc8ffe0384caa8eb382577b2d41971c5cd139f2b2aceb30d86ce3823a7",
     "packages/ui/tests/browser/fixtures/file-search-retry.tsx": "7ba7bc9a8c2fe7f1ffa92ca1e017ec5013395dfe12a6cd4ec20e43815653dd5d",
     "packages/ui/tests/browser/fixtures/fork.tsx": "186759a91ba8eadca4b21d22bf4fed04f2ff81070beec154b3334c1281fa486b",
     "packages/ui/tests/browser/fixtures/full-source-copy.tsx": "87ea8243d595c691435c3035ece934811fb0b9922e4959f13f3ce211a89c2bde",
@@ -22908,6 +22946,7 @@
     "packages/ui/tests/browser/plugin-controls.test.ts": "0cef35ad576b6e320f30af0b5030dd74b7df8e6cbc2af6b31bcf7c0e72c23943",
     "packages/ui/tests/browser/plugin-packages.test.ts": "8284afcf700c6f10c01db0715492369879a027f8ca7734cb4a50ec3d6e83bc3b",
     "packages/ui/tests/browser/plugin-sources.test.ts": "97ab22ba1e8e44d3b9ca123e3f5c1004f4eb0ce9d4efc1b6bc1eac800227576c",
+    "packages/ui/tests/browser/positioner-motion.test.ts": "f0e9759e25607764ca5f422c3b0974182161e53294f74d620941679d7021aec9",
     "packages/ui/tests/browser/preferences-backends.test.ts": "7fe17f74a44dafb4ab0d1da4dd5230ff2dd6d5e43b6be5dcca8a0d0f0c33f3d1",
     "packages/ui/tests/browser/preferences-startup-state.test.ts": "9f5cef59d03c8fcd4e77d726ca5b3c6b55b0c809a690a8132f0d1872edbe3547",
     "packages/ui/tests/browser/preferences-startup.test.ts": "8027b5b3747f02e3cc9ba0b78cc72abb83c42b78b6d2faab70921a1d377b2a6e",
@@ -23030,7 +23069,7 @@
     {
       "source": "packages/ui/src/components/action-overflow-menu.tsx",
       "sheet": "target/rune-inventory/components__action-overflow-menu.json",
-      "sheetSha256": "9e6cef8799eccae0ae1918e5cebb44794ccfecc4b4b30fa6ff193c573e3cf6ee",
+      "sheetSha256": "9c4b36a6b06c16cf497ff589a598825abd43340e91685237e97dbafaa41c9302",
       "components": [
         {
           "id": "packages/ui/src/components/action-overflow-menu.tsx#ActionOverflowMenu",
@@ -23038,7 +23077,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 143
+      "testReferenceCount": 144
     },
     {
       "source": "packages/ui/src/components/advanced-settings-modal.tsx",
@@ -23644,7 +23683,7 @@
     {
       "source": "packages/ui/src/components/instance/shell/right-panel/FileRowActions.tsx",
       "sheet": "target/rune-inventory/components__instance__shell__right-panel__FileRowActions.json",
-      "sheetSha256": "961d4032f0c5e43dafe637597c4905ce190432be82a1323fd2e1ef2d027be5a7",
+      "sheetSha256": "b8c1ad45b6e659dd5006f8840f18d5b1a7f900522ec3dcadacf11f63b5dd93b0",
       "components": [
         {
           "id": "packages/ui/src/components/instance/shell/right-panel/FileRowActions.tsx#FileRowActions",
@@ -23652,7 +23691,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 1
+      "testReferenceCount": 2
     },
     {
       "source": "packages/ui/src/components/instance/shell/right-panel/RightPanel.tsx",
@@ -26469,7 +26508,7 @@
     {
       "source": "packages/ui/src/lib/i18n/index.tsx",
       "sheet": "target/rune-inventory/lib__i18n__index.json",
-      "sheetSha256": "4914938e9d59d60f907ca6a2ae03e60869f601d34b3baae64ddccd37bcae46ee",
+      "sheetSha256": "556693f6197b1ef09236bbe8a0beefae934bbb6c30108e82464896fb7e9871c4",
       "components": [
         {
           "id": "packages/ui/src/lib/i18n/index.tsx#I18nProvider",
@@ -26477,7 +26516,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 361
+      "testReferenceCount": 362
     },
     {
       "source": "packages/ui/src/lib/theme.tsx",
@@ -26521,7 +26560,7 @@
     {
       "source": "packages/ui/src/stores/instance-config.tsx",
       "sheet": "target/rune-inventory/stores__instance-config.json",
-      "sheetSha256": "505e0dac8620a2c48cf1c3277cd6caaba4d1c403af08e5a13aed3013a186ee48",
+      "sheetSha256": "665f8f256aca7b4897308b5a79dd0d8c4fecf6e734cd810eb9ef05b18e8ef896",
       "components": [
         {
           "id": "packages/ui/src/stores/instance-config.tsx#InstanceConfigProvider",
@@ -26529,12 +26568,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 361
+      "testReferenceCount": 362
     },
     {
       "source": "packages/ui/src/stores/preferences.tsx",
       "sheet": "target/rune-inventory/stores__preferences.json",
-      "sheetSha256": "bd21f1575342ed68dade0f6f3bc0dd924bc77dac1ff472b048e7a89304c7e0dc",
+      "sheetSha256": "9096184ccd07fb8cab85c1a4ccf728fdf7bb31068c7b11c8ac30f572471d284a",
       "components": [
         {
           "id": "packages/ui/src/stores/preferences.tsx#ConfigProvider",
@@ -26542,7 +26581,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 361
+      "testReferenceCount": 362
     }
   ]
 }

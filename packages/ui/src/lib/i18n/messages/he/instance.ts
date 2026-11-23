@@ -143,6 +143,7 @@ export const instanceMessages = {
   "gitPanel.history": "היסטוריה",
   "filesPanel.widenWindow": "קבצים — הרחבת החלון",
   "filesPanel.workspace": "סביבת עבודה",
+  "filesPanel.listingTooLarge": "{path}: יותר מ־4,096 פריטים.",
   "filesPanel.commits": "קומיטים",
   "filesPanel.gitInit.notRepository": "תיקייה זו אינה מאגר Git.",
   "filesPanel.gitInit.action": "אתחול Git",

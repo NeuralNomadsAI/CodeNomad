@@ -222,6 +222,11 @@ fn busy(s: &State) -> bool {
 pub fn input_ready(s: &State) -> bool {
     s.workspace.as_ref().is_none_or(|ui| ui.ready)
 }
+
+#[cfg(target_os = "windows")]
+pub(crate) fn native_window_store(s: &State) -> Option<platform::storage::Store> {
+    s.workspace.as_ref()?.persistence.store.clone()
+}
 pub fn active_session(s: &State) -> Option<&str> {
     let ui = s.workspace.as_ref()?;
     match &ui.entries[ui.active].saved {

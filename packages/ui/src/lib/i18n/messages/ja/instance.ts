@@ -143,6 +143,7 @@ export const instanceMessages = {
   "gitPanel.history": "履歴",
   "filesPanel.widenWindow": "ファイル — ウィンドウを広げる",
   "filesPanel.workspace": "ワークスペース",
+  "filesPanel.listingTooLarge": "{path}：項目が4,096件を超えています。",
   "filesPanel.commits": "コミット",
   "filesPanel.gitInit.notRepository": "このフォルダーは Git リポジトリではありません。",
   "filesPanel.gitInit.action": "Git を初期化",

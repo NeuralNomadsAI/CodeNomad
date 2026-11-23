@@ -250,7 +250,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
         changed |= launcher::reopen(s);
     }
-    changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
+    changed |= files::poll(s, now, tx);
     changed |= git::poll(s, now, tx);
     workspace::capture_files_mode(s);
     if changed {
@@ -411,24 +411,19 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
     .on_layout_tx(chat::ToolDiffPreferences::layout)
 }
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
-    conversation_view(s, cx, |expanded| {
-        shell::reader(s, || history_view(s, expanded))
-    })
-}
-
-fn conversation_view(s: &State, cx: &mut Cx<State>, reader: impl FnOnce(bool) -> El) -> El {
     let expanded = interruption_expanded(s);
     rune_theme_codenomad::interruption::session_surface(expanded)
-        .child(reader(expanded))
+        .child(shell::reader(s, || {
+            chat::reading::history(
+                s,
+                rune_theme_codenomad::interruption::history(expanded)
+                    .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
+                    .on_layout_tx(chat::ToolDiffPreferences::history_layout)
+                    .child(transcript::rows(s)),
+            )
+        }))
         .child(agent_view::view(s, cx))
         .child(composer(s))
-}
-
-fn history_view(s: &State, expanded: bool) -> El {
-    rune_theme_codenomad::interruption::history(expanded)
-        .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
-        .on_layout_tx(chat::ToolDiffPreferences::history_layout)
-        .child(transcript::rows(s))
 }
 
 fn composer(s: &State) -> El {

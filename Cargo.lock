@@ -3341,6 +3341,7 @@ dependencies = [
  "pulldown-cmark",
  "rune",
  "rune-highlights",
+ "rune-mermaid",
  "rune-motion",
  "unicode-segmentation",
 ]

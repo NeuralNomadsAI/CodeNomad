@@ -12,37 +12,45 @@ mod resize;
 mod server;
 mod tree;
 mod visual;
+mod workspace_actions;
 
 fn english(s: &State, cx: &mut rune::Cx<State>) -> El {
     crate::strings::with_locale("en", || crate::view(s, cx))
 }
 
-fn reader_with_tree(s: &State, cx: &mut rune::Cx<State>) -> El {
-    crate::strings::with_locale("en", || {
-        layout::render(cx, |cx| {
-            crate::conversation_view(s, cx, |expanded| {
-                rune::col()
-                    .full_width()
-                    .full_height()
-                    .child(toggle(s))
-                    .child(body(s, crate::history_view(s, expanded), expanded).remaining())
-            })
-        })
-    })
-}
-
 fn runtime(ui: crate::files::Ui) -> Runtime<State> {
-    with_view(ui, reader_with_tree)
-}
-
-fn with_view(ui: crate::files::Ui, view: fn(&State, &mut rune::Cx<State>) -> El) -> Runtime<State> {
     let mut state = crate::init();
     state.phase = crate::Phase::Ready;
     state.files = Some(ui);
-    let mut rt = Runtime::new(state, view, (1000.0, 700.0), Env::new(false, 1.0));
+    let mut rt = Runtime::new(state, english, (1000.0, 700.0), Env::new(false, 1.0));
     rt.frame(0.0);
     for _ in 0..30 {
         rt.frame(0.02);
+    }
+    rt
+}
+
+fn shell_runtime(mut ui: crate::files::Ui) -> Runtime<State> {
+    let mut s = crate::init();
+    crate::gallery::shell::fixture(&mut s);
+    let backend = ui.backend.clone();
+    let project = crate::catalog::Project {
+        id: backend.workspace.clone(),
+        path: ui.tree.directory().into(),
+    };
+    s.screen.launcher_mut().unwrap().project = Some(project.clone());
+    s.workspace = Some(crate::workspace::Ui::new());
+    crate::workspace::opened(&mut s, &project);
+    crate::workspace::bound(&mut s, &backend);
+    crate::workspace::set_files_tab(&mut s, true);
+    s.shell.wanted = [Some([false, ui.panel]); 2];
+    ui.shell_managed = true;
+    s.files = Some(ui);
+    crate::git::connected(&mut s, &backend);
+    let mut rt = Runtime::new(s, english, (1000.0, 700.0), Env::new(false, 1.0));
+    for _ in 0..30 {
+        rt.frame(0.02);
+        rt.update(|s, _| crate::shell::sync(s));
     }
     rt
 }
@@ -59,6 +67,8 @@ fn click(rt: &mut Runtime<State>, key: &str) {
     let (x, y) = rt.find(key).unwrap_or_else(|| panic!("missing {key}"));
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
+    rt.frame(0.02);
+    rt.update(|s, _| crate::shell::sync(s));
     rt.frame(0.02);
 }
 fn editable_source(path: &str, role: &str) -> bool {
@@ -123,26 +133,14 @@ fn eye_opens_real_reader_and_return_preserves_chat_draft_without_prompt() {
             })
             .collect();
         ui.panel = true;
-        let mut state = crate::init();
-        state.phase = crate::Phase::Ready;
-        state.draft = rune::TextEdit::new("unfinished prompt");
-        state.files = Some(ui);
+        let mut rt = shell_runtime(ui);
         let (commands, incoming) = codenomad_client::bounded(4);
-        state.commands = Some(commands);
-        let mut rt = Runtime::new(
-            state,
-            reader_with_tree,
-            (1000.0, 700.0),
-            Env::new(false, 1.0),
-        );
-        rt.frame(0.0);
-        for _ in 0..30 {
-            rt.frame(0.02);
-        }
+        rt.state.draft = rune::TextEdit::new("unfinished prompt");
+        rt.state.commands = Some(commands);
         click(&mut rt, "file-row-main.rs");
         assert!(rt.state.files.as_ref().unwrap().reader.target().is_none());
         click(&mut rt, "file-row-other.rs");
-        click(&mut rt, "file-eye-main.rs");
+        click(&mut rt, "workspace-actions:main.rs:pinned:preview");
         assert_eq!(
             rt.state.files.as_ref().unwrap().tree.selected(),
             Some("other.rs")

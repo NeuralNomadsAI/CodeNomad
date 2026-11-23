@@ -242,6 +242,27 @@ fn cancellation_hide_switch_close_and_drop_fence_late_replies() {
 }
 
 #[test]
+fn removed_subtree_discards_its_listing_failures_only() {
+    let mut tree = tree();
+    root(
+        &mut tree,
+        vec![entry("src", Some("1")), entry("src-old", Some("2"))],
+    );
+    let read = tree.toggle("src").pop().unwrap();
+    finish(&mut tree, read, vec![entry("src/deep", Some("3"))]);
+    for path in ["src", "src/deep", "src-old"] {
+        let read = tree.load(path, true).unwrap();
+        assert!(tree.complete(read, Err("fixture failure".into()), Ok));
+    }
+    let read = tree.load(".", true).unwrap();
+    finish(&mut tree, read, vec![entry("src-old", Some("2"))]);
+    assert_eq!(
+        tree.errors().keys().map(String::as_str).collect::<Vec<_>>(),
+        ["src-old"]
+    );
+}
+
+#[test]
 fn cache_retains_eight_departed_directories_and_errors_retry_explicitly() {
     let mut tree = tree();
     root(&mut tree, vec![entry("keep", None)]);
@@ -264,7 +285,7 @@ fn cache_retains_eight_departed_directories_and_errors_retry_explicitly() {
             "failed reply ordered"
         ))
     );
-    assert_eq!(tree.errors()["."], "fixture failure");
+    assert_eq!(tree.errors()["."].to_string(), "fixture failure");
     assert!(tree.take_refresh().is_empty());
     let read = tree.load(".", true).unwrap();
     assert!(tree.errors().is_empty());
@@ -324,7 +345,7 @@ fn ordering_failure_after_buffer_mutation_preserves_listing_descendants_and_vers
     ));
     assert_eq!(paths(&tree), ["sibling", "src", "src/keep"]);
     assert_eq!(tree.selected(), Some("src/keep"));
-    assert_eq!(tree.errors()["."], "collation unavailable");
+    assert_eq!(tree.errors()["."].to_string(), "collation unavailable");
     assert!(!pending.cancelled());
     finish(&mut tree, pending, vec![entry("src/keep", None)]);
     let retry = tree.take_refresh();

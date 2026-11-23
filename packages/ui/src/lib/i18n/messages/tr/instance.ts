@@ -132,6 +132,7 @@ export const instanceMessages = {
   "gitPanel.history": "Geçmiş",
   "filesPanel.widenWindow": "Dosyalar — pencereyi genişletin",
   "filesPanel.workspace": "Çalışma alanı",
+  "filesPanel.listingTooLarge": "{path}: 4.096’dan fazla öğe.",
   "filesPanel.commits": "Commitler",
   "filesPanel.gitInit.notRepository": "Bu klasör bir Git deposu değil.",
   "filesPanel.gitInit.action": "Git'i başlat",

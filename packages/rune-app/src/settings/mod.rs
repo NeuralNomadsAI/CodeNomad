@@ -100,12 +100,8 @@ fn render_with<S>(cx: &mut Cx<S>, prefs: &Preferences, view: impl FnOnce(&mut Cx
 
 pub(crate) fn entry() -> El {
     #[cfg(not(target_arch = "wasm32"))]
-    return rune_theme_codenomad::layout::button(
-        strings::t("settings.title"),
-        false,
-        |s: &mut State| open(&mut s.settings),
-    )
-    .key("open-preferences");
+    return rune_theme_codenomad::layout::button(strings::t("settings.title"), false, open)
+        .key("open-preferences");
     #[cfg(target_arch = "wasm32")]
     rune::el()
 }
@@ -179,7 +175,8 @@ pub(crate) fn direct_entry(s: &State) -> El {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn open(host: &mut Host) {
+fn open(s: &mut State) {
+    let host = &s.settings;
     if let Some((window, token)) = &host.window
         && Rc::strong_count(token) > 1
     {
@@ -194,8 +191,8 @@ fn open(host: &mut Host) {
         .locale()
         .unwrap_or_else(strings::locale);
     let spec = strings::with_locale(locale, view::spec);
-    let window = crate::platform::preferences_window(spec, state, view::closed);
-    host.window = Some((window, token));
+    let window = crate::platform::preferences_window(s, spec, state, view::closed);
+    s.settings.window = Some((window, token));
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -216,6 +213,8 @@ fn warn_save_failed(locale: &'static str) {
 pub(crate) fn close(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        #[cfg(target_os = "windows")]
+        crate::platform::preferences_placement::closed();
         settle_close(&s.settings.shared, warn_save_failed);
         if let Some((window, token)) = s.settings.window.take() {
             token.set(true);
