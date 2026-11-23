@@ -29,30 +29,41 @@ export async function longPaste(page, messages) {
   await expectDraft(initial)
   await page.keyboard.press(mac ? 'Meta+Shift+z' : 'Control+Shift+z')
   await expectDraft(token)
-  const group = page.getByRole('group', {name: messages['rune.prompt'], exact:true})
-  const submit = page.getByRole('button', {name: messages['promptInput.overlay.send'], exact:true})
-  const point = async () => {
-    const groupBox = await group.boundingBox(), submitBox = await submit.boundingBox()
-    assert(groupBox && submitBox, 'Composer must expose its field and actions')
-    return [groupBox.x + groupBox.width / 2, groupBox.y + Math.min(54, (submitBox.y - groupBox.y) / 2)]
-  }
   await page.keyboard.press('Enter')
   const sent = page.getByText(`avant ${text} après`, {exact: true})
   await sent.waitFor({state: 'attached'})
-  await field.waitFor({state:'detached'})
-  await page.mouse.click(...await point())
-  assert.equal(await field.count(), 0, 'The pending field must not accept pointer focus')
-  await page.keyboard.type('must not overwrite')
-  await page.getByText(messages['promptInput.send.errorTitle'], {exact:true}).waitFor()
-  await page.mouse.click(...await point())
-  await expectDraft(token)
+  await expectDraft('')
+  await field.fill('nouveau brouillon')
+  await expectDraft('nouveau brouillon')
+  const refused = page.getByText(messages['promptInput.send.errorTitle'], {exact:true})
+  assert.equal(await refused.count(), 0, 'The new draft must be entered before the first receipt')
+  await refused.waitFor()
+  await sent.waitFor({state:'detached'})
+  await expectDraft('nouveau brouillon')
+  const recall = name => page.getByRole('button', {name: messages[`promptInput.history.${name}AriaLabel`], exact:true})
+  const press = async name => {
+    const {x, y, width, height} = await recall(name).boundingBox()
+    await page.mouse.click(x + width / 2, y + height / 2)
+  }
+  const expectRecalled = value => page.waitForFunction(text => document.querySelector('textarea')?.value === text, value)
+  await press('previous')
+  await expectRecalled(token)
   await chip.waitFor({state:'attached'})
   await image.waitFor({state:'attached'})
+  await press('next')
+  await expectRecalled('nouveau brouillon')
+  await press('previous')
+  await expectRecalled(token)
+  assert.equal(await sent.count(), 0, 'Browsing history must not send a prompt')
   await page.keyboard.press('Enter')
   await sent.waitFor({state:'attached'})
   assert.equal(await sent.count(), 1)
   await chip.waitFor({state: 'detached'})
-  return {insertedAtSelection: true, undo: true, retainedPng: true, restoredAfterRefusal: true, expandedExactlyOnce: true}
+  const group = await page.getByRole('group', {name: messages['rune.prompt'], exact:true}).boundingBox()
+  await page.mouse.click(group.x + group.width / 2, group.y + 24)
+  await expectDraft('nouveau brouillon')
+  return {insertedAtSelection: true, undo: true, retainedPng: true, recalledAfterRefusal: true,
+    nextDraftIntact: true, expandedExactlyOnce: true}
 }
 
 export async function focusRing(page, captures, box, inset, color) {

@@ -201,6 +201,28 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
             .description_static(t("rune.attachments_missing")),
         );
     }
+    if super::recall::available(s) || s.composer.recall.is_some() {
+        actions = actions.children([true, false].map(|older| {
+            layout::button_tx(
+                t(if older {
+                    "promptInput.history.previousAriaLabel"
+                } else {
+                    "promptInput.history.nextAriaLabel"
+                }),
+                !older && s.composer.recall.is_none()
+                    || s.composer.device.busy()
+                    || s.composer.editing_locked(),
+                screen::action_tx(&scope, move |s, tx| {
+                    super::recall::step(s, older, true, tx);
+                }),
+            )
+            .key(if older {
+                "previous-prompt"
+            } else {
+                "next-prompt"
+            })
+        }));
+    }
     body.child(actions)
         .children(
             s.composer
@@ -226,17 +248,15 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
 }
 
 fn editor(s: &State, compact: bool) -> El {
-    let editable = !s.composer.pending();
     #[cfg(not(target_arch = "wasm32"))]
     let input_key = "input";
     #[cfg(target_arch = "wasm32")]
     let input_key = format!("input-{}", s.web_composer_input_epoch);
     let input = layout::composer_input(&s.draft, t("promptInput.placeholder.default"))
         .key(input_key)
-        .label(t("rune.prompt"))
-        .disabled(!editable);
-    if !editable {
-        return layout::composer_field(input, compact, false).key("composer");
+        .label(t("rune.prompt"));
+    if s.composer.editing_locked() {
+        return layout::composer_field(input.disabled(true), compact, false).key("composer");
     }
     let scope = s.input_scope.clone();
     let key_scope = scope.clone();
@@ -248,7 +268,7 @@ fn editor(s: &State, compact: bool) -> El {
             s.current_scope(&key_scope) && key(s, event, tx)
         })
         .on_input_paste(move |s: &mut State, content, tx| {
-            if !s.current_scope(&paste_scope) || s.composer.pending() {
+            if !s.current_scope(&paste_scope) || s.composer.editing_locked() {
                 return true;
             }
             #[cfg(target_arch = "wasm32")]
@@ -413,6 +433,19 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
                     event.key == Key::Enter && event.mods.shift,
                 );
             }
+            return true;
+        }
+    }
+    if event.mods == rune::Mods::default() && matches!(event.key, Key::Up | Key::Down | Key::Escape)
+    {
+        if event.key == Key::Escape && s.composer.recall.is_some() && !s.composer.device.busy() {
+            super::recall::restore(s);
+            s.composer.picker.reset();
+            return true;
+        }
+        if matches!(event.key, Key::Up | Key::Down)
+            && super::recall::step(s, event.key == Key::Up, false, tx)
+        {
             return true;
         }
     }

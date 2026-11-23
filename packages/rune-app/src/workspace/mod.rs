@@ -6,7 +6,6 @@ mod save_snapshot;
 mod snapshot_budget;
 mod state;
 pub(crate) use persistence::finish;
-#[cfg(target_arch = "wasm32")]
 pub(crate) use state::active_workspace;
 pub(crate) use state::contains_project;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]

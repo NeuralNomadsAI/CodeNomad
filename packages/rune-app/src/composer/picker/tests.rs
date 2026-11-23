@@ -566,9 +566,15 @@ fn pasted_known_command_uses_current_catalogue_without_requiring_picker_selectio
         .commands
         .items
         .push(Item::Command(named("review")));
-    rt.paste("/review 🦀");
+    rt.paste("/review @docs 🦀");
     rt.frame(0.0);
     assert!(!rt.state.composer.picker.open());
+    assert!(
+        rt.state
+            .composer
+            .draft
+            .attach(Attachment::Path("./docs".into()))
+    );
     press(&mut rt, Key::Enter, Mods::default());
     let crate::transport::Command::Slash {
         attempt,
@@ -578,20 +584,23 @@ fn pasted_known_command_uses_current_catalogue_without_requiring_picker_selectio
     else {
         panic!("expected native command")
     };
-    assert_eq!((name.as_str(), text.as_str()), ("review", "🦀"));
+    assert_eq!((name.as_str(), text.as_str()), ("review", "./docs 🦀"));
     crate::composer::acknowledge(
         &mut rt.state,
         &attempt,
         crate::transport::PromptOutcome::Unconfirmed,
     );
     assert!(rt.state.composer.command_unconfirmed.is_some());
-    assert_eq!(rt.state.draft.text, "/review 🦀");
+    assert_eq!(rt.state.draft.text, "/review @docs 🦀");
     press(&mut rt, Key::Enter, Mods::default());
     assert!(receiver.try_recv().is_err());
-    rt.state.draft = TextEdit::new("/review  🦀");
+    rt.state.draft = TextEdit::new("/review  ./docs 🦀");
     assert!(!crate::composer::can_send(&rt.state));
     rt.state.draft = TextEdit::new("a different prompt");
     assert!(crate::composer::can_send(&rt.state));
+    rt.update(|s, tx| assert!(crate::composer::recall::step(s, true, true, tx)));
+    assert_eq!(rt.state.draft.text, "/review ./docs 🦀");
+    assert!(!crate::composer::can_send(&rt.state));
 }
 
 #[test]
