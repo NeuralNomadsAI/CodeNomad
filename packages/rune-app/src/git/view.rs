@@ -2,9 +2,9 @@ mod changes_panel;
 mod detail;
 mod diff_view;
 mod history;
-mod placement;
+mod worktrees;
 pub(crate) use diff_view::reader;
-pub(crate) use placement::session_worktree;
+pub(crate) use worktrees::session_worktree;
 
 use super::{Lane, Mode, MutationKind, Preview, Ui};
 use crate::{
@@ -66,7 +66,7 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
                     }),
                 )),
         )
-        .child(worktree_picker(ui, width, &mut overlay));
+        .child(worktrees::browse(ui, width, &mut overlay));
     let mut tools = theme::tools().key("git-tools").child(selector);
     if ui.mode == Mode::Changes && ui.changes.ready() {
         tools = tools.child(theme::count(file_count(ui.changes.count())).key("git-count"));
@@ -155,96 +155,6 @@ fn basename(path: &str) -> &str {
         .next()
         .filter(|v| !v.is_empty())
         .unwrap_or(path)
-}
-
-fn worktree_choices(ui: &Ui) -> Vec<(String, String)> {
-    let trees: Vec<_> = ui
-        .inventory
-        .iter()
-        .flat_map(|list| &list.trees)
-        .filter(|tree| !tree.missing)
-        .map(|tree| {
-            let name = basename(&tree.directory);
-            let label = if ui.repository() == Repository::Git {
-                format!(
-                    "{name} · {}",
-                    tree.branch
-                        .as_deref()
-                        .unwrap_or_else(|| t("gitPanel.detached"))
-                )
-            } else {
-                name.into()
-            };
-            (label, tree.slug.clone())
-        })
-        .collect();
-    let mut seen = std::collections::HashSet::new();
-    trees
-        .into_iter()
-        .map(|(mut label, slug)| {
-            while !seen.insert(label.clone()) {
-                label.push_str(" · ");
-                label.push_str(&slug);
-            }
-            (label, slug)
-        })
-        .collect()
-}
-
-fn worktree_picker(ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
-    let choices = worktree_choices(ui);
-    let labels: Vec<_> = choices.iter().map(|(label, _)| label.clone()).collect();
-    let current = choices
-        .iter()
-        .find(|(_, slug)| slug == &ui.slug)
-        .map(|(label, _)| label.clone());
-    let local_scope = ui.scope.clone();
-    let close_scope = local_scope.clone();
-    let select = move |s: &mut State, label: &str, _: &mut Tx| {
-        if !s
-            .git
-            .owner
-            .as_ref()
-            .is_some_and(|ui| std::rc::Rc::ptr_eq(&local_scope, &ui.scope))
-        {
-            return;
-        }
-        if let Some(ui) = &mut s.git.owner {
-            ui.picker = false;
-            if let Some((_, slug)) = choices.iter().find(|(v, _)| v == label) {
-                ui.select_tree(slug.clone());
-            }
-        }
-        super::binding::sync_files(s);
-    };
-    theme::worktree_picker(
-        &labels,
-        current.as_deref(),
-        t("gitPanel.worktree"),
-        ui.tree().map(|tree| tree.directory.as_str()),
-        width,
-        ui.picker,
-        labels.is_empty() || !ui.online,
-        {
-            let scope = ui.scope.clone();
-            move |s: &mut State| {
-                if let Some(ui) = &mut s.git.owner
-                    && std::rc::Rc::ptr_eq(&scope, &ui.scope)
-                {
-                    ui.picker = !ui.picker;
-                }
-            }
-        },
-        move |s: &mut State| {
-            if let Some(ui) = &mut s.git.owner
-                && std::rc::Rc::ptr_eq(&close_scope, &ui.scope)
-            {
-                ui.picker = false;
-            }
-        },
-        select,
-        overlay,
-    )
 }
 
 pub(super) fn preview_button(
