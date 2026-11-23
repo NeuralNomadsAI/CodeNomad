@@ -22,7 +22,7 @@ fn select(rt: &mut Runtime<State>, index: usize, id: &str) {
     tap(rt, &format!("t-tab-{index}"));
     wait(rt, "selected native session", |s| ready(s, id));
 }
-fn open(rt: &mut Runtime<State>, id: &str) {
+fn open(rt: &mut Runtime<State>, id: &str, title: &str) {
     type_text(
         rt,
         "folder-path",
@@ -46,13 +46,16 @@ fn open(rt: &mut Runtime<State>, id: &str) {
         let before = rt.state.screen.launcher().unwrap().sessions.len();
         assert!(before < 600, "bounded native catalogue traversal");
         assert!(rt.state.screen.launcher().unwrap().next.is_some());
-        tap(rt, "more-sessions");
+        // The store probe tests persisted session identity, not catalogue scroll geometry.
+        rt.update(|s, _| crate::launcher::list(s, true));
         wait(rt, "next native catalogue page", |s| {
             s.screen
                 .launcher()
                 .is_some_and(|l| !l.pending && l.sessions.len() > before)
         });
     }
+    tap(rt, "session-search-toggle");
+    type_text(rt, "session-search", title);
     tap(rt, &format!("session-{id}"));
     wait(rt, "native session history", |s| ready(s, id));
 }
@@ -142,12 +145,12 @@ pub fn run() {
     let mut jump = 0.0;
     match stage.as_str() {
         "prepare" => {
-            open(&mut rt, &long);
+            open(&mut rt, &long, "Rune native stored-history test");
             assert_eq!(rt.state.messages.len(), 200);
             canonical(&rt, &rows[400..]);
             type_text(&mut rt, "composer", LONG);
             tap(&mut rt, "project-tabs-new");
-            open(&mut rt, &empty);
+            open(&mut rt, &empty, "Rune native empty-session test");
             assert!(rt.state.messages.is_empty());
             type_text(&mut rt, "composer", EMPTY);
             select(&mut rt, 0, &long);
