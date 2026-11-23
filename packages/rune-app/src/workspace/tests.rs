@@ -156,15 +156,17 @@ fn canonical_round_trip_keeps_occurrences_and_text_separate() {
     first.workspace_id = Some("workspace-one".into());
     first.active_session_id = Some("ses_same".into());
     first.view = ViewState {
-        files_tab: true,
+        right_panel: RightPanelTab::Files,
         files_mode: Some("changes"),
+        selected_mission: None,
     };
     first.drafts.insert("ses_same".into(), "first\n🦀".into());
     let mut second = first.clone();
     second.occurrence = 1;
     second.view = ViewState {
-        files_tab: false,
+        right_panel: RightPanelTab::Missions,
         files_mode: Some("history"),
+        selected_mission: Some("mission-second".into()),
     };
     second.drafts.insert("ses_same".into(), "second".into());
     second
@@ -191,6 +193,10 @@ fn canonical_round_trip_keeps_occurrences_and_text_separate() {
         json!({
             "version": 1, "rightPanelTab": "files", "filesMode": "changes"
         })
+    );
+    assert_eq!(
+        json["session"]["tabs"][2]["viewState"]["missions"]["selected"],
+        "mission-second"
     );
     for key in [
         "attachments",
