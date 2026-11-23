@@ -75,6 +75,45 @@ pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
 pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
     rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
 }
+pub fn composer_field(edit: &TextEdit, placeholder: &str, compact: bool) -> rune_kit::TextArea {
+    let field = rune_kit::TextArea::new(edit)
+        .width(None)
+        .max_height(320.0)
+        .placeholder(placeholder);
+    if compact {
+        field.auto_grow(1, usize::MAX)
+    } else {
+        field.rows(5)
+    }
+}
+pub fn announce_selection(tx: &mut rune::Tx, name: &str) {
+    tx.announce(name, rune::LiveRegion::Polite);
+}
+
+pub fn suggestion_list<S: 'static>(
+    key: &str,
+    anchor: &str,
+    label: &str,
+    empty: &str,
+    active: usize,
+    items: impl IntoIterator<Item = (String, String)>,
+) -> rune_kit::PopupList<S> {
+    rune_kit::PopupList::new(key, anchor)
+        .label(label)
+        .empty_message(empty)
+        .active(Some(active))
+        .items(
+            items
+                .into_iter()
+                .enumerate()
+                .map(|(index, (name, description))| {
+                    rune_kit::PopupItem::new(index.to_string(), name).description(description)
+                }),
+        )
+}
+pub fn with_overlays(base: El, layers: Vec<El>) -> El {
+    rune_kit::root(base, layers)
+}
 /// Shared wrapping action groups follow the available native/browser width.
 pub fn action_row() -> El {
     rune::row()

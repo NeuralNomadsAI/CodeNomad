@@ -77,13 +77,16 @@ fn workspace_chat_keeps_history_agent_and_composer_inside_the_viewport() {
         let mut state = state();
         state.workspace = Some(crate::workspace::Ui::new());
         state.chat_title = "Existing history".into();
-        state.messages.push(crate::Message {
-            id: "visible-history".into(),
-            role: "assistant".into(),
-            completed: true,
-            body: "Existing answer".into(),
-            parts: vec![],
-        });
+        state.messages.push(
+            crate::Message {
+                id: "visible-history".into(),
+                role: "assistant".into(),
+                completed: true,
+                body: "Existing answer".into(),
+                parts: vec![],
+            }
+            .into(),
+        );
         let rt = runtime(state, size);
         for key in [
             "tab-body-tab-0",

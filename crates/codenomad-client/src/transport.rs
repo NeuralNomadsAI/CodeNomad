@@ -8,6 +8,9 @@ pub struct DirectoryChange {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceEvent {
+    CommandsChanged,
+    MentionsChanged,
+    ComposerCataloguesChanged,
     UiPreferencesChanged,
     NativeFilesystemChanged {
         workspace_id: String,
@@ -29,10 +32,22 @@ pub enum WorkspaceEvent {
 }
 #[derive(Debug)]
 pub enum Command {
-    Send(String),
+    Prompt(crate::prompt::Prompt),
+    Slash {
+        attempt: String,
+        name: String,
+        text: String,
+    },
     Older,
+    Latest,
     Retry,
     Close,
+}
+#[derive(Debug)]
+pub enum PromptOutcome {
+    Confirmed(String),
+    Rejected,
+    Unconfirmed,
 }
 #[derive(Debug)]
 pub enum Event {
@@ -40,18 +55,22 @@ pub enum Event {
     Workspace(WorkspaceEvent),
     Preferences(crate::settings::Owner),
     AgentHint(bool),
-    History(Vec<Message>),
+    History(Vec<crate::history::Row>),
     Sync(Page),
     Older(Page),
     Message(Message),
+    PromptAcknowledged {
+        attempted: String,
+        outcome: PromptOutcome,
+    },
     Text(String, crate::content::TextEvent),
     Done,
     AuthenticationRequired(crate::backend::Backend),
-    PromptSettled { rejected: bool },
     Failed,
     ConnectionLost,
     WorkspaceMissing,
     Reconnecting,
+    HistoryInvalidated,
     PagingFailed,
 }
 

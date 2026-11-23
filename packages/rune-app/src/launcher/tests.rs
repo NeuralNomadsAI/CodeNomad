@@ -143,7 +143,7 @@ fn pending_selection_cannot_consume_the_departing_draft() {
         crate::send(s, tx);
     });
     assert!(
-        matches!(commands.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "keep this draft")
+        matches!(commands.try_recv(), Ok(crate::transport::Command::Prompt(prompt)) if prompt.text == "keep this draft")
     );
     rt.update(|s, _| s.phase = Phase::Streaming);
     assert!(!can_change_session(&rt.state));
@@ -166,6 +166,7 @@ fn a_selection_reply_cannot_replace_a_session_that_resumed_streaming() {
                 older: None,
                 newer: None,
                 running: true,
+                user_file_references: false,
             }))
             .is_ok()
     );

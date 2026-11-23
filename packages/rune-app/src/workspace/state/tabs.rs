@@ -4,6 +4,8 @@ use crate::platform;
 fn stash(s: &mut State) {
     capture_files_mode(s);
     capture(s);
+    s.attachments.cancel();
+    s.composer.picker.reset();
     if let Some(files) = &mut s.files {
         files.activate(false);
     }
@@ -168,6 +170,9 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         saved
             .drafts
             .retain(|id, _| !removed.pending_drafts.contains(id));
+        saved
+            .attachment_drafts
+            .retain(|id| !removed.pending_drafts.contains(id));
         // Clear authority belongs to this occurrence's live lifetime, outside text budgets.
         saved.drafts.extend(
             removed
@@ -212,7 +217,7 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
         return true;
     }
     if ui.active == index {
-        s.pending_prompt.is_some() || crate::agent::navigation_blocked(s)
+        s.composer.pending() || crate::agent::navigation_blocked(s)
     } else {
         ui.entries[index]
             .cache

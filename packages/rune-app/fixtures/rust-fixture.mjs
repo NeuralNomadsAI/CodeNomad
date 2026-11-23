@@ -11,16 +11,20 @@ import {FixtureStore} from './fixture-store.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requireTestSupport()
 const here = path.resolve(import.meta.dirname,'..')
-const profile = path.join(here,'fixture-profile',randomUUID())
+const artifacts = process.env.RUNE_FIXTURE_ARTIFACTS ?? path.join(here,'fixture-profile')
+assert(path.isAbsolute(artifacts),'Fixture artifacts directory must be absolute')
+const profile = path.join(artifacts,randomUUID())
 const project = path.join(profile,'projects','synthetic')
 await mkdir(project,{recursive:true})
 const session = 'ses_rune_synthetic'
 const code = 'fn main() {\n    println!("Rune · Code Nomad");\n}'
 const record = {id:session,projectID:'global',location:{directory:project},time:{created:1},title:'Synthetic Rune'}
 const fresh = process.argv.includes('--fresh-probe')
-const store = new FixtureStore(fresh?0:10000)
+const slash = process.argv.includes('--probe-slash')
+const store = new FixtureStore(fresh||slash?0:10000)
 const upstreamStreams = new Set()
 const requests = []
+const commands = []
 let turn = 0
 const upstream = createServer(async(req,res)=>{
   const url = new URL(req.url,'http://127.0.0.1')
@@ -34,6 +38,10 @@ const upstream = createServer(async(req,res)=>{
     upstreamStreams.add(res);req.on('close',()=>upstreamStreams.delete(res));return
   }
   if(url.pathname==='/api/location') return json({data:{directory:project}})
+  if(slash&&url.pathname==='/api/command') {
+    assert.equal(req.method,'GET')
+    return json({location:{directory:project},data:[{name:'review',description:'Review changes'}]})
+  }
   if(url.pathname===`/api/session/${session}`) return json({data:record})
   if(url.pathname===`/api/session/${session}/message`) {
     const limit=Number(url.searchParams.get('limit'));assert([1,200].includes(limit));
@@ -47,6 +55,11 @@ const upstream = createServer(async(req,res)=>{
   if(url.pathname==='/api/rpc/codenomad.missions/scheduleCarrierRead') return json({output:{owned:false}})
   if(url.pathname===`/api/session/${session}/environment`) {
     assert.equal(req.method,'PUT');return json({data:{}})
+  }
+  if(slash&&url.pathname===`/api/session/${session}/command`) {
+    assert.equal(req.method,'POST')
+    commands.push(JSON.parse(raw))
+    res.writeHead(204);res.end();return
   }
   if(url.pathname===`/api/session/${session}/prompt`) {
     assert.equal(req.method,'POST');assert.equal(typeof JSON.parse(raw).text,'string')
@@ -97,6 +110,11 @@ try {
       RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0'},
   })
   result=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+  if(slash) {
+    assert(!requests.includes(`POST /api/session/${session}/prompt`),'command must never fall back to a native prompt')
+    assert.deepEqual(commands,[{name:'review',text:'résumé 🦀',delivery:'steer'}],
+      'Rune command must reach native OpenCode once through the Rust relay')
+  }
   assert.equal(result,0,'Rune client exit')
   console.log(JSON.stringify({fixture:'real-rust-server-synthetic-opencode',exitCode:result,requests},null,2))
 } finally {

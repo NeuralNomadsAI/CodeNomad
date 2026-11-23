@@ -82,6 +82,10 @@ try{
       const action=req.url.slice('/__test__/'.length)
       if(action==='block-older')blockOlder=true
       if(action==='stale-older')staleOlder=true
+      if(action==='revert-in-history'){
+        store.rows[598].content[0].text='authoritative after revert'
+        emit('session.revert.committed',{to:'message-00599'})
+      }
       if(action==='transport-cut'){
         cutTransport()
         liveText.append(' · milieu 🦀 · fin');liveText.close();liveRow.time.completed=Date.now();idle=Date.now()
@@ -94,11 +98,11 @@ try{
         emit('session.text.delta',{assistantMessageID:liveRow.id,ordinal:0,delta:' · milieu 🦀 · fin'})
       }
       if(action==='upstream-cut'){
-        store.rows[10].content[0].text='changed across upstream generation\nsecond line\nthird line'
+        store.rows[410].content[0].text='changed across upstream generation\nsecond line\nthird line'
         store.append('user','upstream gap question');store.append('assistant','upstream gap answer')
         for(const stream of nativeStreams)stream.destroy()
       }
-      if(action==='remove-anchor'){store.rows.shift();cutTransport()}
+      if(action==='remove-anchor'){store.rows.splice(400,1);cutTransport()}
       res.setHeader('content-type','application/json')
       res.end(JSON.stringify(action==='expected'?store.rows.map(row=>({id:row.id,body:row.type==='user'?row.text:row.content.map(p=>p.text).join('\n')})):stats));return
     }

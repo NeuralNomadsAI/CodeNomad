@@ -9,6 +9,7 @@ fn workspace() -> Workspace {
         workspace_id: None,
         active_session_id: None,
         drafts: BTreeMap::new(),
+        attachment_drafts: Default::default(),
         view: Default::default(),
     }
 }

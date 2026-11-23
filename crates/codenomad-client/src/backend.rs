@@ -70,7 +70,6 @@ impl Backend {
     }
     pub async fn page(&self, target: Value) -> Result<Page> {
         // Match the broker's window envelope; other endpoints retain their own limits.
-        const HISTORY_WINDOW_BYTES: usize = 24 * 1024 * 1024;
         history::decode(
             read_json_limited(
                 self.client
@@ -78,96 +77,73 @@ impl Backend {
                         "{}api/workspaces/{}/session-history/window",
                         self.base, self.workspace
                     ))
+                    .header("x-codenomad-user-files", "reference-v1")
                     .json(&json!({"sessionID":self.session,"target":target}))
                     .send()
                     .await?
                     .error_for_status()?,
-                HISTORY_WINDOW_BYTES,
+                history::WINDOW_BYTES,
             )
             .await?,
         )
     }
     pub async fn empty(&self) -> Result<Page> {
-        let initial = read_json(
-            self.client
-                .get(format!(
-                    "{}workspaces/{}/instance/api/session/{}/message?limit=1",
-                    self.base, self.workspace, self.session
-                ))
-                .send()
-                .await?
-                .error_for_status()?,
-        )
-        .await?;
-        if !initial["data"]
-            .as_array()
-            .is_some_and(|rows| rows.is_empty())
-        {
+        let page = self.page(json!({"kind":"latest"})).await?;
+        if !page.rows.is_empty() {
             return Err("fresh-session mode requires an empty session".into());
         }
-        Ok(Page {
-            rows: vec![],
-            older: None,
-            newer: None,
-            running: false,
-        })
+        Ok(page)
     }
-    pub async fn send(&self, text: String) -> Result<()> {
-        self.client
+    pub async fn prompt(
+        &self,
+        input: &crate::prompt::Prompt,
+    ) -> Result<crate::prompt::Acknowledgement> {
+        let body = crate::prompt::encode(input)?;
+        let response = self
+            .client
             .post(format!(
                 "{}workspaces/{}/instance/api/session/{}/prompt",
                 self.base, self.workspace, self.session
             ))
-            .json(&json!({"text":text}))
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body)
             .send()
-            .await?
-            .error_for_status()?;
-        Ok(())
-    }
-    /// The explicit fresh-session flow retains at most its first 200 native rows.
-    pub async fn fresh(&self, first: Option<&str>) -> Result<Page> {
-        let data = read_json(
-            self.client
-                .get(format!(
-                    "{}workspaces/{}/instance/api/session/{}/message?limit=200&order=asc",
-                    self.base, self.workspace, self.session
-                ))
-                .send()
-                .await?
-                .error_for_status()?,
-        )
-        .await?;
-        let native = data["data"]
-            .as_array()
-            .filter(|rows| rows.len() <= 200)
-            .ok_or("fresh session response exceeds its bound")?;
-        // Native cursors also anchor future reads; their presence alone is not evidence of another page.
-        let latest = read_json(
-            self.client
-                .get(format!(
-                    "{}workspaces/{}/instance/api/session/{}/message?limit=1",
-                    self.base, self.workspace, self.session
-                ))
-                .send()
-                .await?
-                .error_for_status()?,
-        )
-        .await?;
-        let tail = latest["data"]
-            .as_array()
-            .filter(|rows| rows.len() <= 1)
-            .ok_or("invalid latest message")?;
-        if native.last().map(|r| &r["id"]) != tail.first().map(|r| &r["id"]) {
-            return Err("fresh session retained history exceeds its bound or changed".into());
+            .await
+            .map_err(|_| crate::prompt::PromptError::Unconfirmed)?;
+        if cfg!(not(target_arch = "wasm32"))
+            && response.status() == reqwest::StatusCode::UNAUTHORIZED
+        {
+            return Err(crate::prompt::PromptError::AuthenticationRequired.into());
         }
-        if first.is_some_and(|first| !native.iter().any(|row| row["id"] == first)) {
-            return Err("fresh session retained anchor is outside the native page".into());
+        if !response.status().is_success() {
+            let error = if response.status().is_client_error() {
+                crate::prompt::PromptError::Rejected
+            } else {
+                crate::prompt::PromptError::Unconfirmed
+            };
+            return Err(error.into());
         }
-        let mut page = history::decode(
-            json!({"status":"window","messages":native,"older":null,"newer":null,"latest":true}),
-        )?;
-        self.read_running(&mut page).await?;
-        Ok(page)
+        let response = crate::prompt_receipt::read(response)
+            .await
+            .map_err(|_| crate::prompt::PromptError::Unconfirmed)?;
+        let native = response.get("data").unwrap_or(&response);
+        if !native.is_object() {
+            return Err("invalid prompt acknowledgement".into());
+        }
+        if native
+            .get("sessionID")
+            .is_some_and(|session| session != &self.session)
+        {
+            return Err("prompt acknowledgement belongs to another session".into());
+        }
+        let id = match native.get("id") {
+            None | Some(Value::Null) => input.id.as_deref(),
+            Some(Value::String(id)) if id.is_empty() => input.id.as_deref(),
+            Some(id) => id.as_str(),
+        }
+        .filter(|id| history::valid_id(id))
+        .ok_or("prompt acknowledgement has no valid identity")?;
+        Ok(crate::prompt::Acknowledgement { id: id.into() })
     }
     async fn read_running(&self, page: &mut Page) -> Result<()> {
         let state = read_json(
@@ -219,6 +195,7 @@ impl Backend {
             result.rows = joined;
             result.newer = next.newer;
             result.running = next.running;
+            result.user_file_references &= next.user_file_references;
         }
         Err("recovery page budget reached".into())
     }

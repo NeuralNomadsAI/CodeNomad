@@ -55,10 +55,11 @@ node packages/rune-app/fixtures/launcher-fixture.mjs --uncertain-create
 node packages/rune-app/fixtures/launcher-fixture.mjs --with-tools
 node packages/rune-app/fixtures/launcher-fixture.mjs --controls
 node packages/rune-app/fixtures/recovery-fixture.mjs
+node packages/rune-app/fixtures/rust-fixture.mjs --probe-slash
 node scripts/rune/headless.mjs --binary $env:RUNE_CLIENT_EXE
 ```
 
-Les fixtures créent leurs projets, profils `trial-*`, ports éphémères et processus ; OpenCode est simulé dans ces scénarios. Le serveur Rust reste réel. `RUNE_CLIENT_EXE` et `RUNE_SERVER_EXE` sélectionnent des exécutables absolus ; le client utilise sinon le cache `CARGO_TARGET_DIR`, ou `target` à la racine du workspace.
+Les fixtures créent leurs projets, profils `trial-*`, ports éphémères et processus ; OpenCode est simulé dans ces scénarios. Le serveur Rust reste réel. `RUNE_CLIENT_EXE` et `RUNE_SERVER_EXE` sélectionnent des exécutables absolus ; le client utilise sinon le cache `CARGO_TARGET_DIR`, ou `target` à la racine du workspace. `rust-fixture.mjs` accepte un dossier absolu `RUNE_FIXTURE_ARTIFACTS` pour conserver ses profils et journaux.
 Les runners contrôlent `--test-support-info` avant de lancer une fixture. Les implémentations des sondes vivent sous `tests/probes/` et sont propres à la cible native.
 
 `node packages/rune-app/fixtures/files-fixture.mjs` vérifie le client typé Files avec le vrai serveur Rust et des fichiers jetables. Fournir `RUNE_SERVER_EXE` absolu et un `CARGO_TARGET_DIR` existant ; le test Cargo est exécuté avec `--offline --locked`. Le serveur utilise un service natif de métadonnées simulé ; Unicode, octets binaires, versions, limites et liens sont lus sur le vrai système de fichiers du profil privé.

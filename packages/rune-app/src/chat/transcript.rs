@@ -46,7 +46,7 @@ pub fn message(s: &State, i: usize) -> El {
                     let Some(row) = s.messages.iter().find(|row| row.id == id) else {
                         return;
                     };
-                    if row.parts.is_empty() {
+                    if row.role == "user" || row.parts.is_empty() {
                         tx.copy(row.body.as_str());
                     } else {
                         let prose = row
@@ -73,7 +73,7 @@ pub fn message(s: &State, i: usize) -> El {
         .separate(Space::Sm)
         .child(header);
     let mut ordinal = 0;
-    if m.parts.is_empty() && !m.body.is_empty() {
+    if (m.role == "user" || m.parts.is_empty()) && !m.body.is_empty() {
         view = view.child(document::prose(s, format!("body-{}", m.id), &m.body, false));
     }
     let gap_key = format!("parts-gap-{}", m.id);
@@ -145,6 +145,9 @@ pub fn message(s: &State, i: usize) -> El {
             }
             Part::Tool(tool) if visible => Some(tools::view(s, &m.id, tool)),
             Part::Tool(_) => None,
+            Part::Skill(skill) if visible => Some(super::attachments::skill_chip(skill)),
+            Part::File(file) if visible => Some(super::attachments::file_chip(s, file)),
+            Part::Skill(_) | Part::File(_) => None,
         };
         if let Some(body) = body {
             if reveal_start.is_some_and(|first| index >= first) {
