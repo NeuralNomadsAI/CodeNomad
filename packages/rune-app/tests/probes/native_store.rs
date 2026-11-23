@@ -46,8 +46,7 @@ fn open(rt: &mut Runtime<State>, id: &str, title: &str) {
         let before = rt.state.screen.launcher().unwrap().sessions.len();
         assert!(before < 600, "bounded native catalogue traversal");
         assert!(rt.state.screen.launcher().unwrap().next.is_some());
-        // The store probe tests persisted session identity, not catalogue scroll geometry.
-        rt.update(|s, _| crate::launcher::list(s, true));
+        click_more(rt);
         wait(rt, "next native catalogue page", |s| {
             s.screen
                 .launcher()
@@ -59,6 +58,41 @@ fn open(rt: &mut Runtime<State>, id: &str, title: &str) {
     tap(rt, &format!("session-{id}"));
     wait(rt, "native session history", |s| ready(s, id));
 }
+
+fn click_more(rt: &mut Runtime<State>) {
+    rt.update(|_, tx| {
+        tx.scroll_into_view("more-sessions");
+        tx.instant();
+    });
+    for _ in 0..3 {
+        rt.frame(1.0 / 60.0);
+    }
+    let node = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("more-sessions") && !e.exiting)
+        .expect("More button mounted");
+    let (x, y) = rt.find("more-sessions").expect("More button center");
+    let picked = rt.element_at(x, y).map(|hit| hit.path);
+    let eligible = rt
+        .state
+        .screen
+        .launcher()
+        .is_some_and(|l| l.can_page() && !l.pending);
+    let start = std::time::Instant::now();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    let micros = start.elapsed().as_micros();
+    rt.frame(1.0 / 60.0);
+    let pending = rt.state.screen.launcher().is_some_and(|l| l.pending);
+    println!(
+        "{}",
+        json!({"type":"native-store-catalogue-click","rect":node.rect,"visible":node.visible,
+            "point":[x,y],"picked":picked,"focusable":node.focusable,"inert":node.inert,
+            "eligible":eligible,"clickUs":micros,"pendingAfterClick":pending})
+    );
+}
+
 fn canonical(rt: &Runtime<State>, rows: &[Value]) {
     assert_eq!(rt.state.messages.len(), rows.len());
     for (actual, expected) in rt.state.messages.iter().zip(rows) {
