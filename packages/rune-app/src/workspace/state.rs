@@ -9,10 +9,12 @@ mod strip;
 
 pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
 pub(crate) use notification::{
-    Activation, notification_target, observes_notification, open_notification, owns_notification,
+    Activation, check_notification, notification_target, observes_notification, open_notification,
+    owns_notification, workspace_notification,
 };
 pub use panel_state::{
-    capture_files_mode, files_tab, panel_width, restore_files_mode, set_files_tab,
+    capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, set_files_tab,
+    toggle_file_wrap,
 };
 pub use strip::strip;
 
@@ -76,6 +78,7 @@ pub struct Ui {
     revision: u64,
     saved_at: u64,
     panel_widths: [Option<u16>; 2],
+    file_wrap: Option<bool>,
     clock: f64,
     pub(super) persistence: Persistence,
     ready: bool,
@@ -96,6 +99,7 @@ impl Ui {
             revision: 0,
             saved_at: 0,
             panel_widths: [None; 2],
+            file_wrap: None,
             clock: 0.0,
             persistence: Persistence::new(),
             ready: false,
@@ -115,6 +119,7 @@ impl Ui {
             revision: self.revision,
             saved_at: self.saved_at,
             panel_widths: self.panel_widths,
+            file_wrap: self.file_wrap,
             tabs: self.entries.iter().map(|e| {
                 let mut saved = e.saved.clone();
                 if let Tab::Workspace(w) = &mut saved {
@@ -152,6 +157,7 @@ impl Ui {
         self.revision = saved.revision;
         self.saved_at = saved.saved_at;
         self.panel_widths = saved.panel_widths;
+        self.file_wrap = saved.file_wrap;
     }
     pub(super) fn release_all(&self) {
         let records = self
@@ -313,7 +319,8 @@ pub fn connected(s: &mut State) {
         .or_else(platform::storage::configured_directory);
     #[cfg(target_arch = "wasm32")]
     let directory = None;
-    ui.persistence.start(directory, s.wake.clone());
+    ui.persistence
+        .start(directory, &s.documents, s.wake.clone());
     if ui.persistence.loading {
         ui.ready = false;
     }
@@ -362,6 +369,7 @@ pub fn resume(s: &mut State, tx: &mut Tx) {
 pub fn retry(s: &mut State, tx: &mut Tx) {
     if let Some(ui) = &mut s.workspace {
         ui.persistence.retry();
+        ui.persistence.retry_file_drafts(s.wake.clone());
     }
     connected(s);
     resume(s, tx);
@@ -517,22 +525,47 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     };
     ui.clock = now;
     let loading = ui.persistence.loading;
-    let loaded = ui.persistence.poll_load();
-    if let Some(saved) = loaded {
-        ui.hydrate(saved);
-        s.shell.restore_widths(ui.panel_widths);
+    if let Some((saved, drafts)) = ui.persistence.poll_load() {
+        ui.persistence.file_draft_read_error = match drafts {
+            Ok(Some(bytes)) => !s.documents.hydrate_file_drafts(&bytes),
+            Ok(None) => false,
+            Err(_) => true,
+        };
+        s.documents
+            .block_file_draft_updates(ui.persistence.file_draft_read_error);
+        if let Some(saved) = saved {
+            ui.hydrate(saved);
+            s.shell.restore_widths(ui.panel_widths);
+            s.shell.file_wrap = ui.file_wrap.unwrap_or(false);
+        }
     }
     let became_ready = loading && !ui.persistence.loading;
     if became_ready {
         ui.ready = true;
+        #[cfg(target_arch = "wasm32")]
+        if let Some(wrap) = platform::storage::browser_file_wrap() {
+            s.shell.file_wrap = wrap;
+        }
     }
-    let mut changed = poll_cached(s, &mut ui, Some(now), tx);
+    let mut changed = ui.persistence.poll_file_draft_retry(&s.documents);
+    changed |= poll_cached(s, &mut ui, Some(now), tx);
     ui.stage();
-    let previous_error =
-        ui.persistence.read_error || ui.persistence.write_error || ui.persistence.partial;
+    let previous_error = (
+        ui.persistence.read_error,
+        ui.persistence.write_error,
+        ui.persistence.file_draft_error,
+        ui.persistence.partial,
+    );
     let snapshot = ui.snapshot();
     ui.persistence.poll_save(&snapshot, now, tx, s.wake.clone());
-    let error = ui.persistence.read_error || ui.persistence.write_error || ui.persistence.partial;
+    #[cfg(target_arch = "wasm32")]
+    ui.persistence.poll_file_drafts(&s.documents);
+    let error = (
+        ui.persistence.read_error,
+        ui.persistence.write_error,
+        ui.persistence.file_draft_error,
+        ui.persistence.partial,
+    );
     s.workspace = Some(ui);
     if became_ready {
         resume(s, tx);
@@ -550,6 +583,11 @@ pub fn status(s: &State) -> Option<&'static str> {
     } else if ui.persistence.write_error || ui.persistence.partial || ui.has_unsaved_large_drafts()
     {
         Some("rune.save_error")
+    } else if ui.persistence.file_draft_error
+        || ui.persistence.file_draft_read_error
+        || s.documents.has_unretained_file_drafts()
+    {
+        Some("filesPanel.draftLimit")
     } else {
         None
     }

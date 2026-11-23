@@ -1,10 +1,16 @@
 use super::{Backend, Duration, Input, SeqCst, State, runtime, start};
-use crate::{Wake, bounded, history::valid_id};
+use crate::{Wake, bounded, history::valid_id, transport::WorkspaceEvent};
 use serde_json::Value;
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     sync::{Arc, Mutex},
 };
+
+pub struct AttentionHint {
+    pub workspace: String,
+    pub session: String,
+    pub event: WorkspaceEvent,
+}
 
 #[derive(Default)]
 pub enum CatalogueChanges {
@@ -18,6 +24,7 @@ pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
     providers: Mutex<CatalogueChanges>,
     stopped: Mutex<CatalogueChanges>,
+    attention: Mutex<VecDeque<AttentionHint>>,
     wake: Wake,
     generation: std::sync::atomic::AtomicU64,
 }
@@ -31,6 +38,7 @@ impl Signals {
     }
 
     fn disconnected(&self) {
+        self.attention.lock().unwrap().clear();
         if self.generation.load(SeqCst) % 2 == 1 {
             self.generation.fetch_add(1, SeqCst);
             (self.wake)();
@@ -73,6 +81,8 @@ impl Signals {
             return;
         };
         let stopped = kind == Some("workspace.stopped") && self.mark(&self.stopped, Some(id));
+        let attention =
+            kind == Some("instance.event") && self.observe_attention(id, &frame["event"]);
         let invalidates = match kind {
             Some("workspace.worktreesChanged" | "workspace.stopped") => true,
             Some("instance.eventStatus") => frame["status"] == "connected",
@@ -92,9 +102,51 @@ impl Signals {
             ),
             _ => false,
         };
-        if (invalidates && self.mark(&self.pending, Some(id))) | provider_changed | stopped {
+        if (invalidates && self.mark(&self.pending, Some(id)))
+            | provider_changed
+            | stopped
+            | attention
+        {
             (self.wake)();
         }
+    }
+
+    fn observe_attention(&self, workspace: &str, event: &Value) -> bool {
+        let data = &event["data"];
+        let session = if event["type"] == "form.created" {
+            &data["form"]["sessionID"]
+        } else {
+            &data["sessionID"]
+        };
+        let Some(session) = session.as_str().filter(|id| valid_id(id)) else {
+            return false;
+        };
+        let terminal = match event["type"].as_str() {
+            Some("form.replied" | "form.cancelled") => Some((true, &data["id"])),
+            Some("permission.replied") => Some((false, &data["requestID"])),
+            _ => None,
+        };
+        let mapped = if let Some((form, id)) = terminal {
+            id.as_str()
+                .filter(|id| valid_id(id))
+                .map(|id| WorkspaceEvent::SessionRequestResolved {
+                    form,
+                    id: id.into(),
+                })
+        } else {
+            super::session_attention(event, session)
+        };
+        let Some(event) = mapped else { return false };
+        let mut pending = self.attention.lock().unwrap();
+        if pending.len() >= 128 {
+            pending.pop_front();
+        }
+        pending.push_back(AttentionHint {
+            workspace: workspace.into(),
+            session: session.into(),
+            event,
+        });
+        true
     }
 }
 
@@ -113,6 +165,7 @@ impl CatalogueWatch {
             pending: Mutex::default(),
             providers: Mutex::default(),
             stopped: Mutex::default(),
+            attention: Mutex::default(),
             generation: Default::default(),
             wake,
         });
@@ -172,6 +225,13 @@ impl CatalogueWatch {
         std::mem::take(&mut *self.signals.pending.lock().unwrap())
     }
 
+    pub fn take_attention(&self) -> (u64, VecDeque<AttentionHint>) {
+        (
+            self.signals.generation.load(SeqCst),
+            std::mem::take(&mut *self.signals.attention.lock().unwrap()),
+        )
+    }
+
     pub fn take_provider_changes(&self) -> (CatalogueChanges, CatalogueChanges, u64) {
         (
             std::mem::take(&mut *self.signals.providers.lock().unwrap()),
@@ -187,11 +247,43 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn workspace_observer_keeps_attention_from_unselected_sessions() {
+        let (watch, _task) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:1/").unwrap(),
+            Arc::new(|| {}),
+        );
+        for event in [
+            json!({"type":"form.created","data":{"form":{"sessionID":"ses_other","id":"form-1"}}}),
+            json!({"type":"permission.replied","data":{"sessionID":"ses_other","requestID":"perm-1"}}),
+            json!({"type":"session.execution.succeeded","id":"evt-1","data":{"sessionID":"ses_another"}}),
+        ] {
+            watch
+                .signals
+                .observe(&json!({"type":"instance.event","instanceId":"workspace","event":event}));
+        }
+        let (_, pending) = watch.take_attention();
+        assert_eq!(pending.len(), 3);
+        assert!(pending.iter().all(|hint| hint.workspace == "workspace"));
+        assert!(
+            matches!(&pending[0].event, WorkspaceEvent::SessionRequest { form: true, id } if id == "form-1")
+        );
+        assert_eq!(pending[0].session, "ses_other");
+        assert!(
+            matches!(&pending[1].event, WorkspaceEvent::SessionRequestResolved { form: false, id } if id == "perm-1")
+        );
+        assert!(
+            matches!(&pending[2].event, WorkspaceEvent::SessionExecution { notice: Some(id) } if id == "evt-1")
+        );
+        assert_eq!(pending[2].session, "ses_another");
+    }
+
+    #[test]
     fn provider_updates_and_project_stops_keep_separate_scopes() {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
             stopped: Mutex::default(),
+            attention: Mutex::default(),
             generation: Default::default(),
             wake: Arc::new(|| {}),
         };
@@ -216,6 +308,7 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             stopped: Mutex::default(),
+            attention: Mutex::default(),
             generation: Default::default(),
             wake: Arc::new(|| {}),
         };

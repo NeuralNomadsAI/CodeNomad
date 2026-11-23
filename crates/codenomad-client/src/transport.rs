@@ -12,12 +12,17 @@ pub enum WorkspaceEvent {
         form: bool,
         id: String,
     },
+    SessionRequestResolved {
+        form: bool,
+        id: String,
+    },
     SessionExecution {
         notice: Option<String>,
     },
     CommandsChanged,
     MentionsChanged,
     ComposerCataloguesChanged,
+    MemoryChanged,
     ProvidersChanged {
         workspace_id: String,
     },

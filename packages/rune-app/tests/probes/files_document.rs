@@ -7,7 +7,7 @@ use rune::Runtime;
 use serde_json::{Value, json};
 
 const DRAFT: &str = "Rune saved · été 🦀\nsecond line";
-fn edit(rt: &mut Runtime<State>, value: &str) {
+pub(super) fn edit(rt: &mut Runtime<State>, value: &str) {
     let files = rt.state.files.as_mut().unwrap();
     let scope = files.document.scope();
     files.document.input(scope).replace_text(value);

@@ -1,5 +1,6 @@
-use super::{Entry, State, Tab};
+use super::{Backend, Entry, State, Tab};
 use crate::shell::notifications::Target;
+use codenomad_client::{Receiver, bounded};
 use rune::Tx;
 
 pub(crate) fn notification_target(s: &State) -> Option<(Target, String)> {
@@ -67,16 +68,120 @@ pub(crate) fn owns_notification(s: &State, target: &Target) -> bool {
         return false;
     };
     matches!(&entry.saved, Tab::Workspace(saved)
-        if saved.workspace_id.as_ref() == Some(&target.workspace)
-        && saved.occurrence == target.occurrence
-        && entry.binding.as_ref().is_some_and(|backend| {
-            backend.base == target.backend_url
-                && backend.client.server_identity().or(saved.server_id.as_deref()) == target.server.as_deref()
-        })
-        && (saved.active_session_id.as_ref() == Some(&target.session)
-            || entry.sessions.iter().any(|row| row.id == target.session)
-            || (s.workspace.as_ref().is_some_and(|ui| ui.active_key() == tab)
-                && s.screen.launcher().is_some_and(|l| l.sessions.iter().any(|r| r.id == target.session)))))
+    if saved.workspace_id.as_ref() == Some(&target.workspace)
+    && saved.occurrence == target.occurrence
+    && entry.binding.as_ref().or_else(|| s.screen.launcher()?.connection.as_ref()).is_some_and(|backend| {
+        backend.base == target.backend_url
+            && backend.client.server_identity().or(saved.server_id.as_deref()) == target.server.as_deref()
+    }))
+}
+
+fn backend(s: &State, target: &Target) -> Option<Backend> {
+    if !owns_notification(s, target) {
+        return None;
+    }
+    let backend = match &target.tab {
+        Some(tab) => s
+            .workspace
+            .as_ref()?
+            .entries
+            .iter()
+            .find(|entry| &entry.key == tab)?
+            .binding
+            .as_ref()
+            .or_else(|| s.screen.launcher()?.connection.as_ref())?
+            .clone(),
+        None => crate::settings::bound_backend(s)?,
+    };
+    Some(Backend {
+        workspace: target.workspace.clone(),
+        session: target.session.clone(),
+        ..backend
+    })
+}
+
+pub(crate) fn workspace_notification(
+    s: &State,
+    workspace: &str,
+    session: &str,
+) -> Option<(Target, String, Backend)> {
+    let ui = s.workspace.as_ref()?;
+    let (entry, saved) = ui.entries.iter().find_map(|entry| match &entry.saved {
+        Tab::Workspace(saved) if saved.workspace_id.as_deref() == Some(workspace) => {
+            Some((entry, saved))
+        }
+        _ => None,
+    })?;
+    let source = entry
+        .binding
+        .as_ref()
+        .or_else(|| s.screen.launcher()?.connection.as_ref())?;
+    let target = Target {
+        tab: Some(entry.key.clone()),
+        backend_url: source.base.clone(),
+        server: source
+            .client
+            .server_identity()
+            .map(str::to_owned)
+            .or_else(|| saved.server_id.clone()),
+        occurrence: saved.occurrence,
+        workspace: workspace.into(),
+        session: session.into(),
+    };
+    let backend = backend(s, &target)?;
+    let title = saved
+        .folder
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&saved.folder)
+        .into();
+    Some((target, title, backend))
+}
+
+pub(crate) fn check_notification(s: &State, target: &Target) -> Option<Receiver<bool>> {
+    let backend = backend(s, target)?;
+    let expected = target.server.clone();
+    let folder = target.tab.as_ref().and_then(|tab| {
+        s.workspace
+            .as_ref()?
+            .entries
+            .iter()
+            .find_map(|entry| match &entry.saved {
+                Tab::Workspace(saved) if &entry.key == tab => Some(saved.folder.clone()),
+                _ => None,
+            })
+    });
+    let (answer, receiver) = bounded(1);
+    let wake = s.wake.clone();
+    crate::platform::spawn(async move {
+        let check = async {
+            if let Some(server) = expected
+                && backend.server_id().await? != server
+            {
+                return Ok(false);
+            }
+            let Some(project) = backend.projects().await?.into_iter().find(|project| {
+                project.id == backend.workspace
+                    && folder.as_ref().is_none_or(|folder| {
+                        codenomad_client::same_server_path(folder, &project.path)
+                    })
+            }) else {
+                return Ok(false);
+            };
+            Ok(backend
+                .bind_session(&project, &backend.session, false)
+                .await
+                .is_ok())
+        };
+        let ok = codenomad_client::runtime::until_closed(&answer, check)
+            .await
+            .is_some_and(|result: crate::history::Result<bool>| result.unwrap_or(false));
+        let _ = answer.try_send(ok);
+        wake();
+    });
+    Some(receiver)
 }
 
 pub(crate) fn observes_notification(s: &State, target: &Target, allow_running: bool) -> bool {

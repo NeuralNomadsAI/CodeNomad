@@ -43,12 +43,13 @@ pub fn bind(s: &mut crate::State, backend: &crate::backend::Backend) {
                 s.workspace
                     .as_ref()
                     .map_or_else(|| backend.workspace.clone(), |ui| ui.active_key().into()),
-            ),
+            )
+            .with_draft_project(project.clone()),
         )
     });
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod test_http;
+pub(crate) mod test_http;
 #[cfg(test)]
 mod tests;

@@ -26,6 +26,8 @@ pub(super) struct Window {
     picker: Cell<Option<Picker>>,
     palette_choice: Cell<Option<&'static palettes::Palette>>,
     contrast_help: bool,
+    permissions: super::behavior::Permissions,
+    memory_help_failed: bool,
     seen_revision: u64,
     section: Section,
     pub(super) opencode: opencode::Status,
@@ -69,6 +71,7 @@ impl Window {
         {
             let mut prefs = self.shared.borrow_mut();
             prefs.window_wake = None;
+            prefs.memory.show(false);
             prefs.provider_target = None;
         }
         if !self.token.take().is_some_and(|token| token.get()) {
@@ -111,6 +114,7 @@ pub(super) fn spec() -> AppSpec<Window> {
         setup: Some(|s, wake| {
             let mut prefs = s.shared.borrow_mut();
             prefs.window_wake = Some(wake);
+            prefs.memory.show(s.section == Section::General);
             if prefs.backend.is_some() {
                 prefs.refresh();
             }
@@ -176,6 +180,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         }
     }
     let prefs = s.shared.borrow();
+    if prefs.awaiting_appearance() {
+        return rune::el().key("preferences-bootstrap");
+    }
     let system_dark = cx.system_dark();
     let system_more = cx.system_increased_contrast();
     s.close_palette_on_slot_change(prefs.dark(system_dark));
@@ -211,6 +218,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             |s: &mut Window, key| {
                 s.picker.set(None);
                 s.contrast_help = false;
+                s.permissions.close();
                 s.section = match key {
                     "settings-opencode" => Section::OpenCode,
                     "settings-providers" => Section::Providers,
@@ -219,6 +227,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 if s.section != Section::OpenCode {
                     s.opencode = opencode::Status::default();
                 }
+                s.shared
+                    .borrow_mut()
+                    .memory
+                    .show(s.section == Section::General);
+                s.memory_help_failed = false;
                 if s.section != Section::Providers {
                     s.providers.suspend();
                 }
@@ -265,6 +278,8 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             |s: &mut Window, focused, _| {
                 if focused && s.section == Section::OpenCode {
                     s.check_opencode(Some(false));
+                } else if focused && s.section == Section::General {
+                    s.shared.borrow_mut().memory.invalidate();
                 }
             },
         )

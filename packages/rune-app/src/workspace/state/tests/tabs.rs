@@ -1,51 +1,91 @@
 use super::*;
 
 #[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn a_recorded_notification_click_returns_to_its_own_project_and_conversation_once() {
-    let mut s = draft_state();
-    let mut first = workspace("session-first", "");
-    first.workspace_id = Some("workspace-first".into());
-    let mut second = workspace("session-second", "");
-    second.workspace_id = Some("workspace-second".into());
-    let ui = s.workspace.as_mut().unwrap();
-    ui.entries[0].saved = Tab::Workspace(first);
-    ui.entries
-        .push(entry("tab-1".into(), Tab::Workspace(second)));
-    s.notifications.record();
-    let mut other = init();
-    other.notifications.record();
-    let mut rt = runtime(s);
-    rt.update(|s, tx| {
-        let (target, title) = notification_target(s).unwrap();
-        s.notifications
-            .present(&title, "Question", target.clone(), s.wake.clone());
-        other
-            .notifications
-            .present(&title, "Another window", target.clone(), other.wake.clone());
-        assert_eq!(s.notifications.recorded()[0].1, "fixture");
-        assert_eq!(other.notifications.recorded()[0].2, "Another window");
-        select(s, "tab-1", tx);
-        assert_eq!(active_session(s), Some("session-second"));
-        s.screen.launcher_mut().unwrap().pending = true;
-        s.notifications.simulate_click(0);
-        assert!(!crate::shell::notifications::poll(&mut other, tx));
-        assert!(!crate::shell::notifications::poll(s, tx));
-        assert_eq!(active_session(s), Some("session-second"));
-        s.screen.launcher_mut().unwrap().pending = false;
-        assert!(crate::shell::notifications::poll(s, tx));
-        assert_eq!(s.workspace.as_ref().unwrap().active_key(), "tab-0");
-        assert_eq!(active_session(s), Some("session-first"));
-        select(s, "tab-1", tx);
-        s.notifications.simulate_click(0);
-        assert!(!crate::shell::notifications::poll(s, tx));
-        assert_eq!(active_session(s), Some("session-second"));
-        let mut stale = target;
-        stale.occurrence += 1;
-        s.notifications
-            .present(&title, "Stale", stale, s.wake.clone());
-        s.notifications.simulate_click(1);
-        assert!(!crate::shell::notifications::poll(s, tx));
-        assert_eq!(active_session(s), Some("session-second"));
+    use crate::files::test_http::{Http as Fixture, wait};
+    use serde_json::json;
+    crate::platform::block_on(async {
+        let http = Fixture::new().await;
+        let (wake, events) = bounded(1);
+        let mut s = draft_state();
+        s.screen.launcher_mut().unwrap().connection = Some(http.backend.clone());
+        let mut first = workspace("session-first", "");
+        first.workspace_id = Some("workspace-first".into());
+        let mut second = workspace("session-second", "");
+        second.workspace_id = Some("workspace-second".into());
+        let ui = s.workspace.as_mut().unwrap();
+        ui.entries[0].saved = Tab::Workspace(first);
+        ui.entries
+            .push(entry("tab-1".into(), Tab::Workspace(second)));
+        s.notifications.record();
+        let mut other = init();
+        other.notifications.record();
+        let original = notification_target(&s).unwrap().0;
+        let mut rt = runtime(s);
+        rt.update(|s, tx| {
+            let (target, title) = notification_target(s).unwrap();
+            s.notifications
+                .present(&title, "Question", target.clone(), s.wake.clone());
+            other.notifications.present(
+                &title,
+                "Another window",
+                target.clone(),
+                other.wake.clone(),
+            );
+            assert_eq!(s.notifications.recorded()[0].1, "fixture");
+            assert_eq!(other.notifications.recorded()[0].2, "Another window");
+            select(s, "tab-1", tx);
+            assert_eq!(active_session(s), Some("session-second"));
+            s.screen.launcher_mut().unwrap().pending = true;
+            s.wake = std::sync::Arc::new(move || {
+                let _ = wake.try_send(());
+            });
+            s.notifications.simulate_click(0);
+            assert!(!crate::shell::notifications::poll(&mut other, tx));
+            assert!(!crate::shell::notifications::poll(s, tx));
+            assert_eq!(active_session(s), Some("session-second"));
+        });
+        let project = http.accept().await;
+        assert!(project.header.starts_with("GET /api/workspaces HTTP/"));
+        project
+            .reply(
+                200,
+                json!([{"id":"workspace-first","location":{"directory":"/fixture"}}]),
+            )
+            .await;
+        let session = http.accept().await;
+        assert!(session.header.starts_with(
+            "GET /workspaces/workspace-first/instance/api/session/session-first HTTP/"
+        ));
+        rt.update(|s, tx| {
+            s.screen.launcher_mut().unwrap().pending = false;
+            assert!(!crate::shell::notifications::poll(s, tx));
+            assert_eq!(active_session(s), Some("session-second"));
+        });
+        session
+            .reply(
+                200,
+                json!({"data":{"id":"session-first","location":{"directory":"/fixture"}}}),
+            )
+            .await;
+        wait(events.recv()).await.unwrap();
+        rt.update(|s, tx| {
+            assert!(crate::shell::notifications::poll(s, tx));
+            assert_eq!(s.workspace.as_ref().unwrap().active_key(), "tab-0");
+            assert_eq!(active_session(s), Some("session-first"));
+            select(s, "tab-1", tx);
+            s.notifications.simulate_click(0);
+            assert!(!crate::shell::notifications::poll(s, tx));
+            assert_eq!(active_session(s), Some("session-second"));
+            let mut stale = original;
+            stale.occurrence += 1;
+            s.notifications
+                .present("fixture", "Stale", stale, s.wake.clone());
+            s.notifications.simulate_click(1);
+            assert!(!crate::shell::notifications::poll(s, tx));
+            assert_eq!(active_session(s), Some("session-second"));
+        });
     });
 }
 

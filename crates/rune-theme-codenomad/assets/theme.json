@@ -1253,7 +1253,7 @@
     "packages/ui/src/styles/components/dropdown.css": "c728d8ff67c5ddad8ed18ae21a14d82b079a7f494563697e7646a4283457622e",
     "packages/ui/src/styles/components/env-vars.css": "e3663734910b8104f12531b03b4896fe3c5ff0ba0bae5dca7e7a0bca35ec2b94",
     "packages/ui/src/styles/components/folder-drop.css": "67089ccf3fbd107b13d5a472b7097ede7fc7bbb9f0a2375d335778c78495f826",
-    "packages/ui/src/styles/components/folder-home.css": "5944700dd54dca6b5fedaab322b0b02e7d1feb56bda86c2783fe71a5f71f1a34",
+    "packages/ui/src/styles/components/folder-home.css": "47458ce5a57de51185fdfbec958791913cb42674c3f2a5504b977191ba75434e",
     "packages/ui/src/styles/components/folder-loading.css": "fe648cf8c01df91bad81274fd4cd7a94e5271c39627152eeb195f34475567b57",
     "packages/ui/src/styles/components/form-request-options.css": "0ec21de9fd8c4ae40bf497b0da2d636474598e05050f40370370064e083fbcdc",
     "packages/ui/src/styles/components/form-request.css": "30a8696cd3f6569eba19e9789a5455a5fb9cf17764e1175932ed00d3ae256846",

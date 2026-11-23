@@ -48,7 +48,7 @@ pub struct Preview {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WriteResult {
-    Saved,
+    Saved(Option<String>),
     Conflict(Option<String>),
 }
 
@@ -104,7 +104,13 @@ impl Backend {
         if !response.status().is_success() {
             return Err("unexpected file write response".into());
         }
-        Ok(WriteResult::Saved)
+        let version = response
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| value.len() <= 128)
+            .map(str::to_owned);
+        Ok(WriteResult::Saved(version))
     }
     /// One listing, with the shared 2 MiB JSON budget; an oversized folder fails intact.
     pub async fn files(&self, directory: &str, path: &str) -> Result<Vec<Entry>> {

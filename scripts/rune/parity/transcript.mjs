@@ -21,6 +21,8 @@ await writeFile(script, JSON.stringify({events: [
   {t: 0.1, type: 'tap', key: 'toggle-tool-transcript:4:read'},
   {t: 0.4, type: 'tap', key: 'tool-transcript:4:edit-mode'},
   {t: 0.7, type: 'tap', key: 'toggle-reasoning-transcript:0'},
+  {t: 1.1, type: 'tap', key: 'toggle-tool-transcript:7:execute'},
+  {t: 1.4, type: 'tap', key: 'toggle-tool-transcript:7:execute-execute-call-0'},
 ]}))
 const cache = await createFixtureCache()
 const shutdown = createFixtureShutdown(cache)
@@ -77,6 +79,9 @@ try {
     await tool('edit').getByRole('button', {name: 'Switch to split view'}).waitFor()
     await reasoning.locator('.message-technical-group-toggle').click()
     await reasoning.getByText('Verify the sample trace.', {exact: true}).waitFor()
+    await tool('execute').locator('.tool-call-header-toggle').click()
+    await tool('execute').getByText('sample_read', {exact: true}).click()
+    await tool('execute').getByText(/Nested input fixture/).waitFor()
     assert.deepEqual(errors, [])
 
     const tree = path.join(out, `rune-${theme}.json`)
@@ -92,6 +97,7 @@ try {
     assert(interacted.includes('return 7;'))
     assert(interacted.includes('Switch to split view'), 'Rune toggles the shared diff to unified')
     assert(interacted.includes('Verify the sample trace.'), 'Rune opens the same reasoning group')
+    assert(interacted.includes('Nested input fixture'), 'Rune opens the same nested Code Mode call')
     await installPngReader(page)
     const images = await Promise.all(['solid', 'rune'].map(async type =>
       `data:image/png;base64,${(await readFile(path.join(out, `${type}-${theme}.png`))).toString('base64')}`))
@@ -127,6 +133,6 @@ try {
 }
 
 function capture(theme, args) {
-  return promisify(execFile)(binary, ['--scene', 'transcript', '--at', '1', '--theme', theme, '--size', '1000x1200',
+  return promisify(execFile)(binary, ['--scene', 'transcript', '--at', '1.8', '--theme', theme, '--size', '1000x1200',
     '--scale', '1', ...args], {cwd: root, env, windowsHide: true, timeout: 90_000})
 }

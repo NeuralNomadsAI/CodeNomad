@@ -15,6 +15,12 @@ const unexpected = []
 const reads = []
 const mime = {'.html':'text/html','.js':'text/javascript','.wasm':'application/wasm','.css':'text/css','.json':'application/json','.woff2':'font/woff2'}
 let account = 'First fixture account', detached = false
+let contrast = 'on', permissions = 'autonomous'
+const writes = []
+const memoryRequests = []
+let memoryEnabled = false
+let releaseState
+const stateReady = new Promise(resolve => { releaseState = resolve })
 const server = createServer(async (req,res) => {
   const url = new URL(req.url,'http://localhost')
   const p = url.pathname
@@ -39,6 +45,31 @@ const server = createServer(async (req,res) => {
       streams.set(client,res)
       res.on('close',()=>{if(streams.get(client)===res) streams.delete(client)})
       return
+    }
+    if (p === '/api/storage/config/ui') {
+      if (req.method === 'PATCH') {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        const patch = JSON.parse(body)
+        writes.push(patch)
+        contrast = patch.settings.highContrast ?? contrast
+        permissions = patch.settings.newConversationPermissions ?? permissions
+      }
+      return json({settings:{locale:'en',highContrast:contrast,newConversationPermissions:permissions}})
+    }
+    if (p === '/api/storage/state/ui') {
+      await stateReady
+      return json({appearancePreferences:{mode:'light',light:{scheme:{id:'light'}}}})
+    }
+    if (p === '/api/memory/settings') {
+      memoryRequests.push(req.method)
+      if (req.method === 'PUT') {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        assert.deepEqual(JSON.parse(body),{enabled:true})
+        memoryEnabled = true
+      }
+      return json({enabled:memoryEnabled})
     }
     if (p.startsWith('/api/storage/')) return json({})
     if (p === '/api/workspaces/catalogue/worktrees') return json({repository:'uninitialized',worktrees:[]})
@@ -76,12 +107,49 @@ try {
   browser = await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
   const page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true})
   const click = name => page.getByRole('button',{name,exact:true}).click({force:true,timeout:15000})
+  const radio = name => page.getByRole('radio',{name,exact:true})
   const visible = name => page.getByText(name,{exact:true}).waitFor({state:'attached',timeout:15000})
   await page.goto(`http://127.0.0.1:${server.address().port}/?locale=en`)
-  await click('Connect')
+  await Promise.all([
+    page.waitForResponse(response=>new URL(response.url()).pathname==='/api/storage/config/ui'),
+    page.waitForRequest(request=>new URL(request.url()).pathname==='/api/storage/state/ui'),
+    click('Connect'),
+  ])
+  await page.getByRole('button',{name:'Connect',exact:true}).waitFor({state:'detached'})
+  assert.equal(await page.getByRole('button',{name:directory,exact:true}).count(),0,'No app content while appearance state is pending')
+  releaseState()
   await click(directory)
   await visible('No session selected')
-  await click('Providers')
+  await click('Settings')
+  const memory = page.getByRole('switch',{name:'Memory',exact:true})
+  await memory.waitFor({state:'attached'})
+  assert.equal(await memory.getAttribute('aria-checked'),'false')
+  await memory.click({force:true})
+  await page.locator('[role="switch"][aria-checked="true"]').waitFor({state:'attached'})
+  assert.equal(await memory.getAttribute('aria-checked'),'true')
+  assert.equal(memoryRequests.filter(method=>method==='PUT').length,1)
+  const preferencesStream = Array.from(streams).find(([client])=>client.endsWith('-preferences'))?.[1]
+  assert(preferencesStream,'Memory observes the host stream without opening another connection')
+  memoryEnabled = false
+  preferencesStream.write('data: {"type":"memory.changed"}\n\n')
+  await page.getByRole('switch',{name:'Memory',checked:false,exact:true}).waitFor({state:'attached'})
+  await radio('On').waitFor({state:'attached'})
+  assert.equal(await radio('On').getAttribute('aria-checked'),'true')
+  const savedOff = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
+  await radio('Off').click({force:true})
+  await savedOff
+  assert.deepEqual(writes,[{settings:{highContrast:'off'}}])
+  assert.equal(await radio('Off').getAttribute('aria-checked'),'true')
+  const permissionTrigger = page.getByRole('button',{name:'New conversation permissions',exact:true})
+  assert.equal(await permissionTrigger.getAttribute('aria-description'),'Autonomous')
+  await permissionTrigger.click({force:true})
+  const savedPermissions = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
+  await page.getByRole('option',{name:'Supervised',exact:true}).click({force:true})
+  await savedPermissions
+  assert.deepEqual(writes.at(-1),{settings:{newConversationPermissions:'supervised'}})
+  await page.locator('button[aria-description="Supervised"]').waitFor({state:'attached'})
+  assert.equal(reads.length,0,'General does not load the provider catalogue')
+  await radio('Providers').click({force:true})
   await visible(account)
   const nonConversation = () => Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
   assert(nonConversation(),'The catalogue has an EventSource without a conversation')
@@ -97,8 +165,9 @@ try {
   await visible(account)
   assert.equal(reads.length-atDisconnect,4,'The reconnected catalogue reloads its four source lists once')
   assert(!unexpected.some(entry=>/\/session-history|\/prompt|\/session\//.test(entry)),unexpected.join('\n'))
-  console.log(JSON.stringify({fixture:'providers-web',updated:true,revokedWhileDisconnected:true,reconnected:true,requests:reads.length}))
+  console.log(JSON.stringify({fixture:'providers-web',contrastSaved:true,defaultPermissionSaved:true,initialThemeGated:true,updated:true,revokedWhileDisconnected:true,reconnected:true,requests:reads.length}))
 } finally {
+  releaseState()
   await browser?.close()
   server.closeAllConnections()
   await new Promise(resolve=>server.close(resolve))

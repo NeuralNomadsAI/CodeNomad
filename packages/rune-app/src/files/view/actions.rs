@@ -144,7 +144,11 @@ pub(super) fn row(s: &State, ui: &Ui, row: &Row, width: f32, touch: bool) -> (El
                     .filter(|ui| owns(ui, &directory, &path))
                     .and_then(|ui| ui.toggle_preview(&directory, &path))
                 {
-                    Some(true) => crate::git::close_preview(s),
+                    Some(true) => {
+                        #[cfg(target_arch = "wasm32")]
+                        super::refresh_browser_file_wrap(s);
+                        crate::git::close_preview(s);
+                    }
                     Some(false) => crate::chat::reading::restore_position(s, tx),
                     None => {}
                 }

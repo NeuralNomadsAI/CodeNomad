@@ -26,6 +26,8 @@ Workspace `.mmd` dosyaları diyagram olarak açılır. Düzenlemek için **Kayna
 1. Çalışma Alanındaki bir metin dosyasını göz simgesiyle açın.
 2. Markdown için düzenleme yapmak üzere **Kaynağı göster**, işlenmiş görünümü okumak üzere **Markdown'ı önizle** eylemini seçin.
 3. Düzenleyin ve **Kaydet** öğesini seçin veya düzenleyici odaklanmışken **Ctrl/Cmd+S** tuşuna basın.
+
+Masaüstü uygulaması bir taslak kurtarma penceresi açarsa pencereyi kapatmadan önce listedeki değişiklikleri **Kopyala** ile saklayın.
 4. Dosya harici olarak değiştiyse üzerine yazma onayını inceleyin; taslağınızı bu değişikliğin üzerine yazmadan saklamak için **İptal** öğesini seçin.
 
 Kaydetme, bağlantılı çalışma ağacı dahil göz atılan çalışma kopyasındaki gerçek dosyaya yazar; istem göndermez veya düzenlemeyi stage/commit etmez. Çakışma penceresi **Dosya agent tarafından değiştirildi. Agent'ın değişikliklerinin üzerine yazılsın mı?** der; diğer harici yazıcıların değişikliklerine de aynı özeni gösterin.
@@ -35,6 +37,8 @@ Kaydetme, bağlantılı çalışma ağacı dahil göz atılan çalışma kopyas�
 Okuyucunun sonundaki kapatma düğmesi konuşmaya döner; ileti düzenleyicisi okuyucunun altında kullanılabilir kalır. Paneli **Sağ panel** ile gizlemek ya da panel için fazla dar bir pencere, okuyucuyu açılan genişlikle açık bırakır; paneli yeniden göstermek onu olduğu gibi korur. Oturumu/çalışma ağacını değiştirmek seçili okuyucuyu temizler, taslağı kaydetme garantisi vermez. Tarayıcı önizlemesi okuyucunun yerini alır; dosya açmak bu görünümü sohbet moduna döndürür.
 
 Okuyucunun değiştirilmesi ve kapatılması yalnızca geçerli proje sekmesini etkiler. Aynı projeye ait sekmeler farklı dosyaları okuyabilir veya bir dosyayı sohbet, web ya da Görev içeriğinin yanında tutabilir. Hedef ve model bellekte tutulduğu sürece kaynak/işlenmiş görünüm tercihi, düzenleyici seçimi ve kaydırma konumu sekme geçişlerinde korunur. Dosyalar modu sekme başına geri yüklenir; diff ve satır kaydırma tercihleri ortak kalır.
+
+Kaynak okuyucu, dosya veya proje sekmesi değiştiğinde satır kaydırma tercihini korur ve pencere durumuyla birlikte geri yükler.
 
 ## Salt okunur ve sınırlı önizlemeler {#preview-limits}
 

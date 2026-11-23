@@ -26,6 +26,8 @@ Les fichiers `.mmd` du Workspace s’ouvrent en diagramme. **Afficher la source*
 1. Ouvrez un fichier texte du Workspace avec son œil.
 2. Pour Markdown, choisissez **Afficher la source** pour modifier, ou **Aperçu Markdown** pour lire le rendu.
 3. Modifiez et choisissez **Enregistrer**, ou appuyez sur **Ctrl/Cmd+S** lorsque l’éditeur a le focus.
+
+Si l’application de bureau ouvre une fenêtre de récupération des brouillons, utilisez **Copier** pour conserver les modifications listées avant de la fermer.
 4. Si le fichier a changé à l’extérieur, examinez la confirmation d’écrasement ; choisissez **Annuler** pour conserver votre brouillon sans écraser ce changement.
 
 L’enregistrement écrit le fichier réel dans la copie parcourue, y compris un worktree lié ; il n’envoie pas de prompt et n’indexe/ne valide pas la modification. Le dialogue de conflit indique **Le fichier a été modifié par l'agent. Écraser les modifications de l'agent ?** ; traitez les changements de tout auteur externe avec la même prudence.
@@ -35,6 +37,8 @@ Si **Restaurer l’état précédent** est activé, rouvrez le même fichier dan
 Fermer le lecteur avec son bouton de fermeture final revient à la conversation ; la zone de saisie reste disponible sous le lecteur. Masquer le volet avec **Volet droit**, ou une fenêtre trop étroite pour lui, laisse le lecteur ouvert avec la largeur libérée ; réafficher le volet le conserve tel quel. Changer de session/worktree efface le lecteur sélectionné, sans promettre d’enregistrer son brouillon. Ouvrir un aperçu navigateur remplace le lecteur ; ouvrir un fichier remet cette vue en mode chat.
 
 Remplacer ou fermer le lecteur affecte uniquement l’onglet de projet courant. Des onglets ouverts sur le même projet peuvent lire des fichiers différents ou garder un fichier à côté du chat, du web ou d’un contenu de Mission. Le choix source/rendu, la sélection dans l’éditeur et le défilement sont conservés lors des changements d’onglet tant que la cible et le modèle restent en mémoire. Le mode Fichiers est restauré par onglet ; les préférences de diff et de retour à la ligne restent partagées.
+
+Le lecteur de source garde le retour à la ligne d’un fichier ou d’un onglet à l’autre et le rétablit avec l’état de la fenêtre.
 
 ## Aperçus bornés et en lecture seule {#preview-limits}
 
