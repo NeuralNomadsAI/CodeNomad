@@ -119,7 +119,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                         web_sys::window().and_then(|window| window.performance())
                     {
                         performance.clear_marks_with_mark_name("session-search.activate");
-                        let _ = performance.mark("session-search.activate");
+                        let _ = web_sys::Performance::mark(&performance, "session-search.activate");
                     }
                     if let Some(l) = s.screen.launcher_mut() {
                         l.show_search = !l.show_search;

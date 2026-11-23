@@ -25,7 +25,10 @@ export async function openSessionSearch(page, sidebar, messages, tap) {
     await tap(box.x+box.width/2,box.y+box.height/2)
   }
   const field=sidebar.getByRole('group',{name,exact:true})
-  await page.evaluate(()=>performance.clearMarks('session-search.activate'))
+  let started=await page.evaluate(()=>{
+    performance.clearMarks('session-search.activate')
+    return performance.now()
+  })
   let stage='open'
   try {
     await touch(trigger)
@@ -37,13 +40,17 @@ export async function openSessionSearch(page, sidebar, messages, tap) {
     assert.equal(await create.count(),before,
       'Opening session search must not open New Session')
     stage='focus'
+    started=await page.evaluate(()=>performance.now())
     const editor=page.locator('textarea:focus').and(page.getByRole('textbox',{name,exact:true}))
     assert.equal(await editor.count(),0,'Opening search must not focus the field')
     await touch(field)
     await editor.waitFor({state:'attached'})
   } catch (error) {
-    const called=await page.evaluate(()=>performance.getEntriesByName('session-search.activate','mark').length>0)
-    throw new Error(`Session search ${stage}; Rust handler called: ${called}: ${error.message}`,{cause:error})
+    const {called, elapsed}=await page.evaluate(started=>({
+      called:performance.getEntriesByName('session-search.activate','mark').length>0,
+      elapsed:Math.round(performance.now()-started),
+    }),started)
+    throw new Error(`Session search ${stage}; Rust handler called: ${called}; DOM elapsed: ${elapsed} ms: ${error.message}`,{cause:error})
   }
 }
 

@@ -2,7 +2,9 @@
 use crate::platform;
 use crate::{State, chat, composer, settings, shell};
 use rune::{Cx, El};
-use rune_theme_codenomad::layout::{self, Layout};
+use rune_theme_codenomad::layout;
+#[cfg(target_arch = "wasm32")]
+use rune_theme_codenomad::layout::Layout;
 
 pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
     settings::render(s, cx, |cx| {

@@ -261,17 +261,17 @@ fn session_search_keeps_the_pressed_control_when_the_field_mounts() {
     let before = path(&rt, key);
     let create = path(&rt, "create-session");
     let (x, y) = rt.find(key).unwrap();
-    rt.touch(1, rune::TouchPhase::Started, x, y, 0.0);
+    rt.pointer_down(x, y);
     rt.update(|s, _| s.screen.launcher_mut().unwrap().show_search = true);
     rt.frame(0.02);
     assert!(rt.find("session-search").is_some());
     let after = path(&rt, key);
     assert_eq!(path(&rt, "create-session"), create);
-    rt.touch(1, rune::TouchPhase::Ended, x, y, 0.05);
+    rt.pointer_up(x, y);
     settle(&mut rt);
     assert!(
         !rt.state.screen.launcher().unwrap().show_search,
-        "touch release was lost after reparenting: {before} → {after}"
+        "pointer release was lost after reparenting: {before} → {after}"
     );
     assert_eq!(before, after);
 }
