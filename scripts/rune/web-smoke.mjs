@@ -63,7 +63,7 @@ try {
       page.setDefaultTimeout(15000)
       const missions=values.missions?missionsFixture({page,messages,artifact:path.join(out,`missions-${colorScheme}`),project:values.project}):null
       if(missions)await context.addInitScript(()=>Object.defineProperty(Crypto.prototype,'subtle',{value:undefined}))
-      const errors = [], forbiddenRequests = [], routes=[], history=[], settlements=[]
+      const errors = [], forbiddenRequests = [], routes=[], history=[], settlements=[], streamEvents=[], clientDiagnostics=[]
       let measured
       const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions})
       let eventSource=0
@@ -85,12 +85,16 @@ try {
         if(pathname==='/api/events'&&response.status()===200&&request.resourceType()==='eventsource')eventSource++
         if(pathname.endsWith('/session-history/window')&&response.ok())history.push({input:request.postDataJSON(),body:await response.json().catch(()=>null)})
         if(/\/(?:storage\/instances\/[^/]+|instance\/api\/session\/[^/]+|session-history\/window)$/.test(pathname))
-          settlements.push({path:pathname,status:response.status()})
+          settlements.push({at:performance.now(),path:pathname,status:response.status()})
       })
       page.on('requestfailed',request=>{
-        if(values.connected)settlements.push({path:new URL(request.url()).pathname,error:request.failure()?.errorText})
+        if(values.connected)settlements.push({at:performance.now(),path:new URL(request.url()).pathname,error:request.failure()?.errorText})
       })
       page.on('pageerror', error => errors.push({name: error.name, message: error.message}))
+      page.on('console', message=>{
+        if(values.connected&&message.type()==='error'&&clientDiagnostics.length<64)
+          clientDiagnostics.push({at:performance.now(),message:message.text().slice(0,256)})
+      })
       // Connected scenes admit only their private creations; synthetic scenes refuse all API access.
       await context.route('**/*', async route => {
         const requested = new URL(route.request().url())
@@ -102,7 +106,7 @@ try {
         }
         if(protectedRoute){
           assert(routes.length<4000,'Protected browser request bound')
-          const entry={method:req.method(),path:p,query:requested.search,cookie:true};routes.push(entry)
+          const entry={at:performance.now(),method:req.method(),path:p,query:requested.search,cookie:true};routes.push(entry)
           if(req.method()==='POST'&&p==='/api/workspaces'){
             try{Object.assign(entry,await fulfillWorkspaceCreation(route,policy));return}
             catch{errors.push({name:'WorkspaceAdmission',message:'Private workspace response was refused before delivery'});return route.abort('blockedbyclient')}
@@ -132,6 +136,14 @@ try {
         let network
          if(values.mobile){
           const cdp=await mobileClientHints(page,browser)
+          await cdp.send('Network.enable')
+          cdp.on('Network.eventSourceMessageReceived',({requestId,eventName,data})=>{
+            if(streamEvents.length>=512)return
+            let envelope
+            try{envelope=JSON.parse(data)}catch{return}
+            streamEvents.push({at:performance.now(),requestId,eventName,type:envelope.type,
+              status:envelope.status,reason:envelope.reason,native:envelope.event?.type,session:envelope.event?.data?.sessionID})
+          })
           if(colorScheme==='dark'){
             network=cdp
             await cdp.send('Network.emulateNetworkConditions',{
@@ -175,10 +187,15 @@ try {
           const row=name=>sessions.getByRole('listitem',{name,exact:true})
           const select=async(name,id)=>{
             await openSessions()
-            const window=page.waitForResponse(res=>res.url().endsWith('/session-history/window')&&res.ok()&&res.request().postDataJSON()?.sessionID===id)
-            await press(name,'listitem')
-            assert.equal((await (await window).json()).status,'window')
-            await page.getByRole('heading',{name,exact:true}).waitFor()
+            try {
+              const window=page.waitForResponse(res=>res.url().endsWith('/session-history/window')&&res.ok()&&res.request().postDataJSON()?.sessionID===id)
+              void window.catch(()=>{})
+              await press(name,'listitem')
+              assert.equal((await (await window).json()).status,'window')
+              await page.getByRole('heading',{name,exact:true}).waitFor()
+            } catch(error) {
+              throw new Error(`Selecting ${name}: ${error.message}`,{cause:error})
+            }
           }
           const reading=async()=>await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history')&&document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing answer'),undefined,{timeout:30000})
           await press(messages['folderSelection.servers.dialog.connect'])
@@ -403,7 +420,7 @@ try {
           ]}:{pass:true})})
       } catch (error) {
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
-        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,settlements,measured,mirror:await page.locator('body').ariaSnapshot(),
+        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,settlements,streamEvents,clientDiagnostics,measured,mirror:await page.locator('body').ariaSnapshot(),
           marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))}, null, 2))
         throw error
        } finally {missions?.release();releaseRecall();releaseLinked?.();await context.close()}
