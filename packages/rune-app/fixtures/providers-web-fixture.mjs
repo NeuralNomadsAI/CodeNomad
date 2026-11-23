@@ -8,7 +8,10 @@ import {bundleAssetPaths} from '../../../scripts/rune/web-workspace-policy.mjs'
 const bundle = path.resolve(process.argv[2] ?? 'target/rune-web-settings-providers')
 const loseHeaders = process.argv.includes('--lost-headers')
 const opencodeMode = process.argv.find(arg => arg === '--local-opencode' || arg === '--remote-opencode')
-const local = opencodeMode === '--local-opencode'
+const remoteAccess = process.argv.includes('--remote-access')
+const notifications = process.argv.includes('--notifications')
+const noDeviceRegistry = process.argv.includes('--no-device-registry')
+const local = opencodeMode === '--local-opencode' || remoteAccess
 const files = await bundleAssetPaths(bundle)
 const directory = '/fixture/project'
 const project = {id:'catalogue',path:directory,location:{directory}}
@@ -19,9 +22,16 @@ const reads = []
 const mime = {'.html':'text/html','.js':'text/javascript','.wasm':'application/wasm','.css':'text/css','.json':'application/json','.woff2':'font/woff2'}
 let account = 'First fixture account', detached = false
 let contrast = 'on', permissions = 'autonomous'
+let notificationRouting, notifyFocused
 const writes = []
 const memoryRequests = []
 const opencodeRequests = []
+const logLevelWrites = []
+const remoteRequests = []
+const directOrigin = 'https://fixture.example:444'
+const deviceId = '004633fb-53c4-477c-8b01-4cc5c177724b'
+let deviceExists = true
+let logLevel = 'DEBUG'
 let releaseInstall, installed = false
 const installReady = new Promise(resolve => { releaseInstall = resolve })
 const reviews = []
@@ -56,6 +66,28 @@ const server = createServer(async (req,res) => {
         latestVersion:'2.3.2',updateAvailable:!installed,canUpgrade:!installed,binaryPath:'/fixture/opencode'})
     }
     if (p === '/api/auth/status') return json({authenticated:true})
+    if (p.startsWith('/api/remote-control/')) {
+      assert(remoteAccess && local)
+      remoteRequests.push(`${req.method} ${p.slice('/api/remote-control/'.length)}`)
+      if (p === '/api/remote-control/status') {
+        return json({manageable:true,enabled:false,state:'stopped',directOrigins:noDeviceRegistry?[]:[directOrigin]})
+      }
+      if (p === '/api/remote-control/devices') {
+        if (noDeviceRegistry) return res.writeHead(501).end()
+        return json({devices:deviceExists?[{id:deviceId,name:'Fixture Tablet',lastSeenAt:date}]:[]})
+      }
+      if (p === '/api/remote-control/pairings') {
+        assert.equal(req.method,'POST')
+        let body = ''
+        for await (const chunk of req) body += chunk
+        assert.deepEqual(JSON.parse(body),{origin:directOrigin})
+        return json({url:`${directOrigin}/remote-pair#abcdefghijklmnopqrstuv`,expiresAt:new Date(Date.now()+240000).toISOString()})
+      }
+      assert.equal(p,`/api/remote-control/devices/${deviceId}`)
+      assert.equal(req.method,'DELETE')
+      deviceExists = false
+      return res.writeHead(204).end()
+    }
     if (p === '/api/workspaces' && req.method === 'GET') return json([project])
     if (p === '/api/workspaces' && req.method === 'POST') {
       let body = ''
@@ -82,8 +114,16 @@ const server = createServer(async (req,res) => {
         writes.push(patch)
         contrast = patch.settings.highContrast ?? contrast
         permissions = patch.settings.newConversationPermissions ?? permissions
+        if (patch.settings.notificationRouting) {
+          notificationRouting ??= {}
+          for (const [category, row] of Object.entries(patch.settings.notificationRouting)) {
+            notificationRouting[category] = {...notificationRouting[category],...row}
+          }
+        }
+        notifyFocused = patch.settings.osNotificationsAllowWhenVisible ?? notifyFocused
       }
-      return json({settings:{locale:'en',highContrast:contrast,newConversationPermissions:permissions}})
+      return json({settings:{locale:'en',highContrast:contrast,newConversationPermissions:permissions,
+        notificationRouting,osNotificationsAllowWhenVisible:notifyFocused}})
     }
     if (p === '/api/storage/state/ui') {
       await stateReady
@@ -121,6 +161,18 @@ const server = createServer(async (req,res) => {
       assert.equal(operation.action,'delete')
       projectEntries = []
       return json({deleted:true})
+    }
+    if (p === '/api/storage/config/server') {
+      assert(local,'Only the local OpenCode pane reads server configuration')
+      if (req.method === 'PATCH') {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        const change = JSON.parse(body)
+        assert.deepEqual(change,{logLevel:'WARN'})
+        logLevelWrites.push(change)
+        logLevel = change.logLevel
+      }
+      return json({logLevel})
     }
     if (p.startsWith('/api/storage/')) return json({})
     if (p === '/api/workspaces/catalogue/worktrees') return json({repository:'uninitialized',worktrees:[]})
@@ -182,7 +234,20 @@ let browser, page
 try {
   browser = await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined,args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
   page = await browser.newPage({viewport:{width:390,height:844},hasTouch:true,isMobile:true})
+  if (notifications) await page.addInitScript(() => {
+    window.permissionGestures = []
+    window.Notification = class {
+      static permission = 'default'
+      static requestPermission() {
+        window.permissionGestures.push(navigator.userActivation.isActive)
+        this.permission = 'granted'
+        return Promise.resolve(this.permission)
+      }
+    }
+  })
   const click = name => page.getByRole('button',{name,exact:true}).click({force:true,timeout:15000})
+  const afterPaint = () => page.evaluate(() => new Promise(resolve =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve))))
   const radio = name => page.getByRole('radio',{name,exact:true})
   const visible = name => page.getByText(name,{exact:true}).waitFor({state:'attached',timeout:15000})
   await page.goto(`http://127.0.0.1:${server.address().port}/?locale=en`)
@@ -196,8 +261,105 @@ try {
   releaseState()
   await click(directory)
   await visible('No session selected')
-  if (opencodeMode) await checkOpenCode()
+  if (notifications) await checkNotifications()
+  else if (remoteAccess) await checkRemoteAccess()
+  else if (opencodeMode) await checkOpenCode()
   else await checkProviders()
+
+  async function checkNotifications() {
+    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
+    assert(stream,'Project catalogue stream must be attached')
+    const message = 'Short announcement from the fixture'
+    const envelope = {type:'instance.event',instanceId:project.id,event:{
+      id:'toast-fixture',type:'tui.toast.show',data:{title:'Fixture toast',message,variant:'info',duration:2000},
+    }}
+    stream.write(`data: ${JSON.stringify(envelope)}\n\n`)
+    const live = page.locator('[role="status"][aria-live="polite"]').filter({hasText:message})
+    await live.waitFor({state:'attached'})
+    assert.equal(await live.textContent(),`Fixture toast\n${message}`)
+    const bubble = page.getByText(message,{exact:true})
+    await bubble.waitFor({state:'attached'})
+    const bell = page.getByRole('button',{name:'Notification History · 1 unread',exact:true})
+    await bell.waitFor({state:'attached'})
+    await bubble.waitFor({state:'detached',timeout:4000})
+    assert.equal(await bell.count(),1,'Expiration leaves the history entry unread')
+
+    await click('Settings')
+    await radio('Notifications').press('Enter')
+    const switcher = page.getByRole('switch',{name:'Notify when the app is focused',exact:true})
+    const table = page.getByRole('table',{name:'Where each notification appears',exact:true})
+    await table.waitFor({state:'attached'})
+    for (const heading of ['Notification','On screen','History','System']) {
+      assert.equal(await table.getByRole('columnheader',{name:heading,exact:true}).count(),1)
+    }
+    const rows = table.getByRole('row').filter({has:page.getByRole('rowheader')})
+    assert.equal(await rows.count(),9)
+    for (const row of await rows.all()) {
+      const cells = row.getByRole('cell')
+      assert.equal(await cells.count(),3)
+      for (const cell of await cells.all()) assert.equal(await cell.getByRole('checkbox').count(),1)
+    }
+    const focusedName = () => page.evaluate(() => {
+      const root = document.activeElement
+      const id = root?.getAttribute('aria-activedescendant')
+      return (id ? document.getElementById(id) : root)?.getAttribute('aria-label')
+    })
+    const first = 'A session needs your answer · On screen'
+    for (let i=0;i<45 && await focusedName()!==first;i++) await page.keyboard.press('Tab')
+    assert.equal(await focusedName(),first)
+    for (const name of ['A session needs your answer · History','A session needs your answer · System','A session finished · On screen']) {
+      await page.keyboard.press('Tab')
+      assert.equal(await focusedName(),name)
+    }
+    assert.deepEqual(await page.evaluate(()=>window.permissionGestures),[])
+    const history = page.getByRole('checkbox',{name:'Copy confirmations · History',exact:true})
+    const historySaved = page.waitForResponse(response=>response.request().method()==='PATCH'
+      && response.request().postDataJSON()?.settings?.notificationRouting?.copy?.history===true)
+    await history.press('Enter')
+    await historySaved
+    await page.getByRole('checkbox',{name:'Copy confirmations · History',exact:true,checked:true}).waitFor({state:'attached'})
+    assert.deepEqual(await page.evaluate(()=>window.permissionGestures),[])
+    await page.getByRole('checkbox',{name:'Copy confirmations · System',exact:true}).press('Enter')
+    await page.getByRole('button',{name:'Request permission',exact:true}).waitFor({state:'detached'})
+    assert.deepEqual(await page.evaluate(()=>window.permissionGestures),[true])
+    const patch = page.waitForResponse(response=>response.request().method()==='PATCH'
+      && response.request().postDataJSON()?.settings?.osNotificationsAllowWhenVisible===true)
+    await switcher.press('Enter')
+    await patch
+    assert.equal(notificationRouting.copy.history,true)
+    assert.equal(notificationRouting.copy.system,true)
+    assert.equal(notifyFocused,true)
+    console.log(JSON.stringify({fixture:'notifications-preferences',cells:27,permissionGesture:true,foregroundSaved:true,bubbleAnnounced:true,bubbleExpired:true,accessibleUnread:true}))
+  }
+
+  async function checkRemoteAccess() {
+    await click('Settings')
+    await radio('Remote Access').click({force:true})
+    if (noDeviceRegistry) {
+      await visible('Remote Control is off')
+      assert.equal(await page.getByRole('heading',{name:'Paired devices',exact:true}).count(),0)
+      assert.equal(await page.getByRole('button',{name:'Create HTTPS pairing link',exact:true}).count(),0)
+      assert.deepEqual(remoteRequests,['GET status','GET devices'])
+      console.log(JSON.stringify({fixture:'remote-access-without-device-registry',remoteRequests}))
+      return
+    }
+    await visible('Fixture Tablet')
+    assert.deepEqual(remoteRequests,['GET status','GET devices'])
+    assert.equal(await page.getByRole('button',{name:'Start Remote Control',exact:true}).count(),0)
+    await click('Create HTTPS pairing link')
+    await page.getByRole('button',{name:'Copy link',exact:true}).waitFor({state:'attached'})
+    assert.equal(await page.getByText(/abcdefghijklmnopqrstuv/).count(),0)
+    assert.deepEqual(remoteRequests,['GET status','GET devices','POST pairings'])
+    await page.context().grantPermissions(['clipboard-read','clipboard-write'])
+    await click('Copy link')
+    await page.waitForFunction(async expected => await navigator.clipboard.readText() === expected,
+      `${directOrigin}/remote-pair#abcdefghijklmnopqrstuv`)
+    await click('Revoke · Fixture Tablet')
+    await visible('No devices are paired yet.')
+    assert.deepEqual(remoteRequests,['GET status','GET devices','POST pairings',`DELETE devices/${deviceId}`,'GET status','GET devices'])
+    assert.deepEqual(opencodeRequests,[])
+    console.log(JSON.stringify({fixture:'remote-access',remoteRequests}))
+  }
 
   async function checkOpenCode() {
     await Promise.all([
@@ -212,6 +374,12 @@ try {
       await openCode.click({force:true})
       await update.waitFor({state:'attached'})
       assert.deepEqual(opencodeRequests,['GET'])
+      const logging = page.getByRole('button',{name:'OpenCode Log Level',exact:true})
+      await page.locator('button[aria-description="Debug"]').waitFor({state:'attached'})
+      await logging.click({force:true})
+      await page.getByRole('option',{name:'Warn',exact:true}).click({force:true})
+      await page.locator('button[aria-description="Warn"]').waitFor({state:'attached'})
+      assert.deepEqual(logLevelWrites,[{logLevel:'WARN'}])
       await Promise.all([
         page.waitForRequest(request=>new URL(request.url()).pathname==='/api/opencode/update' && request.method()==='POST'),
         update.click({force:true}),
@@ -230,9 +398,12 @@ try {
       await radio('Providers').click({force:true})
       await visible(account)
       assert.equal(await openCode.count(),0)
+      assert.equal(await radio('Remote Access').count(),0)
+      assert.deepEqual(remoteRequests,[])
       assert.deepEqual(opencodeRequests,[])
+      assert.deepEqual(logLevelWrites,[])
     }
-    console.log(JSON.stringify({fixture:'opencode-web',channel:local?'local':'remote',opencodeRequests}))
+    console.log(JSON.stringify({fixture:'opencode-web',channel:local?'local':'remote',opencodeRequests,logLevelWrites}))
   }
 
   async function checkProviders() {
@@ -265,13 +436,22 @@ try {
     }
     assert.fail(`Missing editable field: ${label}`)
   }
-  await edit('Title','Edited project memory')
-  await click('Save')
+  const editedTitle = 'Edited project memory'
+  await edit('Title',editedTitle)
+  // The DOM input updates before Rune draws the dirty form. The pinned mirror
+  // exposes Save even while disabled; the counter confirms the edited frame.
+  await visible(`${[...editedTitle].length}/60`)
+  const save = page.getByRole('button',{name:'Save',exact:true}).and(page.locator(':not([disabled], [aria-disabled="true"])'))
+  await save.click({force:true,timeout:15000})
   await page.getByRole('button',{name:'Edited project memory',exact:true}).waitFor({state:'attached'})
   await click('Edited project memory')
+  // The mirror publishes a new modal before Rune paints its pointer hit regions.
+  await visible('Excluded from agent context')
+  await afterPaint()
   await click('Forget')
   await visible('Forget “Edited project memory”?')
   assert(!reviews.some(({operation})=>operation.action==='delete'),'Forget needs confirmation')
+  await afterPaint()
   await page.getByRole('button',{name:'Forget',exact:true}).last().click({force:true})
   await visible('No memories yet')
   assert.equal(reviews.filter(({operation})=>operation.action==='save').length,1)
@@ -323,6 +503,7 @@ try {
   await click('Tidy up')
   await visible('Review and tidy “About you” in a new project session?')
   assert.equal(cleanupCreates,0,'No session before consent')
+  await afterPaint()
   await page.getByRole('button',{name:'Tidy up',exact:true}).last().click({force:true})
   await page.waitForFunction(()=>document.body.innerText.includes('Cleanup could not be confirmed.'))
   assert.equal(cleanupCreates,1)

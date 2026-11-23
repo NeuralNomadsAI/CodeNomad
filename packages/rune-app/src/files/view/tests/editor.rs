@@ -38,7 +38,7 @@ fn overwrite_dialog_defaults_to_cancel_and_keeps_the_draft() {
 }
 
 #[test]
-fn typing_and_control_save_use_the_versioned_workspace_file() {
+fn typing_and_primary_save_use_the_versioned_workspace_file() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;
         let mut rt = runtime(http.ui(Store::default(), "source-editor"));
@@ -58,9 +58,15 @@ fn typing_and_control_save_use_the_versioned_workspace_file() {
                 .iter()
                 .any(|node| node.path == input.path && node.focused)
         );
+        let mac = cfg!(target_os = "macos");
+        // Rune's native macOS End jumps to the end of the document.
         rt.key(KeyEvent {
-            key: Key::End,
-            mods: Mods::default(),
+            key: if mac { Key::Right } else { Key::End },
+            mods: Mods {
+                cmd: mac,
+                logo: mac,
+                ..Mods::default()
+            },
         });
         rt.key(KeyEvent {
             key: Key::Enter,
@@ -83,7 +89,8 @@ fn typing_and_control_save_use_the_versioned_workspace_file() {
             key: Key::Command('s'),
             mods: Mods {
                 cmd: true,
-                ctrl: true,
+                ctrl: !mac,
+                logo: mac,
                 ..Mods::default()
             },
         });

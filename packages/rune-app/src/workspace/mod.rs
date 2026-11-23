@@ -14,7 +14,8 @@ pub(crate) use state::native_window_store;
 #[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use state::set_files_tab;
 pub(crate) use state::{
-    Activation, notification_target, observes_notification, open_notification, owns_notification,
+    Activation, can_switch_for_notification, check_notification, notification_target,
+    observes_notification, open_notification, owns_notification, workspace_notification,
 };
 pub(crate) use state::{
     Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,

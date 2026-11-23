@@ -29,6 +29,14 @@ test("native schedule availability recognizes consumed shapes independently of v
   }
 })
 
+test("the on/off setting qualifies at the top level or in the experimental block", () => {
+  const root = contract(), config = root.components.schemas["Config.InfoEncoded"] as any
+  config.properties = { automations: { type: "boolean" }, experimental: { type: "object", properties: {} } }
+  assert.deepEqual(nativeScheduleCapability(root), { available: true })
+  config.properties.automations.type = "string"
+  assert.deepEqual(nativeScheduleCapability(root), { available: false, reason: "incompatible-contract" })
+})
+
 test("identical inline request/response structures qualify like refs, while malformed consumed structures refuse", () => {
   const value = contract(), schemas = value.components.schemas as Record<string, any>
   const inline = (input: any): any => {

@@ -11,6 +11,7 @@ import { changeWorkspaceFileDrafts, MAX_FILE_DRAFT_BYTES, normalizeWorkspaceFile
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
 export type { ClientSnapshotV2 }
 const SAVE_DEBOUNCE_MS = 250
+const SAVE_MAX_WAIT_MS = 500
 const FLUSH_MAX_ATTEMPTS = 3
 const MAX_V1_SNAPSHOT_BYTES = 1024 * 1024
 const MAX_LAYOUT_ENTRIES = 64
@@ -42,6 +43,9 @@ let revision = 0
 let dirty = false
 let writeBlock: false | "snapshot" | "transaction" = false
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+let saveDeadline: number | undefined
+let saveDue = false
+let snapshotWritePending = false
 let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
@@ -133,6 +137,8 @@ function canWriteSnapshot(): boolean {
 const cancelSaveTimer = () => {
   if (saveTimer !== null) clearTimeout(saveTimer)
   saveTimer = null
+  saveDeadline = undefined
+  saveDue = false
 }
 
 // Explicit flushes (navigation, close, host requests) verify even unchanged
@@ -148,7 +154,10 @@ function enqueuePendingSave(republish = false): Promise<void> {
     session: partitionProtocolVersion === 1 ? loadedRestorableSession() : withoutPartitionCaches(loadedRestorableSession()),
   }
   const normalizedSnapshot = decodeClientSnapshot(snapshot)
-  if (!normalizedSnapshot) return Promise.reject(new Error("Client snapshot normalization failed"))
+  if (!normalizedSnapshot) {
+    lastSaveError = new Error("Client snapshot normalization failed")
+    return Promise.reject(lastSaveError)
+  }
   layout = { ...normalizedSnapshot.layout }
   dirty = false
   const save = async () => {
@@ -193,10 +202,17 @@ function enqueuePendingSave(republish = false): Promise<void> {
       dirty = true
       lastSaveError = error
       throw error
+    } finally {
+      snapshotWritePending = false
+      if (saveDue) {
+        saveDue = false
+        if (dirty) scheduleSave()
+      }
     }
   }
   // Web saves write sessionStorage before the first await, including during pagehide.
-  const saveAttempt = snapshotOwnsLayout ? writeQueue.then(save) : save()
+  if (snapshotOwnsLayout) snapshotWritePending = true
+  const saveAttempt = snapshotOwnsLayout ? Promise.resolve().then(save) : save()
   writeQueue = saveAttempt.catch(() => undefined)
   return saveAttempt
 }
@@ -211,10 +227,19 @@ function withoutPartitionCaches(state: RestorableSessionState | null): Restorabl
 
 function scheduleSave() {
   dirty = true
-  if (!canWriteSnapshot()) return
-  cancelSaveTimer()
-  saveTimer = setTimeout(() => void enqueuePendingSave()
-    .catch((error) => console.warn("[client-state] failed to save client snapshot", error)), SAVE_DEBOUNCE_MS)
+  if (!canWriteSnapshot() || saveDue) return
+  const now = performance.now()
+  saveDeadline ??= now + SAVE_MAX_WAIT_MS
+  if (saveTimer !== null) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    saveTimer = null
+    // Keep the deadline, but capture only the latest state once the write settles.
+    if (snapshotWritePending) {
+      saveDue = true
+      return
+    }
+    void enqueuePendingSave().catch((error) => console.warn("[client-state] failed to save client snapshot", error))
+  }, Math.min(SAVE_DEBOUNCE_MS, saveDeadline - now))
 }
 function resetLoadedState(snapshot: ClientSnapshotV1 | null = null, resetRevision = false) {
   confirmedPartitionKeys = undefined
@@ -488,33 +513,26 @@ export async function flushWorkspaceFileDraftsForClose(): Promise<void> {
 export async function flushClientState(): Promise<void> {
   cancelSaveTimer()
   if (!snapshotOwnsLayout) return enqueuePendingSave(true)
-  let lastError = lastSaveError
-  for (let attempts = 0; attempts < FLUSH_MAX_ATTEMPTS; attempts += 1) {
+  for (let attempts = 0; ; attempts += 1) {
     while (true) {
       const pending = writeQueue
       await pending
       if (pending === writeQueue) break
     }
     if (republishOnFlush && canWriteSnapshot()) dirty = true
-    if (!dirty) {
-      if (lastError !== undefined) throw lastError
+    if (!dirty || !canWriteSnapshot()) {
+      if (lastSaveError !== undefined) throw lastSaveError
       return
     }
-    if (!canWriteSnapshot()) {
-      const writeError = lastSaveError ?? lastError
-      if (writeError !== undefined) throw writeError
-      return
+    if (attempts === FLUSH_MAX_ATTEMPTS) {
+      throw lastSaveError ?? new Error("Client state remained dirty after the final flush attempt")
     }
     try {
       await enqueuePendingSave(true)
-      lastError = undefined
-    } catch (error) {
-      lastError = error
+    } catch {
+      // Re-read the outcome after the queue settles: a newer write can supersede this attempt.
     }
   }
-  await writeQueue
-  if (!dirty) return
-  throw lastError ?? new Error("Client state remained dirty after the final flush attempt")
 }
 
 export async function clearRestoredClientState(): Promise<void> {

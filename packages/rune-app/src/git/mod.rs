@@ -8,6 +8,8 @@ mod preview;
 mod refresh;
 mod request;
 mod view;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use binding::poll_notices;
 pub(crate) use binding::{
     Binding, PlacementHold, can_place, close_preview, connected, connected_placed,
     diff_preferences, event, files_checkout, has_preview, hold_placement, mode, online, placeable,
@@ -131,6 +133,7 @@ pub(crate) struct Ui {
     reconcile_revision: Option<u64>,
     pending_row_focus: Option<(Vec<Id>, usize)>,
     mutation_message: Option<(bool, String)>,
+    mutation_notice: Option<(bool, String)>,
     invalidated_files: bool,
     init_sessions: Option<Sessions>,
     collation: Option<Collation>,
@@ -180,6 +183,7 @@ impl Ui {
             reconcile_revision: None,
             pending_row_focus: None,
             mutation_message: None,
+            mutation_notice: None,
             invalidated_files: false,
             init_sessions: None,
             collation: Collation::try_default().ok(),

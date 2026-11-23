@@ -32,16 +32,16 @@ export class ClientStateFileDrafts {
     } finally { await file.close() }
   }
 
-  async load(windowId: string, key: unknown, assertCurrent: () => void) {
+  async load(windowId: string, key: unknown, assertCurrent: () => Promise<void>) {
     const drafts = await this.read()
-    assertCurrent()
+    await assertCurrent()
     if (key === undefined) return drafts
     const found = drafts.filter(row => row.key === key)
     if (found.length && typeof key === "string") this.retain(windowId, key)
     return found
   }
 
-  async save(raw: unknown, windowId: string, restoreEnabled: boolean, assertCurrent: () => void,
+  async save(raw: unknown, windowId: string, restoreEnabled: boolean, assertCurrent: () => Promise<void>,
     write: (path: string, contents: string) => Promise<void>, isCurrentRenderer: () => boolean,
   ): Promise<boolean> {
     if (!raw || typeof raw !== "object") return false
@@ -51,7 +51,7 @@ export class ClientStateFileDrafts {
     const value = draft === null ? null : draft as { fingerprint: string; text: string }
     if (value !== null && !restoreEnabled) return false
     const drafts = await this.read()
-    assertCurrent()
+    await assertCurrent()
     const previous = drafts.find(row => row.key === key)
     if (!value) {
       this.readers.get(windowId)?.delete(key)

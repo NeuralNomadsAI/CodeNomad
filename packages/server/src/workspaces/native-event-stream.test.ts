@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { userFileDigest } from "../opencode/user-file-reference"
+import { userFileDigest } from "../opencode/session-pruning/user-file-reference"
 import { projectLargeNativeEvents } from "./native-event-stream"
 
 test("the shared SDK stream receives a large inbox as references and retains following events", async () => {

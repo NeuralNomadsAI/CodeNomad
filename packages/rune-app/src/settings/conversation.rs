@@ -45,11 +45,12 @@ pub(super) fn row<S: 'static>(
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(super) fn web_entry() -> El {
-    rune_theme_codenomad::layout::button(t("settings.nav.chat"), false, |s: &mut crate::State| {
-        s.settings.web_usage = Some(false);
-    })
-    .key("open-conversation-preferences")
+pub(super) fn web_entry(touch: bool) -> El {
+    rune_theme_codenomad::tabs::BarAction::Conversation
+        .button(touch, t("settings.nav.chat"), |s: &mut crate::State| {
+            s.settings.web_usage = Some(false);
+        })
+        .key("open-conversation-preferences")
 }
 
 #[cfg(target_arch = "wasm32")]

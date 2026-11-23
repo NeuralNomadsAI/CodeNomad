@@ -55,7 +55,9 @@ export function nativeScheduleCapability(document: ObjectValue): { available: tr
       && type(properties.sessionID, "string") && type(properties.name, "string") && type(properties.expires, "string")
       && when(properties.trigger) && prompt(properties.action, false)
   }
-  let valid = type(fields(fields(document.components?.schemas?.["Config.InfoEncoded"]).experimental).automations, "boolean")
+  // The on/off setting is top-level `automations`, or `experimental.automations` on runtimes that read that block.
+  const config = fields(document.components?.schemas?.["Config.InfoEncoded"])
+  let valid = type(config.automations, "boolean") || type(fields(config.experimental).automations, "boolean")
   for (const [path, method, name] of routes) {
     const operation = document.paths[path][method]
     valid &&= operation.operationId === `experimental.automation.${name}`

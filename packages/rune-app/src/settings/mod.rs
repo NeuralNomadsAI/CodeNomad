@@ -4,9 +4,11 @@ mod contrast;
 mod conversation;
 mod memory;
 pub(crate) mod notification_routing;
+mod notification_settings;
 mod opencode;
 mod preferences;
 mod providers;
+mod remote;
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -14,9 +16,37 @@ mod web;
 #[cfg(target_arch = "wasm32")]
 mod web_contrast;
 
+mod appearance;
+mod connection;
+mod delivery;
+mod shortcuts;
+mod window;
+
+use appearance::awaiting_appearance;
+#[cfg(test)]
+use appearance::effective_contrast;
+#[cfg(not(target_arch = "wasm32"))]
+use appearance::render_with;
+pub(crate) use appearance::{app_locale, render};
+pub(crate) use connection::{
+    bound_backend, connected, connection_event, conversation_authentication, invalidate,
+    stop_before_conversation,
+};
+#[cfg(test)]
+use connection::{provider_changed, provider_stopped};
+pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_notification};
+#[cfg(test)]
+pub(crate) use delivery::{notification_fixture, notification_test_config};
+pub(crate) use shortcuts::matches_shortcut;
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(crate) use window::gallery;
+pub(crate) use window::{close, direct_entry, entries};
+#[cfg(not(target_arch = "wasm32"))]
+use window::{launch_preferences, settle_close, warn_save_failed};
+
 use crate::{State, strings};
 use preferences::Preferences;
-use rune::{Cx, El};
+#[cfg(not(target_arch = "wasm32"))]
 use std::cell::Cell;
 use std::{cell::RefCell, rc::Rc};
 
@@ -28,8 +58,6 @@ pub(crate) struct Host {
     #[cfg(target_arch = "wasm32")]
     web: web::Panel,
     #[cfg(target_arch = "wasm32")]
-    notification_permission_changed: Rc<Cell<bool>>,
-    #[cfg(target_arch = "wasm32")]
     web_usage: Option<bool>,
     #[cfg(target_arch = "wasm32")]
     contrast: Option<web_contrast::Watch>,
@@ -37,6 +65,16 @@ pub(crate) struct Host {
     last_contrast: bool,
     last_display: Option<([&'static str; 6], bool)>,
     memory_cleanup: Option<memory::cleanup::Run>,
+}
+
+pub(crate) fn message_usage_visibility(s: &State) -> &'static str {
+    s.settings.shared.borrow().usage_visibility(false)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
+    s.settings.shared.borrow_mut().fixture_usage(mode);
+    s.revision += 1;
 }
 
 pub(crate) fn poll_memory_cleanup(s: &mut State, tx: &mut rune::Tx) -> bool {
@@ -146,12 +184,34 @@ pub(crate) fn poll(s: &mut State) -> bool {
         contrast_changed
             | s.settings.web.poll(&mut shared, &s.wake, paired)
             | (s.settings.web.shown() && preferences_changed)
-            | s.settings.notification_permission_changed.replace(false)
     };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
     let (reconnected, missions) = shared.mission_changes();
+    let locale = shared.locale().unwrap_or_else(strings::locale);
+    let notify_failure = shared.take_notification_failure();
+    let update = shared.notification_update.take();
     drop(shared);
+    strings::with_locale(locale, || {
+        use crate::shell::notifications::{Category, emit, emit_outcome};
+        if notify_failure {
+            emit_outcome(
+                s,
+                Category::Settings,
+                None,
+                strings::t("settings.preferenceSaveFailed"),
+                true,
+            );
+        }
+        if let Some(version) = update {
+            emit(
+                s,
+                Category::Updates,
+                Some(strings::t("releases.devUpdateAvailable.title").into()),
+                strings::t("settings.opencode.update.available").replace("{version}", &version),
+            );
+        }
+    });
     if expired {
         s.show_launcher();
         crate::workspace::suspend_missions(s);
@@ -164,474 +224,4 @@ pub(crate) fn poll(s: &mut State) -> bool {
         }
     }
     changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))
-}
-
-pub(crate) enum Delivery {
-    Suppressed,
-    WaitingForSettings,
-    Body(String),
-}
-
-pub(crate) fn system_notification(
-    s: &State,
-    target: &crate::shell::notifications::Target,
-    category: notification_routing::Category,
-    focused: bool,
-    label: &str,
-) -> Delivery {
-    let prefs = s.settings.shared.borrow();
-    if !prefs.backend.as_ref().is_some_and(|backend| {
-        backend.base == target.backend_url
-            && backend.client.server_identity() == target.server.as_deref()
-    }) {
-        return Delivery::Suppressed;
-    }
-    if prefs.notification_config_refreshing() {
-        return Delivery::WaitingForSettings;
-    }
-    let config = prefs.notification_config();
-    if crate::shell::notifications::system_allowed(config, category, focused) {
-        let key = match category {
-            notification_routing::Category::NeedsInput => "sessionEvents.notify.needsInput",
-            notification_routing::Category::SessionDone => "sessionEvents.notify.done",
-        };
-        Delivery::Body(strings::with_locale(
-            prefs.locale().unwrap_or_else(strings::locale),
-            || strings::t(key).replace("{label}", label),
-        ))
-    } else {
-        Delivery::Suppressed
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn notification_fixture(s: &State) {
-    let mut prefs = s.settings.shared.borrow_mut();
-    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
-    prefs.reset_notification_fixture();
-}
-
-pub(crate) fn message_usage_visibility(s: &State) -> &'static str {
-    s.settings.shared.borrow().usage_visibility(false)
-}
-
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
-    s.settings.shared.borrow_mut().fixture_usage(mode);
-    s.revision += 1;
-}
-
-pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {
-    if s.screen.launcher().is_none() {
-        s.settings.shared.borrow_mut().bind(Some(backend.clone()));
-    }
-}
-
-pub(crate) fn bound_backend(s: &State) -> Option<crate::backend::Backend> {
-    s.settings.shared.borrow().backend.clone()
-}
-
-pub(crate) fn stop_before_conversation(s: &State) -> Option<codenomad_client::Receiver<()>> {
-    s.settings.shared.borrow_mut().stop_before_conversation()
-}
-
-pub(crate) fn conversation_authentication(
-    s: &mut State,
-    auth: codenomad_client::transport::Authentication,
-) -> bool {
-    if !authentication_required(s, &auth.backend) {
-        return false;
-    }
-    s.commands = None;
-    s.paging = false;
-    #[cfg(not(target_arch = "wasm32"))]
-    crate::chat::authentication::expired(s, auth);
-    true
-}
-
-fn authentication_required(s: &mut State, expired: &crate::backend::Backend) -> bool {
-    let mut prefs = s.settings.shared.borrow_mut();
-    let current = match s.screen.launcher() {
-        Some(launcher) => launcher.connection.as_ref(),
-        None => prefs.backend.as_ref(),
-    };
-    if let Some(current) = current {
-        if !current.client.same_connection(&expired.client) {
-            return false;
-        }
-        prefs.require_authentication();
-        if let Some(launcher) = s.screen.launcher_mut() {
-            launcher.authentication_required = true;
-        }
-        drop(prefs);
-        s.show_launcher();
-        crate::workspace::suspend_missions(s);
-    }
-    true
-}
-
-pub(crate) fn invalidate(s: &State, owner: codenomad_client::settings::Owner) {
-    s.settings.shared.borrow_mut().invalidate(owner);
-}
-
-fn provider_stopped(s: &State, workspace: &str) {
-    {
-        let mut prefs = s.settings.shared.borrow_mut();
-        if prefs
-            .provider_target
-            .as_ref()
-            .is_some_and(|target| target.is_workspace(workspace))
-        {
-            prefs.provider_target = None;
-            if let Some(wake) = &prefs.window_wake {
-                wake();
-            }
-        }
-    }
-}
-
-fn provider_changed(s: &State, workspace: &str) {
-    {
-        if s.screen
-            .launcher()
-            .is_some_and(|l| l.catalogue_watch.is_some())
-        {
-            return;
-        }
-        let mut prefs = s.settings.shared.borrow_mut();
-        if prefs
-            .provider_target
-            .as_mut()
-            .is_some_and(|target| target.hint(workspace))
-            && let Some(wake) = &prefs.window_wake
-        {
-            wake();
-        }
-    }
-}
-
-pub(crate) fn connection_event(s: &State, event: &crate::transport::Event) {
-    use codenomad_client::transport::{Event, WorkspaceEvent};
-    match event {
-        Event::Workspace(WorkspaceEvent::MemoryChanged) => {
-            s.settings.shared.borrow_mut().memory.invalidate();
-        }
-        Event::Workspace(WorkspaceEvent::ProvidersChanged { workspace_id }) => {
-            provider_changed(s, workspace_id)
-        }
-        Event::Workspace(WorkspaceEvent::Stopped { workspace_id }) => {
-            provider_stopped(s, workspace_id)
-        }
-        Event::AgentHint(true) => {
-            s.settings.shared.borrow_mut().memory.transport(true);
-            provider_transport(s, true);
-        }
-        Event::ConnectionLost => {
-            s.settings.shared.borrow_mut().memory.transport(false);
-            provider_transport(s, false);
-        }
-        _ => {}
-    }
-}
-
-fn provider_transport(s: &State, online: bool) {
-    if s.screen.launcher().is_some() {
-        return;
-    }
-    let mut prefs = s.settings.shared.borrow_mut();
-    if let Some(target) = &mut prefs.provider_target {
-        target.transport(online);
-        if let Some(wake) = &prefs.window_wake {
-            wake();
-        }
-    }
-}
-
-pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<State>) -> El) -> El {
-    let prefs = s.settings.shared.borrow();
-    if awaiting_appearance(s, &prefs) {
-        return rune::el().key("preferences-bootstrap");
-    }
-    #[cfg(target_arch = "wasm32")]
-    let more = s
-        .settings
-        .contrast
-        .as_ref()
-        .is_some_and(web_contrast::Watch::more);
-    #[cfg(not(target_arch = "wasm32"))]
-    let more = cx.system_increased_contrast();
-    render_with(cx, &prefs, more, |cx| {
-        let body = view(cx);
-        #[cfg(target_arch = "wasm32")]
-        if let Some(panel) =
-            conversation::web_view(s, &prefs).or_else(|| web::view(s, &prefs, more))
-        {
-            use rune_theme_codenomad::layout::Layout;
-            return rune::col()
-                .full_width()
-                .full_height()
-                .child(body)
-                .child(panel);
-        }
-        body
-    })
-}
-
-fn awaiting_appearance(s: &State, prefs: &Preferences) -> bool {
-    prefs.awaiting_appearance()
-        || prefs.backend.is_none()
-            && (s
-                .screen
-                .launcher()
-                .is_some_and(|launcher| launcher.pending && !launcher.authentication_required)
-                || s.screen.launcher().is_none()
-                    && s.incoming.is_some()
-                    && s.phase == crate::Phase::Loading)
-}
-
-fn render_with<S>(
-    cx: &mut Cx<S>,
-    prefs: &Preferences,
-    system_more: bool,
-    view: impl FnOnce(&mut Cx<S>) -> El,
-) -> El {
-    let dark = prefs.dark(cx.system_dark());
-    let locale = prefs.locale().unwrap_or_else(strings::locale);
-    use rune_theme_codenomad::layout::Layout;
-    let more = effective_contrast(prefs.contrast(), system_more);
-    let palette = prefs.palette(dark);
-    let palette = if more {
-        rune_theme_codenomad::palettes::increased_contrast(palette, dark)
-    } else {
-        palette
-    };
-    rune_theme_codenomad::settings::render(cx, dark, palette, |cx| {
-        strings::with_locale(locale, || view(cx).locale_direction(locale))
-    })
-}
-
-fn effective_contrast(preference: &str, system: bool) -> bool {
-    preference == "on" || preference == "auto" && system
-}
-
-pub(crate) fn entry() -> El {
-    #[cfg(not(target_arch = "wasm32"))]
-    return rune_theme_codenomad::layout::button(strings::t("settings.title"), false, open)
-        .key("open-preferences");
-    #[cfg(target_arch = "wasm32")]
-    return rune_theme_codenomad::layout::action_row()
-        .child(web::entry())
-        .child(conversation::web_entry())
-        .child(notification_permission_entry());
-}
-
-#[cfg(target_arch = "wasm32")]
-fn notification_permission_entry() -> El {
-    {
-        use web_sys::NotificationPermission;
-        if crate::platform::notifications::permission() != Some(NotificationPermission::Default) {
-            return rune::el();
-        }
-        rune_theme_codenomad::layout::button(
-            strings::t("settings.notifications.requestPermission.action"),
-            false,
-            |s: &mut State| {
-                if let Some(permission) = crate::platform::notifications::request_permission() {
-                    let changed = s.settings.notification_permission_changed.clone();
-                    let wake = s.wake.clone();
-                    wasm_bindgen_futures::spawn_local(async move {
-                        let _ = wasm_bindgen_futures::JsFuture::from(permission).await;
-                        changed.set(true);
-                        wake();
-                    });
-                }
-            },
-        )
-        .key("notification-permission")
-    }
-}
-
-pub(crate) fn matches_shortcut(
-    s: &State,
-    action: &str,
-    event: &rune::KeyEvent,
-    default: char,
-) -> bool {
-    let mods = event.mods;
-    let settings = s.settings.shared.borrow();
-    let Some(overrides) = settings.shortcut(action) else {
-        return matches!(event.key, rune::Key::Command(key) if key.eq_ignore_ascii_case(&default))
-            && mods.ctrl
-            && !mods.shift
-            && !mods.alt;
-    };
-    let function = match event.key {
-        rune::Key::Function(n @ 1..=24) => Some(format!("f{n}")),
-        _ => None,
-    };
-    overrides.iter().any(|rule| {
-        let enabled = |name| rule[name].as_bool() == Some(true);
-        let command = enabled("mod");
-        let mac = cfg!(target_os = "macos");
-        (mac || !enabled("meta"))
-            && mods.ctrl == (enabled("ctrl") || command && !mac)
-            && (!mac || mods.cmd == (enabled("meta") || command))
-            && mods.shift == enabled("shift")
-            && mods.alt == enabled("alt")
-            && rule["key"].as_str().is_some_and(|value| match event.key {
-                rune::Key::Command(key) => {
-                    let mut chars = value.chars();
-                    chars
-                        .next()
-                        .is_some_and(|value| key.eq_ignore_ascii_case(&value))
-                        && chars.next().is_none()
-                }
-                _ => function
-                    .as_ref()
-                    .is_some_and(|key| key.eq_ignore_ascii_case(value)),
-            })
-    })
-}
-
-#[cfg(all(test, target_os = "windows"))]
-#[test]
-fn shell_shortcuts_use_confirmed_overrides_without_changing_the_default() {
-    let s = crate::init();
-    let chord = |key| rune::KeyEvent {
-        key: rune::Key::Command(key),
-        mods: rune::Mods {
-            ctrl: true,
-            ..Default::default()
-        },
-    };
-    assert!(matches_shortcut(&s, "close-instance", &chord('w'), 'w'));
-    s.settings
-        .shared
-        .borrow_mut()
-        .fixture_shortcuts(serde_json::json!({
-            "close-instance": [],
-            "new-instance": [{"key": "t", "mod":true}]
-        }));
-    assert!(!matches_shortcut(&s, "close-instance", &chord('w'), 'w'));
-    assert!(!matches_shortcut(&s, "new-instance", &chord('n'), 'n'));
-    assert!(matches_shortcut(&s, "new-instance", &chord('t'), 'n'));
-    s.settings
-        .shared
-        .borrow_mut()
-        .fixture_shortcuts(serde_json::json!({
-            "close-instance": [{"key":"f9","mod":true}],
-            "new-instance": [{"key":"f10"}]
-        }));
-    let f = |n, ctrl| rune::KeyEvent {
-        key: rune::Key::Function(n),
-        mods: rune::Mods {
-            ctrl,
-            ..Default::default()
-        },
-    };
-    assert!(matches_shortcut(&s, "close-instance", &f(9, true), 'w'));
-    assert!(!matches_shortcut(&s, "close-instance", &f(9, false), 'w'));
-    assert!(!matches_shortcut(&s, "close-instance", &chord('w'), 'w'));
-    assert!(matches_shortcut(&s, "new-instance", &f(10, false), 'n'));
-}
-
-pub(crate) fn direct_entry(s: &State) -> El {
-    if s.workspace.is_none() && s.settings.shared.borrow().backend.is_some() {
-        entry()
-    } else {
-        rune::el()
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn open(s: &mut State) {
-    let host = &s.settings;
-    if let Some((window, token, request)) = &host.window
-        && Rc::strong_count(token) > 1
-    {
-        request.requested.set(true);
-        window.focus();
-        let mut prefs = host.shared.borrow_mut();
-        prefs.opencode_install.cancel_check();
-        if let Some(wake) = &prefs.window_wake {
-            wake();
-        }
-        return;
-    }
-    if host
-        .window
-        .as_ref()
-        .is_some_and(|(_, _, request)| request.reopen.borrow().is_some())
-    {
-        return;
-    }
-    let target = providers::Target::capture(s);
-    {
-        let mut prefs = host.shared.borrow_mut();
-        prefs.provider_target = target;
-        prefs
-            .memory
-            .bind_seen(crate::workspace::native_window_store(s));
-    }
-    launch_preferences(s, Rc::new(view::CloseRequest::default()), None);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn launch_preferences(
-    s: &mut State,
-    request: Rc<view::CloseRequest>,
-    editor: Option<memory::editor::Editor>,
-) {
-    let host = &s.settings;
-    let token = Rc::new(Cell::new(false));
-    let state = view::Window::new(host.shared.clone(), token.clone())
-        .with_close_request(request.clone(), editor);
-    let locale = host
-        .shared
-        .borrow()
-        .locale()
-        .unwrap_or_else(strings::locale);
-    let spec = strings::with_locale(locale, view::spec);
-    let window = crate::platform::preferences_window(s, spec, state, view::closed);
-    s.settings.window = Some((window, token, request));
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn settle_close(shared: &RefCell<Preferences>, warn: impl FnOnce(&'static str)) {
-    let mut prefs = shared.borrow_mut();
-    if !prefs.flush() {
-        let locale = prefs.locale().unwrap_or_else(strings::locale);
-        drop(prefs);
-        warn(locale);
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn warn_save_failed(locale: &'static str) {
-    crate::platform::preferences_save_warning(locale, view::save_warning);
-}
-
-pub(crate) fn close(s: &mut State) {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        #[cfg(target_os = "windows")]
-        crate::platform::preferences_placement::closed();
-        s.settings
-            .shared
-            .borrow_mut()
-            .opencode_install
-            .cancel_check();
-        settle_close(&s.settings.shared, warn_save_failed);
-        if let Some((window, token, _)) = s.settings.window.take() {
-            token.set(true);
-            window.close();
-        }
-    }
-    #[cfg(target_arch = "wasm32")]
-    let _ = s;
-}
-
-#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
-pub(crate) fn gallery() {
-    rune::run(view::spec())
 }

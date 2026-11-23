@@ -2,7 +2,7 @@ use wasm_bindgen::JsCast;
 
 pub(super) fn copy_path(
     path: &str,
-    out: codenomad_client::Sender<(bool, String)>,
+    out: codenomad_client::Sender<(crate::shell::notifications::Category, bool, String)>,
     wake: codenomad_client::Wake,
 ) {
     let Some(window) = web_sys::window() else {
@@ -23,16 +23,7 @@ pub(super) fn copy_path(
             }
             None => fallback.unwrap_or(false),
         };
-        let message = rune_theme_codenomad::catalogue::format(
-            &locale,
-            if copied {
-                "instanceShell.filesShell.toast.copyPathSuccess"
-            } else {
-                "instanceShell.filesShell.toast.copyPathError"
-            },
-            &[],
-        );
-        if out.try_send((copied, message)).is_ok() {
+        if out.try_send(super::copy_feedback(&locale, copied)).is_ok() {
             wake();
         }
     });

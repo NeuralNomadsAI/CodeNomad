@@ -192,3 +192,45 @@ fn a_close_request_wins_over_the_checked_offer_in_the_same_frame() {
         );
     });
 }
+
+#[test]
+fn log_level_is_lazy_and_reconciles_a_lost_receipt_after_the_view_closes() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        assert!(!prefs.poll());
+        assert!(prefs.show_opencode());
+        assert!(prefs.poll());
+        let read = request(&listener).await;
+        assert_eq!(
+            read.first,
+            "GET /api/storage/config/server?authoritative=1 HTTP/1.1"
+        );
+        read.reply(200, json!({})).await;
+        wait_until(|| prefs.poll()).await;
+        assert_eq!(prefs.log_level(), Some(0));
+        prefs.set_log_level(2);
+        prefs.set_log_level(3);
+        assert!(prefs.log_level_pending());
+        assert_eq!(prefs.log_level(), Some(0));
+        prefs.hide_opencode();
+        assert!(prefs.poll());
+        let write = request(&listener).await;
+        assert_eq!(write.first, "PATCH /api/storage/config/server HTTP/1.1");
+        assert_eq!(write.body, json!({"logLevel":"WARN"}));
+        drop(write);
+        let reread = request(&listener).await;
+        assert_eq!(
+            reread.first,
+            "GET /api/storage/config/server?authoritative=1 HTTP/1.1"
+        );
+        reread.reply(200, json!({"logLevel":"WARN"})).await;
+        wait_until(|| prefs.poll()).await;
+        assert_eq!(prefs.log_level(), Some(2));
+        assert!(!prefs.log_level_pending());
+        assert!(
+            timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+}

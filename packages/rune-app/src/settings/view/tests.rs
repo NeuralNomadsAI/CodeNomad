@@ -3,6 +3,33 @@ use rune::{Env, Runtime};
 use serde_json::Value;
 
 #[test]
+fn notifications_tab_mounts_the_routing_table_and_the_focused_switch() {
+    let state =
+        Window::default().with_notification_permission(notification_settings::Permission::Granted);
+    {
+        let mut prefs = state.shared.borrow_mut();
+        prefs.fixture();
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    assert!(node(&rt.accessibility_json(), "updates-system").is_none());
+    let (x, y) = rt.find("settings-notifications").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    let tree = rt.accessibility_json();
+    let system = node(&tree, "updates-system").unwrap();
+    assert_eq!(system["role"], "check-box");
+    assert!(system["states"].to_string().contains("\"checked\""));
+    assert_eq!(
+        node(&tree, "notifications-allow-focused").unwrap()["role"],
+        "switch"
+    );
+}
+
+#[test]
 fn contrast_control_changes_only_the_contrast_choice() {
     let state = Window::default();
     state.shared.borrow_mut().fixture();

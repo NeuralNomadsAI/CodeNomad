@@ -1,25 +1,16 @@
 //! Geometry shared by the application bar and conversation panels.
 pub mod icons;
-use crate::{Length, Space, TextRole, kit, layout, tokens};
+pub mod notices;
+use crate::{
+    Length, Space, TextRole, kit,
+    layout::{self, enter_action},
+    tokens,
+};
 use rune::{App, AppSpec, Cx, El, Icon, Tx, col, el, row, text};
 use rune_kit::{
     Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, SidebarRow, WindowTitlebar,
 };
 use std::rc::Rc;
-
-fn enter_action<S: 'static>(
-    action: Rc<impl Fn(&mut S, &mut Tx) + 'static>,
-) -> impl Fn(&mut S, &rune::KeyEvent, &mut Tx) -> bool + 'static {
-    move |state, event, tx| {
-        if event.key != rune::Key::Enter || event.mods != rune::Mods::default() {
-            return false;
-        }
-        if !tx.key_repeat() {
-            action(state, tx);
-        }
-        true
-    }
-}
 
 // Solid's shell/storage.ts and instance-shell2.tsx own these layout breakpoints.
 pub const CENTER_MIN: f32 = 390.0;
@@ -201,6 +192,9 @@ pub fn panel_tabs<S: 'static>(
     chosen: usize,
     activate: impl Fn(&mut S, usize, &mut Tx) + Clone + 'static,
 ) -> El {
+    let dark = layout::dark();
+    // Solid's project and right-panel strips share the same tab height.
+    let height = tokens(dark).metric("tabActive", "height").px();
     row().role("tablist").label(title).focus_group().children(
         labels.iter().copied().enumerate().map(|(index, label)| {
             let activate = activate.clone();
@@ -214,7 +208,8 @@ pub fn panel_tabs<S: 'static>(
                 })
                 .control_size(ControlSize::Small)
                 .on_press_tx(move |s, tx| press(s, tx))
-                .build(kit(layout::dark()))
+                .build(kit(dark))
+                .h(height)
                 .key(format!("right-panel-tab-{index}"))
                 .role("tab")
                 .focus_selected(index == chosen)

@@ -81,7 +81,7 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
             )
         } else {
             tabs::strip(
-                cx,
+                cx.touch_controls(),
                 &s.locale,
                 &items,
                 Some(&s.active),
@@ -99,6 +99,7 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
                     s.active = id;
                     println!("project-tabs-new");
                 },
+                [],
             )
         };
         rune::row()
