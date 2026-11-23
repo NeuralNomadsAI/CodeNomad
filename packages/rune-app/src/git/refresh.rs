@@ -34,6 +34,12 @@ impl Ui {
                 self.dirty(&[Lane::Worktrees]);
                 self.invalidate_checkout_content();
             }
+            WorkspaceEvent::SessionMoved {
+                workspace_id,
+                session_id,
+            } if workspace_id == &self.backend.workspace && session_id == &self.backend.session => {
+                self.close_preview();
+            }
             WorkspaceEvent::Stopped { workspace_id } if workspace_id == &self.backend.workspace => {
                 self.stopped = true;
                 self.reset_tree();

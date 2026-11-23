@@ -182,6 +182,12 @@ impl Ui {
     }
     pub fn event(&mut self, event: WorkspaceEvent) {
         match event {
+            WorkspaceEvent::SessionMoved {
+                workspace_id,
+                session_id,
+            } if workspace_id == self.backend.workspace && session_id == self.backend.session => {
+                self.close_reader();
+            }
             WorkspaceEvent::FilesChanged {
                 workspace_id,
                 changes,
