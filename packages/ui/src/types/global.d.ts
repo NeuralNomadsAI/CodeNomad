@@ -74,6 +74,8 @@ declare global {
     claimClientStateAccess?: (accessToken: string) => Promise<boolean>
     loadClientState?: (accessToken: string) => Promise<ElectronClientStateLoadResult>
     saveClientState?: (accessToken: string, snapshot: unknown) => Promise<boolean>
+    loadFileDrafts?: (accessToken: string, key?: string) => Promise<import("../stores/workspace-file-drafts-codec").WorkspaceFileDraft[]>
+    saveFileDraft?: (accessToken: string, change: import("../lib/native/client-state").FileDraftChange) => Promise<boolean>
     commitClientStatePartitions?: (accessToken: string, payload: ClientStatePartitionCommit) => Promise<boolean>
     loadClientStatePartition?: (accessToken: string, key: string) => Promise<string | null>
     setClientStateRestoreEnabled?: (accessToken: string, enabled: boolean) => Promise<boolean>
@@ -154,7 +156,7 @@ declare global {
        __CODENOMAD_BROWSER_CAPABILITIES__?: import("../lib/native/browser").BrowserHostCapabilities
        __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote" | "preferences"
        readonly __CODENOMAD_WINDOW_ID__?: string | null
-       __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: (closing?: false | "cancel" | "prepare" | "release") => Promise<void>
+       __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: (phase?: false | "cancel" | "prepare" | "release" | "navigation" | "navigation-cancel") => Promise<void>
        __CODENOMAD_STARTUP_STATE_COMMAND__?: (command: unknown) => Promise<unknown>
        __CODENOMAD_MEMORY_CLEANUP__?: (request: unknown) => Promise<void>
        __CODENOMAD_SELECT_SERVER__?: (intent: unknown, action?: "remove") => void

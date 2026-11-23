@@ -3,7 +3,9 @@ import { registerHooks } from "node:module"
 import { after, test } from "node:test"
 import type { FilePreviewTarget } from "../stores/files-preview"
 
-const fixture = { disk: "baseline", gate: null as Promise<void> | null, writing: false, fail: false }
+type StoredDraft = { fingerprint: string; text: string }
+const fixture = { disk: "baseline", gate: null as Promise<void> | null, writing: false, fail: false,
+  reads: [] as Array<(value: StoredDraft | undefined) => void>, durable: false, installed: true }
 ;(globalThis as any).__workspaceEditorFixture = fixture
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -19,6 +21,16 @@ const hooks = registerHooks({
         } });`,
       "../lib/notifications": "export const showToastNotification = () => {}",
       "../stores/alerts": "export const showConfirmDialog = async () => true",
+      "../stores/instances": `const f = globalThis.__workspaceEditorFixture;
+        export const instances = () => f.durable ? new Map([["test", { id: "test", folder: "/repo" }]]) : new Map();`,
+      "../lib/server-meta": `const f = globalThis.__workspaceEditorFixture;
+        export const localServerMeta = { meta: () => f.installed ? { serverId: "fixture" } : undefined };
+        export const getServerMeta = async () => localServerMeta.meta();`,
+      "../stores/client-state": `const f = globalThis.__workspaceEditorFixture;
+        export const keepRecoveredWorkspaceFileDraft = () => {};
+        export const restoredWorkspaceFileDraft = () => undefined;
+        export const refreshWorkspaceFileDraft = () => new Promise(resolve => f.reads.push(resolve));
+        export const updateWorkspaceFileDraft = () => true;`,
     }
     if (context.parentURL?.endsWith("/workspace-file-editor.ts") && sources[specifier]) {
       return { shortCircuit: true, url: `data:text/javascript,${encodeURIComponent(sources[specifier])}` }
@@ -40,6 +52,81 @@ function setup(path: string) {
   })
   return { editor, close }
 }
+
+test("two open readers share edits and adopt a fresh disk baseline after save", async () => {
+  fixture.disk = "baseline"; fixture.gate = null; fixture.fail = false
+  const first = setup("two-readers.txt"), second = setup("two-readers.txt")
+  try {
+    first.editor.adopt("baseline"); second.editor.adopt("baseline")
+    first.editor.change("first edit")
+    assert.equal(second.editor.text(), "first edit")
+    second.editor.change("second edit")
+    assert.equal(first.editor.text(), "second edit")
+    await second.editor.save()
+    assert.equal(fixture.disk, "second edit")
+    first.editor.adopt("disk changed")
+    assert.equal(second.editor.text(), "disk changed")
+    assert.equal(second.editor.dirty(), false)
+  } finally { first.close(); second.close() }
+})
+
+test("a late recovery joins the shared editor instead of replacing newer text", async () => {
+  fixture.durable = true
+  const first = setup("concurrent-recovery.txt"), second = setup("concurrent-recovery.txt")
+  try {
+    first.editor.reset(); second.editor.reset()
+    const a = first.editor.recover(), b = second.editor.recover()
+    const stored = { fingerprint: "0".repeat(64), text: "stored draft" }
+    fixture.reads.shift()!(stored)
+    assert.equal(await a, "stored draft")
+    first.editor.change("more recent edit")
+    fixture.reads.shift()!(stored)
+    assert.equal(await b, "more recent edit")
+    second.editor.change("edit from the second reader")
+    assert.equal(first.editor.text(), "edit from the second reader")
+    second.editor.discard()
+  } finally { first.close(); second.close(); fixture.durable = false }
+})
+
+test("a recovered draft replaces the clean shared disk view before either reader edits", async () => {
+  fixture.durable = true
+  const first = setup("clean-peer.txt"), second = setup("clean-peer.txt")
+  try {
+    first.editor.reset(); second.editor.reset()
+    const a = first.editor.recover(), b = second.editor.recover()
+    fixture.reads.shift()!(undefined)
+    await a
+    first.editor.adopt("disk contents")
+    fixture.reads.shift()!({ fingerprint: "0".repeat(64), text: "recovered draft" })
+    assert.equal(await b, "recovered draft")
+    assert.equal(first.editor.text(), "recovered draft")
+    first.editor.discard()
+  } finally { first.close(); second.close(); fixture.durable = false }
+})
+
+test("a file stays read-only until its durable identity can be resolved", async () => {
+  fixture.durable = true
+  fixture.installed = false
+  const { editor, close } = setup("unknown-installation.txt")
+  try {
+    editor.reset()
+    await editor.recover()
+    editor.adopt("disk contents")
+    assert.equal(editor.editable(), false)
+    editor.change("unscoped edit")
+    assert.equal(editor.text(), "disk contents")
+    fixture.installed = true
+    const recovered = editor.recover()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    fixture.reads.shift()!(undefined)
+    await recovered
+    assert.equal(editor.editable(), true)
+    editor.adopt("disk contents")
+    editor.change("scoped edit")
+    assert.equal(editor.text(), "scoped edit")
+    editor.discard()
+  } finally { close(); fixture.durable = false; fixture.installed = true }
+})
 
 for (const transition of ["mounted", "reopen-after", "reopen-before"] as const) {
   test(`undo to the clean baseline during a save retains the resulting draft (${transition})`, async () => {
