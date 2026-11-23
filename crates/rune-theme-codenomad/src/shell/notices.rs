@@ -8,21 +8,6 @@ use std::rc::Rc;
 
 pub const ANCHOR: &str = "notification-history-toggle";
 
-pub fn action<S: 'static>(
-    label: &str,
-    disabled: bool,
-    invoke: impl Fn(&mut S, &mut Tx) + 'static,
-) -> El {
-    let invoke = Rc::new(invoke);
-    let press = invoke.clone();
-    let button = layout::button_tx(label, disabled, move |s, tx| press(s, tx));
-    if disabled {
-        button
-    } else {
-        button.on_key(super::enter_action(invoke))
-    }
-}
-
 pub fn bell<S: 'static>(
     label: &'static str,
     unread: Option<(String, String)>,
@@ -32,17 +17,21 @@ pub fn bell<S: 'static>(
 ) -> El {
     let invoke = Rc::new(invoke);
     let press = invoke.clone();
+    let name = unread
+        .as_ref()
+        .map_or_else(|| label.into(), |(_, count)| format!("{label} · {count}"));
     let button = super::control(&super::icons::BELL, label, touch)
+        .label(name)
         .help(label)
         .expanded(open)
         .on_press_tx(move |s, tx| press(s, tx))
         .build(kit(layout::dark()))
-        .on_key(super::enter_action(invoke))
+        .on_key(layout::enter_action(invoke))
         .key(ANCHOR);
     row()
         .center_y()
         .child(button)
-        .children(unread.map(|(count, label)| text(count).text_role(TextRole::Small).label(label)))
+        .children(unread.map(|(count, _)| text(count).text_role(TextRole::Small).a11y_hidden()))
 }
 
 pub fn title(title: &str) -> El {

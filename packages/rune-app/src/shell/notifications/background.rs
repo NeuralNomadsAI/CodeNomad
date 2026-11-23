@@ -194,6 +194,7 @@ pub(super) fn poll(s: &mut State) {
                         Some(cue.target),
                         Some(cue.id),
                         false,
+                        super::in_app::BubbleOptions::Compaction,
                     );
                 }
                 Delivery::Body(..) => deliver(

@@ -333,6 +333,7 @@ fn deliver(s: &mut State, notice: Notice) {
         Some(target.clone()),
         route,
         allow_focused,
+        in_app::BubbleOptions::Default,
     );
 }
 

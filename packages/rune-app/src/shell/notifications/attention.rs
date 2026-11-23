@@ -181,6 +181,7 @@ pub(crate) fn collect(s: &mut State, target: impl FnOnce(&State) -> Option<(Targ
                     Some(target.clone()),
                     Some(id),
                     false,
+                    super::in_app::BubbleOptions::Compaction,
                 );
             }
             continue;

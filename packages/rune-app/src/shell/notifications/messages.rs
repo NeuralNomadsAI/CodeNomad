@@ -1,3 +1,4 @@
+use super::in_app::BubbleOptions;
 use super::{Category, RETAINED, Target};
 use crate::{
     State,
@@ -14,6 +15,7 @@ pub(super) struct Message {
     target: Option<Target>,
     event: Option<String>,
     error: bool,
+    bubble: BubbleOptions,
 }
 
 pub(crate) fn emit(
@@ -38,7 +40,17 @@ pub(crate) fn emit_outcome(
         .and_then(|launcher| launcher.connection.clone())
         .or_else(|| settings::bound_backend(s));
     if let Some(source) = source {
-        enqueue(s, source, category, title, body.into(), None, None, error);
+        enqueue(
+            s,
+            source,
+            category,
+            title,
+            body.into(),
+            None,
+            None,
+            error,
+            BubbleOptions::Default,
+        );
     }
 }
 
@@ -49,7 +61,17 @@ pub(crate) fn emit_from(
     body: String,
     error: bool,
 ) {
-    enqueue(s, backend, category, None, body, None, None, error);
+    enqueue(
+        s,
+        backend,
+        category,
+        None,
+        body,
+        None,
+        None,
+        error,
+        BubbleOptions::Default,
+    );
 }
 
 pub(super) fn enqueue(
@@ -61,6 +83,7 @@ pub(super) fn enqueue(
     target: Option<Target>,
     event: Option<String>,
     error: bool,
+    bubble: BubbleOptions,
 ) {
     let body: String = body.trim().chars().take(4096).collect();
     if body.is_empty() {
@@ -83,6 +106,7 @@ pub(super) fn enqueue(
         target,
         event,
         error,
+        bubble,
     });
 }
 
@@ -93,6 +117,7 @@ pub(crate) fn native(s: &mut State, source: Backend, target: Target, event: Work
             title,
             body,
             error,
+            duration_ms,
         } => {
             let mut target = target;
             if target.tab.is_some() {
@@ -107,6 +132,7 @@ pub(crate) fn native(s: &mut State, source: Backend, target: Target, event: Work
                 Some(target),
                 Some(id),
                 error,
+                duration_ms.map_or(BubbleOptions::Default, BubbleOptions::Toast),
             );
         }
         _ => {}
@@ -206,6 +232,7 @@ pub(super) fn poll(s: &mut State) {
                 .filter(|target| message.category != Category::Opencode || target.tab.is_some()),
             route,
             allow_focused,
+            message.bubble,
         );
     }
 }
@@ -217,10 +244,12 @@ pub(super) fn publish(
     target: Option<Target>,
     route: crate::settings::notification_routing::Route,
     allow_focused: bool,
+    bubble: BubbleOptions,
 ) {
     let host = &mut s.notifications;
     if route.history || route.screen {
-        host.in_app.push(title, body, target.clone(), &route);
+        host.in_app
+            .push(title, body, target.clone(), &route, bubble);
     }
     if !route.system || !allow_focused && host.focused() {
         return;

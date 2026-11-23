@@ -9,11 +9,20 @@ const HISTORY: usize = 50;
 const BUBBLES: usize = 3;
 const LIFETIME: Duration = Duration::from_secs(10);
 
+pub(super) enum BubbleOptions {
+    Default,
+    Toast(u32),
+    Compaction,
+}
+
 struct Record {
     id: u64,
     title: String,
     body: String,
     target: Option<Target>,
+    replace: bool,
+    #[cfg(any(test, target_arch = "wasm32"))]
+    announced: std::cell::Cell<bool>,
 }
 
 #[derive(Default)]
@@ -28,13 +37,23 @@ pub(super) struct Inbox {
 }
 
 impl Inbox {
-    pub(super) fn push(&mut self, title: &str, body: &str, target: Option<Target>, route: &Route) {
+    pub(super) fn push(
+        &mut self,
+        title: &str,
+        body: &str,
+        target: Option<Target>,
+        route: &Route,
+        options: BubbleOptions,
+    ) {
         self.dirty = true;
         let record = Rc::new(Record {
             id: self.next,
             title: title.into(),
             body: body.into(),
             target,
+            replace: matches!(options, BubbleOptions::Compaction),
+            #[cfg(any(test, target_arch = "wasm32"))]
+            announced: Default::default(),
         });
         self.next = self.next.wrapping_add(1);
         if route.history {
@@ -44,12 +63,48 @@ impl Inbox {
             }
         }
         if route.screen {
+            if record.replace
+                && let Some(target) = &record.target
+            {
+                self.bubbles.retain(|(current, _)| {
+                    !current.replace
+                        || current
+                            .target
+                            .as_ref()
+                            .is_none_or(|old| !old.same_event_scope(target))
+                });
+            }
+            let duration = match options {
+                BubbleOptions::Toast(ms) => Duration::from_millis(u64::from(ms)),
+                _ => LIFETIME,
+            };
             self.bubbles
-                .push_front((record, self.opened.unwrap_or_else(Instant::now) + LIFETIME));
+                .push_front((record, self.opened.unwrap_or_else(Instant::now) + duration));
             if self.bubbles.len() > BUBBLES {
                 self.bubbles.pop_back();
             }
         }
+    }
+
+    #[cfg(any(test, target_arch = "wasm32"))]
+    fn announcement(&self) -> Option<String> {
+        if self.opened.is_some() {
+            return None;
+        }
+        let mut pending = self
+            .bubbles
+            .iter()
+            .rev()
+            .filter(|(record, _)| !record.announced.replace(true))
+            .map(|(record, _)| format!("{}\n{}", record.title, record.body))
+            .peekable();
+        pending.peek()?;
+        // A transaction keeps one announcement. Preserve every new bubble in that update.
+        Some(pending.collect::<Vec<_>>().join("\n"))
+    }
+
+    fn next_expiration(&self) -> Option<Instant> {
+        self.bubbles.iter().map(|(_, deadline)| *deadline).min()
     }
 
     pub(super) fn take_change(&mut self) -> bool {
@@ -100,8 +155,12 @@ pub(crate) fn tick(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     inbox
         .bubbles
         .retain(|(record, deadline)| (!visible || *deadline > clock) && current(record));
-    if visible && let Some((_, deadline)) = inbox.bubbles.back() {
-        tx.wake_at(now + (*deadline - clock).as_secs_f64());
+    if visible && let Some(deadline) = inbox.next_expiration() {
+        tx.wake_at(now + (deadline - clock).as_secs_f64());
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(announcement) = inbox.announcement() {
+        tx.announce(announcement, rune::LiveRegion::Polite);
     }
     let changed = prior != (inbox.history.len(), inbox.bubbles.len());
     s.notifications.in_app = inbox;
@@ -222,7 +281,7 @@ fn card(s: &State, record: &Record, read: Option<bool>, height: f32) -> El {
                 t("toastHistory.unread").replace("{count}", "1")
             )
         };
-        theme::action(&record.title, false, move |s: &mut State, _| {
+        layout::button_tx(&record.title, false, move |s: &mut State, _| {
             s.notifications.in_app.read(id)
         })
         .key(format!("notification-read-{id}"))
@@ -257,22 +316,25 @@ fn card(s: &State, record: &Record, read: Option<bool>, height: f32) -> El {
             },
         ));
     }
-    toolbar = toolbar.child(layout::button(
-        t(if bubble {
-            "toastHistory.close"
-        } else {
-            "toastHistory.deleteItem"
-        }),
-        false,
-        move |s: &mut State| {
-            let inbox = &mut s.notifications.in_app;
-            if bubble {
-                inbox.bubbles.retain(|(record, _)| record.id != id);
+    toolbar = toolbar.child(
+        layout::button(
+            t(if bubble {
+                "toastHistory.close"
             } else {
-                inbox.history.retain(|(record, _)| record.id != id);
-            }
-        },
-    ));
+                "toastHistory.deleteItem"
+            }),
+            false,
+            move |s: &mut State| {
+                let inbox = &mut s.notifications.in_app;
+                if bubble {
+                    inbox.bubbles.retain(|(record, _)| record.id != id);
+                } else {
+                    inbox.history.retain(|(record, _)| record.id != id);
+                }
+            },
+        )
+        .key(format!("notification-dismiss-{id}")),
+    );
     theme::record(title, &record.body, toolbar, bubble.then_some(height))
         .key(format!("notification-{id}"))
 }
@@ -326,6 +388,22 @@ mod tests {
         let mut runtime =
             rune::Runtime::new(s, crate::view, (900.0, 650.0), rune::Env::new(false, 1.0));
         runtime.frame(0.0);
+        let bell = runtime
+            .elements()
+            .into_iter()
+            .find(|el| el.key.as_deref() == Some(theme::ANCHOR))
+            .unwrap();
+        assert_eq!(
+            bell.label.as_deref(),
+            Some(
+                format!(
+                    "{} · {}",
+                    t("toastHistory.title"),
+                    t("toastHistory.unread").replace("{count}", "1")
+                )
+                .as_str()
+            )
+        );
         runtime.update(|_, tx| tx.focus(theme::ANCHOR, true));
         runtime.frame(0.02);
         let enter = rune::KeyEvent {
@@ -370,6 +448,7 @@ mod tests {
                 system: false,
             },
             false,
+            BubbleOptions::Default,
         );
         super::super::messages::publish(
             &mut s,
@@ -382,6 +461,7 @@ mod tests {
                 system: false,
             },
             false,
+            BubbleOptions::Default,
         );
         let inbox = &s.notifications.in_app;
         assert_eq!(inbox.unread(), 1);
@@ -398,6 +478,7 @@ mod tests {
                     history: true,
                     system: false,
                 },
+                BubbleOptions::Default,
             );
         }
         let inbox = &mut s.notifications.in_app;
@@ -420,11 +501,136 @@ mod tests {
                 history: false,
                 system: false,
             },
+            BubbleOptions::Default,
         );
         let later = start + Duration::from_secs(30);
         inbox.resume_bubbles(later);
         assert_eq!(inbox.bubbles[0].1, later + LIFETIME);
         assert_eq!(inbox.unread(), 0);
+    }
+
+    #[test]
+    fn screen_toasts_use_their_own_deadline_and_announce_once_in_order() {
+        let mut inbox = Inbox::default();
+        let start = Instant::now();
+        inbox.opened = Some(start);
+        let route = Route {
+            screen: true,
+            history: true,
+            system: false,
+        };
+        inbox.push("Info", "First", None, &route, BubbleOptions::Default);
+        inbox.push("Info", "Second", None, &route, BubbleOptions::Toast(1_800));
+        inbox.push(
+            "Info",
+            "History only",
+            None,
+            &Route {
+                screen: false,
+                ..route
+            },
+            BubbleOptions::Default,
+        );
+        assert_eq!(inbox.announcement(), None);
+        inbox.resume_bubbles(start);
+        assert_eq!(
+            inbox.next_expiration(),
+            Some(start + Duration::from_millis(1_800))
+        );
+        assert_eq!(
+            inbox.announcement().as_deref(),
+            Some("Info\nFirst\nInfo\nSecond")
+        );
+        assert_eq!(inbox.announcement(), None);
+        assert_eq!(inbox.unread(), 3);
+    }
+
+    #[test]
+    fn a_compaction_replaces_only_the_bubble_for_the_same_backend_and_session() {
+        let mut inbox = Inbox::default();
+        let route = Route {
+            screen: true,
+            history: true,
+            system: false,
+        };
+        let target = Target {
+            tab: Some("a".into()),
+            backend_url: "http://127.0.0.1:9/".into(),
+            server: Some("alpha".into()),
+            occurrence: 1,
+            workspace: "project".into(),
+            session: "ses_example".into(),
+        };
+        let other = Target {
+            server: Some("beta".into()),
+            ..target.clone()
+        };
+        let duplicate_tab = Target {
+            tab: Some("b".into()),
+            occurrence: 2,
+            ..target.clone()
+        };
+        let mut push = |body, target| {
+            inbox.push(
+                "Project",
+                body,
+                Some(target),
+                &route,
+                BubbleOptions::Compaction,
+            )
+        };
+        push("First", target);
+        push("Other backend", other);
+        push("Replacement", duplicate_tab);
+        assert_eq!(
+            inbox
+                .bubbles
+                .iter()
+                .map(|(r, _)| r.body.as_str())
+                .collect::<Vec<_>>(),
+            ["Replacement", "Other backend"]
+        );
+        assert_eq!(
+            inbox
+                .history
+                .iter()
+                .map(|(r, _)| r.body.as_str())
+                .collect::<Vec<_>>(),
+            ["Replacement", "Other backend", "First"]
+        );
+    }
+
+    #[test]
+    fn a_focused_bubble_action_accepts_enter_and_space() {
+        for key in [rune::Key::Enter, rune::Key::Text(" ".into())] {
+            let mut s = crate::init();
+            crate::settings::notification_fixture(&s);
+            s.notifications.in_app.push(
+                "Project",
+                "Bubble",
+                None,
+                &Route {
+                    screen: true,
+                    history: true,
+                    system: false,
+                },
+                BubbleOptions::Default,
+            );
+            let mut runtime =
+                rune::Runtime::new(s, crate::view, (900.0, 650.0), rune::Env::new(false, 1.0));
+            runtime.frame(0.0);
+            runtime.update(|_, tx| tx.focus("notification-dismiss-0", true));
+            runtime.frame(0.02);
+            let key = rune::KeyEvent {
+                key,
+                mods: rune::Mods::default(),
+            };
+            runtime.key(key.clone());
+            runtime.key_up(key);
+            runtime.frame(0.04);
+            assert!(runtime.state.notifications.in_app.bubbles.is_empty());
+            assert_eq!(runtime.state.notifications.in_app.unread(), 1);
+        }
     }
 
     #[test]
