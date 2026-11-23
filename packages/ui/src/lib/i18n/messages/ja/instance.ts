@@ -158,8 +158,6 @@ export const instanceMessages = {
   "filesPanel.gitInit.gitRequired": "CodeNomad から Git を利用できません。",
   "filesPanel.viewer": "ファイルのプレビュー",
   "filesPanel.readOnly": "読み取り専用",
-  "filesPanel.draftConflict": "ディスク上のファイルが変更されました。下書きは保持されています。",
-  "filesPanel.draftLimit": "下書きを保持できませんでした。閉じる前に最新の変更を保存するかコピーしてください。",
   "filesPanel.binary": "このバイナリファイルはプレビューできません。",
   "filesPanel.draftConflict": "ディスク上のファイルが変更されました。下書きは保持されています。",
   "filesPanel.draftLimit": "下書きを保持できませんでした。閉じる前に最新の変更を保存するかコピーしてください。",

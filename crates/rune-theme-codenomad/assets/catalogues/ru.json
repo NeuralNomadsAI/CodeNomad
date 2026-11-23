@@ -263,7 +263,7 @@
   "filesPanel.binary": "Предпросмотр этого двоичного файла недоступен.",
   "filesPanel.commits": "Коммиты",
   "filesPanel.draftConflict": "Файл на диске изменился. Ваш черновик сохранён.",
-  "filesPanel.draftLimit": "Не удалось сохранить черновик. Перед закрытием сохраните или скопируйте последние правки.",
+  "filesPanel.draftLimit": "Не удалось сохранить черновик. Перед закрытием сохраните или скопируйте последние изменения.",
   "filesPanel.gitInit.action": "Инициализировать Git",
   "filesPanel.gitInit.deleting": "Эта папка удаляется.",
   "filesPanel.gitInit.error": "Не удалось инициализировать Git: {message}",

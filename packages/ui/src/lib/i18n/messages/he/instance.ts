@@ -158,8 +158,6 @@ export const instanceMessages = {
   "filesPanel.gitInit.gitRequired": "Git אינו זמין עבור CodeNomad.",
   "filesPanel.viewer": "תצוגה מקדימה של קובץ",
   "filesPanel.readOnly": "לקריאה בלבד",
-  "filesPanel.draftConflict": "הקובץ השתנה בדיסק. הטיוטה נשמרה.",
-  "filesPanel.draftLimit": "לא ניתן לשמור את הטיוטה. יש לשמור או להעתיק את השינויים האחרונים לפני הסגירה.",
   "filesPanel.binary": "אין תצוגה מקדימה לקובץ בינארי זה.",
   "filesPanel.draftConflict": "הקובץ השתנה בדיסק. הטיוטה נשמרה.",
   "filesPanel.draftLimit": "לא ניתן לשמור את הטיוטה. יש לשמור או להעתיק את השינויים האחרונים לפני הסגירה.",

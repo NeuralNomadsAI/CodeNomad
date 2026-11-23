@@ -158,8 +158,6 @@ export const instanceMessages = {
   "filesPanel.gitInit.gitRequired": "CodeNomad का लागि Git उपलब्ध छैन।",
   "filesPanel.viewer": "फाइल पूर्वावलोकन",
   "filesPanel.readOnly": "पढ्न मात्र",
-  "filesPanel.draftConflict": "डिस्कमा फाइल परिवर्तन भएको छ। तपाईंको मस्यौदा राखिएको छ।",
-  "filesPanel.draftLimit": "मस्यौदा राख्न सकिएन। बन्द गर्नुअघि पछिल्ला परिवर्तनहरू सुरक्षित गर्नुहोस् वा प्रतिलिपि गर्नुहोस्।",
   "filesPanel.binary": "यो बाइनरी फाइलको पूर्वावलोकन उपलब्ध छैन।",
   "filesPanel.draftConflict": "डिस्कमा फाइल परिवर्तन भएको छ। तपाईंको मस्यौदा राखिएको छ।",
   "filesPanel.draftLimit": "मस्यौदा राख्न सकिएन। बन्द गर्नुअघि पछिल्ला परिवर्तनहरू सुरक्षित गर्नुहोस् वा प्रतिलिपि गर्नुहोस्।",
