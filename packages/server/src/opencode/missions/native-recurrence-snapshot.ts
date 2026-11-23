@@ -7,6 +7,7 @@ import { qualifyNativeRecurrenceControl } from "./native-recurrence-capability"
 import { readRecurrenceWakeError } from "./native-recurrence-wake-status"
 import type { MissionRecurrenceSnapshot } from "../../api-types"
 import { recurrenceIDSchema } from "../../missions/recurrence-contract"
+import { displayMissionText } from "../../missions/truncate-text"
 
 const locationTag = Context.Service<never, Location.Info>("@opencode/Location")
 
@@ -62,7 +63,7 @@ export const readNativeRecurrenceSnapshot = Effect.fn("missions.readNativeRecurr
     const settlementUnknown = lastError?.code === "settlement-failed"
     const pendingStatus = doc.pending?.admission && observed && !settlementUnknown ? "running" as const
       : !doc.pending?.admission && observed && !blocked ? "starting" as const : "uncertain" as const
-    results.push({ id: doc.id, title: doc.config.title, revision: doc.revision, state, clock: doc.config.clock,
+    results.push({ id: doc.id, title: displayMissionText(doc.config.title), revision: doc.revision, state, clock: doc.config.clock,
       nextDueAt: state === "running" ? recurrenceNextDueAt(doc, Date.now()) : null,
       ...(state === "interrupted" ? { interruptionReason: jobStatus === "error" ? "error" as const : doc.interruptionReason ?? "service-restart" } : {}),
       ...(lastError ? { lastError } : {}),

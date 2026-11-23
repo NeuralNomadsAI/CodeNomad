@@ -1,6 +1,7 @@
 import { projectMissionDocument, type MissionDocument, type MissionDocumentTombstone } from "./mission-document"
 import { missionDocumentSummary } from "./mission-document-one-time"
 import { missionScheduleAvailableActions, unobservedMissionSchedule, type MissionScheduleObservation } from "./mission-schedule-display"
+import { displayMissionText } from "./truncate-text"
 
 /** Public schedule data contains no runtime path, proof cookie, environment or
  * stored provider descriptors. The document remains the mutation authority. */
@@ -15,7 +16,8 @@ export function missionScheduleView(doc: MissionDocument | MissionDocumentTombst
   for (const item of owner?.retired ?? []) carriers.push({ role: item.descriptor.role, slot: item.descriptor.slot,
     timeGeneration: item.descriptor.timeGeneration, sessionID: item.descriptor.sessionID, scheduleID: item.descriptor.scheduleID,
     retiring: true, cleanupPending: !item.scheduleRemoved || !item.sessionRemoved || !item.indexRemoved })
-  return { document: { ...missionDocumentSummary(doc), id: doc.id, createdAt: doc.createdAt, configuration: doc.configuration,
+  return { document: { ...missionDocumentSummary(doc), id: doc.id, createdAt: doc.createdAt,
+     configuration: { ...doc.configuration, title: displayMissionText(doc.configuration.title) },
     ...(doc.creation ? { creation: doc.creation } : {}),
     kind: doc.oneTime && !doc.dormantJournal ? "one-time" as const : "schedule" as const,
     oneShotAt: doc.oneShotAt, slotEndsAt: doc.slotEndsAt, successfulCount: doc.successfulCount, checks: doc.checks ?? null,

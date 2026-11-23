@@ -8,7 +8,6 @@ import { dailyClockSchema, dailyOccurrence } from "./recurrence-clock"
 import { compareModelError, missionProfileRoles, missionProfilesInputSchema, validateMissionProfiles } from "./playbook-profiles"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "./lifecycle-input"
-import { truncateMissionText } from "./truncate-text"
 
 export const RECURRENCE_STORAGE_PREFIX = "codenomad-missions/recurrence-v1"
 export const RECURRENCE_HISTORY_LIMIT = 30
@@ -116,8 +115,9 @@ export function recurrenceDispatchAllowed(doc: RecurrenceDocument): boolean {
   return control?.action === "run-now" && control.requestID === due.requestID && control.expectedRevision === due.expectedRevision
 }
 
+/** Raw prefix used to recognize the exact configuration of stored creation receipts. */
 export function recurrenceTitle(instructions: string): string {
-  return truncateMissionText(instructions.split(/\r?\n/).find(line => line.trim())?.trim() ?? "", 120)
+  return instructions.split(/\r?\n/).find(line => line.trim())?.trim().slice(0, 120) ?? ""
 }
 
 export function recurrencePassageID(projectToken: string, scheduleID: string, scheduleRevision: number, due: RecurrenceDue): string {
