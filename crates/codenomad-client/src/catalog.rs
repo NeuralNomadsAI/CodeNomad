@@ -85,6 +85,15 @@ impl Backend {
             .await?,
         )
     }
+
+    pub async fn attest_server(&self) -> Result<String> {
+        let id = self.server_id().await?;
+        if self.client.verify_server_identity(&id) {
+            Ok(id)
+        } else {
+            Err("Server identity changed".into())
+        }
+    }
     /// Creates an independent occurrence; the request retains cleanup ownership until released.
     pub async fn create_project(&self, path: &str, request_id: &str) -> Result<Project> {
         if !crate::server_path::absolute(path) {

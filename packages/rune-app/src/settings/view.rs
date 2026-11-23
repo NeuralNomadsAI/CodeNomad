@@ -162,7 +162,7 @@ fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 .child(text(t(error)).role("alert"))
                 .child(layout::button(
                     t("sessionList.loadError.retry"),
-                    prefs.backend.is_none(),
+                    !prefs.can_retry(),
                     |s: &mut Window| {
                         s.shared.borrow_mut().retry();
                     },

@@ -102,7 +102,9 @@ impl State {
             | Editor::Title
             | Editor::Search => {
                 if let Some(l) = self.screen.launcher_mut()
-                    && (matches!(target, Editor::Title | Editor::Search) || l.project.is_none())
+                    && (matches!(target, Editor::Title | Editor::Search)
+                        || l.project.is_none()
+                        || matches!(target, Editor::Password) && l.authentication_required)
                 {
                     Some(match target {
                         Editor::Address => &mut l.address,

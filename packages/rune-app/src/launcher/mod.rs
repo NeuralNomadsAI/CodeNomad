@@ -45,6 +45,8 @@ pub struct Launcher {
     pub connection: Option<Backend>,
     pub(crate) catalogue_watch: Option<codenomad_client::stream::CatalogueWatch>,
     pub(crate) catalogue_generation: u64,
+    pub(crate) authentication_required: bool,
+    reauthenticated_session: Option<String>,
     pub server_id: Option<String>,
     pub projects: Vec<Project>,
     pub project: Option<Project>,
@@ -136,6 +138,8 @@ impl Launcher {
             connection: None,
             catalogue_watch: None,
             catalogue_generation: 0,
+            authentication_required: false,
+            reauthenticated_session: None,
             server_id: None,
             projects: vec![],
             project: None,
@@ -200,12 +204,23 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
             l.catalogue_watch = None;
+            let reauthenticated = std::mem::take(&mut l.authentication_required);
             l.connection = Some(b);
             l.server_id = Some(server_id);
             l.projects = projects;
             l.password = TextEdit::new("");
             crate::workspace::connected(s);
-            crate::workspace::resume(s, tx);
+            if reauthenticated
+                && let Some(id) = crate::workspace::active_session(s).map(str::to_owned)
+            {
+                if let Some(launcher) = s.screen.launcher_mut() {
+                    launcher.reauthenticated_session = Some(id.clone());
+                }
+                s.show_chat();
+                choose(s, id, tx);
+            } else {
+                crate::workspace::resume(s, tx);
+            }
         }
         Ok(Reply::Opened(opening, rows, restored)) => {
             let project = opening.project.clone();

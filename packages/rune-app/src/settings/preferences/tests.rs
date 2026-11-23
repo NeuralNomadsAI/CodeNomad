@@ -77,6 +77,90 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
 }
 
 #[test]
+fn settings_reattaching_the_same_address_keeps_newer_choices_and_does_not_replay_old_patches() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        attest(
+            &listener,
+            prefs.backend.as_ref().unwrap(),
+            "fixture-profile",
+        )
+        .await;
+        prefs.set_locale("fr");
+        prefs.poll();
+        let write = request(&listener).await;
+        assert_eq!(write.body, json!({"settings":{"locale":"fr"}}));
+        prefs.set_locale("de");
+        let address = prefs.backend.as_ref().unwrap().base.clone();
+        let next = Backend::connect(&address, "").await.unwrap();
+        attest(&listener, &next, "fixture-profile").await;
+        prefs.bind(Some(next));
+        assert_eq!(prefs.locale_display(), Some("de"));
+        prefs.poll();
+        let state = request(&listener).await;
+        assert!(state.first.starts_with("GET /api/storage/state/ui?"));
+        state.reply(200, json!({})).await;
+        wait_until(|| {
+            prefs.poll();
+            prefs.saved(Owner::State) == Some(&json!({}))
+        })
+        .await;
+        write.reply(200, json!({"settings":{"locale":"fr"}})).await;
+        wait_until(|| prefs.poll()).await;
+        let read = request(&listener).await;
+        assert!(read.first.starts_with("GET /api/storage/config/ui?"));
+        read.reply(200, json!({"settings":{"locale":"fr"}})).await;
+        wait_until(|| prefs.poll()).await;
+        let queued = request(&listener).await;
+        assert!(queued.first.starts_with("PATCH /api/storage/config/ui "));
+        assert_eq!(queued.body, json!({"settings":{"locale":"de"}}));
+        queued.reply(200, json!({"settings":{"locale":"de"}})).await;
+        wait_until(|| {
+            prefs.poll();
+            prefs.locale() == Some("de")
+        })
+        .await;
+        assert!(prefs.error().is_none());
+    });
+}
+
+async fn attest(listener: &TcpListener, backend: &Backend, id: &str) {
+    let (out, identity) = bounded(1);
+    let backend = backend.clone();
+    platform::spawn(async move {
+        out.send(backend.attest_server().await).await.unwrap();
+    });
+    let request = request(listener).await;
+    assert_eq!(request.first, "GET /api/meta HTTP/1.1");
+    request
+        .reply(200, json!({"apiContract":1,"serverId":id}))
+        .await;
+    assert_eq!(
+        timeout(Duration::from_secs(3), identity.recv())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        id
+    );
+}
+
+#[test]
+fn settings_same_address_different_server_profile_does_not_inherit_unsent_writes() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let before = prefs.backend.as_ref().unwrap();
+        attest(&listener, before, "profile-a").await;
+        let after = Backend::connect(&before.base, "").await.unwrap();
+        attest(&listener, &after, "profile-b").await;
+        prefs.set_locale("fr");
+        prefs.bind(Some(after));
+        assert_eq!(prefs.locale_display(), None);
+        assert_eq!(prefs.config.requested(Choice::Locale), None);
+    });
+}
+
+#[test]
 fn settings_uses_separate_owners_and_reads_back_an_uncertain_write_once() {
     platform::block_on(async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

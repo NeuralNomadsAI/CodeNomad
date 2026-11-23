@@ -56,6 +56,7 @@ struct Write {
 struct Read {
     queued: bool,
     failed: bool,
+    reattach: bool,
 }
 
 enum Operation {
@@ -74,23 +75,22 @@ pub(super) struct Document {
     read: Read,
     write: Write,
     flight: Option<Flight>,
-    barrier: Option<Receiver<Option<Value>>>,
+    barrier: Option<Flight>,
 }
 
 impl Document {
     pub(super) fn rebind(&mut self, same_address: bool) {
-        let barrier = if same_address {
-            self.barrier.take().or_else(|| {
-                let flight = self.flight.take()?;
-                matches!(flight.operation, Operation::Write(_)).then_some(flight.reply)
-            })
-        } else {
-            None
-        };
-        *self = Self {
-            barrier,
-            ..Self::default()
-        };
+        if !same_address {
+            *self = Self::default();
+            return;
+        }
+        if let Some(flight) = self.flight.take() {
+            match flight.operation {
+                Operation::Write(_) => self.barrier = Some(flight),
+                Operation::Read { retry } => self.write.retry |= retry,
+            }
+        }
+        self.read.reattach = true;
     }
 
     pub(super) fn invalidate(&mut self) {
@@ -150,7 +150,7 @@ impl Document {
                 || !self.read.failed && !self.write.pending.is_empty())
     }
 
-    fn settle(&mut self, operation: Operation, snapshot: Option<Value>) {
+    fn settle(&mut self, operation: Operation, snapshot: Option<Value>, current: bool) {
         if let Operation::Write(sent) = &operation {
             for (&choice, &value) in sent {
                 if !snapshot
@@ -161,7 +161,9 @@ impl Document {
                 }
             }
         }
-        self.read.failed = snapshot.is_none();
+        if current {
+            self.read.failed = snapshot.is_none();
+        }
         if let Some(snapshot) = snapshot {
             self.write.requested.retain(|&choice, value| {
                 // A response already in flight can predate a queued gesture, even for the same value.
@@ -181,7 +183,9 @@ impl Document {
             if matches!(operation, Operation::Read { retry: true }) {
                 self.write.pending.extend(&self.write.failed);
             }
-            self.snapshot = Some(snapshot);
+            if current {
+                self.snapshot = Some(snapshot);
+            }
         }
     }
 
@@ -192,30 +196,33 @@ impl Document {
         main: &Option<rune::Waker>,
         window: &Option<rune::Waker>,
     ) -> bool {
-        if self
-            .barrier
-            .as_ref()
-            .is_some_and(|barrier| barrier.try_recv().is_err() && !barrier.is_closed())
-        {
-            return false;
-        }
-        self.barrier = None;
         let mut changed = false;
+        if let Some(flight) = &self.barrier {
+            let Some(snapshot) = flight.result() else {
+                return false;
+            };
+            if let Some(flight) = self.barrier.take() {
+                self.settle(flight.operation, snapshot, false);
+                changed = true;
+            }
+        }
         if let Some(flight) = &self.flight {
-            let snapshot = match flight.reply.try_recv() {
-                Ok(snapshot) => snapshot,
-                Err(_) if flight.reply.is_closed() && flight.reply.is_empty() => None,
-                Err(_) => return false,
+            let Some(snapshot) = flight.result() else {
+                return changed;
             };
             if let Some(flight) = self.flight.take() {
-                self.settle(flight.operation, snapshot);
+                self.settle(flight.operation, snapshot, true);
                 changed = true;
             }
         }
         let operation = if self.write.retry {
             self.write.retry = false;
+            self.read.reattach = false;
             self.read.queued = false;
             Operation::Read { retry: true }
+        } else if std::mem::take(&mut self.read.reattach) {
+            self.read.queued = false;
+            Operation::Read { retry: false }
         } else if !self.read.failed && !self.write.pending.is_empty() {
             Operation::Write(
                 std::mem::take(&mut self.write.pending)
@@ -255,5 +262,15 @@ impl Document {
             }
         });
         true
+    }
+}
+
+impl Flight {
+    fn result(&self) -> Option<Option<Value>> {
+        match self.reply.try_recv() {
+            Ok(snapshot) => Some(snapshot),
+            Err(_) if self.reply.is_closed() && self.reply.is_empty() => Some(None),
+            Err(_) => None,
+        }
     }
 }

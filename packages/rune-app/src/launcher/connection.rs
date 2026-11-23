@@ -7,12 +7,25 @@ pub fn connect(s: &mut State, _: &mut Tx) {
     if l.pending {
         return;
     }
-    l.host = None;
-    let address = l.address.text.clone();
+    let address = if l.authentication_required {
+        let Some(backend) = &l.connection else { return };
+        backend.base.clone()
+    } else {
+        l.host = None;
+        l.address.text.clone()
+    };
     let password = l.password.text.clone();
+    let expected_server = if l.authentication_required {
+        l.server_id.clone()
+    } else {
+        None
+    };
     l.job("rune.connect_error", async move {
         let b = Backend::connect(&address, &password).await?;
-        let server_id = b.server_id().await?;
+        let server_id = b.attest_server().await?;
+        if expected_server.is_some_and(|expected| expected != server_id) {
+            return Err("Server identity changed during authentication".into());
+        }
         let projects = b.projects().await?;
         Ok(Reply::Connected(b, projects, server_id))
     });
@@ -35,7 +48,7 @@ pub(super) fn poll_boot(l: &mut Launcher) -> bool {
                 // Bootstrap owns the authenticated cookie jar even if project listing fails.
                 l.connection = Some(backend.clone());
                 l.job("rune.list_error", async move {
-                    let server_id = backend.server_id().await?;
+                    let server_id = backend.attest_server().await?;
                     let projects = backend.projects().await?;
                     Ok(Reply::Connected(backend, projects, server_id))
                 });
