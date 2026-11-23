@@ -4,6 +4,10 @@ Une Mission rassemble un objectif, une conversation de coordination, des tâches
 
 Si Missions est indisponible, **Paramètres OpenCode** ouvre la récupération du service pour un plugin absent ou en échec. **Diagnostic serveur** ouvre le rapport de diagnostic dans Paramètres → Info lorsque le pont local Missions du serveur est indisponible.
 
+## Afficher ou masquer Missions {#activation}
+
+Dans **Personnaliser le panneau droit**, cochez **Missions** pour afficher l’onglet, ou décochez et confirmez pour le masquer. Ce geste écrit aussi `codenomad.missions` ou `-codenomad.missions` dans la configuration globale du serveur OpenCode connecté. Une règle du projet peut primer. Désactiver ne supprime ni ne met rien en pause, mais des exécutions planifiées peuvent être manquées. Si l’écriture échoue, l’onglet conserve la visibilité choisie. **Réinitialiser** n’agit que sur la disposition. **Statut → Plugins** omet l’avertissement pour cette règle globale exacte ; les autres désactivations proposent **Réactiver**.
+
 ## Créer une Mission {#create}
 
 Les connexions distantes utilisent le même formulaire et les mêmes commandes. Préférez HTTPS pour protéger les échanges réseau.

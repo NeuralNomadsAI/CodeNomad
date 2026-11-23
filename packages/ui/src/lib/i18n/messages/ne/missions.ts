@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.activation.disableConfirm": "OpenCode को ग्लोबल कन्फिगरेसनमा मिसनहरू निष्क्रिय गर्ने हो? केही पनि मेटिँदैन वा पज हुँदैन।",
   "missions.followed.title": "पछ्याइएका कुराकानीहरू",
   "missions.followed.add": "कुराकानी थप्नुहोस्",
   "missions.followed.source": "पछ्याइएको कुराकानी {number}",

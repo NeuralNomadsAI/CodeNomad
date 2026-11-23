@@ -86,6 +86,113 @@ test("a saved right-panel tab order takes precedence over the Status-first defau
   } finally { await page.close() }
 })
 
+test("Missions keeps layout visibility independent of the exact Global activation write", async () => {
+  const page = await browser.newPage({ viewport: { width: 700, height: 900 }, locale: "en-US" })
+  const pluginId = "codenomad.missions", controls = "**/api/workspaces/status-fixture/plugin-controls**"
+  const writes: unknown[] = []
+  let fail = false
+  const releaseFailure = Promise.withResolvers<void>()
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route(controls, async route => {
+    if (route.request().method() !== "PATCH") {
+      return route.fulfill({ status: 503, json: {} })
+    }
+    const body = route.request().postDataJSON()
+    writes.push(body)
+    const target = { scope: "global", path: "/daemon/opencode.jsonc", exists: true }
+    if (fail) {
+      await releaseFailure.promise
+      return route.fulfill({ status: 503, json: {} })
+    }
+    return route.fulfill({ json: {
+      snapshot: { location: { directory: "/fixture" }, targets: [target], controls: [], runtime: [], configured: { rules: [], sources: [] } },
+      rule: body.enabled ? pluginId : `-${pluginId}`, target, changed: true, reloadPending: true,
+    } })
+  })
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("status-missions-layout-seeded")) return
+    sessionStorage.setItem("status-missions-layout-seeded", "true")
+    localStorage.setItem("opencode-session-right-panel-tab-v2", "missions")
+    localStorage.setItem("opencode-session-right-panel-customization-v1", JSON.stringify({ tabOrder: ["files", "status", "missions"] }))
+  })
+  const customize = page.getByRole("button", { name: "Customize right panel" })
+  const tab = page.getByRole("tab", { name: "Missions", exact: true })
+  const checkbox = page.getByRole("checkbox", { name: "Missions", exact: true, includeHidden: true })
+  const dialog = page.getByRole("dialog")
+  const hidden = () => page.evaluate(() => (window as any).statusFixture.customization().hiddenTabIds)
+  const payload = (enabled: boolean) => ({ location: { directory: "/fixture" }, pluginId, scope: "global", enabled, managedBy: "codenomad" })
+  try {
+    await page.goto(url)
+    await page.getByRole("tab", { name: "Missions", exact: true, selected: true }).waitFor()
+    await customize.click()
+    await checkbox.press("Space")
+    await dialog.getByText("Disable Missions in OpenCode’s Global configuration? Nothing is deleted or paused.").waitFor({ timeout: 4500 })
+    assert.equal(await checkbox.isChecked(), true)
+    assert.deepEqual(writes, [])
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).press("Enter")
+    await tab.waitFor()
+    await page.waitForFunction(() => document.activeElement instanceof HTMLInputElement
+      && document.activeElement.labels?.[0]?.textContent?.trim() === "Missions")
+    assert.deepEqual(writes, [])
+    await checkbox.click()
+    await dialog.waitFor()
+    await page.evaluate(() => (window as any).statusFixture.setPanelMounted(false))
+    await dialog.waitFor({ state: "detached" })
+    await page.evaluate(() => (window as any).statusFixture.setPanelMounted(true))
+    await tab.waitFor()
+    assert.deepEqual(writes, [])
+    if (!await checkbox.count()) await customize.click()
+    await checkbox.click()
+    const write = () => page.waitForResponse(response => response.url().endsWith("/plugin-controls") && response.request().method() === "PATCH")
+    await Promise.all([write(), dialog.getByRole("button", { name: "Confirm", exact: true }).click()])
+    await tab.waitFor({ state: "detached" })
+    await page.getByRole("tab", { name: "Files", exact: true, selected: true }).waitFor()
+    assert.deepEqual(await hidden(), ["missions"])
+    assert.deepEqual(writes, [payload(false)])
+    await page.reload()
+    await customize.click()
+    assert.equal(await checkbox.isChecked(), false)
+    assert.equal(await tab.count(), 0)
+    assert.deepEqual(writes, [payload(false)], "mount and restore only read layout")
+    fail = true
+    await Promise.all([page.waitForRequest(request => request.url().endsWith("/plugin-controls") && request.method() === "PATCH"), checkbox.click()])
+    await page.evaluate(() => (window as any).statusFixture.setPanelActive(false))
+    releaseFailure.resolve()
+    await page.getByText("Could not save Missions in Global.", { exact: true }).waitFor({ timeout: 4500 })
+    await page.evaluate(() => (window as any).statusFixture.setPanelActive(true))
+    await tab.waitFor()
+    assert.deepEqual(await hidden(), [])
+    await page.getByRole("tab", { name: "Files", exact: true, selected: true }).waitFor()
+    assert.deepEqual(writes, [payload(false), payload(true)])
+  } finally { releaseFailure.resolve(); await page.close() }
+})
+
+test("sweeping across Missions toggles surrounding layout checkboxes without confirmation", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 1100 }, locale: "en-US" })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.addInitScript(() => {
+    localStorage.setItem("opencode-session-right-panel-customization-v1", JSON.stringify({ tabOrder: ["status", "missions", "files"] }))
+  })
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Customize right panel" }).click()
+    const box = (name: string) => page.getByRole("checkbox", { name, exact: true, includeHidden: true })
+    const files = await box("Files").boundingBox(), missions = await box("Missions").boundingBox()
+    const popup = page.getByRole("group", { name: "Customize right panel" })
+    const lastSection = popup.locator("[data-status-section-toggle]").last()
+    const section = await lastSection.boundingBox()
+    assert.ok(files && missions && section && section.y < missions.y && missions.y < files.y)
+    await page.mouse.move(section.x + section.width / 2, section.y + section.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(files.x + files.width / 2, files.y + files.height / 2, { steps: 12 })
+    await page.mouse.up()
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    assert.equal(await box("Missions").isChecked(), true)
+    assert.equal(await box("Files").isChecked(), false)
+    assert.equal(await lastSection.isChecked(), false)
+  } finally { await page.close() }
+})
+
 test("Status tokens use the message chips and expand in the header line, wrapping in narrow LTR and RTL panels", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 1000 }, locale: "en-US", reducedMotion: "reduce" })
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))

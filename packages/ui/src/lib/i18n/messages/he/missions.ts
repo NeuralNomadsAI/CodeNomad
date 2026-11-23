@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.activation.disableConfirm": "להשבית משימות בתצורה הגלובלית של OpenCode? דבר לא יימחק ולא יושהה.",
   "missions.followed.title": "שיחות במעקב",
   "missions.followed.add": "הוספת שיחה",
   "missions.followed.source": "שיחה במעקב {number}",
