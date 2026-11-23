@@ -97,6 +97,11 @@ impl Http {
     }
 }
 impl Request {
+    pub async fn disconnected(mut self) {
+        let mut byte = [0];
+        assert_eq!(wait(self.socket.read(&mut byte)).await.unwrap(), 0);
+    }
+
     pub async fn send(mut self, header: &str, body: &[u8]) {
         wait(self.socket.write_all(header.as_bytes()))
             .await

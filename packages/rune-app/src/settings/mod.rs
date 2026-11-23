@@ -56,6 +56,11 @@ pub(crate) fn poll(s: &mut State) -> bool {
         shared.palette(false).map_or("", |p| p.id),
         shared.palette(true).map_or("", |p| p.id),
     ]);
+    drop(shared);
+    if expired {
+        s.show_launcher();
+        crate::workspace::suspend_missions(s);
+    }
     expired | (display != std::mem::replace(&mut s.settings.last_display, display))
 }
 
@@ -87,6 +92,9 @@ pub(crate) fn authentication_required(s: &mut State, expired: &crate::backend::B
         if let Some(launcher) = s.screen.launcher_mut() {
             launcher.authentication_required = true;
         }
+        drop(prefs);
+        s.show_launcher();
+        crate::workspace::suspend_missions(s);
     }
     true
 }

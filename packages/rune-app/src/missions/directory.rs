@@ -52,8 +52,9 @@ pub(crate) struct Panel {
     serial: u64,
     visible: bool,
     pub(super) scope: std::rc::Rc<()>,
-    supported: bool,
-    capability: Option<Receiver<bool>>,
+    supported: Option<bool>,
+    capability: Option<Receiver<Option<bool>>>,
+    probe_attempted: bool,
     lanes: [Lane; 2],
     pub(super) summaries: Vec<Summary>,
     pub(super) cleanups: Vec<Cleanup>,
@@ -76,8 +77,9 @@ impl Panel {
             serial: 0,
             visible: false,
             scope: std::rc::Rc::new(()),
-            supported: false,
+            supported: None,
             capability: None,
+            probe_attempted: false,
             lanes: Default::default(),
             summaries: vec![],
             cleanups: vec![],
@@ -135,20 +137,21 @@ impl Panel {
     }
 
     pub(crate) fn supported(&self) -> bool {
-        self.supported
+        self.supported == Some(true)
     }
 
     pub(crate) fn probe(&mut self) {
-        if self.supported || self.capability.is_some() {
+        if self.supported.is_some() || self.probe_attempted {
             return;
         }
+        self.probe_attempted = true;
         let backend = self.backend.clone();
         let (out, incoming) = bounded(1);
         self.capability = Some(incoming);
         let wake = self.wake.clone();
         let reads = self.reads.clone();
         platform::spawn(async move {
-            let query = async {
+            let query = async || {
                 let (_cancel, cancelled) = bounded(1);
                 let _permit = reads.background(&cancelled).await?;
                 let response = backend
@@ -167,8 +170,14 @@ impl Panel {
                         .any(|value| value == "missions"),
                 )
             };
-            if let Some(Some(supported)) =
-                codenomad_client::runtime::until_closed(&out, query).await
+            let check = async {
+                // Like Solid, give the failed initial metadata flight one recovery read.
+                match query().await {
+                    None => query().await,
+                    result => result,
+                }
+            };
+            if let Some(supported) = codenomad_client::runtime::until_closed(&out, check).await
                 && out.send(supported).await.is_ok()
             {
                 wake();
@@ -178,6 +187,7 @@ impl Panel {
 
     pub(crate) fn cancel_probe(&mut self) {
         self.capability = None;
+        self.probe_attempted = false;
     }
 
     pub(super) fn failed(&self, kind: Kind) -> bool {
@@ -249,10 +259,10 @@ impl Panel {
 
     pub(crate) fn poll(&mut self) -> bool {
         let mut changed = false;
-        if self.capability.as_ref().and_then(|r| r.try_recv().ok()) == Some(true) {
+        if let Some(supported) = self.capability.as_ref().and_then(|r| r.try_recv().ok()) {
             self.capability = None;
-            self.supported = true;
-            changed = true;
+            self.supported = supported;
+            changed = self.supported();
         }
         while let Ok(done) = self.incoming.try_recv() {
             let lane = &mut self.lanes[done.kind as usize];
