@@ -42,6 +42,16 @@ pub(crate) fn emit_outcome(
     }
 }
 
+pub(crate) fn emit_from(
+    s: &mut State,
+    backend: Backend,
+    category: Category,
+    body: String,
+    error: bool,
+) {
+    enqueue(s, backend, category, None, body, None, None, error);
+}
+
 pub(super) fn enqueue(
     s: &mut State,
     source: Backend,
@@ -106,6 +116,13 @@ pub(crate) fn native(
             );
         }
         WorkspaceEvent::SessionCompacted { id } => {
+            if !s
+                .agent
+                .as_ref()
+                .is_some_and(|agent| agent.attention.directory.is_some())
+            {
+                return;
+            }
             let label = s.chat_title.trim();
             let label = if label.is_empty() {
                 target.session.as_str()

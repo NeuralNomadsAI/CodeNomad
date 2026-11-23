@@ -426,6 +426,11 @@ fn mutation_settlement_preserves_edits_and_cannot_clear_another_checkout() {
         Ok(()),
     );
     assert_eq!(ui.changes.draft.text, "different");
+    assert!(
+        ui.mutation_notice
+            .take()
+            .is_some_and(|(success, _)| success)
+    );
     assert!(ui.take_files_invalidation());
     ui.select_tree("other".into());
     ui.changes.draft = TextEdit::new("old");
@@ -440,6 +445,7 @@ fn mutation_settlement_preserves_edits_and_cannot_clear_another_checkout() {
     );
     assert_eq!(ui.changes.draft.text, "old");
     assert!(ui.mutation_message.is_none());
+    assert!(ui.mutation_notice.is_none());
     ui.select_tree("root".into());
     ui.changes.draft = TextEdit::new("old");
     ui.settle_mutation(

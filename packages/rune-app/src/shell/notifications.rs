@@ -14,7 +14,7 @@ pub(crate) use in_app::{
     entry as history_entry, layers as app_layers, measure as measure_notices,
     tick as poll_app_notices,
 };
-pub(crate) use messages::{emit, emit_outcome};
+pub(crate) use messages::{emit, emit_from, emit_outcome};
 pub(crate) fn relay_notice(s: &mut State, event: codenomad_client::transport::WorkspaceEvent) {
     if let Some((target, project)) = crate::workspace::notification_target(s)
         && let Some(source) = crate::settings::bound_backend(s)
@@ -159,6 +159,8 @@ impl Target {
 
 pub(crate) struct Host {
     focused: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) preferences_focused: std::rc::Rc<std::cell::Cell<bool>>,
     routes: VecDeque<(u64, Target, Presented)>,
     delivered: VecDeque<(Target, Category, String)>,
     app_delivered: VecDeque<(Target, Category, String)>,
@@ -212,6 +214,8 @@ impl Default for Host {
         let (send_click, clicks) = codenomad_client::bounded(RETAINED);
         Self {
             focused: true,
+            #[cfg(not(target_arch = "wasm32"))]
+            preferences_focused: Default::default(),
             routes: VecDeque::new(),
             delivered: VecDeque::new(),
             app_delivered: VecDeque::new(),
@@ -282,7 +286,9 @@ impl Host {
         #[cfg(target_arch = "wasm32")]
         return web::focused();
         #[cfg(not(target_arch = "wasm32"))]
-        self.focused
+        {
+            self.focused || self.preferences_focused.get()
+        }
     }
 
     pub(crate) fn present(&mut self, title: &str, body: &str, target: Target, wake: rune::Waker) {

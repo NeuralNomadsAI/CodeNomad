@@ -507,6 +507,10 @@ fn poll_cached(s: &mut State, ui: &mut Ui, now: Option<f64>, tx: &mut Tx) -> boo
                 changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
                 changed |= crate::git::poll(s, now, tx);
             }
+            #[cfg(target_arch = "wasm32")]
+            if now.is_none() {
+                changed |= crate::git::poll_notices(s);
+            }
             item.cache = Some(Cache::take(s));
         }
     }

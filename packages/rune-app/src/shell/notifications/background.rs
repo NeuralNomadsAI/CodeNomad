@@ -240,6 +240,35 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn compaction_notifications_require_a_root_in_the_bound_project() {
+        crate::platform::block_on(async {
+            let http = Http::new().await;
+            for (session, parent) in [("ses_root", None), ("ses_child", Some("ses_root"))] {
+                let mut backend = http.backend.clone();
+                backend.session = session.into();
+                let task = tokio::spawn(async move { backend.notification_label().await });
+                let project = http.accept().await;
+                assert!(project.header.starts_with("GET /api/workspaces HTTP/"));
+                project
+                    .reply(
+                        200,
+                        json!([{"id":"owned","location":{"directory":"/private"}}]),
+                    )
+                    .await;
+                let request = http.accept().await;
+                assert!(request.header.starts_with(&format!(
+                    "GET /workspaces/owned/instance/api/session/{session} HTTP/"
+                )));
+                request.reply(200, json!({"data":{"id":session,"parentID":parent,"location":{"directory":"/private"},"title":"Compacted"}})).await;
+                assert_eq!(
+                    wait(task).await.unwrap().as_deref(),
+                    parent.is_none().then_some("Compacted")
+                );
+            }
+        });
+    }
+
+    #[test]
     fn root_requests_are_verified_without_binding_the_window_to_their_session() {
         crate::platform::block_on(async {
             let http = Http::new().await;

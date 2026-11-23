@@ -397,7 +397,7 @@ impl Backend {
         fresh: bool,
     ) -> Result<(Self, Session)> {
         let (backend, session, _) = self
-            .bind_at_placed(project, id, expected, fresh, true)
+            .bind_at_placed(project, id, expected, fresh, true, false)
             .await?;
         Ok((backend, session))
     }
@@ -408,7 +408,15 @@ impl Backend {
         id: &str,
         fresh: bool,
     ) -> Result<(Self, Session, String)> {
-        self.bind_at_placed(project, id, None, fresh, false).await
+        self.bind_at_placed(project, id, None, fresh, false, false)
+            .await
+    }
+
+    pub(crate) async fn bind_root_session(&self, project: &Project, id: &str) -> Result<Session> {
+        let (_, session, _) = self
+            .bind_at_placed(project, id, None, false, false, true)
+            .await?;
+        Ok(session)
     }
 
     async fn bind_at_placed(
@@ -418,6 +426,7 @@ impl Backend {
         expected: Option<&str>,
         fresh: bool,
         verify_directory: bool,
+        require_root: bool,
     ) -> Result<(Self, Session, String)> {
         if !valid_id(id) || id.starts_with("ses_cn_schedule_") {
             return Err("invalid session".into());
@@ -450,6 +459,9 @@ impl Backend {
         }
         let data = read_json(response.error_for_status()?).await?;
         let row = &data["data"];
+        if require_root && !row["parentID"].is_null() {
+            return Err("not a root conversation".into());
+        }
         let directory = row["location"]["directory"]
             .as_str()
             .ok_or("missing session directory")?;

@@ -40,6 +40,14 @@ pub(crate) fn poll_memory_cleanup(s: &mut State, tx: &mut rune::Tx) -> bool {
     memory::cleanup::poll(s, tx)
 }
 
+pub(crate) fn app_locale(s: &State) -> &'static str {
+    s.settings
+        .shared
+        .borrow()
+        .locale()
+        .unwrap_or_else(strings::locale)
+}
+
 pub(crate) fn poll(s: &mut State) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some((request, editor)) = s.settings.window.as_ref().and_then(|(_, _, request)| {
@@ -143,27 +151,30 @@ pub(crate) fn poll(s: &mut State) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
     let (reconnected, missions) = shared.mission_changes();
+    let locale = shared.locale().unwrap_or_else(strings::locale);
     let notify_failure = shared.take_notification_failure();
     let update = shared.notification_update.take();
     drop(shared);
-    use crate::shell::notifications::{Category, emit, emit_outcome};
-    if notify_failure {
-        emit_outcome(
-            s,
-            Category::Settings,
-            None,
-            strings::t("settings.preferenceSaveFailed"),
-            true,
-        );
-    }
-    if let Some(version) = update {
-        emit(
-            s,
-            Category::Updates,
-            Some(strings::t("releases.devUpdateAvailable.title").into()),
-            strings::t("settings.opencode.update.available").replace("{version}", &version),
-        );
-    }
+    strings::with_locale(locale, || {
+        use crate::shell::notifications::{Category, emit, emit_outcome};
+        if notify_failure {
+            emit_outcome(
+                s,
+                Category::Settings,
+                None,
+                strings::t("settings.preferenceSaveFailed"),
+                true,
+            );
+        }
+        if let Some(version) = update {
+            emit(
+                s,
+                Category::Updates,
+                Some(strings::t("releases.devUpdateAvailable.title").into()),
+                strings::t("settings.opencode.update.available").replace("{version}", &version),
+            );
+        }
+    });
     if expired {
         s.show_launcher();
         crate::workspace::suspend_missions(s);
@@ -602,9 +613,10 @@ fn launch_preferences(
 ) {
     let host = &s.settings;
     let token = Rc::new(Cell::new(false));
-    let state = view::Window::new(host.shared.clone(), token.clone())
+    let mut state = view::Window::new(host.shared.clone(), token.clone())
         .with_close_request(request.clone(), editor)
         .with_notification_permission(notification_settings::native_permission(s));
+    state.focused = s.notifications.preferences_focused.clone();
     let locale = host
         .shared
         .borrow()
@@ -633,6 +645,7 @@ fn warn_save_failed(locale: &'static str) {
 pub(crate) fn close(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        s.notifications.preferences_focused.set(false);
         #[cfg(target_os = "windows")]
         crate::platform::preferences_placement::closed();
         s.settings.shared.borrow_mut().hide_opencode();
