@@ -21,6 +21,18 @@ const stretchRead = (fixture: Fixture, ms: number) => {
   part.time.completed = part.time.ran + ms; fixture.update(row.id, value); return part.time as { ran: number; completed: number }
 }
 
+for (const kind of ["plain", "blob"] as const) test(`${kind}: OpenCode's renamed generate_image tool gives the same series, provenance and pixels`, async () => {
+  const renamed = openFixture(kind, "generate_image"), original = openFixture(kind)
+  try {
+    assert(renamed.call(), "the replayed history names generate_image")
+    assert.deepEqual(await renamed.lines(true), await original.lines(true))
+    assert.deepEqual(await renamed.lines(), BASELINE)
+    const proven = (await renamed.walk()).all.filter(entry => entry.kind === "image")
+    for (const entry of proven) if (entry.kind === "image")
+      assert.deepEqual(await renamed.read(entry.target), await original.read(entry.target), "identical asset bytes")
+  } finally { renamed.close(); original.close() }
+})
+
 each("baseline: identical for 32-message and 1-message pages; icon-a and icon-a2 proven, icon-a2 with icon-a as parent", async fixture => {
   assert.deepEqual(await fixture.lines(), BASELINE)
   assert.deepEqual(await fixture.lines(false, 1), BASELINE)
