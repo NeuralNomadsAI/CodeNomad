@@ -28,6 +28,7 @@ import { createLogger } from "./logger"
 import { launchInBrowser } from "./launcher"
 import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
+import { handleManagedSessionControl } from "./auth/managed-session-control"
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { RemoteServerBrowseManager } from "./codenomad-servers/browse-manager"
@@ -342,6 +343,7 @@ async function main() {
       sessionIdleMs: sessionTimeoutMs(process.env.CODENOMAD_SESSION_IDLE_SECONDS, "CODENOMAD_SESSION_IDLE_SECONDS"),
       sessionAbsoluteMs: sessionTimeoutMs(process.env.CODENOMAD_SESSION_ABSOLUTE_SECONDS, "CODENOMAD_SESSION_ABSOLUTE_SECONDS"),
       generateToken: options.generateToken,
+      managedLocal: process.env.CODENOMAD_NATIVE_PARENT === "1",
       dangerouslySkipAuth: options.dangerouslySkipAuth,
     },
     logger.child({ component: "auth" }),
@@ -728,6 +730,7 @@ async function main() {
     await launchInBrowser(serverMeta.localUrl, logger.child({ component: "launcher" }))
   }
 
+  let shuttingDown = false
   const shutdown = createServerShutdownHandler({
     logger,
     holdAfterFailure: () => new Promise<void>(() => { setInterval(() => undefined, 60_000) }),
@@ -735,8 +738,9 @@ async function main() {
       process.stdin.destroy()
       process.exitCode = code
     },
-    shutdown: () =>
-      orchestrateServerShutdown(
+    shutdown: () => {
+      shuttingDown = true
+      return orchestrateServerShutdown(
         {
           stopInstanceEventBridge: async () => {
             instanceEventBridge.shutdown()
@@ -772,11 +776,13 @@ async function main() {
           stopReleaseMonitor: () => devReleaseMonitor?.stop(),
         },
         logger,
-      ),
+      )
+    },
   })
 
   installShutdownSignalHandlers(process, shutdown)
-  installShutdownStdinHandler(process.stdin, shutdown, (line) => nativeParent.handleLine(line))
+  installShutdownStdinHandler(process.stdin, shutdown, (line) => nativeParent.handleLine(line)
+    || (!shuttingDown && nativeParent.available && handleManagedSessionControl(line, authManager, value => process.stdout.write(`${value}\n`))))
 }
 
 if (path.resolve(process.argv[1] ?? "") === __filename) {
