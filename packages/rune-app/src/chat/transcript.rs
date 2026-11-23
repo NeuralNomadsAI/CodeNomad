@@ -58,14 +58,13 @@ pub fn message(s: &State, i: usize) -> El {
         .then(|| super::anchors::blocks(m, super::anchors::steps(s, &m.id), false))
         .unwrap_or_default();
     let mut blocks = blocks.into_iter().peekable();
-    let mut track = |index, element| {
+    let mut marker = |index| {
         while blocks.peek().is_some_and(|block| block.part < index) {
             blocks.next();
         }
-        if blocks.peek().is_some_and(|block| block.part == index) {
-            return crate::timeline::watch_block(s, blocks.next().unwrap().marker, element);
-        }
-        element
+        blocks
+            .next_if(|block| block.part == index)
+            .map(|block| block.marker)
     };
     let mut header = layout::action_row().child(
         text(t(if m.role == "user" {
@@ -113,15 +112,13 @@ pub fn message(s: &State, i: usize) -> El {
     let mut ordinal = 0;
     if (m.role == "user" || m.parts.is_empty()) && !m.body.is_empty() {
         let key = format!("body-{}", m.id);
-        view = view.child(track(
+        view = view.child(super::reading::passage(
+            s,
+            document::prose(s, &m.id, key.clone(), &m.body, false),
+            &m.id,
+            key,
             None,
-            super::reading::passage(
-                s,
-                document::prose(s, &m.id, key.clone(), &m.body, false),
-                &m.id,
-                key,
-                None,
-            ),
+            marker(None),
         ));
     }
     let gap_key = format!("parts-gap-{}", m.id);
@@ -171,83 +168,97 @@ pub fn message(s: &State, i: usize) -> El {
         }
         let visible = index < head || index >= tail;
         if index < group_end {
+            ordinal += usize::from(matches!(part, Part::Text(_)));
             continue;
         }
-        let body =
-            match part {
-                Part::Text(body) => {
-                    let key = format!("fragment-{}:{ordinal}", m.id);
-                    ordinal += 1;
-                    if visible && !body.text.trim().is_empty() {
-                        Some(super::reading::passage(
+        let body = match part {
+            Part::Text(body) => {
+                let key = format!("fragment-{}:{ordinal}", m.id);
+                ordinal += 1;
+                if visible && !body.text.trim().is_empty() {
+                    Some(super::reading::passage(
+                        s,
+                        document::prose(
                             s,
-                            document::prose(
-                                s,
-                                &m.id,
-                                key.clone(),
-                                &body.text,
-                                !m.completed && body.provenance != TextProvenance::Closed,
-                            ),
                             &m.id,
-                            key,
-                            None,
-                        ))
-                    } else {
-                        None
-                    }
+                            key.clone(),
+                            &body.text,
+                            !m.completed && body.provenance != TextProvenance::Closed,
+                        ),
+                        &m.id,
+                        key,
+                        None,
+                        marker(Some(index)),
+                    ))
+                } else {
+                    None
                 }
-                Part::Tool(tool) if visible && tools::visible(s, tool) => {
-                    let limit = if index < head && head < tail {
-                        head
-                    } else {
-                        m.parts.len()
-                    };
-                    match super::tool_groups::view(s, &m.id, &m.parts[index..limit], m.completed) {
-                        Some((group, count)) => {
-                            group_end = index + count;
-                            Some(group)
-                        }
-                        None => Some(super::reading::passage(
-                            s,
-                            tools::view(s, &m.id, tool),
-                            &m.id,
-                            tools::tool_key(&m.id, &tool.id),
-                            Some(crate::settings::TranscriptRow::tool(&tool.name)),
-                        )),
+            }
+            Part::Tool(tool) if visible && tools::visible(s, &m.id, tool) => {
+                let limit = if index < head && head < tail {
+                    head
+                } else {
+                    m.parts.len()
+                };
+                match super::tool_groups::view(
+                    s,
+                    &m.id,
+                    &m.parts[index..limit],
+                    m.completed,
+                    &mut |index, el| match marker(index) {
+                        Some(marker) => crate::timeline::watch_block(s, marker, el, |_, _, _| {}),
+                        None => el,
+                    },
+                    index,
+                ) {
+                    Some((group, count)) => {
+                        group_end = index + count;
+                        Some(group)
                     }
+                    None => Some(super::reading::passage(
+                        s,
+                        tools::view(s, &m.id, tool),
+                        &m.id,
+                        tools::tool_key(&m.id, &tool.id),
+                        Some(crate::settings::TranscriptRow::tool(&tool.name)),
+                        marker(Some(index)),
+                    )),
                 }
-                Part::Tool(_) => None,
-                Part::Reasoning(_) if visible && index >= reasoning_end => {
-                    let limit = if index < head && head < tail {
-                        head
-                    } else {
-                        m.parts.len()
-                    };
-                    reasoning_end = index
+            }
+            Part::Tool(_) => None,
+            Part::Reasoning(_) if visible && index >= reasoning_end => {
+                let limit = if index < head && head < tail {
+                    head
+                } else {
+                    m.parts.len()
+                };
+                reasoning_end = index
                     + m.parts[index..limit]
                         .iter()
-                        .take_while(|part| matches!(part, Part::Reasoning(_))
-                            || matches!(part, Part::Text(text) if text.text.trim().is_empty()))
+                    .take_while(|part| matches!(part, Part::Reasoning(_))
+                        || matches!(part, Part::Text(text) if text.text.trim().is_empty())
+                        || matches!(part, Part::Tool(tool) if !tools::visible(s, &m.id, tool)))
                         .count();
-                    super::reasoning::view(s, &m.id, &m.parts[index..reasoning_end])
-                }
-                Part::Reasoning(_) => None,
-                Part::SubagentReport(_) => None,
-                Part::Skill(skill) if visible => Some(super::attachments::skill_chip(skill)),
-                Part::File(file) if visible => Some(super::attachments::file_chip(s, file)),
-                Part::Skill(_) | Part::File(_) => None,
-            };
+                super::reasoning::view(s, &m.id, &m.parts[index..reasoning_end])
+            }
+            Part::Reasoning(_) => None,
+            Part::SubagentReport(_) => None,
+            Part::Skill(skill) if visible => Some(super::attachments::skill_chip(skill)),
+            Part::File(file) if visible => Some(super::attachments::file_chip(s, file)),
+            Part::Skill(_) | Part::File(_) => None,
+        };
         if let Some(body) = body {
             // The first fragment of a reasoning run can be blank: its rendered group starts
             // at the first non-blank fragment, though the renderer consumes the full run.
-            let selected = if matches!(part, Part::Reasoning(_)) {
-                (index..reasoning_end)
+            let body = if matches!(part, Part::Reasoning(_))
+                && let Some(selected) = (index..reasoning_end)
                     .find(|&at| matches!(&m.parts[at], Part::Reasoning(p) if p.visible()))
-                    .unwrap_or(index)
+                && let Some(marker) = marker(Some(selected))
+            {
+                crate::timeline::watch_block(s, marker, body, |_, _, _| {})
             } else {
-                index
+                body
             };
-            let body = track(Some(selected), body);
             if reveal_start.is_some_and(|first| index >= first) {
                 view = view.child(
                     col()

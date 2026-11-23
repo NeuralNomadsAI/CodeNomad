@@ -23,6 +23,12 @@ pub(super) struct Navigation {
     browse: bool,
 }
 
+impl Navigation {
+    pub(super) fn unlock(&mut self) {
+        self.locked = false;
+    }
+}
+
 pub(crate) fn cancel_jump(s: &mut State) {
     let j = &mut owner(s).jump;
     j.serial = j.serial.wrapping_add(1);
@@ -83,6 +89,7 @@ pub(super) fn seek_message(s: &mut State, message: &str, tx: &mut Tx) {
             kind: super::MarkerKind::User,
             ordinal: 0,
             continued: false,
+            omitted_before: false,
             tool: None,
         },
         tx,
@@ -157,10 +164,14 @@ fn locate(s: &State, row: &crate::history::Row, m: &Marker) -> Option<(String, u
             && b.marker.ordinal == m.ordinal
             && b.marker.continued == m.continued
     })?;
-    let key = if m.kind == super::MarkerKind::Reasoning {
-        anchors::reasoning_key(row, steps.max(block.reveal), m.ordinal, m.continued)?
-    } else {
-        block.key
+    let shown = steps.max(block.reveal);
+    let key = match m.kind {
+        super::MarkerKind::Reasoning => anchors::reasoning_key(row, shown, m.ordinal, m.continued)?,
+        super::MarkerKind::Tool => block
+            .part
+            .and_then(|index| anchors::tool_group(s, row, shown, index))
+            .unwrap_or(block.key),
+        _ => block.key,
     };
     Some((key, block.reveal))
 }
@@ -288,7 +299,10 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }
     let bounds = s.tool_diff_preferences.history_bounds.get();
     let t = owner(s);
-    let marker = t.reading_line.first(bounds);
+    let marker = t
+        .reading_line
+        .first(bounds)
+        .map(|id| t.folded.get(&id).cloned().unwrap_or(id));
     if t.jump.active == marker {
         return moved || aligned;
     }

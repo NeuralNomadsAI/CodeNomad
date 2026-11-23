@@ -1,4 +1,5 @@
 //! The visible conversation owns structure and selection; the reader owns bodies.
+mod filters;
 mod navigation;
 mod preview;
 mod reading_line;
@@ -18,7 +19,12 @@ use codenomad_client::{
     Receiver, Sender, bounded,
     timeline::{self, MarkerKind, Outline, OutlineRevision, Resident, WindowPosition},
 };
-use std::{cell::Cell, rc::Rc, sync::Arc};
+use std::{
+    cell::Cell,
+    collections::{BTreeSet, HashMap},
+    rc::Rc,
+    sync::Arc,
+};
 
 #[derive(Clone, PartialEq, Eq)]
 struct Marker {
@@ -27,6 +33,7 @@ struct Marker {
     kind: MarkerKind,
     ordinal: u64,
     continued: bool,
+    omitted_before: bool,
     tool: Option<String>,
 }
 
@@ -38,6 +45,7 @@ impl From<timeline::Marker<'_>> for Marker {
             kind: m.kind,
             ordinal: m.ordinal,
             continued: m.continued,
+            omitted_before: m.omitted_before,
             tool: m.tool_name.map(str::to_owned),
         }
     }
@@ -59,6 +67,9 @@ pub(crate) struct Timeline {
     visible: bool,
     width: f32,
     markers: Vec<Marker>,
+    folded: HashMap<String, String>,
+    filters_changed: bool,
+    pending: BTreeSet<crate::agent_api::ToolSource>,
     version: u64,
     outline_error: bool,
     jump: navigation::Navigation,
@@ -78,6 +89,13 @@ fn owner(s: &mut State) -> &mut Timeline {
 
 pub(crate) fn structure_changed(s: &mut State) {
     owner(s).changed = true;
+}
+
+pub(crate) fn filters_changed(s: &mut State) {
+    let t = owner(s);
+    t.filters_changed = true;
+    t.changed = true;
+    (s.wake)();
 }
 
 fn cancel_scan(t: &mut Timeline) {
@@ -197,7 +215,11 @@ fn reproject(s: &mut State) -> bool {
             markers,
         })
         .collect();
-    if !t.index_changed && owned == t.resident && t.detached == s.history_detached {
+    if !t.index_changed
+        && !t.filters_changed
+        && owned == t.resident
+        && t.detached == s.history_detached
+    {
         return false;
     }
     let index = t
@@ -209,17 +231,20 @@ fn reproject(s: &mut State) -> bool {
     } else {
         WindowPosition::Latest
     };
-    let projected = timeline::project(index, &rows, position)
-        .map(|markers| markers.into_iter().map(Marker::from).collect::<Vec<_>>());
+    let projected =
+        timeline::project(index, &rows, position).map(|markers| filters::project(s, markers));
     let detached = s.history_detached;
     let t = owner(s);
     let new_index = std::mem::take(&mut t.index_changed);
+    t.filters_changed = false;
     t.detached = detached;
     t.resident = owned;
     match projected {
-        Ok(markers) if markers != t.markers => {
+        Ok((markers, folded)) if markers != t.markers || folded != t.folded => {
             t.markers = markers;
+            t.folded = folded;
             t.version = t.version.wrapping_add(1);
+            filters::reselect(s);
             true
         }
         Err(e) if e.is::<timeline::UnplacedWindow>() => {
@@ -251,7 +276,13 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     }
     let reads = s.reads.clone();
     let wake = s.wake.clone();
+    let pending = filters::pending(s);
     let t = owner(s);
+    if t.pending != pending {
+        t.pending = pending;
+        t.filters_changed = true;
+        t.changed = true;
+    }
     t.visible = true;
     let complete = t.scan.as_ref().and_then(|(_, in_)| in_.try_recv().ok());
     let mut changed = complete.is_some();

@@ -33,6 +33,7 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
                 id: "form_pending".into(),
                 title: "Pending question".into(),
                 fields: vec![],
+                tool: None,
             }]),
             true
         ))
@@ -103,6 +104,7 @@ fn native_questions_keep_typed_defaults_conditions_and_validation() {
             json!({"key":"count","type":"integer","minimum":1,"maximum":4,"required":true}),
             json!({"key":"hidden","type":"string","hidden":true,"default":"retained"}),
         ],
+        tool: None,
     };
     let mut drafts = Default::default();
     agent_forms::seed(&[form.clone()], &mut drafts);

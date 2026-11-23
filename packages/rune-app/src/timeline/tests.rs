@@ -30,6 +30,7 @@ fn technical_search_uses_native_part_indexes_and_reveals_the_match() {
             ]
         })).unwrap();
         let mut s = crate::init();
+        crate::settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":true}));
         s.messages = vec![row.into()];
         owner(&mut s).width = 800.0;
         let highlight = crate::chat::search_hit::SearchHit::new(
@@ -413,6 +414,7 @@ fn reasoning_uses_the_rendered_run_not_the_native_fragment_ordinal() {
         [(0, "reasoning-think:1"), (1, "reasoning-think:3")]
     );
     let mut state = crate::init();
+    crate::settings::fixture_transcript(&mut state, json!({"showThinkingBlocks":true}));
     state.messages = std::iter::once(row.clone())
         .chain((0..35).map(|i| user(&format!("doc-{i}"))))
         .collect();
@@ -494,6 +496,42 @@ fn reading_line_tracks_the_first_displayed_block_below_its_cutoff() {
 }
 
 #[test]
+fn a_collapsed_tool_group_is_the_local_destination_for_its_second_marker() {
+    let mut s = crate::init();
+    crate::settings::fixture_transcript(&mut s, json!({"toolGroupVisibility":"collapsed"}));
+    s.messages.push(
+        crate::history::decode_message(&json!({
+            "id":"step","type":"assistant","content":[
+                {"type":"tool","id":"one","name":"read","state":{"status":"completed","input":{}}},
+                {"type":"tool","id":"two","name":"grep","state":{"status":"completed","input":{}}}
+            ]
+        }))
+        .unwrap()
+        .into(),
+    );
+    s.messages
+        .extend((0..30).map(|i| user(&format!("after-{i}"))));
+    let (commands, sent) = bounded(1);
+    s.commands = Some(commands);
+    owner(&mut s).width = 800.;
+    owner(&mut s).changed = true;
+    let mut rt = Runtime::new(s, view, (800., 600.), Env::new(false, 1.0));
+    rt.frame(0.016);
+    rt.update(|s, tx| {
+        poll(s, tx);
+        navigation::select(s, "step:Tool:1:false", tx);
+    });
+    for _ in 0..8 {
+        rt.frame(0.016);
+    }
+    let group = rt.presented("group-tool-step:3:one").unwrap().0[1];
+    let top = rt.presented("history").unwrap().0[1];
+    assert!((group - top).abs() < 2.);
+    assert!(rt.find("tool-step:3:two").is_none());
+    assert!(sent.try_recv().is_err());
+}
+
+#[test]
 fn native_system_and_compaction_content_have_exact_rendered_anchors() {
     for (role, field, kind) in [
         ("compaction", "summary", "Compaction"),
@@ -504,6 +542,7 @@ fn native_system_and_compaction_content_have_exact_rendered_anchors() {
         let row: crate::history::Row = crate::history::decode_message(&native).unwrap().into();
         assert_eq!(row.body, "Native context body");
         let mut s = crate::init();
+        crate::settings::fixture_transcript(&mut s, json!({"systemMessagesVisibility":"expanded"}));
         s.messages = std::iter::once(row)
             .chain((0..35).map(|i| user(&format!("after-{i}"))))
             .collect();

@@ -31,35 +31,16 @@ pub(super) fn view(
     message: &str,
     parts: &[Part],
     completed: bool,
+    track: &mut impl FnMut(Option<usize>, El) -> El,
+    start: usize,
 ) -> Option<(El, usize)> {
+    let (group, calls, end) = members(s, message, parts)?;
     let mode = transcript_mode(s, TranscriptRow::Groups);
-    if mode == "hidden" {
-        return None;
-    }
-    let Part::Tool(first) = parts.first()? else {
-        return None;
-    };
-    let group = kind(first)?;
-    let mut calls = Vec::new();
-    let mut end = 0;
-    for (i, part) in parts.iter().enumerate() {
-        match part {
-            Part::Text(text) if text.text.trim().is_empty() => (),
-            Part::Tool(tool) if !tools::visible(s, tool) => (),
-            Part::Tool(tool) if kind(tool) == Some(group) => {
-                calls.push(tool);
-                end = i + 1;
-            }
-            _ => break,
-        }
-    }
-    if calls.len() < 2 {
-        return None;
-    }
+    let first = calls.first()?.1;
     let completed = completed
         || calls
             .iter()
-            .all(|tool| matches!(tool.status.as_str(), "completed" | "error"));
+            .all(|(_, tool)| matches!(tool.status.as_str(), "completed" | "error"));
     let summary = match group {
         Kind::Shell => catalogue::format(
             locale(),
@@ -71,7 +52,7 @@ pub(super) fn view(
             &[("count", &calls.len().to_string())],
         ),
         Kind::Exploration => {
-            let reads = calls.iter().filter(|tool| tool.name == "read").count();
+            let reads = calls.iter().filter(|(_, tool)| tool.name == "read").count();
             let details = [("read", reads), ("search", calls.len() - reads)]
                 .into_iter()
                 .filter(|(_, count)| *count != 0)
@@ -98,7 +79,7 @@ pub(super) fn view(
             )
         }
     };
-    let key = format!("group-{}", tools::tool_key(message, &first.id));
+    let key = key(message, first);
     let expanded = s.transcript_display.expanded(&key, mode == "expanded");
     let toggle = key.clone();
     let mut view = col()
@@ -117,7 +98,68 @@ pub(super) fn view(
             .expanded(expanded),
         );
     if expanded {
-        view = view.children(calls.into_iter().map(|tool| tools::view(s, message, tool)));
+        view = view.children(
+            calls
+                .into_iter()
+                .map(|(offset, tool)| track(Some(start + offset), tools::view(s, message, tool))),
+        );
+    } else {
+        view = track(Some(start), view);
     }
     Some((view, end))
+}
+
+fn key(message: &str, first: &Tool) -> String {
+    format!("group-{}", tools::tool_key(message, &first.id))
+}
+
+fn members<'a>(
+    s: &State,
+    message: &str,
+    parts: &'a [Part],
+) -> Option<(Kind, Vec<(usize, &'a std::sync::Arc<Tool>)>, usize)> {
+    if transcript_mode(s, TranscriptRow::Groups) == "hidden" {
+        return None;
+    }
+    let Part::Tool(first) = parts.first()? else {
+        return None;
+    };
+    if !tools::visible(s, message, first) {
+        return None;
+    }
+    let group = kind(first)?;
+    let mut calls = Vec::new();
+    let mut end = 0;
+    for (i, part) in parts.iter().enumerate() {
+        match part {
+            Part::Text(text) if text.text.trim().is_empty() => (),
+            Part::Tool(tool) if !tools::visible(s, message, tool) => (),
+            Part::Tool(tool) if kind(tool) == Some(group) => {
+                calls.push((i, tool));
+                end = i + 1;
+            }
+            _ => break,
+        }
+    }
+    (calls.len() >= 2).then_some((group, calls, end))
+}
+
+pub(super) fn anchor(s: &State, message: &str, parts: &[Part], target: usize) -> Option<String> {
+    let mode = transcript_mode(s, TranscriptRow::Groups);
+    if mode == "hidden" {
+        return None;
+    }
+    let mut start = 0;
+    while start <= target {
+        if let Some((_, calls, end)) = members(s, message, &parts[start..]) {
+            if target < start + end {
+                let key = key(message, calls.first()?.1);
+                return (!s.transcript_display.expanded(&key, mode == "expanded")).then_some(key);
+            }
+            start += end;
+        } else {
+            start += 1;
+        }
+    }
+    None
 }

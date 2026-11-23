@@ -1,6 +1,8 @@
 use super::*;
 use rune::{Cx, Env, Key, KeyEvent, Runtime};
 
+const MARKER: &str = "message-0:Assistant:0:false";
+
 fn marker(i: usize, kind: MarkerKind) -> Marker {
     Marker {
         id: format!("marker-{i}"),
@@ -8,6 +10,7 @@ fn marker(i: usize, kind: MarkerKind) -> Marker {
         kind,
         ordinal: 0,
         continued: false,
+        omitted_before: false,
         tool: None,
     }
 }
@@ -58,7 +61,18 @@ fn runtime(text: String, size: (f32, f32)) -> Runtime<State> {
     let t = owner(&mut s);
     t.width = size.0;
     t.previews.cache_scope = Some(scope);
-    t.markers.push(marker(0, MarkerKind::Assistant));
+    t.outline = Some(super::super::Outline {
+        entries: vec![
+            serde_json::from_value(serde_json::json!({
+                "id":"message-0","seq":1,"type":"assistant","tools":0,"reasoning":0,"text":1,
+            }))
+            .unwrap(),
+        ],
+        total: 1,
+        cacheable: true,
+    });
+    t.index_changed = true;
+    t.changed = true;
     let mut rt = Runtime::new(s, view, size, Env::new(false, 1.0));
     rt.poll = Some(crate::poll);
     rt.on_key = Some(crate::shell::keys);
@@ -75,7 +89,7 @@ fn settle(rt: &mut Runtime<State>) {
 #[test]
 fn focused_marker_opens_and_escape_keeps_the_same_focus() {
     let mut rt = runtime("**Cached rail excerpt**".into(), (800., 600.));
-    rt.update(|_, tx| tx.focus_when_shown("marker-0", true));
+    rt.update(|_, tx| tx.focus_when_shown(MARKER, true));
     settle(&mut rt);
     assert!(rt.find("timeline-peek").is_some());
     rt.key(KeyEvent {
@@ -89,9 +103,9 @@ fn focused_marker_opens_and_escape_keeps_the_same_focus() {
     assert!(
         rt.elements()
             .iter()
-            .any(|el| el.key.as_deref() == Some("marker-0") && el.focused)
+            .any(|el| el.key.as_deref() == Some(MARKER) && el.focused)
     );
-    let (x, y) = rt.find("marker-0").unwrap();
+    let (x, y) = rt.find(MARKER).unwrap();
     rt.pointer_move(x, y);
     for _ in 0..30 {
         rt.frame(0.016);
@@ -109,7 +123,7 @@ fn focused_marker_opens_and_escape_keeps_the_same_focus() {
     });
     rt.frame(0.016);
     assert!(rt.find("timeline-peek").is_none());
-    let (x, y) = rt.find("marker-0").unwrap();
+    let (x, y) = rt.find(MARKER).unwrap();
     rt.pointer_move(x, y);
     for _ in 0..30 {
         rt.frame(0.016);
@@ -125,7 +139,7 @@ fn focused_marker_opens_and_escape_keeps_the_same_focus() {
 #[test]
 fn touch_never_opens_and_a_clicked_marker_does_not_keep_the_preview() {
     let mut rt = runtime("Touch fixture".into(), (800., 600.));
-    let (x, y) = rt.find("marker-0").unwrap();
+    let (x, y) = rt.find(MARKER).unwrap();
     rt.touch(1, rune::TouchPhase::Started, x, y, 1.);
     for _ in 0..34 {
         rt.frame(0.016);
@@ -135,21 +149,21 @@ fn touch_never_opens_and_a_clicked_marker_does_not_keep_the_preview() {
     settle(&mut rt);
     assert!(rt.find("timeline-peek").is_none());
     let mut rt = runtime("Click fixture".into(), (800., 600.));
-    let (x, y) = rt.find("marker-0").unwrap();
+    let (x, y) = rt.find(MARKER).unwrap();
     rt.pointer_move(x, y);
     settle(&mut rt);
     assert!(rt.find("timeline-peek").is_some());
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     // Hold the marker's non-keyboard focus even when the fixture cannot resolve its jump.
-    rt.update(|_, tx| tx.focus_when_shown("marker-0", false));
+    rt.update(|_, tx| tx.focus_when_shown(MARKER, false));
     settle(&mut rt);
     rt.pointer_move(10., y);
     settle(&mut rt);
     assert!(
         rt.elements()
             .iter()
-            .any(|el| el.key.as_deref() == Some("marker-0") && el.focused && !el.focus_visible)
+            .any(|el| el.key.as_deref() == Some(MARKER) && el.focused && !el.focus_visible)
     );
     assert!(rt.find("timeline-peek").is_none());
 }
@@ -161,7 +175,7 @@ fn short_window_scrolls_and_exposes_the_complete_rendered_description() {
         "Line of text.\n\n".repeat(80)
     );
     let mut rt = runtime(text, (800., 290.));
-    rt.update(|_, tx| tx.focus_when_shown("marker-0", true));
+    rt.update(|_, tx| tx.focus_when_shown(MARKER, true));
     settle(&mut rt);
     let key = rune_theme_codenomad::timeline::preview::KEY;
     let [x, y, w, h] = rt.presented(key).unwrap().0;
@@ -177,7 +191,7 @@ fn short_window_scrolls_and_exposes_the_complete_rendered_description() {
         }
     }
     let tree = rt.accessibility_json();
-    let button = named(&tree, "marker-0").unwrap();
+    let button = named(&tree, MARKER).unwrap();
     assert_eq!(
         button["description"],
         format!("Beginning link {}Final token", "Line of text. ".repeat(80))

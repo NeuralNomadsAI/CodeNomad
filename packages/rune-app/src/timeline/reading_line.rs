@@ -29,7 +29,12 @@ impl Blocks {
     }
 }
 
-pub(crate) fn watch(s: &State, marker: codenomad_client::timeline::Marker<'_>, block: El) -> El {
+pub(crate) fn watch(
+    s: &State,
+    marker: codenomad_client::timeline::Marker<'_>,
+    block: El,
+    observe: impl Fn(&mut State, [f32; 4], &mut rune::Tx) + 'static,
+) -> El {
     let key = Marker::from(marker).id;
     let bounds = {
         let mut shown = s.transcript_display.timeline.reading_line.0.borrow_mut();
@@ -45,6 +50,7 @@ pub(crate) fn watch(s: &State, marker: codenomad_client::timeline::Marker<'_>, b
     block
         .drawn_rect_into(&bounds)
         .on_drawn_layout_tx(move |s: &mut State, rect, tx| {
+            observe(s, rect, tx);
             if s.current_scope(&scope) {
                 let [_, top, _, height] = s.tool_diff_preferences.history_bounds.get();
                 let [_, y, _, h] = rect;

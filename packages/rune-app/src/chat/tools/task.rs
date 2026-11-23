@@ -141,7 +141,7 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
     let child_steps = child_id.map_or(&[][..], |id| s.transcript_display.children.steps(id));
     let visible_steps = child_steps
         .iter()
-        .filter(|(_, step)| super::visible(s, step));
+        .filter(|(message, step)| super::visible(s, message, step));
     let legacy = tool.metadata["summary"]
         .as_array()
         .map_or(&[][..], Vec::as_slice);

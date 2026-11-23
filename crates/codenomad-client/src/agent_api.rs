@@ -18,12 +18,35 @@ pub struct Permission {
     pub resources: Vec<String>,
     pub message: String,
     pub supported: bool,
+    pub tool: Option<ToolSource>,
 }
 #[derive(Clone)]
 pub struct Form {
     pub id: String,
     pub title: String,
     pub fields: Vec<Value>,
+    pub tool: Option<ToolSource>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ToolSource {
+    pub message: String,
+    pub call: String,
+}
+
+fn tool_source(row: &Value) -> Option<ToolSource> {
+    let source = &row["source"];
+    if source["type"] != "tool" {
+        return None;
+    }
+    let (message, call) = (source["messageID"].as_str()?, source["id"].as_str()?);
+    if !valid_id(message) || call.is_empty() || call.len() > 512 {
+        return None;
+    }
+    Some(ToolSource {
+        message: message.into(),
+        call: call.into(),
+    })
 }
 pub struct Snapshot {
     pub models: Option<Vec<Model>>,
@@ -281,6 +304,7 @@ pub fn permissions(value: &Value, session: &str) -> Result<Vec<Permission>> {
                 .take(4096)
                 .collect(),
             supported: resources.len() <= 64,
+            tool: tool_source(row),
         });
     }
     Ok(out)
@@ -305,6 +329,7 @@ pub fn forms(value: &Value, session: &str) -> Result<Vec<Form>> {
             id,
             title: string(&row["title"], 4096)?,
             fields,
+            tool: tool_source(row),
         });
     }
     Ok(out)

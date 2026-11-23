@@ -152,12 +152,33 @@ pub(crate) fn blocks(row: &crate::Message, steps: usize, hidden: bool) -> Vec<Bl
             );
         }
     }
+    if head < tail
+        && let Some(after) = out
+            .iter_mut()
+            .find(|block| block.part.is_some_and(|part| part >= tail))
+    {
+        after.marker.omitted_before = true;
+    }
     out
 }
 
 pub(crate) fn reasoning_key(row: &Row, steps: usize, run: u64, continued: bool) -> Option<String> {
     let (head, tail) = super::transcript::part_window(row.parts.len(), steps);
     super::reasoning::run_anchor(row, head..tail, run.try_into().ok()?, continued)
+}
+
+pub(crate) fn tool_group(s: &State, row: &Row, steps: usize, index: usize) -> Option<String> {
+    let (head, tail) = super::transcript::part_window(row.parts.len(), steps);
+    let (start, end) = if head >= tail {
+        (0, row.parts.len())
+    } else if index < head {
+        (0, head)
+    } else if index >= tail {
+        (tail, row.parts.len())
+    } else {
+        return None;
+    };
+    super::tool_groups::anchor(s, &row.id, &row.parts[start..end], index - start)
 }
 
 pub(super) fn reasoning_changed(

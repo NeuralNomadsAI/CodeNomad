@@ -584,6 +584,7 @@ fn delivery_hidden_interruptions_keep_the_active_close_guard_and_button() {
                     id: "request".into(),
                     title: "Question".into(),
                     fields: vec![serde_json::json!({"key":"answer","type":"string"})],
+                    tool: None,
                 });
                 a.selected = "request".into();
                 let mut d = crate::agent::forms::Draft::default();
@@ -597,6 +598,7 @@ fn delivery_hidden_interruptions_keep_the_active_close_guard_and_button() {
                     resources: vec!["/fixture".into()],
                     message: String::new(),
                     supported: true,
+                    tool: None,
                 });
                 a.selected = "request".into();
                 a.reasons

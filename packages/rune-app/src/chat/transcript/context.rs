@@ -64,22 +64,22 @@ pub(super) fn view(s: &State, message: &Message) -> Option<El> {
                 document::prose(s, &message.id, content, &message.body, false)
             }
         }));
+    let marker = crate::timeline::demanded(s)
+        .then(|| {
+            super::super::anchors::blocks(message, 0, false)
+                .into_iter()
+                .next()
+        })
+        .flatten()
+        .map(|block| block.marker);
     let card = super::super::reading::passage(
         s,
         card,
         &message.id,
         key,
         system.then_some(TranscriptRow::System),
+        marker,
     );
-    let card = if crate::timeline::demanded(s)
-        && let Some(block) = super::super::anchors::blocks(message, 0, false)
-            .into_iter()
-            .next()
-    {
-        crate::timeline::watch_block(s, block.marker, card)
-    } else {
-        card
-    };
     row = row.pad(Space::Lg).child(card);
     Some(row)
 }
