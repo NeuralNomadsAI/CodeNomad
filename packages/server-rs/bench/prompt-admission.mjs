@@ -46,10 +46,16 @@ async function upstream(profile) {
   await git('-C',directory,'-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','--quiet','--allow-empty','-m','synthetic')
   await git('-C',directory,'worktree','add','--quiet','--detach',tree,'HEAD')
   await writeFile(path.join(tree,'tree.txt'),'synthetic tree\n')
+  const treeNested=path.join(tree,'sub'), independent=path.join(tree,'independent')
+  await mkdir(treeNested)
+  await mkdir(path.join(treeNested,'.git'))
+  await git('init','--quiet',independent)
   const calls = [], sessions = new Map(), password = randomUUID(),state={carrier:'absent'}
   for (const [id,dir,metadata] of [['ses_owned',directory,{}],['ses_nested',path.join(directory,'sub'),{}],['ses_tree',tree,{}],['ses_foreign',foreign,{}],['ses_cn_schedule_reserved',directory,{}],['ses_carrier',directory,{'codenomad.schedule-carrier':true}]])
     sessions.set(id,{id,title:'Synthetic',projectID:'project_fixture',location:{directory:dir},metadata,time:{created:1,updated:1}})
   sessions.set('ses_plain',{id:'ses_plain',title:'Synthetic without Git',projectID:'global',location:{directory:plainNested},time:{created:1,updated:1}})
+  for(const [id,dir] of [['ses_tree_nested',treeNested],['ses_independent',independent]])
+    sessions.set(id,{id,title:'Synthetic checkout',projectID:'project_fixture',location:{directory:dir},time:{created:1,updated:1}})
   const server = createServer(async(req,res)=>{
     try {
       assert.equal(req.headers.authorization,`Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`)
@@ -201,12 +207,28 @@ export async function run(commandOnly=false){
         const before=native.calls.length,response=await host.call(`${host.base}/session/${session}/prompt`,post({text:'refuse'}));errors[session]=JSON.parse(Buffer.from(await response.arrayBuffer()).toString())
         rows.push({name:session,status:response.status,forwarded:native.calls.slice(before).filter(r=>r.path.endsWith('/prompt')||r.path.endsWith('/environment')).length})
       }
-      {
-        const before=native.calls.length,response=await host.call(`${host.base}/session/ses_tree/prompt`,post({text:'owned tree',id:'inbox_tree'}))
+      for (const [name,session,expected] of [
+        ['worktree-session','ses_tree',200],
+        ['session-subfolder','ses_nested',200],
+        ['worktree-subfolder','ses_tree_nested',200],
+        ['nested-independent-repo','ses_independent',403],
+      ]) {
+        const before=native.calls.length,response=await host.call(`${host.base}/session/${session}/prompt`,post({text:'owned folder',id:'inbox_tree'}))
         const received=await response.arrayBuffer(),calls=native.calls.slice(before)
-        assert.equal(response.status,200,`${label} owned worktree: ${Buffer.from(received)}`)
-        assert.equal(JSON.parse(Buffer.from(received).toString()).data.id,'inbox_tree')
-        rows.push({name:'worktree-session',status:response.status,forwarded:calls.filter(r=>r.path.endsWith('/prompt')).length,environment:calls.filter(r=>r.path.endsWith('/environment')).length})
+        const body=JSON.parse(Buffer.from(received).toString())
+        assert.equal(response.status,expected,`${label}/${name}: ${Buffer.from(received)}`)
+        const forwarded=calls.filter(r=>r.path.endsWith('/prompt')), environment=calls.filter(r=>r.path.endsWith('/environment'))
+        const dispatch=expected===200
+        assert.deepEqual(forwarded.map(call=>call.path),dispatch?[`/api/session/${session}/prompt`]:[])
+        assert.deepEqual(environment.map(call=>call.path),dispatch?[`/api/session/${session}/environment`]:[])
+        if(dispatch) assert.equal(body.data.id,'inbox_tree')
+        else {
+          assert.equal(body.error,'Session does not belong to workspace')
+          // The fixture sets GIT_CEILING_DIRECTORIES, so TS cannot prove a departure
+          // in strict discovery. Both implementations must refuse before all writes.
+          ;(result.placementDiagnostics??={})[label]=body
+        }
+        rows.push({name,status:response.status,forwarded:forwarded.length,environment:environment.length})
       }
       for(const [carrier,expected] of [['owned',403],['unavailable',503],['move',403]]){
         native.state.carrier=carrier
@@ -296,9 +318,13 @@ async function commandCases(label, host, native, rows, errors) {
     ['native-validation','ses_owned',{...command,name:42},400,true],
   ]){
     const route=`/session/${session}/command`,before=native.calls.length
-    const response=await host.call((name==='nested-no-repo'?plainBase:host.base)+route,post(body))
-    const responseBody=Buffer.from(await response.arrayBuffer()).toString()
-    assert.equal(response.status,expected,`${label}/${name}: ${responseBody}`)
+    // Chunked framing gives both servers the whole near-limit body before Fastify
+    // closes a refusal; a declared overrun can reset the socket while uploading.
+    const response=await host.call((name==='nested-no-repo'?plainBase:host.base)+route,{
+      ...post(body),chunked:name==='body-limit',
+    })
+    const responseBody=await response.text()
+    assert.equal(response.status,expected,`${label}/${name}: ${responseBody || "no HTTP body"}`)
     const calls=native.calls.slice(before)
     const forwarded=calls.filter(r=>r.path===`/api${route}`)
     const environment=calls.filter(r=>r.path.endsWith('/environment'))

@@ -29,8 +29,15 @@ impl DirectoryProof {
         let no_nested_git = |path: &Path, root: &Path| {
             path.starts_with(root)
                 && path.ancestors().take_while(|ancestor| *ancestor != root).all(|ancestor| {
-                    std::fs::symlink_metadata(ancestor.join(".git"))
-                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+                    let marker = ancestor.join(".git");
+                    let marker_clear = match std::fs::symlink_metadata(&marker) {
+                        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+                        Ok(meta) if meta.is_dir() => std::fs::read_dir(marker).is_ok_and(|mut dir| dir.next().is_none()),
+                        _ => false,
+                    };
+                    marker_clear && !(ancestor.join("HEAD").exists()
+                        && (ancestor.join("commondir").exists()
+                            || ancestor.join("objects").is_dir() && ancestor.join("refs").is_dir()))
                 })
         };
         self.source
@@ -45,6 +52,15 @@ impl DirectoryProof {
 /// Capture the checkout that authorizes an existing folder, for a final
 /// synchronous check alongside the folder's own identity.
 pub(crate) async fn capture_directory(app: &App, workspace: &Workspace, physical: &Path) -> Option<DirectoryProof> {
+    capture_directory_with_refresh(app, workspace, physical, false).await
+}
+
+pub(crate) async fn capture_directory_with_refresh(
+    app: &App,
+    workspace: &Workspace,
+    physical: &Path,
+    refresh_on_miss: bool,
+) -> Option<DirectoryProof> {
     if !physical.starts_with(&app.scope) {
         return None;
     }
@@ -55,15 +71,20 @@ pub(crate) async fn capture_directory(app: &App, workspace: &Workspace, physical
     if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
         return None;
     }
-    let catalogue = super::linked::catalogue(app, workspace, false).await.ok()?;
-    let source = if external { Some(catalogue.get("root").ok()?.clone()) } else { None };
-    let tree = catalogue
-        .trees
-        .into_iter()
-        .filter(|tree| tree.contains_live(physical))
-        .max_by_key(|tree| tree.path.as_os_str().len())?;
-    let proof = DirectoryProof { tree: Some(tree), source };
-    proof.live(physical).then_some(proof)
+    for &refresh in if refresh_on_miss { &[false, true][..] } else { &[false] } {
+        let catalogue = super::linked::catalogue(app, workspace, refresh).await.ok()?;
+        let source = if external { Some(catalogue.get("root").ok()?.clone()) } else { None };
+        if let Some(tree) = catalogue
+            .trees
+            .into_iter()
+            .filter(|tree| tree.contains_live(physical))
+            .max_by_key(|tree| tree.path.as_os_str().len())
+        {
+            let proof = DirectoryProof { tree: Some(tree), source };
+            return proof.live(physical).then_some(proof);
+        }
+    }
+    None
 }
 
 /// `resolveDirectoryPath`: the real path, or the real nearest ancestor joined with the
