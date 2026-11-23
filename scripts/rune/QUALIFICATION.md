@@ -37,6 +37,15 @@ wasm-bindgen --target web --out-name probe --out-dir "$CARGO_TARGET_DIR/browser-
 node packages/rune-app/fixtures/browser-outline.mjs "$CARGO_TARGET_DIR/browser-outline"
 ```
 
+Le banc Code Mode vérifie quatre écritures de 70 Kio, la relecture après une trame hors borne et l’actualisation du fil enfant sur la connexion d’origine :
+
+```powershell
+cargo build --locked -p codenomad-client --example tool-progress-sse
+cargo build --locked -p codenomad-client --example tool-progress-sse --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-name probe --out-dir "$env:CARGO_TARGET_DIR/tool-progress-sse" "$env:CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/examples/tool-progress-sse.wasm"
+node packages/rune-app/fixtures/tool-progress-sse.mjs "$env:CARGO_TARGET_DIR/debug/examples/tool-progress-sse.exe" "$env:CARGO_TARGET_DIR/tool-progress-sse"
+```
+
 ## Parité par composant
 
 Les composants Solid et Rune demandent des paires de captures exécutées à géométrie identique, dans chaque palette, avec références d'accessibilité et interactions dédiées. Le statut de parité reste à qualifier pour les composants de l'inventaire.

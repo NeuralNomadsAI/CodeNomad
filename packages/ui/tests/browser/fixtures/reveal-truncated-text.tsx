@@ -61,7 +61,7 @@ setActiveSession(instanceId, "reveal-a")
 await applyUiSettings({ toolInputsVisibility: "hidden", toolOutputExpansion: "expanded", diagnosticsExpansion: "collapsed",
   ...(parity ? { showThinkingBlocks: true } : {}),
   toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: parity
-    ? { read: "collapsed", grep: "collapsed", bash: "expanded", edit: "expanded" }
+    ? { read: "collapsed", grep: "collapsed", bash: "expanded", edit: "expanded", execute: "collapsed" }
     : { read: "expanded", task: "expanded", other: "expanded" } } })
 for (const id of parity ? ["transcript"] : ["reveal-a", "reveal-b", "reveal-c"]) {
   await loadMessages(instanceId, id, { force: true })

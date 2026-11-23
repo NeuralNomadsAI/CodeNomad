@@ -35,6 +35,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
+                s.transcript_display.children.bind(backend.clone());
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -189,6 +190,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.history_error = true;
             }
             Event::HistoryInvalidated => {
+                s.transcript_display.children.clear();
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();
@@ -199,6 +201,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.phase = Phase::Reconnecting;
             }
             Event::WorkspaceMissing => {
+                s.transcript_display.children.clear();
                 #[cfg(target_arch = "wasm32")]
                 {
                     s.phase = Phase::WorkspaceMissing;
@@ -252,6 +255,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.history_error = true;
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
+                s.transcript_display.children.clear();
                 #[cfg(target_arch = "wasm32")]
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
@@ -283,6 +287,10 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
     {
         composer::settle_pending(s, transport::PromptOutcome::Unconfirmed);
         s.phase = Phase::Failed;
+        changed = true;
+    }
+    if s.transcript_display.children.poll() {
+        s.revision += 1;
         changed = true;
     }
     changed
