@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { readFile, readdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, dirname, join, posix, win32 } from "node:path"
 import { getProcessStartIdentity, type ProcessStartIdentityLookup } from "./client-state-process-identity"
@@ -285,6 +286,28 @@ export function crossHostParticipants(directory: string): ProcessOwner[] {
   }
 }
 
+async function readIfExistsAsync(path: string): Promise<string | undefined> {
+  try { return await readFile(path, "utf8") } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return
+    throw error
+  }
+}
+
+export async function crossHostParticipantsAsync(directory: string): Promise<ProcessOwner[]> {
+  try {
+    const participants = []
+    for (const name of await readdir(directory)) {
+      if (!name.startsWith(PARTICIPANT_PREFIX) || !name.endsWith(PARTICIPANT_SUFFIX)) continue
+      const owner = parseOwner(await readIfExistsAsync(join(directory, name)) ?? "")
+      if (owner) participants.push(owner)
+    }
+    return participants
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return []
+    throw error
+  }
+}
+
 export class CrossHostRegistration {
   private released = false
 
@@ -342,6 +365,12 @@ export class CrossHostRegistration {
     if (this.released || !this.primary) return false
     const current = parseOwner(readIfExists(ownerPath(this.directory)) ?? "")
     return Boolean(current && sameOwner(current, this.owner))
+  }
+
+  async checkPrimary(): Promise<boolean> {
+    if (this.released || !this.primary) return false
+    const current = parseOwner(await readIfExistsAsync(ownerPath(this.directory)) ?? "")
+    return Boolean(!this.released && current && sameOwner(current, this.owner))
   }
 
   release(): boolean {

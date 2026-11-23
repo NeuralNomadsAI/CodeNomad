@@ -334,6 +334,42 @@ test("drain freezes mutations and waits for admitted writes", async (t) => {
   assert.deepEqual(persistedRecord(h.statePath).snapshot, { admitted: true })
 })
 
+test("partition commits leave the event loop free and publish in order before quit", async (t) => {
+  const h = harness(t, { version: 1, restoreEnabled: true })
+  let entered!: () => void
+  let resume!: () => void
+  const firstWrite = new Promise<void>((resolve) => { entered = resolve })
+  const gate = new Promise<void>((resolve) => { resume = resolve })
+  t.after(resume)
+  const manager = h.create(async (path, value) => {
+    if (JSON.parse(value).windows[manager.activeWindowId]?.snapshot?.revision === 1) {
+      entered()
+      await gate
+    }
+    await writeFile(path, value, { flush: true })
+  })
+  const content = "durable partition"
+  const key = createHash("sha256").update(content).digest("hex")
+  const commit = (revision: number, partitions: Record<string, string>) => manager.commitClientStatePartitions({
+    protocolVersion: 1,
+    snapshot: { version: 2, sessionPartition: key, partitionKeys: [key], revision },
+    partitionKeys: [key],
+    partitions,
+  })
+  const first = commit(1, { [key]: content })
+  const second = commit(2, {})
+  let quit = false
+  const drain = manager.drainAndReleasePrimary().then(() => { quit = true })
+  await firstWrite
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(quit, false)
+  resume()
+  assert.deepEqual(await Promise.all([first, second, drain]), [true, true, undefined])
+  const reopened = h.create()
+  assert.equal((reopened.loadClientState().snapshot as { revision: number }).revision, 2)
+  assert.equal(await reopened.loadClientStatePartition(key), content)
+})
+
 test("a failed drain keeps ownership and permits a persisted retry", async (t) => {
   const h = harness(t, { version: 1, restoreEnabled: true })
   const manager = h.create()

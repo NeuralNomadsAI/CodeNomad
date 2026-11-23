@@ -7,8 +7,10 @@ import {
   electClientStateProcess,
   getRunningMarkerPath,
   hasLiveTauriClient,
+  hasLiveTauriClientAsync,
   hasErrorCode,
   isProcessOwnerLockOwned,
+  isProcessOwnerLockOwnedAsync,
   removeProcessOwnerLockIfOwned,
   type ProcessOwner,
   removeRunningMarkerIfOwned,
@@ -17,6 +19,7 @@ import { getProcessStartIdentity } from "./client-state-process-identity"
 import {
   CrossHostRegistration,
   crossHostParticipants,
+  crossHostParticipantsAsync,
   resolveCrossHostElectionDirectory,
   resolveCrossHostStatePath,
   resolveLegacyCrossHostStatePath,
@@ -127,7 +130,7 @@ export class ClientStateManager {
   private readonly owner: ProcessOwner
   private readonly partitions: ClientStatePartitionStore
   private state: PersistedClientState = createClientState()
-  private writeQueue: Promise<void> = Promise.resolve()
+  private writeQueue: Promise<unknown> = Promise.resolve()
   private drainAndReleasePromise: Promise<void> | undefined
   private crossHostRegistration: CrossHostRegistration | undefined
   private primary = false
@@ -238,6 +241,19 @@ export class ClientStateManager {
     }
   }
 
+  private async checkPrimary(): Promise<boolean> {
+    const registration = this.crossHostRegistration
+    if (!this.primary || !registration || !await registration.checkPrimary()) return false
+    if (!this.legacyTauriDataPath) return this.primary
+    try {
+      const participants = await crossHostParticipantsAsync(registration.path)
+      return !await hasLiveTauriClientAsync(this.legacyTauriDataPath, participants) && this.primary
+    } catch (error) {
+      console.warn("[client-state] failed to recheck legacy Tauri process markers; ownership disabled", error)
+      return false
+    }
+  }
+
   get activeWindowId(): string {
     return this.state.activeWindowId
   }
@@ -252,7 +268,7 @@ export class ClientStateManager {
 
   setPreferences(request: PreferencesRequest | undefined): Promise<boolean> {
     return this.mutateWindowListAndPersist((state) => {
-      if (!this.isPrimary || this.unsupportedFutureEnvelope) return false
+      if (this.unsupportedFutureEnvelope) return false
       if (request) {
         state.preferences = request
         state.lastPreferences = { section: request.section, ...(request.scrollTop === undefined ? {} : { scrollTop: request.scrollTop }) }
@@ -272,7 +288,7 @@ export class ClientStateManager {
   savePreferencesWindow(window: NativeWindowState): Promise<boolean> {
     const normalized = normalizeNativeWindowState(window)
     return this.mutateWindowListAndPersist((state) => {
-      if (!normalized || !this.isPrimary || this.unsupportedFutureEnvelope) return false
+      if (!normalized || this.unsupportedFutureEnvelope) return false
       state.preferencesWindow = normalized
     })
   }
@@ -283,14 +299,25 @@ export class ClientStateManager {
         throw new Error("Unknown client state window")
       }
       if (state.activeWindowId === windowId) return true
-      if (!this.isPrimary || this.unsupportedFutureEnvelope) return false
+      if (this.unsupportedFutureEnvelope) return false
       state.activeWindowId = windowId
     })
   }
 
   loadClientState(windowId = this.activeWindowId): ClientStateLoadResult {
+    return this.projectClientState(windowId, this.isPrimary)
+  }
+
+  async loadClientStateForRenderer(windowId: string, rendererToken: unknown): Promise<ClientStateLoadResult> {
+    await this.writeQueue.catch(() => {})
+    const primary = await this.checkPrimary()
+    this.assertRendererAccessToken(rendererToken, windowId)
+    return this.projectClientState(windowId, primary)
+  }
+
+  private projectClientState(windowId: string, primary: boolean): ClientStateLoadResult {
     const record = this.windowRecord(windowId)
-    if (!this.isPrimary) {
+    if (!primary) {
       return { isPrimary: false, restoreEnabled: false, snapshot: null, partitionProtocolVersion: CLIENT_STATE_PARTITION_PROTOCOL_VERSION }
     }
     return {
@@ -303,7 +330,7 @@ export class ClientStateManager {
 
   loadFileDrafts(rendererToken: unknown, windowId: string, key?: unknown) {
     const operation = this.writeQueue.catch(() => {}).then(async () => {
-      this.assertReplacementAllowed(rendererToken, windowId)
+      await this.assertReplacementAllowed(rendererToken, windowId)
       if (!this.windowRecord(windowId).restoreEnabled) return []
       return this.fileDrafts.load(windowId, key, () => this.assertReplacementAllowed(rendererToken, windowId))
     })
@@ -313,7 +340,7 @@ export class ClientStateManager {
 
   saveFileDraft(raw: unknown, rendererToken: unknown, windowId: string): Promise<boolean> {
     const operation = this.writeQueue.catch(() => {}).then(async () => {
-      this.assertReplacementAllowed(rendererToken, windowId)
+      await this.assertReplacementAllowed(rendererToken, windowId)
       return this.fileDrafts.save(raw, windowId, this.windowRecord(windowId).restoreEnabled,
         () => this.assertReplacementAllowed(rendererToken, windowId),
         (path, contents) => this.writeAtomically(contents, rendererToken, windowId, path),
@@ -329,7 +356,7 @@ export class ClientStateManager {
     const operation = this.writeQueue.catch(() => {}).then(async () => {
       if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken, windowId)
       const record = this.windowRecord(windowId)
-      if (!this.isPrimary || !record.restoreEnabled
+      if (!await this.checkPrimary() || !record.restoreEnabled
         || record.partitionProtocolVersion !== CLIENT_STATE_PARTITION_PROTOCOL_VERSION
         || !record.partitionKeys?.includes(key)) return null
       return this.partitions.load(key, () => this.assertReplacementAllowed(rendererToken, windowId))
@@ -429,7 +456,7 @@ export class ClientStateManager {
 
   clearClientState(rendererToken?: unknown, windowId = this.activeWindowId): Promise<boolean> {
     this.windowRecord(windowId)
-    if (!this.isPrimary) {
+    if (!this.primary) {
       return Promise.resolve(false)
     }
     if (this.frozen) {
@@ -468,7 +495,7 @@ export class ClientStateManager {
       if (!isWindowId(windowId)) throw new TypeError("Invalid client state window ID")
       if (state.windowOrder.length >= MAX_CLIENT_STATE_WINDOWS) throw new RangeError("Too many client state windows")
       if (state.windows[windowId]) throw new Error("Client state window already exists")
-      if (!this.isPrimary || this.unsupportedFutureEnvelope) return false
+      if (this.unsupportedFutureEnvelope) return false
       if (state.windowOrder.length === 0) state.activeWindowId = windowId
       state.windowOrder.push(windowId)
       state.windows[windowId] = { restoreEnabled: true }
@@ -480,7 +507,7 @@ export class ClientStateManager {
       if (!isWindowId(windowId) || !Object.prototype.hasOwnProperty.call(state.windows, windowId)) {
         throw new Error("Unknown client state window")
       }
-      if (!this.isPrimary || this.unsupportedFutureEnvelope) return false
+      if (this.unsupportedFutureEnvelope) return false
       state.windowOrder = state.windowOrder.filter((id) => id !== windowId)
       delete state.windows[windowId]
       if (state.activeWindowId === windowId && state.windowOrder.length > 0) state.activeWindowId = state.windowOrder[0]!
@@ -639,7 +666,7 @@ export class ClientStateManager {
 
   private getMutationDisposition(windowId: string, futureEnvelopeResult = true): Promise<boolean> | undefined {
     this.windowRecord(windowId)
-    if (!this.isPrimary) {
+    if (!this.primary) {
       return Promise.resolve(false)
     }
     if (this.frozen) {
@@ -660,9 +687,10 @@ export class ClientStateManager {
     committed?: () => Promise<void>,
   ): Promise<boolean> {
     const operation = this.writeQueue.catch(() => {}).then(async () => {
+      if (!await this.checkPrimary()) return false
       if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken, windowId)
       if (skipWhenSuppressed && this.persistenceSuppressed.has(windowId)) {
-        return
+        return true
       }
 
       const previousState = JSON.parse(JSON.stringify(this.state)) as PersistedClientState
@@ -679,9 +707,10 @@ export class ClientStateManager {
         throw error
       }
       await committed?.().catch((error) => console.warn("[client-state] failed to sweep partitions", error))
+      return true
     })
     this.writeQueue = operation
-    return operation.then(() => true)
+    return operation
   }
 
   private mutateWindowListAndPersist(
@@ -690,6 +719,7 @@ export class ClientStateManager {
   ): Promise<boolean> {
     if (this.frozen) return Promise.reject(new Error("Client state persistence is frozen for shutdown"))
     const operation = this.writeQueue.catch(() => {}).then(async () => {
+      if (!await this.checkPrimary()) return false
       const previousState = JSON.parse(JSON.stringify(this.state)) as PersistedClientState
       try {
         const result = mutate(this.state)
@@ -713,7 +743,7 @@ export class ClientStateManager {
     )
     try {
       await this.writeState(temporaryPath, serializedState)
-      this.assertReplacementAllowed(rendererToken, windowId)
+      await this.assertReplacementAllowed(rendererToken, windowId)
       await rename(temporaryPath, target)
       await syncDirectory(dirname(this.statePath))
     } catch (error) {
@@ -735,11 +765,12 @@ export class ClientStateManager {
     }
   }
 
-  private assertReplacementAllowed(rendererToken?: unknown, windowId = this.activeWindowId): void {
+  private async assertReplacementAllowed(rendererToken?: unknown, windowId = this.activeWindowId): Promise<void> {
     if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken, windowId)
-    if (!this.isPrimary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
+    if (!await this.checkPrimary() || !await isProcessOwnerLockOwnedAsync(this.lockPath, this.owner)) {
       throw new Error("Client state ownership changed before atomic replacement")
     }
+    if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken, windowId)
   }
 
   private releaseOwnedProcessFiles(): void {
