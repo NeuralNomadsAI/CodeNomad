@@ -1,26 +1,22 @@
-// Explicit interactive qualification against installed OpenCode. Only owned session copies mutate.
+// Interactive qualification against a seeded, private OpenCode database.
 import assert from 'node:assert/strict'
 import {spawn} from 'node:child_process'
-import {mkdir,writeFile} from 'node:fs/promises'
-import {randomUUID,createHash} from 'node:crypto'
+import {writeFile} from 'node:fs/promises'
+import {createHash} from 'node:crypto'
 import path from 'node:path'
-import {connectNative} from './live-access.mjs'
+import {args,requirePrivateCli,withNative} from './live-access.mjs'
+import {prepareRealHistory} from './real-history-prepare.mjs'
+import {seedRealHistory} from './real-history-seed.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
-requireTestSupport()
-const directory=path.resolve(process.argv[2]??''),title=process.argv[3]
-assert(directory&&path.isAbsolute(directory)&&title,'usage: interactive-live.mjs <project-folder> <existing-session-title>')
-const native=await connectNative(),here=path.resolve(import.meta.dirname,'..')
-const profile=path.join(here,'fixture-profile',`interactive-${randomUUID()}`);await mkdir(profile,{recursive:true})
-const list=await native.read(`/api/session?${new URLSearchParams({directory,limit:'200'})}`)
-const sources=list.data.filter(s=>s.title===title&&!s.parentID&&!s.id.startsWith('ses_cn_schedule_'))
-assert.equal(sources.length,1,'unique source session in bounded first catalogue page')
-const source=sources[0]
+requirePrivateCli();requireTestSupport()
+assert.equal(args.length,0,'Usage: interactive-live.mjs --opencode <absolute executable>; external sessions are forbidden')
+await withNative(async native=>{
+const {profile,project:directory}=native
+const source=(await seedRealHistory(native,await prepareRealHistory(native))).info
 const first=await native.read(`/api/session/${source.id}/message?limit=200`)
 assert.equal(first.data.length,200);assert(first.cursor?.next,'source must be a real long history')
-const fork=process.env.RUNE_TEST_REUSE_FORK
-  ? (await native.read(`/api/session/${process.env.RUNE_TEST_REUSE_FORK}`)).data
-  : (await native.read(`/api/session/${source.id}/fork`,{method:'POST',body:'{}'})).data
+const fork=(await native.read(`/api/session/${source.id}/fork`,{method:'POST',body:'{}'})).data
 assert.equal(fork?.fork?.sessionID,source.id,'fork retains the exact real source')
 assert(fork?.id&&fork.id!==source.id&&fork.location.directory.toLowerCase()===directory.toLowerCase())
 const deny=[{action:'*',resource:'*',effect:'deny'}]
@@ -81,3 +77,4 @@ try{
   console.log(JSON.stringify({type:'INTERACTIVE_READY',profile,directory,longTitle,newTitle,pid:child.pid}))
   await new Promise(r=>child.on('exit',r));clearInterval(guard)
 }finally{stopped=true;observer?.abort();if(child?.exitCode===null)child.kill();server.stdin.end();await Promise.race([new Promise(r=>server.on('exit',r)),new Promise(r=>setTimeout(r,3000))]);if(server.exitCode===null)server.kill();await save();await writeFile(path.join(profile,'rust.log'),log)}
+})

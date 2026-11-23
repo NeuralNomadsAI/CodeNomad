@@ -1,19 +1,17 @@
-// Real Rust backend and real existing OpenCode service; fault injection affects only this client's SSE.
+// Real Rust backend and private OpenCode; fault injection affects only this client's SSE.
 import assert from 'node:assert/strict'
-import {readFile,writeFile} from 'node:fs/promises'
+import {writeFile} from 'node:fs/promises'
 import {createServer,request} from 'node:http'
 import {spawn} from 'node:child_process'
 import path from 'node:path'
-import {connectNative} from './live-access.mjs'
+import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
-requireTestSupport()
-const here=path.resolve(import.meta.dirname,'..')
-const file=path.resolve(process.argv[2]??'')
-assert(file.startsWith(path.join(here,'fixture-profile')+path.sep),'owned manifest required')
-const manifest=JSON.parse(await readFile(file,'utf8'))
+requirePrivateCli();requireTestSupport()
+const manifest=await privateManifest(args[0])
 assert.equal(manifest.seedCount,600)
-const native=await connectNative()
+await withNative(async native=>{
+assert.equal(manifest.project,native.project)
 const current=(await native.read(`/api/session/${manifest.sessionID}`)).data
 assert.deepEqual(current.permissions,[{action:'*',resource:'*',effect:'deny'}])
 const info=await native.read('/api/info')
@@ -110,3 +108,4 @@ try{
   await writeFile(path.join(manifest.profile,'real-backend.log'),log)
 }
 process.exitCode=result??1
+},{profile:manifest.profile})

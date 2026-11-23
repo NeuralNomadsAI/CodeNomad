@@ -1,13 +1,10 @@
 import assert from 'node:assert/strict'
-import {readFile,writeFile} from 'node:fs/promises'
+import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {randomUUID} from 'node:crypto'
-import {connectNative} from './live-access.mjs'
-export async function seedRealHistory(file) {
-  file=path.resolve(file)
-  assert(file.startsWith(path.join(path.resolve(import.meta.dirname,'..'),'fixture-profile')+path.sep))
-  const manifest=JSON.parse(await readFile(file,'utf8'))
-  const native=await connectNative()
+import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
+export async function seedRealHistory(native,manifest) {
+  assert.equal(manifest.project,native.project)
   assert(manifest.pluginActive,'history plugin must be active in the disposable Location')
   const transfer=(await native.read(`/api/experimental/session/${manifest.sessionID}/export`)).data
   assert.equal(transfer.messages.length,0,'seed only a newly created empty test session')
@@ -27,4 +24,8 @@ export async function seedRealHistory(file) {
   console.log(JSON.stringify({type:'REAL_HISTORY_SEEDED',rows:600,pageRows:200,permissions:'deny-all',manifest:path.join(manifest.profile,'seeded.json')}))
   return {...native,...next}
 }
-if(process.argv.includes('--seed'))await seedRealHistory(process.argv[process.argv.indexOf('--seed')+1])
+if(args.includes('--seed')){
+  requirePrivateCli()
+  const manifest=await privateManifest(args[args.indexOf('--seed')+1])
+  await withNative(native=>seedRealHistory(native,manifest),{profile:manifest.profile})
+}

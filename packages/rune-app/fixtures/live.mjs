@@ -1,23 +1,20 @@
-// Own backend, real existing OpenCode service, exact disposable session with every tool denied.
+// Own backend and private OpenCode, with every tool denied.
 import assert from 'node:assert/strict'
 import {spawn} from 'node:child_process'
-import {writeFile,readFile} from 'node:fs/promises'
+import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {prepareLive} from './live-session.mjs'
-import {connectNative} from './live-access.mjs'
+import {args,privateManifest,requirePrivateCli,withNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
-requireTestSupport()
-const here=path.resolve(import.meta.dirname,'..')
-const existing=process.argv.indexOf('--reuse')
-let live
-if(existing>=0) {
-  const file=path.resolve(process.argv[existing+1])
-  assert(file.startsWith(path.join(here,'fixture-profile')+path.sep))
-  live={...await connectNative(),...JSON.parse(await readFile(file,'utf8'))}
-} else live=await prepareLive()
+requirePrivateCli();requireTestSupport()
+const existing=args.indexOf('--reuse')
+const manifest=existing<0?null:await privateManifest(args[existing+1])
+await withNative(async native=>{
+const live=manifest?{...native,sessionID:manifest.sessionID}:await prepareLive(native)
 const {profile,project,sessionID}=live
 const current=(await live.read(`/api/session/${sessionID}`)).data
+assert.equal(current.location.directory,project)
 assert.deepEqual(current.permissions,[{action:'*',resource:'*',effect:'deny'}])
 const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:live.origin,CNRS_FIXTURE_PASSWORD:live.password,
   CNRS_SERVER_PASSWORD:'rune-live-private-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
@@ -85,3 +82,4 @@ try {
   if(server.exitCode===null)server.kill()
   await writeFile(path.join(profile,'backend.log'),log)
 }
+},{profile:manifest?.profile})

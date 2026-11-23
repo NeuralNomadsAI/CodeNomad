@@ -1,17 +1,15 @@
 // Explicit real OpenCode test. Own empty project/session; deny all model tools.
 import assert from 'node:assert/strict'
 import {spawn} from 'node:child_process'
-import {mkdir,writeFile} from 'node:fs/promises'
-import {randomUUID} from 'node:crypto'
+import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {connectNative} from './live-access.mjs'
+import {requirePrivateCli,withNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
-import {requireTestSupport,clientBinary} from './fixture-binaries.mjs'
-requireTestSupport()
-const here=path.resolve(import.meta.dirname,'..'),profile=path.join(here,'fixture-profile',`controls-live-${randomUUID()}`)
-const project=path.join(profile,'projects','empty');await mkdir(project,{recursive:true})
-const native=await connectNative(),permissions=[{action:'*',resource:'*',effect:'deny'}]
-const target={id:'opus',providerID:'claude-agent',variant:'low'}
+import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
+requirePrivateCli();requireTestSupport()
+await withNative(async native=>{
+const {profile,project}=native,permissions=[{action:'*',resource:'*',effect:'deny'}]
+const target={id:'alternate',providerID:'fixture',variant:'low'}
 const catalogue=await native.read(`/api/model?${new URLSearchParams({'location[directory]':project})}`)
 assert(catalogue.data.some(m=>m.enabled&&m.id===target.id&&m.providerID===target.providerID&&m.variants?.some(v=>v.id===target.variant)),'existing configured model capability')
 const title='Rune disposable agent-controls test'
@@ -19,7 +17,7 @@ const session=(await native.read('/api/session',{method:'POST',body:JSON.stringi
 await writeFile(path.join(profile,'session.json'),JSON.stringify({session:session.id,project,title},null,2))
 assert(session?.id&&session.location.directory===project)
 const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'fixture-controls-live',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile}
-const server=spawn(process.env.RUNE_SERVER_EXE??path.join(here,'../server-rs/target/controls/debug/codenomad-rs.exe'),[project,path.join(profile,'identity.json'),'0','owned-real-controls'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
+const server=spawn(serverBinary,[project,path.join(profile,'identity.json'),'0','owned-real-controls'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
 let log='',client,result=1,observer,watch,events=[],cleaned=false
 server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d)
 try{
@@ -62,3 +60,4 @@ try{
   }
 }
 process.exitCode=result??1
+})
