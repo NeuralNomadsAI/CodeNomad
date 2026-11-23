@@ -1,3 +1,4 @@
+pub(super) mod behavior;
 mod document;
 
 use crate::{backend::Backend, platform};
@@ -190,7 +191,11 @@ impl Preferences {
             Some("rune.connect_error")
         } else if self.contrast_failed() {
             Some("settings.appearance.contrast.saveError")
-        } else if self.config.write_failed() || self.state.write_failed() {
+        } else if self
+            .config
+            .write_failed_other_than(Choice::NewConversationPermissions)
+            || self.state.write_failed()
+        {
             Some("settings.preferenceSaveFailed")
         } else if self.config.read_failed() || self.state.read_failed() {
             Some("rune.connect_error")

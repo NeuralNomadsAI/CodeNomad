@@ -15,7 +15,7 @@ const unexpected = []
 const reads = []
 const mime = {'.html':'text/html','.js':'text/javascript','.wasm':'application/wasm','.css':'text/css','.json':'application/json','.woff2':'font/woff2'}
 let account = 'First fixture account', detached = false
-let contrast = 'on'
+let contrast = 'on', permissions = 'autonomous'
 const writes = []
 let releaseState
 const stateReady = new Promise(resolve => { releaseState = resolve })
@@ -50,9 +50,10 @@ const server = createServer(async (req,res) => {
         for await (const chunk of req) body += chunk
         const patch = JSON.parse(body)
         writes.push(patch)
-        contrast = patch.settings.highContrast
+        contrast = patch.settings.highContrast ?? contrast
+        permissions = patch.settings.newConversationPermissions ?? permissions
       }
-      return json({settings:{locale:'en',highContrast:contrast}})
+      return json({settings:{locale:'en',highContrast:contrast,newConversationPermissions:permissions}})
     }
     if (p === '/api/storage/state/ui') {
       await stateReady
@@ -115,6 +116,14 @@ try {
   await savedOff
   assert.deepEqual(writes,[{settings:{highContrast:'off'}}])
   assert.equal(await radio('Off').getAttribute('aria-checked'),'true')
+  const permissionTrigger = page.getByRole('button',{name:'New conversation permissions',exact:true})
+  assert.equal(await permissionTrigger.getAttribute('aria-description'),'Autonomous')
+  await permissionTrigger.click({force:true})
+  const savedPermissions = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
+  await page.getByRole('option',{name:'Supervised',exact:true}).click({force:true})
+  await savedPermissions
+  assert.deepEqual(writes.at(-1),{settings:{newConversationPermissions:'supervised'}})
+  await page.locator('button[aria-description="Supervised"]').waitFor({state:'attached'})
   assert.equal(reads.length,0,'General does not load the provider catalogue')
   await radio('Providers').click({force:true})
   await visible(account)
@@ -132,7 +141,7 @@ try {
   await visible(account)
   assert.equal(reads.length-atDisconnect,4,'The reconnected catalogue reloads its four source lists once')
   assert(!unexpected.some(entry=>/\/session-history|\/prompt|\/session\//.test(entry)),unexpected.join('\n'))
-  console.log(JSON.stringify({fixture:'providers-web',contrastSaved:true,initialThemeGated:true,updated:true,revokedWhileDisconnected:true,reconnected:true,requests:reads.length}))
+  console.log(JSON.stringify({fixture:'providers-web',contrastSaved:true,defaultPermissionSaved:true,initialThemeGated:true,updated:true,revokedWhileDisconnected:true,reconnected:true,requests:reads.length}))
 } finally {
   releaseState()
   await browser?.close()

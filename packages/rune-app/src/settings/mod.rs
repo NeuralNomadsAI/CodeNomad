@@ -1,4 +1,5 @@
 //! Preferences owns its native window; its confirmed host settings also feed the shell.
+mod behavior;
 mod contrast;
 #[cfg(not(target_arch = "wasm32"))]
 mod opencode;

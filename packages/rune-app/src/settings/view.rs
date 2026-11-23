@@ -26,6 +26,7 @@ pub(super) struct Window {
     picker: Cell<Option<Picker>>,
     palette_choice: Cell<Option<&'static palettes::Palette>>,
     contrast_help: bool,
+    permissions: super::behavior::Permissions,
     seen_revision: u64,
     section: Section,
     pub(super) opencode: opencode::Status,
@@ -214,6 +215,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             |s: &mut Window, key| {
                 s.picker.set(None);
                 s.contrast_help = false;
+                s.permissions.close();
                 s.section = match key {
                     "settings-opencode" => Section::OpenCode,
                     "settings-providers" => Section::Providers,

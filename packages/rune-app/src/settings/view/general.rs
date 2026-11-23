@@ -155,6 +155,10 @@ pub(super) fn view(
             ),
             palette_picker,
         )))
+        .child(
+            s.permissions
+                .view(&s.shared, layers, |s: &mut Window| &mut s.permissions),
+        )
 }
 
 fn select(

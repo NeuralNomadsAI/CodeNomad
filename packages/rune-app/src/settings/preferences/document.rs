@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) enum Choice {
     Locale,
     Contrast,
+    NewConversationPermissions,
     Mode,
     Palette(bool),
 }
@@ -16,6 +17,9 @@ impl Choice {
         match self {
             Self::Locale => patch["settings"]["locale"] = json!(value),
             Self::Contrast => patch["settings"]["highContrast"] = json!(value),
+            Self::NewConversationPermissions => {
+                patch["settings"]["newConversationPermissions"] = json!(value)
+            }
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
@@ -31,6 +35,9 @@ impl Choice {
         match self {
             Self::Locale => snapshot["settings"]["locale"] == value,
             Self::Contrast => snapshot["settings"]["highContrast"] == value,
+            Self::NewConversationPermissions => {
+                snapshot["settings"]["newConversationPermissions"] == value
+            }
             Self::Mode => appearance["mode"] == value,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
@@ -126,8 +133,15 @@ impl Document {
         !self.write.failed.is_empty()
     }
 
+    pub(super) fn write_failed_other_than(&self, choice: Choice) -> bool {
+        self.write.failed.iter().any(|failed| *failed != choice)
+    }
+
     pub(super) fn stage(&mut self, choice: Choice, value: &'static str) {
-        if choice == Choice::Contrast {
+        if matches!(
+            choice,
+            Choice::Contrast | Choice::NewConversationPermissions
+        ) {
             self.write.failed.remove(&choice);
         }
         self.write.requested.insert(choice, value);

@@ -269,10 +269,24 @@ pub fn card(child: El) -> El {
 }
 
 pub fn setting_row(label: &str, control: El) -> El {
+    setting_row_with_info(label, None, control)
+}
+
+pub fn setting_row_with_info(label: &str, info: Option<El>, control: El) -> El {
     layout::action_row()
         .justify_between()
-        .child(text(label).text_role(TextRole::Button))
+        .child(
+            row()
+                .center_y()
+                .separate(Space::Xs)
+                .child(text(label).text_role(TextRole::Button))
+                .children(info),
+        )
         .child(control)
+}
+
+pub fn info_link<S: 'static>(help: &str, open: impl Fn(&mut S, &mut rune::Tx) + 'static) -> El {
+    layout::button_tx("ⓘ", false, open).label(help).help(help)
 }
 
 pub fn color_scheme(title: &str, mode: &str, segments: El, contrast: El, picker: El) -> El {

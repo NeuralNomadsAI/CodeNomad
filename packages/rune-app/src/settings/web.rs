@@ -27,6 +27,7 @@ pub(super) struct Panel {
     shown: bool,
     section: Section,
     contrast_help: bool,
+    permissions: super::behavior::Permissions,
     catalog: Catalog,
 }
 
@@ -59,6 +60,7 @@ fn close(s: &mut State) {
     let panel = &mut s.settings.web;
     panel.shown = false;
     panel.contrast_help = false;
+    panel.permissions.close();
     panel.catalog.suspend();
     s.settings.shared.borrow_mut().provider_target = None;
 }
@@ -84,10 +86,21 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 panel.catalog.suspend();
             }
             panel.contrast_help = false;
+            panel.permissions.close();
         },
     );
+    let mut layers = Vec::new();
     let body = match panel.section {
-        Section::General => general(panel, prefs, system_more),
+        Section::General => col()
+            .full_width()
+            .child(general(panel, prefs, system_more))
+            .child(
+                panel
+                    .permissions
+                    .view(&s.settings.shared, &mut layers, |s: &mut State| {
+                        &mut s.settings.web.permissions
+                    }),
+            ),
         Section::Providers => {
             let available =
                 prefs.can_retry() && prefs.provider_target.as_ref().is_some_and(Target::online);
@@ -96,21 +109,24 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             })
         }
     };
-    Some(chrome::embedded_section(
-        t("settings.title"),
-        col()
-            .full_width()
-            .separate(Space::Md)
-            .child(navigation)
-            .child(body),
-        layout::button(
-            t("settings.close"),
-            false,
-            screen::action(&s.input_scope, close),
+    Some(
+        chrome::embedded_section(
+            t("settings.title"),
+            col()
+                .full_width()
+                .separate(Space::Md)
+                .child(navigation)
+                .child(body),
+            layout::button(
+                t("settings.close"),
+                false,
+                screen::action(&s.input_scope, close),
+            )
+            .key("close-preferences"),
+            close,
         )
-        .key("close-preferences"),
-        close,
-    ))
+        .children(layers),
+    )
 }
 
 fn general(panel: &Panel, prefs: &Preferences, system_more: bool) -> El {

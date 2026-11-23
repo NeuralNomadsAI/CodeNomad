@@ -1,5 +1,6 @@
 use super::*;
 mod appearance;
+mod behavior;
 mod providers;
 
 #[test]
