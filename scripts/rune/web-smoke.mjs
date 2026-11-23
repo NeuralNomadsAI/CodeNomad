@@ -536,7 +536,7 @@ try {
           }
            assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===(values['history-search']?2:0)))
           assert(routes.some(row=>row.query.includes('cursor=')))
-          if(values['history-search']&&name==='desktop')await historySearch(page,messages,()=>{
+          if(values['history-search']&&(name==='desktop'||name==='phone'))await historySearch(page,messages,touch,()=>{
             const held={release:Promise.withResolvers()}
             holdAnchor=held
             return ()=>{held.release.resolve();holdAnchor=undefined}
