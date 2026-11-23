@@ -11,6 +11,7 @@ import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from 
 import {openSessionSearch, mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste} from './web-paste.mjs'
 import {missionsFixture} from './web-missions.mjs'
+import {recordTouches} from './web-touch-trace.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
@@ -60,6 +61,8 @@ try {
       const context = await browser.newContext({viewport: {width, height}, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch, colorScheme,
         ...(values.mobile?{...android,ignoreHTTPSErrors:true,...(control?{deviceScaleFactor:1}:{})}:{}),
         ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
+      const touches = touch ? [] : undefined
+      if(touch)await recordTouches(context, touches)
       const page = await context.newPage()
       page.setDefaultTimeout(15000)
       if (values.mobile) await page.addInitScript(() => {
@@ -71,7 +74,7 @@ try {
       const missions=values.missions?missionsFixture({page,messages,artifact:path.join(out,`missions-${colorScheme}`),project:values.project}):null
       if(missions)await context.addInitScript(()=>Object.defineProperty(Crypto.prototype,'subtle',{value:undefined}))
       const errors = [], forbiddenRequests = [], routes=[], history=[]
-      let measured, tabBar
+       let measured, tabBar, lastPress
       const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,mobilePreferences:values.mobile===true})
       let eventSource=0
       let releaseLinked
@@ -145,7 +148,11 @@ try {
             await button.scrollIntoViewIfNeeded()
             const box=await button.boundingBox()
             assert(box&&box.width>0&&box.height>0&&box.x>=-1&&box.y>=-1&&box.x+box.width<=width+1&&box.y+box.height<=height+1,`Connected control outside viewport: ${label}`)
-            if(values.mobile)await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
+            if(values.mobile){
+              const x=box.x+box.width/2,y=box.y+box.height/2
+              lastPress={label,role,x,y,requestedAt:Date.now()}
+              await page.touchscreen.tap(x,y)
+            }
             else await button.click({force:true})
           }
           const left=messages['window.menu.leftPanel']
@@ -231,7 +238,7 @@ try {
             if(searchOnly){
               assert.deepEqual(forbiddenRequests,[])
               assert.deepEqual(errors,[])
-              records.push({name,colorScheme,sessionSearchOpened:true,routes})
+              records.push({name,colorScheme,sessionSearchOpened:true,routes,touches})
               continue
             }
             await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
@@ -377,7 +384,7 @@ try {
             assert.equal(forbiddenRequests.length,0,'Launcher recovery may not submit a password')
           }
         }
-        records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,tabBar,...measured,
+         records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,tabBar,touches,...measured,
           ...(values.mobile?{requiredChecksPassed:true,knownGaps:[
             ...(measured.live.older.status==='known-gap'?['older-button-disabled-state']:[]),
             ...(measured.passwordProxy?.status==='known-gap'?['password-input-bridge-proxy']:[]),
@@ -385,7 +392,7 @@ try {
       } catch (error) {
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
         await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot(),
-          marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))}, null, 2))
+           touches,lastPress,marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))}, null, 2))
         throw error
        } finally {missions?.release();releaseLinked?.();await context.close()}
     }
@@ -393,6 +400,6 @@ try {
 } finally {
   await browser.close()
   await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
-    scene: values.connected?'connected':'synthetic', pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
+     scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
 }
 console.log(`Rune web smoke evidence: ${out}`)

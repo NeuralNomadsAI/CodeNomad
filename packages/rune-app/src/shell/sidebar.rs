@@ -16,6 +16,14 @@ use rune_theme_codenomad::{
     },
 };
 
+#[cfg(target_arch = "wasm32")]
+fn mark_action(name: &str) {
+    if let Some(performance) = web_sys::window().and_then(|window| window.performance()) {
+        performance.clear_marks_with_mark_name(name);
+        let _ = web_sys::Performance::mark(&performance, name);
+    }
+}
+
 fn session_rows(
     l: &launcher::Launcher,
     remote_search: bool,
@@ -115,12 +123,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 .expanded(l.show_search)
                 .on_press(screen::action(scope, |s| {
                     #[cfg(target_arch = "wasm32")]
-                    if let Some(performance) =
-                        web_sys::window().and_then(|window| window.performance())
-                    {
-                        performance.clear_marks_with_mark_name("session-search.activate");
-                        let _ = web_sys::Performance::mark(&performance, "session-search.activate");
-                    }
+                    mark_action("session-search.activate");
                     if let Some(l) = s.screen.launcher_mut() {
                         l.show_search = !l.show_search;
                         if !l.show_search {
@@ -192,6 +195,8 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 workspace::active_session(s) == Some(id.as_str()),
                 disabled,
                 screen::action_tx(&s.input_scope, move |s, tx| {
+                    #[cfg(target_arch = "wasm32")]
+                    mark_action("session-select.activate");
                     launcher::choose(s, id.clone(), tx)
                 }),
             )
