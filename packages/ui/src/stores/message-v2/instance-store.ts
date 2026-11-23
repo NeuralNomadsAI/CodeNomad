@@ -255,7 +255,7 @@ export interface InstanceMessageStore {
   state: InstanceMessageState
   setState: SetStoreFunction<InstanceMessageState>
   addOrUpdateSession: (input: SessionUpsertInput) => void
-  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean; confirmPending?: boolean; chunked?: boolean; guard?: () => boolean }) => void | Promise<boolean>
+  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean; confirmPending?: boolean; chunked?: boolean; guard?: () => boolean; keepStreamedArrivals?: boolean }) => void | Promise<boolean>
   reconcileEmptyAuthoritativeSnapshot: (sessionId: string) => void
   reconcileAuthoritativeMessageIds: (sessionId: string, authoritativeIds: ReadonlySet<string>, baselineRevisions: ReadonlyMap<string, number>) => void
   markSendPending: (messageId: string) => void
@@ -610,6 +610,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   interface HydrationPlan {
     revertMessageId: string | undefined
+    /** Resident records at plan time: the diff basis every chunk compares
+     * against, so a row the store has since replaced is decided by content
+     * freshness at the finalize pass, not by whichever writer landed first. */
+    previousRecords: Map<string, MessageRecord | undefined>
     dedupedInputs: MessageUpsertInput[]
     serverIds: string[]
     serverIdSet: Set<string>
@@ -647,6 +651,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     const serverIds = dedupedInputs.map((item) => item.id)
     const serverIdSet = new Set(serverIds)
+    const previousRecords = new Map<string, MessageRecord | undefined>()
+    for (const input of dedupedInputs) {
+      previousRecords.set(input.id, state.messages[input.id])
+    }
     const membership = reconcileHydrationMembership(sessionId, serverIds, serverIdSet, options)
     const previousMessageIds = membership.previousMessageIds
 
@@ -655,6 +663,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     return {
       revertMessageId,
+      previousRecords,
       dedupedInputs,
       serverIds,
       serverIdSet,
@@ -678,6 +687,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     serverIdSet: Set<string>,
     options?: { preserveOmitted?: boolean },
     plannedAgainst?: ReadonlySet<string>,
+    keepArrivals = false,
   ) {
     // Preserve only requests that have not received a promptAsync response
     // yet. Accepted prompts are confirmed under the same messageID, while
@@ -712,10 +722,16 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         continue
       }
       if (!baselineIds.has(id)) {
-        // Arrived after the snapshot was planned: the snapshot never spoke
-        // about this row, so the newer content survives in place.
-        attach(id)
-        keptArrivals = true
+        // Arrived after the snapshot was planned. The snapshot never spoke
+        // about this row: a latest-window load keeps the newer content in
+        // place, while a history replacement drops it exactly as the
+        // synchronous path omits rows its page does not hold.
+        if (keepArrivals) {
+          attach(id)
+          keptArrivals = true
+        } else {
+          omittedIds.push(id)
+        }
         precedingId = id
         continue
       }
@@ -741,12 +757,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // Computes the changed records for one chunk of inputs, mirroring the
   // synchronous pass record-for-record (unchanged records keep the resident
   // object so their Solid subscribers stay quiet).
-  function normalizeHydrationChunk(chunk: MessageUpsertInput[]): Array<{ id: string; record: MessageRecord; previous: MessageRecord | undefined }> {
+  function normalizeHydrationChunk(chunk: MessageUpsertInput[], plan: HydrationPlan): Array<{ id: string; record: MessageRecord; previous: MessageRecord | undefined }> {
     const normalized: Array<{ id: string; record: MessageRecord; previous: MessageRecord | undefined }> = []
     const now = Date.now()
     for (const input of chunk) {
       const normalizedParts = normalizeParts(input.id, input.parts)
-      const previous = state.messages[input.id]
+      const previous = plan.previousRecords.get(input.id)
       const partsChanged = normalizedParts
         ? havePartsChanged(previous?.partIds, previous?.parts, normalizedParts.ids, normalizedParts.map)
         : false
@@ -759,7 +775,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       // The window is re-projected on every native event, so unchanged
       // messages must keep their resident record object: replacing it would
       // notify every Solid subscriber of that message and re-render it.
-      const recordUnchanged = Boolean(previous) && !shouldBump
+      const recordUnchanged = previous !== undefined && !shouldBump
         && previous.role === input.role
         && previous.sessionId === input.sessionId
         && (input.createdAt === undefined || previous.createdAt === input.createdAt)
@@ -785,6 +801,37 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return normalized
   }
 
+  /** Concatenated text/reasoning content of a record, or undefined when its
+   * part structure carries more than prose (tools, files): text streams only
+   * append, so comparing the two signatures orders the writers. */
+  function recordTextSignature(record: MessageRecord | undefined): string | undefined {
+    if (!record) return undefined
+    let text = ""
+    for (const partId of record.partIds) {
+      const part = record.parts[partId]?.data
+      if (!part) continue
+      if (part.type === "text" || part.type === "reasoning") {
+        text += typeof part.text === "string" ? part.text : ""
+      } else {
+        return undefined
+      }
+    }
+    return text
+  }
+
+  /** Whether a fetched record may replace the resident one it was diffed
+   * against: only when the snapshot's text extends what is displayed (the
+   * resident is a strict prefix). A longer or divergent resident is newer
+   * live content a stale snapshot must not regress. */
+  function snapshotExtendsResident(resident: MessageRecord | undefined, next: MessageRecord): boolean {
+    if (resident === undefined) return true
+    const residentText = recordTextSignature(resident)
+    const nextText = recordTextSignature(next)
+    if (residentText === undefined || nextText === undefined) return false
+    if (residentText === "") return true
+    return nextText.startsWith(residentText)
+  }
+
   // A chunked hydration computes its chunks across task boundaries but keeps
   // partial results out of the visible store: concurrent structural writes
   // fence the remaining chunks, and the finalize pass commits atomically,
@@ -794,7 +841,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   async function hydrateMessagesChunked(
     sessionId: string,
     plan: HydrationPlan,
-    options?: { preserveOmitted?: boolean; confirmPending?: boolean; guard?: () => boolean },
+    options?: { preserveOmitted?: boolean; confirmPending?: boolean; guard?: () => boolean; keepStreamedArrivals?: boolean },
   ): Promise<boolean> {
     const chunks: MessageUpsertInput[][] = []
     for (let start = 0; start < plan.dedupedInputs.length; start += HYDRATE_CHUNK_SIZE) {
@@ -812,7 +859,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         await yieldToMainThread()
         if (currentHydrationFence(sessionId) !== fenceToken) return false
       }
-      for (const entry of normalizeHydrationChunk(chunks[index])) {
+      for (const entry of normalizeHydrationChunk(chunks[index], plan)) {
         contentChanged = true
         pendingRecords.push(entry)
       }
@@ -833,7 +880,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     if (options?.guard && !options.guard()) return false
     // Finalize: re-plan membership against the CURRENT rows so rows streamed
     // during the yields survive, then commit everything in one batch.
-    const membership = reconcileHydrationMembership(sessionId, plan.serverIds, plan.serverIdSet, options, new Set(plan.previousMessageIds))
+    const membership = reconcileHydrationMembership(sessionId, plan.serverIds, plan.serverIdSet, options, new Set(plan.previousMessageIds), options?.keepStreamedArrivals === true)
     const infoChangedAny = pendingInfos.length > 0
     if (!contentChanged && membership.omittedIds.length === 0 && !infoChangedAny
       && areMessageIdListsEqual(membership.previousMessageIds, membership.incomingIds)) {
@@ -881,12 +928,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     batch(() => {
       for (const entry of pendingRecords) {
-        // A record the chunk diffed that a newer writer (a live projection)
-        // has since created or replaced keeps the newer content: stale REST
-        // text never regresses what is already displayed. The diff basis
-        // includes `undefined` for rows the snapshot would create, so a row
-        // streamed in between is left alone too.
-        if (state.messages[entry.id] !== entry.previous) continue
+        // The row still holds its plan-time diff basis: the snapshot updates
+        // it. Otherwise a newer writer replaced it between the plan and this
+        // commit; the snapshot wins only when its text extends what the
+        // resident displays (a queued older partial must not mask it, while
+        // longer live content a stale snapshot must not regress).
+        if (state.messages[entry.id] !== entry.previous
+          && !snapshotExtendsResident(state.messages[entry.id], entry.record)) continue
         setState("messages", entry.id, entry.record)
       }
       if (!options?.preserveOmitted && membership.omittedIds.length > 0) {
@@ -936,7 +984,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     sessionId: string,
     inputs: MessageUpsertInput[],
     infos?: Iterable<MessageInfo>,
-    options?: { preserveOmitted?: boolean; confirmPending?: boolean; chunked?: boolean; guard?: () => boolean },
+    options?: { preserveOmitted?: boolean; confirmPending?: boolean; chunked?: boolean; guard?: () => boolean; keepStreamedArrivals?: boolean },
   ): void | Promise<boolean> {
     if (!Array.isArray(inputs) || inputs.length === 0) return
 

@@ -37,9 +37,13 @@ export function seedSessionMessagesV2(
    * task boundaries, fenced against concurrent writes. Returns whether the
    * whole snapshot committed. */
   chunked = false,
-  /** Checked right before the chunked finalize writes: a load whose native
-   * message revision moved while its chunks computed must not publish. */
+  /** Checked right before the chunked finalize writes: a load that lost its
+   * authority while its chunks computed must not publish. */
   guard?: () => boolean,
+  /** Latest-window loads keep rows streamed between chunks; a history
+   * replacement drops them exactly as the synchronous path omits rows its
+   * page does not hold. */
+  keepStreamedArrivals = false,
 ): boolean | Promise<boolean> {
   if (!session || !Array.isArray(messages)) return false
   const store = messageStoreBus.getOrCreate(instanceId)
@@ -73,7 +77,7 @@ export function seedSessionMessagesV2(
     bumpRevision: false,
   }))
 
-  const hydrated = store.hydrateMessages(metadata.id, normalizedMessages, messageInfos?.values(), { preserveOmitted, confirmPending, chunked, guard })
+  const hydrated = store.hydrateMessages(metadata.id, normalizedMessages, messageInfos?.values(), { preserveOmitted, confirmPending, chunked, guard, keepStreamedArrivals })
   if (hydrated && typeof (hydrated as Promise<boolean>).then === "function") {
     return (hydrated as Promise<boolean>).then((committed) => committed)
   }

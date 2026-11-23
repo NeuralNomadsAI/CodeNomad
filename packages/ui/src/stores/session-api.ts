@@ -2202,10 +2202,11 @@ async function loadMessages(
       if (!initialSeed && hasLatestRevisionConflict()) {
         retryAfterRevisionConflict = true
       } else if (!(await seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false, true, true,
-        // A native message event admitted while the chunked seed computed (a
-        // cancelled jump, an SSE update the fetch never saw) must keep the
-        // finalize pass from publishing the stale snapshot.
-        () => getOpenCodeMessageRevision(instanceId, sessionId) === liveMessageRevision))) {
+        // A load that lost its authority while the chunked seed computed (a
+        // cancelled or superseded jump) must not publish; ordinary streaming
+        // keeps it, with the finalize pass deciding rows by freshness.
+        () => isCurrent(),
+        nextWindow.kind === "latest"))) {
         retryAfterRevisionConflict = true
       } else {
         // The chunked seed awaited across task boundaries: the load's

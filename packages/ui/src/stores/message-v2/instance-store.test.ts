@@ -756,7 +756,7 @@ describe("chunked hydration", () => {
   it("keeps rows streamed between chunks and their usage, and never regresses a replaced record", async () => {
     const store = createInstanceMessageStore("chunked-live-writer")
     const inputs = makeInputs(CHUNK_SIZE * 2)
-    const result = store.hydrateMessages("session", inputs, undefined, { chunked: true })
+    const result = store.hydrateMessages("session", inputs, undefined, { chunked: true, keepStreamedArrivals: true })
 
     // Rows streamed between the chunk yields: one appended row the snapshot
     // never knew (with usage), and one replacement of a chunk-0 record.
@@ -774,10 +774,41 @@ describe("chunked hydration", () => {
 
     assert.equal(await result, true)
     const ids = store.getSessionMessageIds("session")
-    assert.ok(ids.includes("msg_zzz_live"), "a row streamed between chunks survives the snapshot commit")
+    assert.ok(ids.includes("msg_zzz_live"), "a row streamed between chunks survives a latest-window snapshot commit")
     assert.equal((store.getMessage("msg_zzz_live")?.parts["msg_zzz_live-part-0"]?.data as { text?: string })?.text, "streamed reply")
-    assert.equal((store.getMessage("msg_010")?.parts["msg_010-part-0"]?.data as { text?: string })?.text, "live SSE text", "a record replaced after its chunk computed keeps the newer content")
+    assert.equal((store.getMessage("msg_010")?.parts["msg_010-part-0"]?.data as { text?: string })?.text, "live SSE text", "divergent live content a snapshot does not extend is never regressed")
     assert.equal(store.getSessionUsage("session")?.totalCost, 2, "streamed usage survives the snapshot's usage rebuild")
+  })
+
+  it("drops rows streamed between chunks of a history replacement", async () => {
+    const store = createInstanceMessageStore("chunked-history-drop")
+    const inputs = makeInputs(CHUNK_SIZE * 2)
+    const result = store.hydrateMessages("session", inputs, undefined, { chunked: true })
+
+    const appended = {
+      id: "msg_zzz_live", sessionId: "session", role: "assistant" as const, status: "streaming" as const,
+      createdAt: 900, updatedAt: 900, parts: [{ type: "text" as const, text: "streamed reply" }],
+    }
+    store.hydrateMessages("session", [appended], undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    assert.equal(store.getSessionMessageIds("session").includes("msg_zzz_live"), false, "a history replacement omits rows its page does not hold")
+  })
+
+  it("lets a snapshot extend displayed partial text it was diffed against", async () => {
+    const store = createInstanceMessageStore("chunked-snapshot-extends")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    // A queued older projection lands a partial prefix of the final text.
+    const partial = base.map((input, index) =>
+      index === 10
+        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "body-1" }] }
+        : input,
+    )
+    const result = store.hydrateMessages("session", base, undefined, { chunked: true })
+    store.hydrateMessages("session", partial, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    assert.equal((store.getMessage("msg_010")?.parts["msg_010-part-0"]?.data as { text?: string })?.text, "body-10", "the snapshot's full text replaces the queued older partial it extends")
   })
 
   it("reaches exactly the state of a single-pass hydrate", async () => {
