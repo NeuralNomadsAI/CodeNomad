@@ -73,7 +73,7 @@ fn click_more(rt: &mut Runtime<State>) {
         .find(|e| e.key.as_deref() == Some("more-sessions") && !e.exiting)
         .expect("More button mounted");
     let (x, y) = rt.find("more-sessions").expect("More button center");
-    let picked = rt.element_at(x, y).map(|hit| hit.path);
+    let picked = rt.element_at(x, y).map(|hit| hit.path().to_owned());
     let eligible = rt
         .state
         .screen
