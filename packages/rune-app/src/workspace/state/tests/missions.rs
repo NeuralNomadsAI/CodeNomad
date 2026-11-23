@@ -228,7 +228,13 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         let cleanups = http.accept().await;
         assert!(rt.find("missions-panel").is_some());
         rt.update(|s, tx| {
-            assert!(crate::settings::authentication_required(s, &http.backend));
+            assert!(crate::settings::conversation_authentication(
+                s,
+                codenomad_client::transport::Authentication {
+                    backend: http.backend.clone(),
+                    confirmed: true,
+                },
+            ));
             tx.instant();
         });
         tick(&mut rt);
