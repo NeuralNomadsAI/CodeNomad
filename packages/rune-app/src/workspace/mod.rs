@@ -21,7 +21,9 @@ pub(crate) use state::{
     opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume, retry,
     schedule_catalogue, select, status, strip, unselect_missing,
 };
-pub(crate) use state::{mission_panel, mission_supported, right_panel_tab, set_right_panel_tab};
+pub(crate) use state::{
+    mission_panel, mission_supported, right_panel_tab, set_right_panel_tab, suspend_missions,
+};
 
 use crate::composer::draft_storage::SavedParts;
 use save_snapshot::encode_for_save;

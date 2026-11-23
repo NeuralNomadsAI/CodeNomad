@@ -75,7 +75,8 @@ fn mission_owner(s: &State) -> Option<&missions::Panel> {
 }
 
 fn mission_edit(s: &mut State) -> (Option<&mut missions::Panel>, &mut TextEdit) {
-    let visible = s.shell.visible(1) && right_panel_tab(s) == RightPanelTab::Missions;
+    let visible =
+        crate::shell::right_panel_visible(s) && right_panel_tab(s) == RightPanelTab::Missions;
     let panel = s.workspace.as_mut().and_then(|ui| {
         visible
             .then(|| &mut ui.entries[ui.active])
@@ -87,6 +88,7 @@ fn mission_edit(s: &mut State) -> (Option<&mut missions::Panel>, &mut TextEdit) 
 pub(super) fn poll_missions(ui: &mut Ui, s: &State) -> bool {
     let mut changed = false;
     let mut selection_changed = false;
+    let mounted = crate::shell::right_panel_visible(s);
     for (index, entry) in ui.entries.iter_mut().enumerate() {
         if index != ui.active {
             if let Some(panel) = &mut entry.missions {
@@ -123,11 +125,11 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State) -> bool {
             changed = true;
         }
         if let Some(panel) = &mut entry.missions {
-            let visible = s.shell.visible(1) && saved.view.right_panel == RightPanelTab::Missions;
+            let visible = mounted && saved.view.right_panel == RightPanelTab::Missions;
             if !visible {
                 panel.show(false);
             }
-            if s.shell.visible(1) {
+            if mounted {
                 panel.probe();
             } else {
                 panel.cancel_probe();
@@ -144,6 +146,15 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State) -> bool {
         ui.changed();
     }
     changed
+}
+
+pub(crate) fn suspend_missions(s: &mut State) {
+    if let Some(ui) = &mut s.workspace
+        && let Some(panel) = &mut ui.entries[ui.active].missions
+    {
+        panel.show(false);
+        panel.cancel_probe();
+    }
 }
 
 pub fn restore_files_mode(s: &mut State) {

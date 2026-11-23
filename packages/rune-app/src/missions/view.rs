@@ -87,21 +87,23 @@ pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
                     ("pending", &cleanup.pending.to_string()),
                 ],
             );
-            body = body.child(
-                col()
-                    .full_width()
-                    .pad(Space::Sm)
-                    .key(format!(
-                        "mission-cleanup-{}-{}",
-                        cleanup.mission_id, cleanup.deletion_id
-                    ))
-                    .child(
-                        text(&cleanup.objective)
-                            .text_role(TextRole::Small)
-                            .wrap_anywhere(),
-                    )
-                    .child(text(counts).text_role(TextRole::Small).wrap_anywhere()),
-            );
+            let mut row = col()
+                .full_width()
+                .pad(Space::Sm)
+                .key(format!(
+                    "mission-cleanup-{}-{}",
+                    cleanup.mission_id, cleanup.deletion_id
+                ))
+                .child(
+                    text(&cleanup.objective)
+                        .text_role(TextRole::Small)
+                        .wrap_anywhere(),
+                )
+                .child(text(counts).text_role(TextRole::Small).wrap_anywhere());
+            if cleanup.document_pending == Some(true) {
+                row = row.child(theme::note(t("missions.cleanup.documentPending"), "status"));
+            }
+            body = body.child(row);
         }
     }
     body = body.child(page_footer(ui, scoped.clone(), Kind::Cleanups));

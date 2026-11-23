@@ -49,6 +49,9 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         tick(&mut rt);
         let meta = http.accept().await;
         assert!(meta.header.starts_with("GET /api/meta "));
+        meta.reply(503, json!({})).await;
+        let meta = http.accept().await;
+        assert!(meta.header.starts_with("GET /api/meta "));
         meta.reply(200, json!({"capabilities":["missions"]})).await;
         test_http::wait(signal.recv()).await.unwrap();
         tick(&mut rt);
@@ -76,7 +79,11 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
                 )
             } else {
                 assert_eq!(source, "cleanups");
-                ("XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc", vec![])
+                let text = r#"{"missionID":"pending","deletionID":"pending-delete","requestID":"request-pending","expectedRevision":4,"deleteManagedSessions":true,"objective":"Only document cleanup","removed":0,"retained":0,"pending":0,"reasons":[],"createdAt":1.2,"documentPending":true}"#;
+                (
+                    "avT82Y_MBECsXLRw2uK9T35u7Z3kBrjXEox3HpLTKRQ",
+                    vec![json!({"index":0,"offset":0,"characters":text.len(),"text":text})],
+                )
             };
             let total = pieces.len();
             let mut page = json!({"available":true,"version":1,"source":source,"projectID":"fixture-project",
@@ -93,6 +100,11 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         }
         tick(&mut rt);
         assert!(rt.accessibility_json().to_string().contains("Alpha 🦀"));
+        assert!(
+            rt.accessibility_json()
+                .to_string()
+                .contains(crate::strings::t("missions.cleanup.documentPending"))
+        );
         click(&mut rt, "mission-row-alpha");
         let ui = rt.state.workspace.as_ref().unwrap();
         assert!(
@@ -103,12 +115,23 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         assert!(rt.find("missions-panel").is_none());
         http.quiet().await;
         click(&mut rt, "right-panel-tab-2");
-        let stale = http.accept().await;
-        click(&mut rt, "right-panel-toggle");
+        let summaries = http.accept().await;
+        let cleanups = http.accept().await;
+        assert!(rt.find("missions-panel").is_some());
+        rt.update(|s, tx| {
+            assert!(crate::settings::authentication_required(s, &http.backend));
+            tx.instant();
+        });
+        tick(&mut rt);
+        assert!(
+            rt.state.shell.visible(1),
+            "the dock geometry still claims space"
+        );
         assert!(rt.find("missions-panel").is_none());
-        let _ = stale
-            .try_reply(503, json!({"available":false,"reason":"changed"}))
-            .await;
+        assert!(rt.find("server-password").is_some());
+        summaries.disconnected().await;
+        cleanups.disconnected().await;
+        http.quiet().await;
         assert_eq!(right_panel_tab(&rt.state), RightPanelTab::Missions);
     });
 }

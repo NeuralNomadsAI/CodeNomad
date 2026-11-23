@@ -11,7 +11,7 @@ const initial=[summary('alpha','Alpha 🦀',1),...Array.from({length:49},(_,i)=>
 const revised=[summary('alpha','Alpha révisée 🦀',2),...initial.slice(1,50),summary('gamma','Gamma',2)]
 const cleanup=JSON.stringify({
   missionID:'old',deletionID:'cleanup',requestID:'request',expectedRevision:1,
-  deleteManagedSessions:false,objective:'Nettoyage vérifié',createdAt:1,removed:0,retained:1,pending:0,reasons:[],
+  deleteManagedSessions:false,objective:'Nettoyage vérifié',createdAt:1,removed:0,retained:1,pending:0,reasons:[],documentPending:true,
 })
 
 export function missionsFixture({page,messages,artifact,project}){
@@ -82,6 +82,7 @@ export function missionsFixture({page,messages,artifact,project}){
     },{search,help:messages['missionsPanel.pages.searchLoaded']})
     assert.equal(await page.getByText(messages['missionsPanel.picker.noMatch'],{exact:true}).count(),0)
     await page.getByText('Nettoyage vérifié',{exact:true}).waitFor()
+    await page.getByText(messages['missions.cleanup.documentPending'],{exact:true}).waitFor()
     await press(more)
     await page.getByText(messages['missionsPanel.picker.noMatch'],{exact:true}).waitFor()
     await filter('Bêta')
