@@ -2,19 +2,44 @@ use crate::{State, files, git};
 use std::borrow::Cow;
 
 pub(super) fn open(s: &mut State, href: &str) -> bool {
+    open_resolved(s, href)
+}
+
+pub(in crate::chat) fn open_native(s: &mut State, path: &str) -> bool {
+    open_resolved(s, &literal(path))
+}
+
+pub(in crate::chat) fn native_file(s: &State, path: &str) -> Option<String> {
+    let (backend, directory) = git::file_link_scope(s)?;
+    path_in_scope(
+        backend.session_directory.as_deref().unwrap_or(directory),
+        directory,
+        &literal(path),
+    )
+}
+
+fn literal(path: &str) -> String {
+    path.replace('%', "%25").replace('#', "%23")
+}
+
+fn open_resolved(s: &mut State, href: &str) -> bool {
     let Some((backend, directory)) = git::file_link_scope(s) else {
         return false;
     };
     let native = backend.session_directory.as_deref().unwrap_or(directory);
-    let Some(path) = resolve(href, native).or_else(|| {
-        (directory != native)
-            .then(|| resolve(href, directory))
-            .flatten()
-    }) else {
+    let Some(path) = path_in_scope(native, directory, href) else {
         return false;
     };
     let (backend, directory) = (backend.clone(), directory.to_owned());
     files::open_session_path(s, &backend, directory, path)
+}
+
+fn path_in_scope(native: &str, directory: &str, href: &str) -> Option<String> {
+    resolve(href, native).or_else(|| {
+        (directory != native)
+            .then(|| resolve(href, directory))
+            .flatten()
+    })
 }
 
 fn resolve(href: &str, base: &str) -> Option<String> {

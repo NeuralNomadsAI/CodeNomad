@@ -122,12 +122,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         shared.transcript_mode(rows.next().unwrap(), false)
     }));
     let transcript_changed = s.settings.last_transcript != transcript;
+    let keep_passage = transcript_changed && s.settings.last_transcript.is_some();
     if transcript_changed {
-        if s.settings.last_transcript.is_some() {
-            s.transcript_display
-                .reading_mut()
-                .keep_passage(tx, |row| shared.transcript_mode(row, false) != "hidden");
-        }
         s.settings.last_transcript = transcript;
         s.revision += 1;
     }
@@ -151,6 +147,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         s.show_launcher();
         crate::workspace::suspend_missions(s);
     } else {
+        if keep_passage {
+            crate::chat::reading::keep_passage(s, tx);
+        }
         if reconnected {
             crate::workspace::mission_event(s, None);
         }

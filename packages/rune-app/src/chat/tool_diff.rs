@@ -226,11 +226,8 @@ pub(super) fn body(
             s,
             key,
             entry,
-            if tool.name == "apply_patch" {
-                path
-            } else {
-                path.rsplit(['/', '\\']).next().unwrap_or_default()
-            },
+            (tool.name != "apply_patch")
+                .then(|| path.rsplit(['/', '\\']).next().unwrap_or_default()),
         ),
         _ => {
             let stamp = (
@@ -299,10 +296,14 @@ pub(super) fn body(
         })
 }
 
-fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
+fn view(s: &State, key: &str, entry: &Entry, path: Option<&str>) -> El {
     let split = entry.state.mode() == DiffMode::Split;
     let wrapped = entry.state.wrap();
-    let file = path.chars().take(250).collect::<String>();
+    let file = path
+        .unwrap_or_default()
+        .chars()
+        .take(250)
+        .collect::<String>();
     let title = if file.is_empty() {
         t("toolCall.diff.label").into()
     } else {
@@ -319,7 +320,7 @@ fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
         .child(
             layout::action_row()
                 .label(t("toolCall.diff.viewMode.ariaLabel"))
-                .child(text(title))
+                .children(path.map(|_| text(title)))
                 .child(
                     markdown::copy_button(
                         t("toolCall.diff.copyPatch"),

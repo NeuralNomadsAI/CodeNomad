@@ -18,6 +18,23 @@ mod context;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "test-support")]
+pub(crate) fn load_scene(s: &mut State) {
+    let native = serde_json::from_str(include_str!("../../fixtures/transcript.json"))
+        .expect("transcript fixture JSON");
+    s.messages = vec![
+        crate::history::decode_message(&native)
+            .expect("transcript fixture record")
+            .into(),
+    ];
+    s.phase = crate::Phase::Ready;
+    crate::settings::fixture_transcript(
+        s,
+        serde_json::from_str(include_str!("../../fixtures/transcript-settings.json"))
+            .expect("transcript fixture preferences"),
+    );
+}
+
 pub(super) fn part_window(len: usize, steps: usize) -> (usize, usize) {
     let initial = if len > PART_LIMIT {
         PART_LIMIT / 2
@@ -190,21 +207,25 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
                     None
                 }
             }
-            Part::Tool(tool) if visible && tools::visible(s, tool) => match groups.get(i, index) {
-                Some(chunk) => {
-                    group_end = chunk.end;
-                    let body = chunk.view(s, &m.id, &m.parts[index..group_end]);
-                    hidden_continuation |= body.is_none();
-                    body
+            Part::Tool(tool)
+                if visible && (tools::visible(s, tool) || groups.awaiting(&m.id, &tool.id)) =>
+            {
+                match groups.get(i, index) {
+                    Some(chunk) => {
+                        group_end = chunk.end;
+                        let body = chunk.view(s, &m.id, &m.parts[index..group_end]);
+                        hidden_continuation |= body.is_none();
+                        body
+                    }
+                    None => Some(super::reading::passage(
+                        s,
+                        tools::view(s, &m.id, tool),
+                        &m.id,
+                        tools::tool_key(&m.id, &tool.id),
+                        Some(crate::settings::TranscriptRow::tool(&tool.name)),
+                    )),
                 }
-                None => Some(super::reading::passage(
-                    s,
-                    tools::view(s, &m.id, tool),
-                    &m.id,
-                    tools::tool_key(&m.id, &tool.id),
-                    Some(crate::settings::TranscriptRow::tool(&tool.name)),
-                )),
-            },
+            }
             Part::Tool(_) => None,
             Part::Reasoning(_) if visible && index >= reasoning_end => {
                 let limit = if index < head && head < tail {

@@ -56,6 +56,9 @@ impl Display {
     pub(crate) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
     }
+    pub(super) fn reading(&self) -> &super::reading::Reading {
+        &self.active.reading
+    }
 
     pub fn bind(&mut self, server: &str, workspace: &str, session: &str) {
         if !self

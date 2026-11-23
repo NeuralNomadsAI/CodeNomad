@@ -123,34 +123,43 @@ pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Opt
     let mut view = col().full_width().separate(Space::Sm);
     for (index, file) in changes.iter().take(FILE_LIMIT).enumerate() {
         let patch = patch(file);
-        if patch.trim().is_empty() {
-            continue;
-        }
-        if remaining == 0 {
-            truncated = true;
-            break;
-        }
         let path = string(file, &["relativePath", "filePath", "file", "path"]);
         let key = format!("{key}-patch-{index}");
+        let label = label(s, file, path, patch, index);
+        let heading = if super::super::links::native_file(s, path).is_some() {
+            let path = path.to_owned();
+            layout::button(
+                &label,
+                false,
+                screen::action(&s.input_scope, move |s| {
+                    super::super::links::open_native(s, &path);
+                }),
+            )
+            .key(format!("{key}-file"))
+        } else {
+            text(label).wrap()
+        };
+        let card = col()
+            .key(key.clone())
+            .full_width()
+            .separate(Space::Sm)
+            .child(heading);
+        rendered += 1;
+        if patch.is_empty() || remaining == 0 {
+            truncated |= !patch.is_empty();
+            view = view.child(card);
+            continue;
+        }
         let mut units = patch.encode_utf16();
         let used = units.by_ref().take(remaining).count();
         let complete = units.next().is_none();
         let fallback = || {
-            let label = if path.is_empty() {
-                catalogue::format(
-                    locale(),
-                    "toolCall.applyPatch.fileFallback",
-                    &[("number", &(index + 1).to_string())],
-                )
-            } else {
-                path.chars().take(250).collect()
-            };
             let snapshot = tool.clone();
             col()
                 .full_width()
                 .separate(Space::Sm)
                 .child(
-                    layout::action_row().child(text(label)).child(
+                    layout::action_row().child(
                         markdown::copy_button(
                             t("toolCall.diff.copyPatch"),
                             screen::action_tx(&s.input_scope, move |_, tx| {
@@ -174,10 +183,134 @@ pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Opt
             } else {
                 fallback()
             };
-        view = view.child(col().key(key).full_width().child(body));
-        rendered += 1;
+        view = view.child(card.child(body));
         remaining -= used;
     }
     Some(view.children(truncated.then(|| text(t("toolCall.output.truncated")).role("status"))))
         .filter(|_| rendered > 0)
+}
+
+#[cfg(test)]
+#[test]
+fn native_file_summaries_include_diff_less_changes_and_open_the_destination() {
+    use rune::{Env, Runtime};
+    use serde_json::json;
+    let row = crate::history::decode_message(&json!({
+        "id":"change","type":"assistant","time":{"completed":1},
+        "content":[{"type":"tool","name":"apply_patch","id":"patch","state":{
+            "status":"completed","metadata":{"files":[
+                {"relativePath":"new.rs","status":"added"},
+                {"relativePath":"gone.rs","status":"deleted"},
+                {"relativePath":"next #1.rs","status":"renamed","oldPath":"old.rs"}
+            ]}
+        }}]
+    }))
+    .unwrap();
+    let mut s = crate::init();
+    s.phase = crate::Phase::Ready;
+    s.messages.push(row.into());
+    let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:1").unwrap();
+    backend.workspace = "owned".into();
+    backend.session = "session".into();
+    backend.session_directory = Some("/project".into());
+    s.files = Some(crate::files::Ui::new(
+        backend.clone(),
+        "/other".into(),
+        s.reads.clone(),
+        s.wake.clone(),
+    ));
+    crate::git::connected_placed(&mut s, &backend, "root");
+    crate::settings::fixture_transcript(
+        &mut s,
+        json!({"toolCallExpansionDefaults":{"tools":{"other":"expanded"}}}),
+    );
+    let mut rt = Runtime::new(
+        s,
+        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+        (1000.0, 900.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.02);
+    let tree = rt.accessibility_json().to_string();
+    assert!(
+        tree.contains("Added · new.rs")
+            && tree.contains("Deleted · gone.rs")
+            && tree.contains("Renamed · old.rs → next #1.rs")
+    );
+    let (x, y) = rt.find("tool-change:5:patch-patch-2-file").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    let files = rt.state.files.as_ref().unwrap();
+    let target = files.reader.target().unwrap();
+    assert_eq!(
+        (target.directory.as_str(), target.path.as_str()),
+        ("/project", "next #1.rs")
+    );
+    assert_eq!(files.tree.directory(), "/other");
+}
+
+fn label(s: &State, file: &Value, path: &str, patch: &str, index: usize) -> String {
+    let display = |path: &str| {
+        super::super::links::native_file(s, path)
+            .unwrap_or_else(|| path.replace('\\', "/"))
+            .chars()
+            .take(250)
+            .collect::<String>()
+    };
+    let mut label = if path.is_empty() {
+        catalogue::format(
+            locale(),
+            "toolCall.applyPatch.fileFallback",
+            &[("number", &(index + 1).to_string())],
+        )
+    } else {
+        display(path)
+    };
+    let mut status = file["status"].as_str().unwrap_or_default();
+    if !path.is_empty()
+        && (status == "renamed" || matches!(status, "" | "modified") && file["file"].is_string())
+    {
+        let header = &patch[..patch.floor_char_boundary(patch.len().min(TOOL_LIMIT))];
+        let header: Vec<_> = header
+            .lines()
+            .take_while(|line| !tool_diff::is_hunk(line))
+            .collect();
+        let old = string(file, &["oldPath", "sourcePath", "oldFilePath"]);
+        let old = (!old.is_empty())
+            .then_some(old)
+            .or_else(|| {
+                header
+                    .iter()
+                    .find_map(|line| line.strip_prefix("rename from "))
+            })
+            .or_else(|| header.iter().find_map(|line| line.strip_prefix("Index: ")))
+            .or_else(|| {
+                header.iter().find_map(|line| {
+                    line.strip_prefix("--- ").map(|old| {
+                        let old = old.split('\t').next().unwrap_or(old);
+                        if header.iter().any(|line| line.starts_with("diff --git ")) {
+                            old.strip_prefix("a/").unwrap_or(old)
+                        } else {
+                            old
+                        }
+                    })
+                })
+            });
+        if let Some(source) = old.filter(|old| !old.is_empty() && *old != "/dev/null") {
+            let source = display(source);
+            if status == "renamed" || source != label && !source.ends_with(&format!("/{label}")) {
+                status = "renamed";
+                label = format!("{source} → {label}");
+            }
+        }
+    }
+    let label_key = match status {
+        "added" => "toolCall.applyPatch.added",
+        "deleted" => "toolCall.applyPatch.deleted",
+        "modified" => "toolCall.applyPatch.modified",
+        "renamed" => "toolCall.applyPatch.renamed",
+        _ => "toolCall.diff.label.withPath",
+    };
+    catalogue::format(locale(), label_key, &[("path", &label)])
 }

@@ -581,6 +581,8 @@ fn delivery_hidden_interruptions_keep_the_active_close_guard_and_button() {
         match kind {
             "form" => {
                 a.forms.push(crate::agent_api::Form {
+                    tool: None,
+                    infer_websearch: false,
                     id: "request".into(),
                     title: "Question".into(),
                     fields: vec![serde_json::json!({"key":"answer","type":"string"})],
@@ -592,6 +594,7 @@ fn delivery_hidden_interruptions_keep_the_active_close_guard_and_button() {
             }
             "reason" => {
                 a.permissions.push(crate::agent_api::Permission {
+                    tool: None,
                     id: "request".into(),
                     action: "read".into(),
                     resources: vec!["/fixture".into()],

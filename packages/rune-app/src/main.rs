@@ -137,6 +137,8 @@ fn setup(s: &mut State, wake: rune::Waker) {
     s.wake = wake.clone();
     #[cfg(feature = "test-support")]
     if platform::scene_is("transcript") {
+        #[cfg(target_arch = "wasm32")]
+        transcript::load_scene(s);
         return;
     }
     #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
@@ -291,7 +293,7 @@ fn run_app() {
                     s.phase = Phase::Ready;
                 }),
                 #[cfg(not(target_arch = "wasm32"))]
-                ("transcript", probes::transcript_scene::load),
+                ("transcript", transcript::load_scene),
                 #[cfg(not(target_arch = "wasm32"))]
                 ("git-changes", probes::git_scene::changes),
                 #[cfg(not(target_arch = "wasm32"))]

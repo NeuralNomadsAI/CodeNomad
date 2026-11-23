@@ -11,7 +11,10 @@ use rune_theme_codenomad::{
     Space, catalogue,
     layout::{self, Layout},
 };
-use std::{collections::HashMap, rc::Rc};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -29,6 +32,7 @@ fn kind(tool: &Tool) -> Option<Kind> {
 
 struct Summary {
     key: String,
+    message: String,
     kind: Kind,
     count: usize,
     reads: usize,
@@ -47,11 +51,17 @@ pub(super) struct Chunk {
 }
 
 #[derive(Default)]
-pub(super) struct Groups(HashMap<(usize, usize), Chunk>);
+pub(super) struct Groups {
+    chunks: HashMap<(usize, usize), Chunk>,
+    waiting: HashMap<String, HashSet<String>>,
+}
 
 impl Groups {
     pub(super) fn project(s: &State) -> Self {
-        let mut index = Self::default();
+        let mut index = Self {
+            waiting: waiting(s),
+            ..Self::default()
+        };
         if transcript_mode(s, TranscriptRow::Groups) == "hidden" {
             return index;
         }
@@ -75,6 +85,9 @@ impl Groups {
                 }
                 match content {
                     Part::Text(text) if text.text.trim().is_empty() => (),
+                    Part::Tool(tool) if index.awaiting(&message.id, &tool.id) => {
+                        index.finish(run.take(), true)
+                    }
                     Part::Tool(tool) if !tools::visible(s, tool) => (),
                     Part::Tool(tool) if let Some(kind) = kind(tool) => {
                         if run.as_ref().is_some_and(|run| run.summary.kind != kind) {
@@ -83,6 +96,7 @@ impl Groups {
                         let run = run.get_or_insert_with(|| Run {
                             summary: Summary {
                                 key: format!("group-{}", tools::tool_key(&message.id, &tool.id)),
+                                message: message.id.clone(),
                                 kind,
                                 count: 0,
                                 reads: 0,
@@ -117,7 +131,7 @@ impl Groups {
         summary.completed |= closed;
         let summary = Rc::new(summary);
         for (i, (row, range)) in chunks.into_iter().enumerate() {
-            self.0.insert(
+            self.chunks.insert(
                 (row, range.start),
                 Chunk {
                     summary: summary.clone(),
@@ -129,17 +143,75 @@ impl Groups {
     }
 
     pub(super) fn get(&self, row: usize, start: usize) -> Option<&Chunk> {
-        self.0.get(&(row, start))
+        self.chunks.get(&(row, start))
+    }
+
+    pub(super) fn awaiting(&self, message: &str, call: &str) -> bool {
+        self.waiting
+            .get(message)
+            .is_some_and(|calls| calls.contains(call))
+    }
+
+    pub(super) fn collapsed_anchor(&self, s: &State, message: &str, key: &str) -> Option<String> {
+        let (row, current) = s
+            .messages
+            .iter()
+            .enumerate()
+            .find(|(_, row)| row.id == message)?;
+        let part = current.parts.iter().position(|part| matches!(part,
+            Part::Tool(tool) if tools::visible(s, tool) && tools::tool_key(message, &tool.id) == key))?;
+        let (_, chunk) = self
+            .chunks
+            .iter()
+            .find(|((owner, start), chunk)| *owner == row && *start <= part && part < chunk.end)?;
+        (!chunk.expanded(s)).then(|| format!("{}/{}", chunk.summary.message, chunk.summary.key))
     }
 }
 
+fn waiting(s: &State) -> HashMap<String, HashSet<String>> {
+    let Some(agent) = &s.agent else {
+        return HashMap::new();
+    };
+    let mut waiting: HashMap<String, HashSet<String>> = HashMap::new();
+    for target in agent
+        .permissions
+        .iter()
+        .filter_map(|req| req.tool.as_ref())
+        .chain(agent.forms.iter().filter_map(|req| req.tool.as_ref()))
+    {
+        waiting
+            .entry(target.message.clone())
+            .or_default()
+            .insert(target.call.clone());
+    }
+    if agent.forms.iter().any(|form| form.infer_websearch)
+        && let Some((message, call)) = s.messages.iter().rev().find_map(|message| {
+            message.parts.iter().rev().find_map(|part| match part {
+                Part::Tool(tool) if tool.name == "websearch" => Some((&message.id, &tool.id)),
+                _ => None,
+            })
+        })
+    {
+        waiting
+            .entry(message.clone())
+            .or_default()
+            .insert(call.clone());
+    }
+    waiting
+}
+
 impl Chunk {
+    fn expanded(&self, s: &State) -> bool {
+        s.transcript_display.expanded(
+            &self.summary.key,
+            transcript_mode(s, TranscriptRow::Groups) == "expanded",
+        )
+    }
+
     pub(super) fn view(&self, s: &State, message: &str, parts: &[Part]) -> Option<El> {
         let summary = &self.summary;
         let key = &summary.key;
-        let expanded = s
-            .transcript_display
-            .expanded(key, transcript_mode(s, TranscriptRow::Groups) == "expanded");
+        let expanded = self.expanded(s);
         if !self.first && !expanded {
             return None;
         }
