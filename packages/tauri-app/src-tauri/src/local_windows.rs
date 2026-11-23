@@ -369,9 +369,7 @@ impl LocalWindows {
             .ok()
             .and_then(|mut registry| registry.mark_focused(label));
         if let (Some(id), Some(state)) = (id, app.try_state::<ClientState>()) {
-            if let Err(error) = state.set_active_window(&id) {
-                eprintln!("[client-state] failed to persist active window: {error}");
-            }
+            state.queue_active_window(app, id);
         }
     }
 

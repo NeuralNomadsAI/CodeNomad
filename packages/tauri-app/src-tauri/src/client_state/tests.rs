@@ -156,6 +156,60 @@ fn failing_state(initially_failing: bool) -> (TempDir, ClientState, Arc<AtomicBo
     .unwrap();
     (directory, state, fail)
 }
+
+#[test]
+fn ordered_ipc_commits_leave_the_event_thread_free_and_drain_before_release() {
+    let directory = tempfile::tempdir().unwrap();
+    let event_thread = thread::current().id();
+    let (entered, writing) = mpsc::channel();
+    let (resume, paused) = mpsc::channel();
+    let paused = std::sync::Mutex::new(Some(paused));
+    let state = Arc::new(ClientState::initialize_at_with_writer(
+        directory.path(),
+        Arc::new(move |path, bytes, valid| {
+            assert_ne!(event_thread, thread::current().id());
+            if let Some(paused) = paused.lock().unwrap().take() {
+                entered.send(()).unwrap();
+                paused.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+            super::write_atomically(path, bytes, valid)
+        }),
+    ).unwrap());
+    enable_restore_in_memory(&state);
+    let window_id = state.active_window_id().unwrap();
+    let key = partition_key("test partition");
+    let (done, completed) = mpsc::channel();
+    let worker = super::commands::ordered_worker(move |task: Option<super::partitions::PartitionCommit>| {
+        if let Some(commit) = task {
+            assert!(state.commit_partitions_guarded(commit, || true).unwrap());
+        } else {
+            state.flush().unwrap();
+            state.release_locks();
+            done.send(()).unwrap();
+        }
+    });
+    for revision in 1..=2 {
+        worker.send(Some(partition_commit(json!({
+            "protocolVersion": 1,
+            "snapshot": partition_root(std::slice::from_ref(&key), json!({"revision": revision})),
+            "partitionKeys": [&key],
+            "partitions": if revision == 1 { json!({(&key): "test partition"}) } else { json!({}) },
+        })))).unwrap();
+    }
+    worker.send(None).unwrap();
+    writing.recv_timeout(Duration::from_secs(5)).unwrap();
+    // This is the dispatching thread; it can process another event while the
+    // worker is held in the real publication path and quit waits behind it.
+    assert_eq!(thread::current().id(), event_thread);
+    assert!(matches!(completed.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    resume.send(()).unwrap();
+    completed.recv_timeout(Duration::from_secs(5)).unwrap();
+    drop(worker);
+    let reopened = ClientState::initialize_at(directory.path()).unwrap();
+    assert_eq!(reopened.load_window(&window_id).unwrap().snapshot["revision"], 2);
+    assert_eq!(reopened.load_partition_guarded(&key, || true).unwrap().as_deref(), Some("test partition"));
+}
+
 fn window() -> NativeWindowState {
     NativeWindowState {
         bounds: bounds(20, 30, 1400, 900),

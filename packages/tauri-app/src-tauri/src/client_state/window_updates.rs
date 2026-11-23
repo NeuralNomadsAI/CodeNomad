@@ -14,6 +14,7 @@ pub(super) struct WindowGeometry {
 #[derive(Default)]
 pub(super) struct WindowCaptures {
     latest: HashMap<String, NativeWindowState>,
+    active: Option<String>,
     // A clear/disable/removal is tentative until publication. Keep admission
     // based on its previous policy so a failed write cannot drop live events.
     mutation: Option<(String, Option<NativeWindowState>)>,
@@ -22,6 +23,16 @@ pub(super) struct WindowCaptures {
 }
 
 impl ClientState {
+    pub(crate) fn queue_active_window(&self, app: &tauri::AppHandle, id: String) {
+        if let Ok(mut pending) = self.pending_windows.lock() {
+            if pending.stopped {
+                return;
+            }
+            pending.active = Some(id);
+        }
+        self.schedule_window_flush(app);
+    }
+
     pub(super) fn capture_window_geometry(
         &self,
         window_id: &str,
@@ -115,9 +126,16 @@ impl ClientState {
             .map_err(|error| error.to_string())?;
         if state.unsupported_future_envelope {
             pending.latest.clear();
+            pending.active = None;
             return Ok(());
         }
         let mut applied = false;
+        if let Some(id) = pending.active.take() {
+            if id != state.active_window_id && state.record(&id).is_ok() {
+                state.active_window_id = id;
+                applied = true;
+            }
+        }
         for (id, capture) in pending.latest.drain() {
             if id == crate::preferences_window::LABEL {
                 state.preferences_window = Some(capture);
@@ -195,7 +213,7 @@ impl ClientState {
                 .lock()
                 .map_err(|error| error.to_string())?;
             if state.unsupported_future_envelope
-                || (pending.latest.is_empty() && !pending.unpublished)
+                || (pending.latest.is_empty() && pending.active.is_none() && !pending.unpublished)
             {
                 return Ok(());
             }

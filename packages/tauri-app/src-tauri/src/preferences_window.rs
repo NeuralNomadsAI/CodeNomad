@@ -517,7 +517,7 @@ pub(crate) fn preferences_get_request(
     Ok(preferences.request())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn preferences_accept_request(
     webview: tauri::Webview,
     app: AppHandle,
@@ -688,6 +688,7 @@ pub(crate) fn suspend_guard(app: &AppHandle) {
 }
 
 pub(crate) fn approve_close(app: &AppHandle) -> Result<(), String> {
+    crate::client_state::capture_and_flush_window(app, LABEL);
     app.state::<crate::client_state::ClientState>()
         .set_preferences(None)?;
     app.state::<PreferencesWindow>()
@@ -704,11 +705,22 @@ pub(crate) fn intercept_close(app: &AppHandle) -> bool {
         .state
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    if std::mem::take(&mut state.close_approved) || !state.renderer_ready {
+    if std::mem::take(&mut state.close_approved) {
         return false;
     }
     if let Some(window) = app.get_webview_window(LABEL) {
-        let _ = window.emit("preferences:close-requested", ());
+        if state.renderer_ready {
+            let _ = window.emit("preferences:close-requested", ());
+        } else {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                if let Err(error) = approve_close(&app)
+                    .and_then(|()| window.close().map_err(|error| error.to_string()))
+                {
+                    eprintln!("[client-state] failed to close Preferences: {error}");
+                }
+            });
+        }
     }
     true
 }

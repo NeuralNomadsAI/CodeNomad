@@ -97,7 +97,7 @@ pub(crate) fn bind_microphone(window: &tauri::WebviewWindow, remote: bool) {
     });
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn device_speech_request(
     webview: Webview,
     state: State<'_, AppState>,

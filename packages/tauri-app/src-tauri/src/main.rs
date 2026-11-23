@@ -415,7 +415,7 @@ fn claim_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) -> bool
     claim_unowned_remote_proxy_session(&profiles, &mut claims, session_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn window_control(
     webview: tauri::Webview,
     app: AppHandle,
@@ -577,7 +577,7 @@ async fn browser_target_action(
         .map_err(|error| embedded_view::diagnostics::preview_error("target action", error))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn browser_target_unregister(
     webview: tauri::Webview,
     app: AppHandle,
@@ -730,7 +730,7 @@ struct WakeLockConfig {
     sleep: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cli_get_status(
     webview: tauri::Webview,
     state: tauri::State<AppState>,
@@ -753,7 +753,7 @@ async fn cli_renew_managed_session(
         .map_err(|_| "Session renewal unavailable".to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cli_restart(
     webview: tauri::Webview,
     app: AppHandle,
@@ -775,7 +775,7 @@ fn cli_restart(
     .unwrap_or_else(|| Err("Application shutdown is in progress".to_string()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn wake_lock_start(
     webview: tauri::Webview,
     state: tauri::State<AppState>,
@@ -805,7 +805,7 @@ fn wake_lock_start(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<AppState>) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
     let mut state_lock = state.wake_lock.lock().map_err(|err| err.to_string())?;
@@ -860,7 +860,7 @@ fn should_open_external_url(url: &Url) -> bool {
 }
 
 /// The renderer's system opener (application and Preferences windows).
-#[tauri::command]
+#[tauri::command(async)]
 fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
     let url = Url::parse(&url).map_err(|error| error.to_string())?;
     if !should_open_external_url(&url) {
@@ -1420,7 +1420,7 @@ fn clear_remote_window_metadata(
     true
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn needs_local_certificate_install(
     webview: tauri::Webview,
     state: tauri::State<AppState>,
@@ -2447,19 +2447,10 @@ fn main() {
                     remote_dictation::remote_navigation_pending(&app_handle, &label, None);
                 }
                 if label == preferences_window::LABEL {
-                    client_state::capture_and_flush_window(&app_handle, &label);
                     if shutdown::exit_allowed(&app_handle) {
                         return;
                     }
                     if preferences_window::intercept_close(&app_handle) {
-                        api.prevent_close();
-                        return;
-                    }
-                    if let Err(error) = app_handle
-                        .state::<client_state::ClientState>()
-                        .set_preferences(None)
-                    {
-                        eprintln!("[client-state] failed to close Preferences: {error}");
                         api.prevent_close();
                     }
                     return;

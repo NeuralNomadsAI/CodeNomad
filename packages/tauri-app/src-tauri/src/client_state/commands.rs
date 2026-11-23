@@ -5,38 +5,32 @@ use tauri::{AppHandle, State, Webview};
 use url::Url;
 
 pub(crate) fn with_ordered_ipc(
-    fallback: impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool,
-) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool {
-    let (send, receive) = std::sync::mpsc::channel::<tauri::ipc::Invoke<tauri::Wry>>();
-    std::thread::Builder::new()
-        .name("client-state-ipc".into())
-        .spawn(move || {
-            let dispatch = tauri::generate_handler![
-                client_state_claim_access,
-                client_state_load,
-                client_state_load_file_drafts,
-                client_state_save_file_draft,
-                client_state_save,
-                client_state_commit_partitions,
-                client_state_load_partition,
-                client_state_set_restore_enabled,
-                client_state_clear,
-                client_state_renderer_flushed,
-                client_state_navigation_flushed,
-                client_state_startup_command_result,
-            ];
-            for invoke in receive {
-                // The prefix is reserved for this handler; unknown names still
-                // get a response, including if Tauri prunes a command at build time.
-                if !dispatch(tauri::ipc::Invoke {
-                    resolver: invoke.resolver.clone(),
-                    ..invoke
-                }) {
-                    invoke.resolver.reject("Unknown client state command");
-                }
-            }
-        })
-        .expect("start client state IPC worker");
+    fallback: impl Fn(Invoke) -> bool,
+) -> impl Fn(Invoke) -> bool {
+    let dispatch: fn(Invoke) -> bool = tauri::generate_handler![
+        client_state_claim_access,
+        client_state_load,
+        client_state_load_file_drafts,
+        client_state_save_file_draft,
+        client_state_save,
+        client_state_commit_partitions,
+        client_state_load_partition,
+        client_state_set_restore_enabled,
+        client_state_clear,
+        client_state_renderer_flushed,
+        client_state_navigation_flushed,
+        client_state_startup_command_result,
+    ];
+    let send = ordered_worker(move |invoke: Invoke| {
+        // The prefix is reserved for this handler; unknown names still
+        // get a response, including if Tauri prunes a command at build time.
+        if !dispatch(Invoke {
+            resolver: invoke.resolver.clone(),
+            ..invoke
+        }) {
+            invoke.resolver.reject("Unknown client state command");
+        }
+    });
     move |invoke| {
         if !invoke.message.command().starts_with("client_state_") {
             return fallback(invoke);
@@ -48,6 +42,19 @@ pub(crate) fn with_ordered_ipc(
         }
         true
     }
+}
+
+type Invoke = tauri::ipc::Invoke<tauri::Wry>;
+
+pub(super) fn ordered_worker<T: Send + 'static>(
+    dispatch: impl Fn(T) + Send + 'static,
+) -> std::sync::mpsc::Sender<T> {
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("client-state-ipc".into())
+        .spawn(move || receive.into_iter().for_each(dispatch))
+        .expect("start client state IPC worker");
+    send
 }
 
 fn same_origin(url: &Url, expected: &str) -> bool {
