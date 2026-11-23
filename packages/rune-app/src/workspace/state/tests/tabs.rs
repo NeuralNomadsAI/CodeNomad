@@ -16,12 +16,18 @@ fn a_recorded_notification_click_returns_to_its_own_project_and_conversation_onc
         second.workspace_id = Some("workspace-second".into());
         let ui = s.workspace.as_mut().unwrap();
         ui.entries[0].saved = Tab::Workspace(first);
+        ui.entries[0].binding = Some(Backend {
+            workspace: "workspace-first".into(),
+            session: "session-first".into(),
+            ..http.backend.clone()
+        });
         ui.entries
             .push(entry("tab-1".into(), Tab::Workspace(second)));
         s.notifications.record();
         let mut other = init();
         other.notifications.record();
         let original = notification_target(&s).unwrap().0;
+        assert_eq!(original.backend_url, http.backend.base);
         let mut rt = runtime(s);
         rt.update(|s, tx| {
             let (target, title) = notification_target(s).unwrap();
@@ -37,6 +43,7 @@ fn a_recorded_notification_click_returns_to_its_own_project_and_conversation_onc
             assert_eq!(other.notifications.recorded()[0].2, "Another window");
             select(s, "tab-1", tx);
             assert_eq!(active_session(s), Some("session-second"));
+            assert!(owns_notification(s, &target));
             s.screen.launcher_mut().unwrap().pending = true;
             s.wake = std::sync::Arc::new(move || {
                 let _ = wake.try_send(());
@@ -78,11 +85,34 @@ fn a_recorded_notification_click_returns_to_its_own_project_and_conversation_onc
             s.notifications.simulate_click(0);
             assert!(!crate::shell::notifications::poll(s, tx));
             assert_eq!(active_session(s), Some("session-second"));
+            s.notifications
+                .present("fixture", "Deleted", original.clone(), s.wake.clone());
+            s.notifications.simulate_click(1);
+            assert!(!crate::shell::notifications::poll(s, tx));
+        });
+        http.accept()
+            .await
+            .reply(
+                200,
+                json!([{"id":"workspace-first","location":{"directory":"/fixture"}}]),
+            )
+            .await;
+        http.accept()
+            .await
+            .reply(
+                404,
+                json!({"_tag":"SessionNotFoundError","sessionID":"session-first"}),
+            )
+            .await;
+        wait(events.recv()).await.unwrap();
+        rt.update(|s, tx| {
+            assert!(!crate::shell::notifications::poll(s, tx));
+            assert_eq!(s.workspace.as_ref().unwrap().active_key(), "tab-1");
             let mut stale = original;
             stale.occurrence += 1;
             s.notifications
                 .present("fixture", "Stale", stale, s.wake.clone());
-            s.notifications.simulate_click(1);
+            s.notifications.simulate_click(2);
             assert!(!crate::shell::notifications::poll(s, tx));
             assert_eq!(active_session(s), Some("session-second"));
         });
