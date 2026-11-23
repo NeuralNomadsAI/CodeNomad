@@ -443,7 +443,7 @@ export const settingsMessages = {
   "settings.opencode.update.title": "OpenCode version",
   "settings.opencode.update.subtitle": "Installed version of the configured OpenCode binary.",
   "settings.opencode.update.checking": "Reading installed version...",
-  "settings.opencode.update.checkFailed": "Could not read the installed OpenCode version.",
+  "settings.opencode.update.checkFailed": "Could not check for OpenCode updates.",
   "settings.opencode.update.retry": "Try again",
   "settings.opencode.update.installed": "Installed version",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} is available. Automatic installation is not supported by OpenCode V2.",

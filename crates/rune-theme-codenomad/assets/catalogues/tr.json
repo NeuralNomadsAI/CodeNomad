@@ -2775,7 +2775,7 @@
   "settings.opencode.update.action": "OpenCode {version} sürümüne güncelle",
   "settings.opencode.update.available": "OpenCode {version} kullanılabilir.",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} mevcut. Otomatik kurulum OpenCode V2 tarafından desteklenmiyor.",
-  "settings.opencode.update.checkFailed": "OpenCode'un kurulu sürümü okunamadı.",
+  "settings.opencode.update.checkFailed": "OpenCode güncellemeleri denetlenemedi.",
   "settings.opencode.update.checking": "Kurulu sürüm okunuyor...",
   "settings.opencode.update.failed": "OpenCode güncellemesi başarısız oldu. Kurulu sürümünüz değiştirilmedi.",
   "settings.opencode.update.installed": "Kurulu sürüm",

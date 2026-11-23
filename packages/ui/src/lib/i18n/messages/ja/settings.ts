@@ -442,7 +442,7 @@ export const settingsMessages = {
   "settings.opencode.update.title": "OpenCode バージョン",
   "settings.opencode.update.subtitle": "設定された OpenCode バイナリのインストール済みバージョンです。",
   "settings.opencode.update.checking": "インストール済みバージョンを読み込んでいます...",
-  "settings.opencode.update.checkFailed": "インストール済みの OpenCode バージョンを読み込めませんでした。",
+  "settings.opencode.update.checkFailed": "OpenCode の更新を確認できませんでした。",
   "settings.opencode.update.retry": "再試行",
   "settings.opencode.update.installed": "インストール済みバージョン",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} を利用できます。OpenCode V2 は自動インストールに対応していません。",

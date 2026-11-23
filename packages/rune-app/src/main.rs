@@ -311,6 +311,12 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::AgentHint(catalog) => {
+                if catalog
+                    && s.screen.launcher().is_none()
+                    && let Some(backend) = settings::bound_backend(s)
+                {
+                    settings::provider_changed(s, &backend.workspace);
+                }
                 if let Some(a) = s.agent.as_mut() {
                     if catalog {
                         a.online = true;
@@ -319,6 +325,16 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Workspace(event) => {
+                use codenomad_client::transport::WorkspaceEvent;
+                match &event {
+                    WorkspaceEvent::ProvidersChanged { workspace_id } => {
+                        settings::provider_changed(s, workspace_id)
+                    }
+                    WorkspaceEvent::Stopped { workspace_id } => {
+                        settings::provider_stopped(s, workspace_id)
+                    }
+                    _ => {}
+                }
                 git::event(s, &event);
                 if let Some(files) = &mut s.files {
                     files.event(event);

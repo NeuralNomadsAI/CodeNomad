@@ -240,3 +240,15 @@ pub fn color_scheme(title: &str, mode: &str, segments: El, picker: El) -> El {
         .child(layout::action_row().child(text(mode)).child(segments))
         .child(picker)
 }
+
+pub fn disclosure<S: 'static>(
+    label: &str,
+    open: bool,
+    body: El,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    rune_kit::Collapsible::new(label, open)
+        .child(body)
+        .on_toggle(toggle)
+        .build(crate::kit(layout::dark()))
+}

@@ -1,4 +1,5 @@
 //! Host-owned configuration and appearance, independent of any project location.
+mod providers;
 use crate::{
     Wake,
     backend::{Backend, read_json},
@@ -6,6 +7,8 @@ use crate::{
     recovery::Input,
     runtime, stream,
 };
+pub(crate) use providers::provider_change;
+pub use providers::{Provider, providers};
 use serde_json::Value;
 use std::{
     sync::{
@@ -57,6 +60,112 @@ fn owner(value: Value) -> Result<Value> {
         Ok(value)
     } else {
         Err("Invalid preferences owner document".into())
+    }
+}
+
+pub struct OpenCodeStatus {
+    pub current: Option<String>,
+    pub running: Option<String>,
+    pub minimum: Option<String>,
+    pub recommended: Option<String>,
+    pub latest: Option<String>,
+    pub update_available: bool,
+    pub check_failed: bool,
+    pub state: &'static str,
+    pub restart: Option<&'static str>,
+}
+
+pub async fn opencode_status(backend: &Backend, recheck: bool) -> Result<OpenCodeStatus> {
+    let mut request = backend
+        .client
+        .get(format!("{}api/opencode/update", backend.base));
+    // The host can spend 60 s on the release lookup before probing the daemon.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        request = request.timeout(Duration::from_secs(120));
+    }
+    if recheck {
+        request = request.query(&[("recheck", "1")]);
+    }
+    open_code_status(read_json(request.send().await?.error_for_status()?).await?)
+}
+
+fn open_code_status(data: Value) -> Result<OpenCodeStatus> {
+    let text = |name: &str| {
+        data[name]
+            .as_str()
+            .filter(|value| {
+                !value.is_empty() && value.len() <= 256 && !value.contains(char::is_control)
+            })
+            .map(str::to_owned)
+    };
+    let service = data["serviceState"].as_str();
+    let state = match (data["state"].as_str(), service) {
+        (_, Some("ready" | "restart_available")) => "connected",
+        (_, Some("error")) => "serviceError",
+        (_, Some("restart_required" | "incompatible")) => "update_required",
+        (Some("ready"), _) => "disconnected",
+        (Some("missing"), _) => "missing",
+        (Some("update_required"), _) => "update_required",
+        (Some("error"), _) => "error",
+        _ => return Err("Invalid OpenCode status".into()),
+    };
+    Ok(OpenCodeStatus {
+        state,
+        restart: match service {
+            Some("restart_available") => Some("settings.opencode.setup.restartAvailable"),
+            Some("restart_required") => Some("settings.opencode.setup.restartRequired"),
+            _ => None,
+        },
+        current: text("currentVersion"),
+        running: text("daemonVersion"),
+        minimum: text("minimumVersion"),
+        recommended: text("recommendedVersion"),
+        latest: text("latestVersion"),
+        update_available: data["updateAvailable"] == true,
+        check_failed: data["checkError"] == "update_check_failed",
+    })
+}
+
+#[cfg(test)]
+#[test]
+fn setup_status_distinguishes_daemon_from_executable_and_redacts_invalid_fields() {
+    let data = serde_json::json!({
+        "state":"ready", "serviceState":"stopped", "currentVersion":"2.3.0",
+        "daemonVersion":"line\nbreak", "minimumVersion":"2.2.3"
+    });
+    let status = open_code_status(data).unwrap();
+    assert_eq!(status.state, "disconnected");
+    assert_eq!(status.current.as_deref(), Some("2.3.0"));
+    assert!(status.running.is_none());
+    assert!(open_code_status(serde_json::json!({"state":"unrecognized"})).is_err());
+}
+
+#[cfg(test)]
+#[test]
+fn setup_status_keeps_restart_decisions_separate_from_update_lookup() {
+    for (service, state, label) in [
+        (
+            "restart_available",
+            "connected",
+            "settings.opencode.setup.restartAvailable",
+        ),
+        (
+            "restart_required",
+            "update_required",
+            "settings.opencode.setup.restartRequired",
+        ),
+    ] {
+        let status = open_code_status(serde_json::json!({
+            "state":"ready", "serviceState":service, "currentVersion":"2.3.0",
+            "daemonVersion":"2.2.5", "checkError":"update_check_failed"
+        }))
+        .unwrap();
+        assert_eq!(status.state, state);
+        assert_eq!(status.restart, Some(label));
+        assert_eq!(status.running.as_deref(), Some("2.2.5"));
+        assert!(status.check_failed);
+        assert!(!status.update_available);
     }
 }
 

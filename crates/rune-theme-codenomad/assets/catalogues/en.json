@@ -2775,7 +2775,7 @@
   "settings.opencode.update.action": "Update to OpenCode {version}",
   "settings.opencode.update.available": "OpenCode {version} is available.",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} is available. Automatic installation is not supported by OpenCode V2.",
-  "settings.opencode.update.checkFailed": "Could not read the installed OpenCode version.",
+  "settings.opencode.update.checkFailed": "Could not check for OpenCode updates.",
   "settings.opencode.update.checking": "Reading installed version...",
   "settings.opencode.update.failed": "The OpenCode update failed. Your installed version was not changed.",
   "settings.opencode.update.installed": "Installed version",
