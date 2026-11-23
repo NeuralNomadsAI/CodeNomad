@@ -51,9 +51,13 @@ mod tests {
     #[test]
     fn budget_evicts_the_least_recently_viewed_inactive_content_only() {
         let mut ui = Ui::new();
-        for (key, touched) in [("a", 2), ("b", 3), ("c", 1)] {
+        for (key, touched) in [("a", 2), ("b", 3), ("c", 1), ("live", 0)] {
             let mut s = crate::init();
-            s.phase = Phase::Ready;
+            s.phase = if key == "live" {
+                Phase::Streaming
+            } else {
+                Phase::Ready
+            };
             s.draft = rune::edit::TextEdit::new(key);
             s.messages.push(Message {
                 id: key.into(),
@@ -67,9 +71,10 @@ mod tests {
             item.cache = Some(Cache::take(&mut s));
             ui.entries.push(item);
         }
-        trim(&mut ui, 2, usize::MAX);
+        trim(&mut ui, 3, usize::MAX);
         assert_eq!(ui.entries[1].cache.as_ref().unwrap().history_weight().0, 1);
         assert_eq!(ui.entries[2].cache.as_ref().unwrap().history_weight().0, 1);
+        assert_eq!(ui.entries[4].cache.as_ref().unwrap().history_weight().0, 1);
         let evicted = ui.entries[3].cache.take().unwrap();
         let mut s = crate::init();
         evicted.apply(&mut s);

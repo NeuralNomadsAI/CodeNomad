@@ -22,8 +22,8 @@ impl Default for Reading {
 }
 
 impl Reading {
-    pub(crate) fn bookmark(&self) -> Bookmark {
-        if !self.following
+    pub(crate) fn bookmark(&self, gap: bool) -> Bookmark {
+        if (gap || !self.following)
             && let Some((id, offset)) = &self.top
         {
             Bookmark::Message {
@@ -97,13 +97,20 @@ mod tests {
         reading.record("anchor", 100.0, [0.0, 80.0, 500.0, 60.0]);
         reading.record("next", 100.0, [0.0, 140.0, 500.0, 60.0]);
         assert_eq!(
-            reading.bookmark(),
+            reading.bookmark(false),
             Bookmark::Message {
                 id: "anchor".into(),
                 offset: -20.0
             }
         );
         reading.following = true;
-        assert_eq!(reading.bookmark(), Bookmark::Latest);
+        assert_eq!(reading.bookmark(false), Bookmark::Latest);
+        assert_eq!(
+            reading.bookmark(true),
+            Bookmark::Message {
+                id: "anchor".into(),
+                offset: -20.0,
+            }
+        );
     }
 }

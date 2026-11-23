@@ -276,6 +276,72 @@ fn dropping_the_sse_receiver_releases_an_idle_connection() {
         assert!(!state.valid(0));
     });
 }
+
+#[test]
+fn a_queued_prompt_has_one_http_attempt_with_the_reader_and_upstream_events_down() {
+    use crate::{
+        recovery::{ReadingLane, demand},
+        transport::{Command, Event},
+    };
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut backend =
+                Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+                    .await
+                    .unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let (out, events) = bounded(8);
+            let (commands, input) = bounded(1);
+            let (demand, observer) = demand::open();
+            let (content, _snapshots) = bounded(1);
+            demand.publish(None);
+            let task = tokio::spawn(crate::transport::run_backend_reading(
+                backend, out, input, Arc::new(|| {}), ReadingLane { demand: observer, events: content },
+            ));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(socket);
+            let mut headers = Vec::new();
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" { break; }
+                headers.push(line);
+            }
+            assert!(headers[0].starts_with("GET /api/events?"));
+            stream.get_mut().write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n\
+                data: {\"instanceId\":\"workspace\",\"type\":\"instance.eventStatus\",\"status\":\"disconnected\"}\n\n")
+                .await.unwrap();
+            while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
+
+            commands.send(Command::Send("queued prompt".into())).await.unwrap();
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut prompt = BufReader::new(socket);
+            let mut header = String::new();
+            prompt.read_line(&mut header).await.unwrap();
+            assert!(header.starts_with("POST /workspaces/workspace/instance/api/session/session/prompt "));
+            loop {
+                header.clear();
+                assert!(prompt.read_line(&mut header).await.unwrap() > 0);
+                if header == "\r\n" { break; }
+            }
+            let expected = br#"{"text":"queued prompt"}"#;
+            let mut body = vec![0; expected.len()];
+            prompt.read_exact(&mut body).await.unwrap();
+            assert_eq!(body, expected);
+            prompt.get_mut().write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await.unwrap();
+            commands.send(Command::Close).await.unwrap();
+            task.await.unwrap().unwrap();
+            assert!(tokio::time::timeout(Duration::from_millis(30), listener.accept()).await.is_err());
+        })
+        .await
+        .expect("single owned POST must not depend on transcript or SSE availability");
+    });
+}
+
 #[test]
 fn publishing_to_a_dropped_display_channel_returns_without_waking_it() {
     run(async {
