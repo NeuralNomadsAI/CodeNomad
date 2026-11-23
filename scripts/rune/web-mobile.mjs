@@ -44,11 +44,19 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
         ? route.continue() : route.abort()
     })
     const get = (pathname, options) => context.request.get(new URL(pathname, origin).href, {maxRedirects:0,...options})
+    const entryHeaders={accept:'text/html',referer:'https://rune-pair-source.test/'}
+    const entry=method=>context.request.fetch(`${origin}/`,{method,maxRedirects:0,headers:entryHeaders})
     assert.equal((await get('/api/workspaces')).status(), 401)
     assert.deepEqual(await (await get('/api/auth/status')).json(), {authenticated:false,pairingRequired:true})
     const redirect = await get('/', {maxRedirects:0,headers:{accept:'text/html'}})
     assert.equal(redirect.status(), 302)
     assert.equal(redirect.headers().location, '/remote-pair')
+    if(fromLink)for(const method of ['GET','HEAD']){
+      const response=await entry(method)
+      assert.equal(response.status(),302,`${method} from an external page must redirect before pairing`)
+      assert.equal(response.headers().location,'/remote-pair')
+      if(method==='HEAD')assert.equal((await response.body()).length,0)
+    }
     const guide = await get('/remote-pair')
     assert.equal(guide.headers()['cache-control'], 'no-store')
     assert.equal(guide.headers()['referrer-policy'], 'no-referrer')
@@ -64,11 +72,21 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
       return matches
     }), 'The pairing card consumes the shared overlay token')
     url.searchParams.set('locale','fr')
-    await navigatePair(page,url,{fromLink})
+    await navigatePair(page,url,{fromLink,assets})
     const cookies = await context.cookies()
     assert(cookies.some(c => c.name === '__Host-codenomad_device' && c.secure && c.httpOnly && c.sameSite === 'Lax'))
     assert.equal((await (await get('/api/auth/status')).json()).authenticated, true)
     assert.equal((await get('/api/workspaces')).status(), 200)
+    const pairedEntry={}
+    if(fromLink)for(const method of ['GET','HEAD']){
+      const response=await entry(method)
+      assert.equal(response.status(),200,`${method} from an external page must serve the client after pairing`)
+      assert.match(response.headers()['content-type'],/^text\/html/)
+      const body=await response.body()
+      if(method==='GET')assert.match(body.toString('utf8'),/\.\/boot\.js/)
+      else assert.equal(body.length,0)
+      pairedEntry[method]=response.status()
+    }
     for (const pathname of ['/login', '/api/remote-control/devices', '/snippets/missing.js', '/app.d.ts']) {
       assert.equal((await get(pathname)).status(), 404, pathname)
     }
@@ -82,7 +100,7 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
     const sha256 = createHash('sha256').update(await wasm.body()).digest('hex')
     assert.equal(sha256, manifest.files.find(row => row.file === 'app_bg.wasm').sha256)
     await context.storageState({path:storage})
-    return {origin, sha256, paired:true, crossOriginLink:fromLink}
+    return {origin, sha256, paired:true, crossOriginLink:fromLink, clientBootReady:true, pairedEntry}
   } finally { await browser.close() }
 }
 
@@ -96,7 +114,8 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
   const composer = role('group', labels.prompt)
   const send = role('button', labels.send)
   const editor = page.locator('textarea:focus')
-  const pad=theme.numbers['space-md'],gap=theme.numbers['space-sm']
+  const pad=theme['space-md'],gap=theme['space-sm']
+  const line=2*gap+Math.ceil(theme['font-size-base']*theme['line-height-normal'])
   async function fieldRect(){
     const group=await composer.boundingBox()
     const actions=await composer.getByRole('button').evaluateAll(buttons=>Math.min(...buttons.map(button=>button.getBoundingClientRect().top)))
@@ -106,6 +125,7 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
     assert(width>0&&height>0)
     return {x,y,width,height}
   }
+  const inkClip=field=>({...field,height:Math.min(line,field.height)})
   const capture=async clip=>`data:image/png;base64,${(await page.screenshot({clip,scale:'css'})).toString('base64')}`
   async function glyphMatch(baseline, reference, candidate, startX=0){
     return imagePage.evaluate(async ([baseline,reference,candidate,startX])=>{
@@ -139,7 +159,7 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
   const waitValue = value => page.waitForFunction(value =>
     document.activeElement?.tagName === 'TEXTAREA' && document.activeElement.value === value, value, {timeout:2500})
   const text = 'été 日本語 🦀'
-  let blank
+  let blank,paintedDraft
   try {
     await probe('touchScroll', async () => {
       const before = await rowSample()
@@ -171,14 +191,14 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
       const focus = await center(composer)
       await page.touchscreen.tap(focus.x,focus.y)
       await editor.waitFor({state:'attached',timeout:2500})
-      blank=await capture(await fieldRect())
+      blank=await capture(inkClip(await fieldRect()))
       await cdp.send('Input.insertText',{text})
       await waitValue(text)
       return {...await editor.evaluate(el => ({focused:true,name:el.getAttribute('aria-label'),inputMode:el.inputMode,
         autocapitalize:el.autocapitalize,spellcheck:el.spellcheck})),tap:'center'}
     })
     await probe('compositionAndReplacement', async () => {
-      const clip=await fieldRect()
+      const clip=inkClip(await fieldRect())
       let before,prefix
       for(const until=Date.now()+2500;;){
         before=await capture(clip)
@@ -212,7 +232,7 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
       const draft='Été 日本語 🦀かな'
       await waitValue(draft)
       await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
-      const edited=await capture(clip)
+      paintedDraft=await capture(clip)
       await page.keyboard.press('Tab')
       await page.waitForFunction(()=>!document.querySelector('textarea:focus')&&[...document.querySelectorAll('textarea')].every(el=>!el.value))
       const point=await center(composer)
@@ -220,7 +240,7 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
       await waitValue(draft)
       let refocused
       for(const until=Date.now()+2500;;){
-        refocused=await glyphMatch(blank,edited,await capture(clip))
+        refocused=await glyphMatch(blank,paintedDraft,await capture(clip))
         if(looksLikeGlyphs(refocused))break
         assert(Date.now()<until,'The committed glyphs must reappear in the painted editor after refocus')
       }
@@ -244,17 +264,17 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
       await waitValue(value)
       assert(field&&field.height>0&&field.y>=top-1&&field.y+field.height<=bottom+1&&field.x>=left-1&&field.x+field.width<=right+1,
         'The composer field must stay visible in the smaller viewport')
-      const painted=await imagePage.evaluate(async ([source,hex])=>{
-        const [image]=await globalThis.__codenomadReadPngs([source])
-        const surface=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16))
-        const {width,height,pixels}=image
-        return [[2,2],[width-3,2],[2,height-3],[width-3,height-3]].every(([x,y])=>
-          surface.every((channel,i)=>Math.abs(channel-pixels[(y*width+x)*4+i])<=12))
-      },[await capture(field),theme.colors['surface-field']])
-      assert(painted,'Sample the actual field surface inside the smaller viewport')
+      const clip=inkClip(field)
+      let draftInk
+      for(const until=Date.now()+2500;;){
+        draftInk=await glyphMatch(blank,paintedDraft,await capture(clip))
+        if(looksLikeGlyphs(draftInk))break
+        assert(Date.now()<until,'The resized field must paint the known draft, not only a background')
+      }
+      assert(!looksLikeGlyphs(await glyphMatch(blank,paintedDraft,blank)),'A field without draft text must fail')
       assert(button?.y>=top && button?.y+button?.height<=bottom+1,'Send must stay within the smaller viewport')
       await page.setViewportSize(viewport)
-      return {resized:true,canvas:shown,field,button,viewportBounds,retainedDraft:true,fieldVisible:true,sendReachable:true}
+      return {resized:true,canvas:shown,field,button,viewportBounds,draftInk,retainedDraft:true,fieldVisible:true,sendReachable:true}
     })
     return evidence
   } finally {await cdp.detach()}

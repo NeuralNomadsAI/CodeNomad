@@ -250,7 +250,7 @@ try {
         if(values.mobile)measured.android=await mobileInteraction(page,{
           prompt:messages['rune.prompt'], send:messages['promptInput.overlay.send'],
           latest:messages['rune.latest'],
-        },imagePage,{numbers:palette.numbers[colorScheme],colors:palette[colorScheme]})
+        },imagePage,palette.numbers[colorScheme])
         if(values.mobile){
           measured.linkedContinuationRecovered=linkedContinuationRecovered
           measured.linkedAcrossSwitch=linkedAcrossSwitch
@@ -297,12 +297,15 @@ try {
           if(values.mobile)assert.equal(await page.evaluate(()=>sessionStorage.getItem('codenomad.rune.alpha.records-released')),'1')
           measured.departure={owned,retained,ownedRemoved:true,unownedPreserved:true}
           if(values.mobile&&control){
-            measured.revokedLauncherNoPassword=await revokedLauncher({context,url,messages})
+            Object.assign(measured,await revokedLauncher({context,url,messages}))
             assert.equal(forbiddenRequests.length,0,'Launcher recovery may not submit a password')
           }
         }
         records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,...measured,
-          ...(values.mobile?{requiredChecksPassed:true,knownGaps:measured.live.older.status==='known-gap'?['older-button-disabled-state']:[]}:{pass:true})})
+          ...(values.mobile?{requiredChecksPassed:true,knownGaps:[
+            ...(measured.live.older.status==='known-gap'?['older-button-disabled-state']:[]),
+            ...(measured.passwordProxy?.status==='known-gap'?['password-input-bridge-proxy']:[]),
+          ]}:{pass:true})})
       } catch (error) {
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
         await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot()}, null, 2))
