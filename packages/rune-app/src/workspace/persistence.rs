@@ -16,6 +16,8 @@ pub(super) struct Persistence {
     saving: Option<Receiver<(u64, bool)>>,
     saved: u64,
     saved_file_drafts: u64,
+    #[cfg(target_arch = "wasm32")]
+    attempted_file_drafts: u64,
     due: f64,
 }
 impl Persistence {
@@ -31,6 +33,8 @@ impl Persistence {
             saving: None,
             saved: 0,
             saved_file_drafts: 0,
+            #[cfg(target_arch = "wasm32")]
+            attempted_file_drafts: 0,
             due: 0.0,
         }
     }
@@ -140,6 +144,10 @@ impl Persistence {
         self.read_error = false;
         self.write_error = false;
         self.due = 0.0;
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.attempted_file_drafts = self.saved_file_drafts;
+        }
     }
     pub fn flush(&mut self, snapshot: &Snapshot) -> bool {
         if self.read_error || self.loading {
@@ -161,9 +169,24 @@ impl Persistence {
         ok && !partial
     }
     pub fn flush_file_drafts(&mut self, documents: &crate::files::document::store::Store) -> bool {
-        let Some((revision, bytes)) = documents.file_draft_snapshot(self.saved_file_drafts) else {
-            return true;
+        self.save_file_drafts_since(documents, self.saved_file_drafts)
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn poll_file_drafts(&mut self, documents: &crate::files::document::store::Store) {
+        self.save_file_drafts_since(documents, self.attempted_file_drafts);
+    }
+    fn save_file_drafts_since(
+        &mut self,
+        documents: &crate::files::document::store::Store,
+        revision: u64,
+    ) -> bool {
+        let Some((revision, bytes)) = documents.file_draft_snapshot(revision) else {
+            return !self.file_draft_error;
         };
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.attempted_file_drafts = revision;
+        }
         if self
             .store
             .as_ref()

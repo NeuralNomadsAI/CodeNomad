@@ -22,6 +22,13 @@ pub(super) struct SavedKey {
     pub directory: String,
     pub path: String,
 }
+impl SavedKey {
+    fn valid(&self) -> bool {
+        [&self.server, &self.project, &self.directory, &self.path]
+            .into_iter()
+            .all(|part| !part.is_empty() && part.len() <= 16 * 1024)
+    }
+}
 
 #[derive(Clone, PartialEq, Eq)]
 struct Saved {
@@ -46,17 +53,16 @@ impl Saved {
         if row.len() != 6 {
             return None;
         }
-        let field = |index: usize| -> Option<String> {
-            let text = row.get(index)?.as_str()?;
-            (!text.is_empty() && text.len() <= 16 * 1024).then(|| text.into())
+        let field = |index: usize| row.get(index)?.as_str().map(str::to_owned);
+        let key = SavedKey {
+            server: field(0)?,
+            project: field(1)?,
+            directory: field(2)?,
+            path: field(3)?,
         };
+        key.valid().then_some(())?;
         Some(Self {
-            key: SavedKey {
-                server: field(0)?,
-                project: field(1)?,
-                directory: field(2)?,
-                path: field(3)?,
-            },
+            key,
             version: version(Some(row.get(4)?.as_str()?))?,
             text: row.get(5)?.as_str()?.into(),
         })
@@ -243,6 +249,10 @@ impl Store {
             draft.not_retained = true;
             return;
         };
+        if draft.text.len() > LIMIT || !saved_key.valid() {
+            draft.not_retained = true;
+            return;
+        }
         let row = Saved {
             key: saved_key.clone(),
             version: version.clone(),
@@ -250,10 +260,6 @@ impl Store {
         };
         if previous.is_some_and(|index| store.saved[index] == row) {
             draft.not_retained = false;
-            return;
-        }
-        if row.text.len() > LIMIT {
-            draft.not_retained = true;
             return;
         }
         let mut next = store.saved.clone();

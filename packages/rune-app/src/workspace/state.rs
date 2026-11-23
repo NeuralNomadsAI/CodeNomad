@@ -506,7 +506,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let snapshot = ui.snapshot();
     ui.persistence.poll_save(&snapshot, now, tx, s.wake.clone());
     #[cfg(target_arch = "wasm32")]
-    let _ = ui.persistence.flush_file_drafts(&s.documents);
+    ui.persistence.poll_file_drafts(&s.documents);
     let error = (
         ui.persistence.read_error,
         ui.persistence.write_error,

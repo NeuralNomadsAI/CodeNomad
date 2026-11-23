@@ -171,6 +171,50 @@ pub(super) fn finish(mut rt: Runtime<State>) {
         "snapshot must flush successfully"
     );
     drop(rt);
+    finish_backend();
+}
+
+#[cfg(target_os = "windows")]
+fn finish_native(rt: Runtime<State>) {
+    let state = rt.state;
+    rune::run_windows_with_args(Default::default(), [], move |_| {
+        [rune::WindowSpec::new(
+            "file-draft-restart",
+            crate::layout::app_spec("Rune", init, view),
+        )
+        .options(rune::WindowOptions {
+            visible: false,
+            ..Default::default()
+        })
+        .state(state)
+        .inactive()
+        .on_created(|handle| handle.close())
+        .on_close(|state, tx| {
+            workspace::finish(state, tx);
+            assert!(
+                workspace::status(state).is_none(),
+                "native close must flush drafts"
+            );
+            report(
+                &std::env::var("RUNE_TEST_RESTORE_STAGE").unwrap(),
+                true,
+                true,
+            );
+        })]
+    });
+    finish_backend();
+}
+
+fn report(stage: &str, native_window: bool, file_drafts: bool) {
+    println!(
+        "{}",
+        json!({"type":"window-restore-stage","stage":stage,"occurrences":2,
+        "selectedSession":"ses_created_2","draftsDistinct":true,"flushAndRelease":true,"nativeWindow":native_window,
+        "fileDrafts":file_drafts})
+    );
+}
+
+fn finish_backend() {
     platform::finish();
     platform::block_on(async {
         let backend = crate::backend::Backend::connect(
@@ -301,11 +345,15 @@ pub fn run() {
             stage == "verify"
         );
     }
+    let native_window = cfg!(target_os = "windows") && file_drafts;
+    #[cfg(target_os = "windows")]
+    if native_window {
+        finish_native(rt);
+        return;
+    } else {
+        finish(rt);
+    }
+    #[cfg(not(target_os = "windows"))]
     finish(rt);
-    println!(
-        "{}",
-        json!({"type":"window-restore-stage","stage":stage,"occurrences":2,
-        "selectedSession":"ses_created_2","draftsDistinct":true,"flushAndRelease":true,"nativeWindow":false,
-        "fileDrafts":file_drafts})
-    );
+    report(&stage, native_window, file_drafts);
 }
