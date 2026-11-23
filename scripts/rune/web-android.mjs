@@ -26,6 +26,7 @@ const solid=process.env.RUNE_ANDROID_SOLID_DIR
 const comparison=Boolean(process.env.RUNE_ANDROID_COMPARE)
 const trace=process.env.RUNE_ANDROID_TRACE
 const gpuProbe=process.env.RUNE_ANDROID_GPU_PROBE
+const scrollOnly=process.env.RUNE_ANDROID_SAMPLE==='scroll'
 const locale=comparison?'en':'fr'
 const messages=JSON.parse(await readFile(new URL(`../../crates/rune-theme-codenomad/assets/catalogues/${locale}.json`,import.meta.url),'utf8'))
 const run=(...args)=>promisify(execFile)(adb,['-P',port,'-s',serial,...args],{timeout:15000,windowsHide:true})
@@ -60,8 +61,8 @@ async function runAndroid() {
     if(url.pathname==='/api/events'&&response.ok()&&
       response.headers()['content-type']?.startsWith('text/event-stream'))events++
   })
-  const detailedTrace=Boolean(trace&&trace!=='display')
-  if(detailedTrace||gpuProbe)await page.addInitScript(observeRenderer,detailedTrace)
+  const recordCpu=trace==='1',shaderMarks=trace==='stutter'
+  if(recordCpu||shaderMarks||gpuProbe)await page.addInitScript(observeRenderer,{recordCpu,shaderMarks})
   if(gpuProbe)await page.addInitScript(observeGpu)
   const gpuLog=[]
   if(gpuProbe){
@@ -92,13 +93,15 @@ async function runAndroid() {
   evidence.timings.landingNavigationToLauncherMs=await page.evaluate(()=>performance.now())
   evidence.timings.moduleReadyMs=await page.evaluate(()=>globalThis.__codenomadRuneBoot?.moduleReadyMs)
   if(gpuProbe==='only'){
+    const first=await gpuState(page)
+    await page.screenshot({path:path.join(profile,'android-launcher.png')})
     try {
       await page.waitForFunction(()=>performance.getEntriesByType('mark').some(e=>/web\.(gpu\.failed|handover\.(done|failed))$/.test(e.name)),
         undefined,{timeout:15000})
     }catch(error){if(error.name!=='TimeoutError')throw error}
     const state=await gpuState(page,true)
     const chrome=await chromeGraphicsReport(context,page)
-    await writeFile(path.join(profile,'android-gpu.json'),JSON.stringify({...state,chrome,gpuLog},null,2))
+    await writeFile(path.join(profile,'android-gpu.json'),JSON.stringify({...state,first,timings:evidence.timings,chrome,gpuLog},null,2))
     return
   }
   if(gpuProbe==='webgl'){
@@ -185,9 +188,19 @@ async function runAndroid() {
   await goLatest()
   await page.getByText('Existing answer',{exact:true}).waitFor()
   if(trace) {
-    evidence.profiledScroll=await traceSwipe(page,cdp,profile,()=>scrollMeasure(page,swipe,solid?'.message-stream p':undefined),trace==='display')
+    evidence.profiledScroll=await traceSwipe(page,cdp,profile,()=>scrollMeasure(page,swipe,solid?'.message-stream p':undefined),trace)
     await goLatest()
     await page.getByText('Existing answer',{exact:true}).waitFor()
+  }
+  if(scrollOnly){
+    if(gpuProbe==='webgl'){
+      evidence.gpuAfterScroll=await gpuState(page)
+      assertWebGL(evidence.gpuAfterScroll)
+    }
+    assert.deepEqual(forbidden,[])
+    assert.deepEqual(errors,[])
+    await writeFile(path.join(profile,'android-proof.json'),JSON.stringify({before,...evidence},null,2))
+    return
   }
   const tapComposer=async()=>{
     const field=await group.boundingBox();assert(field)

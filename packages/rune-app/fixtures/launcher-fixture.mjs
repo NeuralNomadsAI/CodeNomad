@@ -20,6 +20,7 @@ const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||pr
 const solid=webAndroid&&process.env.RUNE_ANDROID_SOLID_DIR
 const compare=webAndroid&&process.env.RUNE_ANDROID_COMPARE
 const probeGpu=webAndroid&&process.env.RUNE_ANDROID_GPU_PROBE==='only'
+const sampleScroll=webAndroid&&process.env.RUNE_ANDROID_SAMPLE==='scroll'
 const useTs=webAndroid&&process.env.RUNE_ANDROID_TS_SERVER==='1'
 assert(!useTs||solid&&compare,'The TS restart control runs the same Solid build and conversation')
 const sameOriginPairing=process.argv.includes('--same-origin-pairing')
@@ -363,7 +364,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid?1:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid?1:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(filesState){
     await filesChain;assert(filesProof);assert.deepEqual(filesStages.map(s=>s.stage),filesExpected)
     const version=text=>`"${createHash('sha256').update(text).digest('hex')}"`
