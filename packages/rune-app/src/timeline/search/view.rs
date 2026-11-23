@@ -171,19 +171,9 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
         })
         .build(field_kit(layout::dark()))
         .key(super::FIELD);
-    let len = model.text.encode_utf16().count();
-    let minimum = super::MIN_QUERY_UNITS;
-    let header =
-        layout::action_row()
-            .child(input.remaining())
-            .children((len > 0 && len < minimum).then(|| {
-                rune::text(catalogue::format(
-                    locale(),
-                    "messageSection.search.count.minChars",
-                    &[("count", &minimum.to_string())],
-                ))
-                .role("status")
-            }));
+    let header = layout::action_row()
+        .child(input.remaining())
+        .children(model.minimum_hint().map(rune::text));
     let mut frame = search::body().key(BODY).child(header).children(
         model.page().filter(|p| !p.hits.is_empty()).map(|_| {
             layout::action_row()

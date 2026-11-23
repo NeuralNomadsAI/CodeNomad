@@ -266,7 +266,9 @@ fn the_short_search_body_scrolls_to_its_cursor_without_moving_the_toolbar() {
             examined_before: 0,
             exclusions: vec![],
             page: Page {
-                hits: (0..20).map(|i| hit("here", &format!("hit-{i}"), Kind::Text, 0)).collect(),
+                hits: (0..20)
+                    .map(|i| hit("here", &format!("hit-{i}"), Kind::Text, 0))
+                    .collect(),
                 cursor: Some("older".into()),
                 ..Page::default()
             },

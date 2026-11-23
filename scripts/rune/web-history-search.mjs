@@ -26,9 +26,9 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
   const input=page.locator('textarea').and(page.getByRole('textbox',{name:messages['messageSection.search.ariaLabel'],exact:true}))
   await input.waitFor({state:'attached'})
   await input.fill('Ex')
-  await search.getByRole('status').filter({
-    hasText:messages['messageSection.search.count.minChars'].replace('{count}','3'),
-  }).waitFor()
+  const minimum=messages['messageSection.search.count.minChars'].replace('{count}','3')
+  await search.getByText(minimum,{exact:true}).waitFor()
+  await page.locator('[aria-live="polite"]').filter({hasText:minimum}).waitFor({state:'attached'})
   const focusLabel=label=>page.waitForFunction(expected=>{
     const active=document.activeElement
     const id=active?.getAttribute('aria-activedescendant')
