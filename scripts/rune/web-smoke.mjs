@@ -9,12 +9,12 @@ import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction} from './web-mobile.mjs'
 import {mobileLive, revokedLauncher} from './web-live.mjs'
-import {focusRing, longPaste} from './web-paste.mjs'
+import {focusRing, longPaste, mobileMoreActions} from './web-paste.mjs'
 import {missionsFixture} from './web-missions.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'paste-only':{type:'boolean'},'history-return-only':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'paste-only':{type:'boolean'},'history-return-only':{type:'boolean'},'more-actions-only':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
@@ -22,7 +22,9 @@ if(values.connected){assert(values.workspace&&values.project&&values['storage-st
 else url.searchParams.set('scene', values['paste-only'] ? 'synthetic-paste' : 'synthetic')
 if(values.mobile)assert(values.connected && url.protocol==='https:')
 const historyReturnOnly = values['history-return-only']
-if(historyReturnOnly)assert(values.mobile)
+const moreActionsOnly = values['more-actions-only']
+const recallScene = historyReturnOnly || moreActionsOnly
+if(recallScene)assert(values.mobile)
 if(values['paste-only'])assert(!values.connected)
 if(values.missions)assert(values.connected&&!values.mobile&&url.protocol==='http:')
 url.searchParams.set('locale', values.locale)
@@ -53,9 +55,9 @@ try {
   const android=mobileContext(browser)
   const sizes=values.missions?[['desktop',1200,900,false]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
     [['desktop',960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
-  for (const [name, width, height, touch] of sizes) {
+  for (const [name, width, height, touch] of moreActionsOnly ? sizes.slice(0,1) : sizes) {
     const control=name==='phone-dpr1-control'
-    for (const colorScheme of control?['light']:['light','dark']) {
+    for (const colorScheme of control||moreActionsOnly?['light']:['light','dark']) {
       const context = await browser.newContext({viewport: {width, height}, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch, colorScheme,
         ...(values.mobile?{...android,ignoreHTTPSErrors:true,...(control?{deviceScaleFactor:1}:{})}:{}),
         ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
@@ -71,7 +73,7 @@ try {
       const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
       let markLinked
       const linkedRequested=values.mobile?new Promise(resolve=>{markLinked=resolve}):null
-      const failLinkedPage=values.mobile&&!control&&colorScheme==='light'
+      const failLinkedPage=values.mobile&&!recallScene&&!control&&colorScheme==='light'
       const linkedReads=[]
       let linkedContinuationRecovered
       let linkedAcrossSwitch
@@ -168,7 +170,8 @@ try {
           const press=async (label,role='button')=>{
             const match=page.getByRole(role,{name:label,exact:true})
             // The same fixture directory can appear both in Browse and in Recent.
-            const button=role==='button'&&label===values.project?match.first():match
+            const button=role==='button'&&label===values.project
+              ? match.and(page.locator(':not([disabled]):not([aria-disabled=true])')).first() : match
             await button.waitFor({state:'attached'})
              await button.scrollIntoViewIfNeeded()
              if(values.mobile)await present()
@@ -202,8 +205,9 @@ try {
           const reading=async()=>await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history')&&document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing answer'),undefined,{timeout:30000})
           await press(messages['folderSelection.servers.dialog.connect'])
           await press(values.project)
+          if(values.mobile)await page.getByRole('tab',{name:values.project,exact:true,selected:true}).waitFor()
           await openSessions()
-          if(values.mobile&&!historyReturnOnly){
+          if(values.mobile&&!recallScene){
             await row('Existing history').waitFor()
             if(colorScheme==='dark'){
               await linkedRequested
@@ -248,16 +252,18 @@ try {
           await press(messages['rune.more'])
           if(values.mobile){
             await row('Another session').waitFor()
-            if(!historyReturnOnly){
+            if(!recallScene){
               await select('Linked checkout next page','ses_linked_next')
               await page.getByText('Linked checkout answer',{exact:true}).waitFor()
             }
+          }
+          if(recallScene){
             await select('Existing history','ses_existing')
             await reading()
           }
           await select('Another session','ses_another')
           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
-          if(values.mobile){
+          if(recallScene){
             holdRecall = true
             const composer=page.getByRole('group',{name:messages['rune.prompt'],exact:true})
             await present()
@@ -276,11 +282,12 @@ try {
             holdRecall = false
             releaseRecall()
           }
-          if(historyReturnOnly){
+          if(recallScene){
             assert(transcriptWhileRecallHeld && eventSource)
+            const menu=moreActionsOnly?await mobileMoreActions(page,messages,press):undefined
             assert.deepEqual(forbiddenRequests,[])
             assert.deepEqual(errors,[])
-            records.push({name,colorScheme,transcriptWhileRecallHeld,routes,history,pass:true})
+            records.push({name,colorScheme,transcriptWhileRecallHeld,menu,routes,history,pass:true})
             continue
           }
          }else{
@@ -367,7 +374,6 @@ try {
         if(values.mobile){
           measured.linkedContinuationRecovered=linkedContinuationRecovered
           measured.linkedAcrossSwitch=linkedAcrossSwitch
-          measured.transcriptWhileRecallHeld=transcriptWhileRecallHeld
           measured.network=colorScheme==='dark'?{rttMs:80,downloadBytesPerSecond:2_500_000,uploadBytesPerSecond:625_000}:'loopback'
           assert.deepEqual(measured.viewport,{width,height,touch:true,dpr:control?1:android.deviceScaleFactor,platform:'Android',mobile:true})
           const {width:backingWidth,height:backingHeight}=measured.canvases[0]

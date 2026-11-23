@@ -3,6 +3,43 @@ import {installPngReader} from './png-pixels.mjs'
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aN0AAAAASUVORK5CYII='
 
+export async function mobileMoreActions(page, messages, press) {
+  const name = messages['messageItem.actions.more']
+  const composer = page.getByRole('group', {name:messages['rune.prompt'],exact:true})
+  const trigger = composer.getByRole('button', {name,exact:true})
+  const editor = page.locator('textarea:focus')
+  const draft = 'Brouillon mobile'
+  const field = await composer.boundingBox()
+  assert(field)
+  await page.touchscreen.tap(field.x+field.width/2,field.y+20)
+  await editor.fill(draft)
+  const value = text => page.waitForFunction(text => document.activeElement?.value === text,text)
+  await value(draft)
+  const toggle = async () => {
+    const box = await trigger.boundingBox()
+    assert(box)
+    await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
+  }
+  await toggle()
+  const queueName = messages['promptInput.send.queueAriaLabel']
+  const queue = page.getByText(queueName,{exact:true})
+  await queue.waitFor({state:'attached'})
+  // The current Rune browser mirror exposes a disabled menu row as text.
+  assert.equal(await page.getByRole('menuitem',{name:queueName,exact:true}).count(),0)
+  await press(messages['promptInput.clear.title'],'menuitem')
+  await value('')
+  await page.keyboard.press('Control+z')
+  await value(draft)
+  await toggle()
+  const chooser = page.waitForEvent('filechooser',{timeout:15000})
+  void chooser.catch(()=>{})
+  const attach = messages['promptInput.attachFiles.title'].replace(/[.…]+$/u,'')
+  await press(new RegExp(`^${RegExp.escape(attach)}[.…]*$`,'u'),'menuitem')
+  await chooser
+  await queue.waitFor({state:'detached'})
+  return {idleQueueDisabled:true,clearUndo:true,devicePicker:true}
+}
+
 export async function longPaste(page, messages) {
   const field = page.locator('textarea:focus')
   const text = `Fixture web @./literal [pasted #8] 🦀 ${'contenu '.repeat(24)}fin`

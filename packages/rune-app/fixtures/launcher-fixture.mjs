@@ -17,10 +17,12 @@ import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {webLiveFixture} from './web-live-fixture.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
-const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
+const webMoreActions=process.argv.includes('--web-mobile-more-actions')
+const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||webMoreActions||process.argv.includes('--web-mobile')
 const webMissions=process.argv.includes('--web-missions')
 const historyReturnOnly=process.argv.includes('--history-return-only')
 assert(!historyReturnOnly || webMobile&&!webAndroid)
+assert(!webMoreActions||!webAndroid&&!historyReturnOnly&&!process.argv.includes('--web-mobile'))
 const solid=webAndroid&&process.env.RUNE_ANDROID_SOLID_DIR
 const compare=webAndroid&&process.env.RUNE_ANDROID_COMPARE
 const probeGpu=webAndroid&&process.env.RUNE_ANDROID_GPU_PROBE==='only'
@@ -456,6 +458,7 @@ try{
       await deviceLease.open()
     }
     if(historyReturnOnly)args.push('--history-return-only')
+    if(webMoreActions)args.push('--more-actions-only')
     client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
     if(webAndroid)clientClosed=new Promise(resolve=>client.once('close',resolve))
     const handleMobileAction=async action=>{
@@ -520,7 +523,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||historyReturnOnly?1:webMissions?2:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||historyReturnOnly||webMoreActions?1:webMissions?2:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
     if(!placeWorktree){
       await removeReview
