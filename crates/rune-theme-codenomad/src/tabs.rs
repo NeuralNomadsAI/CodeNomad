@@ -443,7 +443,7 @@ mod tests {
                 },
             ],
             Some(&s.active),
-            |s, id, _| s.active = id.into(),
+            |s: &mut App, id, _| s.active = id.into(),
             |s, id, _| s.closed.push(id.into()),
             |s, _| s.new += 1,
             actions,
