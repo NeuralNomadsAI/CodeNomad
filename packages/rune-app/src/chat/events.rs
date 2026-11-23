@@ -29,6 +29,8 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         let content = observation.is_none();
         let event = observation.or_else(|| s.reader.as_ref().and_then(chat::reader::Reader::next));
         let Some(event) = event else { break };
+        let stale_activity = matches!(&event, Event::ReaderSync { version, .. }
+            if s.reader.as_ref().is_some_and(|reader| reader.activity_after(*version)));
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
@@ -97,17 +99,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
-            Event::Sync(_) | Event::ReaderSync { .. } => {
-                let (page, stale_activity) = match event {
-                    Event::Sync(page) => (page, false),
-                    Event::ReaderSync { page, version } => (
-                        page,
-                        s.reader
-                            .as_ref()
-                            .is_some_and(|reader| reader.activity_after(version)),
-                    ),
-                    _ => unreachable!(),
-                };
+            Event::Sync(page) | Event::ReaderSync { page, .. } => {
                 chat::reader::reconcile_bookmark(s, &page.rows);
                 if let Some(reader) = &mut s.reader {
                     reader.install(page.newer.is_some());
