@@ -1,12 +1,43 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { authenticatedFetch, authRecovery, createAuthRecovery } from "./auth-recovery"
+import { authenticatedFetch, authRecovery, createAuthenticatedFetch, createAuthRecovery } from "./auth-recovery"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>(done => { resolve = done })
   return { promise, resolve }
 }
+
+test("a confirmed local expiration renews and reconnects without replaying the failed request", async () => {
+  const observed: string[] = []
+  let authenticated = false
+  const transport: typeof fetch = async (input, init) => {
+    if (String(input).endsWith("/api/auth/status")) {
+      observed.push("status")
+      return Response.json({ authenticated })
+    }
+    observed.push(init?.method ?? "GET")
+    return new Response(null, { status: 401 })
+  }
+  const recovery = createAuthRecovery(undefined, transport, undefined, async () => {
+    observed.push("renew")
+    authenticated = true
+    return true
+  })
+  recovery.onRestored(() => observed.push("reconnect"))
+  assert.equal((await createAuthenticatedFetch(recovery, transport)("/api/example", { method: "POST" })).status, 401)
+  await recovery.check()
+  assert.deepEqual(observed, ["POST", "status", "renew", "status", "reconnect"])
+  assert.equal(recovery.required(), false)
+})
+
+test("a paired device never asks the local host to renew", async () => {
+  const recovery = createAuthRecovery(undefined,
+    async () => Response.json({ authenticated: false, pairingRequired: true }), undefined,
+    async () => assert.fail("paired device offered local renewal"))
+  await recovery.check()
+  assert.equal(recovery.pairingRequired(), true)
+})
 
 test("validation stays local and authentication still probes globally without replaying the action", async () => {
   const original = globalThis.fetch, requests: string[] = []

@@ -123,14 +123,12 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     const body = TokenSchema.parse(request.body ?? {})
-    const ok = deps.authManager.consumeBootstrapToken(body.token)
-    if (!ok) {
+    const session = deps.authManager.createBootstrapSession(body.token)
+    if (!session) {
       reply.code(401).send({ error: "Invalid token" })
       return
     }
 
-    const username = deps.authManager.getStatus().username
-    const session = deps.authManager.createSession(username)
     deps.authManager.setSessionCookieWithOptions(reply, session.id, { secure: isSecureRequest(request) })
     reply.send({ ok: true })
   })
