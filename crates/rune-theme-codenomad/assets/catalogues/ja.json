@@ -1,9 +1,11 @@
 {
   "advancedSettings.actions.close": "閉じる",
+  "advancedSettings.environmentVariables.maskValue": "既定で値を隠す",
   "advancedSettings.environmentVariables.subtitle": "各プロンプトまたはセッションコマンドの送信前に適用",
   "advancedSettings.environmentVariables.title": "環境変数",
   "advancedSettings.hideDiffWhitespace.subtitle": "空白や改行コードだけが変わった未ステージのファイルを隠し、差分ではインデントと行末の空白を無視します。ステージ済みのファイルは表示されたままです。",
   "advancedSettings.hideDiffWhitespace.title": "空白のみの変更を非表示",
+  "advancedSettings.savedForSharedClients": "共有設定に保存されます。Rune ではまだこの設定は適用されません。",
   "advancedSettings.title": "詳細設定",
   "agentSelector.badge.subagent": "サブエージェント",
   "agentSelector.none": "なし",

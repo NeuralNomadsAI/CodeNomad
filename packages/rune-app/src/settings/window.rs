@@ -43,11 +43,9 @@ fn open(s: &mut State) {
         }
         return;
     }
-    if host
-        .window
-        .as_ref()
-        .is_some_and(|(_, _, request)| request.reopen.borrow().is_some())
-    {
+    if host.window.as_ref().is_some_and(|(_, _, request)| {
+        request.reopen.borrow().is_some() || request.config_reopen.borrow().is_some()
+    }) {
         return;
     }
     let target = providers::Target::capture(s);

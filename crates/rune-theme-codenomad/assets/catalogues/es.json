@@ -1,9 +1,11 @@
 {
   "advancedSettings.actions.close": "Cerrar",
+  "advancedSettings.environmentVariables.maskValue": "Ocultar el valor de forma predeterminada",
   "advancedSettings.environmentVariables.subtitle": "Se aplican antes de cada prompt o comando de sesión",
   "advancedSettings.environmentVariables.title": "Variables de entorno",
   "advancedSettings.hideDiffWhitespace.subtitle": "Oculta los archivos no preparados cuyos únicos cambios son espacios o finales de línea, e ignora la sangría y los espacios finales en los diffs. Los archivos preparados siguen visibles.",
   "advancedSettings.hideDiffWhitespace.title": "Ocultar cambios solo de espacios",
+  "advancedSettings.savedForSharedClients": "Se guarda en las preferencias compartidas. Rune aún no aplica este ajuste.",
   "advancedSettings.title": "Configuración avanzada",
   "agentSelector.badge.subagent": "subagente",
   "agentSelector.none": "Ninguno",

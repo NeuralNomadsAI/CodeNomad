@@ -1,9 +1,11 @@
 {
   "advancedSettings.actions.close": "Close",
+  "advancedSettings.environmentVariables.maskValue": "Mask value by default",
   "advancedSettings.environmentVariables.subtitle": "Applied before each prompt or session command",
   "advancedSettings.environmentVariables.title": "Environment Variables",
   "advancedSettings.hideDiffWhitespace.subtitle": "Hides unstaged files whose only changes are whitespace or line endings, and ignores indentation and trailing spaces in diffs. Staged files stay visible.",
   "advancedSettings.hideDiffWhitespace.title": "Hide whitespace-only changes",
+  "advancedSettings.savedForSharedClients": "Saved in shared preferences. Rune does not apply this setting yet.",
   "advancedSettings.title": "Advanced Settings",
   "agentSelector.badge.subagent": "subagent",
   "agentSelector.none": "None",

@@ -13,6 +13,8 @@ pub(super) enum Choice {
     NewConversationPermissions,
     LogLevel,
     UpdateFeed,
+    Advanced(crate::settings::advanced::Toggle),
+    Environment,
     NotificationRoute(Category, Destination),
     NotificationsFocused,
     Mode,
@@ -31,6 +33,21 @@ impl Choice {
             }
             return;
         }
+        if let (
+            Self::Environment,
+            ChoiceValue::Environment {
+                name,
+                value,
+                secure,
+            },
+        ) = (self, value)
+        {
+            patch["environmentVariables"][name] = value.clone().map_or(Value::Null, Value::String);
+            if let Some(secure) = secure {
+                patch["secureEnvVars"] = json!(secure);
+            }
+            return;
+        }
         let ChoiceValue::Text(value) = *value else {
             return;
         };
@@ -39,6 +56,7 @@ impl Choice {
             Self::Contrast => patch["settings"]["highContrast"] = json!(value),
             Self::LogLevel => patch["logLevel"] = json!(value),
             Self::UpdateFeed => patch["updateFeed"] = json!(value),
+            Self::Advanced(choice) => patch["settings"][choice.key()] = json!(value == "true"),
             Self::NotificationRoute(category, destination) => {
                 patch["settings"]["notificationRouting"][category.key()][destination.key()] =
                     json!(value == "true");
@@ -50,7 +68,7 @@ impl Choice {
                 patch["settings"]["newConversationPermissions"] = json!(value)
             }
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
-            Self::Shortcut(_) | Self::ShortcutReset => (),
+            Self::Shortcut(_) | Self::ShortcutReset | Self::Environment => (),
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 patch["appearancePreferences"][mode] = json!({
@@ -69,6 +87,23 @@ impl Choice {
             return matches!(value, ChoiceValue::Shortcut(binding)
                 if &snapshot["settings"]["hotkeyOverrides"][id] == binding);
         }
+        if let (
+            Self::Environment,
+            ChoiceValue::Environment {
+                name,
+                value,
+                secure,
+            },
+        ) = (self, value)
+        {
+            let saved = &snapshot["environmentVariables"][name];
+            return value
+                .as_ref()
+                .map_or_else(|| saved.is_null(), |value| saved == value)
+                && secure
+                    .as_ref()
+                    .is_none_or(|secure| snapshot["secureEnvVars"] == json!(secure));
+        }
         let ChoiceValue::Text(value) = *value else {
             return false;
         };
@@ -78,6 +113,7 @@ impl Choice {
             Self::Contrast => snapshot["settings"]["highContrast"] == value,
             Self::LogLevel => snapshot["logLevel"] == value,
             Self::UpdateFeed => snapshot["updateFeed"] == value,
+            Self::Advanced(choice) => snapshot["settings"][choice.key()] == (value == "true"),
             Self::NotificationRoute(category, destination) => {
                 snapshot["settings"]["notificationRouting"][category.key()][destination.key()]
                     == (value == "true")
@@ -89,7 +125,7 @@ impl Choice {
                 snapshot["settings"]["newConversationPermissions"] == value
             }
             Self::Mode => appearance["mode"] == value,
-            Self::Shortcut(_) | Self::ShortcutReset => false,
+            Self::Shortcut(_) | Self::ShortcutReset | Self::Environment => false,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
                 let slot = &appearance[mode];
@@ -107,6 +143,11 @@ impl Choice {
 enum ChoiceValue {
     Text(&'static str),
     Shortcut(Value),
+    Environment {
+        name: String,
+        value: Option<String>,
+        secure: Option<Vec<String>>,
+    },
 }
 
 type Choices = BTreeMap<Choice, ChoiceValue>;
@@ -222,6 +263,27 @@ impl Document {
         self.stage_value(Choice::Shortcut(id), ChoiceValue::Shortcut(binding));
     }
 
+    pub(super) fn stage_environment(
+        &mut self,
+        name: String,
+        value: Option<String>,
+        secure: Option<Vec<String>>,
+    ) {
+        self.stage_value(
+            Choice::Environment,
+            ChoiceValue::Environment {
+                name,
+                value,
+                secure,
+            },
+        );
+    }
+
+    pub(super) fn environment_pending(&self) -> bool {
+        self.write.requested.contains_key(&Choice::Environment)
+            && !self.choice_failed(Choice::Environment)
+    }
+
     pub(super) fn reset_shortcuts(&mut self) {
         if !self.shortcuts_pending() {
             self.write
@@ -252,6 +314,8 @@ impl Document {
                 | Choice::NewConversationPermissions
                 | Choice::LogLevel
                 | Choice::UpdateFeed
+                | Choice::Advanced(_)
+                | Choice::Environment
                 | Choice::NotificationRoute(..)
                 | Choice::NotificationsFocused
                 | Choice::Shortcut(_)
@@ -266,7 +330,7 @@ impl Document {
     pub(super) fn requested(&self, choice: Choice) -> Option<&'static str> {
         match self.write.requested.get(&choice)? {
             ChoiceValue::Text(value) => Some(*value),
-            ChoiceValue::Shortcut(_) => None,
+            ChoiceValue::Shortcut(_) | ChoiceValue::Environment { .. } => None,
         }
     }
 
@@ -318,8 +382,12 @@ impl Document {
             self.read.failed = snapshot.is_none();
             // Info has an independent authoritative metadata read after every feed gesture.
             // Settle a refused preflight so that read can proceed; retry needs a new gesture.
-            if self.read.failed && self.write.pending.remove(&Choice::UpdateFeed) {
-                self.write.failed.insert(Choice::UpdateFeed);
+            if self.read.failed {
+                for choice in [Choice::UpdateFeed, Choice::Environment] {
+                    if self.write.pending.remove(&choice) {
+                        self.write.failed.insert(choice);
+                    }
+                }
             }
         }
         if let Some(snapshot) = snapshot {

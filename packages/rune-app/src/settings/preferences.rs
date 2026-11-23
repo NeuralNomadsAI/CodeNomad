@@ -22,6 +22,7 @@ pub(super) struct Preferences {
     state: Document,
     server: Document,
     show_server: bool,
+    show_environment: bool,
     pub(super) window_wake: Option<rune::Waker>,
     pub(super) main_wake: Option<rune::Waker>,
     pub(super) revision: u64,
@@ -294,7 +295,9 @@ impl Preferences {
             if config {
                 self.config.invalidate();
             }
-            if (config | stream.take_server_changed()) && self.show_server {
+            if (config | stream.take_server_changed())
+                && (self.show_server || self.show_environment)
+            {
                 self.server.invalidate();
             }
             if state {
@@ -317,7 +320,7 @@ impl Preferences {
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         let changed = self.config.poll(backend, Owner::Config, &main, &window)
             | self.state.poll(backend, Owner::State, &main, &window)
-            | ((self.show_server || self.server.unsettled())
+            | ((self.show_server || self.show_environment || self.server.unsettled())
                 && self.server.poll(backend, Owner::Server, &main, &window))
             | self.memory.poll(backend, &main, &window)
             | self

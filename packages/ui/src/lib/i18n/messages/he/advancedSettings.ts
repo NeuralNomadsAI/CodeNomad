@@ -1,4 +1,6 @@
 export const advancedSettingsMessages = {
+  "advancedSettings.savedForSharedClients": "נשמר בהעדפות המשותפות. Rune עדיין לא מחיל הגדרה זו.",
+  "advancedSettings.environmentVariables.maskValue": "הסתרת הערך כברירת מחדל",
   "advancedSettings.title": "הגדרות מתקדמות",
   "advancedSettings.environmentVariables.title": "משתני סביבה",
   "advancedSettings.environmentVariables.subtitle": "מוחלים לפני כל הנחיה או פקודת שיחה",

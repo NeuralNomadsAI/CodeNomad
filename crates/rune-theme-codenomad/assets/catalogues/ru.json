@@ -1,9 +1,11 @@
 {
   "advancedSettings.actions.close": "Закрыть",
+  "advancedSettings.environmentVariables.maskValue": "Скрывать значение по умолчанию",
   "advancedSettings.environmentVariables.subtitle": "Применяются перед каждым запросом или командой сессии",
   "advancedSettings.environmentVariables.title": "Переменные окружения",
   "advancedSettings.hideDiffWhitespace.subtitle": "Скрывает неиндексированные файлы, в которых изменились только пробелы или окончания строк, и игнорирует отступы и пробелы в конце строк в diff. Индексированные файлы остаются видимыми.",
   "advancedSettings.hideDiffWhitespace.title": "Скрывать изменения только пробелов",
+  "advancedSettings.savedForSharedClients": "Сохраняется в общих настройках. Rune пока не применяет этот параметр.",
   "advancedSettings.title": "Расширенные настройки",
   "agentSelector.badge.subagent": "субагент",
   "agentSelector.none": "Нет",

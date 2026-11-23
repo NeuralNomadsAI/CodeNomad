@@ -1,9 +1,11 @@
 {
   "advancedSettings.actions.close": "סגור",
+  "advancedSettings.environmentVariables.maskValue": "הסתרת הערך כברירת מחדל",
   "advancedSettings.environmentVariables.subtitle": "מוחלים לפני כל הנחיה או פקודת שיחה",
   "advancedSettings.environmentVariables.title": "משתני סביבה",
   "advancedSettings.hideDiffWhitespace.subtitle": "מסתיר קבצים שלא הוכנו לקומיט שהשינוי היחיד בהם הוא רווחים או סיומי שורות, ומתעלם מהזחה ומרווחים בסוף שורה בהשוואות. קבצים שהוכנו לקומיט נשארים גלויים.",
   "advancedSettings.hideDiffWhitespace.title": "הסתר שינויים של רווחים בלבד",
+  "advancedSettings.savedForSharedClients": "נשמר בהעדפות המשותפות. Rune עדיין לא מחיל הגדרה זו.",
   "advancedSettings.title": "הגדרות מתקדמות",
   "agentSelector.badge.subagent": "תת-סוכן",
   "agentSelector.none": "ללא",

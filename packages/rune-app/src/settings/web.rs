@@ -4,7 +4,6 @@ use super::{
     remote,
 };
 use crate::{State, platform, screen, strings::t};
-use codenomad_client::{Receiver, Sender, bounded, settings::opencode_local};
 use rune::{El, col, text};
 use rune_theme_codenomad::{
     Space,
@@ -21,6 +20,8 @@ enum Section {
     Shortcuts,
     Providers,
     Remote,
+    ConfigFiles,
+    Advanced,
     Info,
 }
 
@@ -33,6 +34,8 @@ impl Section {
             Self::Shortcuts => "settings.nav.hotkeys",
             Self::Providers => "settings.nav.providers",
             Self::Remote => "settings.nav.remote",
+            Self::ConfigFiles => "settings.nav.configFiles",
+            Self::Advanced => "settings.nav.advanced",
             Self::Info => "settings.nav.info",
         })
     }
@@ -53,7 +56,10 @@ pub(super) struct Panel {
     memory_help_failed: bool,
     memory_editor: super::memory::editor::Editor,
     catalog: Catalog,
-    scope: Option<HostScope>,
+    scope: super::host_support::HostSupport,
+    config_files: super::config_files::Editor,
+    environment: super::advanced::environment::Editor,
+    confirm_config_close: bool,
     opencode: opencode::Status,
     logging: opencode::logging::Logging,
     remote: remote::Remote,
@@ -78,12 +84,6 @@ impl Default for PermissionRequest {
     }
 }
 
-struct HostScope {
-    owner: String,
-    local: bool,
-    probe: Option<(Sender<()>, Receiver<bool>)>,
-}
-
 impl Panel {
     pub(super) fn poll_window_actions(&mut self, prefs: &Preferences, tx: &mut rune::Tx) -> bool {
         if self.shown && self.section == Section::Info {
@@ -102,6 +102,10 @@ impl Panel {
 
     pub fn poll(&mut self, prefs: &mut Preferences, wake: &rune::Waker, paired: bool) -> bool {
         let scope_changed = self.poll_scope(prefs, wake, paired);
+        let environment = self.environment.poll(
+            prefs,
+            self.shown && paired && self.section == Section::Advanced,
+        );
         let opencode = if self.section == Section::OpenCode && self.local(prefs) {
             prefs.show_opencode() | self.opencode.step(prefs, wake)
         } else {
@@ -110,6 +114,7 @@ impl Panel {
         let editor = prefs.memory.poll_editor(&mut self.memory_editor);
         editor
             | scope_changed
+            | environment
             | opencode
             | self.poll_notification_permission()
             | (self.shown && paired && self.section == Section::Info && self.info.poll(prefs, wake))
@@ -137,65 +142,33 @@ impl Panel {
     }
 
     fn poll_scope(&mut self, prefs: &mut Preferences, wake: &rune::Waker, paired: bool) -> bool {
-        let backend = prefs
-            .backend
-            .as_ref()
-            .filter(|_| self.shown && paired && prefs.can_retry());
-        if backend.map(|b| b.client_id.as_str()) != self.scope.as_ref().map(|s| s.owner.as_str()) {
-            let backend = backend.cloned();
+        let shown = self.shown && paired;
+        let mut changed = self.scope.poll(prefs, wake, shown);
+        if matches!(self.section, Section::OpenCode | Section::Remote) && !self.local(prefs) {
             prefs.hide_opencode();
             self.logging.close();
             self.remote.close();
             self.opencode = opencode::Status::default();
-            if matches!(self.section, Section::OpenCode | Section::Remote) {
-                self.section = Section::General;
-                prefs.memory.show(true);
-            }
-            self.scope = backend.map(|backend| {
-                let (cancel, cancelled) = bounded(1);
-                let (out, reply) = bounded(1);
-                let wake = wake.clone();
-                let owner = backend.client_id.clone();
-                platform::spawn(async move {
-                    if let Some(local) =
-                        platform::reads::cancellable(&cancelled, opencode_local(&backend)).await
-                        && out.send(local.unwrap_or(false)).await.is_ok()
-                    {
-                        wake();
-                    }
-                });
-                HostScope {
-                    owner,
-                    local: false,
-                    probe: Some((cancel, reply)),
-                }
-            });
-            return true;
+            self.section = Section::General;
+            prefs.memory.show(true);
+            changed = true;
         }
-        let Some(scope) = &mut self.scope else {
-            return false;
-        };
-        let Some(local) = scope
-            .probe
-            .as_ref()
-            .and_then(|(_, reply)| reply.try_recv().ok())
-        else {
-            return false;
-        };
-        scope.probe = None;
-        scope.local = local;
-        local
+        let capable = self.scope.config_files(prefs);
+        if self.section == Section::ConfigFiles && !capable {
+            self.section = Section::General;
+            prefs.memory.show(true);
+            changed = true;
+        }
+        changed
+            | self.config_files.poll(
+                prefs,
+                wake,
+                shown && capable && self.section == Section::ConfigFiles,
+            )
     }
 
     fn local(&self, prefs: &Preferences) -> bool {
-        prefs.can_retry()
-            && self.scope.as_ref().is_some_and(|scope| {
-                scope.local
-                    && prefs
-                        .backend
-                        .as_ref()
-                        .is_some_and(|backend| backend.client_id == scope.owner)
-            })
+        self.scope.local(prefs)
     }
 }
 
@@ -215,12 +188,21 @@ pub(super) fn entry() -> El {
 
 fn close(s: &mut State) {
     let panel = &mut s.settings.web;
+    if panel.config_files.busy() {
+        return;
+    }
+    if panel.config_files.dirty() {
+        panel.confirm_config_close = true;
+        return;
+    }
     panel.shown = false;
     panel.contrast_help = false;
     panel.permissions.close();
     panel.catalog.suspend();
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.hide_opencode();
+    prefs.show_environment(false);
+    panel.environment = Default::default();
     panel.logging.close();
     panel.remote.close();
     panel.info.close();
@@ -230,8 +212,12 @@ fn close(s: &mut State) {
         panel.notification_permission.set(PermissionRequest::Idle);
     }
     panel.opencode = opencode::Status::default();
-    panel.scope = None;
-    if matches!(panel.section, Section::OpenCode | Section::Remote) {
+    panel.scope = Default::default();
+    panel.config_files = Default::default();
+    if matches!(
+        panel.section,
+        Section::OpenCode | Section::Remote | Section::ConfigFiles
+    ) {
         panel.section = Section::General;
     }
     prefs.provider_target = None;
@@ -269,25 +255,24 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
         return None;
     }
     let local = panel.local(prefs);
-    let sections = if local {
-        &[
-            Section::General,
-            Section::OpenCode,
-            Section::Notifications,
-            Section::Shortcuts,
-            Section::Providers,
-            Section::Remote,
-            Section::Info,
-        ][..]
-    } else {
-        &[
-            Section::General,
-            Section::Notifications,
-            Section::Shortcuts,
-            Section::Providers,
-            Section::Info,
-        ][..]
-    };
+    let sections: Vec<_> = [
+        Section::General,
+        Section::OpenCode,
+        Section::Notifications,
+        Section::Shortcuts,
+        Section::Providers,
+        Section::Remote,
+        Section::ConfigFiles,
+        Section::Advanced,
+        Section::Info,
+    ]
+    .into_iter()
+    .filter(|section| match section {
+        Section::OpenCode | Section::Remote => local,
+        Section::ConfigFiles => panel.scope.config_files(prefs),
+        _ => true,
+    })
+    .collect();
     let labels: Vec<_> = sections.iter().map(|section| section.label()).collect();
     let navigation = chrome::segments(
         t("settings.navigationAriaLabel"),
@@ -299,9 +284,13 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
         move |s: &mut State, index| {
             let panel = &mut s.settings.web;
             let mut prefs = s.settings.shared.borrow_mut();
-            let section = sections[index];
+            let Some(&section) = sections.get(index) else {
+                return;
+            };
             if !panel.shown
                 || (matches!(section, Section::OpenCode | Section::Remote) && !panel.local(&prefs))
+                || section == Section::ConfigFiles && !panel.scope.config_files(&prefs)
+                || panel.config_files.busy()
             {
                 return;
             }
@@ -428,6 +417,32 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 && panel.local(&s.settings.shared.borrow()))
             .then_some(&mut panel.remote)
         }),
+        Section::ConfigFiles if panel.scope.config_files(prefs) => {
+            panel
+                .config_files
+                .view(&mut layers, &s.settings.shared, |s: &mut State| {
+                    &mut s.settings.web.config_files
+                })
+        }
+        Section::Advanced => col()
+            .full_width()
+            .child(super::advanced::view(
+                prefs,
+                false,
+                |s: &mut State, toggle, checked| {
+                    s.settings
+                        .shared
+                        .borrow_mut()
+                        .set_advanced_toggle(toggle, checked);
+                },
+            ))
+            .child(
+                panel
+                    .environment
+                    .view(prefs, &s.settings.shared, |s: &mut State| {
+                        &mut s.settings.web.environment
+                    }),
+            ),
         Section::Info => panel.info.view(
             &s.settings.shared,
             |s: &mut State| {
@@ -436,7 +451,7 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             },
             local.then_some(open_remote),
         ),
-        Section::OpenCode | Section::Remote => rune::el(),
+        Section::OpenCode | Section::Remote | Section::ConfigFiles => rune::el(),
     };
     if let Some(editor) = prefs.memory.editor_view(
         &panel.memory_editor,
@@ -446,6 +461,17 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
         },
     ) {
         layers.push(editor);
+    }
+    if panel.confirm_config_close {
+        layers.push(super::config_files::confirm_discard(
+            |s: &mut State, accept, _| {
+                s.settings.web.confirm_config_close = false;
+                if accept {
+                    s.settings.web.config_files = Default::default();
+                    close(s);
+                }
+            },
+        ));
     }
     Some(
         chrome::embedded_section(

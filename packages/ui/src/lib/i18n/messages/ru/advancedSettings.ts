@@ -1,4 +1,6 @@
 export const advancedSettingsMessages = {
+  "advancedSettings.savedForSharedClients": "Сохраняется в общих настройках. Rune пока не применяет этот параметр.",
+  "advancedSettings.environmentVariables.maskValue": "Скрывать значение по умолчанию",
   "advancedSettings.title": "Расширенные настройки",
   "advancedSettings.environmentVariables.title": "Переменные окружения",
   "advancedSettings.environmentVariables.subtitle": "Применяются перед каждым запросом или командой сессии",
