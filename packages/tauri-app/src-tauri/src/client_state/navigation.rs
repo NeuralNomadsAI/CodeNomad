@@ -204,18 +204,30 @@ fn run_navigation_queue(window_label: String) {
             complete_active(&window_label);
             continue;
         }
-        let result = crate::shutdown::with_navigation_authority(&app, || {
-            let state = app.try_state::<ClientState>();
-            execute_navigation_for(
-                state.as_deref(),
-                window_id.as_deref(),
-                target_url.as_ref(),
-                || navigate(app.clone()),
-            )
+        let dispatch = app.clone();
+        let (done, reply) = std::sync::mpsc::sync_channel(1);
+        // Native getters and navigation run together; the worker waits
+        // without holding shutdown authority.
+        let result = app.run_on_main_thread(move || {
+            let result = crate::shutdown::with_navigation_authority(&dispatch, || {
+                if !is_current() {
+                    return Err("discarded stale navigation".into());
+                }
+                let state = dispatch.try_state::<ClientState>();
+                execute_navigation_for(
+                    state.as_deref(),
+                    window_id.as_deref(),
+                    target_url.as_ref(),
+                    || navigate(dispatch.clone()),
+                )
+            });
+            let _ = done.send(result);
+        }).map_err(|err| err.to_string()).and_then(|()| {
+            reply.recv().map_err(|err| err.to_string())
         });
-        if !matches!(result, Some(Ok(()))) {
+        if !matches!(result, Ok(Some(Ok(())))) {
             ClientState::cancel_navigation_flush(&app, &window_label, generation);
-            if let Some(Err(err)) = result {
+            if let Ok(Some(Err(err))) | Err(err) = result {
                 eprintln!("[client-state] navigation failed: {err}");
             }
         }
@@ -377,6 +389,7 @@ mod tests {
         assert!(state
             .renderer_access
             .allows_claim_origin_for(&window_id, &outgoing_url));
+        state.renderer_page_started(&window_id, Some(&incoming_url));
         state
             .renderer_access
             .claim_for(&window_id, "incoming-renderer", &incoming_url)

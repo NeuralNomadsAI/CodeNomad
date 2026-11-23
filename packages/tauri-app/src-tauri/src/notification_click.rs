@@ -166,7 +166,7 @@ pub(crate) async fn notification_permission(
     Ok(None)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn notification_show(
     webview: Webview,
     title: String,

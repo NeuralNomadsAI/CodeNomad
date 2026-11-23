@@ -616,6 +616,7 @@ jobs:
           packages/ui/src/components/mission-native-execution.test.ts
           packages/ui/src/components/mission-picker-model.test.ts
           packages/ui/src/components/mission-profile-controls-data.test.ts
+          packages/ui/src/components/catalog-refresh.test.ts
           packages/ui/src/components/mission-profile-summary-data.test.ts
           packages/ui/src/components/mission-progress-model.test.ts
           packages/ui/src/components/mission-reader-locales.test.ts

@@ -37,6 +37,26 @@ verify omitted files on disk under the publication transaction; the 256 MiB
 limit applies to the complete graph. Publication and partition collection are
 serialized across windows, retaining the union of their roots. A failed delta
 retries once with all partition bodies.
+After a root rename, readers use the published root even if directory sync
+fails. Durability is reported separately and collection waits for a confirmed
+sync.
+
+Tauri admits client-state IPC to a FIFO worker before yielding the event loop,
+so writes and renderer flush acknowledgements keep delivery order. Admission
+captures the renderer URL and document epoch; page-load start retires the
+previous epoch after any pre-navigation flush. A first claim must carry the
+challenge injected into its committed document. Quit seals the queue and waits
+for a bounded FIFO barrier before releasing ownership. Windows requests the
+renderer flush at session-end query and drains admitted work at confirmed
+session end. Preferences captures native inputs before joining that same
+queue and completes a close once its clear is published, with directory sync
+retried before ownership release. New windows register under the Quit snapshot
+fence, then join the FIFO after native construction. Their initial focus and
+latest geometry are folded into the first publication. A renderer without a
+claim relies on the queue drain during quit. Electron serializes
+renderer loads and publication on its write queue. Both hosts bind
+participating processes to an exact owner generation so
+recovery after a handoff waits only for that generation and unbound records.
 
 Workspace file drafts use a separate `workspace-file-drafts.json` beside the
 profile's client-state envelope. Both hosts serialize atomic draft changes under

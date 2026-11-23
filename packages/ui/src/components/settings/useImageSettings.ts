@@ -5,6 +5,7 @@ import { backendOf } from "../../lib/backend-client"
 import { captureBackendOperation } from "../../lib/backend-operation"
 import { backendEvents as serverEvents } from "../../lib/server-events"
 import { getActiveCatalogLocation } from "../../stores/sessions"
+import { isCatalogEvent } from "../../lib/catalog-events"
 
 /** Reads while mounted; config, model-catalog and connection events coalesce into one trailing reread. */
 export function useImageSettings(props: { instanceId: string; location?: LocationRef }) {
@@ -53,7 +54,7 @@ export function useImageSettings(props: { instanceId: string; location?: Locatio
     }
     const events = serverEvents.on("instance.event", payload => {
       if (payload.type === "instance.event" && payload.instanceId === instanceId
-        && ["config.updated", "model.updated", "integration.updated", "credential.updated"].includes(payload.event.type)) void load()
+        && (["config.updated", "integration.updated", "credential.updated"].includes(payload.event.type) || isCatalogEvent(payload.event.type))) void load()
     })
     const status = serverEvents.on("instance.eventStatus", payload => {
       if (payload.type === "instance.eventStatus" && payload.instanceId === instanceId && payload.status === "connected") void load()

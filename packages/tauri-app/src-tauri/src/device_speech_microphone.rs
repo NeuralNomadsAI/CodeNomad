@@ -1,5 +1,6 @@
 use super::{
     microphone_id, DeviceSpeech, Engine, Kind, MicrophonePurpose, Operation, Slots, SpeechError,
+    SpeechPreflight,
 };
 use crate::{
     device_speech_ipc::remote_microphone::Capture, remote_dictation::ApiMicrophonePurpose,
@@ -47,8 +48,10 @@ impl DeviceSpeech {
         url: &Url,
         id: String,
         preferences: bool,
+        preflight: SpeechPreflight,
     ) -> Result<Value, SpeechError> {
         let slots = self.slots.lock();
+        Self::check_preflight(&slots, owner, &preflight)?;
         if self.native_microphone_busy(&slots).is_some() {
             return Err(SpeechError::Busy);
         }
@@ -58,7 +61,10 @@ impl DeviceSpeech {
         }
         if !preferences
             && !lease.is_some_and(|lease| lease.purpose != MicrophonePurpose::Dictation)
-            && self.preferred_engine() != Ok(Some(Engine::Api))
+            && !preflight
+                .choice
+                .expect("microphone probes choice")
+                .is_ok_and(|choice| choice.engine == Some(Engine::Api))
         {
             return Err(SpeechError::Unavailable);
         }
@@ -67,8 +73,18 @@ impl DeviceSpeech {
         Ok(Value::Null)
     }
 
-    pub(crate) fn revoke_api_microphone(&self, owner: &str, id: &str) {
+    pub(crate) fn revoke_api_microphone(
+        &self,
+        owner: &str,
+        id: &str,
+        preflight: SpeechPreflight,
+    ) -> Result<Value, SpeechError> {
+        let slots = self.slots.lock();
+        if !Self::document_current(&slots, owner, &preflight) {
+            return Err(SpeechError::NotOwned);
+        }
         self.api_microphone.revoke(Some(owner), Some(id));
+        Ok(Value::Null)
     }
 
     pub(crate) fn claim_local_microphone(&self, owner: &str, url: &Url) -> bool {
