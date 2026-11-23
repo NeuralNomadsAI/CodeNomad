@@ -218,10 +218,12 @@ try {
   live.recovered=true
   evidence.timings.cutToRecoveryMs=performance.now()-cut
   evidence.timings.releaseToRecoveredHistoryMs=performance.now()-resume
+  evidence.memory.afterCut=await chromeMemory(run,cdp)
   assert(events>0)
   const previous=[...policy.workspaces],beforeRestart=events,restart=performance.now()
   await command('restart')
-  await page.getByText('Mobile Rust restart history',{exact:true}).waitFor({timeout:45000})
+  try { await page.getByText('Mobile Rust restart history',{exact:true}).waitFor({timeout:45000}) }
+  catch(error){evidence.restartWaitMs=performance.now()-restart;throw error}
   await recovering.waitFor({state:'hidden'})
   await paint()
   evidence.timings.rustRestartToHistoryMs=performance.now()-restart
