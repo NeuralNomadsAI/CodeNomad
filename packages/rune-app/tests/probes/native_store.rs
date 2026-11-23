@@ -23,6 +23,21 @@ fn select(rt: &mut Runtime<State>, index: usize, id: &str) {
     wait(rt, "selected native session", |s| ready(s, id));
 }
 fn open(rt: &mut Runtime<State>, id: &str, title: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !rt.elements().iter().any(|node| {
+        node.key.as_deref() == Some("folder-path")
+            && !node.exiting
+            && node.visible[2] > 0.0
+            && node.visible[3] > 0.0
+    }) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "folder selector never became visible; {}",
+            rt.accessibility_json()
+        );
+        rt.frame(1.0 / 60.0);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     type_text(
         rt,
         "folder-path",
