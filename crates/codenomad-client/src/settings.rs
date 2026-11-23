@@ -1,4 +1,5 @@
 //! Host-owned configuration and appearance, independent of any project location.
+pub mod memory;
 mod providers;
 use crate::{
     Wake,
@@ -198,9 +199,13 @@ impl PreferencesWatch {
                             async {
                                 while let Ok(event) = events.recv().await {
                                     let flag = match event {
-                                        Input::Opened(_) => 3,
+                                        Input::Opened(_) => 11,
                                         Input::Preferences(Owner::Config) => 1,
                                         Input::Preferences(Owner::State) => 2,
+                                        Input::Workspace(
+                                            _,
+                                            crate::transport::WorkspaceEvent::MemoryChanged,
+                                        ) => 8,
                                         _ => 0,
                                     };
                                     if flag != 0 && notices.fetch_or(flag, SeqCst) & flag != flag {
@@ -246,6 +251,10 @@ impl PreferencesWatch {
 
     pub fn take_authentication_required(&self) -> bool {
         self.dirty.fetch_and(!4, SeqCst) & 4 != 0
+    }
+
+    pub fn take_memory_changed(&self) -> bool {
+        self.dirty.fetch_and(!8, SeqCst) & 8 != 0
     }
 
     pub fn stop(self) -> crate::Receiver<()> {

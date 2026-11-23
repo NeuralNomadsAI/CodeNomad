@@ -289,6 +289,20 @@ pub fn info_link<S: 'static>(help: &str, open: impl Fn(&mut S, &mut rune::Tx) + 
     layout::button_tx("ⓘ", false, open).label(help).help(help)
 }
 
+pub fn setting_switch<S: 'static>(
+    label: &str,
+    checked: bool,
+    disabled: bool,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    rune_kit::Switch::new(checked)
+        .label(label)
+        .hide_label()
+        .disabled(disabled)
+        .on_toggle(toggle)
+        .build(crate::kit(layout::dark()))
+}
+
 pub fn color_scheme(title: &str, mode: &str, segments: El, contrast: El, picker: El) -> El {
     col()
         .full_width()

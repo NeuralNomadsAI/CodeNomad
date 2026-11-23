@@ -17,6 +17,8 @@ const mime = {'.html':'text/html','.js':'text/javascript','.wasm':'application/w
 let account = 'First fixture account', detached = false
 let contrast = 'on', permissions = 'autonomous'
 const writes = []
+const memoryRequests = []
+let memoryEnabled = false
 let releaseState
 const stateReady = new Promise(resolve => { releaseState = resolve })
 const server = createServer(async (req,res) => {
@@ -58,6 +60,16 @@ const server = createServer(async (req,res) => {
     if (p === '/api/storage/state/ui') {
       await stateReady
       return json({appearancePreferences:{mode:'light',light:{scheme:{id:'light'}}}})
+    }
+    if (p === '/api/memory/settings') {
+      memoryRequests.push(req.method)
+      if (req.method === 'PUT') {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        assert.deepEqual(JSON.parse(body),{enabled:true})
+        memoryEnabled = true
+      }
+      return json({enabled:memoryEnabled})
     }
     if (p.startsWith('/api/storage/')) return json({})
     if (p === '/api/workspaces/catalogue/worktrees') return json({repository:'uninitialized',worktrees:[]})
@@ -109,6 +121,18 @@ try {
   await click(directory)
   await visible('No session selected')
   await click('Settings')
+  const memory = page.getByRole('switch',{name:'Memory',exact:true})
+  await memory.waitFor({state:'attached'})
+  assert.equal(await memory.getAttribute('aria-checked'),'false')
+  await memory.click({force:true})
+  await page.locator('[role="switch"][aria-checked="true"]').waitFor({state:'attached'})
+  assert.equal(await memory.getAttribute('aria-checked'),'true')
+  assert.equal(memoryRequests.filter(method=>method==='PUT').length,1)
+  const preferencesStream = Array.from(streams).find(([client])=>client.endsWith('-preferences'))?.[1]
+  assert(preferencesStream,'Memory observes the host stream without opening another connection')
+  memoryEnabled = false
+  preferencesStream.write('data: {"type":"memory.changed"}\n\n')
+  await page.getByRole('switch',{name:'Memory',checked:false,exact:true}).waitFor({state:'attached'})
   await radio('On').waitFor({state:'attached'})
   assert.equal(await radio('On').getAttribute('aria-checked'),'true')
   const savedOff = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')

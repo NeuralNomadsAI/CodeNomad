@@ -1,6 +1,7 @@
 //! Preferences owns its native window; its confirmed host settings also feed the shell.
 mod behavior;
 mod contrast;
+mod memory;
 #[cfg(not(target_arch = "wasm32"))]
 mod opencode;
 mod preferences;
@@ -213,17 +214,26 @@ fn provider_changed(s: &State, workspace: &str) {
     }
 }
 
-pub(crate) fn provider_connection_event(s: &State, event: &crate::transport::Event) {
+pub(crate) fn connection_event(s: &State, event: &crate::transport::Event) {
     use codenomad_client::transport::{Event, WorkspaceEvent};
     match event {
+        Event::Workspace(WorkspaceEvent::MemoryChanged) => {
+            s.settings.shared.borrow_mut().memory.invalidate();
+        }
         Event::Workspace(WorkspaceEvent::ProvidersChanged { workspace_id }) => {
             provider_changed(s, workspace_id)
         }
         Event::Workspace(WorkspaceEvent::Stopped { workspace_id }) => {
             provider_stopped(s, workspace_id)
         }
-        Event::AgentHint(true) => provider_transport(s, true),
-        Event::ConnectionLost => provider_transport(s, false),
+        Event::AgentHint(true) => {
+            s.settings.shared.borrow_mut().memory.transport(true);
+            provider_transport(s, true);
+        }
+        Event::ConnectionLost => {
+            s.settings.shared.borrow_mut().memory.transport(false);
+            provider_transport(s, false);
+        }
         _ => {}
     }
 }

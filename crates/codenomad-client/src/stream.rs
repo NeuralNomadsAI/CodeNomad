@@ -303,6 +303,11 @@ pub(super) async fn dispatch(
     if data.len() > NATIVE_EVENT_LIMIT {
         return Err("oversized SSE event".into());
     }
+    if value["type"] == "memory.changed" {
+        out.send(Input::Workspace(epoch, WorkspaceEvent::MemoryChanged))
+            .await?;
+        return Ok(());
+    }
     if value["type"] == "instance.event"
         && let Some(id) = crate::settings::provider_change(&value)
         && id == b.workspace

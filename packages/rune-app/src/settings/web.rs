@@ -28,6 +28,7 @@ pub(super) struct Panel {
     section: Section,
     contrast_help: bool,
     permissions: super::behavior::Permissions,
+    memory_help_failed: bool,
     catalog: Catalog,
 }
 
@@ -49,7 +50,11 @@ impl Panel {
 pub(super) fn entry() -> El {
     layout::button(t("settings.title"), false, |s: &mut State| {
         let target = Target::capture(s);
-        s.settings.shared.borrow_mut().provider_target = target;
+        let mut prefs = s.settings.shared.borrow_mut();
+        prefs.provider_target = target;
+        prefs
+            .memory
+            .show(s.settings.web.section == Section::General);
         s.settings.web.shown = true;
         (s.wake)();
     })
@@ -62,7 +67,10 @@ fn close(s: &mut State) {
     panel.contrast_help = false;
     panel.permissions.close();
     panel.catalog.suspend();
-    s.settings.shared.borrow_mut().provider_target = None;
+    let mut prefs = s.settings.shared.borrow_mut();
+    prefs.provider_target = None;
+    prefs.memory.show(false);
+    panel.memory_help_failed = false;
 }
 
 pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<El> {
@@ -87,6 +95,12 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
             }
             panel.contrast_help = false;
             panel.permissions.close();
+            panel.memory_help_failed = false;
+            s.settings
+                .shared
+                .borrow_mut()
+                .memory
+                .show(panel.section == Section::General);
         },
     );
     let mut layers = Vec::new();
@@ -94,6 +108,14 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
         Section::General => col()
             .full_width()
             .child(general(panel, prefs, system_more))
+            .child(super::memory::view(
+                prefs,
+                panel.memory_help_failed,
+                |s: &mut State, desired| {
+                    super::memory::action(&mut s.settings.shared.borrow_mut(), desired)
+                },
+                |s: &mut State, failed| s.settings.web.memory_help_failed = failed,
+            ))
             .child(
                 panel
                     .permissions

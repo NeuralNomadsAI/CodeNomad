@@ -1,6 +1,7 @@
 use super::*;
 mod appearance;
 mod behavior;
+mod memory;
 mod providers;
 
 #[test]

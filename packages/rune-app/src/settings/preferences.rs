@@ -14,6 +14,7 @@ use serde_json::json;
 pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
     pub(super) provider_target: Option<super::providers::Target>,
+    pub(super) memory: super::memory::Setting,
     config: Document,
     state: Document,
     pub(super) window_wake: Option<rune::Waker>,
@@ -78,6 +79,7 @@ impl Preferences {
             });
         self.config.rebind(same_address);
         self.state.rebind(same_address);
+        self.memory.bind(same_address);
         self.backend = owner;
         self.authentication_required = false;
         self.unwatch();
@@ -218,6 +220,9 @@ impl Preferences {
             if state {
                 self.state.invalidate();
             }
+            if stream.take_memory_changed() {
+                self.memory.invalidate();
+            }
         }
     }
 
@@ -230,7 +235,8 @@ impl Preferences {
         };
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         let changed = self.config.poll(backend, Owner::Config, &main, &window)
-            | self.state.poll(backend, Owner::State, &main, &window);
+            | self.state.poll(backend, Owner::State, &main, &window)
+            | self.memory.poll(backend, &main, &window);
         if changed {
             self.revision += 1;
         }

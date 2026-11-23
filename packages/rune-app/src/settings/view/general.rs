@@ -155,6 +155,14 @@ pub(super) fn view(
             ),
             palette_picker,
         )))
+        .child(super::super::memory::view(
+            prefs,
+            s.memory_help_failed,
+            |s: &mut Window, desired| {
+                super::super::memory::action(&mut s.shared.borrow_mut(), desired)
+            },
+            |s: &mut Window, failed| s.memory_help_failed = failed,
+        ))
         .child(
             s.permissions
                 .view(&s.shared, layers, |s: &mut Window| &mut s.permissions),

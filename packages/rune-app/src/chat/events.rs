@@ -29,7 +29,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         let content = observation.is_none();
         let event = observation.or_else(|| s.reader.as_ref().and_then(chat::reader::Reader::next));
         let Some(event) = event else { break };
-        settings::provider_connection_event(s, &event);
+        settings::connection_event(s, &event);
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
