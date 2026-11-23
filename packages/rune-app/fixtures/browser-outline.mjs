@@ -24,6 +24,9 @@ const server=createServer(async(req,res)=>{
       checkpoints:first?[checkpoint(-1,40)]:[checkpoint(40,2000)],
       cursor:first?{after:40,through:2000}:null,
     }))
+  }else if(req.method==='GET'&&req.url==='/workspaces/workspace/instance/api/session/session'){
+    assert.equal(req.headers.cookie,'fixture=outline')
+    res.writeHead(200,{'Content-Type':'application/json'}).end('{"data":{"id":"session"}}')
   }else if(req.url==='/'){
     res.writeHead(200,{'Content-Type':'text/html','Set-Cookie':'fixture=outline; Path=/; HttpOnly'}).end('<!doctype html>')
   }else if(files.has(req.url)){

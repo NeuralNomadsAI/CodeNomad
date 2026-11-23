@@ -1,16 +1,20 @@
 //! Read the global structural outline independently of resident transcript windows.
 use crate::{
-    backend::{Backend, read_json_limited},
+    backend::{Backend, read_json, read_json_limited},
     history::{Result, valid_id},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::collections::HashSet;
+use serde_json::{Value, json};
+use std::{
+    collections::HashSet,
+    sync::atomic::{AtomicU64, Ordering::SeqCst},
+};
 
 const PAGE_ENTRIES: usize = 16_384;
 const PAGE_BYTES: usize = 24 * 1024 * 1024;
-const INDEX_ENTRIES: usize = 200_000;
-const INDEX_BYTES: usize = 32 * 1024 * 1024;
+const CACHE_ENTRIES: usize = 200_000;
+const CACHE_BYTES: usize = 16 * 1024 * 1024;
+const INDEX_BYTES: usize = 128 * 1024 * 1024;
 const MAX_SEQ: u64 = (1 << 53) - 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -57,6 +61,18 @@ pub struct Outline {
     pub entries: Vec<Entry>,
     /// Count at the last page's read transaction, not a guarantee against concurrent deletion.
     pub total: u64,
+    /// Larger indexes stay in the active view, outside the reusable cache.
+    pub cacheable: bool,
+}
+
+/// The view invalidates this revision on undo and on revocation of its history read.
+#[derive(Default)]
+pub struct OutlineRevision(AtomicU64);
+
+impl OutlineRevision {
+    pub fn invalidate(&self) {
+        self.0.fetch_add(1, SeqCst);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,7 +125,7 @@ impl std::error::Error for Blocked {}
 
 impl Backend {
     /// A cold scan publishes only after the last page. Drop the future to cancel the read.
-    pub async fn outline(&self) -> Result<Outline> {
+    pub async fn outline(&self, revision: &OutlineRevision) -> Result<Outline> {
         if !valid_id(&self.workspace) || !valid_id(&self.session) {
             return Err("invalid outline scope".into());
         }
@@ -117,8 +133,16 @@ impl Backend {
             "{}api/workspaces/{}/session-history/outline",
             self.base, self.workspace
         );
+        let stamp = revision.0.load(SeqCst);
+        let current = || {
+            (revision.0.load(SeqCst) == stamp)
+                .then_some(())
+                .ok_or(Blocked::Conflict)
+        };
+        let undo = self.outline_undo().await?;
         let mut scan = Scan::default();
         loop {
+            current()?;
             let body = match scan.cursor {
                 None => json!({"sessionID": self.session}),
                 Some(cursor) => json!({"sessionID": self.session, "cursor": cursor}),
@@ -131,13 +155,41 @@ impl Backend {
                 .await?
                 .error_for_status()?;
             let page = serde_json::from_value(read_json_limited(response, PAGE_BYTES).await?)?;
-            if let Some(total) = scan.accept(page)? {
+            current()?;
+            let total = scan.accept(page)?;
+            // Each broker page is stable within its own request. The native undo boundary
+            // and the live revision together fence the complete multi-page scan.
+            if self.outline_undo().await? != undo {
+                return Err(Blocked::Conflict.into());
+            }
+            current()?;
+            if let Some(total) = total {
                 return Ok(Outline {
+                    cacheable: scan.cacheable,
                     entries: scan.entries,
                     total,
                 });
             }
         }
+    }
+
+    async fn outline_undo(&self) -> Result<Value> {
+        let value = read_json(
+            self.client
+                .get(format!(
+                    "{}workspaces/{}/instance/api/session/{}",
+                    self.base, self.workspace, self.session
+                ))
+                .send()
+                .await?
+                .error_for_status()?,
+        )
+        .await?;
+        let record = value.get("data").unwrap_or(&value);
+        if record["id"] != self.session {
+            return Err("outline session identity changed".into());
+        }
+        Ok(record["revert"].clone())
     }
 }
 
@@ -148,6 +200,7 @@ struct Scan {
     ids: HashSet<String>,
     bytes: usize,
     pages: usize,
+    cacheable: bool,
 }
 
 impl Scan {
@@ -162,10 +215,15 @@ impl Scan {
             } => (entries, total, cursor, checkpoints),
             Page::Blocked { reason } => return Err(reason.into()),
         };
+        if self.pages == 0 {
+            if total > (INDEX_BYTES / std::mem::size_of::<Entry>()) as u64 {
+                return Err("outline cannot fit in its active index budget".into());
+            }
+            self.cacheable = total <= CACHE_ENTRIES as u64;
+        }
         self.pages += 1;
         if self.pages > 512
             || entries.len() > PAGE_ENTRIES
-            || self.entries.len() + entries.len() > INDEX_ENTRIES
             || total > MAX_SEQ
             || checkpoints.is_empty()
             || checkpoints.len() > 512
@@ -226,6 +284,7 @@ impl Scan {
             self.entries.push(entry);
         }
         self.cursor = next;
+        self.cacheable &= self.entries.len() <= CACHE_ENTRIES && self.bytes <= CACHE_BYTES;
         Ok(next.is_none().then_some(total))
     }
 }

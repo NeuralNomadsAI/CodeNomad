@@ -4,7 +4,7 @@ fn main() {}
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub async fn fetch_outline() -> Result<String, wasm_bindgen::JsValue> {
-    use codenomad_client::backend::Backend;
+    use codenomad_client::{backend::Backend, timeline::OutlineRevision};
     use wasm_bindgen::JsValue;
 
     let mut backend =
@@ -12,7 +12,7 @@ pub async fn fetch_outline() -> Result<String, wasm_bindgen::JsValue> {
     backend.workspace = "workspace".into();
     backend.session = "session".into();
     let outline = backend
-        .outline()
+        .outline(&OutlineRevision::default())
         .await
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
     Ok(outline
