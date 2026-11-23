@@ -11,7 +11,9 @@ pub(crate) use state::contains_project;
 pub(crate) use state::evict_for_probe;
 #[cfg(target_os = "windows")]
 pub(crate) use state::native_window_store;
-pub(crate) use state::{Activation, notification_target, open_notification, owns_notification};
+pub(crate) use state::{
+    Activation, notification_target, observes_notification, open_notification, owns_notification,
+};
 pub(crate) use state::{
     Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
     close, connected, draft_changed, files_tab, has_conversation_stream, input_ready, new_tab,

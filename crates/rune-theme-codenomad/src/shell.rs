@@ -103,6 +103,9 @@ fn titlebar_height() -> f32 {
     tokens(layout::dark()).length(Length::Chrome).px()
 }
 
+/// A producer can update an owning window independently of its next paint.
+pub type WindowFeed<S> = rune::AppHandle<S>;
+
 pub fn app<S: 'static>(
     spec: AppSpec<S>,
     closing: fn(&mut S, &mut Tx),

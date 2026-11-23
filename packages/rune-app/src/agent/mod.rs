@@ -59,6 +59,7 @@ pub struct Ui {
     pub(crate) attention: crate::shell::notifications::Attention,
     reading: bool,
     activity_during_job: bool,
+    request_during_job: bool,
     trailing: Option<bool>,
 }
 pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
@@ -110,6 +111,7 @@ impl Ui {
         self.handle = handle;
         self.reading = false;
         self.activity_during_job = false;
+        self.request_during_job = false;
         self.trailing = None;
         self.busy = false;
         self.stopping = false;
@@ -211,6 +213,7 @@ impl Ui {
             attention: Default::default(),
             reading: false,
             activity_during_job: false,
+            request_during_job: false,
             trailing: None,
         };
         ui.refresh(true);
@@ -262,10 +265,17 @@ impl Ui {
             .chain(self.forms.iter().map(|p| p.id.clone()))
             .collect()
     }
+    pub(crate) fn notice_request(&mut self, form: bool, id: String) {
+        self.attention.request(form, id);
+        self.request_during_job |= self.reading || self.busy;
+        self.refresh(false);
+    }
+
     fn snapshot(&mut self, s: Snapshot) {
         let current_activity = !std::mem::take(&mut self.activity_during_job);
+        let current_requests = !std::mem::take(&mut self.request_during_job);
         if self.online {
-            self.attention.observe(&s);
+            self.attention.observe(&s, current_requests);
         }
         self.known = s.session_known;
         if s.session_known {

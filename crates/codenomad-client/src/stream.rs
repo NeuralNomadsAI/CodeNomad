@@ -394,8 +394,7 @@ pub(super) async fn dispatch(
             || native["type"] == "server.connected")
     {
         if crate::history::valid_id(&b.session)
-            && native["data"]["sessionID"] == b.session
-            && let Some(event) = execution_attention(native)
+            && let Some(event) = session_attention(native, &b.session)
         {
             out.send(Input::Workspace(epoch, event)).await?;
         }
@@ -413,8 +412,22 @@ pub(super) async fn dispatch(
     Ok(())
 }
 
-fn execution_attention(event: &Value) -> Option<WorkspaceEvent> {
-    let notice = match event["type"].as_str()? {
+fn session_attention(event: &Value, session: &str) -> Option<WorkspaceEvent> {
+    let data = &event["data"];
+    let kind = event["type"].as_str()?;
+    if kind == "form.created" {
+        let form = &data["form"];
+        return (form["sessionID"] == session)
+            .then(|| attention_request(true, &form["id"]))
+            .flatten();
+    }
+    if data["sessionID"] != session {
+        return None;
+    }
+    if kind == "permission.asked" {
+        return attention_request(false, data.get("id").unwrap_or(&data["permissionID"]));
+    }
+    let notice = match kind {
         "session.execution.succeeded" | "session.execution.failed" => Some(event["id"].as_str()?),
         "session.execution.interrupted" if event["data"]["reason"] == "inactivity" => {
             Some(event["id"].as_str()?)
@@ -432,6 +445,16 @@ fn execution_attention(event: &Value) -> Option<WorkspaceEvent> {
     })
 }
 
+fn attention_request(form: bool, id: &Value) -> Option<WorkspaceEvent> {
+    Some(WorkspaceEvent::SessionRequest {
+        form,
+        id: id
+            .as_str()
+            .filter(|id| crate::history::valid_id(id))?
+            .into(),
+    })
+}
+
 #[test]
 fn terminal_notifications_include_failures_but_exclude_manual_stops_and_shutdown() {
     for (kind, reason, expected) in [
@@ -446,9 +469,10 @@ fn terminal_notifications_include_failures_but_exclude_manual_stops_and_shutdown
         ("session.execution.failed", "", Some("terminal")),
         ("session.execution.started", "", None),
     ] {
-        let event = json!({"id":"terminal","type":kind,"data":{"reason":reason}});
+        let event =
+            json!({"id":"terminal","type":kind,"data":{"sessionID":"session","reason":reason}});
         assert!(
-            matches!(execution_attention(&event), Some(WorkspaceEvent::SessionExecution { notice })
+            matches!(session_attention(&event, "session"), Some(WorkspaceEvent::SessionExecution { notice })
             if notice.as_deref() == expected)
         );
     }

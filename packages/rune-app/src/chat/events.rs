@@ -93,6 +93,14 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     agent.observe_running(running);
                 }
             }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionRequest {
+                form,
+                id,
+            }) => {
+                if let Some(agent) = &mut s.agent {
+                    agent.notice_request(form, id);
+                }
+            }
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionExecution {
                 notice,
             }) => {

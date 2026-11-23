@@ -57,10 +57,15 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
         assert!(matches!(crate::settings::system_notification(
             s, &foreign, crate::settings::notification_routing::Category::NeedsInput, false, "foreign"
         ), crate::settings::Delivery::Suppressed));
+        assert!(events.try_send(crate::transport::Event::Workspace(
+            codenomad_client::transport::WorkspaceEvent::SessionRequest { form: true, id: "question".into() }
+        )).is_ok());
+        assert!(crate::poll_chat(s, 8));
         for _ in 0..2 {
             assert!(out.try_send(super::Result::Read(snapshot(), false)).is_ok());
             assert!(crate::poll_chat(s, 8));
             notifications::collect(s, |_| Some((target.clone(), "Private project".into())));
+            let _ = incoming.try_recv();
         }
         assert_eq!(
             s.notifications.recorded(),

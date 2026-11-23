@@ -8,6 +8,10 @@ pub struct DirectoryChange {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceEvent {
+    SessionRequest {
+        form: bool,
+        id: String,
+    },
     SessionExecution {
         notice: Option<String>,
     },

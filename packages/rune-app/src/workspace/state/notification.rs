@@ -79,6 +79,36 @@ pub(crate) fn owns_notification(s: &State, target: &Target) -> bool {
                 && s.screen.launcher().is_some_and(|l| l.sessions.iter().any(|r| r.id == target.session)))))
 }
 
+pub(crate) fn observes_notification(s: &State, target: &Target, allow_running: bool) -> bool {
+    if !owns_notification(s, target) {
+        return false;
+    }
+    let observes = || {
+        s.agent
+            .as_ref()
+            .is_some_and(|agent| agent.online && (allow_running || !agent.running))
+    };
+    let Some(tab) = &target.tab else {
+        return observes();
+    };
+    let Some(ui) = &s.workspace else { return false };
+    let Some(entry) = ui.entries.iter().find(|entry| &entry.key == tab) else {
+        return false;
+    };
+    if !matches!(&entry.saved, Tab::Workspace(saved)
+        if saved.active_session_id.as_ref() == Some(&target.session))
+    {
+        return false;
+    }
+    if ui.active_key() == tab {
+        return !s.screen.is_launcher() && observes();
+    }
+    entry
+        .cache
+        .as_ref()
+        .is_some_and(|cache| cache.observes_notifications(allow_running))
+}
+
 pub(crate) enum Activation {
     Opened,
     Wait,
