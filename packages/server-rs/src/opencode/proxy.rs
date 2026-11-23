@@ -149,6 +149,15 @@ fn relayed(response: &reqwest::Response) -> axum::http::response::Builder {
     )
 }
 
+fn is_json_content_type(headers: &axum::http::HeaderMap) -> bool {
+    headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|ct| {
+        let rest = ct.as_bytes();
+        rest.len() >= 16
+            && rest[..16].eq_ignore_ascii_case(b"application/json")
+            && rest.get(16).is_none_or(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+    })
+}
+
 fn one_location(location: &Value, directory: &str) -> Result<(), Error> {
     if !location.as_object().is_some_and(|o| o.len() == 1) || location["directory"].as_str() != Some(directory) {
         return Err(foreign());
@@ -234,6 +243,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         .map(|(_, v)| v.into_owned());
     let session_path = route.strip_prefix("/api/session/").or_else(|| route.strip_prefix("/api/experimental/session/"));
     let session = session_path.and_then(|path| path.split('/').next()).filter(|v| !matches!(*v, "active" | "global"));
+    let defer_media = head.method == Method::GET
+        && session.is_some_and(|s| {
+            route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
+        })
+        && crate::sessions::media::wants_deferred(&head.headers);
     let actual = if let Some(session) = session {
         Some(super::session_record_at(&app, &endpoint, session).await?)
     } else {
@@ -707,6 +721,23 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             }
         }
         return Ok(Json(native).into_response());
+    }
+    if defer_media && response.status().is_success() && is_json_content_type(response.headers()) {
+        let builder = relayed(&response);
+        let bytes = tokio::select! {
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            read = super::read_bytes(response, 64 * 1024 * 1024) => read.map_err(|_| error(Status::BAD_GATEWAY, "OpenCode response was interrupted"))?,
+        };
+        let body = match serde_json::from_slice::<Value>(&bytes) {
+            Ok(mut native) => {
+                if let Some(session) = session {
+                    crate::sessions::media::defer(id, session, &mut native["data"]);
+                }
+                Body::from(native.to_string())
+            }
+            Err(_) => Body::from(bytes),
+        };
+        return builder.extension(NativeBody).body(body).map_err(|_| upstream_error());
     }
     let builder = relayed(&response);
     use futures_util::StreamExt;

@@ -38,11 +38,17 @@ pub async fn native(
     body: Option<Value>,
     max: usize,
 ) -> Result<Value, Error> {
-    let mut request = app
-        .native
-        .request(method, app.native.url().join(path).map_err(|_| native_error())?)
-        .query(query)
-        .timeout(Duration::from_secs(12));
+    let request = app.native.request(method, app.native.url().join(path).map_err(|_| native_error())?);
+    send(request, query, body, max).await
+}
+
+pub(super) async fn send(
+    request: reqwest::RequestBuilder,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+    max: usize,
+) -> Result<Value, Error> {
+    let mut request = request.query(query).timeout(Duration::from_secs(12));
     if let Some(body) = body {
         request = request.json(&body);
     }

@@ -198,6 +198,16 @@ impl Tree {
             && self.layout.live()
             && identity(&self.path).ok() == self.identity
     }
+
+    pub(super) fn contains_media(&self, dir: &Path) -> bool {
+        super::ownership::within(&self.path, dir)
+            && self.layout.live()
+            && if self.nested_missing {
+                std::fs::symlink_metadata(&self.path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            } else {
+                identity(&self.path).ok() == self.identity
+            }
+    }
 }
 #[derive(Clone)]
 pub struct Catalogue {
@@ -262,6 +272,9 @@ fn drop_entries(app: &App, id: Option<Uuid>) {
 pub fn invalidate(app: &App) {
     drop_entries(app, None)
 }
+pub(super) fn revision(app: &App) -> u64 {
+    app.linked_events.lock().unwrap().0
+}
 pub fn forget(app: &App, id: Uuid) {
     drop_entries(app, Some(id))
 }
@@ -313,10 +326,40 @@ struct Root {
     local: Physical,
     main: Physical,
 }
-async fn root(app: &App, w: &Workspace) -> Result<Root, Error> {
+async fn catalogue_native(
+    app: &App,
+    w: &Workspace,
+    endpoint: Option<&Arc<crate::opencode::Endpoint>>,
+    method: Method,
+    path: &str,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+    max: usize,
+) -> Result<Value, Error> {
+    let Some(endpoint) = endpoint else { return native(app, method, path, query, body, max).await };
+    let current = || app.native.current(endpoint) && app.workspace(&w.id.to_string()).is_ok();
+    if !current() {
+        return Err(native_error());
+    }
+    let url = endpoint.url.join(path).map_err(|_| native_error())?;
+    let request = app.native.client.request(method, url).basic_auth("opencode", Some(&endpoint.password));
+    let result = super::linked::send(request, query, body, max).await?;
+    current().then_some(result).ok_or_else(native_error)
+}
+
+async fn root_at(app: &App, w: &Workspace, endpoint: Option<&Arc<crate::opencode::Endpoint>>) -> Result<Root, Error> {
     let native_dir = w.location["directory"].as_str().ok_or_else(native_error)?;
-    let here =
-        native(app, Method::GET, "/api/location", &[("location[directory]", native_dir)], None, 128 * 1024).await?;
+    let here = catalogue_native(
+        app,
+        w,
+        endpoint,
+        Method::GET,
+        "/api/location",
+        &[("location[directory]", native_dir)],
+        None,
+        128 * 1024,
+    )
+    .await?;
     let project = here["project"]["id"].as_str().filter(|p| crate::opencode::valid_id(p)).ok_or_else(native_error)?;
     let local = checkout(&w.path).await?;
     let main_path = here["project"]["canonical"].as_str().and_then(physical).ok_or_else(native_error)?;
@@ -339,18 +382,39 @@ async fn root(app: &App, w: &Workspace) -> Result<Root, Error> {
 }
 /// Root-only session mutations need the opened checkout's proof, independent of sibling inventory size.
 pub async fn root_supported(app: &App, w: &Workspace) -> bool {
-    root(app, w).await.is_ok()
+    root_at(app, w, None).await.is_ok()
 }
 pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalogue, Error> {
-    let Root { project, local, main } = root(app, w).await?;
+    catalogue_at(app, w, refresh, None).await
+}
+
+pub(crate) async fn catalogue_at(
+    app: &App,
+    w: &Workspace,
+    refresh: bool,
+    endpoint: Option<&Arc<crate::opencode::Endpoint>>,
+) -> Result<Catalogue, Error> {
+    let Root { project, local, main } = root_at(app, w, endpoint).await?;
     let native_dir = w.location["directory"].as_str().ok_or_else(native_error)?;
     let project = project.as_str();
     let tail = w.path.strip_prefix(&local.root).map_err(|_| native_error())?;
     if refresh {
-        native(app, Method::POST, "/api/worktree/refresh", &[], Some(json!({"projectID":project})), 16384).await?;
+        catalogue_native(
+            app,
+            w,
+            endpoint,
+            Method::POST,
+            "/api/worktree/refresh",
+            &[],
+            Some(json!({"projectID":project})),
+            16384,
+        )
+        .await?;
     }
     // The reference lists every registration; only the response sizes are bounded.
-    let entries = native(app, Method::GET, "/api/worktree", &[("projectID", project)], None, 4 << 20).await?;
+    let entries =
+        catalogue_native(app, w, endpoint, Method::GET, "/api/worktree", &[("projectID", project)], None, 4 << 20)
+            .await?;
     let entries = entries.as_array().ok_or_else(native_error)?;
     let annotations =
         crate::git::run(&main.root, &["worktree", "list", "--porcelain", "-z"], 4 << 20).await?.ok()?.text();

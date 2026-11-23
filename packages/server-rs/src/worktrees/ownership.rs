@@ -23,6 +23,7 @@ pub(crate) struct DirectoryProof {
     tree: Option<super::inventory::Tree>,
     source: Option<super::inventory::Tree>,
     external: bool,
+    media: bool,
 }
 
 impl DirectoryProof {
@@ -48,8 +49,8 @@ impl DirectoryProof {
                 (absent(&path.join("commondir")) && (absent(&path.join("objects")) || absent(&path.join("refs"))))
                     || head_cannot_name_repository(&path.join("HEAD"))
             };
-            path.starts_with(root)
-                && path.ancestors().take_while(|ancestor| *ancestor != root).all(|ancestor| {
+            within(root, path)
+                && path.ancestors().take_while(|ancestor| !within(ancestor, root)).all(|ancestor| {
                     let marker = ancestor.join(".git");
                     let marker_clear = match std::fs::symlink_metadata(&marker) {
                         Err(error) => error.kind() == std::io::ErrorKind::NotFound,
@@ -66,8 +67,9 @@ impl DirectoryProof {
             .is_none_or(|source| source.contains_live(&source.path) && no_nested_git(&source.path, source.registered()))
             && match &self.tree {
                 Some(tree) => {
-                    tree.contains_live(physical)
-                        && (!(self.external || history_root.is_some()) || no_nested_git(physical, tree.registered()))
+                    (if self.media { tree.contains_media(physical) } else { tree.contains_live(physical) })
+                        && (!(self.external || self.media || history_root.is_some())
+                            || no_nested_git(physical, tree.registered()))
                 }
                 None => history_root.is_none_or(|root| no_nested_git(physical, root)),
             }
@@ -109,29 +111,80 @@ pub(crate) async fn capture_directory_with_refresh(
     }
     let external = !physical.starts_with(&workspace.path);
     if physical == workspace.path || !external && matches!(super::root_only(workspace).await, Ok(Some(true))) {
-        return Some(DirectoryProof { tree: None, source: None, external });
+        return Some(DirectoryProof { tree: None, source: None, external, media: false });
     }
     if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
         return None;
     }
     for &refresh in if refresh_on_miss { &[false, true][..] } else { &[false] } {
         let catalogue = super::linked::catalogue(app, workspace, refresh).await.ok()?;
-        if let Some(proof) = catalogue_proof(&catalogue, physical, external) {
+        if let Some(proof) = catalogue_proof(&catalogue, physical, external, false) {
             return proof.live(physical).then_some(proof);
         }
     }
     None
 }
 
-fn catalogue_proof(catalogue: &super::inventory::Catalogue, path: &Path, external: bool) -> Option<DirectoryProof> {
+fn catalogue_proof(
+    catalogue: &super::inventory::Catalogue,
+    path: &Path,
+    external: bool,
+    media: bool,
+) -> Option<DirectoryProof> {
     let root = catalogue.get("root").ok()?;
     let tree = catalogue
         .trees
         .iter()
-        .filter(|tree| tree.contains_live(path))
+        .filter(|tree| if media { tree.contains_media(path) } else { tree.contains_live(path) })
         .max_by_key(|tree| tree.path.as_os_str().len())?;
     let source = (external || tree.registered() != root.registered()).then(|| root.clone());
-    Some(DirectoryProof { tree: Some(tree.clone()), source, external })
+    Some(DirectoryProof { tree: Some(tree.clone()), source, external, media })
+}
+
+pub(crate) async fn media_directory(
+    app: &App,
+    workspace: &Workspace,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    path: &Path,
+    anchor: &Path,
+) -> Result<Option<DirectoryProof>, crate::Error> {
+    use super::{inventory, linked::native_error};
+    let current = || app.native.current(endpoint) && app.workspace(&workspace.id.to_string()).is_ok();
+    if !current() {
+        return Err(native_error());
+    }
+    if !crate::files::paths::under(&app.scope, path) {
+        return Ok(None);
+    }
+    let external = !within(&workspace.path, path);
+    if path == workspace.path || !external && super::root_only(workspace).await? == Some(true) {
+        let proof = DirectoryProof { tree: None, source: None, external, media: true };
+        return Ok(proof.history_live(&workspace.path, path).then_some(proof));
+    }
+    if external && !shares_common_directory(&workspace.path, anchor).await.map_err(|_| native_error())? {
+        return Ok(None);
+    }
+    // Refresh on a miss; an invalidated snapshot cannot grant ownership.
+    let mut refresh = false;
+    let mut refreshed = false;
+    for _ in 0..4 {
+        let revision = inventory::revision(app);
+        let catalogue = inventory::catalogue_at(app, workspace, refresh, Some(endpoint)).await?;
+        refreshed |= refresh;
+        refresh = false;
+        if !current() {
+            return Err(native_error());
+        }
+        let proof = catalogue_proof(&catalogue, path, external, true).filter(|proof| proof.live(path));
+        if inventory::revision(app) != revision {
+            continue;
+        }
+        if proof.is_some() || refreshed {
+            return Ok(proof);
+        }
+        refresh = true;
+    }
+    Err(native_error())
 }
 
 /// Request-local validated checkout inventory for history fan-out and provenance.
@@ -156,8 +209,8 @@ impl HistoryInventory {
     pub(crate) fn prove(&self, workspace: &Path, path: &Path) -> Option<DirectoryProof> {
         let external = !path.starts_with(workspace);
         let proof = match &self.0 {
-            Some(inventory) => catalogue_proof(inventory, path, external)?,
-            None if !external => DirectoryProof { tree: None, source: None, external },
+            Some(inventory) => catalogue_proof(inventory, path, external, false)?,
+            None if !external => DirectoryProof { tree: None, source: None, external, media: false },
             None => return None,
         };
         proof.history_live(workspace, path).then_some(proof)
