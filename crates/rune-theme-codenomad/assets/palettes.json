@@ -277,7 +277,10 @@
         "text-secondary": "#1f314bff",
         "text-tertiary": "#1f314bff",
         "timeline-segment-active-bg": "#b7e6d6ff",
-        "timeline-segment-active-text": "#032f23ff"
+        "timeline-segment-active-text": "#032f23ff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000033 0px 20px 60px 0px",
@@ -575,7 +578,10 @@
         "text-secondary": "#b8b8b8ff",
         "text-tertiary": "#b8b8b8ff",
         "timeline-segment-active-bg": "#0f5b44ff",
-        "timeline-segment-active-text": "#ffffffff"
+        "timeline-segment-active-text": "#ffffffff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000059 0px 20px 60px 0px",
@@ -873,7 +879,10 @@
         "text-secondary": "#202835ff",
         "text-tertiary": "#202835ff",
         "timeline-segment-active-bg": "#b7e6d6ff",
-        "timeline-segment-active-text": "#032f23ff"
+        "timeline-segment-active-text": "#032f23ff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000033 0px 20px 60px 0px",
@@ -1171,7 +1180,10 @@
         "text-secondary": "#d2dceeff",
         "text-tertiary": "#d2dceeff",
         "timeline-segment-active-bg": "#0f5b44ff",
-        "timeline-segment-active-text": "#ffffffff"
+        "timeline-segment-active-text": "#ffffffff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000059 0px 20px 60px 0px",
@@ -1469,7 +1481,10 @@
         "text-secondary": "#152736ff",
         "text-tertiary": "#152736ff",
         "timeline-segment-active-bg": "#b7e6d6ff",
-        "timeline-segment-active-text": "#032f23ff"
+        "timeline-segment-active-text": "#032f23ff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000033 0px 20px 60px 0px",
@@ -1767,7 +1782,10 @@
         "text-secondary": "#bddcffff",
         "text-tertiary": "#bddcffff",
         "timeline-segment-active-bg": "#0f5b44ff",
-        "timeline-segment-active-text": "#ffffffff"
+        "timeline-segment-active-text": "#ffffffff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000059 0px 20px 60px 0px",
@@ -2065,7 +2083,10 @@
         "text-secondary": "#271908ff",
         "text-tertiary": "#271908ff",
         "timeline-segment-active-bg": "#b7e6d6ff",
-        "timeline-segment-active-text": "#032f23ff"
+        "timeline-segment-active-text": "#032f23ff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000033 0px 20px 60px 0px",
@@ -2363,7 +2384,10 @@
         "text-secondary": "#f2e1c7ff",
         "text-tertiary": "#f2e1c7ff",
         "timeline-segment-active-bg": "#0f5b44ff",
-        "timeline-segment-active-text": "#ffffffff"
+        "timeline-segment-active-text": "#ffffffff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000059 0px 20px 60px 0px",
@@ -2661,7 +2685,10 @@
         "text-secondary": "#27383aff",
         "text-tertiary": "#27383aff",
         "timeline-segment-active-bg": "#b7e6d6ff",
-        "timeline-segment-active-text": "#032f23ff"
+        "timeline-segment-active-text": "#032f23ff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000033 0px 20px 60px 0px",
@@ -2959,7 +2986,10 @@
         "text-secondary": "#2f2241ff",
         "text-tertiary": "#2f2241ff",
         "timeline-segment-active-bg": "#b7e6d6ff",
-        "timeline-segment-active-text": "#032f23ff"
+        "timeline-segment-active-text": "#032f23ff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000033 0px 20px 60px 0px",
@@ -3257,7 +3287,10 @@
         "text-secondary": "#1b3010ff",
         "text-tertiary": "#1b3010ff",
         "timeline-segment-active-bg": "#b7e6d6ff",
-        "timeline-segment-active-text": "#032f23ff"
+        "timeline-segment-active-text": "#032f23ff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000033 0px 20px 60px 0px",
@@ -3555,7 +3588,10 @@
         "text-secondary": "#eaf7dcff",
         "text-tertiary": "#eaf7dcff",
         "timeline-segment-active-bg": "#0f5b44ff",
-        "timeline-segment-active-text": "#ffffffff"
+        "timeline-segment-active-text": "#ffffffff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000059 0px 20px 60px 0px",
@@ -3853,7 +3889,10 @@
         "text-secondary": "#d8dde8ff",
         "text-tertiary": "#d8dde8ff",
         "timeline-segment-active-bg": "#0f5b44ff",
-        "timeline-segment-active-text": "#ffffffff"
+        "timeline-segment-active-text": "#ffffffff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000059 0px 20px 60px 0px",
@@ -4151,7 +4190,10 @@
         "text-secondary": "#cbe0e9ff",
         "text-tertiary": "#cbe0e9ff",
         "timeline-segment-active-bg": "#0f5b44ff",
-        "timeline-segment-active-text": "#ffffffff"
+        "timeline-segment-active-text": "#ffffffff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000059 0px 20px 60px 0px",
@@ -4449,7 +4491,10 @@
         "text-secondary": "#d8e0caff",
         "text-tertiary": "#d8e0caff",
         "timeline-segment-active-bg": "#0f5b44ff",
-        "timeline-segment-active-text": "#ffffffff"
+        "timeline-segment-active-text": "#ffffffff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000059 0px 20px 60px 0px",
@@ -4747,7 +4792,10 @@
         "text-secondary": "#e3cedfff",
         "text-tertiary": "#e3cedfff",
         "timeline-segment-active-bg": "#0f5b44ff",
-        "timeline-segment-active-text": "#ffffffff"
+        "timeline-segment-active-text": "#ffffffff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000059 0px 20px 60px 0px",
@@ -5045,7 +5093,10 @@
         "text-secondary": "#e6d7c9ff",
         "text-tertiary": "#e6d7c9ff",
         "timeline-segment-active-bg": "#0f5b44ff",
-        "timeline-segment-active-text": "#ffffffff"
+        "timeline-segment-active-text": "#ffffffff",
+        "transcript-search-active": "#facc15ff",
+        "transcript-search-active-ink": "#111827ff",
+        "transcript-search-mark": "#fde04794"
       },
       "shadows": {
         "folder-card-shadow": "#00000059 0px 20px 60px 0px",
