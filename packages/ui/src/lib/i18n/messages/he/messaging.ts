@@ -42,6 +42,8 @@ export const messagingMessages = {
   "promptInput.skills.empty": "אין מיומנויות זמינות בתיקייה זו.",
   "toolCall.image.label": "תמונה {number}",
   "toolCall.image.unavailable": "לא ניתן להציג את התמונה הזו.",
+  "toolCall.image.openExternal": "פתיחת התמונה בדפדפן",
+  "messageItem.attachment.enlarge": "הגדלת התמונה",
   "promptInput.btw.title": "/btw — שאלה צדדית",
   "promptInput.btw.commandDescription": "שאל שאלה צדדית בלי להוסיף אותה לשיחה",
   "promptInput.btw.question": "השאלה שלך",

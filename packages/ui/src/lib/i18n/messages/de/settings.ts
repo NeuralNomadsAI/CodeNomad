@@ -251,6 +251,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "Ausgabe",
   "contextUsagePanel.labels.cost": "Kosten",
   "contextUsagePanel.included": "Inbegriffen",
+  "contextUsagePanel.partialTotal": "Teilsumme der Unterhaltung",
+  "contextUsagePanel.totalUnavailable": "Gesamtsumme der Unterhaltung nicht verfügbar",
   "contextUsagePanel.labels.totalInput": "Gesamt Ein",
   "contextUsagePanel.labels.totalOutput": "Gesamt Aus",
   "contextUsagePanel.labels.totalCost": "Gesamtkosten",

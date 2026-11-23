@@ -23,6 +23,7 @@ await writeFile(script, JSON.stringify({events: [
   {t: 0.7, type: 'tap', key: 'toggle-reasoning-transcript:0'},
   {t: 1.1, type: 'tap', key: 'toggle-tool-transcript:7:execute'},
   {t: 1.4, type: 'tap', key: 'toggle-tool-transcript:7:execute-execute-call-0'},
+  {t: 1.6, type: 'tap', key: 'toggle-message-usage-transcript'},
 ]}))
 const cache = await createFixtureCache()
 const shutdown = createFixtureShutdown(cache)
@@ -70,11 +71,16 @@ try {
     const reasoning = page.locator('.message-reasoning-group')
     await reasoning.getByText('Check the output', {exact: true}).waitFor()
     assert.equal(await reasoning.getByText('Verify the sample trace.', {exact: true}).count(), 0)
+    const usage = page.locator('.message-step-usage-toggle')
+    await usage.waitFor()
+    assert.equal(await usage.getAttribute('aria-expanded'), 'false')
+    assert.match(await usage.getAttribute('aria-label'), /1250/)
     await page.evaluate(() => document.fonts.ready)
     await page.screenshot({path: path.join(out, `solid-${theme}.png`), animations: 'disabled'})
     await writeFile(path.join(out, `solid-${theme}.aria.yml`), await page.locator('.message-stream').ariaSnapshot())
     await tool('read').locator('.tool-call-header-toggle').click()
     await tool('read').getByText('return 7;', {exact: true}).waitFor()
+    await tool('read').getByRole('img', {name: 'Sample image'}).waitFor()
     await tool('edit').getByRole('button', {name: 'Switch to unified view'}).click()
     await tool('edit').getByRole('button', {name: 'Switch to split view'}).waitFor()
     await reasoning.locator('.message-technical-group-toggle').click()
@@ -82,6 +88,8 @@ try {
     await tool('execute').locator('.tool-call-header-toggle').click()
     await tool('execute').getByText('sample_read', {exact: true}).click()
     await tool('execute').getByText(/Nested input fixture/).waitFor()
+    await usage.click()
+    assert.match(await usage.getAttribute('aria-label'), /92/)
     assert.deepEqual(errors, [])
 
     const tree = path.join(out, `rune-${theme}.json`)
@@ -91,13 +99,16 @@ try {
     const accessibility = JSON.stringify(data.accessibility)
     for (const label of ['Results', 'Grep return', 'demo.rs']) assert(accessibility.includes(label))
     assert(accessibility.includes('Check the output') && !accessibility.includes('Verify the sample trace.'))
+    assert(accessibility.includes('1,250') && !accessibility.includes('Reasoning: 92'))
     const after = path.join(out, `rune-${theme}-read.json`)
     await capture(theme, ['--script', script, '--tree', after])
     const interacted = JSON.stringify(JSON.parse(await readFile(after, 'utf8')).accessibility)
     assert(interacted.includes('return 7;'))
+    assert(interacted.includes('Sample image'), 'Rune presents the image inside the read card')
     assert(interacted.includes('Switch to split view'), 'Rune toggles the shared diff to unified')
     assert(interacted.includes('Verify the sample trace.'), 'Rune opens the same reasoning group')
     assert(interacted.includes('Nested input fixture'), 'Rune opens the same nested Code Mode call')
+    assert(interacted.includes('Reasoning: 92'), 'Rune opens the same token disclosure')
     await installPngReader(page)
     const images = await Promise.all(['solid', 'rune'].map(async type =>
       `data:image/png;base64,${(await readFile(path.join(out, `${type}-${theme}.png`))).toString('base64')}`))

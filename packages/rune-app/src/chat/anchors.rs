@@ -19,7 +19,7 @@ pub(super) fn context(row: &crate::Message) -> Option<(String, &'static str)> {
     Some((format!("context-{}", row.id), label))
 }
 
-pub(crate) fn blocks<'a>(row: &'a Row, steps: usize, hidden: bool) -> Vec<Block<'a>> {
+pub(crate) fn blocks(row: &crate::Message, steps: usize, hidden: bool) -> Vec<Block<'_>> {
     let mut out = Vec::new();
     let mut push = |kind, ordinal, continued, key, reveal, tool_name, text, part| {
         out.push(Block {

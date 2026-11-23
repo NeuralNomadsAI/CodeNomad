@@ -214,7 +214,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
-    changed |= settings::poll(s);
+    changed |= settings::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
         changed |= launcher::reopen(s);

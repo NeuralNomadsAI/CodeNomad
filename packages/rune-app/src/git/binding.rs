@@ -110,6 +110,7 @@ pub(crate) fn project_opened(s: &mut State) {
         return;
     };
     backend.session.clear();
+    backend.session_directory = None;
     crate::files::bind(s, &backend);
     connected(s, &backend);
     if let Some(files) = &mut s.files {
@@ -131,10 +132,14 @@ pub(super) fn sync_files(s: &mut State) {
                 || inventory.is_some_and(|list| {
                     !list.trees.iter().any(|tree| {
                         !tree.missing
-                            && codenomad_client::same_server_path(
+                            && (codenomad_client::same_server_path(
                                 &tree.directory,
                                 &target.directory,
-                            )
+                            ) || files.session_preview()
+                                && tree.slug == owner.session_slug
+                                && tree.service_directory.as_deref().is_some_and(|alias| {
+                                    codenomad_client::same_server_path(alias, &target.directory)
+                                }))
                     })
                 })
         }) {
@@ -256,6 +261,39 @@ pub(crate) fn files_checkout(s: &State, directory: &str) -> Option<String> {
     }
     let project = s.screen.launcher()?.project.as_ref()?;
     codenomad_client::same_server_path(directory, &project.path).then(|| "root".into())
+}
+
+pub(crate) fn file_link_scope(s: &State) -> Option<(&Backend, &str)> {
+    let owner = s.git.owner.as_ref()?;
+    let backend = &owner.backend;
+    if backend.session.is_empty()
+        || owner.stopped
+        || placement_unconfirmed(s)
+        || owner.session_checkout_removed()
+        || s.workspace.is_some() && crate::workspace::active_session(s) != Some(&backend.session)
+    {
+        return None;
+    }
+    let native = backend.session_directory.as_deref()?;
+    let host = owner
+        .inventory
+        .as_ref()
+        .and_then(|inventory| {
+            inventory
+                .trees
+                .iter()
+                .find(|tree| {
+                    !tree.missing
+                        && tree.slug == owner.session_slug
+                        && tree
+                            .service_directory
+                            .as_deref()
+                            .is_some_and(|path| codenomad_client::same_server_path(path, native))
+                })
+                .map(|tree| tree.directory.as_str())
+        })
+        .unwrap_or(native);
+    Some((backend, host))
 }
 
 pub(crate) fn placement(s: &State) -> Option<&str> {

@@ -34,6 +34,7 @@ fn arrived(rt: &mut Runtime<State>) {
     rt.state.incoming = Some(incoming);
     for event in [
         crate::transport::Event::Message(crate::Message {
+            usage: None,
             id: "native-reader-arrival".into(),
             role: "assistant".into(),
             body: String::new(),

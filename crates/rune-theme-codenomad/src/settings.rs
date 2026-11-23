@@ -192,6 +192,96 @@ pub fn build_picker(control: Select, layers: &mut Vec<El>) -> El {
     kit.c.layer_01 = tokens(dark).color("surface-overlay");
     control.build(&kit, layers)
 }
+
+pub fn transcript_popup<S: 'static>(
+    trigger: &str,
+    label: &str,
+    content: El,
+    dismiss: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
+    let dark = layout::dark();
+    let theme = tokens(dark);
+    let body = col()
+        .key("transcript-filters")
+        .role("dialog")
+        .label(label)
+        .focus_group()
+        .focus_return(trigger)
+        .modal_tx(true, dismiss)
+        // transcript-filters.css: width 18rem, an independently scrolling list.
+        .w(288.0)
+        .fill(theme.color("surface-overlay"))
+        .border(1.0, theme.color("border-base"))
+        .child(heading(label))
+        .child(
+            col()
+                .max_h(400.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(content),
+        );
+    rune_kit::popover::anchored(
+        crate::kit(dark),
+        body,
+        trigger,
+        rune_kit::Placement::BottomEnd,
+        6.0,
+    )
+}
+
+pub fn transcript_preset_picker(key: &str, label: &str, options: &[&str]) -> Select {
+    picker(key, label, options).width(272.0)
+}
+
+pub fn transcript_filter_row<S: 'static>(
+    label: &str,
+    visibility: (&str, bool, impl Fn(&mut S, &mut rune::Tx) + 'static),
+    expansion: (&str, bool, impl Fn(&mut S, &mut rune::Tx) + 'static),
+    disabled: bool,
+) -> El {
+    use crate::git_panel::{CHEVRON_DOWN, CHEVRON_RIGHT, EYE, icon_button};
+    let (visibility_name, visible, set_visibility) = visibility;
+    let (expansion_name, expanded, set_expansion) = expansion;
+    row()
+        .role("group")
+        .label(label)
+        .full_width()
+        .center_y()
+        .pad(Space::Xs)
+        .child(
+            text(label)
+                .text_role(TextRole::Label)
+                .grow(1.0)
+                .shrink()
+                .truncate(),
+        )
+        .child(
+            icon_button(
+                &EYE,
+                visibility_name,
+                disabled,
+                Some(visible),
+                set_visibility,
+            )
+            .key("visibility"),
+        )
+        .child(
+            icon_button(
+                if expanded {
+                    &CHEVRON_DOWN
+                } else {
+                    &CHEVRON_RIGHT
+                },
+                expansion_name,
+                disabled || !visible,
+                Some(expanded),
+                set_expansion,
+            )
+            .key("expansion"),
+        )
+}
+
 pub fn render<S, T>(
     cx: &mut Cx<S>,
     dark: bool,

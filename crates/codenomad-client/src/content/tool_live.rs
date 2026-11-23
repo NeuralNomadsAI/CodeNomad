@@ -110,6 +110,7 @@ pub(crate) fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
             output: String::new(),
             error: String::new(),
             started: None,
+            pictures: Vec::new(),
             bytes: 0,
             output_bytes: 0,
         };

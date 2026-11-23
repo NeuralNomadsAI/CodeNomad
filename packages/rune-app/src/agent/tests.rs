@@ -22,6 +22,7 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
         models: Some(vec![]),
         current: None,
         session_known: true,
+        usage: None,
         running: true,
         permissions: Some(vec![]),
         forms: Some(forms),
@@ -68,6 +69,7 @@ fn settled_requests_and_removed_models_reject_late_actions_before_dispatch() {
     let model = super::Model {
         reference: json!({"id":"model","providerID":"fixture"}),
         label: "Model".into(),
+        included: false,
     };
     ui.models.push(model);
     let model = ui.models.pop().unwrap();

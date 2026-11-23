@@ -1,0 +1,85 @@
+use super::{Display, document};
+use crate::{
+    Message, State, screen,
+    settings::{self, TranscriptRow},
+    strings::t,
+};
+use rune::{El, col, text};
+use rune_theme_codenomad::{
+    Space, TextRole,
+    layout::{self, Layout},
+};
+
+// Same context key as history-4. Its rail attaches to this card, not its body.
+pub(super) fn view(s: &State, message: &Message) -> Option<El> {
+    let mut row = col().key(message.id.clone()).full_width();
+    let key = format!("context-{}", message.id);
+    let system = message.role == "system";
+    let heading = match message.role.as_str() {
+        "system" => t("messageBlock.system.label"),
+        "compaction" => t("messageTimeline.segment.compaction.label"),
+        _ => return None,
+    };
+    let mode = settings::transcript_mode(s, TranscriptRow::System);
+    if system && mode == "hidden" {
+        return Some(row);
+    }
+    let expanded = !system || s.transcript_display.expanded(&key, mode == "expanded");
+    let toggle = key.clone();
+    let title = if system {
+        layout::button(
+            heading,
+            false,
+            screen::action(&s.input_scope, move |s| {
+                Display::set_expanded(s, &toggle, !expanded);
+            }),
+        )
+        .key(format!("toggle-{key}"))
+        .expanded(expanded)
+    } else {
+        text(heading).text_role(TextRole::Label)
+    };
+    let card = col()
+        .key(key.clone())
+        .full_width()
+        .pad(Space::Sm)
+        .inset_surface()
+        .child(title)
+        .children((expanded && !message.body.is_empty()).then(|| {
+            let content = format!("{key}-content");
+            if system {
+                document::window(
+                    s,
+                    content,
+                    &[&message.body],
+                    document::PROSE_LIMIT,
+                    |shown, _| {
+                        rune_theme_codenomad::markdown::tool_pane(
+                            rune_theme_codenomad::markdown::code(shown, "text", false, true),
+                            true,
+                        )
+                    },
+                )
+            } else {
+                document::prose(s, &message.id, content, &message.body, false)
+            }
+        }));
+    let card = super::super::reading::passage(
+        s,
+        card,
+        &message.id,
+        key,
+        system.then_some(TranscriptRow::System),
+    );
+    let card = if crate::timeline::demanded(s)
+        && let Some(block) = super::super::anchors::blocks(message, 0, false)
+            .into_iter()
+            .next()
+    {
+        crate::timeline::watch_block(s, block.marker, card)
+    } else {
+        card
+    };
+    row = row.pad(Space::Lg).child(card);
+    Some(row)
+}

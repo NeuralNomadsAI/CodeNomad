@@ -42,6 +42,8 @@ export const messagingMessages = {
   "promptInput.skills.empty": "Bu dizinde kullanılabilir beceri yok.",
   "toolCall.image.label": "Görsel {number}",
   "toolCall.image.unavailable": "Bu görsel görüntülenemiyor.",
+  "toolCall.image.openExternal": "Görseli tarayıcıda aç",
+  "messageItem.attachment.enlarge": "Görseli büyüt",
   "promptInput.btw.title": "/btw — Yan soru",
   "promptInput.btw.commandDescription": "Konuşmaya eklemeden yan bir soru sorun",
   "promptInput.btw.question": "Sorunuz",

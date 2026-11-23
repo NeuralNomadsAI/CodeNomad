@@ -13,6 +13,7 @@ pub mod files;
 pub mod git;
 pub mod history;
 pub mod http;
+pub mod interruption_receipts;
 pub mod missions;
 pub mod prompt;
 pub mod prompt_catalogue;
@@ -42,6 +43,7 @@ pub struct Message {
     pub role: String,
     pub completed: bool,
     pub body: String,
+    pub usage: Option<content::Usage>,
     pub parts: Vec<content::Part>,
 }
 

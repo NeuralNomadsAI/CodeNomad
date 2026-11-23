@@ -124,6 +124,7 @@ fn ui() -> Ui {
         session: "session".into(),
         client: codenomad_client::http::Http::new().unwrap(),
         client_id: "test".into(),
+        session_directory: None,
         fresh_mode: false,
     };
     let mut ui = Ui::new(
@@ -175,6 +176,72 @@ fn the_linked_conversation_owns_the_git_target_without_a_root_fallback() {
     ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
     assert!(ui.tree().is_none());
     assert!(!ui.can_mutate());
+}
+
+#[test]
+fn late_worktree_inventory_syncs_the_tree_without_closing_a_session_link() {
+    for native in ["D:/other", "/mnt/d/other"] {
+        let mut s = crate::init();
+        let mut owner = ui();
+        let mut inventory = owner.inventory.take().unwrap();
+        inventory
+            .trees
+            .iter_mut()
+            .find(|tree| tree.slug == "other")
+            .unwrap()
+            .service_directory = Some("/mnt/d/other".into());
+        let mut backend = owner.backend.clone();
+        backend.session_directory = Some(native.into());
+        assert!(owner.bind_placed(&backend, Some("other")));
+        s.files = Some(crate::files::Ui::new(
+            backend.clone(),
+            "D:/repo".into(),
+            s.reads.clone(),
+            s.wake.clone(),
+        ));
+        s.git.owner = Some(owner);
+        let (_, directory) = super::file_link_scope(&s).unwrap();
+        assert_eq!(directory, native);
+        assert!(crate::files::open_session_path(
+            &mut s,
+            &backend,
+            native.into(),
+            "notes.txt".into()
+        ));
+        let scope = s.files.as_ref().unwrap().document.scope();
+
+        let publish = |s: &mut crate::State, inventory| {
+            s.git
+                .owner
+                .as_mut()
+                .unwrap()
+                .accept(Lane::Worktrees, Value::Worktrees(inventory));
+            super::binding::sync_files(s);
+        };
+        publish(&mut s, inventory.clone());
+        let files = s.files.as_ref().unwrap();
+        assert_eq!(files.tree.directory(), "D:/other");
+        assert_eq!(
+            files
+                .reader
+                .target()
+                .map(|target| target.directory.as_str()),
+            Some(native)
+        );
+        assert_eq!(
+            files.document.scope(),
+            scope,
+            "tree sync must not reopen the reader"
+        );
+        assert_eq!(super::file_link_scope(&s).unwrap().1, "D:/other");
+
+        inventory.trees.retain(|tree| tree.slug == "root");
+        publish(&mut s, inventory);
+        assert!(
+            !crate::files::has_preview(&s),
+            "authoritative removal still closes the reader"
+        );
+    }
 }
 
 #[test]

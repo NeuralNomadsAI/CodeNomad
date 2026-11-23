@@ -42,6 +42,8 @@ export const messagingMessages = {
   "promptInput.skills.empty": "Keine Skills in diesem Verzeichnis verfügbar.",
   "toolCall.image.label": "Bild {number}",
   "toolCall.image.unavailable": "Dieses Bild kann nicht angezeigt werden.",
+  "toolCall.image.openExternal": "Bild im Browser öffnen",
+  "messageItem.attachment.enlarge": "Bild vergrößern",
   "promptInput.btw.title": "/btw — Zwischenfrage",
   "promptInput.btw.commandDescription": "Eine Zwischenfrage stellen, ohne sie zum Gespräch hinzuzufügen",
   "promptInput.btw.question": "Ihre Frage",

@@ -42,6 +42,8 @@ export const messagingMessages = {
   "promptInput.skills.empty": "В этом каталоге нет доступных навыков.",
   "toolCall.image.label": "Изображение {number}",
   "toolCall.image.unavailable": "Не удалось отобразить это изображение.",
+  "toolCall.image.openExternal": "Открыть изображение в браузере",
+  "messageItem.attachment.enlarge": "Увеличить изображение",
   "promptInput.btw.title": "/btw — Отдельный вопрос",
   "promptInput.btw.commandDescription": "Задать отдельный вопрос, не добавляя его в разговор",
   "promptInput.btw.question": "Ваш вопрос",

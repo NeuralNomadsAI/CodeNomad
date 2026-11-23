@@ -14,6 +14,7 @@ use rune_theme_codenomad::{
 enum Section {
     General,
     Providers,
+    Conversation,
 }
 
 impl Default for Section {
@@ -29,6 +30,7 @@ pub(super) struct Panel {
     contrast_help: bool,
     permissions: super::behavior::Permissions,
     memory_help_failed: bool,
+    transcript_picker: Option<super::TranscriptRow>,
     catalog: Catalog,
 }
 
@@ -71,6 +73,7 @@ fn close(s: &mut State) {
     prefs.provider_target = None;
     prefs.memory.show(false);
     panel.memory_help_failed = false;
+    panel.transcript_picker = None;
 }
 
 pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<El> {
@@ -80,16 +83,25 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
     }
     let navigation = chrome::segments(
         t("settings.navigationAriaLabel"),
-        &[t("settings.nav.general"), t("settings.nav.providers")],
-        Some(usize::from(panel.section == Section::Providers)),
+        &[
+            t("settings.nav.general"),
+            t("settings.nav.providers"),
+            t("settings.nav.chat"),
+        ],
+        Some(match panel.section {
+            Section::General => 0,
+            Section::Providers => 1,
+            Section::Conversation => 2,
+        }),
         false,
         |s: &mut State, index| {
             let panel = &mut s.settings.web;
-            panel.section = if index == 1 {
-                Section::Providers
-            } else {
-                Section::General
+            panel.section = match index {
+                1 => Section::Providers,
+                2 => Section::Conversation,
+                _ => Section::General,
             };
+            panel.transcript_picker = None;
             if panel.section != Section::Providers {
                 panel.catalog.suspend();
             }
@@ -130,6 +142,13 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 s.settings.web.catalog.toggle()
             })
         }
+        Section::Conversation => super::conversation::content(
+            prefs,
+            panel.transcript_picker,
+            &mut layers,
+            |s: &mut State, row| s.settings.web.transcript_picker = row,
+            |s: &mut State, row, mode| s.settings.shared.borrow_mut().set_transcript(row, mode),
+        ),
     };
     Some(
         chrome::embedded_section(

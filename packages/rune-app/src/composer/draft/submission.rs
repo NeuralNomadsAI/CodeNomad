@@ -172,6 +172,7 @@ impl Draft {
             parts.push(Part::File(content::File {
                 id: format!("{id}-file-{}", prompt.files.len()),
                 reference: None,
+                picture: None,
                 mime: mime.into(),
                 name: Some(name.clone()),
             }));

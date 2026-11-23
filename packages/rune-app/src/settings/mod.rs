@@ -1,6 +1,9 @@
 //! Preferences owns its native window; its confirmed host settings also feed the shell.
 mod behavior;
 mod contrast;
+mod conversation;
+pub(crate) mod transcript_filters;
+pub(crate) use transcript_preset::Row as TranscriptRow;
 mod memory;
 pub(crate) fn show_timeline(s: &crate::State) -> bool {
     s.settings.shared.borrow().show_timeline()
@@ -9,6 +12,7 @@ pub(crate) fn show_timeline(s: &crate::State) -> bool {
 mod opencode;
 mod preferences;
 mod providers;
+mod transcript_preset;
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -35,9 +39,11 @@ pub(crate) struct Host {
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
     last_display: Option<([&'static str; 5], bool)>,
+    last_transcript: Option<[&'static str; transcript_preset::ROW_COUNT]>,
+    transcript_filters: transcript_filters::Filters,
 }
 
-pub(crate) fn poll(s: &mut State) -> bool {
+pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let mut shared = s.settings.shared.borrow_mut();
     if shared.main_wake.is_none() {
         shared.main_wake = Some(s.wake.clone());
@@ -114,6 +120,20 @@ pub(crate) fn poll(s: &mut State) -> bool {
         ],
         awaiting_appearance(s, &shared),
     ));
+    let mut rows = TranscriptRow::all();
+    let transcript = Some(std::array::from_fn(|_| {
+        shared.transcript_mode(rows.next().unwrap(), false)
+    }));
+    let transcript_changed = s.settings.last_transcript != transcript;
+    if transcript_changed {
+        if s.settings.last_transcript.is_some() {
+            s.transcript_display
+                .reading_mut()
+                .keep_passage(tx, |row| shared.transcript_mode(row, false) != "hidden");
+        }
+        s.settings.last_transcript = transcript;
+        s.revision += 1;
+    }
     #[cfg(target_arch = "wasm32")]
     let changed = {
         let more = s
@@ -141,7 +161,33 @@ pub(crate) fn poll(s: &mut State) -> bool {
             crate::workspace::mission_event(s, Some(event));
         }
     }
-    changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))
+    let filters_changed =
+        preferences_changed && s.settings.transcript_filters.is_open(&s.input_scope);
+    changed
+        | expired
+        | filters_changed
+        | transcript_changed
+        | (display != std::mem::replace(&mut s.settings.last_display, display))
+}
+
+pub(crate) fn message_usage_visibility(s: &State) -> &'static str {
+    s.settings.shared.borrow().usage_visibility(false)
+}
+
+pub(crate) fn transcript_mode(s: &State, row: TranscriptRow) -> &'static str {
+    s.settings.shared.borrow().transcript_mode(row, false)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn fixture_transcript(s: &mut State, settings: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_transcript(settings);
+    s.revision += 1;
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
+    s.settings.shared.borrow_mut().fixture_usage(mode);
+    s.revision += 1;
 }
 
 pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {

@@ -13,6 +13,7 @@ use std::time::Duration;
 pub fn synthetic() -> Vec<crate::history::Row> {
     (0..10_000)
         .map(|i| Message {
+            usage: None,
             completed: true,
             parts: vec![],
             id: format!("synthetic-{i}"),
@@ -225,6 +226,7 @@ async fn run_synthetic(out: Sender<Event>, input: Receiver<Command>, wake: rune:
             &out,
             &wake,
             Event::Message(Message {
+                usage: None,
                 completed: false,
                 parts: vec![],
                 id: id.clone(),

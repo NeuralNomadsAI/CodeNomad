@@ -42,6 +42,8 @@ export const messagingMessages = {
   "promptInput.skills.empty": "此目录中没有可用技能。",
   "toolCall.image.label": "图片 {number}",
   "toolCall.image.unavailable": "无法显示此图片。",
+  "toolCall.image.openExternal": "在浏览器中打开图片",
+  "messageItem.attachment.enlarge": "放大图片",
   "promptInput.btw.title": "/btw — 旁支问题",
   "promptInput.btw.commandDescription": "提出旁支问题，不添加到对话中",
   "promptInput.btw.question": "你的问题",

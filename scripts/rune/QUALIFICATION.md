@@ -61,6 +61,8 @@ wasm-bindgen --target web --out-name probe --out-dir "$env:CARGO_TARGET_DIR/tool
 node packages/rune-app/fixtures/tool-progress-sse.mjs "$env:CARGO_TARGET_DIR/debug/examples/tool-progress-sse.exe" "$env:CARGO_TARGET_DIR/tool-progress-sse"
 ```
 
+`pending-live-fixture.mjs <opencode-exécutable-absolu>` utilise un OpenCode jetable, le serveur Rust et Rune sans fenêtre. Il vérifie trois décisions d’autorisation dans le fil et deux règlements de Forms dans le dock. `RUNE_PENDING_EVIDENCE` fixe le dossier de preuves ; `CNRS_PLUGIN_ASSETS` fournit le dossier absolu des plugins construits lorsque le binaire serveur se trouve hors de son dossier de distribution.
+
 ## Parité par composant
 
 Les composants Solid et Rune demandent des paires de captures exécutées à géométrie identique, dans chaque palette, avec références d'accessibilité et interactions dédiées. Le statut de parité reste à qualifier pour les composants de l'inventaire.

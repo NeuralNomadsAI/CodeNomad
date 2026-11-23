@@ -687,6 +687,7 @@ dependencies = [
  "icu_collator",
  "icu_locale_core",
  "js-sys",
+ "percent-encoding",
  "reqwest",
  "rune",
  "rune-kit",

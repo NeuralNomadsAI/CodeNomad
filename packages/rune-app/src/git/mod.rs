@@ -10,9 +10,9 @@ mod request;
 mod view;
 pub(crate) use binding::{
     Binding, PlacementHold, can_place, close_preview, connected, connected_placed,
-    diff_preferences, event, files_checkout, has_preview, hold_placement, mode, online, placeable,
-    placement, placement_hold, placement_unconfirmed, poll, project_opened, release_placement,
-    set_diff_preferences, set_mode, show,
+    diff_preferences, event, file_link_scope, files_checkout, has_preview, hold_placement, mode,
+    online, placeable, placement, placement_hold, placement_unconfirmed, poll, project_opened,
+    release_placement, set_diff_preferences, set_mode, show,
 };
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader, session_worktree};
@@ -224,10 +224,16 @@ impl Ui {
             self.invalidate_index();
         }
         if self.backend.session != backend.session
+            || self.backend.session_directory != backend.session_directory
             || placement.is_some_and(|slug| self.session_slug != slug)
         {
             self.backend.session.clone_from(&backend.session);
-            self.session_slug = placement.unwrap_or("root").into();
+            self.backend
+                .session_directory
+                .clone_from(&backend.session_directory);
+            if let Some(slug) = placement {
+                self.session_slug = slug.into();
+            }
             self.close_preview();
             if self.slug != self.session_slug {
                 self.slug.clone_from(&self.session_slug);

@@ -635,6 +635,7 @@ fn closing_reader_restores_the_transcript_reading_position() {
         rt.update(|state, _| {
             state.messages.push(
                 crate::Message {
+                    usage: None,
                     id: "while-reading-file".into(),
                     role: "assistant".into(),
                     body: "Arriving message".into(),

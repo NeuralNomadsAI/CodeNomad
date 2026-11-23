@@ -13,6 +13,11 @@ use rune_theme_codenomad::{
 };
 
 pub(super) const PART_LIMIT: usize = 1000;
+
+mod context;
+#[cfg(test)]
+mod tests;
+
 pub(super) fn part_window(len: usize, steps: usize) -> (usize, usize) {
     let initial = if len > PART_LIMIT {
         PART_LIMIT / 2
@@ -42,6 +47,9 @@ pub fn rows(s: &State) -> El {
 
 pub fn message(s: &State, i: usize) -> El {
     let m = &s.messages[i];
+    if let Some(context) = context::view(s, m) {
+        return context;
+    }
     if matches!(m.parts.as_slice(), [Part::SubagentReport(_)]) {
         return col().key(m.id.clone());
     }
@@ -51,29 +59,14 @@ pub fn message(s: &State, i: usize) -> El {
         .unwrap_or_default();
     let mut blocks = blocks.into_iter().peekable();
     let mut track = |index, element| {
+        while blocks.peek().is_some_and(|block| block.part < index) {
+            blocks.next();
+        }
         if blocks.peek().is_some_and(|block| block.part == index) {
             return crate::timeline::watch_block(s, blocks.next().unwrap().marker, element);
         }
         element
     };
-    if let Some((key, label)) = super::anchors::context(m) {
-        return col()
-            .key(m.id.clone())
-            .full_width()
-            .pad(Space::Lg)
-            .child(track(
-                None,
-                col()
-                    .key(key.clone())
-                    .full_width()
-                    .pad(Space::Sm)
-                    .inset_surface()
-                    .child(text(t(label)).text_role(TextRole::Label))
-                    .children((!m.body.is_empty()).then(|| {
-                        document::prose(s, &m.id, format!("{key}-content"), &m.body, false)
-                    })),
-            ));
-    }
     let mut header = layout::action_row().child(
         text(t(if m.role == "user" {
             "messageItem.speaker.you"
@@ -119,20 +112,25 @@ pub fn message(s: &State, i: usize) -> El {
         .child(header);
     let mut ordinal = 0;
     if (m.role == "user" || m.parts.is_empty()) && !m.body.is_empty() {
+        let key = format!("body-{}", m.id);
         view = view.child(track(
             None,
-            document::prose(s, &m.id, format!("body-{}", m.id), &m.body, false),
+            super::reading::passage(
+                s,
+                document::prose(s, &m.id, key.clone(), &m.body, false),
+                &m.id,
+                key,
+                None,
+            ),
         ));
     }
     let gap_key = format!("parts-gap-{}", m.id);
-    let initial = if m.parts.len() > PART_LIMIT {
-        PART_LIMIT / 2
-    } else {
-        m.parts.len()
-    };
+    let (initial, _) = part_window(m.parts.len(), 0);
     let (head, tail) = part_window(m.parts.len(), s.transcript_display.steps(&gap_key));
+    let usage_after = super::usage::last_text(m).filter(|&index| index < head || index >= tail);
     let mut reveal_start = (head > initial).then(|| head.saturating_sub(PART_LIMIT));
     let mut reasoning_end = 0;
+    let mut group_end = 0;
     for (index, part) in m.parts.iter().enumerate() {
         if index == head && head < tail {
             let hidden = tail - head;
@@ -172,24 +170,52 @@ pub fn message(s: &State, i: usize) -> El {
             );
         }
         let visible = index < head || index >= tail;
+        if index < group_end {
+            continue;
+        }
         let body =
             match part {
                 Part::Text(body) => {
                     let key = format!("fragment-{}:{ordinal}", m.id);
                     ordinal += 1;
                     if visible && !body.text.trim().is_empty() {
-                        Some(document::prose(
+                        Some(super::reading::passage(
                             s,
+                            document::prose(
+                                s,
+                                &m.id,
+                                key.clone(),
+                                &body.text,
+                                !m.completed && body.provenance != TextProvenance::Closed,
+                            ),
                             &m.id,
                             key,
-                            &body.text,
-                            !m.completed && body.provenance != TextProvenance::Closed,
+                            None,
                         ))
                     } else {
                         None
                     }
                 }
-                Part::Tool(tool) if visible => Some(tools::view(s, &m.id, tool)),
+                Part::Tool(tool) if visible && tools::visible(s, tool) => {
+                    let limit = if index < head && head < tail {
+                        head
+                    } else {
+                        m.parts.len()
+                    };
+                    match super::tool_groups::view(s, &m.id, &m.parts[index..limit], m.completed) {
+                        Some((group, count)) => {
+                            group_end = index + count;
+                            Some(group)
+                        }
+                        None => Some(super::reading::passage(
+                            s,
+                            tools::view(s, &m.id, tool),
+                            &m.id,
+                            tools::tool_key(&m.id, &tool.id),
+                            Some(crate::settings::TranscriptRow::tool(&tool.name)),
+                        )),
+                    }
+                }
                 Part::Tool(_) => None,
                 Part::Reasoning(_) if visible && index >= reasoning_end => {
                     let limit = if index < head && head < tail {
@@ -234,6 +260,9 @@ pub fn message(s: &State, i: usize) -> El {
                 reveal_start = None;
             } else {
                 view = view.child(body);
+            }
+            if usage_after == Some(index) {
+                view = view.children(super::usage::message(s, i, index));
             }
         }
     }
