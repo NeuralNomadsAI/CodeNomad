@@ -283,7 +283,7 @@ mod tests {
         let tree = rt.accessibility_json();
         assert_eq!(node(&tree, "composer-more:menu").unwrap()["role"], "menu");
         let queue = node(&tree, "composer-more:item:queue").unwrap();
-        assert_eq!(queue["role"], "menuitem");
+        assert_eq!(queue["role"], "menu-item");
         assert!(
             queue["states"]
                 .as_array()
