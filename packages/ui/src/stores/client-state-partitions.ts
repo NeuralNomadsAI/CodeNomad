@@ -6,6 +6,7 @@ export { canonicalJson, sha256 } from "./client-state-partition-json"
 import { encodeOutlinePartitions, decodeOutlinePartitions, type EncodedOutline } from "./client-state-outline-partitions"
 import { encodeCatalogPartitions, decodeCatalogPartitions, type EncodedCatalog } from "./client-state-catalog-partitions"
 import { normalizeTabViewState } from "./tab-view-state-codec"
+import { normalizeWorkspaceFileDrafts, type WorkspaceFileDraft } from "./workspace-file-drafts-codec"
 
 const MAX_PARTITION_BYTES = 1024 * 1024
 const MAX_ROOT_BYTES = 1024 * 1024
@@ -127,7 +128,7 @@ async function encodeAttachments(attachments: RestorableAttachment[], addPartiti
   }))
 }
 
-async function encodeSessionGraph(session: RestorableSessionState | null, legacyHomeActive = false, previous: Array<EncodedWorkspace | undefined> = []) {
+async function encodeSessionGraph(session: RestorableSessionState | null, fileDrafts?: WorkspaceFileDraft[], legacyHomeActive = false, previous: Array<EncodedWorkspace | undefined> = []) {
   const generated = new Map<string, EncodedPartition>()
   const workspaces: Array<EncodedWorkspace | undefined> = []
   const encode = async (value: unknown) => {
@@ -217,7 +218,8 @@ async function encodeSessionGraph(session: RestorableSessionState | null, legacy
     activeTabIndex: session.activeTabIndex,
     ...(legacyHomeActive ? { homeActive: true } : {}),
   }
-  const sessionPartition = add(await encode({ format: 2, session: encodedSession }))
+  const draftPartition = fileDrafts?.length ? add(await encode({ format: 2, drafts: fileDrafts })) : undefined
+  const sessionPartition = add(await encode({ format: 2, session: encodedSession, ...(draftPartition && { draftPartition }) }))
   const partitionKeys = [...generated.keys()].sort()
   const partitions = Object.freeze(Object.fromEntries(partitionKeys.map((key) => [key, generated.get(key)!.text])))
   graphSizes.set(partitions, [...generated.values()].reduce((bytes, partition) => bytes + partition.bytes, 0))
@@ -230,7 +232,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null, legacy
 }
 
 export async function encodeClientSnapshotV2(snapshot: ClientSnapshotV1): Promise<EncodedClientSnapshotV2> {
-  return snapshotV2(snapshot, await encodeSessionGraph(snapshot.session))
+  return snapshotV2(snapshot, await encodeSessionGraph(snapshot.session, snapshot.fileDrafts))
 }
 
 export function createClientSnapshotV2Encoder() {
@@ -238,7 +240,7 @@ export function createClientSnapshotV2Encoder() {
   // records by value and reuse their immutable encoded partitions across captures.
   let previous: Array<EncodedWorkspace | undefined> = []
   return async (snapshot: ClientSnapshotV1) => {
-    const graph = await encodeSessionGraph(snapshot.session, false, previous)
+    const graph = await encodeSessionGraph(snapshot.session, snapshot.fileDrafts, false, previous)
     previous = graph.workspaces
     return snapshotV2(snapshot, graph)
   }
@@ -326,17 +328,8 @@ async function decodeGraph(
   loaded: Map<string, string>,
   loadPartition: (key: string) => Promise<string | null>,
   verified?: (key: string) => void,
-): Promise<RestorableSessionState | null | undefined> {
-  if (!hasExactKeys(manifest, ["format", "session"]) || canonicalJson(manifest) !== loaded.get(rootKey)) return
-  if (manifest.session === null) {
-    const reencoded = await encodeSessionGraph(null)
-    return graphMatches(reencoded, rootKey, persistedKeys, loaded) ? null : undefined
-  }
-  if (!isRecord(manifest.session)
-    || !hasExactKeys(manifest.session, ["tabs", "activeTabIndex"], ["homeActive"])
-    || (hasOwn(manifest.session, "homeActive") && manifest.session.homeActive !== true)
-    || !Array.isArray(manifest.session.tabs)) return
-
+): Promise<Pick<ClientSnapshotV1, "session" | "fileDrafts"> | undefined> {
+  if (!hasExactKeys(manifest, ["format", "session"], ["draftPartition"]) || canonicalJson(manifest) !== loaded.get(rootKey)) return
   const loadCanonical = async (key: unknown): Promise<Record<string, unknown> | null> => {
     if (typeof key !== "string" || !PARTITION_KEY.test(key)) return null
     let partition = loaded.get(key)
@@ -350,6 +343,23 @@ async function decodeGraph(
     const parsed = parseJson(partition)
     return parsed && isRecord(parsed.value) && canonicalJson(parsed.value) === partition ? parsed.value : null
   }
+  let fileDrafts: WorkspaceFileDraft[] | undefined
+  if (hasOwn(manifest, "draftPartition")) {
+    if (typeof manifest.draftPartition !== "string" || !persistedKeys.includes(manifest.draftPartition)) return
+    const partition = await loadCanonical(manifest.draftPartition)
+    if (!partition || partition.format !== 2 || !hasExactKeys(partition, ["format", "drafts"])) return
+    fileDrafts = normalizeWorkspaceFileDrafts(partition.drafts)
+    if (!fileDrafts.length || !canonicalEquals(partition.drafts, fileDrafts)) return
+  }
+  const drafts = fileDrafts ? { fileDrafts } : {}
+  if (manifest.session === null) {
+    const reencoded = await encodeSessionGraph(null, fileDrafts)
+    return graphMatches(reencoded, rootKey, persistedKeys, loaded) ? { session: null, ...drafts } : undefined
+  }
+  if (!isRecord(manifest.session)
+    || !hasExactKeys(manifest.session, ["tabs", "activeTabIndex"], ["homeActive"])
+    || (hasOwn(manifest.session, "homeActive") && manifest.session.homeActive !== true)
+    || !Array.isArray(manifest.session.tabs)) return
 
   const sameKeys = (left: Iterable<string>, right: readonly string[]) => {
     const sorted = [...new Set(left)].sort()
@@ -417,6 +427,7 @@ async function decodeGraph(
 
   const tabs: unknown[] = []
   const declaredGraph = new Set([rootKey])
+  if (typeof manifest.draftPartition === "string") declaredGraph.add(manifest.draftPartition)
   let degraded = false
   let legacyGraph = false
   for (const shell of manifest.session.tabs) {
@@ -572,10 +583,11 @@ async function decodeGraph(
   }
   const normalized = normalizeRestorableSession(reconstructed)
   if (!normalized || !canonicalEquals(reconstructed, normalized)) return
-  if (degraded || legacyGraph) return normalized
+  const decoded = { session: normalized, ...drafts }
+  if (degraded || legacyGraph) return decoded
   // Reproduce the stored manifest hash before exposing just the restorable tabs.
-  const reencoded = await encodeSessionGraph(normalized, manifest.session.homeActive === true)
-  return graphMatches(reencoded, rootKey, persistedKeys, loaded) ? normalized : undefined
+  const reencoded = await encodeSessionGraph(normalized, fileDrafts, manifest.session.homeActive === true)
+  return graphMatches(reencoded, rootKey, persistedKeys, loaded) ? decoded : undefined
 }
 
 function graphMatches(
@@ -608,8 +620,8 @@ export async function decodeClientSnapshotV2(
     if (isRecord(parsed.value) && parsed.value.format === 2) {
       const loaded = new Map([[decoded.partitionKey, partition]])
       verified?.(decoded.partitionKey)
-      const session = await decodeGraph(parsed.value, decoded.partitionKey, decoded.partitionKeys, loaded, loadPartition, verified)
-      return session === undefined ? null : { ...decoded.root, session }
+      const state = await decodeGraph(parsed.value, decoded.partitionKey, decoded.partitionKeys, loaded, loadPartition, verified)
+      return state === undefined ? null : { ...decoded.root, ...state }
     }
     return null
   } catch {

@@ -3,7 +3,21 @@ import { it } from "node:test"
 
 import type { ClientSnapshotV1, RestorableWorkspaceTabState } from "./client-state-codec.ts"
 import { canCommitClientSnapshotV2, canonicalJson, decodeClientSnapshotV2, encodeClientSnapshotV2, sha256 } from "./client-state-partitions.ts"
+import { decodeClientSnapshot } from "./client-state-codec"
 import { encodePartition } from "./client-state-partition-json.ts"
+
+it("window file drafts round-trip without a workspace tab and are bounded before publication", async () => {
+  const entry = { key: '["local",null,"/project","/checkout","a.txt"]', fingerprint: "a".repeat(64), text: "été" }
+  const snapshot = decodeClientSnapshot({
+    version: 1, revision: 1, savedAt: 1, layout: {}, session: null,
+    fileDrafts: [entry, { ...entry, text: "duplicate" }, { ...entry, key: "large", text: "\0".repeat(50_000) }],
+  })!
+  assert.deepEqual(snapshot.fileDrafts, [entry])
+  const encoded = await encodeClientSnapshotV2(snapshot)
+  const load = async (key: string) => encoded.partitions[key] ?? null
+  assert.deepEqual((await decodeClientSnapshotV2(encoded.root, 1, load))?.fileDrafts, [entry])
+  assert.equal(await decodeClientSnapshotV2(encoded.root, 1, async key => key === encoded.root.sessionPartition ? load(key) : null), null)
+})
 
 const attachment = (id: string) => ({
   id,

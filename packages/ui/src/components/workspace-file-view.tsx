@@ -14,7 +14,7 @@ import { Markdown } from "./markdown"
 import { MermaidDiagram } from "./mermaid-diagram"
 import { writeClientLayoutValue } from "../stores/client-state"
 import { readStoredEnum, RIGHT_PANEL_FILES_WORD_WRAP_KEY } from "./instance/shell/storage"
-import { decodeWorkspaceText, useWorkspaceFileEditor } from "./workspace-file-editor"
+import { decodeWorkspaceText, useWorkspaceFileEditor, workspaceFileFingerprint } from "./workspace-file-editor"
 import { showConfirmDialog } from "../stores/alerts"
 
 const MonacoFileViewer = lazy(() => import("./file-viewer/monaco-file-viewer").then(module => ({ default: module.MonacoFileViewer })))
@@ -37,7 +37,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
   const mermaid = () => /\.mmd$/i.test(props.target.path)
   const previewable = () => markdown() || mermaid()
   async function load() {
-    if (!props.active || editor.dirty() || editor.saving()) return
+    if (!props.active || (editor.dirty() && !editor.needsVerification()) || editor.saving()) return
     if (loading()) { pending = true; return }
     const request = controller = new AbortController(), target = props.target
     const operation = captureBackendOperation(props.instanceId, request.signal)
@@ -48,14 +48,23 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
     try {
       const result = await previewReads.run(operation.signal,
         () => backendOf(props.instanceId).api.previewWorkspaceFile(props.instanceId, target.path, target.directory, operation.signal), "visible")
-      if (!operation.current() || editor.dirty() || editor.saving()) return
+      if (!operation.current() || target !== props.target || editor.saving()) return
+      if (editor.dirty()) {
+        if (editor.needsVerification()) {
+          const hash = workspaceFileFingerprint(result)
+          let text: string | undefined
+          try { text = decodeWorkspaceText(result) } catch { /* keep the recovered text */ }
+          editor.verify(text, hash)
+        }
+        return
+      }
       const mime = imageTypes[target.path.split(".").pop()!.toLowerCase()]
       if (mime && result.encoding === "base64") setContent({ image: `data:${mime};base64,${result.contents}` })
       else {
         try {
           const text = decodeWorkspaceText(result)
           if (text.includes("\0")) setContent({ binary: true })
-          else { editor.adopt(text); setContent({ text }) }
+          else { editor.adopt(text, workspaceFileFingerprint(result)); setContent({ text }) }
         } catch { setContent({ binary: true }) }
       }
     } catch (cause) {
@@ -74,7 +83,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
     cancel(); setContent(null); setError(null); setSource(views.get(props.target)?.source ?? false)
     const draft = editor.reset()
     if (draft !== undefined) setContent({ text: draft })
-    else void load()
+    void load()
   }))
   createEffect(on(() => props.active, active => { if (!active) cancel(); else void load() }, { defer: true }))
   createEffect(on(() => backendEvents.signalForInstance(props.instanceId), signal => {
@@ -112,6 +121,8 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
       <button class="files-header-icon-button" aria-label={t("gitPanel.backChat")} title={t("gitPanel.backChat")} onClick={props.onClose}><X size={16} /></button>
     </header>
     <Show when={error()}><div class="p-3 text-error" role="alert">{error()} <button onClick={() => void explicitRefresh()}>{t("instanceShell.rightPanel.actions.refresh")}</button></div></Show>
+    <Show when={editor.conflict()}><div class="p-3 text-error" role="alert">{t("filesPanel.draftConflict")}</div></Show>
+    <Show when={editor.limited()}><div class="p-3 text-error" role="alert">{t("filesPanel.draftLimit")}</div></Show>
     <Show when={loading() && !content()}><p class="p-3 text-secondary">{t("instanceInfo.loading")}</p></Show>
     <Show when={content()}>{value => <>
       <Show when={value().image}>{url => <div class="workspace-image"><img src={url()} alt={props.target.path} /></div>}</Show>

@@ -7,6 +7,7 @@ import { canCommitClientSnapshotV2, createClientSnapshotV2Encoder, decodeClientS
 import type { ClientSnapshotV2, EncodedClientSnapshotV2 } from "./client-state-partitions"
 import { LEGACY_SESSION_PREVIEWS_KEY, SESSION_BROWSER_STATE_KEY, mergeSessionBrowsers, tabPreviewModes } from "./tab-view-state-codec"
 import { migrateLegacyTabPreviews } from "./tab-view-state-migration"
+import { normalizeWorkspaceFileDrafts, type WorkspaceFileDraft } from "./workspace-file-drafts-codec"
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
 export type { ClientSnapshotV2 }
 const SAVE_DEBOUNCE_MS = 250
@@ -24,6 +25,7 @@ const [loadedRestorableSession, setLoadedRestorableSession] = createSignal<Resto
 let initialized = false
 let initialization: Promise<void> | null = null
 let layout: Record<string, string> = Object.create(null)
+let fileDrafts: WorkspaceFileDraft[] = []
 let revision = 0
 let dirty = false
 let writeBlock: false | "snapshot" | "transaction" = false
@@ -132,6 +134,7 @@ function enqueuePendingSave(republish = false): Promise<void> {
     savedAt: Date.now(),
     layout: { ...layout },
     session: partitionProtocolVersion === 1 ? loadedRestorableSession() : withoutPartitionCaches(loadedRestorableSession()),
+    ...(fileDrafts.length && { fileDrafts }),
   }
   const normalizedSnapshot = decodeClientSnapshot(snapshot)
   if (!normalizedSnapshot) return Promise.reject(new Error("Client snapshot normalization failed"))
@@ -208,6 +211,7 @@ function resetLoadedState(snapshot: ClientSnapshotV1 | null = null, resetRevisio
   committedContent = null
   republishOnFlush = false
   layout = snapshot ? { ...snapshot.layout } : Object.create(null)
+  fileDrafts = snapshot?.fileDrafts ?? []
   if (resetRevision) revision = snapshot?.revision ?? 0
   setLoadedClientSnapshotExists(snapshot !== null)
   setLoadedRestorableSession(snapshot?.session ?? null)
@@ -269,6 +273,25 @@ export function updateRestorableSession(state: RestorableSessionState | null): v
   if (writeBlock || !clientStateIsPrimary() || !restorePreviousStateEnabled()) return
   setLoadedRestorableSession(normalized)
   scheduleSave()
+}
+
+export function restoredWorkspaceFileDraft(key: string) {
+  return fileDrafts.find(draft => draft.key === key)
+}
+
+/** Keep admitted drafts intact if a new or larger draft exceeds the window budget. */
+export function updateWorkspaceFileDraft(key: string, value?: Omit<WorkspaceFileDraft, "key">): boolean {
+  if (writeBlock === "snapshot" || !clientStateIsPrimary() || !restorePreviousStateEnabled()) return true
+  const previous = restoredWorkspaceFileDraft(key)
+  if (previous?.text === value?.text && previous?.fingerprint === value?.fingerprint) return true
+  const remaining = fileDrafts.filter(draft => draft.key !== key)
+  if (value) {
+    const next = normalizeWorkspaceFileDrafts([...remaining, { key, ...value }])
+    if (!next.some(draft => draft.key === key)) return false
+    fileDrafts = next
+  } else fileDrafts = remaining
+  scheduleSave()
+  return true
 }
 
 export function readClientLayoutValue(key: string): string | null {

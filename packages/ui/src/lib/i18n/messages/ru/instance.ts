@@ -157,6 +157,8 @@ export const instanceMessages = {
   "filesPanel.viewer": "Просмотр файла",
   "filesPanel.readOnly": "Только чтение",
   "filesPanel.binary": "Предпросмотр этого двоичного файла недоступен.",
+  "filesPanel.draftConflict": "Файл на диске изменился. Ваш черновик сохранён.",
+  "filesPanel.draftLimit": "Хранилище черновиков заполнено. Перед закрытием сохраните или скопируйте последние изменения.",
   "filesPanel.image.before": "До",
   "filesPanel.image.after": "После",
   "gitPanel.changes": "Изменения",

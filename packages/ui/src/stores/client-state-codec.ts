@@ -6,6 +6,7 @@ import { isBackendId, LOCAL_BACKEND_ID } from "../lib/backend-identity"
 import type { BackendId } from "../lib/backend-transport"
 import { normalizeOutlineIndexes, outlineBudget, type OutlineBudget, type PersistedOutline } from "./session-outline-persistence"
 import { MAX_TAB_PREVIEW_STORAGE, normalizeTabViewState, type RestorableTabViewState } from "./tab-view-state-codec"
+import { normalizeWorkspaceFileDrafts, type WorkspaceFileDraft } from "./workspace-file-drafts-codec"
 
 export interface RestorableWorkspaceTabState {
   /** Absent for the local backend, so states saved before backend ids decode unchanged. */
@@ -32,6 +33,7 @@ export interface RestorableSessionState { tabs: RestorableTabState[]; activeTabI
 export interface ClientSnapshotV1 {
   version: 1; revision: number; savedAt: number
   layout: Record<string, string>; session: RestorableSessionState | null
+  fileDrafts?: WorkspaceFileDraft[]
 }
 
 const MAX_TABS = 32, MAX_LAYOUT_ENTRIES = 64, MAX_DRAFTS = 24, MAX_SCROLLS_PER_TAB = 96
@@ -360,7 +362,8 @@ export function decodeClientSnapshot(value: unknown): ClientSnapshotV1 | null {
   const session = value.session === null ? null : normalizeSession(value.session, budget)
   if (value.session !== null && !session) return null
   const layout = normalizeStringRecord(value.layout, MAX_LAYOUT_ENTRIES, MAX_LAYOUT_VALUE, budget)
-  return layout ? { version: 1, revision: Number(value.revision), savedAt, layout, session } : null
+  const fileDrafts = normalizeWorkspaceFileDrafts(value.fileDrafts)
+  return layout ? { version: 1, revision: Number(value.revision), savedAt, layout, session, ...(fileDrafts.length && { fileDrafts }) } : null
 }
 
 export function isFutureClientSnapshot(value: unknown): boolean {

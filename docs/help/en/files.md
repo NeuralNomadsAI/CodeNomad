@@ -30,7 +30,7 @@ Workspace `.mmd` files open as diagrams. Use **Show source** to edit and **Show 
 
 Save writes the actual file in the browsed checkout, including a linked worktree; it does not send a prompt or stage/commit the edit. The conflict dialog says **File was modified by the agent. Overwrite agent's changes?**; treat any external writer's changes with the same care.
 
-Dirty source drafts are retained in renderer memory by project instance, directory and path when readers are closed or switched. Filesystem refreshes do not silently replace them. This is not durable file storage: save or copy important edits before restarting/reloading the client. Explicit **Refresh** warns before discarding unsaved edits.
+With **Restore previous state** enabled, reopen the same file in the same project and checkout after restarting the desktop app to recover your draft. If the file changed on disk, CodeNomad keeps the draft and flags the conflict. The original changes only when you explicitly save. Each window can retain up to 32 drafts within a combined 256 KiB storage limit; save or copy your latest edits if the editor warns that draft storage is full. **Refresh** asks before discarding a draft.
 
 Closing the reader with its trailing close button returns to the conversation; the composer remains available below the reader. Hiding the panel with **Right panel**, or a window too narrow for it, leaves the reader open with the freed width; showing the panel again keeps it as it was. Changing session/worktree clears the selected reader, not a promise to save its draft. Opening a browser preview replaces the reader; opening a file returns that view to chat mode.
 
