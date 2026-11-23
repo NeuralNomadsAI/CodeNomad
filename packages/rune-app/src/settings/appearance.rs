@@ -20,16 +20,16 @@ pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<St
     render_with(cx, &prefs, more, |cx| {
         let body = view(cx);
         #[cfg(target_arch = "wasm32")]
-        if let Some(panel) =
-            conversation::web_view(s, &prefs).or_else(|| web::view(s, &prefs, more))
         {
             use rune_theme_codenomad::layout::Layout;
-            return rune::col()
+            // Opening or closing a modal must keep the shell at the same Rune path.
+            rune::col()
                 .full_width()
                 .full_height()
                 .child(body)
-                .child(panel);
+                .children(conversation::web_view(s, &prefs).or_else(|| web::view(s, &prefs, more)))
         }
+        #[cfg(not(target_arch = "wasm32"))]
         body
     })
 }
