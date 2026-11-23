@@ -36,7 +36,8 @@ import {
 } from "../../stores/sessions"
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "../../stores/message-v2/bus"
 import type { ScrollSnapshot } from "../../stores/message-v2/types"
-import { getAuthoritativeAttachmentSessionIdsForInstance, getSessionAttachmentsForInstance } from "../../stores/attachments"
+import { trackSessionDraftChanges } from "../../stores/session-state"
+import { getAuthoritativeAttachmentSessionIdsForInstance, getSessionAttachmentsForInstance, trackSessionAttachmentChanges } from "../../stores/attachments"
 import { closedDraftSnapshotAuthority, omitSupersededClosedDrafts, pendingClosedDrafts } from "../../stores/closed-workspace-drafts"
 import { serializeDraftAttachments } from "../../stores/client-state-attachments-codec"
 import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
@@ -491,9 +492,9 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions()
     outlineCacheRevision(); seenInterruptionsRevision()
     checkpointSessions()
+    trackSessionDraftChanges()
+    trackSessionAttachmentChanges()
     for (const tab of tabs) if (tab.kind === "instance") {
-      getSessionDraftPromptsForInstance(tab.instance.id)
-      getSessionAttachmentsForInstance(tab.instance.id)
       captureTabViewState(tab.instance.id)
     }
     schedule()

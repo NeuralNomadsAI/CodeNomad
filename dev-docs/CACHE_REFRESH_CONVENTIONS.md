@@ -38,6 +38,8 @@ of row metadata. Single-row publications retain unaffected descendant indexes an
 family trees; bulk inventory publication rebuilds the affected workspace's indexes
 on demand. Client-state capture tracks workspace checkpoint tokens, waits for a
 quiet period, and encodes changed catalog chunks. Explicit flushes capture immediately.
+Draft and attachment signals schedule capture without materializing their saved
+maps on each edit; serialization reads the current maps at the checkpoint.
 Session rename events publish their title directly in the catalog; unseen IDs
 share one metadata read carrying the latest title observed during that read.
 

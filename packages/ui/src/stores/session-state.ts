@@ -428,6 +428,7 @@ function getSessionDraftPrompt(instanceId: string, sessionId: string): string {
 function writeSessionDraftPrompt(instanceId: string, sessionId: string, value: string) {
   const key = getDraftKey(instanceId, sessionId)
   setSessionDraftPrompts((prev) => {
+    if ((prev.get(key) ?? "") === value) return prev
     const next = new Map(prev)
     if (!value) {
       next.delete(key)
@@ -480,6 +481,11 @@ function getSessionDraftPromptsForInstance(instanceId: string): Record<string, s
     result[key.slice(prefix.length)] = value
   }
   return result
+}
+
+export function trackSessionDraftChanges(): void {
+  sessionDraftPrompts()
+  authoritativeDraftKeys()
 }
 
 function getAuthoritativeSessionIds(keys: ReadonlySet<string>, instanceId: string): ReadonlySet<string> {

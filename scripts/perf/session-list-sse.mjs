@@ -1,5 +1,6 @@
 // Run against a sourcemapped production UI build, with no native app or daemon.
-// node scripts/perf/session-list-sse.mjs <dist> <probes> <artifacts> [seconds]
+// node scripts/perf/session-list-sse.mjs <dist> <probes> <artifacts> [seconds] [--exercise-clock]
+import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import { execFile } from "node:child_process"
 import { readFile, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises"
@@ -7,7 +8,7 @@ import { resolve, join, extname, sep } from "node:path"
 import { promisify } from "node:util"
 import { chromium } from "playwright"
 
-const [dist, probes, artifacts, seconds = "90"] = process.argv.slice(2)
+const [dist, probes, artifacts, seconds = "90", ...flags] = process.argv.slice(2)
 const root = resolve(dist)
 const output = resolve(artifacts)
 await mkdir(output, { recursive: true })
@@ -30,10 +31,16 @@ for (let i = 0; i < 120; i++) {
 }
 const streams = new Set()
 const requested = new Set()
+const sessionReads = new Map()
+let measuring = false
 const mime = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" }
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost"), path = url.pathname
   requested.add(path)
+  if (measuring && req.method === "GET" && /\/api\/session(?:\/ses_\d+)?$/.test(path)) {
+    const key = path + url.search
+    sessionReads.set(key, (sessionReads.get(key) ?? 0) + 1)
+  }
   if (path === "/api/events") {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" })
     res.write(": connected\n\n")
@@ -133,7 +140,33 @@ try {
   })
   emit(rename("ses_5998", 1, "Fixture ready"))
   await page.locator(".session-item-base").getByText("Fixture ready", { exact: true }).waitFor({ timeout: 12000 })
+  if (flags.includes("--exercise-clock")) {
+    const sessionID = "ses_5998"
+    emit({
+      type: "session.retry.scheduled", id: "clock-retry", created: Date.now(), location: { directory: folder },
+      durable: { aggregateID: sessionID, seq: 2, version: 1 },
+      data: { sessionID, assistantMessageID: "msg_fixture", attempt: 1, at: Date.now() + 3_000,
+        error: { name: "UnknownError", message: "Fixture backoff" } },
+    })
+    const header = page.locator(".session-header-indicators .session-status-text").filter({ hasText: /Retrying/i }).first()
+    await header.filter({ hasText: /[123]/ }).waitFor({ timeout: 6_000 })
+    await page.keyboard.press("a")
+    assert.equal(await editor.inputValue(), "a")
+    await page.keyboard.press("Backspace")
+    assert.equal(await editor.inputValue(), "")
+    await header.filter({ hasNotText: /\d/ }).waitFor({ timeout: 6_000 })
+  }
+  await page.evaluate(() => {
+    window.perfKeys = []
+    document.addEventListener("keydown", event => {
+      if (!(event.target instanceof HTMLTextAreaElement) || !["a", "Backspace"].includes(event.key)) return
+      // Include input, synchronous reactive work and microtasks before the next
+      // render opportunity; use every key, unlike Event Timing's 16 ms floor.
+      requestAnimationFrame(() => window.perfKeys.push(performance.now() - event.timeStamp))
+    }, { capture: true })
+  })
   const commitsBefore = await page.evaluate(() => window.perfCommits)
+  measuring = true
   let seq = 0
   activity = setInterval(() => {
     const ordinal = ++seq
@@ -155,7 +188,12 @@ try {
   await writeFile(join(output, "longtasks.txt"), result[1].stdout)
   const counters = { eventTicks: await count, streams: streams.size,
     mockPartitionCommits: await page.evaluate(start => window.perfCommits - start, commitsBefore) }
+  const keys = await page.evaluate(() => window.perfKeys.sort((a, b) => a - b))
+  assert.ok(keys.length > 0, "the production composer received keyboard input")
+  counters.keyToFrame = { count: keys.length, p50: keys[Math.ceil(keys.length * 0.5) - 1],
+    p95: keys[Math.ceil(keys.length * 0.95) - 1], max: keys.at(-1) }
   await writeFile(join(output, "fixture.json"), JSON.stringify(counters, null, 2))
+  await writeFile(join(output, "session-reads.json"), JSON.stringify(Object.fromEntries(sessionReads), null, 2))
   console.log(counters)
 } finally {
   clearInterval(activity)
