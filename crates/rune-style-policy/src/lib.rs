@@ -249,7 +249,10 @@ impl<'ast> Visit<'ast> for Policy {
         if names.windows(2).any(|pair| pair == ["AppSpec", "new"]) {
             self.reject(node.path.segments[0].ident.span(), "AppSpec::new");
         }
-        if names.len() > 1 && names != ["web_sys", "Location", "origin"] {
+        if names.len() > 1
+            && names != ["web_sys", "Location", "origin"]
+            && names != ["web_sys", "Performance", "mark"]
+        {
             let last = node.path.segments.last().unwrap();
             if forbidden(&last.ident.to_string()) {
                 self.reject(last.ident.span(), &last.ident.to_string());
@@ -467,6 +470,21 @@ mod tests {
             assert!(!check(&invalid).unwrap().is_empty(), "{invalid}");
         }
     }
+    #[test]
+    fn allows_browser_timing_marks_without_allowing_visual_marks() {
+        assert!(
+            check(r#"fn trace() { web_sys::Performance::mark(&performance, "action"); }"#)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            !check("fn styled() { rune::El::mark(el, 42); }")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!check("fn styled() { el.mark(42); }").unwrap().is_empty());
+    }
+
     #[test]
     fn allows_local_values_named_like_builders() {
         assert!(
