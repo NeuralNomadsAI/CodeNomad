@@ -220,6 +220,8 @@
   "contextUsagePanel.labels.totalInput": "Gesamt Ein",
   "contextUsagePanel.labels.totalOutput": "Gesamt Aus",
   "contextUsagePanel.labels.totalReasoning": "Gesamt Denken",
+  "contextUsagePanel.partialTotal": "Teilsumme der Unterhaltung",
+  "contextUsagePanel.totalUnavailable": "Gesamtsumme der Unterhaltung nicht verfügbar",
   "directoryBrowser.close": "Schließen",
   "directoryBrowser.createFolder.cancelLabel": "Abbrechen",
   "directoryBrowser.createFolder.confirmLabel": "Erstellen",

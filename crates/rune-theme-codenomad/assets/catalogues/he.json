@@ -220,6 +220,8 @@
   "contextUsagePanel.labels.totalInput": "קלט כולל",
   "contextUsagePanel.labels.totalOutput": "פלט כולל",
   "contextUsagePanel.labels.totalReasoning": "חשיבה כוללת",
+  "contextUsagePanel.partialTotal": "סכום חלקי של השיחה",
+  "contextUsagePanel.totalUnavailable": "הסכום הכולל של השיחה אינו זמין",
   "directoryBrowser.close": "סגור",
   "directoryBrowser.createFolder.cancelLabel": "ביטול",
   "directoryBrowser.createFolder.confirmLabel": "צור",

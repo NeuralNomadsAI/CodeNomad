@@ -220,6 +220,8 @@
   "contextUsagePanel.labels.totalInput": "Toplam Girdi",
   "contextUsagePanel.labels.totalOutput": "Toplam Çıktı",
   "contextUsagePanel.labels.totalReasoning": "Toplam Reasoning",
+  "contextUsagePanel.partialTotal": "Konuşmanın kısmi toplamı",
+  "contextUsagePanel.totalUnavailable": "Konuşmanın toplamı kullanılamıyor",
   "directoryBrowser.close": "Kapat",
   "directoryBrowser.createFolder.cancelLabel": "İptal",
   "directoryBrowser.createFolder.confirmLabel": "Oluştur",
