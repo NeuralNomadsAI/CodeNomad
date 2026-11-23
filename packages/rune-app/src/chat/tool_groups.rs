@@ -6,6 +6,7 @@ use crate::{
     settings::{TranscriptRow, transcript_mode},
     strings::locale,
 };
+use codenomad_client::search::Kind as SearchKind;
 use rune::{El, col};
 use rune_theme_codenomad::{
     Space, catalogue,
@@ -80,7 +81,7 @@ pub(super) fn view(
         }
     };
     let key = key(message, first);
-    let expanded = s.transcript_display.expanded(&key, mode == "expanded");
+    let expanded = expanded(s, message, &key, mode, &calls);
     let toggle = key.clone();
     let mut view = col()
         .key(key.clone())
@@ -111,6 +112,20 @@ pub(super) fn view(
 
 fn key(message: &str, first: &Tool) -> String {
     format!("group-{}", tools::tool_key(message, &first.id))
+}
+
+fn expanded(
+    s: &State,
+    message: &str,
+    key: &str,
+    mode: &str,
+    calls: &[(usize, &std::sync::Arc<Tool>)],
+) -> bool {
+    s.transcript_display.expanded(key, mode == "expanded")
+        || calls.iter().any(|(_, tool)| {
+            super::search_hit::query(s, message, SearchKind::Tool, tool.part_index)
+                .is_some_and(|q| q.active)
+        })
 }
 
 fn members<'a>(
@@ -155,7 +170,7 @@ pub(super) fn anchor(s: &State, message: &str, parts: &[Part], target: usize) ->
         if let Some((_, calls, end)) = members(s, message, &parts[start..]) {
             if target < start + end {
                 let key = key(message, calls.first()?.1);
-                return (!s.transcript_display.expanded(&key, mode == "expanded")).then_some(key);
+                return (!expanded(s, message, &key, mode, &calls)).then_some(key);
             }
             start += end;
         } else {

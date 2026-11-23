@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {readFile,realpath} from 'node:fs/promises'
+import {readFile,realpath,lstat} from 'node:fs/promises'
 import path from 'node:path'
 
 const inside=(parent,value)=>{const relative=path.relative(parent,value);return relative&&!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith(`..${path.sep}`)}
@@ -11,7 +11,11 @@ export async function privateWebFixture({root,project,storageState,out,origin}){
   assert(inside(profile,storage),'Cookies must come from this private fixture profile')
   const auth=JSON.parse(await readFile(storage,'utf8'))
   assert(auth.cookies.length>0&&auth.cookies.every(c=>['127.0.0.1','localhost','::1'].includes(c.domain))&&(auth.origins??[]).every(o=>o.origin===origin),'Private loopback cookie state only')
-  assert(inside(profile,path.resolve(out)),'Output must stay in the private fixture profile')
+  const output=path.resolve(out)
+  const parent=await realpath(path.dirname(output))
+  const leaf=await lstat(output).catch(error=>{if(error.code!=='ENOENT')throw error})
+  assert((parent===profile||inside(profile,parent))&&(!leaf||leaf.isDirectory()&&!leaf.isSymbolicLink()),
+    'Output must stay in the private fixture profile')
   return {profile,storage,project:directory,inside}
 }
 export async function bundleAssetPaths(directory){

@@ -84,6 +84,7 @@ export const messagingMessages = {
   "history.sessionUnavailable": "सत्र उपलब्ध छैन",
   "history.openSession": "सत्रमा खोल्नुहोस्",
   "history.openFailed": "यो सत्र खोल्न सकिएन।",
+  "history.destinationFiltered": "सन्देश सामग्रीका फिल्टरहरूले यो गन्तव्य लुकाएका छन्।",
   "history.planning": "इतिहास जाँच्दै: {count} सन्देश",
   "history.pruning": "सफा गर्दै: {count} / {total} सन्देश",
   "transcriptFilters.title": "सन्देशको सामग्री",

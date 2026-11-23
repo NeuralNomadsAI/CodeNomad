@@ -1,7 +1,7 @@
 use super::{Marker, owner};
 use crate::{
     State,
-    chat::{anchors, reader},
+    chat::{anchors, reader, search_hit::Landing},
     history::Page,
     transport::Command,
 };
@@ -17,6 +17,7 @@ pub(super) struct Navigation {
     flight: Option<(Sender<()>, Marker)>,
     align: Option<(String, String)>,
     pub(super) retry: Option<Marker>,
+    pub(super) filtered: bool,
     pub(super) requested_active: Option<String>,
     pub(super) active: Option<String>,
     locked: bool,
@@ -30,6 +31,7 @@ pub(crate) fn cancel_jump(s: &mut State) {
     j.flight = None;
     j.align = None;
     j.retry = None;
+    j.filtered = false;
     j.locked = false;
 }
 
@@ -56,6 +58,7 @@ pub(super) fn cancel_search(s: &mut State) {
     {
         cancel_jump(s);
     }
+    owner(s).jump.filtered = false;
 }
 
 pub(super) fn select(s: &mut State, id: &str, tx: &mut Tx) {
@@ -106,11 +109,13 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
     cancel_jump(s);
     let serial = owner(s).jump.serial;
     if let Some(row) = s.messages.iter().find(|row| row.id == target.message) {
-        if let Some(block) = locate(s, row, &target) {
-            settle(s, &target, block);
-            apply_alignment(s, tx);
-        } else {
-            owner(s).jump.retry = Some(target);
+        match locate(s, row, &target) {
+            Landing::Visible(key, steps) => {
+                settle(s, &target, (key, steps));
+                apply_alignment(s, tx);
+            }
+            Landing::Filtered => refuse_filtered(s),
+            Landing::Missing => owner(s).jump.retry = Some(target),
         }
         return;
     }
@@ -144,32 +149,55 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
     super::filters::reselect(s);
 }
 
-fn locate(s: &State, row: &crate::history::Row, m: &Marker) -> Option<(String, usize)> {
+pub(super) fn refuse_filtered(s: &mut State) {
+    s.transcript_display.search_highlight = None;
+    owner(s).jump.filtered = true;
+}
+
+fn locate(s: &State, row: &crate::history::Row, m: &Marker) -> Landing {
+    if !anchors::context_visible(s, &row.role) {
+        return Landing::Filtered;
+    }
+    let steps = anchors::steps(s, &row.id);
     if m.id.is_empty() {
         return s
             .transcript_display
             .search_highlight
             .as_ref()
             .filter(|hit| hit.message == row.id)
-            .and_then(|hit| hit.block(row, anchors::steps(s, &row.id)))
-            .or_else(|| Some((row.id.clone(), 0)));
+            .map_or_else(
+                || Landing::Visible(row.id.clone(), 0),
+                |hit| hit.landing(s, row, steps),
+            );
     }
-    let steps = anchors::steps(s, &row.id);
-    let block = anchors::blocks(row, steps, true).into_iter().find(|b| {
+    let Some(block) = anchors::blocks(row, steps, true).into_iter().find(|b| {
         b.marker.kind == m.kind
             && b.marker.ordinal == m.ordinal
             && b.marker.continued == m.continued
-    })?;
+    }) else {
+        return Landing::Missing;
+    };
+    if block
+        .part
+        .is_some_and(|i| !anchors::part_visible(s, row, i))
+    {
+        return Landing::Filtered;
+    }
     let shown = steps.max(block.reveal);
     let key = match m.kind {
-        super::MarkerKind::Reasoning => anchors::reasoning_key(row, shown, m.ordinal, m.continued)?,
+        super::MarkerKind::Reasoning => {
+            let Some(key) = anchors::reasoning_key(row, shown, m.ordinal, m.continued) else {
+                return Landing::Missing;
+            };
+            key
+        }
         super::MarkerKind::Tool => block
             .part
             .and_then(|index| anchors::tool_group(s, row, shown, index))
             .unwrap_or(block.key),
         _ => block.key,
     };
-    Some((key, block.reveal))
+    Landing::Visible(key, block.reveal)
 }
 
 fn settle(s: &mut State, m: &Marker, (key, steps): (String, usize)) {
@@ -185,6 +213,10 @@ fn settle(s: &mut State, m: &Marker, (key, steps): (String, usize)) {
 }
 
 pub(crate) fn admit(s: &mut State, serial: u64, page: Page, admit: Admission) {
+    admit_window(s, serial, page, || admit.accept());
+}
+
+pub(super) fn admit_window(s: &mut State, serial: u64, page: Page, accept: impl FnOnce() -> bool) {
     if !(super::demanded(s) || super::search::is_open(s))
         || owner(s).jump.serial != serial
         || gesture(s)
@@ -194,20 +226,18 @@ pub(crate) fn admit(s: &mut State, serial: u64, page: Page, admit: Admission) {
     let Some((_cancel, target)) = owner(s).jump.flight.take() else {
         return;
     };
-    let Some(block) = page
+    let landing = page
         .rows
         .iter()
         .find(|row| row.id == target.message)
-        .and_then(|row| locate(s, row, &target))
-    else {
-        owner(s).jump.retry = Some(target);
-        return;
-    };
-    if admit.accept() {
-        reader::install_anchor(s, page);
-        settle(s, &target, block);
-    } else {
-        owner(s).jump.retry = Some(target);
+        .map_or(Landing::Missing, |row| locate(s, row, &target));
+    match landing {
+        Landing::Visible(key, steps) if accept() => {
+            reader::install_anchor(s, page);
+            settle(s, &target, (key, steps));
+        }
+        Landing::Filtered => refuse_filtered(s),
+        _ => owner(s).jump.retry = Some(target),
     }
 }
 
@@ -253,14 +283,19 @@ pub(crate) fn restore_search(s: &mut State) {
         return;
     }
     let hit = hit.clone();
-    if let Some((key, steps)) = s
+    match s
         .messages
         .iter()
         .find(|row| row.id == hit.message)
-        .and_then(|row| hit.block(row, anchors::steps(s, &row.id)))
-    {
-        anchors::reveal_parts(s, &hit.message, steps);
-        owner(s).jump.align = Some((hit.message, key));
+        .map_or(Landing::Missing, |row| {
+            hit.landing(s, row, anchors::steps(s, &row.id))
+        }) {
+        Landing::Visible(key, steps) => {
+            anchors::reveal_parts(s, &hit.message, steps);
+            owner(s).jump.align = Some((hit.message, key));
+        }
+        Landing::Filtered => refuse_filtered(s),
+        Landing::Missing => {}
     }
 }
 

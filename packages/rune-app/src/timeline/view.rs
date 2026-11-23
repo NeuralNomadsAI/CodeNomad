@@ -162,12 +162,10 @@ pub(crate) fn view(s: &State, history: El, expanded: bool) -> El {
             }
         })
         .child(timeline::transcript_lane(history));
-    if !super::demanded(s) {
-        return area;
-    }
     let scope = s.input_scope.clone();
     let locale = locale();
-    if (t.has_raw_markers || !t.markers.is_empty())
+    if super::demanded(s)
+        && (t.has_raw_markers || !t.markers.is_empty())
         && let Some(rail) = timeline::view(
             t.width,
             locale,
@@ -188,12 +186,23 @@ pub(crate) fn view(s: &State, history: El, expanded: bool) -> El {
     {
         area = area.child(scroll(s, rail, true));
     }
+    if t.jump.filtered && !super::search::is_open(s) {
+        return rune::col()
+            .full_width()
+            .remaining()
+            .child(
+                rune::text(crate::strings::t("history.destinationFiltered"))
+                    .role("alert")
+                    .wrap(),
+            )
+            .child(area);
+    }
     let retry = if t.jump.retry.is_some() {
         Some((
             "history.sessionUnavailable",
             super::navigation::retry as fn(&mut State, &mut rune::Tx),
         ))
-    } else if t.outline_error && t.scan.is_none() {
+    } else if super::demanded(s) && t.outline_error && t.scan.is_none() {
         Some((
             "history.navigation.outlineUnavailable",
             retry_outline as fn(&mut State, &mut rune::Tx),

@@ -84,6 +84,7 @@ export const messagingMessages = {
   "history.sessionUnavailable": "Session unavailable",
   "history.openSession": "Open in session",
   "history.openFailed": "This session could not be opened.",
+  "history.destinationFiltered": "This destination is hidden by Message content filters.",
   "history.planning": "Inspecting history: {count} messages",
   "history.pruning": "Cleaning: {count} / {total} messages",
   "transcriptFilters.title": "Message content",

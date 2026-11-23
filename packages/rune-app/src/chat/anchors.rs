@@ -1,4 +1,5 @@
 //! Resolve structural identities to keys actually built by the transcript.
+use crate::settings::{self, TranscriptRow};
 use crate::{State, content::Part, history::Row};
 use codenomad_client::timeline::{Marker, MarkerKind::*};
 
@@ -17,6 +18,22 @@ pub(super) fn context(row: &crate::Message) -> Option<(String, &'static str)> {
         _ => return None,
     };
     Some((format!("context-{}", row.id), label))
+}
+
+pub(crate) fn context_visible(s: &State, role: &str) -> bool {
+    role != "system" || settings::transcript_mode(s, TranscriptRow::System) != "hidden"
+}
+
+pub(crate) fn reasoning_visible(s: &State) -> bool {
+    settings::transcript_mode(s, TranscriptRow::Thinking) != "hidden"
+}
+
+pub(crate) fn part_visible(s: &State, row: &Row, index: usize) -> bool {
+    match &row.parts[index] {
+        Part::Tool(tool) => super::tools::visible(s, &row.id, tool),
+        Part::Reasoning(_) => reasoning_visible(s),
+        _ => true,
+    }
 }
 
 pub(crate) fn blocks(row: &crate::Message, steps: usize, hidden: bool) -> Vec<Block<'_>> {

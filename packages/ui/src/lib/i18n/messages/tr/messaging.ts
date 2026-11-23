@@ -84,6 +84,7 @@ export const messagingMessages = {
   "history.sessionUnavailable": "Oturum kullanılamıyor",
   "history.openSession": "Oturumda aç",
   "history.openFailed": "Bu oturum açılamadı.",
+  "history.destinationFiltered": "Bu hedef mesaj içeriği filtreleri tarafından gizleniyor.",
   "history.planning": "Geçmiş inceleniyor: {count} mesaj",
   "history.pruning": "Temizleniyor: {count} / {total} mesaj",
   "transcriptFilters.title": "Mesaj içeriği",

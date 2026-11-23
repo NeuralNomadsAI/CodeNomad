@@ -403,6 +403,7 @@
   "gitPanel.parentDiff": "İlk üst commit ile karşılaştırma",
   "gitPanel.view": "Git görünümü",
   "gitPanel.worktree": "İncelenecek çalışma ağacı",
+  "history.destinationFiltered": "Bu hedef mesaj içeriği filtreleri tarafından gizleniyor.",
   "history.furtherBack": "Daha eskiyi ara",
   "history.more": "Sonraki sonuçlar",
   "history.navigation.loading": "Bölüm yükleniyor…",

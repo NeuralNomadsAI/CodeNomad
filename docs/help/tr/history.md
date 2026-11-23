@@ -31,6 +31,8 @@ Konuşma çok dar olduğunda (420 CSS pikselinin altında) zaman çizelgesi gizl
 
 ## Doğru geçmiş işlemini seçin {#operation-reference}
 
+Rune'da arama, seçilen daraltılmış sonucu açar. Sonuç gizliyse **Mesaj içeriği** bölümünde türünü gösterip yeniden seçin.
+
 | Operasyon | Nerede | Kapsam ve sonuç |
 | --- | --- | --- |
 | Görüntü filtreleme | **Mesaj içeriği** veya **Ayarlar → Sohbet** | Paylaşılan konuşma dökümü görüntüleme tercihleri; içeriği silmeden gizler / daraltır |

@@ -39,12 +39,34 @@ export async function historySearch(page, messages) {
     const technical=search.getByRole('checkbox',{name:messages['history.technical'],exact:true})
     await Promise.all([read('query'),technical.click({force:true})])
     assert.equal(await technical.getAttribute('aria-checked'),'true')
+    const rail=page.getByRole('navigation',{name:messages['messageTimeline.ariaLabel']})
+    const grep=rail.getByRole('button',{name:'grep',exact:true})
+    const toolHit='Existing technical tool match'
+    const toolBody=page.getByText('Found Existing technical tool match',{exact:true}).and(page.locator('p, pre, code'))
+    const filtered=search.getByText(messages['history.destinationFiltered'],{exact:true})
+    const setTool=async mode=>{
+      const response=await page.request.patch(new URL('/api/storage/config/ui',page.url()).href,{data:{
+        settings:{toolCallExpansionDefaults:{tools:{grep:mode}}},
+      }})
+      assert(response.ok())
+    }
+    await grep.waitFor()
+    await setTool('hidden')
+    await grep.waitFor({state:'detached'})
+    await press(search,toolHit)
+    await filtered.waitFor()
+    assert.equal(await toolBody.count(),0,'A filtered search hit must not reveal a tool')
+    assert.equal(windows,0,'A refused resident jump must keep its window')
+    await setTool('collapsed')
+    await grep.waitFor()
+    assert.equal(await toolBody.count(),0,'Showing the tool must leave its group collapsed')
     await installPngReader(page)
     for(const [hit,body] of [
       ['Existing technical tool match','Found Existing technical tool match'],
       ['Existing reasoning match','Existing reasoning match in the opened card'],
     ]){
       await press(search,hit)
+      await filtered.waitFor({state:'detached'})
       await page.getByText(body,{exact:true}).and(page.locator('p, pre, code')).first().waitFor()
       await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
       const screenshot=await page.screenshot()

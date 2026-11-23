@@ -1,4 +1,6 @@
 //! The visible conversation owns structure and selection; the reader owns bodies.
+#[cfg(test)]
+mod filter_jump_tests;
 mod filters;
 mod navigation;
 mod preview;

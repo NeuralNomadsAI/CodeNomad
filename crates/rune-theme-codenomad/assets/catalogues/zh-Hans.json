@@ -403,6 +403,7 @@
   "gitPanel.parentDiff": "与第一个父提交比较",
   "gitPanel.view": "Git 视图",
   "gitPanel.worktree": "浏览工作树",
+  "history.destinationFiltered": "此目标已被消息内容筛选器隐藏。",
   "history.furtherBack": "搜索更早记录",
   "history.more": "下一页结果",
   "history.navigation.loading": "正在加载所选段落…",

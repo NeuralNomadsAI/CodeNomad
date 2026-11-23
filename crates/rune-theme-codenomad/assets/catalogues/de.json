@@ -403,6 +403,7 @@
   "gitPanel.parentDiff": "Vergleich mit erstem Eltern-Commit",
   "gitPanel.view": "Git-Ansicht",
   "gitPanel.worktree": "Worktree ansehen",
+  "history.destinationFiltered": "Dieses Ziel ist durch die Filter für Nachrichteninhalte ausgeblendet.",
   "history.furtherBack": "Weiter zurück suchen",
   "history.more": "Weitere Ergebnisse",
   "history.navigation.loading": "Abschnitt wird geladen…",

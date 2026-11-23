@@ -403,6 +403,7 @@
   "gitPanel.parentDiff": "השוואה להורה הראשון",
   "gitPanel.view": "תצוגת Git",
   "gitPanel.worktree": "עץ עבודה לעיון",
+  "history.destinationFiltered": "מסנני תוכן ההודעות מסתירים את היעד הזה.",
   "history.furtherBack": "חיפוש אחורה בזמן",
   "history.more": "התוצאות הבאות",
   "history.navigation.loading": "טוען קטע…",

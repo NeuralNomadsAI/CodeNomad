@@ -211,6 +211,13 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
     if model.open_error {
         frame = frame.child(rune::text(t("history.openFailed")).role("alert"));
     }
+    if s.transcript_display.timeline.jump.filtered {
+        frame = frame.child(
+            rune::text(t("history.destinationFiltered"))
+                .role("alert")
+                .wrap(),
+        );
+    }
     match &model.results {
         Some(Ranked::Unsupported) => {
             frame = frame.child(rune::text(t("history.rankedUnsupported")).role("status"))

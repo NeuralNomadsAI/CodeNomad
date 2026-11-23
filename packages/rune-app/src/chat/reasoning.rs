@@ -55,7 +55,7 @@ pub(crate) fn run_anchor(
 
 pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> Option<El> {
     let mode = settings::transcript_mode(s, TranscriptRow::Thinking);
-    if mode == "hidden" {
+    if !super::anchors::reasoning_visible(s) {
         return None;
     }
     let mut reasoning = parts.iter().filter_map(|part| match part {

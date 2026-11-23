@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn,execFile} from 'node:child_process'
 import {promisify} from 'node:util'
-import {mkdir,readFile,writeFile,rename,unlink,access} from 'node:fs/promises'
+import {mkdir,readFile,writeFile,rename,unlink,access,realpath} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
 import {chromium,request} from 'playwright'
 import path from 'node:path'
@@ -48,7 +48,15 @@ if(gitOutput)assert(path.isAbsolute(gitOutput),'Git fixture output must be absol
 const restoreFileDrafts=process.argv.includes('--file-draft-restart')
 const draftOutput=restoreFileDrafts?process.env.RUNE_TEST_FILES_OUTPUT:undefined
 if(draftOutput)assert(path.isAbsolute(draftOutput),'Files fixture output must be absolute')
-const here=path.resolve(import.meta.dirname,'..'),profile=path.join(draftOutput??gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile')),`launcher-${randomUUID()}`)
+const here=path.resolve(import.meta.dirname,'..')
+const output=draftOutput??gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile'))
+const run=`launcher-${randomUUID()}`
+let profile=path.join(output,run)
+if(webSearch){
+  await mkdir(output,{recursive:true})
+  profile=path.join(await realpath(output),run)
+}
+const browserOutput=path.join(output,run,'browser')
 const project=path.join(profile,'projects','synthetic');await mkdir(project,{recursive:true})
 if(webFileWrap)await writeFile(path.join(project,'wrap.txt'),'Workspace word wrap fixture: '+'wide source '.repeat(24)+'\n')
 const forbidden=path.join(profile,'forbidden');if(web)await mkdir(forbidden)
@@ -192,6 +200,7 @@ stores.get('ses_existing').append('user','Existing project history');stores.get(
 if(webSearch){
   stores.get('ses_existing').append('assistant','Technical search fixture').content.push(
     {type:'tool',id:'search-tool',name:'grep',state:{status:'completed',content:[{type:'text',text:'Found Existing technical tool match'}]}},
+    {type:'tool',id:'neighbor',name:'read',state:{status:'completed',content:[{type:'text',text:'Other tool output'}]}},
   )
   stores.get('ses_existing').append('assistant','Reasoning search fixture').content.push(
     {type:'reasoning',text:'Existing reasoning match in the opened card'},
@@ -523,7 +532,8 @@ try{
   if(web){
     await signIn(origin)
     if(webTimeline||webSearch){
-      const config=await http.patch('/api/storage/config/ui',{data:{settings:{showThinkingBlocks:true,systemMessagesVisibility:'expanded'}}})
+      const config=await http.patch('/api/storage/config/ui',{data:{settings:{showThinkingBlocks:true,systemMessagesVisibility:'expanded',
+        ...(webSearch?{toolGroupVisibility:'collapsed'}:{})}}})
       assert(config.ok(),`Configure the history fixture: ${await config.text()}`)
     }
     const storage=path.join(profile,'browser-storage.json')
@@ -544,7 +554,7 @@ try{
       manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
     staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,backend:ts?'ts':'rust',serverBinary:ts?.args[0]??serverBinary,ui:solid||ui,paired}
     const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
-    const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
+    const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(webMissions?['--missions']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webFileWrap?['--file-wrap']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',browserOutput,'--executable',process.env.CODENOMAD_BROWSER_PATH||chromium.executablePath()]
     if(webTimeline)args.push(webTouchHistory?'--touch-history':'--timeline')
     if(webSearch)args.push('--history-search')
     const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}

@@ -341,7 +341,14 @@ fn open_result(s: &mut State, _: &mut Tx) {
         .and_then(|i| model.page()?.hits.get(i))
         .cloned();
     let Some(hit) = hit else { return };
-    let target = crate::chat::search_hit::SearchHit::new(&hit, &model.text, true);
+    if !crate::chat::anchors::context_visible(s, &hit.role)
+        || hit.kind == codenomad_client::search::Kind::Reasoning
+            && !crate::chat::anchors::reasoning_visible(s)
+    {
+        super::navigation::refuse_filtered(s);
+        return;
+    }
+    let target = crate::chat::search_hit::SearchHit::new(&hit, &state(s).text, true);
     let Some(backend) = s.transcript_display.timeline.backend.clone() else {
         return;
     };

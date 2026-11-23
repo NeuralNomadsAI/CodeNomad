@@ -403,6 +403,7 @@
   "gitPanel.parentDiff": "Сравнение с первым родителем",
   "gitPanel.view": "Представление Git",
   "gitPanel.worktree": "Просматриваемое рабочее дерево",
+  "history.destinationFiltered": "Это место скрыто фильтрами содержимого сообщений.",
   "history.furtherBack": "Искать дальше в прошлом",
   "history.more": "Следующие результаты",
   "history.navigation.loading": "Загрузка фрагмента…",

@@ -84,6 +84,7 @@ export const messagingMessages = {
   "history.sessionUnavailable": "השיחה אינה זמינה",
   "history.openSession": "פתיחה בשיחה",
   "history.openFailed": "לא ניתן היה לפתוח את השיחה הזו.",
+  "history.destinationFiltered": "מסנני תוכן ההודעות מסתירים את היעד הזה.",
   "history.planning": "בדיקת היסטוריה: {count} הודעות",
   "history.pruning": "ניקוי: {count} / {total} הודעות",
   "transcriptFilters.title": "תוכן ההודעות",

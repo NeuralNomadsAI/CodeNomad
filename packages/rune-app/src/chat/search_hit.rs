@@ -2,6 +2,12 @@ use crate::{State, content::Part, history::Row};
 use codenomad_client::search::{Hit, Kind};
 use rune_theme_codenomad::timeline::search::{Query, terms};
 
+pub(crate) enum Landing {
+    Visible(String, usize),
+    Filtered,
+    Missing,
+}
+
 #[derive(Clone, Hash)]
 pub(crate) struct SearchHit {
     pub message: String,
@@ -37,8 +43,33 @@ impl SearchHit {
         }
     }
 
-    // The broker indexes the native array, including unrendered elements.
+    pub(crate) fn landing(&self, s: &State, row: &Row, steps: usize) -> Landing {
+        if !super::anchors::context_visible(s, &row.role) {
+            return Landing::Filtered;
+        }
+        if self.part.is_none_or(|(kind, _)| kind == Kind::Text) {
+            return Landing::Visible(
+                super::anchors::context(row).map_or_else(|| row.id.clone(), |(key, _)| key),
+                0,
+            );
+        }
+        let Some((index, key, steps)) = self.technical_block(row, steps) else {
+            return Landing::Missing;
+        };
+        if !super::anchors::part_visible(s, row, index) {
+            return Landing::Filtered;
+        }
+        Landing::Visible(key, steps)
+    }
+
+    #[cfg(test)]
     pub(crate) fn block(&self, row: &Row, steps: usize) -> Option<(String, usize)> {
+        self.technical_block(row, steps)
+            .map(|(_, key, steps)| (key, steps))
+    }
+
+    // The broker indexes the native array, including unrendered elements.
+    fn technical_block(&self, row: &Row, steps: usize) -> Option<(usize, String, usize)> {
         let (kind, index) = self.part?;
         let (i, key) = row.parts.iter().enumerate().find_map(|(i, p)| match p {
             Part::Tool(tool) if kind == Kind::Tool && tool.part_index == Some(index) => {
@@ -54,6 +85,7 @@ impl SearchHit {
         let (head, tail) = super::transcript::part_window(row.parts.len(), steps);
         let step = super::transcript::PART_LIMIT;
         Some((
+            i,
             key,
             if (head..tail).contains(&i) {
                 (i - step / 2) / step + 1

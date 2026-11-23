@@ -31,6 +31,8 @@ La chronologie est masquée si la conversation est trop étroite (moins de 420 p
 
 ## Choisir la bonne opération sur l’historique {#operation-reference}
 
+Dans Rune, la recherche déplie le résultat sélectionné. S’il est masqué, affichez son type dans **Contenu des messages**, puis sélectionnez-le de nouveau.
+
 | Opération | Où | Portée et conséquence |
 | --- | --- | --- |
 | Filtrage d’affichage | **Contenu des messages**, ou **Paramètres → Chat** | Préférences d’affichage de transcription partagées ; masque/replie le contenu sans le supprimer |

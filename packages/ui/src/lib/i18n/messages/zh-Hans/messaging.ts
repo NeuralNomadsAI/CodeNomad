@@ -84,6 +84,7 @@ export const messagingMessages = {
   "history.sessionUnavailable": "会话不可用",
   "history.openSession": "在会话中打开",
   "history.openFailed": "无法打开此会话。",
+  "history.destinationFiltered": "此目标已被消息内容筛选器隐藏。",
   "history.planning": "正在检查历史：{count} 条消息",
   "history.pruning": "正在清理：{count} / {total} 条消息",
   "transcriptFilters.title": "消息内容",

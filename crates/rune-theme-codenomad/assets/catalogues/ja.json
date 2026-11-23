@@ -403,6 +403,7 @@
   "gitPanel.parentDiff": "最初の親コミットと比較",
   "gitPanel.view": "Git 表示",
   "gitPanel.worktree": "参照するワークツリー",
+  "history.destinationFiltered": "この移動先はメッセージ内容のフィルターで非表示になっています。",
   "history.furtherBack": "さらに過去を検索",
   "history.more": "次の結果",
   "history.navigation.loading": "該当箇所を読み込み中…",
