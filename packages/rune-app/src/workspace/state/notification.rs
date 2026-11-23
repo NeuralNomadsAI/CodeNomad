@@ -170,10 +170,11 @@ pub(crate) fn check_notification(s: &State, target: &Target) -> Option<Receiver<
             }) else {
                 return Ok(false);
             };
-            Ok(backend
-                .bind_session(&project, &backend.session, false)
-                .await
-                .is_ok())
+            Ok(backend.session.is_empty()
+                || backend
+                    .bind_session(&project, &backend.session, false)
+                    .await
+                    .is_ok())
         };
         let ok = codenomad_client::runtime::until_closed(&answer, check)
             .await
@@ -248,6 +249,9 @@ pub(crate) fn open_notification(
         {
             return Activation::Wait;
         }
+    }
+    if target.session.is_empty() {
+        return Activation::Opened;
     }
     if target.tab.is_some()
         && (s.screen.is_launcher() || super::active_session(s) != Some(&target.session))

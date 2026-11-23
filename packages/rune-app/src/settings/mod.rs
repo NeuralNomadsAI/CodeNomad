@@ -33,7 +33,6 @@ pub(crate) struct Host {
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
     last_display: Option<([&'static str; 5], bool)>,
-    notification_error: bool,
     memory_cleanup: Option<memory::cleanup::Run>,
 }
 
@@ -144,9 +143,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
     let (reconnected, missions) = shared.mission_changes();
-    let failed = shared.error() == Some("settings.preferenceSaveFailed");
-    let previous_failed = std::mem::replace(&mut s.settings.notification_error, failed);
-    let notify_failure = failed && !previous_failed;
+    let notify_failure = shared.take_notification_failure();
     let update = shared.notification_update.take();
     drop(shared);
     use crate::shell::notifications::{Category, emit};
@@ -198,9 +195,11 @@ pub(crate) fn notification_route(
     category: notification_routing::Category,
 ) -> ConfirmedRoute {
     let prefs = s.settings.shared.borrow();
-    if !prefs.backend.as_ref().is_some_and(|backend| {
-        backend.base == source.base && backend.client.same_connection(&source.client)
-    }) {
+    if !prefs.can_retry()
+        || !prefs.backend.as_ref().is_some_and(|backend| {
+            backend.base == source.base && backend.client.same_connection(&source.client)
+        })
+    {
         return ConfirmedRoute::Unavailable;
     }
     if prefs.notification_config_refreshing() {
@@ -220,10 +219,12 @@ pub(crate) fn system_notification(
     label: &str,
 ) -> Delivery {
     let prefs = s.settings.shared.borrow();
-    if !prefs.backend.as_ref().is_some_and(|backend| {
-        backend.base == target.backend_url
-            && backend.client.server_identity() == target.server.as_deref()
-    }) {
+    if !prefs.can_retry()
+        || !prefs.backend.as_ref().is_some_and(|backend| {
+            backend.base == target.backend_url
+                && backend.client.server_identity() == target.server.as_deref()
+        })
+    {
         return Delivery::Suppressed;
     }
     if prefs.notification_config_refreshing() {
@@ -253,7 +254,7 @@ pub(crate) fn notification_fixture(s: &State) {
 }
 
 #[cfg(test)]
-pub(crate) fn notification_test_config(s: &State, snapshot: Value) {
+pub(crate) fn notification_test_config(s: &State, snapshot: serde_json::Value) {
     s.settings
         .shared
         .borrow_mut()

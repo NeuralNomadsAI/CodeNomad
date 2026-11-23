@@ -12,6 +12,7 @@ pub(super) struct Message {
     title: String,
     body: String,
     target: Option<Target>,
+    event: Option<String>,
 }
 
 pub(crate) fn emit(
@@ -26,7 +27,7 @@ pub(crate) fn emit(
         .and_then(|launcher| launcher.connection.clone())
         .or_else(|| settings::bound_backend(s));
     if let Some(source) = source {
-        enqueue(s, source, category, title, body.into(), None);
+        enqueue(s, source, category, title, body.into(), None, None);
     }
 }
 
@@ -37,6 +38,7 @@ pub(super) fn enqueue(
     title: Option<String>,
     body: String,
     target: Option<Target>,
+    event: Option<String>,
 ) {
     let body: String = body.trim().chars().take(4096).collect();
     if body.is_empty() {
@@ -57,6 +59,7 @@ pub(super) fn enqueue(
             .collect(),
         body,
         target,
+        event,
     });
 }
 
@@ -69,18 +72,18 @@ pub(crate) fn native(
 ) {
     match event {
         WorkspaceEvent::OpenCodeNotice { id, title, body } => {
-            if !claim(s, &target, Category::Opencode, &id) {
-                return;
-            }
             let mut target = target;
-            target.session.clear();
+            if target.tab.is_some() {
+                target.session.clear();
+            }
             enqueue(
                 s,
                 source,
                 Category::Opencode,
                 title,
                 body,
-                target.tab.is_some().then_some(target),
+                Some(target),
+                Some(id),
             );
         }
         WorkspaceEvent::SessionCompacted { id } => {
@@ -91,9 +94,6 @@ pub(crate) fn native(
                 label
             };
             let body = compaction(label);
-            if !claim(s, &target, Category::Sessions, &id) {
-                return;
-            }
             enqueue(
                 s,
                 source,
@@ -101,6 +101,7 @@ pub(crate) fn native(
                 Some(project),
                 body,
                 Some(target),
+                Some(id),
             );
         }
         _ => {}
@@ -140,8 +141,16 @@ pub(super) fn poll(s: &mut State) {
             ConfirmedRoute::Ready(route, allow_focused)
                 if route.system && (allow_focused || !s.notifications.focused()) =>
             {
+                if let (Some(target), Some(id)) = (&message.target, &message.event)
+                    && !claim(s, target, message.category, id)
+                {
+                    continue;
+                }
                 let host = &mut s.notifications;
-                if let Some(target) = message.target.filter(|target| !target.session.is_empty()) {
+                if let Some(target) = message
+                    .target
+                    .filter(|target| message.category != Category::Opencode || target.tab.is_some())
+                {
                     host.present(&message.title, &message.body, target, s.wake.clone());
                 } else {
                     let id = host.next_id;

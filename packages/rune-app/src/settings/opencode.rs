@@ -21,7 +21,6 @@ pub(super) struct Status {
     trailing: Option<bool>,
     failed: bool,
     details_open: bool,
-    announced_update: Option<String>,
 }
 
 impl Status {
@@ -136,9 +135,9 @@ impl Status {
                 .as_ref()
                 .filter(|status| status.update_available)
                 .and_then(|status| status.latest.as_ref())
-            && self.announced_update.as_ref() != Some(version)
+            && prefs.announced_update.as_ref() != Some(version)
         {
-            self.announced_update = Some(version.clone());
+            prefs.announced_update = Some(version.clone());
             prefs.notification_update = Some(version.clone());
             if let Some(wake) = &prefs.main_wake {
                 wake();

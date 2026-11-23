@@ -16,7 +16,7 @@ pub(crate) fn has_preview(s: &crate::State) -> bool {
         .is_some_and(|ui| ui.reader.target().is_some())
 }
 
-pub(crate) fn poll(s: &mut crate::State, now: f64, tx: &mut rune::Tx) -> bool {
+pub(crate) fn poll_notices(s: &mut crate::State) -> bool {
     let saved = s.files.as_mut().is_some_and(Ui::observe_document_write);
     if saved {
         crate::shell::notifications::emit(
@@ -26,11 +26,16 @@ pub(crate) fn poll(s: &mut crate::State, now: f64, tx: &mut rune::Tx) -> bool {
             crate::strings::t("instanceShell.rightPanel.toast.saveSuccess"),
         );
     }
+    saved | view::poll_notices(s)
+}
+
+pub(crate) fn poll(s: &mut crate::State, now: f64, tx: &mut rune::Tx) -> bool {
+    let notices = poll_notices(s);
     let changed = s.files.as_mut().is_some_and(|ui| {
         let selected = ui.sync_tree_focus(tx);
         ui.poll(now) || selected
     });
-    saved | changed | view::poll_actions(s, tx)
+    notices | changed | view::poll_actions(s, tx)
 }
 
 pub fn bind(s: &mut crate::State, backend: &crate::backend::Backend) {

@@ -19,6 +19,7 @@ pub(super) struct Preferences {
     pub(super) memory: super::memory::Setting,
     pub(super) opencode_install: super::opencode::install::Install,
     pub(super) notification_update: Option<String>,
+    pub(super) announced_update: Option<String>,
     config: Document,
     state: Document,
     server: Document,
@@ -32,6 +33,11 @@ pub(super) struct Preferences {
 }
 
 impl Preferences {
+    pub(super) fn take_notification_failure(&mut self) -> bool {
+        self.config.take_notification_failure()
+            | self.state.take_notification_failure()
+            | self.server.take_notification_failure()
+    }
     #[cfg(test)]
     pub(super) fn notification_test_config(&mut self, snapshot: Value) {
         self.reset_notification_fixture();
