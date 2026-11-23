@@ -198,6 +198,14 @@ impl Tree {
             && self.layout.live()
             && identity(&self.path).ok() == self.identity
     }
+    pub(super) fn contains_receipt_location(&self, dir: &Path) -> bool {
+        if !self.nested_missing {
+            return self.contains_live(dir);
+        }
+        super::ownership::within(&self.path, dir)
+            && self.layout.live()
+            && std::fs::symlink_metadata(&self.path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+    }
 }
 #[derive(Clone)]
 pub struct Catalogue {

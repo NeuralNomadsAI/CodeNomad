@@ -290,16 +290,16 @@ pub async fn list(
     let Ok(physical) = same_file::Handle::from_path(&open.path) else {
         return route_error(Status::CONFLICT, "Workspace changed");
     };
-    let found = match crate::opencode::session_record(&app, &session).await {
+    let Some(endpoint) = app.native.endpoint() else {
+        return route_error(Status::SERVICE_UNAVAILABLE, "Receipt scope unavailable");
+    };
+    let found = match crate::opencode::session_record_at(&app, &endpoint, &session).await {
         Ok(found) => found,
         Err((Status::NOT_FOUND, _)) => return route_error(Status::NOT_FOUND, "Session not found"),
         Err((status, _)) => return route_error(status, "OpenCode is unavailable"),
     };
-    if found["location"]["directory"] != open.location["directory"] || found["location"].get("workspaceID").is_some() {
+    let Some(placement) = owned_location(&app, &open, &found["location"]).await else {
         return route_error(Status::FORBIDDEN, "Session does not belong to workspace");
-    }
-    let Some(endpoint) = app.native.endpoint() else {
-        return route_error(Status::SERVICE_UNAVAILABLE, "Receipt scope unavailable");
     };
     let Ok(scope) = scope(&app, &endpoint).await else {
         return route_error(Status::SERVICE_UNAVAILABLE, "Receipt scope unavailable");
@@ -334,11 +334,21 @@ pub async fn list(
             break;
         }
     }
-    if app.workspace(&workspace).is_err()
-        || !same_file::Handle::from_path(&open.path).is_ok_and(|path| path == physical)
-        || !crate::opencode::session_record(&app, &session)
+    let live = || {
+        app.native.current(&endpoint)
+            && super::permission_mode::workspace_current(&app, &open)
+            && same_file::Handle::from_path(&open.path).is_ok_and(|path| path == physical)
+    };
+    let Some(fresh) = owned_location(&app, &open, &found["location"]).await else {
+        return route_error(Status::CONFLICT, "Workspace changed");
+    };
+    if !live()
+        || !crate::opencode::session_record_at(&app, &endpoint, &session)
             .await
             .is_ok_and(|current| current["location"] == found["location"] && current["projectID"] == found["projectID"])
+        || !live()
+        || !placement.live(&open)
+        || !fresh.live(&open)
     {
         return route_error(Status::CONFLICT, "Workspace changed");
     }
@@ -347,4 +357,16 @@ pub async fn list(
         response["next"] = json!(names[scanned - 1]);
     }
     reply(Status::OK, response)
+}
+
+async fn owned_location(
+    app: &App,
+    workspace: &Workspace,
+    location: &Value,
+) -> Option<crate::worktrees::ownership::ReceiptLocation> {
+    if location.get("workspaceID").is_some() {
+        return None;
+    }
+    let directory = location["directory"].as_str()?;
+    crate::worktrees::ownership::receipt_location(app, workspace, directory).await
 }
