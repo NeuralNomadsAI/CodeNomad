@@ -111,6 +111,8 @@ An inactive tab keeps its conversation observer for execution status, pending in
 
 Live tool input appends native deltas until its full input arrives. Progress replaces the running tool's metadata. Tool identity and phase fence late updates; bounded history reads repair missing transitions and supply terminal output. A running shell's ANSI preview retains parsed state while its visible prefix grows and starts from a clean state when the prefix changes.
 
+Code Mode cards show the native `metadata.toolCalls` snapshots with localized statuses and bounded input disclosures. The completed result can be indented within the JSON size and nesting limits; Copy retains the native output, including warnings and logs.
+
 Reasoning fragments retain a separate native ordinal, including empty fragments, in history and on the scoped live stream. Completed fragments keep their authoritative text and timestamps. The transcript groups adjacent visible reasoning, with a disclosure, latest summary and completed duration. Group placement uses the first displayed fragment's native key; expanded fragments retain their own keys and text windows.
 
 Reasoning-heavy pages retain a smaller contiguous window around the requested anchor, with cursors at its retained edges. The client budgets reasoning separately from prose, counts UTF-16 units even after the live prefix reaches its byte ceiling, and coalesces rendering of revealed windows beyond 10,000 units at 200 ms. Reveal and completion update the rendered text immediately.
