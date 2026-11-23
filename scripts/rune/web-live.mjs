@@ -127,20 +127,22 @@ export async function revokedLauncher({context,url,messages}){
     const connect=page.getByRole('button',{name:messages['folderSelection.servers.dialog.connect'],exact:true})
     await connect.waitFor()
     const password=messages['authRecovery.password']
+    // Playwright's DOM-based snapshot still lists inert controls.
+    const accessibility=await context.newCDPSession(page)
     const observePassword=async()=>{
       assert.equal(await page.getByText(password,{exact:true}).count(),0)
       assert.equal(await page.getByLabel(password,{exact:true}).count(),0)
       const generic=await page.getByLabel('Password input',{exact:true}).evaluateAll(fields=>fields.map(field=>{
         const rect=field.getBoundingClientRect(),style=getComputedStyle(field)
         return {bridge:field instanceof HTMLInputElement&&field.type==='password'&&field.parentElement===document.body&&
-          field.tabIndex===-1&&field!==document.activeElement&&style.opacity==='0'&&style.pointerEvents==='none',
+          field.inert&&field.tabIndex===-1&&field!==document.activeElement&&style.opacity==='0'&&style.pointerEvents==='none',
           tag:field.tagName,type:field.type,tabIndex:field.tabIndex,focused:field===document.activeElement,
           opacity:style.opacity,pointerEvents:style.pointerEvents,rect:[rect.width,rect.height]}
       }))
       assert(generic.length<=1&&generic.every(field=>field.bridge),`Only Rune's hidden password proxy may carry the generic label: ${JSON.stringify(generic)}`)
       assert.equal(await page.locator('input[type=password]').count(),generic.length,'Reject password controls with any other label')
-      const mirror=await page.locator('body').ariaSnapshot()
-      assert(!mirror.includes('textbox "Password input"'),'The inactive password proxy must stay out of the accessibility tree')
+      const {nodes}=await accessibility.send('Accessibility.getFullAXTree')
+      assert(!nodes.some(node=>!node.ignored&&node.name?.value==='Password input'),'The inactive password proxy must stay out of the accessibility tree')
     }
     for(let i=0;i<4;i++){
       await page.keyboard.press('Tab')
