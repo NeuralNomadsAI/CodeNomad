@@ -8835,6 +8835,12 @@
     },
     {
       "specifier": "node:assert/strict",
+      "file": "packages/ui/src/stores/opencode-data-read-testing.ts",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:assert/strict",
       "file": "packages/ui/src/stores/opencode-data-reconnect.test.ts",
       "line": 1,
       "resolution": "external-dependency-requires-installed-contract"
@@ -14277,6 +14283,18 @@
     },
     {
       "specifier": "solid-js",
+      "file": "packages/ui/tests/browser/fixtures/scroll-pipeline.tsx",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js/web",
+      "file": "packages/ui/tests/browser/fixtures/scroll-pipeline.tsx",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js",
       "file": "packages/ui/tests/browser/fixtures/search-highlight.tsx",
       "line": 1,
       "resolution": "external-dependency-requires-installed-contract"
@@ -14680,6 +14698,18 @@
     {
       "specifier": "solid-js/web",
       "file": "packages/ui/tests/browser/fixtures/timeline-tool-filters.tsx",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js",
+      "file": "packages/ui/tests/browser/fixtures/tool-card-bounds.tsx",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js/web",
+      "file": "packages/ui/tests/browser/fixtures/tool-card-bounds.tsx",
       "line": 2,
       "resolution": "external-dependency-requires-installed-contract"
     },
@@ -18980,6 +19010,24 @@
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
+      "specifier": "node:assert/strict",
+      "file": "packages/ui/tests/browser/scroll-pipeline.test.ts",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:test",
+      "file": "packages/ui/tests/browser/scroll-pipeline.test.ts",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "playwright",
+      "file": "packages/ui/tests/browser/scroll-pipeline.test.ts",
+      "line": 3,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
       "specifier": "playwright",
       "file": "packages/ui/tests/browser/search-highlight-assertions.ts",
       "line": 1,
@@ -20289,6 +20337,24 @@
     },
     {
       "specifier": "node:assert/strict",
+      "file": "packages/ui/tests/browser/tool-card-bounds.test.ts",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:test",
+      "file": "packages/ui/tests/browser/tool-card-bounds.test.ts",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "playwright",
+      "file": "packages/ui/tests/browser/tool-card-bounds.test.ts",
+      "line": 4,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:assert/strict",
       "file": "packages/ui/tests/browser/tool-images.test.ts",
       "line": 1,
       "resolution": "external-dependency-requires-installed-contract"
@@ -20881,7 +20947,7 @@
     "packages/ui/src/components/form-request.tsx": "c95f6bb8fe6983af464dd3cce935210242c620583dd87aeda59fadb22f2909ca",
     "packages/ui/src/components/git-diff-view.tsx": "a4a9f153a507835c3d5c5e2907168e13a264429d47380c7a0db92d0708f69922",
     "packages/ui/src/components/git-image-preview.tsx": "f6347f337561057aaf23b457fd26f7fb4e7e9637870e346897c45b36b23666e9",
-    "packages/ui/src/components/hidden-text.tsx": "b106169cf94a213b5f78a901fbbcbdfb95224208bcc134a7b1216b5751ea70a9",
+    "packages/ui/src/components/hidden-text.tsx": "97265611ed97f31a702a92843d647bb2481abdb178ebc45899cf655c4f5c8650",
     "packages/ui/src/components/history-message-preview.tsx": "118840e82d04dc173fb35d5b2f71b3f92435c36b5f6fb9f5ccc6a361ac0904dc",
     "packages/ui/src/components/history-search-results.tsx": "9819ffcd37b139a832aa345d54020d2b34542c1bac362f2ec9929e44638821c9",
     "packages/ui/src/components/info-popover-button.tsx": "0cb67b1c2bd5c7287300159157e3ea6960d2dd487bf8cfdfac50498932507438",
@@ -20962,7 +21028,7 @@
     "packages/ui/src/components/measured-action-overflow.ts": "4c0ed8b0c7fff778bcb59993389fe26455934a6804327884221531c1852b7c37",
     "packages/ui/src/components/mermaid-diagram.tsx": "0b7a1f2c26edff383f4f4db916ec3f3af60459a24a38404aa63dda2bd2f66d7d",
     "packages/ui/src/components/message-anchors.ts": "4e4561fad115da8e7d396622a4c226d9f6872bac5bc7a2aa5b029ca9d051c540",
-    "packages/ui/src/components/message-block.tsx": "257c50e27a40dfe4833031af5938cc023094a0fbfa2681dcee6c7899fc636173",
+    "packages/ui/src/components/message-block.tsx": "191ca55b4c3a6efc6b774e5b47290bbbf3b4cdaaf82ad1168e5af36f6b4a4f91",
     "packages/ui/src/components/message-content-icons.ts": "a0abe0f586f52b62ec12209cfd4cdc9558b4e7ea14b82c4154b1affa43bf7ef6",
     "packages/ui/src/components/message-history-pagination.test.ts": "0792d49aea611b001a551d2ae0bd9688f5f4886f9b56598d064e477b72eed55b",
     "packages/ui/src/components/message-history-pagination.ts": "4ddeabf53474185930b4fa0af6d352f4ea0fabc4828477cb5dc418204a136e45",
@@ -20970,7 +21036,7 @@
     "packages/ui/src/components/message-list-header.tsx": "38eeb951bb9f9dd677b7f0a77840ae91caca356ec73f0e44f13da97ac9e415c9",
     "packages/ui/src/components/message-part.tsx": "219462b6df7e30db707a846548ea6c3e4b4d723530f6febe9e6a3f8cebe31a3b",
     "packages/ui/src/components/message-preview.tsx": "c070d068aa81b0bdb36637d5a1089c8e53219ac02cc9d29131840d7848ddba4e",
-    "packages/ui/src/components/message-section.tsx": "f3220f8bfe7ce9caee0c8e8b0edfdf8dc9bec3337394fcd9a61eff1f9d257ced",
+    "packages/ui/src/components/message-section.tsx": "5560589a8205a689acf20a5a880eed0c489f78220ffc825e709ea63b2e364c11",
     "packages/ui/src/components/message-timeline-projection.test.ts": "4c72f0a4e628ce382efd6c816d5587e1a338f63bbf5f5a5a504ddf4fcd9c0ede",
     "packages/ui/src/components/message-timeline-projection.ts": "c3f03d3e25d2b32efb2c3d5bc571e3b9cffffd3d2961aab55e6aa7addd7e0a8d",
     "packages/ui/src/components/message-timeline-v2.test.ts": "eb175df19ed9b9e5213e2f99a482f7bea1834b90081a378ecf0b1226d17c501f",
@@ -21296,10 +21362,10 @@
     "packages/ui/src/components/tool-call/renderers/subagent-report.ts": "9f35b8f083dcef16756cd8a278499469f00d0ff9e3fd3b723bd4b82da8d79d76",
     "packages/ui/src/components/tool-call/renderers/task-copy.test.ts": "b92651abaa12b23bcbb7f8d10c0f829ed210f6a522dc497931f00dfabcd739f1",
     "packages/ui/src/components/tool-call/renderers/task-copy.ts": "c5180b840707d7021a476e4f4d11b5eb5dbd8038a47485c013195a5b3c0191d9",
-    "packages/ui/src/components/tool-call/renderers/task-summary.ts": "52e9bcecf523aa7db0654d3576d35eea8626556c3fc2cded41c179354a6d4feb",
+    "packages/ui/src/components/tool-call/renderers/task-summary.ts": "1fad313db849f379bf0c05d090f45fd1d494291693084d6af13699a794ce54eb",
     "packages/ui/src/components/tool-call/renderers/task-title.test.ts": "6ab7b618e2159476c4470f05f5a1d05e5e7708e1d3035de090e80c76f5becc9a",
     "packages/ui/src/components/tool-call/renderers/task-title.ts": "c451e55cf6eda6b427718b6abdcdd5502e8f2b18fb6d1b172e65cfb50f7c380b",
-    "packages/ui/src/components/tool-call/renderers/task.tsx": "289bd7673a388eb040714dbaea9ef7a6207830301f75d55526914b4846bde140",
+    "packages/ui/src/components/tool-call/renderers/task.tsx": "ccba7e29890097fc2877709cbbee560a8a0f58aef9422a3c38689b21e342683d",
     "packages/ui/src/components/tool-call/renderers/todo-data.ts": "2a50459a129813eb912b43f79ee27667ce88bd27576dcfa18fd26e22f20d2b45",
     "packages/ui/src/components/tool-call/renderers/todo.tsx": "95d0212ff52b889385b0e92ad199b947c3985866e0503a004933d1caa672c060",
     "packages/ui/src/components/tool-call/renderers/webfetch.tsx": "8c65052bca1cd738ca15d6498e8984efa65242553bffd17d7806470e638f973d",
@@ -21326,8 +21392,8 @@
     "packages/ui/src/components/user-message-navigation.ts": "321bfb704ebd02eb98920613fa6d3c99b0dc318b145dbfec534c17f8867105d9",
     "packages/ui/src/components/version-pill.tsx": "2d0433a2184ddc8ef31de61b703c3a903a176ef708d465b90897cdafefceef42",
     "packages/ui/src/components/virtual-follow-behavior.test.ts": "a05a79bba70a0248e875b86d47897c8950e37a796700b0e98f17527a5d16ee67",
-    "packages/ui/src/components/virtual-follow-behavior.ts": "76d4218055b759fd68bfcd73afbf7ff75f6e9d5c5bf6b67d1dbda87809a7a8d2",
-    "packages/ui/src/components/virtual-follow-list.tsx": "7b7964cdd7c768889f60a35de6aba188f5c2fada9c111cf38527c46675fedd57",
+    "packages/ui/src/components/virtual-follow-behavior.ts": "7cdbf4e45f8c25153f97107175d3efb4a51eb9b527feaff071609d8d0c898d19",
+    "packages/ui/src/components/virtual-follow-list.tsx": "b171fc0a7e7c2cf9316a5f8e957590c63f17d349b6451e780715a4588dac0878",
     "packages/ui/src/components/virtual-follow-measurements.test.ts": "666b46f8d703524b32d957b6a4001af34d985e160440f094e505db232f58cc2d",
     "packages/ui/src/components/virtual-follow-measurements.ts": "7734f0acf7ddd2df19b246860039946eaedf2e3e477c83afeca1aa07bbc5cdbb",
     "packages/ui/src/components/virtual-reader-settlement.test.ts": "a4e15a017d07cf5eae320ed412e16066921d1a229537d2bfea2241db81904055",
@@ -21426,7 +21492,7 @@
     "packages/ui/src/lib/external-url.ts": "a287a4cdd8a449b843af672e5b6e87318eec58012ab78339dc4d1e2db5d3acc9",
     "packages/ui/src/lib/filesystem-events.test.ts": "2b5a9ce1209d9400d90dabf23df6ea5f3ab93bb5948d6defb85a6a2ade00ca4a",
     "packages/ui/src/lib/filesystem-events.ts": "52f80beee37924ee3a51a1211a72fa885286c7d32bf354b1777074401ad17d3a",
-    "packages/ui/src/lib/follow-scroll.tsx": "f226d0d5ba86b18cc102dc62fdcc487cefd927affdc045766e5047bd80428a90",
+    "packages/ui/src/lib/follow-scroll.tsx": "27a3f04a15ccc2d893c03414d6fe488f07d1b567b17be5cf7c2a957a743c3e5d",
     "packages/ui/src/lib/form-answer-interaction.ts": "b0593b0e1d6efb31211a1ead0097c108734e704fdabf3286cadec894d0675f59",
     "packages/ui/src/lib/form-schema.ts": "c908280818c0301dd6b3a216edfb671e50b13f94795c912a4f8c781fbb8e024d",
     "packages/ui/src/lib/formatters.ts": "cf7b243d9e9a9c8fca8686e74c1de7ea1fab264eaf3c433db9e8963957a3be12",
@@ -21960,7 +22026,7 @@
     "packages/ui/src/lib/remote-server-request.test.ts": "d1998770613774ee773329248460fc7421ef3fb162aeed14d4fd649c9e701d6b",
     "packages/ui/src/lib/remote-server-request.ts": "d9758f3fc85387b52a66b9240fdf8bc3d44cec39d6baf72f700c1780d12c827a",
     "packages/ui/src/lib/render-text-window.test.ts": "9ea852d3278d483a8bfb69b39c5b66359de19efa11e5e4cfddb39af65e7bd0dd",
-    "packages/ui/src/lib/render-text-window.ts": "aefe6e538d0c8ee57efd54f72a0736d8db0286335052e49741afdf3cc111fec9",
+    "packages/ui/src/lib/render-text-window.ts": "83a8374a0c9b70c347f5cbbfca2e78db01d6eb2efab9c9fa10391187561fa4a5",
     "packages/ui/src/lib/request-focus.ts": "97b62acfebc2eb3bbab60c7fa20c48c33b2b5e63bcc0a1874c093cab4713ff64",
     "packages/ui/src/lib/retained-size.test.ts": "bed144ed6c28a7494bd4abeb6cf28ea299e709a56d0c73bfcf008984f9d816fd",
     "packages/ui/src/lib/retained-size.ts": "263cfc5c496e3ed3cdda0a8dc46eb27f3a199745b698455d1b29f68d533a172d",
@@ -21969,7 +22035,7 @@
     "packages/ui/src/lib/runtime-env.test.ts": "b888627adf72ac1d36b9d5f41be264988045afa89533738e5764f2ee34f546f0",
     "packages/ui/src/lib/runtime-env.ts": "6173992954434188101664472b22c4f74fd525116ff6a695a5a3b83113e17076",
     "packages/ui/src/lib/scroll-gesture-routing.test.ts": "0cbaafec0a8b68098acecfb11440823321b5c0c30637431c628e71311c371570",
-    "packages/ui/src/lib/scroll-gesture-routing.ts": "dca4897ccf3fda4e32eeb9667bd177d211804b4459d54575e02c6ae9f88afbeb",
+    "packages/ui/src/lib/scroll-gesture-routing.ts": "72d5f99295ba6b4dd8f37417797b91525d26afd8726d315eaa66e293aa006f8a",
     "packages/ui/src/lib/sdk-background-reads.test.ts": "57c87c4857da2e8bea617e6ab46d5680420b5c47ff01ea1aa59ef262ea8aa552",
     "packages/ui/src/lib/sdk-manager.test.ts": "9697afb61e16f81b0ce2ebab4ff5fe735d1613cec93ccfe32064bc5e8d4e0623",
     "packages/ui/src/lib/sdk-manager.ts": "827ec12be6a66815038d06ad0b2c9cf10e469b3e94155a07aa1c4db983ca1147",
@@ -21977,7 +22043,7 @@
     "packages/ui/src/lib/server-events.ts": "03d0a9535db6dec8e51163607143c17148a48907388c0044b1305951ca038a5c",
     "packages/ui/src/lib/server-meta.test.ts": "f5d25cff155d30842c938f5ebd82502c217df8e8a828471b8d62a1031b53f786",
     "packages/ui/src/lib/server-meta.ts": "db7bd3a3f6667110fae25d05831495d74ed34ccc4801b511ca027cbf533bef2b",
-    "packages/ui/src/lib/session-search.ts": "a8e62de0cb0ba0cc1f6040b1692527e717addca5fb5f2b6cd9d9b0608d79bf07",
+    "packages/ui/src/lib/session-search.ts": "a09d3dc62d3e15d6d6cde2417ce230026637b6643a3d0545f6485d37c46c059f",
     "packages/ui/src/lib/session-sidebar-events.ts": "ef6ef0a1624624e8ecc011fa88b751580813485ef24f21d9e9e10e8b66553cc8",
     "packages/ui/src/lib/session-transcript-lru.test.ts": "c2edc0e6c9cd484de57d0eaa0052bd75aea447b0bbd509bfab54a45287afd798",
     "packages/ui/src/lib/session-transcript-lru.ts": "2a17055ab95abf26f42d948eeaeb8623ee5765d3c3e125ce4a9fd977b4106803",
@@ -22141,12 +22207,12 @@
     "packages/ui/src/stores/message-history.ts": "42b5b405fe0e98b416fc8419bfb3c6542817eeb25e0dab81479de80e15206ff9",
     "packages/ui/src/stores/message-prompt-display.test.ts": "964e9ab9667af5eaf8d1200de9c3b8b202d8935705be9fad9503de919bf00bc5",
     "packages/ui/src/stores/message-prompt-display.ts": "3a21be1d313eccff5459d6d0c2ba7e96600db36abc04477686b36f7440602100",
-    "packages/ui/src/stores/message-v2/bridge.ts": "e38dd23cdfa5d7582768cec39c6a417dfb0927270ca788dc91e744d277095c6c",
+    "packages/ui/src/stores/message-v2/bridge.ts": "8a89c281ee3328ca166549d4f19ac2c3ee29af7c7c80200b72386095584203d0",
     "packages/ui/src/stores/message-v2/bus.test.ts": "a943ee816ed8ee2d14190b9f0b018cfee852f2ac654cadcc49a8a8dc518d175d",
     "packages/ui/src/stores/message-v2/bus.ts": "15aea46630479af36a6b6f76e614220c03c50b9ec33986eec97e318d1ec185bb",
     "packages/ui/src/stores/message-v2/empty-content.test.ts": "18157aed9983487db5c64bf628a49fd3247cdaaf4d923fc54f7b48c98a76af36",
-    "packages/ui/src/stores/message-v2/instance-store.test.ts": "b86617ce885ceef5f18d04acd88111a5e901233d596a3599bd4b132ebadcf225",
-    "packages/ui/src/stores/message-v2/instance-store.ts": "5348d27af986d35cea48b8243872b240b00cceaecc5a9c5204f9aba06a985554",
+    "packages/ui/src/stores/message-v2/instance-store.test.ts": "a2b4479a5896e85877afd43f1045ab29d376ff716d74f2c10d012df9056daa55",
+    "packages/ui/src/stores/message-v2/instance-store.ts": "80aaa0dabfe84f6a4b578fb70e7c0deb6035607a78853d05367e41f6a77ab6ed",
     "packages/ui/src/stores/message-v2/message-hydration-authority.test.ts": "65369d32b12344a433100682e411092a060c5e83bdbb62acf258da1454b03cff",
     "packages/ui/src/stores/message-v2/message-hydration-authority.ts": "a1b9ebb32dda1d1c6044a695aa82b12bfe99af46062227205a650e1abf533004",
     "packages/ui/src/stores/message-v2/message-status.test.ts": "707cef4f84c0af4b8ad2ed1b27a80e4bdcae4072fb151040d591e85d6ad9d135",
@@ -22156,7 +22222,7 @@
     "packages/ui/src/stores/message-v2/normalizers.test.ts": "36325b095352445035adeb1519ac7db0e7e45af7b6056f827c6c4c3e424a4be0",
     "packages/ui/src/stores/message-v2/normalizers.ts": "cc8e68bbaf9b7b4ca5d5b7a7a38fc7714c5eb5c164669b02217c7e883dbe0413",
     "packages/ui/src/stores/message-v2/pending-request-dedupe.ts": "010fda5081b31f1832cd32066e2a74ba2a007e9de922506dcc85883491e92462",
-    "packages/ui/src/stores/message-v2/record-display-cache.ts": "e3fc1007ebb340aaca2c88bf89449079392df607fbbee2b9f6971de2db3ba203",
+    "packages/ui/src/stores/message-v2/record-display-cache.ts": "fdfd3397073372aace6482b549689725dfde0b0a482c1088d4474bff87feaf3f",
     "packages/ui/src/stores/message-v2/run-failure.test.ts": "d349d2dc8a192a1ca60247a7dd40bde36b131e3da38047377e084fac0c3d1dc4",
     "packages/ui/src/stores/message-v2/run-failure.ts": "3c57895ecc51ec9df3cb0c9037ded81fb3fec539106249cd9ac23410d467e4c8",
     "packages/ui/src/stores/message-v2/session-info.ts": "8a385a0cc26f0e76312cbe3acaaa5b1f844054d5efa4f15d6234825c44757fa7",
@@ -22205,13 +22271,13 @@
     "packages/ui/src/stores/opencode-data-idle.test.ts": "5d5ff67641f97aa0b7e9dac32b6fd068e480e0430df9a506427f836b1ed22d3a",
     "packages/ui/src/stores/opencode-data-read-merge.test.ts": "23b65ef11e5acbc20aeeb43d1e03b5c1658c4d45999804e7329bd61f8446d257",
     "packages/ui/src/stores/opencode-data-read-merge.ts": "cba6bfb47a84e223acbb8271fc37ccfd9b323e8170dc2f76e943842a127a8dfc",
-    "packages/ui/src/stores/opencode-data-read-testing.ts": "d4ffd6e7b88875e1285e626a8b579d1798237ac3792ab7d122d77415fc180bc6",
-    "packages/ui/src/stores/opencode-data-reconnect.test.ts": "e45fb9fd73cc4925e36e3dd33096e5dd449d7ef28c9f027bceeb5ddee78db628",
+    "packages/ui/src/stores/opencode-data-read-testing.ts": "2cf1a50849e1169606ccf066bc8f8a159f918da33bfa6f69bce78a728f2c40cc",
+    "packages/ui/src/stores/opencode-data-reconnect.test.ts": "453e9850e76b4a8d65e9c474e81917be477b2ab0fd1d71bc73730f1c3971a610",
     "packages/ui/src/stores/opencode-data-round-boundary.test.ts": "3f9130fcc0e3166da43edf5aad2c619642df4d715ae7154f54ddfb7a351e1f39",
     "packages/ui/src/stores/opencode-data-settlement.test.ts": "488accd4f7f9ec70fb106ba1dceb4057785b38686c1a6e10801f2e43d9a6f0eb",
-    "packages/ui/src/stores/opencode-data-trailing-read.test.ts": "5dd242a032ab7eafa64aa03aa1fabc6c4b611ab432e7ba1decb3902ea8f9bc09",
-    "packages/ui/src/stores/opencode-data.test.ts": "23e1e2eefd0e7cfb17e74fa18686634281a36b2b609b2a53ef01cf47a4f02ad6",
-    "packages/ui/src/stores/opencode-data.ts": "05fa087c388d472b4547eeacca24a1849c40bb5b09d276ea393c5055fafc1b99",
+    "packages/ui/src/stores/opencode-data-trailing-read.test.ts": "b1dbd109b05903719b8aa8be7b9b28c51403dbdf455cac89e47b73ade38d87f6",
+    "packages/ui/src/stores/opencode-data.test.ts": "334b8f1a7ab7a68c9408a8382c241267a303270aaa3611e145e395c45b6b1274",
+    "packages/ui/src/stores/opencode-data.ts": "b8a920160b7a75a571d631a2503c0e72a524fb6e1eed9cb26c8a8be7ea816e53",
     "packages/ui/src/stores/opencode-inbox-rebinding.test.ts": "4effe667dab83e03048810ae3877f4ef750d439ecfc6e0b6d5e1fe10522418c9",
     "packages/ui/src/stores/opencode-projection-frame.test.ts": "4abae4b09b32f6154391d7b14528c562f80385065de7d2b8d09137130996d0ec",
     "packages/ui/src/stores/opencode-projection-frame.ts": "0ef36538ad55c4b6813a89c5653d5ce9f5d6c64158bec9cc5bd68bf76d2799d0",
@@ -22264,7 +22330,7 @@
     "packages/ui/src/stores/session-actions.test.ts": "fc9f0614dbafa09cb68be2ca62ea4119c6a5206ef07d28ec1b8351e6429fa5db",
     "packages/ui/src/stores/session-actions.ts": "0fe0d6ee60b7d0659d7968a4ec4059bb03d9d0a25e5bbb1058a2bf0d8ff330b8",
     "packages/ui/src/stores/session-api-running-open.test.ts": "1027d7ae90214d8407f55d6db1b989990a7b973f2deb68d69f6947ede8ad8d51",
-    "packages/ui/src/stores/session-api.ts": "f607d3545bec90f8e2586bcb3ca3047e9eb1d8a686712f581a9fd87de2ee3957",
+    "packages/ui/src/stores/session-api.ts": "1626c3e96ae39a819977501274f77ea01b61fa03443c800dcf01999f6b620ec0",
     "packages/ui/src/stores/session-archive.test.ts": "6677da22aafd5e3a205eef5901d877d02ddcbf6c52532e2701f11f732f726a08",
     "packages/ui/src/stores/session-archive.ts": "86f9a3bdc2c25cbf47461bf863f0f34f9895d76e711290ac0270a17378971bb9",
     "packages/ui/src/stores/session-browser-persistence.test.ts": "975f2ab13931a75b8b3d91a96f45af1c74ba24d3203646899983fca0e06d7575",
@@ -22328,7 +22394,7 @@
     "packages/ui/src/stores/session-prompt-ack.ts": "be07ab4bbb1f0fec8367cd7c0be369993e659a3246c06b3c4e89bab1917da1fc",
     "packages/ui/src/stores/session-pruning-events.test.ts": "c8fcf7d8c06fd7ab162d7e6e26602dadc10c128701e1f2189e082909d90b99d7",
     "packages/ui/src/stores/session-pruning-events.ts": "5e14e31b74f14d142309ee245afe586325d5098aaa4179824f532728a953e770",
-    "packages/ui/src/stores/session-pruning-pagination.test.ts": "937cb091aece46075b649be178adae74593297b15b811250b3c58a067380f717",
+    "packages/ui/src/stores/session-pruning-pagination.test.ts": "3e37f4c241b7e2c67c1bf9975d2b9221c8c1391f57df017065d6b11660426241",
     "packages/ui/src/stores/session-pruning-projection.test.ts": "b4145ea91333f100576eef79f43836cc517a7a858e936210a3a369c14e8642fa",
     "packages/ui/src/stores/session-pruning.ts": "02c70cd5acb5e3cf336d7f1aaed4349e0490cd3239e660fc04065ef4b0a5f706",
     "packages/ui/src/stores/session-request-authority.test.ts": "444f20e85f8424d001929170bc0b4ee3446bca33c8f91b20b2f19f37b9c1cc94",
@@ -22778,6 +22844,7 @@
     "packages/ui/tests/browser/fixtures/reveal-truncated-text.tsx": "0fc579ac99c44ca10b55a061d634defded3a88a27ddbdc4167d3ab280bb50078",
     "packages/ui/tests/browser/fixtures/rune-window-close.tsx": "2d0a7bdae9f59c76a43970bb6cfdd27016a08497592dd27e875a4e280971304a",
     "packages/ui/tests/browser/fixtures/scroll-input.tsx": "6ff532fa5a41ebfce0bf5dcdd44467d2ae03b4d4d9d0cfa804c37bb6fc004db3",
+    "packages/ui/tests/browser/fixtures/scroll-pipeline.tsx": "3110c3290e586610df21321683d9f0e169b4c289729c1e27acf125f1f5e12a9d",
     "packages/ui/tests/browser/fixtures/search-highlight-adapter.ts": "c56d50a8cdbd6fedc50a9799b8ebe97dbcf31a0773ae10e0acab3d21b464525d",
     "packages/ui/tests/browser/fixtures/search-highlight-baseline.ts": "68d2d614212287a302e176090b010096157ee98a130ca85abf0f4d611bebca96",
     "packages/ui/tests/browser/fixtures/search-highlight.tsx": "bda1a11a2cb7dbc90f4dd3df5f4c274895e36e3b08a71bb3e9940808e4ed3a77",
@@ -22821,6 +22888,7 @@
     "packages/ui/tests/browser/fixtures/task-copy.tsx": "5c20d3d7d10ebfc068471f1210a95811fab2b907c661845d16a0a9f869720aba",
     "packages/ui/tests/browser/fixtures/timeline-sync.tsx": "086b24a18c4902e0d26f12d8da14506fe13f3def36978b6ca9fd6ced77cd98f8",
     "packages/ui/tests/browser/fixtures/timeline-tool-filters.tsx": "919b3fe985f19606ef65d705c80a2d98e435381b5b9270592a8c5864300855d4",
+    "packages/ui/tests/browser/fixtures/tool-card-bounds.tsx": "f604a9e97a89f3ff8633c43c729243282e7f59b1381084f01d77ca176737fdc2",
     "packages/ui/tests/browser/fixtures/tool-images.tsx": "2eac684424eee7ed275001ecb453203eafb78cc789276eaea9f3600821a484b2",
     "packages/ui/tests/browser/fixtures/tool-reprojection.tsx": "c1ae270c0615bb9658b7b3df24489a4a13efd073f139f3cab3e8744cf380bd9f",
     "packages/ui/tests/browser/fixtures/ui-settings.ts": "94b1ea6b9420fe4359252531dab4b1009a2fe14771244af90a50d4ababcf6873",
@@ -22844,7 +22912,7 @@
     "packages/ui/tests/browser/help-command.test.ts": "148f423f56351eea1c0a65961d5f95e8fde0aa8cd8b5e5e12a480c370c3a878a",
     "packages/ui/tests/browser/hex-capture.test.ts": "612e3119e30905851b1b957323e9d9e0f88974ab095bcb2882e64a6cce03abae",
     "packages/ui/tests/browser/hidden-forms.test.ts": "93756788920f9298bf99d5f40d6d56385864acb7b20f2ee65265e1832db075c4",
-    "packages/ui/tests/browser/history-navigation.test.ts": "8ad84df368537b59c834e726e2674a18f8cbf494ea64f58ac514de58c5baa36e",
+    "packages/ui/tests/browser/history-navigation.test.ts": "4cd1a4832f849867ad09613964aebe58a9f2eca62397c54b43488813aa86e705",
     "packages/ui/tests/browser/history.test.ts": "b3f512ebb68590bca0ab20a25e01fb9aded64f1fc82170764c80168f01dab464",
     "packages/ui/tests/browser/host-only-controls.test.ts": "b57bdbbbfa54b626b401cec553024da8b98dea952c86220e1de235ec1a2f7019",
     "packages/ui/tests/browser/hotkeys-settings.test.ts": "db6214be3cdca82fb60af012cdeb341eb39213a046201f22e98928541dec0867",
@@ -22978,10 +23046,11 @@
     "packages/ui/tests/browser/remote-tab-web-reload.test.ts": "bf9ffa09010f42a98daea212960bb4bf3d7bb00a2ec9fdee7c86d6b8b89ed0d9",
     "packages/ui/tests/browser/remote-web-restore.test.ts": "07d817092bbd0e3ac1911dfc9c26d2703777a81c424790fb8738efda2de525d7",
     "packages/ui/tests/browser/render-cost-mount.test.ts": "ceb84928e75e3a559ed2b7e55af31f96d6edff4818773b101050681395e45e71",
-    "packages/ui/tests/browser/render-cost.test.ts": "8d2ff05e7994e27aa68759bf9b47e5ff357f2148d4aaa042c31af7ff19c8c1b4",
+    "packages/ui/tests/browser/render-cost.test.ts": "31fddff4268155d2f052bfbec8e73a84d43fe5badf53f0b0e2289a92c8fe1620",
     "packages/ui/tests/browser/reveal-truncated-text.test.ts": "70aadfedc0c2f9fdd6f0fdd06d6b11790f8c79b1a30282428639c3c89d483a6a",
     "packages/ui/tests/browser/run.mjs": "483826d943afdf86422c2d0af8e3065a0ba8af883ede801759ff20c962d9048d",
     "packages/ui/tests/browser/rune-window-close.test.ts": "7ebd88e80fa5902eee126355f7a4c53cb8a64f51b46e2424b1bbbbf7c8078140",
+    "packages/ui/tests/browser/scroll-pipeline.test.ts": "6108030d51e298d0f60919e5e86a989aef504d8aaa286d2ab58abca98f864ad1",
     "packages/ui/tests/browser/search-highlight-assertions.ts": "f80fd0ecdcdf07646e628a330b267ecdd56d17a2639e81163618c1b51f3981ee",
     "packages/ui/tests/browser/search-highlight-harness.ts": "4a6d8fea739f1220fd99fdc07ab26f95c33ab2e27166ef6116d15bb970e11f42",
     "packages/ui/tests/browser/search-highlight-report.mjs": "5f89a9afb53249373108fcc17d13313197ba48ae5bcc6ebe7995a8dd4adf814c",
@@ -23025,11 +23094,12 @@
     "packages/ui/tests/browser/system-notification-focus.test.ts": "bfa78e358713ac7033f7d665648674f4326a059066e146bc7cb0e4d3231e3661",
     "packages/ui/tests/browser/tab-chrome.test.ts": "187f7a30a685944c447db5adc51fb79884583ad89914f1bbf7e79ca7169d0853",
     "packages/ui/tests/browser/tab-view-persistence.test.ts": "7c2d5ae1762d62527c0645571fc11c41dac0903067abe2a3f6ea254e34170ed1",
-    "packages/ui/tests/browser/task-copy.test.ts": "de85e92f5504bfe8c7f293aa91c9aaddd721fb0419a6f6da1fbd45975e955b05",
+    "packages/ui/tests/browser/task-copy.test.ts": "046d44cf7e149f23e64a9ddbf3ac20efc07c7f6f5c71622afe4c8f736204e36f",
     "packages/ui/tests/browser/timeline-sync-session.ts": "6f7f0fff0f3cbc57e1fd86f1e1a538585004e5ca449f39e1093a767dd4ee603c",
     "packages/ui/tests/browser/timeline-sync.qualification.ts": "3372571dd2b2e4c303934fb9341038a60de3e2ece586cb5fcde816d70071d549",
     "packages/ui/tests/browser/timeline-sync.test.ts": "1266bd99cfdf6e2108dbd42a32fea0a32fb0ca2531b3a66772b34c015c39816d",
     "packages/ui/tests/browser/timeline-tool-filters.test.ts": "265bd0cc2149f6bac8f9b603152af9a183191686be18d671633cc0ec489b229d",
+    "packages/ui/tests/browser/tool-card-bounds.test.ts": "7708565b22bfe35d762f1af5dc9723ef162cab6d3ffb729662ffd182321baf84",
     "packages/ui/tests/browser/tool-images.test.ts": "d84a8e65da1f750f82c9873e13e6506b8691a0f1840fa318f7de7d1a289ff27d",
     "packages/ui/tests/browser/transcript-presets.test.ts": "494ef796c8f587a9a843958766cf958cb5fdc63694bd56ad098f7fe85b902bd4",
     "packages/ui/tests/browser/usage-metrics.test.ts": "93ff4c630fa05966c2c8df25530200f87868a6ed88904997f15ae870ebf55bce",
@@ -23057,7 +23127,7 @@
     "scripts/rune/component-inventory-ast.mjs": "3db80f65a676f5faad7a9c4e1ee17ce78b7ba4aea4de58c69bab8f091aacaea5",
     "scripts/rune/component-inventory.mjs": "b98ea680c0c49c6a4c30e6dc9fcdebc6a512fcfcdf2530aa02b6559b393b3fe8"
   },
-  "componentCount": 314,
+  "componentCount": 315,
   "modules": [
     {
       "source": "packages/ui/src/App.tsx",
@@ -23075,7 +23145,7 @@
     {
       "source": "packages/ui/src/components/action-overflow-menu.tsx",
       "sheet": "target/rune-inventory/components__action-overflow-menu.json",
-      "sheetSha256": "9c4b36a6b06c16cf497ff589a598825abd43340e91685237e97dbafaa41c9302",
+      "sheetSha256": "840e48b02eb08cf79ee575aad4a54989e1f3d36262441d95fdf38791478adc65",
       "components": [
         {
           "id": "packages/ui/src/components/action-overflow-menu.tsx#ActionOverflowMenu",
@@ -23083,7 +23153,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 144
+      "testReferenceCount": 145
     },
     {
       "source": "packages/ui/src/components/advanced-settings-modal.tsx",
@@ -23210,7 +23280,7 @@
     {
       "source": "packages/ui/src/components/brand-logo.tsx",
       "sheet": "target/rune-inventory/components__brand-logo.json",
-      "sheetSha256": "6615e508ecb2ee3346b32b4561d0bec0de816544f5879a5d0995735f66180b5e",
+      "sheetSha256": "861d2fba169d8d9dafce290f30b47731fe98f8a8cc7c61a82cf822a400d2fe20",
       "components": [
         {
           "id": "packages/ui/src/components/brand-logo.tsx#BrandLogo",
@@ -23218,12 +23288,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 87
+      "testReferenceCount": 88
     },
     {
       "source": "packages/ui/src/components/branded-empty-state.tsx",
       "sheet": "target/rune-inventory/components__branded-empty-state.json",
-      "sheetSha256": "ea07faef1aa531d09ff6e2ea0c52fcb05a2279ec43e7ec2e293d92caf4baf7af",
+      "sheetSha256": "57b5b9bfa46e6c382c144eddc19be4977e705ff487cea7d8506748d8cf08ee8f",
       "components": [
         {
           "id": "packages/ui/src/components/branded-empty-state.tsx#BrandedEmptyState",
@@ -23231,7 +23301,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 53
     },
     {
       "source": "packages/ui/src/components/browse-menu.tsx",
@@ -23254,7 +23324,7 @@
     {
       "source": "packages/ui/src/components/browser-frame.tsx",
       "sheet": "target/rune-inventory/components__browser-frame.json",
-      "sheetSha256": "2ccad0f0f70340be16d240769bdcf473bdc01cf35dc3a070ee9d0bd4c9e1208a",
+      "sheetSha256": "6a3186de2f24ede5d868c4f7a413f90b0a3908f4d8f00e6078540ff43ec110ac",
       "components": [
         {
           "id": "packages/ui/src/components/browser-frame.tsx#BrowserFrame",
@@ -23262,7 +23332,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 314
+      "testReferenceCount": 315
     },
     {
       "source": "packages/ui/src/components/command-palette.tsx",
@@ -23332,7 +23402,7 @@
     {
       "source": "packages/ui/src/components/dismissible-window.tsx",
       "sheet": "target/rune-inventory/components__dismissible-window.json",
-      "sheetSha256": "a867d369ae3eccb29f478caefcacf2ce6737f1952c16a5f63e71803f3d85b250",
+      "sheetSha256": "357cf4509300ef9bb74ae7c6a8f366daf9457b5cfead770eb7287654365abbc1",
       "components": [
         {
           "id": "packages/ui/src/components/dismissible-window.tsx#DismissibleWindow",
@@ -23340,7 +23410,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 93
+      "testReferenceCount": 94
     },
     {
       "source": "packages/ui/src/components/entry-count.tsx",
@@ -23467,7 +23537,7 @@
     {
       "source": "packages/ui/src/components/hidden-text.tsx",
       "sheet": "target/rune-inventory/components__hidden-text.json",
-      "sheetSha256": "8af2bfb156e8790c5b85a48872aa8bb6e5a3b1e696a088dbce79178ac1673782",
+      "sheetSha256": "97496b490888647d97bbadf406fba66e5665418f0d7c48d66493365ef591320e",
       "components": [
         {
           "id": "packages/ui/src/components/hidden-text.tsx#HiddenTextNotice",
@@ -23480,12 +23550,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 131
+      "testReferenceCount": 132
     },
     {
       "source": "packages/ui/src/components/history-message-preview.tsx",
       "sheet": "target/rune-inventory/components__history-message-preview.json",
-      "sheetSha256": "1be5b44d55636be696e91153b2da163aa9ed8ddd74cc6e78792164f6b05870d5",
+      "sheetSha256": "9b20cb72ada594659c7cbb51967331e25b6e537ca8374c2ee4f20e3ffaa3f2fa",
       "components": [
         {
           "id": "packages/ui/src/components/history-message-preview.tsx#HistoryMessagePreview",
@@ -23493,12 +23563,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/history-search-results.tsx",
       "sheet": "target/rune-inventory/components__history-search-results.json",
-      "sheetSha256": "2764c6cbd62ed4c8554d5bc98af895ddf4a6431c5ba7c5d05099bc43cd32b656",
+      "sheetSha256": "629dd6ffb9f5e0d9356b16a8804388c174ee08cd45a74b5ac3468026b944d9f2",
       "components": [
         {
           "id": "packages/ui/src/components/history-search-results.tsx#HistorySearchResults",
@@ -23521,7 +23591,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/info-popover-button.tsx",
@@ -23913,7 +23983,7 @@
     {
       "source": "packages/ui/src/components/load-error-state.tsx",
       "sheet": "target/rune-inventory/components__load-error-state.json",
-      "sheetSha256": "ca9cba465023676b09ab9b9e3514f9de2bfbdefb88a811b6f09de9e928b0cde9",
+      "sheetSha256": "e4de6bdaafac621dd587925011b6431020f29a68548b3874a0a3355931d88771",
       "components": [
         {
           "id": "packages/ui/src/components/load-error-state.tsx#LoadErrorState",
@@ -23921,7 +23991,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 140
+      "testReferenceCount": 141
     },
     {
       "source": "packages/ui/src/components/locale-selector.tsx",
@@ -23939,7 +24009,7 @@
     {
       "source": "packages/ui/src/components/markdown.tsx",
       "sheet": "target/rune-inventory/components__markdown.json",
-      "sheetSha256": "ec418c780d3de613c410f472ee890ec468ddf327972696179b356ab67c014b73",
+      "sheetSha256": "b834f7b57f0234b1288d0fac5bbccc461a7d0ff4c401c72c38a68fd9a3019db4",
       "components": [
         {
           "id": "packages/ui/src/components/markdown.tsx#Markdown",
@@ -23947,12 +24017,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 100
+      "testReferenceCount": 101
     },
     {
       "source": "packages/ui/src/components/mermaid-diagram.tsx",
       "sheet": "target/rune-inventory/components__mermaid-diagram.json",
-      "sheetSha256": "57c08ba9031e96b4d3b2e0a1aaa369c5369c4d89e0c544d2ca79e2e36eb4ff94",
+      "sheetSha256": "eaf838f2144884369489546afc598f78f00d75ec3481bcfed9a48722066fd6d4",
       "components": [
         {
           "id": "packages/ui/src/components/mermaid-diagram.tsx#MermaidDiagram",
@@ -23960,12 +24030,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 100
+      "testReferenceCount": 101
     },
     {
       "source": "packages/ui/src/components/message-block.tsx",
       "sheet": "target/rune-inventory/components__message-block.json",
-      "sheetSha256": "6d88befc835fa0fdd8e01428d0059810211b502f7998e375a67182982d7f705d",
+      "sheetSha256": "712dfc15a5c1dedb111803b28aaed8c8b6ad07b169f2d43d98d5328e1c7ef7e8",
       "components": [
         {
           "id": "packages/ui/src/components/message-block.tsx#ToolCallFallback",
@@ -24013,12 +24083,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 53
     },
     {
       "source": "packages/ui/src/components/message-item.tsx",
       "sheet": "target/rune-inventory/components__message-item.json",
-      "sheetSha256": "610003900c01a89e403833a34e0cd8d09c13cf2948219f4fb5a589d5cf223c17",
+      "sheetSha256": "5f2c19f66f0d265ea333a885cbe7bc2f1fc4f6290ce8d7e4cf95c254d80dafd9",
       "components": [
         {
           "id": "packages/ui/src/components/message-item.tsx#MessageItem",
@@ -24026,7 +24096,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 55
+      "testReferenceCount": 56
     },
     {
       "source": "packages/ui/src/components/message-list-header.tsx",
@@ -24044,7 +24114,7 @@
     {
       "source": "packages/ui/src/components/message-part.tsx",
       "sheet": "target/rune-inventory/components__message-part.json",
-      "sheetSha256": "356d8d29632ad6ce68791d7df3584ad4149d2678355816b4b87102284a334879",
+      "sheetSha256": "2909da6618c7123f35035f5647768292cda0c3c7064f74bbca73af999873706b",
       "components": [
         {
           "id": "packages/ui/src/components/message-part.tsx#MessagePart",
@@ -24057,7 +24127,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 55
+      "testReferenceCount": 56
     },
     {
       "source": "packages/ui/src/components/message-preview.tsx",
@@ -24075,7 +24145,7 @@
     {
       "source": "packages/ui/src/components/message-section.tsx",
       "sheet": "target/rune-inventory/components__message-section.json",
-      "sheetSha256": "b1ef87f2868eef805e4a3feb26a6c763bd974aec2061ae27b8efdb19e673c85c",
+      "sheetSha256": "4043c42f632b77d3668df3fd058a3765ca2c3cfdfe6f2788d5d1a1865b07f85b",
       "components": [
         {
           "id": "packages/ui/src/components/message-section.tsx#TimelinePlacement",
@@ -24088,12 +24158,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/message-timeline.tsx",
       "sheet": "target/rune-inventory/components__message-timeline.json",
-      "sheetSha256": "d77ce91e0188bffad094d4a823d040f8ec8605574a40c31019ff7b392d78cf65",
+      "sheetSha256": "a613c29c1038547afdd0c50021eea9a91b3ab1dfebaa1151560d1d45950c9510",
       "components": [
         {
           "id": "packages/ui/src/components/message-timeline.tsx#MessageTimeline",
@@ -24101,12 +24171,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/message-usage.tsx",
       "sheet": "target/rune-inventory/components__message-usage.json",
-      "sheetSha256": "0728209f14fd1976b08f9d2c3d2e209b748a91af3e164848d3865b51abd33d9b",
+      "sheetSha256": "fc0f9fc60265c8f735edc0f573b8df9fc0d2ad2f50a71f1f0494ab5d55d3ebaa",
       "components": [
         {
           "id": "packages/ui/src/components/message-usage.tsx#MessageUsage",
@@ -24114,7 +24184,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 54
+      "testReferenceCount": 55
     },
     {
       "source": "packages/ui/src/components/mission-action-bar.tsx",
@@ -24857,7 +24927,7 @@
     {
       "source": "packages/ui/src/components/part-duration.tsx",
       "sheet": "target/rune-inventory/components__part-duration.json",
-      "sheetSha256": "8dabe0733d02493ae66e8c8fb382015b8e2b853914441a6228916b1796bab775",
+      "sheetSha256": "923dec91ea8051becb0dd4bc2ff557fe2d0911716a8a9c0ab28d664067000f56",
       "components": [
         {
           "id": "packages/ui/src/components/part-duration.tsx#PartDuration",
@@ -24865,7 +24935,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 56
+      "testReferenceCount": 57
     },
     {
       "source": "packages/ui/src/components/permission-fallback-diff.tsx",
@@ -24896,7 +24966,7 @@
     {
       "source": "packages/ui/src/components/permission-receipts.tsx",
       "sheet": "target/rune-inventory/components__permission-receipts.json",
-      "sheetSha256": "9ad6c6e6bce983bfc0c8e8a21fb3754a5cdd8e41b2d6a285b22a4456aa5ab45f",
+      "sheetSha256": "00cf0401a0ab7dddef89bdac88a5136c3916297b4e7f140b1f39ab43d42e6f02",
       "components": [
         {
           "id": "packages/ui/src/components/permission-receipts.tsx#PermissionReceipts",
@@ -24909,7 +24979,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/plugin-activation-controls.tsx",
@@ -25324,7 +25394,7 @@
     {
       "source": "packages/ui/src/components/session-cleanup-progress.tsx",
       "sheet": "target/rune-inventory/components__session-cleanup-progress.json",
-      "sheetSha256": "c6290abb5c76769234fe7a2cb54ad391f3c711e7611fff1d157c5683b504719c",
+      "sheetSha256": "27c9767bde3e6caa8caea30a14ee3baf1b546508fed5a8e14b719e583fa3ee7b",
       "components": [
         {
           "id": "packages/ui/src/components/session-cleanup-progress.tsx#SessionCleanupProgress",
@@ -25332,7 +25402,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/session-expander.tsx",
@@ -26167,7 +26237,7 @@
     {
       "source": "packages/ui/src/components/speech-action-button.tsx",
       "sheet": "target/rune-inventory/components__speech-action-button.json",
-      "sheetSha256": "96a04b3f4f6313e8043a3128c547031247f72e69882923ca57b2fd122de2e07b",
+      "sheetSha256": "5061740f975492b3443fb8516e6c538d325c9a99d53d25d955e7fbcad346326a",
       "components": [
         {
           "id": "packages/ui/src/components/speech-action-button.tsx#SpeechActionButton",
@@ -26175,12 +26245,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 59
+      "testReferenceCount": 60
     },
     {
       "source": "packages/ui/src/components/system-message.tsx",
       "sheet": "target/rune-inventory/components__system-message.json",
-      "sheetSha256": "6e138b0150beb66cf863621ac76f3aa1c1ed95ba138f7a4029c61625bd4a0074",
+      "sheetSha256": "9e01d8f476158a742993e68ac035cbd556715aa01285e324040277ffb8f2d9d2",
       "components": [
         {
           "id": "packages/ui/src/components/system-message.tsx#SystemMessage",
@@ -26188,7 +26258,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 53
     },
     {
       "source": "packages/ui/src/components/tab-scroll.tsx",
@@ -26219,7 +26289,7 @@
     {
       "source": "packages/ui/src/components/timeline-virtual-list.tsx",
       "sheet": "target/rune-inventory/components__timeline-virtual-list.json",
-      "sheetSha256": "9d8f8cd7f72d7f041dd6c4166929e509f70667ee18fd0db7f2964f3c7fcc00be",
+      "sheetSha256": "3a9bf6604c03740f8d87b7b77a902615645baf95fdfc11be2a038d918939105a",
       "components": [
         {
           "id": "packages/ui/src/components/timeline-virtual-list.tsx#TimelineVirtualList",
@@ -26227,7 +26297,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 51
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/toast-history-panel.tsx",
@@ -26268,7 +26338,7 @@
     {
       "source": "packages/ui/src/components/tool-call/diagnostics-section.tsx",
       "sheet": "target/rune-inventory/components__tool-call__diagnostics-section.json",
-      "sheetSha256": "92bbe4d4ff1108441d8569d20082f3081b4980701a5fefb993f9074067d8fa8e",
+      "sheetSha256": "443121561699c18c7b1eeda6475ef753fc877a352d576bf04b32d6b5c70d3818",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/diagnostics-section.tsx#DiagnosticsPayloadAccess",
@@ -26276,7 +26346,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 132
+      "testReferenceCount": 133
     },
     {
       "source": "packages/ui/src/components/tool-call/diff-render.tsx",
@@ -26325,7 +26395,7 @@
     {
       "source": "packages/ui/src/components/tool-call/renderers/apply-patch.tsx",
       "sheet": "target/rune-inventory/components__tool-call__renderers__apply-patch.json",
-      "sheetSha256": "f14f04553be5ad136b39f2d794c4498ddd8c056850270ca9fe8144f7e45b0296",
+      "sheetSha256": "9ac35b91cdef04f402ebde3f40f0b2592b89819b54e6c2ccfbfe51ceec137b86",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/renderers/apply-patch.tsx#DiagnosticsInline",
@@ -26333,12 +26403,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 132
+      "testReferenceCount": 133
     },
     {
       "source": "packages/ui/src/components/tool-call/renderers/bash.tsx",
       "sheet": "target/rune-inventory/components__tool-call__renderers__bash.json",
-      "sheetSha256": "3ccc2044dafbeece8e54c8163dddefab47f73fd546fc6db4c58fb673505cdc6f",
+      "sheetSha256": "6196f90b154803729f55848d336b68659543398ab86436d815279ee99785e6c8",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/renderers/bash.tsx#OutputReveal",
@@ -26361,25 +26431,30 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 131
+      "testReferenceCount": 132
     },
     {
       "source": "packages/ui/src/components/tool-call/renderers/task.tsx",
       "sheet": "target/rune-inventory/components__tool-call__renderers__task.json",
-      "sheetSha256": "7e402e0915edc1cd011c0037fad20b661264fea32e77d6521eb050b6530c87b2",
+      "sheetSha256": "381e272317894514f6ee516d4553932e3e96e87562d5122bcd77ee6b62e04c0a",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/renderers/task.tsx#TaskToolCallRow",
           "name": "TaskToolCallRow",
           "status": "not-converted"
+        },
+        {
+          "id": "packages/ui/src/components/tool-call/renderers/task.tsx#TaskStepsGap",
+          "name": "TaskStepsGap",
+          "status": "not-converted"
         }
       ],
-      "testReferenceCount": 132
+      "testReferenceCount": 133
     },
     {
       "source": "packages/ui/src/components/tool-call/renderers/todo.tsx",
       "sheet": "target/rune-inventory/components__tool-call__renderers__todo.json",
-      "sheetSha256": "e387a9a43c1fa6f883c96bfcf1cdcf7dd51640204db8ce58dbf8d52af9c03417",
+      "sheetSha256": "25c5242a09bef9efc4982791282102cd486d885415a38d7b5f35fb700b960bbc",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/renderers/todo.tsx#TodoStatusIcon",
@@ -26392,7 +26467,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 131
+      "testReferenceCount": 132
     },
     {
       "source": "packages/ui/src/components/transcript-filters.tsx",
@@ -26423,7 +26498,7 @@
     {
       "source": "packages/ui/src/components/usage-metric-chips.tsx",
       "sheet": "target/rune-inventory/components__usage-metric-chips.json",
-      "sheetSha256": "f79ac224f9799b194870e65f6937a9506f58e1e892a459e056e19b03f36a57c3",
+      "sheetSha256": "f75ca79b800d43459dedc66f274a7497479081ca7712d1938759bb458b7ce5e6",
       "components": [
         {
           "id": "packages/ui/src/components/usage-metric-chips.tsx#UsageMetricChips",
@@ -26431,7 +26506,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 58
+      "testReferenceCount": 59
     },
     {
       "source": "packages/ui/src/components/version-pill.tsx",
@@ -26449,7 +26524,7 @@
     {
       "source": "packages/ui/src/components/virtual-follow-list.tsx",
       "sheet": "target/rune-inventory/components__virtual-follow-list.json",
-      "sheetSha256": "882acc600ad7f195baf248dfe62f654881d85de7ecc262318de7f5a3ff7fee30",
+      "sheetSha256": "c06d832b3cc161d3014db9dd2a339777cd3055ccee5be5519b82a42427d94748",
       "components": [
         {
           "id": "packages/ui/src/components/virtual-follow-list.tsx#VirtualFollowList",
@@ -26457,12 +26532,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 53
+      "testReferenceCount": 55
     },
     {
       "source": "packages/ui/src/components/window-close-button.tsx",
       "sheet": "target/rune-inventory/components__window-close-button.json",
-      "sheetSha256": "fd17d3216963c90cd60f81ef37c3c6939187f1d1782ec5230be04cefe9506a5b",
+      "sheetSha256": "34df34673c68cee1354aa35c61009616bf819b897687515537d229ac7d9419e2",
       "components": [
         {
           "id": "packages/ui/src/components/window-close-button.tsx#WindowCloseButton",
@@ -26470,7 +26545,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 317
+      "testReferenceCount": 318
     },
     {
       "source": "packages/ui/src/components/workspace-file-view.tsx",
@@ -26514,7 +26589,7 @@
     {
       "source": "packages/ui/src/lib/i18n/index.tsx",
       "sheet": "target/rune-inventory/lib__i18n__index.json",
-      "sheetSha256": "b62e18b91b905e1d7ebe9a9aba09a1dda19f8189260239691fd9e1e37e6d0a81",
+      "sheetSha256": "e25f7e76f85ed3aa3fbd4d0cae8351924ad5c11128e11fa1ac99f48803dc018a",
       "components": [
         {
           "id": "packages/ui/src/lib/i18n/index.tsx#I18nProvider",
@@ -26522,12 +26597,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 362
+      "testReferenceCount": 363
     },
     {
       "source": "packages/ui/src/lib/theme.tsx",
       "sheet": "target/rune-inventory/lib__theme.json",
-      "sheetSha256": "3110bab004b7146f3b5862a7d417ecf00c8151008113914096e4c3b9795e0900",
+      "sheetSha256": "024680fcbca6018d5f7277da98083fcef1240d8e00ff6f1d8d7eda0451dee7b2",
       "components": [
         {
           "id": "packages/ui/src/lib/theme.tsx#ThemeProvider",
@@ -26535,7 +26610,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 135
+      "testReferenceCount": 136
     },
     {
       "source": "packages/ui/src/renderer/loading/main.tsx",
@@ -26566,7 +26641,7 @@
     {
       "source": "packages/ui/src/stores/instance-config.tsx",
       "sheet": "target/rune-inventory/stores__instance-config.json",
-      "sheetSha256": "665f8f256aca7b4897308b5a79dd0d8c4fecf6e734cd810eb9ef05b18e8ef896",
+      "sheetSha256": "fc4a09f384c83fbc37644a7d8d8067b70cfcdc66f6ec1b51e6101df80311e352",
       "components": [
         {
           "id": "packages/ui/src/stores/instance-config.tsx#InstanceConfigProvider",
@@ -26574,12 +26649,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 362
+      "testReferenceCount": 363
     },
     {
       "source": "packages/ui/src/stores/preferences.tsx",
       "sheet": "target/rune-inventory/stores__preferences.json",
-      "sheetSha256": "ae50816142fb81060d41b9960302545ea1399475ea426c24f4f28c4f03aad894",
+      "sheetSha256": "ff7d6c608781abf9aac80ba0b3b51bd90d7e3741faabda88a393f87f6bae6019",
       "components": [
         {
           "id": "packages/ui/src/stores/preferences.tsx#ConfigProvider",
@@ -26587,7 +26662,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 362
+      "testReferenceCount": 363
     }
   ]
 }

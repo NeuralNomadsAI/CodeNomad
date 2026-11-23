@@ -62,17 +62,22 @@ pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 impl Store {
     pub(crate) fn has_tab_edits(&self, tab_key: &str) -> bool {
-        lock(&self.0)
-            .drafts
-            .keys()
-            .any(|key| key.instance == tab_key)
+        self.has_matching_edits(|key| key.instance == tab_key)
     }
 
     pub(super) fn has_edits(&self, server: &str, instance: &str) -> bool {
-        lock(&self.0)
+        self.has_matching_edits(|key| key.server == server && key.instance == instance)
+    }
+
+    fn has_matching_edits(&self, accepts: impl Fn(&Key) -> bool) -> bool {
+        // Never hold the registry lock while waiting for a draft.
+        let drafts: Vec<_> = lock(&self.0)
             .drafts
-            .keys()
-            .any(|key| key.server == server && key.instance == instance)
+            .iter()
+            .filter(|(key, _)| accepts(key))
+            .map(|(_, draft)| draft.clone())
+            .collect();
+        drafts.iter().any(|draft| lock(draft).retained())
     }
     pub(super) fn writes(&self, server: &str, instance: &str) -> Writes {
         let mut store = lock(&self.0);

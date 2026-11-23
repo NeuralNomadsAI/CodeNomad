@@ -126,6 +126,85 @@ fn the_linked_conversation_owns_the_git_target_without_a_root_fallback() {
 }
 
 #[test]
+#[cfg(feature = "test-support")]
+fn removing_a_session_worktree_closes_the_hidden_workspace_reader_without_forgetting_edits() {
+    let mut s = crate::init();
+    let mut owner = ui();
+    let backend = owner.backend.clone();
+    assert!(owner.bind_placed(&backend, Some("other")));
+    let linked = owner.tree().unwrap().directory.clone();
+    let current = owner.inventory.clone().unwrap();
+    let mut files = crate::files::Ui::new(
+        backend.clone(),
+        linked.clone(),
+        s.reads.clone(),
+        s.wake.clone(),
+    )
+    .with_documents(s.documents.clone(), "tab-0".into());
+    files.online(true);
+    files.open("draft.txt".into());
+    files.reader.scene(Ok(codenomad_client::files::Preview {
+        workspace_id: backend.workspace.clone(),
+        path: "draft.txt".into(),
+        bytes: b"original".to_vec(),
+        version: Some("v1".into()),
+    }));
+    files.document.poll(&mut files.reader);
+    let scope = files.document.scope();
+    files
+        .document
+        .input(scope)
+        .replace_text("unsaved linked draft");
+    files.document.changed(scope);
+    assert!(s.documents.has_tab_edits("tab-0"));
+    s.files = Some(files);
+    s.git.owner = Some(owner);
+
+    let publish = |s: &mut crate::State, list: Worktrees| {
+        s.git
+            .owner
+            .as_mut()
+            .unwrap()
+            .accept(Lane::Worktrees, Value::Worktrees(list));
+        super::binding::sync_files(s);
+    };
+    publish(
+        &mut s,
+        Worktrees {
+            trees: vec![],
+            ..current.clone()
+        },
+    );
+    assert!(
+        crate::files::has_preview(&s),
+        "empty inventory does not establish removal"
+    );
+    publish(&mut s, current.clone());
+    assert!(
+        crate::files::has_preview(&s),
+        "an unchanged inventory keeps reading"
+    );
+
+    let mut removed = current;
+    removed.trees.retain(|tree| tree.slug == "root");
+    publish(&mut s, removed);
+    assert!(!crate::files::has_preview(&s));
+    assert!(
+        s.git.owner.as_ref().unwrap().tree().is_none(),
+        "inventory absence does not relabel a session"
+    );
+    assert!(s.documents.has_tab_edits("tab-0"));
+
+    super::connected_placed(&mut s, &backend, "root");
+    assert_eq!(s.files.as_ref().unwrap().tree.directory(), "D:/repo");
+    assert!(!crate::files::has_preview(&s), "no implicit root-file read");
+    let files = s.files.as_mut().unwrap();
+    files.browse(linked);
+    files.open("draft.txt".into());
+    assert_eq!(files.document.edit().text, "unsaved linked draft");
+}
+
+#[test]
 fn the_index_is_read_only_until_a_conversation_can_observe_it() {
     let mut ui = ui();
     ui.online = true;

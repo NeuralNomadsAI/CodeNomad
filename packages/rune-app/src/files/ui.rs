@@ -31,9 +31,11 @@ pub struct Ui {
     pub rows: Vec<Row>,
     pub panel: bool,
     pub(super) shell_managed: bool,
+    pub(super) tree_scroll: rune_theme_codenomad::git_panel::ScrollBookmark,
     pub(super) local: bool,
     pub(super) actions: super::view::Actions,
     pub host_width: Option<f32>,
+    pub(super) reader_width: Option<f32>,
     pub(super) backend: Backend,
     reads: Reads,
     collation: std::result::Result<Collation, String>,
@@ -71,9 +73,11 @@ impl Ui {
             rows: vec![],
             panel: false,
             shell_managed: false,
+            tree_scroll: Default::default(),
             local: false,
             actions: Default::default(),
             host_width: None,
+            reader_width: None,
             backend,
             reads,
             collation: Collation::try_default(),
@@ -108,6 +112,8 @@ impl Ui {
         self.active = active;
         if !active {
             self.host_width = None;
+            self.reader_width = None;
+            self.tree_scroll.retain_for_remount();
             self.pictures.suspend();
             self.actions.revoke();
         }
@@ -119,12 +125,16 @@ impl Ui {
         if self.panel == show {
             return;
         }
+        if !show {
+            self.tree_scroll.retain_for_remount();
+        }
         self.panel = show;
         self.demand();
     }
     pub fn browse(&mut self, directory: String) {
         if self.tree.directory() != directory {
             self.actions.revoke();
+            self.tree_scroll = Default::default();
             self.close_reader();
             self.tree.switch(directory);
             self.demand();
@@ -175,6 +185,12 @@ impl Ui {
     }
     pub fn event(&mut self, event: WorkspaceEvent) {
         match event {
+            WorkspaceEvent::SessionMoved {
+                workspace_id,
+                session_id,
+            } if workspace_id == self.backend.workspace && session_id == self.backend.session => {
+                self.close_reader();
+            }
             WorkspaceEvent::FilesChanged {
                 workspace_id,
                 changes,

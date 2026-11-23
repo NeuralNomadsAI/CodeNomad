@@ -36,6 +36,7 @@ fn real_rust_reader_ui_contract() {
             .await
             .unwrap();
         backend.workspace = data["workspaceId"].as_str().unwrap().into();
+        backend.session = "reader-fixture".into();
         let mut ui = crate::files::Ui::new(
             backend,
             directory.into(),
@@ -43,7 +44,7 @@ fn real_rust_reader_ui_contract() {
             Arc::new(|| {}),
         );
         ui.online(true);
-        let mut rt = runtime(ui);
+        let mut rt = shell_runtime(ui);
         let (commands, incoming) = codenomad_client::bounded(4);
         rt.update(|state, _| {
             state.draft = rune::TextEdit::new("reader fixture draft");
@@ -59,7 +60,7 @@ fn real_rust_reader_ui_contract() {
             rt.frame(1.0 / 60.0);
         }
         assert_eq!(rt.scroll_at_bottom("history"), Some(false));
-        click(&mut rt, "files-toggle");
+        click(&mut rt, "right-panel-toggle");
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
@@ -94,7 +95,7 @@ fn real_rust_reader_ui_contract() {
                 .unwrap()
         };
         let before = anchor(&rt);
-        click(&mut rt, "file-eye-été 日本語.txt");
+        click(&mut rt, "workspace-actions:été 日本語.txt:pinned:preview");
         settle(&mut rt).await;
         assert_eq!(
             rt.state.files.as_ref().unwrap().document.edit().text,
