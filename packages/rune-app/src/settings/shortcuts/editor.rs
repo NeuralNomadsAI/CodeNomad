@@ -44,7 +44,7 @@ impl Capture {
                     .iter()
                     .map(|(key, names)| conflict(key, names))
                     .collect();
-                layout::announce_selection(tx, &warnings.join(" · "));
+                layout::announce_polite(tx, warnings.join(" · "));
             }
             #[cfg(not(target_arch = "wasm32"))]
             let _ = id;

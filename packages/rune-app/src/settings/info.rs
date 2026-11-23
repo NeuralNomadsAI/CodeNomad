@@ -58,7 +58,7 @@ impl Info {
                 .collect::<Vec<_>>()
                 .join(" · ");
             if changed.iter().all(|key| key.ends_with(".copied")) {
-                layout::announce_selection(tx, &message);
+                layout::announce_polite(tx, message);
             } else {
                 layout::announce_alert(tx, &message);
             }
