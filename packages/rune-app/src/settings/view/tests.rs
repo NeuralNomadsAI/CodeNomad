@@ -29,6 +29,12 @@ fn keyboard_shortcuts_records_the_focused_save_binding() {
     assert!(!rt.state.recording_shortcut);
     assert!(!rt.state.shared.borrow().file_save_pending());
     click_edit(&mut rt);
+    rt.window_focus(false);
+    rt.frame(0.02);
+    rt.window_focus(true);
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    click_edit(&mut rt);
     rt.key(rune::KeyEvent {
         key: rune::Key::Function(8),
         mods: rune::Mods::default(),

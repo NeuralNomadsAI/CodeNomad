@@ -266,7 +266,10 @@ impl Editor {
             {
                 self.store.remember_position(
                     key.clone(),
-                    SavedPosition::capture(&self.edit, self.position.viewport.saved_scroll()),
+                    SavedPosition::capture(
+                        &self.edit,
+                        self.position.viewport.saved_scroll(&self.edit.text),
+                    ),
                 );
             }
             self.store.sync_saved(key, self.saved_key.as_ref(), draft);
@@ -428,10 +431,11 @@ impl Editor {
         }
         let draft = lock(&shared);
         if self.revision != draft.revision {
-            let live_selection =
-                self.position.viewport.mounted().then(|| {
-                    SavedPosition::capture(&self.edit, self.position.viewport.saved_scroll())
-                });
+            let live_selection = self
+                .position
+                .viewport
+                .mounted()
+                .then(|| SavedPosition::capture(&self.edit, Default::default()));
             self.edit = TextEdit::new(&draft.text);
             if let Some(saved) = live_selection {
                 saved.restore_selection(&mut self.edit);

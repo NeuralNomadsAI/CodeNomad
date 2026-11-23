@@ -69,6 +69,26 @@ pub(super) fn binding_label(overrides: Option<&[Value]>) -> String {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(super) fn conflict_label(preferences: &super::Preferences) -> Vec<&'static str> {
+    let platform = rune::KeyPlatform::current();
+    let save = file_save(preferences.shortcut(FILE_SAVE));
+    [
+        ("new-instance", 'n', "hotkeys.action.new-instance"),
+        ("close-instance", 'w', "hotkeys.action.close-instance"),
+    ]
+    .into_iter()
+    .filter_map(|(id, default, label)| {
+        let mut shell = preferences.shortcut(id).map_or_else(
+            || vec![Chord::new(ChordKey::Char(default)).with(ChordMod::Primary)],
+            |rules| rules.iter().filter_map(decode).collect(),
+        );
+        shell.retain(|chord| save.iter().any(|save| save.same_keys(chord, platform)));
+        (!shell.is_empty()).then_some(label)
+    })
+    .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn record(event: &KeyEvent, tx: &Tx) -> Option<Value> {
     use serde_json::json;
     let name = if let Some(c) = physical_slot(tx) {
@@ -117,21 +137,29 @@ pub(super) fn record(event: &KeyEvent, tx: &Tx) -> Option<Value> {
 
 pub(crate) fn matches_save(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
     let preferences = s.settings.shared.borrow();
-    let physical = physical_slot(tx);
     file_save(preferences.shortcut(FILE_SAVE))
         .iter()
-        .any(|chord| {
-            if let Some(physical) = physical {
-                // Solid records these slots by physical key, even on layouts that type a symbol.
-                chord.key() == ChordKey::Char(physical)
-                    && chord.matches(&KeyEvent {
-                        key: Key::Command(physical),
-                        mods: event.mods,
-                    })
-            } else {
-                chord.matches_tx(event, tx)
-            }
-        })
+        .any(|chord| matches(*chord, event, physical_slot(tx)))
+}
+
+fn matches(chord: Chord, event: &KeyEvent, physical: Option<char>) -> bool {
+    // Unlike Rune's menu chords, Solid uses the typed character outside digit/bracket slots.
+    if let ChordKey::Char(expected) = chord.key() {
+        let char = physical.or_else(|| match &event.key {
+            Key::Command(c) => Some(*c),
+            Key::Text(text) => text.chars().next().filter(|c| c.len_utf8() == text.len()),
+            _ => None,
+        });
+        let Some(key) = char.filter(|actual| actual.to_lowercase().eq(expected.to_lowercase()))
+        else {
+            return false;
+        };
+        return chord.matches(&KeyEvent {
+            key: Key::Command(key),
+            mods: event.mods,
+        });
+    }
+    physical.is_none() && chord.matches(event)
 }
 
 fn physical_slot(tx: &Tx) -> Option<char> {
@@ -173,4 +201,20 @@ fn resolves_shared_save_overrides() {
             Chord::new(ChordKey::Char('1')).with(ChordMod::Ctrl)
         ]
     );
+}
+
+#[cfg(test)]
+#[test]
+fn logical_punctuation_matches_only_the_character_solid_records() {
+    use rune::Mods;
+    let event = KeyEvent {
+        key: Key::Text(">".to_owned()),
+        mods: Mods {
+            shift: true,
+            ..Mods::default()
+        },
+    };
+    assert!(!matches(Chord::parse("shift+.").unwrap(), &event, None));
+    assert!(matches(Chord::parse("shift+>").unwrap(), &event, None));
+    assert!(matches(Chord::parse("shift+1").unwrap(), &event, Some('1')));
 }

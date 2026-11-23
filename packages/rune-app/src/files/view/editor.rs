@@ -71,28 +71,26 @@ pub(super) fn source(
         })
         .build(theme::editor::code_kit(dark))
         .key("file-editor");
+    let text = &ui.document.edit().text;
+    let source_layout = theme::editor::SourceLayout::new(dark, text, wrap, view_width);
+    let viewport = ui.document.source_viewport();
+    let restore = document_action_tx(s, {
+        let viewport = viewport.clone();
+        let scroll_key = scroll_key.clone();
+        move |ui, tx| {
+            if !wrap || view_width.is_some() {
+                viewport.restore(&scroll_key, &ui.document.edit().text, source_layout, tx);
+            }
+        }
+    });
+    // A new wrap width mounts a fresh watcher even when the editor's outer rectangle is unchanged.
+    let watch = rune::el()
+        .key(format!("{scroll_key}-anchor-{}", source_layout.width_key()))
+        .on_layout_tx(move |s, _, tx| restore(s, tx));
     Some(
-        theme::editor::editor_view(dark, field, &ui.document.edit().text, wrap, view_width)
+        theme::editor::editor_view(dark, field, text, wrap, view_width, watch)
             .key(&scroll_key)
-            .on_scroll_offset({
-                let viewport = ui.document.source_viewport();
-                move |scroll| viewport.observe(scroll.offset)
-            })
-            .on_layout_tx({
-                let viewport = ui.document.source_viewport();
-                let input_scope = s.input_scope.clone();
-                move |s: &mut State, [_, _, w, h], tx| {
-                    if w > 0.0
-                        && h > 0.0
-                        && s.current_scope(&input_scope)
-                        && s.files
-                            .as_ref()
-                            .is_some_and(|ui| ui.document.scope() == scope)
-                    {
-                        viewport.restore(&scroll_key, tx);
-                    }
-                }
-            }),
+            .on_scroll_offset(move |scroll| viewport.observe(scroll.offset, source_layout)),
     )
 }
 

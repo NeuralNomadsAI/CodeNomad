@@ -92,7 +92,7 @@ Workspace uses the shared file-row actions. Windows local connections offer fold
 
 The source reader shares its word-wrap choice across project tabs and file readers in a window. The workspace snapshot stores the Solid layout key `opencode-session-right-panel-files-word-wrap-v1` as `on` or `off`. Web readers also use that key in same-origin localStorage. Diff and Markdown block wrapping keep their own controls.
 
-Source selection and both scroll offsets survive reopening in the same project tab and checkout. The window keeps five recently closed source positions in memory, separate from file drafts. Selection uses line and UTF-16 column and clamps to UTF-8 boundaries. The source viewport restores pixel offsets within the current extent; a changed wrap width can move the first visible line.
+Source selection and both scroll offsets survive reopening in the same project tab and checkout. The window keeps five recently closed source positions in memory, separate from file drafts. Selection uses line and UTF-16 column and clamps to UTF-8 boundaries. When wrap width changes, the editable source uses the first visible logical line as its vertical anchor and clamps the offset inside that line.
 
 Windows Workspace file actions label the default action by extension: Open, Edit, or Choose an application. The host classifies the resolved file before dispatch, uses the Edit verb for script formats, and falls back to the chooser if Edit fails. It reports an immediate chooser launch failure through the existing file-action error.
 

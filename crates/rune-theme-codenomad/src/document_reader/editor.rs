@@ -51,6 +51,7 @@ pub fn editor_view(
     text: &str,
     wrap: bool,
     viewport_width: Option<f32>,
+    anchor_watch: El,
 ) -> El {
     // The gutter's wrap width excludes the TextArea's inner chrome; its logical lines
     // use the same line spacing as the editor.
@@ -67,9 +68,76 @@ pub fn editor_view(
             .w_full()
             .literal_direction()
             .child(gutter_style(dark, text, width, style, INSET).pt(INSET))
-            .child(field),
+            .child(field)
+            .child(anchor_watch.pin(Some(0.0), Some(0.0), None, None)),
         wrap,
     )
+}
+
+/// The logical gutter line and its offset within a wrapped paragraph.
+#[derive(Clone, Copy)]
+pub struct LineAnchor {
+    line: usize,
+    delta: f32,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub struct SourceLayout {
+    wrap_width: Option<f32>,
+    style: TextStyle,
+}
+
+impl SourceLayout {
+    pub fn new(dark: bool, text: &str, wrap: bool, width: Option<f32>) -> Self {
+        let mut style = code_kit(dark).ty.ui;
+        style.line_height = LINE_HEIGHT;
+        Self {
+            wrap_width: width
+                .filter(|_| wrap)
+                .map(|w| (drawing_width(dark, text, w) - 2.0 * INSET).max(1.0)),
+            style,
+        }
+    }
+
+    pub fn width_key(self) -> u32 {
+        self.wrap_width.map_or(0, f32::to_bits)
+    }
+
+    fn rows(self, line: &str) -> usize {
+        wrapped_rows(line, self.style, self.wrap_width)
+    }
+
+    pub fn capture(self, text: &str, offset: f32) -> Option<LineAnchor> {
+        let mut delta = offset - INSET;
+        if delta < 0.0 {
+            return None;
+        }
+        for (line, text) in text.split('\n').enumerate() {
+            let height = self.rows(text) as f32 * self.style.line_px();
+            if delta < height {
+                return Some(LineAnchor { line, delta });
+            }
+            delta -= height;
+        }
+        None
+    }
+
+    pub fn restore(self, text: &str, anchor: LineAnchor) -> Option<f32> {
+        let mut y = INSET;
+        for (line, text) in text.split('\n').enumerate() {
+            let height = self.rows(text) as f32 * self.style.line_px();
+            if line == anchor.line {
+                return Some(
+                    y + anchor.delta.min(
+                        (height - self.style.line_px()).max(0.0)
+                            + anchor.delta % self.style.line_px(),
+                    ),
+                );
+            }
+            y += height;
+        }
+        None
+    }
 }
 
 pub fn code_kit(dark: bool) -> &'static rune_kit::Kit {
@@ -98,6 +166,7 @@ pub fn save<S: 'static>(
     let button = IconButton::new(&SAVE)
         .variant(IconButtonVariant::Neutral)
         .label(label)
+        .help(label)
         .disabled(disabled)
         .on_press_tx(press);
     let button = if shortcut.is_empty() {

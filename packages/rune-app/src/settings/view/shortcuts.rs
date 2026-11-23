@@ -1,5 +1,5 @@
 use super::{Preferences, Window, layout, t, text};
-use crate::settings::shortcuts::{FILE_SAVE, binding_label, record};
+use crate::settings::shortcuts::{FILE_SAVE, binding_label, conflict_label, record};
 use rune::{El, Key};
 use serde_json::{Value, json};
 
@@ -39,13 +39,8 @@ pub(super) fn view(window: &Window, prefs: &Preferences) -> El {
             s.shared.borrow_mut().stage_file_save(binding);
         }
         true
-    })
-    .on_window_focus(|s: &mut Window, focused, _| {
-        if !focused {
-            s.recording_shortcut = false;
-        }
     });
-    layout::action_row()
+    let controls = layout::action_row()
         .child(text(t("hotkeys.action.file-save")))
         .child(text(if binding.is_empty() {
             t("hotkeys.empty")
@@ -68,5 +63,21 @@ pub(super) fn view(window: &Window, prefs: &Preferences) -> El {
                 s.recording_shortcut = false;
                 s.shared.borrow_mut().stage_file_save(Value::Null);
             },
-        ))
+        ));
+    let conflicts = conflict_label(prefs);
+    if conflicts.is_empty() {
+        controls
+    } else {
+        rune::col().child(controls).child(
+            text(
+                t("hotkeys.conflict")
+                    .replace("{shortcut}", &binding)
+                    .replace(
+                        "{actions}",
+                        &conflicts.into_iter().map(t).collect::<Vec<_>>().join(", "),
+                    ),
+            )
+            .role("status"),
+        )
+    }
 }

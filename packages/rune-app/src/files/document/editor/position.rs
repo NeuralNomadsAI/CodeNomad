@@ -1,14 +1,15 @@
 use rune::TextEdit;
+use rune_theme_codenomad::document_reader::editor::{LineAnchor, SourceLayout};
 use std::{cell::Cell, rc::Rc};
 
 #[derive(Clone, Copy, Default)]
 pub(in crate::files::document) struct SavedPosition {
     selection: [(usize, usize); 2],
-    scroll: [f32; 2],
+    scroll: ScrollPosition,
 }
 
 impl SavedPosition {
-    pub(super) fn capture(edit: &TextEdit, scroll: [f32; 2]) -> Self {
+    pub(super) fn capture(edit: &TextEdit, scroll: ScrollPosition) -> Self {
         let location = |at: usize| {
             let mut at = at.min(edit.text.len());
             while !edit.text.is_char_boundary(at) {
@@ -64,7 +65,7 @@ impl Position {
         Self {
             selection: saved,
             viewport: Rc::new(Viewport {
-                offset: Cell::new(saved.map_or([0.0; 2], |view| view.scroll)),
+                position: Cell::new(saved.map_or_else(ScrollPosition::default, |view| view.scroll)),
                 pending: Cell::new(true),
                 mounted: Cell::new(false),
             }),
@@ -80,16 +81,27 @@ impl Position {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub(super) struct ScrollPosition {
+    offset: [f32; 2],
+    layout: Option<SourceLayout>,
+    anchor: Option<LineAnchor>,
+}
+
 #[derive(Default)]
 pub(crate) struct Viewport {
-    offset: Cell<[f32; 2]>,
+    position: Cell<ScrollPosition>,
     pending: Cell<bool>,
     mounted: Cell<bool>,
 }
 
 impl Viewport {
-    pub(super) fn saved_scroll(&self) -> [f32; 2] {
-        self.offset.get()
+    pub(super) fn saved_scroll(&self, text: &str) -> ScrollPosition {
+        let mut saved = self.position.get();
+        saved.anchor = saved
+            .layout
+            .and_then(|layout| layout.capture(text, saved.offset[1]));
+        saved
     }
 
     pub(super) fn arm(&self) {
@@ -102,20 +114,44 @@ impl Viewport {
 
     #[cfg(test)]
     pub(crate) fn captured_scroll(&self) -> [f32; 2] {
-        self.offset.get()
+        self.position.get().offset
     }
 
-    pub(crate) fn observe(&self, offset: [f32; 2]) {
-        if !self.pending.get() && offset.iter().all(|value| value.is_finite()) {
-            self.offset.set(offset);
+    pub(crate) fn observe(&self, offset: [f32; 2], layout: SourceLayout) {
+        let previous = self.position.get();
+        if !self.pending.get()
+            && previous.layout == Some(layout)
+            && offset.iter().all(|value| value.is_finite())
+        {
+            self.position.set(ScrollPosition {
+                offset,
+                layout: Some(layout),
+                anchor: None,
+            });
         }
     }
 
-    pub(crate) fn restore(&self, key: &str, tx: &mut rune::Tx) {
+    pub(crate) fn restore(&self, key: &str, text: &str, layout: SourceLayout, tx: &mut rune::Tx) {
         self.mounted.set(true);
-        if self.pending.replace(false) {
-            let [x, y] = self.offset.get();
+        let old = self.position.get();
+        let moved = old.layout != Some(layout);
+        if self.pending.replace(false) || moved {
+            let [x, mut y] = old.offset;
+            if moved
+                && let Some(anchor) = old
+                    .anchor
+                    .or_else(|| old.layout.and_then(|layout| layout.capture(text, y)))
+            {
+                y = layout.restore(text, anchor).unwrap_or(y);
+            }
+            self.position.set(ScrollPosition {
+                offset: [x, y],
+                layout: Some(layout),
+                anchor: None,
+            });
             tx.scroll_to_instant(key, x, y);
+        } else {
+            tx.live_only();
         }
     }
 }
@@ -129,7 +165,7 @@ mod tests {
         let mut edit = TextEdit::new("old\né🦀z");
         edit.anchor = "old\né🦀".len();
         edit.focus = "old\n".len();
-        let saved = SavedPosition::capture(&edit, [0.0; 2]);
+        let saved = SavedPosition::capture(&edit, ScrollPosition::default());
         let mut changed = TextEdit::new("longer prefix\né🦀z");
         saved.restore_selection(&mut changed);
         assert_eq!(changed.anchor, "longer prefix\né🦀".len());

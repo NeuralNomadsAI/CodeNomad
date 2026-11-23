@@ -1,6 +1,75 @@
 use super::*;
 
 #[test]
+fn wrapped_reader_keeps_its_logical_top_line_across_resize_and_reopen() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "source-reflow"));
+        let text = format!(
+            "{}short target\n{}",
+            "long prefix ".repeat(30) + "\n",
+            "after\n".repeat(120)
+        );
+        let contents = STANDARD.encode(text);
+        open(&mut rt, &http, "wrapped.txt", &contents).await;
+        click(&mut rt, "file-wrap");
+        let top_line = |rt: &Runtime<State>| {
+            let nodes = rt.elements();
+            let gutter = nodes
+                .iter()
+                .find(|node| node.key.as_deref() == Some("file-line-numbers"))
+                .unwrap();
+            let viewport = nodes
+                .iter()
+                .find(|node| {
+                    node.key.as_deref().is_some_and(|key| {
+                        key.starts_with("file-source-scroll-") && !key.contains("-anchor-")
+                    })
+                })
+                .unwrap();
+            let row = gutter
+                .text
+                .as_deref()
+                .unwrap()
+                .split('\n')
+                .position(|line| line == "2")
+                .unwrap();
+            (row, gutter.rect[1] + 17.5 * row as f32 - viewport.rect[1])
+        };
+        let (wide, _) = top_line(&rt);
+        assert!(wide > 1);
+        rt.update(|s, tx| {
+            let scope = s.files.as_ref().unwrap().document.scope();
+            tx.scroll_to_instant(
+                format!("file-source-scroll-{scope}"),
+                0.0,
+                10.0 + 17.5 * wide as f32,
+            );
+        });
+        rt.frame(0.02);
+        let (_, y) = top_line(&rt);
+        rt.set_viewport((550.0, 700.0), 1.0);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let (narrow, new_y) = top_line(&rt);
+        assert!(narrow > wide);
+        assert!((new_y - y).abs() < 1.0, "{y} → {new_y} on resize");
+        click(&mut rt, "file-close");
+        rt.set_viewport((1000.0, 700.0), 1.0);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        open(&mut rt, &http, "wrapped.txt", &contents).await;
+        let (row, new_y) = top_line(&rt);
+        assert_eq!(row, wide);
+        assert!((new_y - y).abs() < 1.0, "{y} → {new_y} after reopening");
+        http.quiet().await;
+    });
+}
+
+#[test]
 fn reopening_source_restores_selection_and_both_scroll_axes() {
     use base64::{Engine, engine::general_purpose::STANDARD};
     crate::platform::block_on(async {
@@ -157,7 +226,6 @@ fn typing_and_control_save_use_the_versioned_workspace_file() {
             key: Key::Command('s'),
             mods: Mods {
                 cmd: true,
-                ctrl: true,
                 ..Mods::default()
             },
         });
@@ -199,7 +267,6 @@ fn source_save_uses_the_live_override_and_disable_preference() {
         let chord = |key| KeyEvent {
             key,
             mods: Mods {
-                ctrl: true,
                 cmd: true,
                 ..Mods::default()
             },

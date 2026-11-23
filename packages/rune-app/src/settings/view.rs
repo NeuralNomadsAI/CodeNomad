@@ -280,7 +280,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         };
         chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers).on_window_focus(
             |s: &mut Window, focused, _| {
-                if focused && s.section == Section::OpenCode {
+                if !focused {
+                    s.recording_shortcut = false;
+                } else if s.section == Section::OpenCode {
                     s.check_opencode(Some(false));
                 }
             },

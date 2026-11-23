@@ -21,6 +21,7 @@ use std::{cell::RefCell, rc::Rc};
 #[derive(Default)]
 pub(crate) struct Host {
     shared: Rc<RefCell<Preferences>>,
+    last_save_shortcut: Option<Vec<serde_json::Value>>,
     #[cfg(not(target_arch = "wasm32"))]
     window: Option<(rune::WindowHandle, Rc<Cell<bool>>)>,
     #[cfg(target_arch = "wasm32")]
@@ -107,6 +108,11 @@ pub(crate) fn poll(s: &mut State) -> bool {
         shared.palette(true).map_or("", |p| p.id),
         shared.contrast(),
     ]);
+    let save = shared.shortcut(shortcuts::FILE_SAVE);
+    let save_changed = save != s.settings.last_save_shortcut.as_deref();
+    if save_changed {
+        s.settings.last_save_shortcut = save.map(<[_]>::to_vec);
+    }
     #[cfg(target_arch = "wasm32")]
     let changed = {
         let more = s
@@ -119,7 +125,10 @@ pub(crate) fn poll(s: &mut State) -> bool {
     };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
-    changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))
+    changed
+        | expired
+        | save_changed
+        | (display != std::mem::replace(&mut s.settings.last_display, display))
 }
 
 pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {

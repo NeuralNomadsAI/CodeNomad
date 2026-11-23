@@ -209,6 +209,22 @@ fn gutter(dark: bool, contents: &str, view_width: Option<f32>) -> El {
 fn gutter_width(style: TextStyle, lines: usize) -> f32 {
     rune::text::advance("00000", style).max(rune::text::advance(&lines.to_string(), style))
 }
+fn wrapped_rows(line: &str, style: TextStyle, width: Option<f32>) -> usize {
+    let Some(width) = width.filter(|_| !line.is_empty()) else {
+        return 1;
+    };
+    let options = rune::text::RichLayoutOptions::new()
+        .direction(rune::Direction::Ltr)
+        .wrap_anywhere();
+    let (_, height) = rune::text::measure_with(
+        line.trim_end_matches('\r'),
+        &[],
+        style,
+        Some(width),
+        options,
+    );
+    ((height / style.line_px()).round() as usize).max(1)
+}
 fn gutter_style(
     dark: bool,
     contents: &str,
@@ -238,19 +254,11 @@ fn gutter_style(
                     numbers.push('\n');
                 }
                 let _ = write!(numbers, "{}", i + 1);
-                if let Some(wrap) = wrap.filter(|_| i + 1 < lines && !line.is_empty()) {
-                    let options = rune::text::RichLayoutOptions::new()
-                        .direction(rune::Direction::Ltr)
-                        .wrap_anywhere();
-                    let (_, height) = rune::text::measure_with(
-                        line.trim_end_matches('\r'),
-                        &[],
-                        style,
-                        Some(wrap),
-                        options,
-                    );
-                    let extra = (height / style.line_px()).round() as usize;
-                    numbers.extend(std::iter::repeat_n('\n', extra.saturating_sub(1)));
+                if i + 1 < lines {
+                    numbers.extend(std::iter::repeat_n(
+                        '\n',
+                        wrapped_rows(line, style, wrap) - 1,
+                    ));
                 }
             }
             rune::text(numbers)
