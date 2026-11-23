@@ -72,7 +72,12 @@ pub fn reader(s: &State, history: impl FnOnce() -> El) -> El {
 }
 
 pub fn sync(s: &mut State) {
-    crate::git::show(s, s.shell.visible(1) && workspace::files_tab(s));
+    let files = s.shell.visible(1) && workspace::files_tab(s);
+    crate::git::show(s, files);
+    crate::files::show_workspace(
+        s,
+        files && crate::git::mode(s) == crate::git::Mode::Workspace,
+    );
 }
 
 fn connection(s: &State) -> &'static str {

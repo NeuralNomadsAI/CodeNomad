@@ -26,7 +26,7 @@ pub fn view(s: &State, width: f32, touch: bool, floating: bool) -> El {
         .full_height()
         .child(shell::header(floating, true, touch, [picker]))
         .child(if crate::workspace::files_tab(s) {
-            crate::git::panel(s, width, rune::el()).remaining()
+            crate::git::panel(s, width, crate::files::tree(s)).remaining()
         } else {
             col().pad(Space::Md).child(text(connection(s)))
         })

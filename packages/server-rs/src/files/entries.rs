@@ -69,7 +69,11 @@ fn checked_parent(path: &str) -> Result<&str, Error> {
 }
 
 fn checked_name(name: &str) -> Result<&str, Error> {
-    if name.contains('/') || relative(name, false)? != name { Err(invalid()) } else { Ok(name) }
+    if name.contains('/') || !relative(name, false).is_ok_and(|checked| checked == name) {
+        Err(error(Status::BAD_REQUEST, "Invalid file or folder name"))
+    } else {
+        Ok(name)
+    }
 }
 
 fn open_real_dir(parent: &Dir, name: &str) -> io::Result<Dir> {
@@ -129,6 +133,8 @@ mod tests {
         assert!(checked_name("étude 日本語.txt").is_ok());
         assert_eq!(checked_parent(".").unwrap(), ".");
         assert_eq!(checked_parent("src/nested").unwrap(), "src/nested");
+        #[cfg(windows)]
+        assert_eq!(checked_name("x:y").unwrap_err().1.0["error"], "Invalid file or folder name");
     }
 
     #[test]

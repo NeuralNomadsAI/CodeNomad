@@ -31,6 +31,8 @@ pub struct Ui {
     pub tree: Tree,
     pub rows: Vec<Row>,
     pub panel: bool,
+    pub(super) shell_managed: bool,
+    workspace_visible: bool,
     pub host_width: Option<f32>,
     backend: Backend,
     reads: Reads,
@@ -64,6 +66,8 @@ impl Ui {
             tree: Tree::new(directory),
             rows: vec![],
             panel: false,
+            shell_managed: false,
+            workspace_visible: false,
             host_width: None,
             backend,
             reads,
@@ -97,10 +101,23 @@ impl Ui {
             return;
         }
         self.panel = show;
-        if !show && !self.create.pending {
+        if !self.shell_managed && !show && !self.create.pending {
             self.create.form = None;
         }
         self.demand();
+    }
+    pub(super) fn set_workspace_visible(&mut self, visible: bool) {
+        if self.workspace_visible != visible {
+            self.workspace_visible = visible;
+            self.demand();
+        }
+    }
+    fn tree_visible(&self) -> bool {
+        if self.shell_managed {
+            self.workspace_visible
+        } else {
+            self.drawer().pinned
+        }
     }
     pub fn browse(&mut self, directory: String) {
         if self.tree.directory() != directory {
@@ -121,10 +138,8 @@ impl Ui {
         }
         let was_pinned = self.drawer().pinned;
         self.host_width = Some(width);
-        if !self.drawer().pinned && !self.create.pending {
-            self.create.form = None;
-        }
-        if was_pinned
+        if !self.shell_managed
+            && was_pinned
             && !self.drawer().pinned
             && tx.focused().is_some_and(|key| {
                 key.starts_with("file-row-")
@@ -150,7 +165,7 @@ impl Ui {
     }
     fn demand(&mut self) {
         self.tree
-            .activate(self.active && self.drawer().pinned && self.online);
+            .activate(self.active && self.tree_visible() && self.online);
         self.due = Some(0.0);
         self.snapshot();
     }
@@ -230,7 +245,7 @@ impl Ui {
         }
     }
     pub(super) fn sync_tree_focus(&mut self, tx: &mut rune::Tx) -> bool {
-        if self.stopped || !self.active || !self.drawer().pinned {
+        if self.stopped || !self.active || !self.tree_visible() {
             return false;
         }
         // Rune polls before input and has no element focus callback. Read the resulting
@@ -400,7 +415,7 @@ impl Ui {
             (self.wake)();
         }
         if self.active
-            && self.drawer().pinned
+            && self.tree_visible()
             && self.online
             && self.due.is_some_and(|due| now >= due)
         {

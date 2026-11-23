@@ -15,8 +15,20 @@ struct Target {
 pub(in crate::files) struct Form {
     pub id: u64,
     pub edit: TextEdit,
-    pub error: Option<&'static str>,
+    pub error: Option<Error>,
     target: Target,
+}
+pub(in crate::files) enum Error {
+    Label(&'static str),
+    Server(String),
+}
+impl Error {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Label(key) => crate::strings::t(key),
+            Self::Server(message) => message,
+        }
+    }
 }
 impl Form {
     pub fn parent(&self) -> &str {
@@ -69,7 +81,7 @@ impl Ui {
             && self.active
             && self.online
             && !self.stopped
-            && self.drawer().pinned
+            && self.tree_visible()
             && !self.create.pending
             && !self.creation_unclear()
     }
@@ -123,7 +135,7 @@ impl Ui {
             return;
         }
         if !form.valid() {
-            form.error = Some("filesPanel.entryNameInvalid");
+            form.error = Some(Error::Label("filesPanel.entryNameInvalid"));
             return;
         }
         let entry = form.target.clone();
@@ -133,7 +145,7 @@ impl Ui {
                 .iter()
                 .any(|row| row.expanded.is_some() && row.entry.path == entry.parent)
         {
-            form.error = Some("filesPanel.entryCreateFailed");
+            form.error = Some(Error::Label("filesPanel.entryCreateFailed"));
             return;
         }
         self.create.pending = true;
@@ -180,15 +192,12 @@ impl Ui {
                 Some(CreateEntry::Created) => {}
                 None => self.create.unclear = Some(entry),
                 Some(result) => {
-                    form.error = Some(if result == CreateEntry::NameTaken {
-                        "filesPanel.entryNameTaken"
-                    } else {
-                        "filesPanel.entryCreateFailed"
+                    form.error = Some(match result {
+                        CreateEntry::NameTaken => Error::Label("filesPanel.entryNameTaken"),
+                        CreateEntry::Rejected(Some(reason)) => Error::Server(reason),
+                        _ => Error::Label("filesPanel.entryCreateFailed"),
                     });
-                    if self.active
-                        && self.drawer().pinned
-                        && entry.directory == self.tree.directory()
-                    {
+                    if entry.directory == self.tree.directory() {
                         self.create.form = Some(form);
                     }
                 }

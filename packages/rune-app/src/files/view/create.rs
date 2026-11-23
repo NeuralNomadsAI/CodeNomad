@@ -128,7 +128,11 @@ pub(super) fn dialog(s: &State, ui: &Ui) -> Vec<El> {
                 form.parent()
             }))
             .child(input)
-            .children(form.error.map(|key| text(t(key)).role("alert")))
+            .children(
+                form.error
+                    .as_ref()
+                    .map(|error| text(error.message()).role("alert")),
+            )
             .child(actions),
     )
 }

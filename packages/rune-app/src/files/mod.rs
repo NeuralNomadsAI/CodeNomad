@@ -22,27 +22,33 @@ pub(crate) fn poll(s: &mut crate::State, now: f64, tx: &mut rune::Tx) -> bool {
     })
 }
 
+pub(crate) fn show_workspace(s: &mut crate::State, visible: bool) {
+    if let Some(ui) = &mut s.files {
+        ui.set_workspace_visible(visible);
+    }
+}
+
 pub fn bind(s: &mut crate::State, backend: &crate::backend::Backend) {
     s.files = s.screen.launcher().and_then(|launcher| {
         let project = launcher
             .project
             .as_ref()
             .filter(|p| p.id == backend.workspace)?;
-        Some(
-            Ui::new(
-                backend.clone(),
-                project.path.clone(),
-                s.reads.clone(),
-                s.wake.clone(),
-            )
-            .with_local_entries(launcher.local_connection())
-            .with_documents(
-                s.documents.clone(),
-                s.workspace
-                    .as_ref()
-                    .map_or_else(|| backend.workspace.clone(), |ui| ui.active_key().into()),
-            ),
+        let mut ui = Ui::new(
+            backend.clone(),
+            project.path.clone(),
+            s.reads.clone(),
+            s.wake.clone(),
         )
+        .with_local_entries(launcher.local_connection())
+        .with_documents(
+            s.documents.clone(),
+            s.workspace
+                .as_ref()
+                .map_or_else(|| backend.workspace.clone(), |ui| ui.active_key().into()),
+        );
+        ui.shell_managed = true;
+        Some(ui)
     });
 }
 

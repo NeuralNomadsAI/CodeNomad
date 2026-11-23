@@ -20,7 +20,24 @@ fn english(s: &State, cx: &mut rune::Cx<State>) -> El {
 fn create_controls_target_the_selected_folder_and_refresh_after_create() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;
-        let mut ui = http.ui(Store::default(), "entry-create");
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        let project = crate::catalog::Project {
+            id: http.backend.workspace.clone(),
+            path: "/private".into(),
+        };
+        state.screen.launcher_mut().unwrap().project = Some(project.clone());
+        state.workspace = Some(crate::workspace::Ui::new());
+        crate::workspace::opened(&mut state, &project);
+        crate::files::bind(&mut state, &http.backend);
+        state.git.owner = Some(crate::git::Ui::new(
+            http.backend.clone(),
+            Some(project.path),
+            state.reads.clone(),
+            state.wake.clone(),
+        ));
+        let ui = state.files.as_mut().unwrap();
+        ui.online(true);
         ui.tree.activate(true);
         let root = ui.tree.take_refresh().pop().unwrap();
         ui.tree.complete(
@@ -37,18 +54,47 @@ fn create_controls_target_the_selected_folder_and_refresh_after_create() {
             Ok,
         );
         ui.tree.select("src".into());
-        ui.panel = true;
-        let mut rt = runtime(ui);
+        let mut rt = Runtime::new(state, english, (1400.0, 900.0), Env::new(false, 1.0));
+        let settle_shell = |rt: &mut Runtime<State>| {
+            for _ in 0..12 {
+                rt.update(|state, _| crate::shell::sync(state));
+                rt.frame(0.025);
+            }
+        };
+        settle_shell(&mut rt);
+        click(&mut rt, "right-panel-tab-1");
+        settle_shell(&mut rt);
+        assert!(crate::workspace::files_tab(&rt.state));
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| node.key.as_deref() == Some("files-panel")
+                    && node.path.contains("/right-panel/"))
+        );
         assert!(
             rt.find("file-new").is_none(),
             "remote browser must not show local creation"
         );
         rt.update(|state, _| state.files.as_mut().unwrap().create.local = true);
         rt.frame(0.02);
-        for (button, kind, name, status) in [
-            ("file-new", "file", "新規.txt", 201),
-            ("file-new-directory", "directory", "docs", 201),
-            ("file-new-directory", "directory", "docs", 409),
+        for (button, kind, name, status, reason) in [
+            ("file-new", "file", "新規.txt", 201, None),
+            ("file-new-directory", "directory", "docs", 201, None),
+            ("file-new-directory", "directory", "docs", 409, None),
+            (
+                "file-new",
+                "file",
+                "bad:name",
+                400,
+                Some("Invalid file or folder name"),
+            ),
+            (
+                "file-new",
+                "file",
+                "valid.txt",
+                400,
+                Some("Selected path is unavailable"),
+            ),
         ] {
             click(&mut rt, button);
             rt.frame(0.02);
@@ -66,12 +112,49 @@ fn create_controls_target_the_selected_folder_and_refresh_after_create() {
                 request.body,
                 serde_json::json!({"parent":"src","name":name,"kind":kind})
             );
-            request.reply(status, serde_json::Value::Null).await;
+            if status == 409 {
+                rt.set_viewport((390.0, 740.0), 1.0);
+                settle_shell(&mut rt);
+                assert!(rt.find("file-create-dialog").is_none());
+            }
+            request
+                .reply(
+                    status,
+                    reason.map_or(
+                        serde_json::Value::Null,
+                        |error| serde_json::json!({"error":error}),
+                    ),
+                )
+                .await;
             let deadline = Instant::now() + Duration::from_secs(3);
             while rt.state.files.as_ref().unwrap().create.pending {
                 rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
                 assert!(Instant::now() < deadline);
                 tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            if status == 409 {
+                rt.set_viewport((1400.0, 900.0), 1.0);
+                settle_shell(&mut rt);
+                rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
+            }
+            if let Some(reason) = reason {
+                rt.frame(0.02);
+                assert!(rt.accessibility_json().to_string().contains(reason));
+                assert_eq!(
+                    rt.state
+                        .files
+                        .as_ref()
+                        .unwrap()
+                        .create
+                        .form
+                        .as_ref()
+                        .unwrap()
+                        .edit
+                        .text,
+                    name
+                );
+                click(&mut rt, "file-create-cancel");
+                continue;
             }
             http.request("GET", "src")
                 .await

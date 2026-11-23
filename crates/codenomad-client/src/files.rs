@@ -27,11 +27,11 @@ pub enum EntryKind {
     File,
     Directory,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CreateEntry {
     Created,
     NameTaken,
-    Rejected,
+    Rejected(Option<String>),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
@@ -90,7 +90,14 @@ impl Backend {
             status
                 if status.is_client_error() && status != reqwest::StatusCode::REQUEST_TIMEOUT =>
             {
-                Ok(CreateEntry::Rejected)
+                let body = read_json_limited(response, 4096).await.ok();
+                let reason = body
+                    .as_ref()
+                    .and_then(|body| body["error"].as_str())
+                    .map(str::trim)
+                    .filter(|reason| !reason.is_empty())
+                    .map(str::to_owned);
+                Ok(CreateEntry::Rejected(reason))
             }
             _ => {
                 response.error_for_status()?;
