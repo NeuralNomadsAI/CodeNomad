@@ -37,6 +37,10 @@ const browser = await chromium.launch({headless: true, ...(values.executable ? {
 const records = []
 const imagePage = await browser.newPage()
 const palette = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/theme.json'), 'utf8'))
+// The authenticated fixture returns an empty UI state, selecting the product's default palettes.
+const connectedPalettes = values.connected
+  ? JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/palettes.json'), 'utf8'))
+  : null
   const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??(values.connected?'target/rune-web-connected':'target/rune-web')))
   if(values.mobile)assets.add('/remote-pair')
 try {
@@ -239,7 +243,11 @@ try {
         const {['space-md']: md, ['space-sm']: sm} = palette.numbers[colorScheme]
         if(!values.connected)textRegions.push({name: 'composer', surface: 'surface-field', inset: sm,
           rect: [composerBox.x + md, composerBox.y + md, composerBox.width - md * 2, sendBox.y - sm - composerBox.y - md]})
-        const textContrast = await assertRenderedTextContrast(imagePage, png, textRegions, palette[colorScheme])
+         const colors = connectedPalettes
+           ? connectedPalettes.find(p => p.id === (colorScheme === 'dark' ? 'mist' : 'porcelain'))?.colors
+           : palette[colorScheme]
+         assert(colors, `Missing contrast palette for ${colorScheme}`)
+         const textContrast = await assertRenderedTextContrast(imagePage, png, textRegions, colors)
         measured = await page.evaluate(() => ({boot: globalThis.__codenomadRuneBoot,
           viewport: {width: innerWidth, height: innerHeight, touch: matchMedia('(pointer:coarse)').matches,
             dpr:devicePixelRatio,platform:navigator.userAgentData?.platform,mobile:navigator.userAgentData?.mobile},
