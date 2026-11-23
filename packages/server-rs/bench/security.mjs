@@ -12,12 +12,15 @@ import path from "node:path"
 import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
 import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
 import { setTimeout as delay } from "node:timers/promises"
-import { dist, dropRegistration, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { dist, dropRegistration, fromDist, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 const exe=process.argv[2]
 assert(path.isAbsolute(exe??""),"usage: node security.mjs <absolute opencode executable>")
 const bin=rustBinary()
 await useBenchTemp()
+const { isHtmlBundlePath } = await fromDist("remote-control/gate.js")
+assert(isHtmlBundlePath?.("/index.html.br"),
+  `Rebuild the TypeScript reference at ${dist.href}: its remote gate must protect precompressed HTML`)
 // The TS test surface with a real connection manager, so that revocation closes live streams.
 const surface=new URL("remote-control/test-support/surface.js",dist)
 const wired=new URL("surface-bench.mjs",surface)
@@ -74,8 +77,9 @@ async function checkSolid(title, targets, origins, issue) {
     const publicAsset=await target({url:"/manifest.webmanifest"})
     assert.equal(publicAsset.status,200,title)
     assert.equal(publicAsset.body.name,"CodeNomad")
+    const backend=index===0?"TypeScript":"Rust"
     for(const url of ["/index.html","/index.html.br"])
-      assert.equal((await target({url})).status,index===0&&title==="direct"?302:401)
+      assert.equal((await target({url})).status,index===0&&title==="direct"?302:401,`${backend}: unpaired ${title} ${url}`)
     if(title==="ingress"){
       const unpairedPage=await target({url:"/index.html",headers:{accept:"text/html"}})
       assert.equal(unpairedPage.status,302)
