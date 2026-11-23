@@ -39,6 +39,7 @@ enum Startup {
 }
 
 fn launch(s: &mut crate::State, startup: Startup) {
+    s.status_permissions.leave_session();
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);
     s.incoming = Some(incoming);

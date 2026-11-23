@@ -57,7 +57,7 @@ Receipts are read-only CodeNomad annotations, not native messages or permission-
 
 ## Conversation permission mode {#conversation-mode}
 
-Select a conversation, open **Status → Permissions**, and click a mode. When the section is collapsed, a lightning bolt (Autonomous) or shield (Supervised) shows the last known mode.
+Select a conversation, open **Status → Permissions**, and click a mode. The collapsed section shows the last known mode.
 
 - **Autonomous** — Follows OpenCode’s permission rules.
 - **Supervised** — Asks before agent edits and shell commands. For those actions, global, project and conversation deny rules still apply, and allow rules become requests. Matching **Always Allow** approvals saved by OpenCode still apply.

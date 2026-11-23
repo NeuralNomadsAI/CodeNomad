@@ -35,6 +35,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
+                s.status_permissions.bind(&backend);
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -46,6 +47,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    s.status_permissions.online(true);
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
                     git::online(s, true);
@@ -65,6 +67,11 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::MentionsChanged) => {
                 s.composer.picker.mentions_changed(&s.reads, &s.wake);
+            }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::PermissionModeChanged { root },
+            ) => {
+                s.status_permissions.invalidate(root.as_deref());
             }
             Event::Workspace(
                 codenomad_client::transport::WorkspaceEvent::ComposerCataloguesChanged,
@@ -98,6 +105,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     event,
                     codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
                 ) {
+                    s.status_permissions.online(false);
                     chat::reader::suspend(s);
                     s.composer.picker.set_attachments_supported(false);
                     s.attachments.cancel();
@@ -166,6 +174,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
             }
             Event::Reconnecting | Event::ConnectionLost => {
+                s.status_permissions.online(false);
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::reconnecting(s);
                 #[cfg(target_arch = "wasm32")]
@@ -199,6 +208,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.phase = Phase::Reconnecting;
             }
             Event::WorkspaceMissing => {
+                s.status_permissions.online(false);
                 #[cfg(target_arch = "wasm32")]
                 {
                     s.phase = Phase::WorkspaceMissing;
@@ -262,6 +272,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     continue;
                 }
                 s.composer.picker.set_attachments_supported(false);
+                s.status_permissions.online(false);
                 chat::reader::suspend(s);
                 git::online(s, false);
                 if let Some(files) = &mut s.files {

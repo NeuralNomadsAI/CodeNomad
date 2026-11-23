@@ -14,6 +14,7 @@ pub mod git;
 pub mod history;
 pub mod http;
 pub mod missions;
+pub mod permission_mode;
 pub mod prompt;
 pub mod prompt_catalogue;
 mod prompt_command;
@@ -30,7 +31,7 @@ pub mod stream;
 pub mod timeline;
 pub mod transport;
 pub mod wire;
-pub use async_channel::{Receiver, Sender, bounded};
+pub use async_channel::{Receiver, Sender, TryRecvError, bounded};
 
 /// Notify an owner's event loop after publishing data, without depending on its UI framework.
 pub type Wake = std::sync::Arc<dyn Fn() + Send + Sync>;

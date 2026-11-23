@@ -73,22 +73,32 @@ pub struct Sessions {
 }
 
 impl Backend {
-    pub async fn server_id(&self) -> Result<String> {
-        server_id(
-            &read_json(
-                self.client
-                    .get(format!("{}api/meta", self.base))
-                    .send()
-                    .await?
-                    .error_for_status()?,
-            )
-            .await?,
+    async fn server_meta(&self) -> Result<Value> {
+        read_json(
+            self.client
+                .get(format!("{}api/meta", self.base))
+                .send()
+                .await?
+                .error_for_status()?,
         )
+        .await
+    }
+
+    pub async fn server_id(&self) -> Result<String> {
+        server_id(&self.server_meta().await?)
     }
 
     pub async fn attest_server(&self) -> Result<String> {
-        let id = self.server_id().await?;
-        if self.client.verify_server_identity(&id) {
+        let meta = self.server_meta().await?;
+        let id = server_id(&meta)?;
+        let capabilities = meta["capabilities"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        if self.client.attest(&id, capabilities) {
             Ok(id)
         } else {
             Err("Server identity changed".into())

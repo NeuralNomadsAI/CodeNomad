@@ -2,6 +2,7 @@ mod panels;
 pub(crate) mod render;
 mod right_panel;
 mod sidebar;
+pub(crate) mod status_permissions;
 
 use crate::{Phase, Screen, State, components::button_tx, launcher_view, strings::t, workspace};
 use rune::{Cx, El, Tx, col, text};

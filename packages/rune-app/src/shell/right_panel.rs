@@ -28,6 +28,13 @@ pub fn view(s: &State, width: f32, touch: bool, floating: bool) -> El {
         .child(if crate::workspace::files_tab(s) {
             crate::git::panel(s, width, crate::files::tree(s, width, touch)).remaining()
         } else {
-            col().pad(Space::Md).child(text(connection(s)))
+            let mut status = col()
+                .pad(Space::Md)
+                .separate(Space::Sm)
+                .child(text(connection(s)));
+            if let Some(permissions) = super::status_permissions::view(s) {
+                status = status.child(permissions);
+            }
+            status
         })
 }

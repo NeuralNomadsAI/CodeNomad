@@ -321,6 +321,23 @@ pub(super) async fn dispatch(
     }
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
+    if own && value["type"] == "instance.event" {
+        let root = match native["type"].as_str() {
+            Some("server.connected") => Some(None),
+            Some("session.permissions") => native["data"]["sessionID"]
+                .as_str()
+                .filter(|id| crate::history::valid_id(id))
+                .map(|id| Some(id.to_owned())),
+            _ => None,
+        };
+        if let Some(root) = root {
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::PermissionModeChanged { root },
+            ))
+            .await?;
+        }
+    }
     let catalogues = (own && value["type"] == "instance.event")
         .then(|| match native["type"].as_str() {
             Some("command.updated") => Some(WorkspaceEvent::CommandsChanged),

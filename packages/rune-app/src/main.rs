@@ -64,6 +64,7 @@ struct State {
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
     shell: shell::Panels,
+    status_permissions: shell::status_permissions::Permissions,
     chat_title: String,
     messages: Vec<history::Row>,
     draft: TextEdit,
@@ -117,6 +118,7 @@ fn init() -> State {
         rejected_edit: TextEdit::new(""),
         workspace: None,
         shell: Default::default(),
+        status_permissions: Default::default(),
         chat_title: String::new(),
         messages: vec![],
         draft: TextEdit::new(""),
@@ -212,6 +214,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
+    changed |= shell::status_permissions::poll(s);
     changed |= settings::poll(s);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
