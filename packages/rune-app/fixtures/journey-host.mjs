@@ -107,8 +107,10 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
       assert(res.ok,`Private OpenCode ${url.pathname}: HTTP ${res.status}`)
       return res.json()
     }
-    assert.equal((await read('/api/info')).pid,native.child.pid,'Refusing an OpenCode endpoint that is not the owned child')
-    report.openCodePID=native.child.pid
+    const pid=await native.pid()
+    assert(Number.isSafeInteger(pid)&&pid>0,'Private OpenCode child PID unavailable')
+    assert.equal((await read('/api/info')).pid,pid,'Refusing an OpenCode endpoint that is not the owned child')
+    report.openCodePID=pid
     await pruning.activate({project,url:daemon,authorization},()=>assert.equal(native.child.exitCode,null))
     const ownedRust={CNRS_FIXTURE_PASSWORD:privatePassword,CNRS_SERVER_PASSWORD:password}
     server=launchFixture(rust,[profile,path.join(profile,'backend.json'),'0','fixture-only'],{cwd:profile,shutdown:'shutdown\n',env:assertPrivateChild({

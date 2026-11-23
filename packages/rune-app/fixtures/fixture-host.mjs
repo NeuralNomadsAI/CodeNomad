@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {setTimeout as delay} from 'node:timers/promises'
 import {request} from 'playwright'
-import {spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 
 export async function until(check,label,ms=20000){
   const end=Date.now()+ms
@@ -26,7 +26,7 @@ export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000}){
   child.stdout.on('data',data=>{stdout=(stdout+data).slice(-1048576)})
   for(const stream of [child.stdout,child.stderr])stream.on('data',data=>{output=(output+data).slice(-1048576)})
   child.stdin?.on('error',()=>{})
-  return {child,closed,output:()=>output,stdout:()=>stdout,ready:match=>until(()=>{
+  return {child,pid:()=>fixtureChildPid(child),closed,output:()=>output,stdout:()=>stdout,ready:match=>until(()=>{
     if(error)throw error
     assert(child.exitCode===null&&child.signalCode===null,`Fixture child exited: ${output.slice(-2000)}`)
     return match(stdout)

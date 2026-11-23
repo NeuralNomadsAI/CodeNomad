@@ -22,11 +22,15 @@ const browserExecutable=process.env.CODENOMAD_BROWSER_PATH||undefined
 const codenomad=path.basename(path.dirname(root))==='worktrees'?path.resolve(root,'../..'):path.join(root,'.codenomad')
 const evidence=path.join(codenomad,'cargo-targets','e2e-journey')
 // esbuild's worker and any OS helper inherit only this allowlist.
+const jobExecutable=process.env.CODENOMAD_FIXTURE_JOB_EXE
+  ?? path.resolve(root,process.env.CARGO_TARGET_DIR||'target','debug','codenomad-fixture-job.exe')
 const system=assertPrivateChild(fixtureSystemEnvironment())
 const stripped=Object.keys(process.env).filter(key=>!Object.hasOwn(system,key))
 for(const key of stripped)delete process.env[key]
 const filtered=stripped.filter(credentialVariable).sort()
 if(filtered.length)console.error(`Fixture filtered environment variables: ${JSON.stringify(filtered)}`)
+// Runner-only executable selection; fixture children receive their explicit private env.
+process.env.CODENOMAD_FIXTURE_JOB_EXE=jobExecutable
 await mkdir(evidence,{recursive:true})
 
 async function journeyDesktop({origin,password,project,profile,env},report){
