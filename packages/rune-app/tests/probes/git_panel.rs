@@ -14,16 +14,18 @@ const UNSTAGED: &str = "git-row-unstaged:file:git-panel.txt";
 fn wait(rt: &mut Runtime<State>, step: &str, ready: impl Fn(&Runtime<State>) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(25);
     while !ready(rt) {
-        if Instant::now() >= deadline {
-            let alerts: Vec<_> = rt
-                .elements()
-                .into_iter()
-                .filter(|el| !el.exiting && el.role == "alert")
-                .filter_map(|el| el.text.or(el.label))
-                .collect();
-            eprintln!("Git panel probe: timed out at {step}; alerts: {alerts:?}");
-            std::process::exit(1);
-        }
+        assert!(
+            Instant::now() < deadline,
+            "Git panel timeout: {step}, session={:?}, Git={:?}, held={}, ready={}, launcher error={:?}",
+            workspace::active_session(&rt.state),
+            crate::git::placement(&rt.state),
+            crate::git::placement_unconfirmed(&rt.state),
+            rt.state.phase == Phase::Ready,
+            rt.state
+                .screen
+                .launcher()
+                .and_then(|launcher| launcher.error)
+        );
         rt.frame(1.0 / 60.0);
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -199,106 +201,222 @@ pub(super) fn run() {
     }));
     assert!(!crate::git::has_preview(&rt.state));
     assert!(rt.find("composer").is_some());
-
-    rt.update(|s, tx| crate::launcher::choose(s, "ses_another".into(), tx));
-    wait(&mut rt, "linked conversation bound", |rt| {
-        workspace::active_session(&rt.state) == Some("ses_another")
-            && rt.state.phase == Phase::Ready
-    });
-    rt.set_viewport((1100.0, 920.0), 1.0);
-    rt.frame(1.0 / 60.0);
-    tap_mode(&mut rt, 0);
-    wait(&mut rt, "linked Workspace row", |rt| {
-        rt.find(&eye).is_some() && rt.state.messages.len() == 50
-    });
-    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 1600.0));
-    for _ in 0..12 {
-        rt.frame(1.0 / 60.0);
-    }
-    let reading = super::recovery::anchor(&rt);
-    let open = |rt: &mut Runtime<State>| {
-        let (x, y) = rt.find(&eye).unwrap();
-        rt.pointer_move(x, y);
-        rt.frame(1.0 / 60.0);
-        tap(rt, &eye);
-        wait(rt, "linked file replaces the transcript", |rt| {
-            rt.find("file-editor").is_some() && rt.find("history").is_none()
+    if let Ok(placement) = std::env::var("RUNE_TEST_PLACE_WORKTREE") {
+        let unconfirmed = placement == "ambiguous";
+        let trigger = "session-worktree-trigger";
+        assert!(visible_text(&rt, trigger, "synthetic · main"));
+        type_text(&mut rt, "composer", "keep this draft across placement");
+        wait(&mut rt, "placement picker enabled", |rt| {
+            crate::git::can_place(&rt.state)
         });
-    };
-    for close in ["file-close", eye.as_str(), "Escape"] {
-        open(&mut rt);
-        if close == "Escape" {
-            rt.key(rune::KeyEvent {
-                key: rune::Key::Escape,
-                mods: Default::default(),
-            });
-        } else {
-            tap(&mut rt, close);
+        rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
+        rt.frame(0.02);
+        let anchor = super::recovery::anchor(&rt);
+        tap(&mut rt, trigger);
+        let escape = rune::KeyEvent {
+            key: rune::Key::Escape,
+            mods: Default::default(),
+        };
+        rt.key(escape.clone());
+        rt.key_up(escape);
+        rt.frame(0.02);
+        super::recovery::check_anchor(&rt, &anchor);
+        let choose_review = |rt: &mut Runtime<State>| {
+            tap(rt, trigger);
+            let option = rt
+                .elements()
+                .into_iter()
+                .find(|el| {
+                    !el.exiting
+                        && el.role == "option"
+                        && el.path.contains("session-worktree")
+                        && el
+                            .label
+                            .as_deref()
+                            .is_some_and(|label| label.starts_with("review · "))
+                })
+                .and_then(|el| el.key)
+                .expect("session placement option");
+            tap(rt, &option);
+        };
+        choose_review(&mut rt);
+        if placement == "busy" {
+            wait(
+                &mut rt,
+                "busy family refusal leaves the original placement usable",
+                |rt| {
+                    rt.state.screen.launcher().unwrap().error
+                        == Some("sessionList.worktreeMove.error")
+                        && crate::git::can_place(&rt.state)
+                },
+            );
+            assert!(visible_text(&rt, trigger, "synthetic · main"));
+            choose_review(&mut rt);
         }
-        wait(&mut rt, "linked transcript remounted", |rt| {
-            rt.find(&reading.0).is_some()
+        wait(&mut rt, "family placement settled", |rt| {
+            crate::workspace::active_session(&rt.state) == Some("ses_existing")
+                && if unconfirmed {
+                    crate::git::placement_unconfirmed(&rt.state)
+                } else {
+                    rt.state.phase == Phase::Ready && visible_text(rt, trigger, "review · ")
+                }
         });
-        super::recovery::check_anchor(&rt, &reading);
+        if !unconfirmed {
+            wait(
+                &mut rt,
+                "placed transcript restores its visible anchor",
+                |rt| {
+                    rt.elements().into_iter().any(|row| {
+                        !row.exiting
+                            && row.visible[3] > 0.0
+                            && row.path.ends_with(&format!("/{}", anchor.0))
+                            && (row.rect[1] - anchor.1).abs() < 0.5
+                    })
+                },
+            );
+            super::recovery::check_anchor(&rt, &anchor);
+        }
+        if unconfirmed {
+            assert!(visible_text(&rt, trigger, "synthetic · main"));
+            rt.update(crate::send);
+        }
+        assert_eq!(rt.state.draft.text, "keep this draft across placement");
+        if unconfirmed {
+            rt.update(|s, tx| crate::launcher::choose(s, "ses_child".into(), tx));
+            wait(&mut rt, "hold covers another member of the family", |rt| {
+                crate::workspace::active_session(&rt.state) == Some("ses_child")
+                    && crate::git::placement_unconfirmed(&rt.state)
+            });
+            type_text(&mut rt, "composer", "child draft");
+            rt.update(crate::send);
+            assert_eq!(rt.state.draft.text, "child draft");
+            tap(&mut rt, "placement-retry");
+            wait(
+                &mut rt,
+                "complete inventory and fresh activity lift the hold",
+                |rt| !crate::git::placement_unconfirmed(&rt.state),
+            );
+            assert_eq!(rt.state.draft.text, "child draft");
+            wait(
+                &mut rt,
+                "placement selector available after reconciliation",
+                |rt| crate::git::can_place(&rt.state),
+            );
+            tap(&mut rt, trigger);
+            assert!(rt.elements().into_iter().any(|el| {
+                !el.exiting
+                    && el.role == "option"
+                    && el.path.contains("session-worktree")
+                    && el
+                        .label
+                        .as_deref()
+                        .is_some_and(|label| label.starts_with("review · "))
+            }));
+        }
+        println!(
+            "{{\"type\":\"worktree-placement-proof\",\"draftRetained\":true,\"unconfirmed\":{unconfirmed}}}"
+        );
+    } else {
+        rt.update(|s, tx| crate::launcher::choose(s, "ses_another".into(), tx));
+        wait(&mut rt, "linked conversation bound", |rt| {
+            workspace::active_session(&rt.state) == Some("ses_another")
+                && rt.state.phase == Phase::Ready
+        });
+        rt.set_viewport((1100.0, 920.0), 1.0);
+        rt.frame(1.0 / 60.0);
+        tap_mode(&mut rt, 0);
+        wait(&mut rt, "linked Workspace row", |rt| {
+            rt.find(&eye).is_some() && rt.state.messages.len() == 50
+        });
+        rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 1600.0));
+        for _ in 0..12 {
+            rt.frame(1.0 / 60.0);
+        }
+        let reading = super::recovery::anchor(&rt);
+        let open = |rt: &mut Runtime<State>| {
+            let (x, y) = rt.find(&eye).unwrap();
+            rt.pointer_move(x, y);
+            rt.frame(1.0 / 60.0);
+            tap(rt, &eye);
+            wait(rt, "linked file replaces the transcript", |rt| {
+                rt.find("file-editor").is_some() && rt.find("history").is_none()
+            });
+        };
+        for close in ["file-close", eye.as_str(), "Escape"] {
+            open(&mut rt);
+            if close == "Escape" {
+                rt.key(rune::KeyEvent {
+                    key: rune::Key::Escape,
+                    mods: Default::default(),
+                });
+            } else {
+                tap(&mut rt, close);
+            }
+            wait(&mut rt, "linked transcript remounted", |rt| {
+                rt.find(&reading.0).is_some()
+            });
+            super::recovery::check_anchor(&rt, &reading);
+        }
+        open(&mut rt);
+        wait(&mut rt, "linked editor", |rt| {
+            rt.find("file-editor").is_some()
+                && rt
+                    .state
+                    .files
+                    .as_ref()
+                    .is_some_and(|files| files.document.edit().text.trim() == "git-panel initial")
+        });
+        let workspace = rt
+            .state
+            .files
+            .as_ref()
+            .unwrap()
+            .reader
+            .preview()
+            .unwrap()
+            .workspace_id
+            .clone();
+        let tab = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+        rt.update(|s, _| {
+            let files = s.files.as_mut().unwrap();
+            let scope = files.document.scope();
+            files
+                .document
+                .input(scope)
+                .replace_text("unsaved linked draft");
+            files.document.changed(scope);
+        });
+        assert!(rt.state.documents.has_tab_edits(&tab));
+        tap(&mut rt, "right-panel-toggle");
+        println!(
+            "{}",
+            serde_json::json!({"type":"files-evacuation","workspace":workspace})
+        );
+        std::io::stdout().flush().unwrap();
+        wait(
+            &mut rt,
+            "move closes the reader before checkout removal",
+            |rt| rt.state.phase == Phase::Failed && !crate::files::has_preview(&rt.state),
+        );
+        assert!(rt.state.documents.has_tab_edits(&tab));
+        println!("{{\"type\":\"files-reader-closed\"}}");
+        std::io::stdout().flush().unwrap();
+        let mut receipt = String::new();
+        std::io::stdin().read_line(&mut receipt).unwrap();
+        assert_eq!(receipt.trim(), "removed");
+        rt.update(|s, tx| crate::launcher::choose(s, "ses_another".into(), tx));
+        wait(&mut rt, "evacuated session rebound at root", |rt| {
+            rt.state.phase == Phase::Ready
+                && rt.state.files.as_ref().is_some_and(|files| {
+                    codenomad_client::same_server_path(
+                        files.tree.directory(),
+                        &std::env::var("RUNE_TEST_FOLDER").unwrap(),
+                    )
+                })
+        });
+        assert!(!crate::files::has_preview(&rt.state));
+        assert!(rt.state.documents.has_tab_edits(&tab));
     }
-    open(&mut rt);
-    wait(&mut rt, "linked editor", |rt| {
-        rt.find("file-editor").is_some()
-            && rt
-                .state
-                .files
-                .as_ref()
-                .is_some_and(|files| files.document.edit().text.trim() == "git-panel initial")
-    });
-    let workspace = rt
-        .state
-        .files
-        .as_ref()
-        .unwrap()
-        .reader
-        .preview()
-        .unwrap()
-        .workspace_id
-        .clone();
-    let tab = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
-    rt.update(|s, _| {
-        let files = s.files.as_mut().unwrap();
-        let scope = files.document.scope();
-        files
-            .document
-            .input(scope)
-            .replace_text("unsaved linked draft");
-        files.document.changed(scope);
-    });
-    assert!(rt.state.documents.has_tab_edits(&tab));
-    tap(&mut rt, "right-panel-toggle");
-    println!(
-        "{}",
-        serde_json::json!({"type":"files-evacuation","workspace":workspace})
-    );
-    std::io::stdout().flush().unwrap();
-    wait(
-        &mut rt,
-        "move closes the reader before checkout removal",
-        |rt| rt.state.phase == Phase::Failed && !crate::files::has_preview(&rt.state),
-    );
-    assert!(rt.state.documents.has_tab_edits(&tab));
-    println!("{{\"type\":\"files-reader-closed\"}}");
-    std::io::stdout().flush().unwrap();
-    let mut receipt = String::new();
-    std::io::stdin().read_line(&mut receipt).unwrap();
-    assert_eq!(receipt.trim(), "removed");
-    rt.update(|s, tx| crate::launcher::choose(s, "ses_another".into(), tx));
-    wait(&mut rt, "evacuated session rebound at root", |rt| {
-        rt.state.phase == Phase::Ready
-            && rt.state.files.as_ref().is_some_and(|files| {
-                codenomad_client::same_server_path(
-                    files.tree.directory(),
-                    &std::env::var("RUNE_TEST_FOLDER").unwrap(),
-                )
-            })
-    });
-    assert!(!crate::files::has_preview(&rt.state));
-    assert!(rt.state.documents.has_tab_edits(&tab));
     println!("{{\"type\":\"git-panel-proof\",\"mounted\":true}}");
 }
 

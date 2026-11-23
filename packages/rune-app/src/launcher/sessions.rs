@@ -229,6 +229,7 @@ pub fn can_change_session(s: &State) -> bool {
         && crate::workspace::input_ready(s)
         && !crate::agent::navigation_blocked(s)
 }
+
 pub(super) fn can_rebind(s: &State, id: &str) -> bool {
     !s.screen.is_launcher()
         && s.phase == Phase::Failed

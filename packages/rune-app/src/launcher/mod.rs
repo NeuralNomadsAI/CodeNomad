@@ -1,6 +1,7 @@
 //! One serialized opening action at a time; HTTP never runs on the UI thread.
 mod connection;
 pub(crate) mod linked;
+pub(crate) mod placement;
 mod projects;
 #[cfg(target_arch = "wasm32")]
 mod reopen;
@@ -18,6 +19,7 @@ use crate::{
 };
 use codenomad_client::{Receiver, bounded, runtime::Instant};
 pub use connection::connect;
+pub(crate) use placement::place;
 pub(crate) use projects::set_project;
 pub use projects::{choose_project, open, restore};
 #[cfg(target_arch = "wasm32")]
@@ -72,6 +74,9 @@ enum Reply {
     Selected(Vec<String>, Option<Selection>, Option<u64>),
     #[cfg(target_arch = "wasm32")]
     Reopened(crate::workspace::opening::Opening, Backend, String, String),
+    Placed(Backend, String, String, bool, bool),
+    PlacementUnconfirmed(crate::git::PlacementHold),
+    PlacementReconciled(Backend, String, String, crate::git::PlacementHold),
 }
 type Selection = (Backend, String, Option<usize>, Instant, String);
 enum Restored {
@@ -328,12 +333,37 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         Ok(Reply::Reopened(opening, backend, title, slug)) => {
             reopen::apply(s, opening, backend, title, &slug)
         }
+        Ok(Reply::Placed(backend, title, slug, confirmed, attempted)) => {
+            if selected.as_deref() == Some(backend.session.as_str()) {
+                l.error = (!confirmed).then_some("sessionList.worktreeMove.error");
+                crate::workspace::schedule_catalogue(s);
+                if attempted
+                    || crate::git::placement(s) != Some(slug.as_str())
+                    || s.phase == Phase::Failed
+                {
+                    bind(s, backend, title, None, &slug, tx);
+                }
+            }
+        }
+        Ok(Reply::PlacementUnconfirmed(family)) => {
+            l.error = Some("sessionList.worktreeMove.error");
+            crate::git::hold_placement(s, family);
+            crate::workspace::schedule_catalogue(s);
+        }
+        Ok(Reply::PlacementReconciled(backend, title, slug, family)) => {
+            crate::git::release_placement(s, &backend.base, &family);
+            crate::workspace::schedule_catalogue(s);
+            if crate::git::placement(s) != Some(slug.as_str()) || s.phase == Phase::Failed {
+                bind(s, backend, title, None, &slug, tx);
+            }
+        }
         Err(error) => {
             let key = match error.to_string().as_str() {
                 "rune.connect_error" => "rune.connect_error",
                 "rune.list_error" => "rune.list_error",
                 "rune.create_error" => "rune.create_error",
                 "rune.restore_error" => "rune.restore_error",
+                "sessionList.worktreeMove.error" => "sessionList.worktreeMove.error",
                 _ => "rune.open_error",
             };
             if key == "rune.create_error" {
