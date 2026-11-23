@@ -1,6 +1,6 @@
 import { compareEvents, createOrderedMissionFold, orderedMissionLookups, type MissionEvent } from "./model"
 import type { NativeJournalRange } from "../opencode/missions/native-journal-range"
-import { cleanupReceiptID, documentCleanupReceiptID, isCleanupReceipt, isDocumentCleanupReceipt,
+import { cleanupObjective, cleanupReceiptID, documentCleanupReceiptID, isCleanupReceipt, isDocumentCleanupReceipt,
   hasInvalidCleanupHistory, projectMissionCleanups } from "./cleanup-projection"
 
 /** Keep only references used by the project index, not historical bodies. */
@@ -47,7 +47,7 @@ export async function foldJournalRange(range: NativeJournalRange, missionID: str
       if (ref) references.push(ref)
       if ((event.type === "mission.updated" || event.type === "mission.prepared" || event.type === "mission.revised")
         && event.objective !== undefined) {
-        objective = { ...event, objective: event.objective.slice(0, 240), notes: undefined }
+        objective = { ...event, objective: cleanupObjective(event.objective), notes: undefined }
       } else if (event.type === "mission.deleted") {
         if (objective) { cleanupEvents.push(objective); objective = undefined }
         cleanupEvents.push(event)
@@ -64,7 +64,7 @@ export async function foldJournalRange(range: NativeJournalRange, missionID: str
     related = reports = new Map()
   }, (_, creation) => {
     created = creation !== undefined
-    if (creation) cleanupEvents.push({ ...creation, objective: creation.objective.slice(0, 240), notes: undefined })
+    if (creation) cleanupEvents.push({ ...creation, objective: cleanupObjective(creation.objective), notes: undefined })
     fold = createOrderedMissionFold({ created: creation, readEvent: id => related.get(id),
       readReport: id => { const event = reports.get(id); return event?.type === "task.reported" ? event : undefined },
       onTask: (key, id) => taskSources.set(key, id),
