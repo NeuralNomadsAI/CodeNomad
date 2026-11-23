@@ -122,3 +122,10 @@ test("one flag read bounds its expanded text and references", async () => {
   await assert.rejects(inline(config(9, "big")), /unreadable/, "a small config repeating a large reference")
   await assert.rejects(inline(config(65, "small")), /unreadable/, "too many references")
 })
+test("environment substitutions count against the read budget in bytes", async () => {
+  const env = { OPENCODE_CONFIG_CONTENT: `{"experimental":{"automations":false},"a":[${Array.from({ length: 10 }, () => '"{env:BIG}"').join(",")}]}`,
+    BIG: "é".repeat(512 * 1024) }
+  await assert.rejects(nativeAutomationsSetting([{ type: "document", info: {} } as any], "/work", { env, readText: async () => "" }), /unreadable/,
+    "ten 1 MiB (UTF-8) values in a compact config")
+  assert.equal((await nativeAutomationsSetting([{ type: "document", info: {} } as any], "/work", { env: { ...env, BIG: "x" }, readText: async () => "" })).enabled, false)
+})

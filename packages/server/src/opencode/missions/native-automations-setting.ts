@@ -18,7 +18,8 @@ export type NativeAutomationsSetting = {
 }
 type Env = Readonly<Record<string, string | undefined>>
 export type NativeAutomationsSources = { env: Env; readText(file: string): Promise<string>; budget?: Budget }
-/** One flag read inspects at most this much text, references included; beyond it the setting is unknown. */
+/** One flag read inspects at most this many bytes of documents and substituted values, and this many
+ * references; beyond them the setting is unknown. */
 type Budget = { bytes: number; references: number }
 const BUDGET_BYTES = 8 * 1024 * 1024, BUDGET_REFERENCES = 64
 const spend = (sources: NativeAutomationsSources, bytes: number, references = 0) => {
@@ -53,7 +54,9 @@ const defaults: NativeAutomationsSources = { env: process.env, readText: readBou
 async function substitute(text: string, directory: string, sources: NativeAutomationsSources) {
   const env = (escape: boolean) => text.replace(/\{env:([^}]+)\}/g, (_, name: string) => {
     const value = sources.env[name] || ""
-    return escape ? JSON.stringify(value).slice(1, -1) : value
+    const replacement = escape ? JSON.stringify(value).slice(1, -1) : value
+    spend(sources, Buffer.byteLength(replacement))
+    return replacement
   })
   const files = async (input: string) => {
     let out = "", cursor = 0
@@ -66,7 +69,7 @@ async function substitute(text: string, directory: string, sources: NativeAutoma
       spend(sources, 0, 1)
       const content = await sources.readText(resolved).catch(() => "")
       const escaped = JSON.stringify(content.trim()).slice(1, -1)
-      spend(sources, escaped.length)
+      spend(sources, Buffer.byteLength(escaped))
       out += escaped
     }
     return out + input.slice(cursor)
@@ -115,7 +118,7 @@ export async function nativeAutomationsSetting(entries: readonly ConfigEntry[], 
     if (value !== undefined && typeof value !== "boolean") throw new Error("Native automations setting invalid")
     // Inline `{file:}` references resolve from the Location, as OpenCode resolves them.
     const text = entry.path ? await sources.readText(entry.path) : entry === inlineEntry ? inlineText! : undefined
-    if (text !== undefined) spend(sources, text.length)
+    if (text !== undefined) spend(sources, Buffer.byteLength(text))
     const legacy = text !== undefined && !managedPreferences(text)
       && await legacyAutomationsOff(text, entry.path ? path.dirname(entry.path) : directory, sources)
     const deciding = !decided && (value !== undefined || legacy)

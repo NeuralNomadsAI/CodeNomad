@@ -55,9 +55,10 @@ Missions schedules qualify the consumed Automation API, effective automations
 setting and retained plugin/provider bundle independently of general runtime admission.
 The setting is top-level `automations` (on by default, highest document wins) or, on
 runtimes whose flag resolver still lists it, `experimental.automations`. On top-level
-runtimes `missions/native-automations-setting.ts` keeps a saved legacy OFF (local
-JSON/JSONC documents and inline config, decoded with OpenCode's substitution, and
-`-automations` in `OPENCODE_FLAGS`) unless a newer top-level choice above it decides;
+runtimes `missions/native-automations-setting.ts` keeps Missions schedules off for
+`-automations` or `-schedules` in `OPENCODE_FLAGS`, whatever the documents say, and for a
+saved legacy OFF in local JSON/JSONC documents or inline config (decoded with OpenCode's
+substitution) unless a top-level choice in a higher document decides;
 managed preference plists and remote well-known configuration are not inspected, and a
 source it cannot read fails the read closed. Contracts: [native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integration-qualification)
 and [transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md). Recognition uses the
