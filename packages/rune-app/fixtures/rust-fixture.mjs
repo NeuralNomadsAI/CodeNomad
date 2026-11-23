@@ -20,7 +20,8 @@ const session = 'ses_rune_synthetic'
 const code = 'fn main() {\n    println!("Rune · Code Nomad");\n}'
 const record = {id:session,projectID:'global',location:{directory:project},time:{created:1},title:'Synthetic Rune'}
 const fresh = process.argv.includes('--fresh-probe')
-const slash = process.argv.includes('--probe-slash')
+const history = process.argv.includes('--prompt-history')
+const slash = history || process.argv.includes('--probe-slash')
 const attachments = process.argv.includes('--probe-attachments')
 const bytes = Buffer.from('Rune attachment fixture 🦀\r\n')
 const capture = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aN0AAAAASUVORK5CYII=','base64')
@@ -148,14 +149,30 @@ try {
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await fetch(`${origin}/api/workspaces`,{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({path:project})})
   const workspace=await opened.json();assert.equal(opened.status,201,JSON.stringify(workspace))
+  const instance = `${origin}/api/storage/instances/${workspace.id}`
+  const agentModelSelections = { build: { providerId: 'fixture', modelId: 'fixture' } }
+  if(history) {
+    const seed = await fetch(instance, {method:'PUT', headers:{'content-type':'application/json',cookie}, body:JSON.stringify({messageHistory:[],agentModelSelections})})
+    assert.equal(seed.status,204)
+  }
   for(const end=Date.now()+10000;upstreamStreams.size===0;){assert(Date.now()<end,'Rust event bridge');await new Promise(r=>setTimeout(r,50))}
   const args=process.argv.slice(2)
-  const runeArgs=fresh?['--probe-fresh']:args.includes('--window')?args.filter(arg=>arg!=='--window'):args.length?args:['--probe-contract']
-  child=spawn(clientBinary,runeArgs,{
-    cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,
-      RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0'},
-  })
-  result=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+  const runeArgs=history?['--probe-slash']:fresh?['--probe-fresh']:args.includes('--window')?args.filter(arg=>arg!=='--window'):args.length?args:['--probe-contract']
+  const run = (stage = {}) => {
+    child=spawn(clientBinary,runeArgs,{
+      cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,
+        RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:fresh?'1':'0',...stage},
+    })
+    return new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
+  }
+  result=await run(history?{RUNE_PROMPT_HISTORY_STAGE:'write'}:{})
+  if(history) {
+    assert.equal(result,0)
+    const stored = await fetch(instance, {headers:{cookie}})
+    assert.equal(stored.status,200)
+    assert.deepEqual(await stored.json(), {messageHistory:['/review résumé 🦀'],agentModelSelections})
+    result=await run({RUNE_PROMPT_HISTORY_STAGE:'read'})
+  }
   if(attachments&&result===0) {
     child=spawn(clientBinary,runeArgs,{
       cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,

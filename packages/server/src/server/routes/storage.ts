@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify"
 import { z } from "zod"
-import { InstanceStore } from "../../storage/instance-store"
+import { HISTORY_ENTRY_BYTES, InstanceStore } from "../../storage/instance-store"
 import { EventBus } from "../../events/bus"
 import { ModelPreferenceSchema } from "../../config/schema"
 import type { InstanceData } from "../../api-types"
@@ -55,6 +55,23 @@ export function registerStorageRoutes(app: FastifyInstance, deps: RouteDeps) {
     } catch (error) {
       reply.code(400)
       return { error: error instanceof z.ZodError ? "Invalid instance data" : error instanceof Error ? error.message : "Failed to save instance data" }
+    }
+  })
+
+  app.post<{ Params: { id: string } }>("/api/storage/instances/:id", async (request, reply) => {
+    const { id } = request.params
+    const workspace = deps.workspaceManager.get(id)
+    if (!workspace) return reply.code(404).send({ error: "Not found" })
+    const text = (request.body as { text?: unknown } | null)?.text
+    if (typeof text !== "string" || !text || Buffer.byteLength(text) > HISTORY_ENTRY_BYTES) {
+      return reply.code(400).send({ error: "Invalid prompt history entry" })
+    }
+    try {
+      const data = await deps.instanceStore.appendHistory(workspace.path, text)
+      deps.eventBus.publish({ type: "instance.dataChanged", instanceId: id, data })
+      return reply.code(204).send()
+    } catch {
+      return reply.code(503).send({ error: "Storage unavailable" })
     }
   })
 

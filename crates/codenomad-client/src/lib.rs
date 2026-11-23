@@ -17,6 +17,7 @@ pub mod missions;
 pub mod prompt;
 pub mod prompt_catalogue;
 mod prompt_command;
+pub mod prompt_history;
 mod prompt_receipt;
 pub mod recovery;
 pub mod runtime;

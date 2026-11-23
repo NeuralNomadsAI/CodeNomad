@@ -69,6 +69,8 @@ Prompt forwarding keeps native fields (`text`, `files`, `agents`, `skills`, `met
 
 Slash commands retain native `name`, `text`, delivery and attachment fields inside the 1 MiB mutation bound. Sends read the profile environment at admission, preserve native session ownership and use the same validated connection for the environment and input writes. `bench/compare.mjs command-admission` exercises these checks without a model or OpenCode process.
 
+`POST /api/storage/instances/:id` prepends one nonempty `text` of up to 128 KiB to the open project's `messageHistory`. It preserves model selections and other fields, retaining up to 100 entries under the 8 MiB document limit.
+
 Prompt and command sends accept sessions in existing subfolders of the opened workspace or a live linked checkout. The proxy verifies the physical directory and native checkout registration before updating the environment and forwarding the input.
 
 Known divergence: when a platform package does not match its registry integrity, the TypeScript server installs it anyway through `@opencode/cli`'s postinstall fallback; Rust refuses it (`bench/opencode-install.mjs`). OpenCode 1.x npm replacement is not ported: such an installation is refused.

@@ -9,10 +9,11 @@ export async function longPaste(page, messages) {
   const initial = 'avant retirer après'
   const token = 'avant [pasted #9] après'
   const expectDraft = value => page.waitForFunction(text => document.activeElement?.value === text, value)
+  const present = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
   await field.fill(initial)
   await expectDraft(initial)
   await field.evaluate(el => el.setSelectionRange(6, 13))
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  await present()
   assert(await field.evaluate((el, {text, png}) => {
     const clipboardData = new DataTransfer()
     clipboardData.setData('text/plain', text)
@@ -42,6 +43,7 @@ export async function longPaste(page, messages) {
   await expectDraft('nouveau brouillon')
   const recall = name => page.getByRole('button', {name: messages[`promptInput.history.${name}AriaLabel`], exact:true})
   const press = async name => {
+    await present()
     const {x, y, width, height} = await recall(name).boundingBox()
     await page.mouse.click(x + width / 2, y + height / 2)
   }
@@ -60,7 +62,7 @@ export async function longPaste(page, messages) {
   assert.equal(await sent.count(), 1)
   await chip.waitFor({state: 'detached'})
   await refused.waitFor({state: 'detached'})
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  await present()
   const group = await page.getByRole('group', {name: messages['rune.prompt'], exact:true}).boundingBox()
   await page.mouse.click(group.x + group.width / 2, group.y + 24)
   await expectDraft('nouveau brouillon')
