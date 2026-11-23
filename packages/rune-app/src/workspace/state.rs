@@ -7,7 +7,7 @@ mod panel_state;
 mod strip;
 
 pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
-#[cfg(test)]
+#[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub(crate) use panel_state::set_files_tab;
 pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,

@@ -37,7 +37,7 @@ pub fn files_tab(s: &State) -> bool {
     right_panel_tab(s) == RightPanelTab::Files
 }
 
-#[cfg(test)]
+#[cfg(any(test, all(feature = "test-support", not(target_arch = "wasm32"))))]
 pub fn set_files_tab(s: &mut State, files: bool) {
     set_right_panel_tab(
         s,
