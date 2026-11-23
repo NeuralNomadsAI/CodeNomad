@@ -6,7 +6,7 @@ import { deferToolMedia, wantsDeferredMedia } from "../../opencode/session-media
 import { awaitSessionMedia } from "../../opencode/session-media-fetch"
 import type { HistoryRouteDeps } from "./session-history"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
-import { hasOnlyUserFileReferences, readInlineUserFile, USER_FILES_REFERENCE, userFileDigest } from "../../opencode/user-file-reference"
+import { hasOnlyUserFileReferences, readInlineUserFile, USER_FILES_REFERENCE, userFileDigest } from "../../opencode/session-pruning/user-file-reference"
 
 // The native SDK throws the declared RPC error body as the error's own fields.
 function isMethodNotFound(error: unknown) {

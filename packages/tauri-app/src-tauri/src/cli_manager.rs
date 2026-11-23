@@ -471,12 +471,10 @@ fn navigate_main(manager: &CliProcessManager, generation: u64, app: &AppHandle, 
         log_line(&format!("navigating main to {display}"));
         if let Ok(parsed) = Url::parse(&final_url) {
             let current = manager.clone();
-            let navigate = manager.clone();
             app.state::<crate::local_windows::LocalWindows>()
                 .set_backend_target(Some(final_url));
             for record in app.state::<crate::local_windows::LocalWindows>().records() {
                 let current = current.clone();
-                let navigate = navigate.clone();
                 let parsed = parsed.clone();
                 let label = record.label.clone();
                 let target_label = label.clone();
@@ -487,18 +485,10 @@ fn navigate_main(manager: &CliProcessManager, generation: u64, app: &AppHandle, 
                     Some(parsed.clone()),
                     move || current.is_current_generation(generation),
                     move |app| {
-                        navigate
-                            .with_current_generation(generation, || {
-                                app.get_webview(&target_label)
-                                    .ok_or_else(|| {
-                                        "local window not found for CLI navigation".to_string()
-                                    })?
-                                    .navigate(parsed)
-                                    .map_err(|err| {
-                                        format!("failed to navigate local window to CLI URL: {err}")
-                                    })
-                            })
-                            .unwrap_or_else(|| Err("discarded stale CLI navigation".to_string()))
+                        app.get_webview(&target_label)
+                            .ok_or_else(|| "local window not found for CLI navigation".to_string())?
+                            .navigate(parsed)
+                            .map_err(|err| format!("failed to navigate local window to CLI URL: {err}"))
                     },
                 );
             }
@@ -916,9 +906,27 @@ impl CliProcessManager {
     }
 
     pub fn start(&self, app: AppHandle, dev: bool) -> anyhow::Result<()> {
+        self.start_checked(app, dev, None)
+    }
+
+    pub(crate) fn start_checked(
+        &self,
+        app: AppHandle,
+        dev: bool,
+        stopped_generation: Option<u64>,
+    ) -> anyhow::Result<()> {
         let _lifecycle = self.lifecycle.lock();
-        self.accepting_spawns.store(true, Ordering::SeqCst);
-        let generation = self.advance_generation();
+        let generation = {
+            let _authority = self.generation_authority.lock();
+            crate::shutdown::with_navigation_authority(&app, || {
+                if stopped_generation.is_some_and(|expected| !self.generation_matches(expected)) {
+                    return Err(anyhow::anyhow!("CLI restart was superseded"));
+                }
+                self.accepting_spawns.store(true, Ordering::SeqCst);
+                Ok(self.generation.fetch_add(1, Ordering::SeqCst) + 1)
+            })
+            .ok_or_else(|| anyhow::anyhow!("Application shutdown is in progress"))??
+        };
         crate::remote_dictation::revoke(&app, None);
         *self.bootstrap_token.lock() = None;
         *self.local_access.lock() = None;
@@ -947,7 +955,11 @@ impl CliProcessManager {
 
     pub fn stop(&self) -> anyhow::Result<()> {
         self.accepting_spawns.store(false, Ordering::SeqCst);
-        let generation = self.advance_generation();
+        let generation = {
+            let _authority = self.generation_authority.lock();
+            self.accepting_spawns.store(false, Ordering::SeqCst);
+            self.generation.fetch_add(1, Ordering::SeqCst) + 1
+        };
         *self.bootstrap_token.lock() = None;
         *self.local_access.lock() = None;
         let _lifecycle = self.lifecycle.lock();
@@ -960,6 +972,10 @@ impl CliProcessManager {
     }
 
     pub(crate) fn stop_until(&self, deadline: Instant) -> anyhow::Result<()> {
+        self.stop_until_generation(deadline).map(|_| ())
+    }
+
+    pub(crate) fn stop_until_generation(&self, deadline: Instant) -> anyhow::Result<u64> {
         self.accepting_spawns.store(false, Ordering::SeqCst);
         let Some(generation) = self.advance_generation_until(deadline) else {
             return Err(anyhow::anyhow!(
@@ -991,7 +1007,7 @@ impl CliProcessManager {
         }
         self.stop_tracked_child(Some(deadline))?;
         self.reset_stopped_status();
-        Ok(())
+        Ok(generation)
     }
 
     fn advance_generation(&self) -> u64 {
@@ -1004,7 +1020,10 @@ impl CliProcessManager {
             return None;
         }
         let _authority = self.generation_authority.try_lock_until(deadline)?;
-        (Instant::now() < deadline).then(|| self.generation.fetch_add(1, Ordering::SeqCst) + 1)
+        (Instant::now() < deadline).then(|| {
+            self.accepting_spawns.store(false, Ordering::SeqCst);
+            self.generation.fetch_add(1, Ordering::SeqCst) + 1
+        })
     }
 
     pub(crate) fn generation(&self) -> u64 {
@@ -1160,6 +1179,7 @@ impl CliProcessManager {
         status.port = None;
         status.url = None;
         status.error = None;
+        drop(status);
         *self.local_access.lock() = None;
         self.stdin.lock().take();
     }

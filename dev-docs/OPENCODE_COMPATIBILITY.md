@@ -27,17 +27,19 @@ explicit incompatible identity.
 
 Minimum and recommended runtime **2.3.2** (`runtime-support.ts`), with **2.3.2**
 client/schema/plugin pins and the matching `effect` **4.1.0**. CodeNomad
-qualifies only the 2.3 subagent contract: every subagent call returns at once
+qualifies background subagent delivery: every subagent call returns at once
 (`metadata.status: "running"`) and the child reports to its parent through
-synthetic `<subagent sessionID state …>` messages, one per idle period, tagged
+synthetic `<subagent sessionID state …>` or `<background-result kind="subagent" sessionID state …>`
+messages, one per idle period, tagged
 `running` while background work remains (the subagent card in `TRANSCRIPT.md`,
 `scripts/test-missions-native-trajectory.mjs`,
 `scripts/test-subagent-nesting-native.mjs`). The minimum also carries the image tool contract of
 upstream [#60258](https://github.com/anomalyco/opencode/pull/60258), consumed by
 the Images gallery, the Design agent and skills and the Images settings: one
-name, `experimental_image_generate`, for the tool, its permission action, its job
-type and its completion notices' `metadata.source` (`IMAGE_TOOL` in
-`session-pruning/assets-gallery-proof.ts`), and the tool offered while an image
+name per runtime, `experimental_image_generate` or `generate_image`, for the tool, its
+permission action, its job type and its completion notices' `metadata.source`
+(`isImageTool` in `session-pruning/assets-gallery-proof.ts` recognizes both; the
+Design agent names `generate_image` with the other as fallback), and the tool offered while an image
 model is available unless `experimental.image_generate` is `false`
 (`image-settings.ts` reads it that way). Notices wrap their text in
 `<image id="…" state="…">`; the gallery reads the `Saved image: <path> (` line.
@@ -50,9 +52,16 @@ undergo authenticated contract recognition; missing canonical APIs, session
 environment or the replay shape give a concrete reason. OpenCode reads older
 stored data.
 
-Missions schedules qualify the consumed Automation API, effective
-`experimental.automations` flag and retained plugin/provider bundle independently
-of general runtime admission: [native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integration-qualification)
+Missions schedules qualify the consumed Automation API, effective automations
+setting and retained plugin/provider bundle independently of general runtime admission.
+The setting is top-level `automations` (on by default, highest document wins) or, on
+runtimes whose flag resolver still lists it, `experimental.automations`. On top-level
+runtimes `missions/native-automations-setting.ts` keeps Missions schedules off for
+`-automations` or `-schedules` in `OPENCODE_FLAGS`, whatever the documents say, and for a
+saved legacy OFF in local JSON/JSONC documents or inline config (decoded with OpenCode's
+substitution) unless a top-level choice in a higher document decides;
+managed preference plists and remote well-known configuration are not inspected, and a
+source it cannot read fails the read closed. Contracts: [native contracts](MISSIONS_NATIVE_CONTRACTS.md#schedule-integration-qualification)
 and [transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md). Recognition uses the
 consumed capabilities, including on future versions. Schedule delivery qualification
 uses the minimum/latest CI matrix, including cold scheduled passage admission with
