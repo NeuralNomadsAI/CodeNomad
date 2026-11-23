@@ -163,13 +163,21 @@ export async function historySearch(page, messages, touch) {
       await input.fill('Ex')
       await Promise.all([read('ranked'),input.fill('Existing')])
       await first.waitFor()
+      // The inter-session preview adds content; return to the original mobile viewport.
+      await resize(viewport)
     }
     const preview=page.waitForResponse(response=>response.url().endsWith('/session/ses_another/message/message-00000'))
     await press(search,'Existing ranked destination')
     assert((await preview).ok())
     assert.equal(windows,0,'Preview must not read a transcript window')
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
-    const [destination]=await Promise.all([read('window'),press(search,'history.openSession')])
+    const open=search.getByRole('button',{name:messages['history.openSession'],exact:true})
+    if(touch){
+      const bounds=await search.boundingBox(), box=await open.boundingBox()
+      assert(bounds&&box&&box.y>=bounds.y&&box.y+box.height<=bounds.y+bounds.height,
+        'The open action must be inside the search window before the tap')
+    }
+    const [destination]=await Promise.all([read('window'),activate(open)])
     const requested=destination.request().postDataJSON()
     assert.deepEqual(requested,{sessionID:'ses_another',target:{kind:'around',messageID:'message-00000'}})
     await page.getByRole('heading',{name:'Another session',exact:true}).waitFor()
