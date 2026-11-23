@@ -538,6 +538,33 @@ test("web previews reach Remote Control through their capability while the host 
   assert.deepEqual(upstream.requests, [["GET", "/page", undefined], ["POST", "/form", undefined], ["GET", "/assets/probe.json", undefined], ["GET", "/remote-pair", undefined], ["GET", "/;version=1", undefined]])
 })
 
+test("a shared HTTP listener preserves same-origin previews and admits external HTTPS entry links", async t => {
+  const host = "direct.fixture.test"
+  const origin = `https://${host}`
+  const { app, authManager, manager, previewManager } = await startRemoteSurface(t, { allowedOrigins: [origin], configureApp(app) {
+    app.addHook("onRequest", (request, _reply, done) => {
+      const socket = request.raw.socket
+      socket.destroy ??= () => { socket.emit("close"); return socket }
+      done()
+    })
+  } })
+  const upstream = await startPreviewUpstream(t)
+  const { token } = previewManager.create("session", upstream.url)
+  const referer = `http://${host}/previews/${token}/page`
+  const session = `${authManager.getCookieName()}=${authManager.createSession("codenomad").id}`
+  const direct = manager.exchangeDirectPairing(new URL(manager.createDirectPairing(origin).url).hash.slice(1), origin, undefined)
+  assert.ok(direct)
+  for (const url of ["/remote-pair", "/;version=1"]) {
+    const http = await app.inject({ url, headers: { host, referer, cookie: session, "sec-fetch-site": "same-origin" } })
+    assert.deepEqual(http.json(), { ok: true })
+    const entryResponse: { statusCode: number; headers: Record<string, unknown> } = await app.inject({
+      url, headers: { host, referer, cookie: `__Host-codenomad_device=${direct.token}`,
+      accept: "text/html", "sec-fetch-site": "cross-site" } })
+    assert.equal(entryResponse.statusCode, 200)
+    assert.match(String(entryResponse.headers["content-type"]), /^text\/html/)
+  }
+})
+
 test("web previews served through Remote Control stay on the preview origin", async (t) => {
   const { previewManager, target, code } = await startRemoteSurface(t)
   const cookie = await pair(target(), code)
