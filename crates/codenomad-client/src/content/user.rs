@@ -16,7 +16,7 @@ pub struct File {
     pub reference: Option<Reference>,
     pub picture: Option<PictureSource>,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Reference {
     pub message: String,
     pub ordinal: usize,
@@ -93,8 +93,10 @@ pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
                 Some("uri") => source["uri"]
                     .as_str()
                     .map(|uri| PictureSource::uri(mime, uri)),
-                Some("inline" | "file") => file["data"].as_str()
-                    .or_else(|| source["data"].as_str()).map(PictureSource::inline),
+                Some("inline" | "file") => file["data"]
+                    .as_str()
+                    .or_else(|| source["data"].as_str())
+                    .map(PictureSource::inline),
                 _ => None,
             };
             picture

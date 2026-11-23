@@ -1,5 +1,9 @@
 //! Shared composer and transcript attachment chip.
-use crate::{Length, Space, layout::{self, Layout}, tokens};
+use crate::{
+    Length, Space,
+    layout::{self, Layout},
+    tokens,
+};
 use rune::{El, Icon, TextStyle, icon, row, text};
 
 pub fn picture(image: Option<&rune::Image>, label: &str, mime: &str, error: Option<&str>) -> El {

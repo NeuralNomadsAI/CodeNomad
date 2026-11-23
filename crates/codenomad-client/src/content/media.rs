@@ -15,7 +15,7 @@ pub struct Picture {
     pub source: PictureSource,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PictureSource {
     Inline(Arc<str>),
     Http(Arc<str>),
@@ -126,7 +126,9 @@ fn passive_raster(bytes: &[u8], claimed: &str) -> bool {
         || (matches!(kind, Ico) && claimed.eq_ignore_ascii_case("image/vnd.microsoft.icon")))
         && images::can_decode(bytes)
         && imagesize::blob_size(bytes).ok().is_some_and(|size| {
-            size.width > 0 && size.height > 0 && size.width.saturating_mul(size.height) <= 8 * 1024 * 1024
+            size.width > 0
+                && size.height > 0
+                && size.width.saturating_mul(size.height) <= 8 * 1024 * 1024
         })
 }
 

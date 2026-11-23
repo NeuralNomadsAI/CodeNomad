@@ -9,6 +9,7 @@ use rune::{El, Image, ImageCache};
 use rune_theme_codenomad::{attachment, catalogue};
 use std::{
     collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
     rc::{Rc, Weak},
     sync::Arc,
 };
@@ -120,7 +121,7 @@ pub(super) fn tool<'a>(
     key: &'a str,
     pictures: &'a [crate::content::Picture],
 ) -> impl Iterator<Item = El> + 'a {
-    pictures.iter().enumerate().map(|(i, picture)| {
+    pictures.iter().enumerate().map(move |(i, picture)| {
         let name = picture.name.clone().unwrap_or_else(|| {
             catalogue::format(
                 locale(),
@@ -139,6 +140,9 @@ pub(super) fn tool<'a>(
 }
 
 pub(super) fn view(s: &State, key: String, source: &PictureSource, name: &str, mime: &str) -> El {
+    let mut stamp = DefaultHasher::new();
+    (source, mime).hash(&mut stamp);
+    let key = format!("{key}-{:x}", stamp.finish());
     let entry = s
         .transcript_display
         .pictures
@@ -208,8 +212,12 @@ fn inline_user_and_tool_images_render_while_active_content_stays_a_label() {
     let mut state = init();
     state.phase = Phase::Ready;
     state.messages = vec![user.into(), tool.into()];
-    let mut rt = Runtime::new(state, |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
-        (960.0, 900.0), Env::new(false, 1.0));
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| crate::strings::with_locale("en", || crate::view(s, cx)),
+        (960.0, 900.0),
+        Env::new(false, 1.0),
+    );
     rt.frame(0.0);
     let initial = rt.accessibility_json().to_string();
     assert!(initial.contains("Notes.txt") && !initial.contains("Tool sample"));
@@ -218,11 +226,16 @@ fn inline_user_and_tool_images_render_while_active_content_stays_a_label() {
     rt.pointer_up(x, y);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     loop {
-        rt.update(|s, tx| { if super::super::events::poll_chat(s, 4) { tx.instant(); } });
+        rt.update(|s, tx| {
+            if super::events::poll_chat(s, 4) {
+                tx.instant();
+            }
+        });
         rt.frame(1.0 / 60.0);
         let tree = rt.accessibility_json().to_string();
         if tree.contains("Unable to display this image.")
-            && tree.matches("\"role\":\"img\"").count() >= 2 {
+            && tree.matches("\"role\":\"image\"").count() >= 2
+        {
             assert!(tree.contains("Attached sample") && tree.contains("Tool sample"));
             break;
         }

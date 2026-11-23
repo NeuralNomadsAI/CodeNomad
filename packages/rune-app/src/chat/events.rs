@@ -204,6 +204,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::HistoryInvalidated => {
                 s.transcript_display.children.clear();
+                s.transcript_display.pictures.clear();
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();
@@ -215,6 +216,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::WorkspaceMissing => {
                 s.transcript_display.children.clear();
+                s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -279,6 +281,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
                 s.transcript_display.children.clear();
+                s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
