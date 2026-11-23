@@ -244,6 +244,12 @@ pub fn suspend() {
             })
         },
     );
+    rt.update(|s, _| {
+        s.agent
+            .as_mut()
+            .unwrap()
+            .select_request("permission-suspended".into())
+    });
     assert!(
         rt.accessibility_json()
             .to_string()

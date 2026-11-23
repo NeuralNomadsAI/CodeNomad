@@ -561,9 +561,10 @@ fn settings_renewed_connection_authenticates_git_reads_with_the_new_cookie() {
         renewed.workspace.clone_from(&previous.workspace);
         renewed.session.clone_from(&previous.session);
         let login = renewed.clone();
+        let (signed_in, receipt) = bounded(1);
         platform::spawn(async move {
-            login
-                .sign_in("operator", "new-fixture-password")
+            signed_in
+                .send(login.sign_in("operator", "new-fixture-password").await)
                 .await
                 .unwrap();
         });
@@ -575,6 +576,7 @@ fn settings_renewed_connection_authenticates_git_reads_with_the_new_cookie() {
                 "Set-Cookie: fixture=renewed; Path=/\r\n",
             )
             .await;
+        receipt.recv().await.unwrap().unwrap();
         attest(&listener, &renewed, "fixture-profile").await;
         let mut root = crate::init();
         crate::git::connected(&mut root, &previous);
@@ -604,9 +606,10 @@ fn closing_project_without_conversation_uses_the_renewed_cookie() {
         attest(&listener, &previous, "fixture-profile").await;
         let renewed = Backend::unauthenticated(&previous.base).unwrap();
         let login = renewed.clone();
+        let (signed_in, receipt) = bounded(1);
         platform::spawn(async move {
-            login
-                .sign_in("operator", "new-fixture-password")
+            signed_in
+                .send(login.sign_in("operator", "new-fixture-password").await)
                 .await
                 .unwrap();
         });
@@ -614,6 +617,7 @@ fn closing_project_without_conversation_uses_the_renewed_cookie() {
             .await
             .reply_with_headers(200, json!({}), "Set-Cookie: fixture=renewed; Path=/\r\n")
             .await;
+        receipt.recv().await.unwrap().unwrap();
         attest(&listener, &renewed, "fixture-profile").await;
         let mut root = crate::init();
         let mut launcher = crate::launcher::Launcher::fixture();
