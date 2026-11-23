@@ -154,17 +154,39 @@ fn the_toolbar_drags_the_search_window_and_resize_keeps_its_close_button_visible
         }
     };
     settle(&mut rt);
-    rt.update(|s, _| state(s).open = true);
+    rt.update(|s, tx| {
+        state(s).open = true;
+        state(s).query.focused = true;
+        tx.focus_when_shown(FOCUS, true);
+    });
     settle(&mut rt);
+    let focused = |rt: &Runtime<State>| {
+        rt.elements()
+            .iter()
+            .any(|el| el.path.contains(FIELD) && el.focused)
+    };
+    assert!(focused(&rt), "the query has focus before dragging");
     let before = rt.presented("history-search").unwrap().0;
-    let (x, y) = rt.find("history-search-drag").unwrap();
+    let [left, top, _, height] = rt.presented("history-search-drag").unwrap().0;
+    let (x, y) = (left + 8., top + height / 2.);
     rt.pointer_down(x, y);
     rt.pointer_move(x + 40., y + 80.);
     rt.frame(0.016);
+    assert!(
+        state(&mut rt.state).drag.is_some(),
+        "the title receives the drag"
+    );
+    assert!(focused(&rt), "dragging must not blur the query field");
     rt.pointer_up(x + 40., y + 80.);
     settle(&mut rt);
+    rt.key(KeyEvent {
+        key: Key::Text("still focused".into()),
+        mods: Mods::default(),
+    });
+    rt.frame(0.016);
     let dragged = rt.presented("history-search").unwrap().0;
     let model = state(&mut rt.state);
+    assert_eq!(model.query.text, "still focused");
     assert!(
         dragged[0] > before[0] + 30. && dragged[1] > before[1] + 70.,
         "before={before:?} after={dragged:?} frame={:?} position={:?}",

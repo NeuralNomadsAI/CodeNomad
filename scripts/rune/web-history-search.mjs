@@ -1,12 +1,40 @@
 import assert from 'node:assert/strict'
 import {installPngReader} from './png-pixels.mjs'
 
-export async function historySearch(page, messages) {
-  const press=(root,key)=>root.getByRole('button',{name:messages[key]??key,exact:true}).click({force:true})
+export async function historySearch(page, messages, touch) {
+  const viewport=page.viewportSize()
+  const cdp=touch&&await page.context().newCDPSession(page)
+  if(touch)await page.setViewportSize({width:844,height:390})
+  const activate=async locator=>{
+    if(!touch)return locator.click({force:true})
+    await locator.waitFor()
+    const box=await locator.boundingBox()
+    assert(box)
+    await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
+  }
+  const press=(root,key)=>activate(root.getByRole('button',{name:messages[key]??key,exact:true}))
   await press(page,'messageSection.search.ariaLabel')
   const search=page.getByRole('region',{name:messages['messageSection.search.ariaLabel']})
   const input=page.locator('textarea').and(page.getByRole('textbox',{name:messages['messageSection.search.ariaLabel'],exact:true}))
   await input.waitFor({state:'attached'})
+  await input.fill('Ex')
+  await search.getByRole('status').filter({
+    hasText:messages['messageSection.search.count.minChars'].replace('{count}','3'),
+  }).waitFor()
+  const focusLabel=label=>page.waitForFunction(expected=>{
+    const active=document.activeElement
+    const id=active?.getAttribute('aria-activedescendant')
+    return (id?document.getElementById(id):active)?.getAttribute('aria-label')===expected
+  },label)
+  const scopeLabel=`${messages['history.scope']}: ${messages['history.session']}`
+  for(const label of [messages['messageSection.search.closeAriaLabel'],messages['history.technical'],scopeLabel]){
+    await page.keyboard.press('Shift+Tab')
+    await focusLabel(label)
+  }
+  for(const label of [messages['history.technical'],messages['messageSection.search.closeAriaLabel'],messages['messageSection.search.ariaLabel']]){
+    await page.keyboard.press('Tab')
+    await focusLabel(label)
+  }
   const read=(route)=>page.waitForResponse(response=>response.url().endsWith(`/session-history/${route}`)
     && (route==='window'||response.request().postDataJSON()?.query==='Existing'))
   const [literal]=await Promise.all([read('query'),input.fill('Existing')])
@@ -15,21 +43,36 @@ export async function historySearch(page, messages) {
   const title=search.getByText(messages['messageSection.search.ariaLabel'],{exact:true})
   const start=await title.boundingBox()
   assert(start)
-  await page.mouse.move(start.x+8,start.y+start.height/2)
-  await page.mouse.down()
-  // Move the window away from the transcript area sampled for active-match ink.
+  const x=start.x+8,y=start.y+start.height/2
   const height=page.viewportSize().height
-  await page.mouse.move(start.x+48,height-20,{steps:5})
-  await page.mouse.up()
+  const distance=touch?28:height-20-y
+  if(touch){
+    const event=(type,dx,dy)=>cdp.send('Input.dispatchTouchEvent',{
+      type,touchPoints:type==='touchEnd'?[]:[{x:x+dx,y:y+dy}],
+    })
+    await event('touchStart',0,0)
+    await event('touchMove',10,14)
+    await event('touchMove',40,distance)
+    assert(await input.evaluate(el=>el===document.activeElement),'Dragging must keep the real search textarea focused')
+    await event('touchEnd')
+  }else{
+    // Move the window away from the transcript area sampled for active-match ink.
+    await page.mouse.move(x,y)
+    await page.mouse.down()
+    await page.mouse.move(x+40,y+distance,{steps:5})
+    assert(await input.evaluate(el=>el===document.activeElement),'Dragging must keep the real search textarea focused')
+    await page.mouse.up()
+  }
   await title.evaluate((element,start)=>new Promise((resolve,reject)=>{
     const until=performance.now()+3000
     const sample=now=>{
-      if(element.getBoundingClientRect().top>start+80)resolve()
+      if(element.getBoundingClientRect().top>start.y+start.moved)resolve()
       else if(now>=until)reject(Error('Dragging the toolbar must move the search window'))
       else requestAnimationFrame(sample)
     }
     requestAnimationFrame(sample)
-  }),start.y)
+  }),{y:start.y,moved:touch?10:80})
+  assert(await input.evaluate(el=>el===document.activeElement),'Releasing the toolbar must keep the query editable')
   let windows=0
   const count=request=>{if(request.url().endsWith('/session-history/window'))windows++}
   page.on('request',count)
@@ -37,7 +80,7 @@ export async function historySearch(page, messages) {
     await press(search,'Existing answer')
     assert.equal(windows,0,'A resident result needs no window')
     const technical=search.getByRole('checkbox',{name:messages['history.technical'],exact:true})
-    await Promise.all([read('query'),technical.click({force:true})])
+    await Promise.all([read('query'),activate(technical)])
     assert.equal(await technical.getAttribute('aria-checked'),'true')
     await installPngReader(page)
     for(const [hit,body] of [
@@ -46,6 +89,7 @@ export async function historySearch(page, messages) {
     ]){
       await press(search,hit)
       await page.getByText(body,{exact:true}).and(page.locator('p, pre, code')).first().waitFor()
+      if(touch)continue
       await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
       const screenshot=await page.screenshot()
       const active=await page.evaluate(async png=>{
@@ -59,16 +103,43 @@ export async function historySearch(page, messages) {
     }
     assert.equal(windows,0,'Revealing technical matches must also stay local')
     // Rune exposes the select trigger as a button in the unfocused web mirror.
-    const picker=search.getByRole('button',{name:`${messages['history.scope']}: ${messages['history.session']}`,exact:true})
-    await picker.click({force:true})
+    const picker=search.getByRole('button',{name:scopeLabel,exact:true})
+    await activate(picker)
     const workspace=page.getByRole('option',{name:messages['history.workspace'],exact:true})
-    const [ranked]=await Promise.all([read('ranked'),workspace.click({force:true})])
+    const [ranked]=await Promise.all([read('ranked'),activate(workspace)])
     if(!ranked.ok())assert.fail(`Ranked broker status ${ranked.status()}: ${await ranked.text()}`)
     await search.getByRole('button',{name:'Existing ranked destination',exact:true}).waitFor()
     const first=search.getByRole('button',{name:'Existing ranked destination',exact:true})
     await search.locator('[aria-description="Another session · history-fixture"]').and(first).waitFor()
     assert.deepEqual(await search.getByRole('button').filter({hasText:/^Existing /}).allTextContents(),
       ['Existing ranked destination','Existing answer'])
+    if(touch){
+      await page.setViewportSize({width:844,height:245})
+      const close=search.getByRole('button',{name:messages['messageSection.search.closeAriaLabel'],exact:true})
+      const more=search.getByRole('button',{name:messages['history.furtherBack'],exact:true})
+      const short=await search.boundingBox(), toolbar=await close.boundingBox()
+      assert(short&&toolbar&&short.height<245)
+      const bottom=short.y+short.height
+      const inside=async locator=>{
+        const box=await locator.boundingBox()
+        return box&&box.height>0&&box.y+box.height<=bottom
+      }
+      assert(!await inside(more),'The continuation starts below the short window')
+      await cdp.send('Input.synthesizeScrollGesture',{
+        x:short.x+short.width/2,y:bottom-18,yDistance:-350,gestureSourceType:'touch',speed:800,
+      })
+      await more.waitFor()
+      assert(await inside(more),'Scrolling the window body reveals the continuation')
+      assert.deepEqual(await close.boundingBox(),toolbar,'The toolbar stays fixed while the body scrolls')
+      const [older]=await Promise.all([read('ranked'),activate(more)])
+      assert(older.ok())
+      assert.equal(older.request().postDataJSON().cursor,(await ranked.json()).cursor)
+      await search.getByRole('button',{name:'Existing older result',exact:true}).waitFor()
+      await page.setViewportSize({width:844,height:390})
+      await input.fill('Ex')
+      await Promise.all([read('ranked'),input.fill('Existing')])
+      await first.waitFor()
+    }
     const preview=page.waitForResponse(response=>response.url().endsWith('/session/ses_another/message/message-00000'))
     await press(search,'Existing ranked destination')
     assert((await preview).ok())
@@ -80,5 +151,8 @@ export async function historySearch(page, messages) {
     await page.getByRole('heading',{name:'Another session',exact:true}).waitFor()
     await page.getByRole('paragraph').filter({hasText:'Existing ranked destination'}).waitFor()
     assert.equal(await search.count(),0,'The previous search belongs to its source view')
-  }finally{page.off('request',count)}
+  }finally{
+    page.off('request',count)
+    if(touch)await page.setViewportSize(viewport)
+  }
 }

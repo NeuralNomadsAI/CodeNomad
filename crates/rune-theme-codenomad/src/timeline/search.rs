@@ -266,6 +266,7 @@ pub fn drag_title<S: 'static>(
         .center_y()
         .pad(Space::Xs)
         .child(rune::text(label).text_role(crate::TextRole::Label))
+        .preserve_focus_on_press(true)
         .touch_drags_at_once()
         .on_drag(move |s, gesture, tx| {
             let at = [gesture.dx, gesture.dy];
@@ -286,14 +287,19 @@ pub fn toggle<S: 'static>(label: &str, press: impl Fn(&mut S, &mut rune::Tx) + '
         .build(crate::kit(layout::dark()))
 }
 
-pub fn results() -> El {
+pub fn body() -> El {
     rune::col()
         .w_full()
-        .max_h(18.0 * tokens(layout::dark()).number("font-size-base").px())
+        .min_h(0.0)
         .shrink()
+        .separate(Space::Sm)
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+}
+
+pub fn results() -> El {
+    rune::col().w_full()
 }
 
 #[cfg(test)]

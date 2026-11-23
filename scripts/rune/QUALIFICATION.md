@@ -50,7 +50,7 @@ Le raccord conversation est couvert par `cargo test --locked -p codenomad-rune-a
 
 `node packages/rune-app/fixtures/launcher-fixture.mjs --web-touch-history` envoie le toucher, le glissement et le relâchement par le canal CDP tactile. Le banc retient la réponse du lecteur pendant le retour élastique et vérifie un seul curseur `before` ainsi que la disparition du statut après admission.
 
-La recherche utilise le même banc Rust, via `node packages/rune-app/fixtures/launcher-fixture.mjs --web-history-search` avec les routes `query` et `ranked`. Le scénario vérifie un résultat résident sans fenêtre, le rang d'un résultat d'une autre session, sa lecture unitaire et son ouverture au moyen d'une fenêtre `around`. Les tests `codenomad-client search::tests` couvrent les continuations et le redémarrage classé.
+La recherche utilise le même banc Rust, via `node packages/rune-app/fixtures/launcher-fixture.mjs --web-history-search` avec les routes `query` et `ranked`. Le scénario vérifie le focus pendant le glissement, l'ordre de Maj+Tab, le seuil de requête, un résultat résident sans fenêtre et l'ouverture d'une autre session par une fenêtre `around` après lecture unitaire. Sur mobile en paysage, il réduit la hauteur et fait défiler le corps jusqu'à une continuation classée sans déplacer la barre. Les tests `codenomad-client search::tests` couvrent aussi le redémarrage classé.
 
 Le banc Code Mode vérifie quatre écritures de 70 Kio, la relecture après une trame hors borne et l’actualisation du fil enfant sur la connexion d’origine :
 

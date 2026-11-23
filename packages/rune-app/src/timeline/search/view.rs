@@ -46,6 +46,7 @@ fn button(s: &State, id: &str, label: &str, f: impl Fn(&mut State, &mut Tx) + 's
 
 pub(crate) const HOST: &str = "history-search-host";
 const WINDOW: &str = "history-search";
+const BODY: &str = "history-search-body";
 
 fn drag(s: &mut State, gesture: search::WindowDrag, tx: &mut Tx) {
     let model = state(s);
@@ -120,7 +121,8 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
         },
     )
     .key("history-search-drag");
-    let preferences = layout::action_row()
+    let toolbar = layout::action_row()
+        .child(title)
         .child(search::build_scope(picker, layers))
         .child(
             search::technical(
@@ -134,17 +136,17 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                 }),
             )
             .key("history-search-technical"),
-        );
-    let toolbar = layout::action_row().child(title).child(
-        search::close(
-            t("messageSection.search.closeAriaLabel"),
-            screen::action_tx(&scope, |s, tx| {
-                close(s);
-                tx.focus("history-search-toggle", true);
-            }),
         )
-        .key("history-search-close"),
-    );
+        .child(
+            search::close(
+                t("messageSection.search.closeAriaLabel"),
+                screen::action_tx(&scope, |s, tx| {
+                    close(s);
+                    tx.focus("history-search-toggle", true);
+                }),
+            )
+            .key("history-search-close"),
+        );
     let change = screen::action_tx(&scope, super::query_changed);
     let input = layout::hinted_field(&model.query, t("messageSection.search.placeholder"))
         .label(t("messageSection.search.ariaLabel"))
@@ -169,16 +171,21 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
         })
         .build(field_kit(layout::dark()))
         .key(super::FIELD);
-    let header = layout::action_row().child(input.remaining());
-    let mut frame = search::panel()
-        .key(WINDOW)
-        .role("region")
-        .label_static(t("messageSection.search.ariaLabel"))
-        .drawn_rect_into(&model.frame.0)
-        .child(toolbar)
-        .child(preferences)
-        .child(header)
-        .children(model.page().filter(|p| !p.hits.is_empty()).map(|_| {
+    let len = model.text.encode_utf16().count();
+    let minimum = super::MIN_QUERY_UNITS;
+    let header =
+        layout::action_row()
+            .child(input.remaining())
+            .children((len > 0 && len < minimum).then(|| {
+                rune::text(catalogue::format(
+                    locale(),
+                    "messageSection.search.count.minChars",
+                    &[("count", &minimum.to_string())],
+                ))
+                .role("status")
+            }));
+    let mut frame = search::body().key(BODY).child(header).children(
+        model.page().filter(|p| !p.hits.is_empty()).map(|_| {
             layout::action_row()
                 .child(button(
                     s,
@@ -192,7 +199,8 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                     "messageSection.search.nextAriaLabel",
                     |s, tx| super::move_match(s, tx, true),
                 ))
-        }));
+        }),
+    );
     if model.flight.is_some() {
         frame = frame.child(rune::text(t("messageSection.search.searching")).role("status"));
     }
@@ -290,8 +298,8 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
             };
             let launch = s.screen.launcher();
             let groups = group_starts(&page.hits);
-            frame = frame.child(
-                search::results().children(page.hits.iter().enumerate().flat_map(|(i, hit)| {
+            frame = frame.child(search::results().children(
+                page.hits.iter().enumerate().flat_map(|(i, hit)| {
                     let group = format!("history-result-group-{}", groups[i]);
                     let header = (model.ranked && groups[i] == i)
                         .then(|| {
@@ -348,8 +356,8 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                     } else {
                         result.description_static(kind)
                     }))
-                })),
-            );
+                }),
+            ));
             if let Some(hit) = model.selected.and_then(|index| page.hits.get(index))
                 && s.transcript_display
                     .timeline
@@ -389,17 +397,26 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                     } else {
                         "history.more"
                     },
-                    move |s, _| {
+                    move |s, tx| {
                         super::clear_selection(s);
                         state(s).cursor = Some(cursor.clone());
                         state(s).run();
+                        tx.scroll_to_y(BODY, 0.);
                     },
                 ));
             }
         }
         _ => {}
     }
-    Some(frame)
+    Some(
+        search::panel()
+            .key(WINDOW)
+            .role("region")
+            .label_static(t("messageSection.search.ariaLabel"))
+            .drawn_rect_into(&model.frame.0)
+            .child(toolbar)
+            .child(frame),
+    )
 }
 
 pub(super) fn group_starts(hits: &[codenomad_client::search::Hit]) -> Vec<usize> {

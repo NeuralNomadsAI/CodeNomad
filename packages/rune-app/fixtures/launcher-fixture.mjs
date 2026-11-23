@@ -338,11 +338,15 @@ const upstream=createServer(async(req,res)=>{
       assert.equal(input.query,'Existing')
       const shape=(sessionID,excerpt)=>({sessionID,messageID:stores.get(sessionID).rows[sessionID==='ses_another'?0:1].id,
         role:'assistant',partIndex:0,kind:'text',excerpt,createdAt:100})
-      const hits=[shape('ses_another','Existing ranked destination'),shape('ses_existing','Existing answer')]
+      const continued=input.cursor!==undefined
+      if(continued)assert.equal(input.cursor,'fixture-ranked-continuation')
+      const hits=continued?[shape('ses_existing','Existing older result')]:
+        [shape('ses_another','Existing ranked destination'),shape('ses_existing','Existing answer')]
       const sessions=hits.map(({sessionID})=>({sessionID,directory:project,title:records.get(sessionID).title,
         scanned:1,candidates:1,judged:1,matchedMessages:1,tools:0,reasoning:0,skipped:0,prefilterBypassed:0}))
-      return json({output:{version:1,status:'ranked',scanned:2,candidates:2,judged:2,skipped:0,prefilterBypassed:0,
-        matchedSessions:2,capped:false,examinedBefore:0,cursor:null,exclusions:[],caps:[],hits,sessions}})
+      const count=hits.length
+      return json({output:{version:1,status:'ranked',scanned:count,candidates:count,judged:count,skipped:0,prefilterBypassed:0,
+        matchedSessions:count,capped:false,examinedBefore:0,cursor:continued?null:'fixture-ranked-continuation',exclusions:[],caps:[],hits,sessions}})
     }
     if(url.pathname==='/api/rpc/codenomad.session-pruning/outlinePreview'){
       const {input}=JSON.parse(raw), rows=stores.get(input.sessionID).rows
