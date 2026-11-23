@@ -35,6 +35,7 @@ pub(super) struct Window {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {
     General,
+    Conversation,
     OpenCode,
     Providers,
 }
@@ -183,8 +184,10 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
         let providers_label = t("settings.nav.providers");
+        let conversation_label = t("settings.nav.chat");
         let section = match s.section {
             Section::General => general_label,
+            Section::Conversation => conversation_label,
             Section::OpenCode => opencode_label,
             Section::Providers => providers_label,
         };
@@ -196,6 +199,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-general",
                     general_label,
                     s.section == Section::General,
+                ),
+                (
+                    "settings-conversation",
+                    conversation_label,
+                    s.section == Section::Conversation,
                 ),
                 (
                     "settings-opencode",
@@ -213,6 +221,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 s.contrast_help = false;
                 s.section = match key {
                     "settings-opencode" => Section::OpenCode,
+                    "settings-conversation" => Section::Conversation,
                     "settings-providers" => Section::Providers,
                     _ => Section::General,
                 };
@@ -245,6 +254,16 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         };
         let (key, controls) = match s.section {
             Section::OpenCode => ("opencode", opencode::view(s)),
+            Section::Conversation => (
+                "conversation",
+                super::conversation::row(
+                    &prefs,
+                    s.picker.get() == Some(Picker::Usage),
+                    &mut layers,
+                    |s: &mut Window, open| s.picker.set(open.then_some(Picker::Usage)),
+                    |s: &mut Window, mode| s.shared.borrow_mut().set_usage_visibility(mode),
+                ),
+            ),
             Section::General => (
                 "general",
                 general::view(s, &prefs, system_dark, system_more, &mut layers),

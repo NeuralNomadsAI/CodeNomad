@@ -24,6 +24,49 @@ pub(super) struct Preferences {
 }
 
 impl Preferences {
+    pub(super) fn usage_visibility(&self, pending: bool) -> &'static str {
+        let settings = self
+            .saved(Owner::Config)
+            .map(|data| &data["settings"])
+            .unwrap_or(&Value::Null);
+        let requested = |choice| {
+            (pending && !self.config.choice_failed(choice))
+                .then(|| self.config.requested(choice))
+                .flatten()
+        };
+        if !requested(Choice::UsageVisible).map_or_else(
+            || settings["showUsageMetrics"].as_bool() == Some(true),
+            |value| value == "on",
+        ) {
+            return "hidden";
+        }
+        match requested(Choice::UsageExpansion)
+            .or_else(|| settings["usageMetricsExpansion"].as_str())
+        {
+            Some("expanded") => "expanded",
+            Some("collapsed") => "collapsed",
+            _ if settings["toolCallExpansionDefaults"]["preset"] == "everything" => "expanded",
+            _ => "collapsed",
+        }
+    }
+
+    pub(super) fn set_usage_visibility(&mut self, mode: &'static str) {
+        if self.saved(Owner::Config).is_none()
+            || !self.can_retry()
+            || mode == self.usage_visibility(true)
+        {
+            return;
+        }
+        self.config.stage(
+            Choice::UsageVisible,
+            if mode == "hidden" { "off" } else { "on" },
+        );
+        if mode != "hidden" {
+            self.config.stage(Choice::UsageExpansion, mode);
+        }
+        self.revision += 1;
+    }
+
     pub(super) fn shortcut(&self, action: &str) -> Option<&[Value]> {
         self.config.snapshot.as_ref()?["settings"]["hotkeyOverrides"][action]
             .as_array()

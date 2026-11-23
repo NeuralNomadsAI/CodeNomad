@@ -1,4 +1,5 @@
 //! Shared token and cost chips for the transcript and Status.
+pub mod numbers;
 use crate::{
     Length, Space, TextRole, kit,
     layout::{self, Layout},

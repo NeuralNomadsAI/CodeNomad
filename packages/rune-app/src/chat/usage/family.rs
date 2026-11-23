@@ -1,7 +1,7 @@
 use crate::{
     State,
     backend::Backend,
-    content::{FAMILY_LIMIT, Family, FamilyChange, Usage},
+    content::{FAMILY_LIMIT, FamilyChange, FamilySnapshot, Usage},
 };
 use codenomad_client::{Receiver, Sender, bounded};
 
@@ -10,15 +10,16 @@ pub(super) const KEY: &str = "status-usage";
 #[derive(Default)]
 pub(crate) struct Totals {
     backend: Option<Backend>,
-    loaded: Option<Family>,
+    loaded: Option<FamilySnapshot>,
     read: Option<Read>,
     demanded: bool,
     dirty: bool,
+    pub(super) failed: bool,
 }
 
 struct Read {
     cancelled: Sender<()>,
-    result: Receiver<Option<Family>>,
+    result: Receiver<Option<FamilySnapshot>>,
     live: std::collections::HashMap<String, Usage>,
     stale: bool,
 }
@@ -34,6 +35,7 @@ impl Totals {
         self.loaded = None;
         self.demanded = false;
         self.dirty = false;
+        self.failed = false;
     }
 
     fn cancel(&mut self) {
@@ -60,7 +62,11 @@ impl Totals {
                         read.live.insert(id.clone(), usage);
                     }
                 }
-                if let Some(slot) = self.loaded.as_mut().and_then(|family| family.get_mut(&id)) {
+                if let Some(slot) = self
+                    .loaded
+                    .as_mut()
+                    .and_then(|family| family.members.get_mut(&id))
+                {
                     let changed = slot.usage != usage;
                     slot.usage = usage;
                     return changed;
@@ -73,8 +79,8 @@ impl Totals {
                         .as_ref()
                         .is_some_and(|b| parent.as_deref() == Some(b.session.as_str()))
                     || self.loaded.as_ref().is_some_and(|family| {
-                        family.contains_key(&id)
-                            || parent.is_some_and(|id| family.contains_key(&id))
+                        family.members.contains_key(&id)
+                            || parent.is_some_and(|id| family.members.contains_key(&id))
                     });
                 if relevant {
                     self.refresh();
@@ -88,9 +94,12 @@ impl Totals {
         &self,
         root: Usage,
         included: impl Fn(&str, &str) -> bool,
-    ) -> Option<Usage> {
-        let descendants = self.loaded.as_ref().filter(|family| !family.is_empty())?;
-        Some(descendants.values().fold(root, |total, member| {
+    ) -> Option<(Usage, bool)> {
+        let descendants = self
+            .loaded
+            .as_ref()
+            .filter(|family| !family.members.is_empty())?;
+        let total = descendants.members.values().fold(root, |total, member| {
             let mut usage = member.usage;
             if member
                 .model
@@ -100,7 +109,8 @@ impl Totals {
                 usage.cost = 0.0;
             }
             total.plus(usage)
-        }))
+        });
+        Some((total, descendants.complete))
     }
 
     pub(crate) fn poll(s: &mut State) -> bool {
@@ -130,16 +140,18 @@ impl Totals {
             .and_then(|read| read.result.try_recv().ok())
         {
             let read = family.read.take().expect("result belongs to a read");
-            if !read.stale
-                && let Some(mut next) = result
-            {
-                for (id, usage) in read.live {
-                    if let Some(slot) = next.get_mut(&id) {
-                        slot.usage = usage;
+            if !read.stale {
+                let mut result = result;
+                if let Some(next) = &mut result {
+                    for (id, usage) in read.live {
+                        if let Some(slot) = next.members.get_mut(&id) {
+                            slot.usage = usage;
+                        }
                     }
                 }
-                changed = family.loaded.as_ref() != Some(&next);
-                family.loaded = Some(next);
+                family.failed = result.is_none();
+                family.loaded = result;
+                changed = true;
             }
         }
         if family.read.is_none()
@@ -147,6 +159,8 @@ impl Totals {
             && let Some(backend) = family.backend.clone()
         {
             family.dirty = false;
+            family.failed = false;
+            changed = true;
             let (cancelled, cancel) = bounded(1);
             let (out, result) = bounded(1);
             let (reads, wake) = (s.reads.clone(), s.wake.clone());
@@ -171,6 +185,10 @@ impl Totals {
         }
         changed
     }
+
+    pub(super) fn loading(&self) -> bool {
+        self.read.is_some() || self.demanded && self.dirty
+    }
 }
 
 #[cfg(test)]
@@ -187,13 +205,18 @@ fn totals_include_the_root_once_and_replace_live_child_usage() {
     };
     let mut totals = Totals {
         demanded: true,
-        loaded: Some(Family::from([
-            ("child".into(), member(8, 0.25, None)),
-            (
-                "grandchild".into(),
-                member(13, 0.5, Some(("provider".into(), "included".into()))),
-            ),
-        ])),
+        loaded: Some(FamilySnapshot {
+            complete: false,
+            members: [
+                ("child".into(), member(8, 0.25, None)),
+                (
+                    "grandchild".into(),
+                    member(13, 0.5, Some(("provider".into(), "included".into()))),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        }),
         ..Totals::default()
     };
     let root = Usage {
@@ -202,18 +225,19 @@ fn totals_include_the_root_once_and_replace_live_child_usage() {
         ..Usage::default()
     };
     let included = |provider: &str, id: &str| provider == "provider" && id == "included";
-    let initial = totals.including(root, included).unwrap();
+    let (initial, complete) = totals.including(root, included).unwrap();
+    assert!(!complete, "partial snapshot keeps its marker");
     assert_eq!((initial.input, initial.cost), (71, 1.25));
     totals.event(FamilyChange::Usage {
         id: "unrelated".into(),
         usage: root,
     });
-    assert_eq!(totals.including(root, included), Some(initial));
+    assert_eq!(totals.including(root, included), Some((initial, false)));
     totals.event(FamilyChange::Usage {
         id: "child".into(),
         usage: member(16, 0.5, None).usage,
     });
-    let current = totals.including(root, included).unwrap();
+    let (current, _) = totals.including(root, included).unwrap();
     assert_eq!((current.input, current.cost), (79, 1.5));
     totals.event(FamilyChange::Membership {
         id: "new".into(),

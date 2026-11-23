@@ -10,6 +10,12 @@ pub const FAMILY_LIMIT: usize = 128;
 pub type Family = HashMap<String, FamilyMember>;
 
 #[derive(Debug, PartialEq)]
+pub struct FamilySnapshot {
+    pub members: Family,
+    pub complete: bool,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct FamilyMember {
     pub usage: Usage,
     pub model: Option<(String, String)>,
@@ -65,7 +71,7 @@ impl FamilyChange {
 
 impl Backend {
     /// Totals only: a native child-list limit and continuation are scoped to each parent.
-    pub async fn family_usage(&self) -> Result<Family> {
+    pub async fn family_usage(&self) -> Result<FamilySnapshot> {
         futures_lite::future::race(self.read_family_usage(), async {
             crate::runtime::sleep(crate::http::REQUEST_TIMEOUT).await;
             Err("session family timed out".into())
@@ -73,7 +79,7 @@ impl Backend {
         .await
     }
 
-    async fn read_family_usage(&self) -> Result<Family> {
+    async fn read_family_usage(&self) -> Result<FamilySnapshot> {
         if !valid_id(&self.session) {
             return Err("invalid session family root".into());
         }
@@ -101,7 +107,10 @@ impl Backend {
             loop {
                 requests += 1;
                 if requests > 2 * FAMILY_LIMIT {
-                    return Err("session family page budget reached".into());
+                    return Ok(FamilySnapshot {
+                        members,
+                        complete: false,
+                    });
                 }
                 let request = self.client.get(&url);
                 let request = if let Some(cursor) = &cursor {
@@ -115,14 +124,19 @@ impl Backend {
                     }
                 };
                 let page = read_json(request.send().await?.error_for_status()?).await?;
-                add_children(
+                if !add_children(
                     &page,
                     &parent,
                     project,
                     &self.session,
                     &mut members,
                     &mut next,
-                )?;
+                )? {
+                    return Ok(FamilySnapshot {
+                        members,
+                        complete: false,
+                    });
+                }
                 cursor = match &page["cursor"]["next"] {
                     Value::Null => break,
                     Value::String(value)
@@ -136,7 +150,10 @@ impl Backend {
                 };
             }
         }
-        Ok(members)
+        Ok(FamilySnapshot {
+            members,
+            complete: true,
+        })
     }
 }
 
@@ -147,7 +164,7 @@ fn add_children(
     root: &str,
     members: &mut Family,
     next: &mut VecDeque<String>,
-) -> Result<()> {
+) -> Result<bool> {
     let rows = page["data"]
         .as_array()
         .filter(|rows| rows.len() <= 100)
@@ -160,8 +177,11 @@ fn add_children(
         if id == root || child["parentID"] != parent || child["projectID"] != project {
             return Err("invalid session family relationship".into());
         }
-        if members.len() >= FAMILY_LIMIT || members.contains_key(id) {
-            return Err("session family budget or continuity lost".into());
+        if members.contains_key(id) {
+            return Err("session family continuity lost".into());
+        }
+        if members.len() >= FAMILY_LIMIT {
+            return Ok(false);
         }
         let model = &child["model"];
         let model = model["providerID"]
@@ -178,5 +198,49 @@ fn add_children(
         );
         next.push_back(id.into());
     }
-    Ok(())
+    Ok(true)
+}
+
+#[cfg(test)]
+#[test]
+fn a_large_family_preserves_the_bounded_prefix_as_partial() {
+    use serde_json::json;
+    let page = |start, count| {
+        json!({"data": (start..start + count).map(|i| json!({
+        "id":format!("child-{i}"), "parentID":"root","projectID":"project",
+        "tokens":{"input":1}
+    })).collect::<Vec<_>>()})
+    };
+    let mut members = Family::new();
+    let mut next = VecDeque::new();
+    assert!(
+        add_children(
+            &page(0, 100),
+            "root",
+            "project",
+            "root",
+            &mut members,
+            &mut next
+        )
+        .unwrap()
+    );
+    assert!(
+        !add_children(
+            &page(100, 30),
+            "root",
+            "project",
+            "root",
+            &mut members,
+            &mut next
+        )
+        .unwrap()
+    );
+    assert_eq!(members.len(), FAMILY_LIMIT);
+    assert_eq!(
+        members
+            .values()
+            .map(|member| member.usage.input)
+            .sum::<u64>(),
+        FAMILY_LIMIT as u64
+    );
 }

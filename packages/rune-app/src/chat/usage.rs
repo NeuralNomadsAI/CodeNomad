@@ -6,7 +6,10 @@ use crate::{
 };
 use rune::El;
 use rune_theme_codenomad::usage as theme;
-use rune_theme_codenomad::{Space, layout::Layout};
+use rune_theme_codenomad::{
+    Space,
+    layout::{self, Layout},
+};
 pub(crate) mod family;
 
 fn text_part(part: &Part) -> bool {
@@ -101,12 +104,16 @@ pub(crate) fn session(s: &State) -> Option<El> {
             false,
             included,
         ));
-    if s.transcript_display.toggled(family::KEY)
-        && let Some(total) = s
-            .transcript_display
-            .usage_family
-            .including(usage, |provider, id| agent.includes_cost(provider, id))
+    let totals = &s.transcript_display.usage_family;
+    if !s.transcript_display.toggled(family::KEY) {
+        return Some(panel);
+    }
+    if let Some((total, complete)) =
+        totals.including(usage, |provider, id| agent.includes_cost(provider, id))
     {
+        if !complete {
+            panel = panel.child(rune::text(t("contextUsagePanel.partialTotal")).role("status"));
+        }
         let tokens = [
             counter(t("contextUsagePanel.labels.totalInput"), total.input),
             counter(t("contextUsagePanel.labels.totalOutput"), total.output),
@@ -124,6 +131,21 @@ pub(crate) fn session(s: &State) -> Option<El> {
                         .into_iter()
                         .map(|(name, value, full)| theme::metric(name, &value, &full)),
                 ),
+        );
+    }
+    if totals.loading() {
+        panel = panel.child(rune::text(t("rune.loading")).role("status"));
+    } else if totals.failed {
+        panel = panel.child(
+            layout::action_row()
+                .child(rune::text(t("contextUsagePanel.totalUnavailable")).role("status"))
+                .child(layout::button(
+                    t("sessionList.loadError.retry"),
+                    false,
+                    screen::action(&s.input_scope, |s| {
+                        s.transcript_display.usage_family.refresh()
+                    }),
+                )),
         );
     }
     Some(panel)
@@ -172,9 +194,14 @@ fn disclosure(
         .map(|(label, _, full)| format!("{label}: {full}"))
         .collect::<Vec<_>>()
         .join(", ");
+    let accessible = if let Some(title) = title {
+        format!("{title}. {label}. {detail}")
+    } else {
+        format!("{label}. {detail}")
+    };
     theme::disclosure(
         &key,
-        &format!("{label}. {detail}"),
+        &accessible,
         title,
         expanded,
         entries
@@ -196,23 +223,17 @@ fn token(kind: &str, count: u64, session: bool) -> (&'static str, String, String
 }
 
 fn money(label: &'static str, cost: f64, session: bool) -> (&'static str, String, String) {
-    let value = if session || cost == 0.0 || cost >= 0.01 {
-        format!("${cost:.2}")
-    } else {
-        let decimals = (1.0 - cost.log10().floor()).clamp(2.0, 12.0) as usize;
-        format!("${cost:.*}", decimals)
-    };
+    let value = theme::numbers::usd(crate::strings::locale(), cost, !session);
     (label, value.clone(), value)
 }
 
 fn counter(label: &'static str, count: u64) -> (&'static str, String, String) {
-    let compact = match count {
-        1_000_000_000.. => format!("{:.1}B", count as f64 / 1e9),
-        1_000_000.. => format!("{:.1}M", count as f64 / 1e6),
-        1_000.. => format!("{}K", count.saturating_add(500) / 1000),
-        _ => count.to_string(),
-    };
-    (label, compact, count.to_string())
+    let locale = crate::strings::locale();
+    (
+        label,
+        theme::numbers::compact(locale, count),
+        theme::numbers::exact(locale, count),
+    )
 }
 
 #[cfg(test)]
@@ -280,5 +301,37 @@ fn token_line_counts_distinct_technical_rows_and_precedes_trailing_tools() {
         rt.accessibility_json()
             .to_string()
             .contains("Reasoning: 18")
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn status_tokens_accessible_name_contains_its_visible_heading() {
+    use rune::{Env, Runtime};
+    let mut rt = Runtime::new(
+        crate::init(),
+        |s, _| {
+            crate::strings::with_locale("en", || {
+                disclosure(
+                    s,
+                    family::KEY.into(),
+                    Usage {
+                        input: 1250,
+                        ..Usage::default()
+                    },
+                    true,
+                    false,
+                    false,
+                )
+            })
+        },
+        (600.0, 200.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    let value = rt.accessibility_json().to_string();
+    assert!(
+        value.contains("Tokens. ") && value.contains("Input: 1,250"),
+        "{value}"
     );
 }

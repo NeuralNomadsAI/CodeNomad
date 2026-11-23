@@ -362,3 +362,20 @@ fn settings_language_picker_opens_with_enter() {
             .contains("Français")
     );
 }
+
+#[test]
+fn conversation_preferences_show_the_tokens_choice_on_a_new_profile() {
+    let state = Window::default();
+    state.shared.borrow_mut().fixture();
+    let mut runtime = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    runtime.frame(0.0);
+    let (x, y) = runtime.find("settings-conversation").unwrap();
+    runtime.pointer_down(x, y);
+    runtime.pointer_up(x, y);
+    for _ in 0..8 {
+        runtime.frame(0.02);
+    }
+    let tree = runtime.accessibility_json();
+    let row = node(&tree, "usage-visibility-trigger").unwrap().to_string();
+    assert!(row.contains("Tokens") && row.contains("Hidden"), "{row}");
+}

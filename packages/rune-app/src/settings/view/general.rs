@@ -5,6 +5,7 @@ use rune_theme_codenomad::catalogue::LANGUAGE_NAMES;
 pub(super) enum Picker {
     Locale,
     Palette(bool),
+    Usage,
 }
 
 impl Window {
@@ -26,6 +27,7 @@ impl Picker {
         match self {
             Self::Locale => "locale",
             Self::Palette(_) => "palette",
+            Self::Usage => "usage-visibility",
         }
     }
 }

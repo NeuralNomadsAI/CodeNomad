@@ -63,8 +63,10 @@ async fn check(base: &str) -> Result<(), String> {
     if !initial.rows.is_empty() {
         return Err("child started before the live watch was verified".into());
     }
-    let family = observer.family_usage().await.map_err(|e| e.to_string())?;
-    if family.len() != 2
+    let snapshot = observer.family_usage().await.map_err(|e| e.to_string())?;
+    let family = snapshot.members;
+    if !snapshot.complete
+        || family.len() != 2
         || family["child"].usage.input != 8
         || family["grandchild"].usage.input != 13
     {

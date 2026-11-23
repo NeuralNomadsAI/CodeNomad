@@ -1,6 +1,6 @@
 use serde_json::Value;
 mod family;
-pub use family::{FAMILY_LIMIT, Family, FamilyChange, FamilyMember};
+pub use family::{FAMILY_LIMIT, Family, FamilyChange, FamilyMember, FamilySnapshot};
 
 /// Native counters and USD cost on an assistant step or session.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

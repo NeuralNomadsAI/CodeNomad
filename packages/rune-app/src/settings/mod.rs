@@ -1,4 +1,5 @@
 //! Preferences owns its native window; its confirmed host settings also feed the shell.
+mod conversation;
 #[cfg(not(target_arch = "wasm32"))]
 mod opencode;
 mod preferences;
@@ -24,6 +25,8 @@ pub(crate) struct Host {
     window: Option<(rune::WindowHandle, Rc<Cell<bool>>)>,
     #[cfg(target_arch = "wasm32")]
     web_providers: web_providers::Panel,
+    #[cfg(target_arch = "wasm32")]
+    web_usage: Option<bool>,
     #[cfg(target_arch = "wasm32")]
     contrast: Option<web_contrast::Watch>,
     #[cfg(target_arch = "wasm32")]
@@ -105,7 +108,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
         shared.palette(false).map_or("", |p| p.id),
         shared.palette(true).map_or("", |p| p.id),
         shared.contrast(),
-        usage_visibility(&shared),
+        shared.usage_visibility(false),
     ]);
     if s.settings.last_display.map(|last| last[5]) != display.map(|next| next[5]) {
         s.revision += 1;
@@ -125,24 +128,8 @@ pub(crate) fn poll(s: &mut State) -> bool {
     changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))
 }
 
-fn usage_visibility(prefs: &Preferences) -> &'static str {
-    use codenomad_client::settings::Owner::Config;
-    let Some(settings) = prefs.saved(Config).and_then(|value| value.get("settings")) else {
-        return "hidden";
-    };
-    if settings["showUsageMetrics"].as_bool() != Some(true) {
-        return "hidden";
-    }
-    match settings["usageMetricsExpansion"].as_str() {
-        Some("expanded") => "expanded",
-        Some("collapsed") => "collapsed",
-        _ if settings["toolCallExpansionDefaults"]["preset"] == "everything" => "expanded",
-        _ => "collapsed",
-    }
-}
-
 pub(crate) fn message_usage_visibility(s: &State) -> &'static str {
-    usage_visibility(&s.settings.shared.borrow())
+    s.settings.shared.borrow().usage_visibility(false)
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -278,7 +265,9 @@ pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<St
     render_with(cx, &prefs, more, |cx| {
         let body = view(cx);
         #[cfg(target_arch = "wasm32")]
-        if let Some(panel) = web_providers::view(s, &prefs) {
+        if let Some(panel) =
+            conversation::web_view(s, &prefs).or_else(|| web_providers::view(s, &prefs))
+        {
             use rune_theme_codenomad::layout::Layout;
             return rune::col()
                 .full_width()
@@ -320,7 +309,9 @@ pub(crate) fn entry() -> El {
     return rune_theme_codenomad::layout::button(strings::t("settings.title"), false, open)
         .key("open-preferences");
     #[cfg(target_arch = "wasm32")]
-    web_providers::entry()
+    rune_theme_codenomad::layout::action_row()
+        .child(web_providers::entry())
+        .child(conversation::web_entry())
 }
 
 pub(crate) fn matches_shortcut(

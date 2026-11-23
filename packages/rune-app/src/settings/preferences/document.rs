@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) enum Choice {
     Locale,
     Contrast,
+    UsageVisible,
+    UsageExpansion,
     Mode,
     Palette(bool),
 }
@@ -16,6 +18,8 @@ impl Choice {
         match self {
             Self::Locale => patch["settings"]["locale"] = json!(value),
             Self::Contrast => patch["settings"]["highContrast"] = json!(value),
+            Self::UsageVisible => patch["settings"]["showUsageMetrics"] = json!(value == "on"),
+            Self::UsageExpansion => patch["settings"]["usageMetricsExpansion"] = json!(value),
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
@@ -31,6 +35,8 @@ impl Choice {
         match self {
             Self::Locale => snapshot["settings"]["locale"] == value,
             Self::Contrast => snapshot["settings"]["highContrast"] == value,
+            Self::UsageVisible => snapshot["settings"]["showUsageMetrics"] == (value == "on"),
+            Self::UsageExpansion => snapshot["settings"]["usageMetricsExpansion"] == value,
             Self::Mode => appearance["mode"] == value,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
@@ -124,7 +130,10 @@ impl Document {
     }
 
     pub(super) fn stage(&mut self, choice: Choice, value: &'static str) {
-        if choice == Choice::Contrast {
+        if matches!(
+            choice,
+            Choice::Contrast | Choice::UsageVisible | Choice::UsageExpansion
+        ) {
             self.write.failed.remove(&choice);
         }
         self.write.requested.insert(choice, value);

@@ -98,7 +98,7 @@ try {
     const accessibility = JSON.stringify(data.accessibility)
     for (const label of ['Results', 'Grep return', 'demo.rs']) assert(accessibility.includes(label))
     assert(accessibility.includes('Check the output') && !accessibility.includes('Verify the sample trace.'))
-    assert(accessibility.includes('1250') && !accessibility.includes('Reasoning: 92'))
+    assert(accessibility.includes('1,250') && !accessibility.includes('Reasoning: 92'))
     const after = path.join(out, `rune-${theme}-read.json`)
     await capture(theme, ['--script', script, '--tree', after])
     const interacted = JSON.stringify(JSON.parse(await readFile(after, 'utf8')).accessibility)
