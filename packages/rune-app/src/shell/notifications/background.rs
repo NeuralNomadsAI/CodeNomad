@@ -65,6 +65,18 @@ impl Cue {
 }
 
 impl Background {
+    fn next_waiting(&mut self) -> Option<Cue> {
+        // Keep compaction publication in stream order without blocking other sessions.
+        let position = self.waiting.iter().position(|cue| {
+            cue.category != Category::Sessions
+                || !self.reading.iter().any(|(active, _)| {
+                    active.category == Category::Sessions
+                        && active.target.same_event_scope(&cue.target)
+                })
+        })?;
+        self.waiting.remove(position)
+    }
+
     fn observe(&mut self, s: &mut State, hint: AttentionHint) {
         let Some((target, project, backend)) =
             crate::workspace::workspace_notification(s, &hint.workspace, &hint.session)
@@ -74,7 +86,7 @@ impl Background {
         let (category, id, request) = match hint.event {
             WorkspaceEvent::SessionCompacted { id } => (Category::Sessions, id, None),
             event @ WorkspaceEvent::OpenCodeNotice { .. } => {
-                super::messages::native(s, backend, target, project, event);
+                super::messages::native(s, backend, target, event);
                 return;
             }
             WorkspaceEvent::SessionRequest { form, id } => (
@@ -151,9 +163,11 @@ pub(super) fn poll(s: &mut State) {
             return match crate::settings::notification_route(s, &cue.backend, cue.category) {
                 crate::settings::ConfirmedRoute::Refreshing => Delivery::WaitingForSettings,
                 crate::settings::ConfirmedRoute::Ready(route, allow_focused)
-                    if route.system && (allow_focused || !s.notifications.focused()) =>
+                    if route.screen
+                        || route.history
+                        || route.system && (allow_focused || !s.notifications.focused()) =>
                 {
-                    Delivery::Body(String::new())
+                    Delivery::Body(String::new(), route, allow_focused)
                 }
                 _ => Delivery::Suppressed,
             };
@@ -177,12 +191,12 @@ pub(super) fn poll(s: &mut State) {
             Ok(Some(label)) => match policy(s, &cue) {
                 Delivery::WaitingForSettings => {
                     if pending.waiting.len() >= RETAINED {
-                        pending.waiting.pop_front();
+                        pending.waiting.pop_back();
                     }
-                    pending.waiting.push_back(cue);
+                    pending.waiting.push_front(cue);
                 }
                 Delivery::Suppressed => {}
-                Delivery::Body(_) if cue.category == Category::Sessions => {
+                Delivery::Body(..) if cue.category == Category::Sessions => {
                     super::messages::enqueue(
                         s,
                         cue.backend,
@@ -191,9 +205,11 @@ pub(super) fn poll(s: &mut State) {
                         super::messages::compaction(&label),
                         Some(cue.target),
                         Some(cue.id),
+                        false,
+                        super::in_app::BubbleOptions::Compaction,
                     );
                 }
-                Delivery::Body(_) => deliver(
+                Delivery::Body(..) => deliver(
                     s,
                     Notice {
                         target: cue.target,
@@ -209,7 +225,7 @@ pub(super) fn poll(s: &mut State) {
         }
     }
     while pending.reading.len() < 2 {
-        let Some(cue) = pending.waiting.pop_front() else {
+        let Some(cue) = pending.next_waiting() else {
             break;
         };
         if !cue.current(s)
@@ -224,7 +240,7 @@ pub(super) fn poll(s: &mut State) {
                 pending.waiting.push_front(cue);
                 break;
             }
-            Delivery::Body(_) => pending.reading.push(cue.verify(s)),
+            Delivery::Body(..) => pending.reading.push(cue.verify(s)),
         }
     }
     s.notifications.background_attention = pending;
@@ -235,6 +251,68 @@ mod tests {
     use super::*;
     use crate::files::test_http::{Http, wait};
     use serde_json::json;
+
+    #[test]
+    fn a_slow_compaction_keeps_its_sessions_order_without_blocking_other_sessions() {
+        let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        let cue = |session: &str, id: &str| Cue {
+            target: Target {
+                tab: Some(id.into()),
+                backend_url: backend.base.clone(),
+                server: None,
+                occurrence: 1,
+                workspace: "project".into(),
+                session: session.into(),
+            },
+            project: "Project".into(),
+            category: Category::Sessions,
+            id: id.into(),
+            request: None,
+            backend: backend.clone(),
+        };
+        let mut pending = Background::default();
+        let (_send, reply) = bounded(1);
+        pending.reading.push((cue("ses_a", "oldest"), reply));
+        pending.waiting.extend([
+            cue("ses_a", "second"),
+            cue("ses_b", "other"),
+            cue("ses_a", "newest"),
+        ]);
+        assert_eq!(pending.next_waiting().unwrap().id, "other");
+        assert!(pending.next_waiting().is_none());
+        pending.reading.clear();
+        assert_eq!(pending.next_waiting().unwrap().id, "second");
+        assert_eq!(pending.next_waiting().unwrap().id, "newest");
+    }
+
+    #[test]
+    fn compaction_notifications_require_a_root_in_the_bound_project() {
+        crate::platform::block_on(async {
+            let http = Http::new().await;
+            for (session, parent) in [("ses_root", None), ("ses_child", Some("ses_root"))] {
+                let mut backend = http.backend.clone();
+                backend.session = session.into();
+                let task = tokio::spawn(async move { backend.notification_label().await });
+                let project = http.accept().await;
+                assert!(project.header.starts_with("GET /api/workspaces HTTP/"));
+                project
+                    .reply(
+                        200,
+                        json!([{"id":"owned","location":{"directory":"/private"}}]),
+                    )
+                    .await;
+                let request = http.accept().await;
+                assert!(request.header.starts_with(&format!(
+                    "GET /workspaces/owned/instance/api/session/{session} HTTP/"
+                )));
+                request.reply(200, json!({"data":{"id":session,"parentID":parent,"location":{"directory":"/private"},"title":"Compacted"}})).await;
+                assert_eq!(
+                    wait(task).await.unwrap().as_deref(),
+                    parent.is_none().then_some("Compacted")
+                );
+            }
+        });
+    }
 
     #[test]
     fn root_requests_are_verified_without_binding_the_window_to_their_session() {

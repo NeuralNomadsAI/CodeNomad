@@ -25,9 +25,9 @@ mod window;
 use appearance::awaiting_appearance;
 #[cfg(test)]
 use appearance::effective_contrast;
-pub(crate) use appearance::render;
 #[cfg(not(target_arch = "wasm32"))]
 use appearance::render_with;
+pub(crate) use appearance::{app_locale, render};
 pub(crate) use connection::{
     bound_backend, connected, connection_event, conversation_authentication, invalidate,
     stop_before_conversation,
@@ -188,26 +188,30 @@ pub(crate) fn poll(s: &mut State) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
     let (reconnected, missions) = shared.mission_changes();
+    let locale = shared.locale().unwrap_or_else(strings::locale);
     let notify_failure = shared.take_notification_failure();
     let update = shared.notification_update.take();
     drop(shared);
-    use crate::shell::notifications::{Category, emit};
-    if notify_failure {
-        emit(
-            s,
-            Category::Settings,
-            None,
-            strings::t("settings.preferenceSaveFailed"),
-        );
-    }
-    if let Some(version) = update {
-        emit(
-            s,
-            Category::Updates,
-            Some(strings::t("releases.devUpdateAvailable.title").into()),
-            strings::t("settings.opencode.update.available").replace("{version}", &version),
-        );
-    }
+    strings::with_locale(locale, || {
+        use crate::shell::notifications::{Category, emit, emit_outcome};
+        if notify_failure {
+            emit_outcome(
+                s,
+                Category::Settings,
+                None,
+                strings::t("settings.preferenceSaveFailed"),
+                true,
+            );
+        }
+        if let Some(version) = update {
+            emit(
+                s,
+                Category::Updates,
+                Some(strings::t("releases.devUpdateAvailable.title").into()),
+                strings::t("settings.opencode.update.available").replace("{version}", &version),
+            );
+        }
+    });
     if expired {
         s.show_launcher();
         crate::workspace::suspend_missions(s);

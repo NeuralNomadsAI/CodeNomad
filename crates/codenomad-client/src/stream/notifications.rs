@@ -15,7 +15,7 @@ pub(super) fn other_notice(event: &Value) -> Option<WorkspaceEvent> {
         "session.compaction.ended" => Some(WorkspaceEvent::SessionCompacted { id: id()? }),
         "tui.toast.show" => {
             let data = &event["data"];
-            data["variant"].as_str()?;
+            let variant = data["variant"].as_str()?;
             let body = data["message"].as_str()?.trim();
             if body.is_empty() {
                 return None;
@@ -26,9 +26,31 @@ pub(super) fn other_notice(event: &Value) -> Option<WorkspaceEvent> {
                     .as_str()
                     .map(|title| title.chars().take(256).collect()),
                 body: body.chars().take(4096).collect(),
+                error: variant == "error",
+                duration_ms: data["duration"]
+                    .as_f64()
+                    .filter(|ms| ms.is_finite() && *ms >= 0.0)
+                    .map(|ms| ms.min(f64::from(i32::MAX)) as u32),
             })
         }
         _ => None,
+    }
+}
+
+#[test]
+fn decodes_a_toast_duration_without_changing_the_default_for_invalid_values() {
+    for (duration, expected) in [
+        (json!(1800), Some(1800)),
+        (json!(0), Some(0)),
+        (json!(null), None),
+        (json!(-4), None),
+        (json!("1000"), None),
+    ] {
+        let event = json!({"id":"evt_notice", "type":"tui.toast.show",
+            "data":{"message":"Hello","variant":"info","duration":duration}});
+        assert!(
+            matches!(other_notice(&event), Some(WorkspaceEvent::OpenCodeNotice { duration_ms, .. }) if duration_ms == expected)
+        );
     }
 }
 

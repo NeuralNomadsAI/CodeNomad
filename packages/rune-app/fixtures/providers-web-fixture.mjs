@@ -265,6 +265,23 @@ try {
   else await checkProviders()
 
   async function checkNotifications() {
+    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]
+    assert(stream,'Project catalogue stream must be attached')
+    const message = 'Short announcement from the fixture'
+    const envelope = {type:'instance.event',instanceId:project.id,event:{
+      id:'toast-fixture',type:'tui.toast.show',data:{title:'Fixture toast',message,variant:'info',duration:2000},
+    }}
+    stream.write(`data: ${JSON.stringify(envelope)}\n\n`)
+    const live = page.locator('[role="status"][aria-live="polite"]').filter({hasText:message})
+    await live.waitFor({state:'attached'})
+    assert.equal(await live.textContent(),`Fixture toast\n${message}`)
+    const bubble = page.getByText(message,{exact:true})
+    await bubble.waitFor({state:'attached'})
+    const bell = page.getByRole('button',{name:'Notification History · 1 unread',exact:true})
+    await bell.waitFor({state:'attached'})
+    await bubble.waitFor({state:'detached',timeout:4000})
+    assert.equal(await bell.count(),1,'Expiration leaves the history entry unread')
+
     await click('Settings')
     await radio('Notifications').press('Enter')
     const switcher = page.getByRole('switch',{name:'Notify when the app is focused',exact:true})
@@ -310,7 +327,7 @@ try {
     assert.equal(notificationRouting.copy.history,true)
     assert.equal(notificationRouting.copy.system,true)
     assert.equal(notifyFocused,true)
-    console.log(JSON.stringify({fixture:'notifications-preferences',cells:27,permissionGesture:true,foregroundSaved:true}))
+    console.log(JSON.stringify({fixture:'notifications-preferences',cells:27,permissionGesture:true,foregroundSaved:true,bubbleAnnounced:true,bubbleExpired:true,accessibleUnread:true}))
   }
 
   async function checkRemoteAccess() {

@@ -214,7 +214,7 @@ fn choose_from(
         return;
     }
     l.selection_ticket = ticket;
-    l.job("rune.open_error", async move {
+    l.job("sessionList.reload.error", async move {
         let mut missing = Vec::new();
         for (id, step) in candidates {
             let started = Instant::now();

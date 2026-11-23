@@ -197,6 +197,10 @@ fn latest(s: &mut State, tx: &mut Tx) {
     chat::reader::latest(s, tx);
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
+    strings::with_locale(settings::app_locale(s), || poll_window(s, now, tx))
+}
+
+fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = poll_chat(s, 64);
     shell::notifications::collect(s, workspace::notification_target);
     if !s.screen.is_launcher()
@@ -219,7 +223,6 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
     changed |= settings::poll(s) | settings::poll_memory_cleanup(s, tx);
-    changed |= shell::notifications::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
         changed |= launcher::reopen(s);
@@ -230,6 +233,8 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     changed |= files::poll(s, now, tx);
     changed |= git::poll(s, now, tx);
+    changed |= shell::notifications::poll(s, tx);
+    changed |= shell::notifications::poll_app_notices(s, now, tx);
     workspace::capture_files_mode(s);
     if changed {
         tx.instant();
@@ -289,7 +294,9 @@ fn run_app() {
         AppSpec {
             setup: Some(setup),
             poll: Some(poll),
-            on_key: Some(shell::keys),
+            on_key: Some(|s, event, tx| {
+                strings::with_locale(settings::app_locale(s), || shell::keys(s, event, tx))
+            }),
             #[cfg(feature = "test-support")]
             scenes: &[
                 ("synthetic", |s| {

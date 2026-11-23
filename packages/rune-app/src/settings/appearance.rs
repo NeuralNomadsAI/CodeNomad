@@ -70,3 +70,11 @@ pub(super) fn render_with<S>(
 pub(super) fn effective_contrast(preference: &str, system: bool) -> bool {
     preference == "on" || preference == "auto" && system
 }
+
+pub(crate) fn app_locale(s: &State) -> &'static str {
+    s.settings
+        .shared
+        .borrow()
+        .locale()
+        .unwrap_or_else(strings::locale)
+}

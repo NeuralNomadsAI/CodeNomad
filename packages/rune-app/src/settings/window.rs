@@ -71,16 +71,17 @@ pub(super) fn launch_preferences(
 ) {
     let host = &s.settings;
     let token = Rc::new(Cell::new(false));
-    let state = view::Window::new(host.shared.clone(), token.clone())
+    let mut state = view::Window::new(host.shared.clone(), token.clone())
         .with_close_request(request.clone(), editor)
         .with_notification_permission(notification_settings::native_permission(s));
+    state.focused = s.notifications.preferences_focused.clone();
     let locale = host
         .shared
         .borrow()
         .locale()
         .unwrap_or_else(strings::locale);
     let spec = strings::with_locale(locale, view::spec);
-    let window = crate::platform::preferences_window(s, spec, state, view::closed);
+    let window = crate::platform::preferences_window(s, spec, state, view::closed, view::focus);
     s.settings.window = Some((window, token, request));
 }
 
@@ -104,6 +105,7 @@ pub(crate) fn close(s: &mut State) {
     {
         #[cfg(target_os = "windows")]
         crate::platform::preferences_placement::closed();
+        s.notifications.preferences_focused.set(false);
         s.settings.shared.borrow_mut().hide_opencode();
         settle_close(&s.settings.shared, warn_save_failed);
         if let Some((window, token, _)) = s.settings.window.take() {

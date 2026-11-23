@@ -66,10 +66,7 @@ impl Backend {
             .ok()?
             .into_iter()
             .find(|project| project.id == self.workspace)?;
-        let (_, session) = self
-            .bind_session(&project, &self.session, false)
-            .await
-            .ok()?;
+        let session = self.bind_root_session(&project, &self.session).await.ok()?;
         let title = session.title.trim();
         Some(
             if title.is_empty() {

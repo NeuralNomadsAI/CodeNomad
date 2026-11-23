@@ -336,7 +336,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 dismiss_origin_panel(s, dismiss, tx);
                 bind(s, b, title, visit, &slug, tx);
             } else if !blocked {
-                l.error = Some("rune.open_error");
+                l.error = Some("sessionList.reload.error");
+                crate::shell::notifications::emit_outcome(
+                    s,
+                    crate::shell::notifications::Category::Sessions,
+                    None,
+                    crate::strings::t("sessionList.reload.error"),
+                    true,
+                );
             }
         }
         #[cfg(target_arch = "wasm32")]
@@ -373,6 +380,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 "rune.list_error" => "rune.list_error",
                 "rune.create_error" => "rune.create_error",
                 "rune.restore_error" => "rune.restore_error",
+                "sessionList.reload.error" => "sessionList.reload.error",
                 "sessionList.worktreeMove.error" => "sessionList.worktreeMove.error",
                 _ => "rune.open_error",
             };
@@ -381,8 +389,16 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.error = Some(key);
             if matches!(key, "rune.restore_error" | "rune.open_error") {
-                use crate::shell::notifications::{Category, emit};
-                emit(s, Category::Projects, None, crate::strings::t(key));
+                use crate::shell::notifications::{Category, emit_outcome};
+                emit_outcome(s, Category::Projects, None, crate::strings::t(key), true);
+            } else if key == "sessionList.reload.error" {
+                crate::shell::notifications::emit_outcome(
+                    s,
+                    crate::shell::notifications::Category::Sessions,
+                    None,
+                    crate::strings::t(key),
+                    true,
+                );
             }
             #[cfg(target_arch = "wasm32")]
             {

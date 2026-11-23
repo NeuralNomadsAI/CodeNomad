@@ -82,9 +82,9 @@ impl Preferences {
             | self.server.take_notification_failure()
     }
     #[cfg(test)]
-    pub(super) fn notification_test_config(&mut self, snapshot: Value) {
+    pub(super) fn notification_test_config(&mut self, snapshot: Option<Value>) {
         self.reset_notification_fixture();
-        self.config.snapshot = Some(snapshot);
+        self.config.snapshot = snapshot;
     }
 
     pub(super) fn shortcut(&self, action: &str) -> Option<&[Value]> {

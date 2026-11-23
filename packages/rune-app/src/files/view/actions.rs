@@ -15,7 +15,7 @@ use rune_theme_codenomad::{
 };
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
-use crate::shell::notifications::{Category, emit};
+use crate::shell::notifications::{Category, emit_outcome};
 type Notice = (Category, bool, String);
 
 pub(in crate::files) struct Actions {
@@ -113,11 +113,11 @@ pub(in crate::files) fn poll_notices(s: &mut State) -> bool {
     let mut notices = Vec::new();
     while let Ok((category, success, message)) = ui.actions.incoming.try_recv() {
         ui.actions.notice = Some((success, message.clone()));
-        notices.push((category, message));
+        notices.push((category, success, message));
     }
     let changed = !notices.is_empty();
-    for (category, message) in notices {
-        emit(s, category, None, message);
+    for (category, success, message) in notices {
+        emit_outcome(s, category, None, message, !success);
     }
     changed
 }
