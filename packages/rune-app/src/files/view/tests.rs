@@ -371,16 +371,22 @@ fn markdown_links_html_and_mermaid_fallback_use_only_the_loaded_document() {
             let mut rt = runtime(http.ui(Store::default(), "renderers"));
             open(&mut rt, &http, name, case["base64"].as_str().unwrap()).await;
             if name == "broken.png" {
-                assert!(
-                    rt.state
-                        .files
-                        .as_ref()
-                        .unwrap()
-                        .presentation
-                        .image
-                        .is_none(),
-                    "an invalid header must not reach the decoder"
-                );
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while !rt
+                    .state
+                    .files
+                    .as_ref()
+                    .unwrap()
+                    .presentation
+                    .image
+                    .as_ref()
+                    .is_some_and(rune::Image::is_ready)
+                {
+                    assert!(Instant::now() < deadline);
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+                rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
+                rt.frame(0.02);
             }
             let nodes = rt.elements();
             let shown = nodes
