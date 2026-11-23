@@ -143,6 +143,17 @@ impl Choice {
             }
         }
     }
+
+    fn has_dedicated_error(self) -> bool {
+        matches!(
+            self,
+            Self::Contrast
+                | Self::NewConversationPermissions
+                | Self::Shortcut(_)
+                | Self::ShortcutReset
+                | Self::UpdateFeed
+        )
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -393,8 +404,7 @@ impl Document {
                         .is_some_and(|data| choice.confirmed(value, data))
                 {
                     self.write.failed.insert(choice);
-                    self.notification_failure |=
-                        current && choice != Choice::NewConversationPermissions;
+                    self.notification_failure |= current && !choice.has_dedicated_error();
                 }
             }
         }
@@ -542,6 +552,36 @@ fn notification_routes_do_not_read_an_invalidated_document() {
     assert!(document.confirmed().is_some());
     document.invalidate();
     assert!(document.confirmed().is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn dedicated_error_choices_do_not_emit_generic_save_notification() {
+    let unchanged = json!({"settings":{"hotkeyOverrides":{"file-save":[]}}});
+    for (choice, value) in [
+        (Choice::Contrast, ChoiceValue::Text("on")),
+        (
+            Choice::NewConversationPermissions,
+            ChoiceValue::Text("manual"),
+        ),
+        (
+            Choice::Shortcut("close-instance"),
+            ChoiceValue::Shortcut(json!([])),
+        ),
+        (Choice::ShortcutReset, ChoiceValue::Shortcut(Value::Null)),
+        (Choice::UpdateFeed, ChoiceValue::Text("stable")),
+    ] {
+        let mut document = Document::default();
+        let sent = BTreeMap::from([(choice, value)]);
+        document.settle(Operation::Write(sent), Some(unchanged.clone()), true);
+        assert!(document.choice_failed(choice));
+        assert!(!document.take_notification_failure());
+    }
+    let mut document = Document::default();
+    let sent = BTreeMap::from([(Choice::Locale, ChoiceValue::Text("fr"))]);
+    document.settle(Operation::Write(sent), Some(unchanged), true);
+    assert!(document.choice_failed(Choice::Locale));
+    assert!(document.take_notification_failure());
 }
 
 impl Flight {
