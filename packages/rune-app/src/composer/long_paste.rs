@@ -79,7 +79,24 @@ fn compact(s: &mut State, text: &str) -> bool {
         return false;
     }
     let prior = s.draft.clone();
-    s.draft.paste(&format!("[pasted #{id}]"));
+    s.draft.undo_group(|edit| {
+        let (start, _) = edit.range();
+        edit.paste(&format!("[pasted #{id}]"));
+        let (end, _) = edit.range();
+        let inherited: Vec<_> = edit
+            .marks()
+            .iter()
+            .filter(|mark| mark.start < end && start < mark.end)
+            .map(|mark| mark.mark.clone())
+            .collect();
+        if !inherited.is_empty() {
+            edit.set_selection(start, end);
+            for mark in inherited {
+                edit.remove_mark(&mark);
+            }
+            edit.set_caret(end);
+        }
+    });
     if !workspace::attachment_draft_admissible(s) {
         s.draft = prior;
         s.composer.draft.attachments.pop();
@@ -176,6 +193,61 @@ mod tests {
         );
         assert!(prompt.files.is_empty());
         assert!(input.try_recv().is_err());
+    }
+
+    #[test]
+    fn compact_paste_at_the_end_of_inline_paste_keeps_its_own_marker() {
+        let mut s = crate::init();
+        let large = "x".repeat(MAX_BYTES - 180);
+        let inline = format!(" @./literal {}", "y".repeat(180));
+        let small = "\nline 1\nline 2\nline 3";
+        let mut tx = Tx::default();
+        for text in [&large, &inline, small] {
+            assert!(paste(&mut s, text, &mut tx));
+        }
+        assert_eq!(s.draft.text, format!("[pasted #1]{inline}[pasted #2]"));
+        assert_eq!(
+            active_tokens(&s.draft)
+                .map(|(_, id)| id)
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
+        let expected = format!("{large}{inline}{small}");
+        let saved = SavedParts::capture(&s.composer.draft, false, &s.draft)
+            .unwrap()
+            .encode();
+        let (restored, missing) = SavedParts::decode(&saved).unwrap().restore();
+        assert!(!missing);
+        let mut edit = TextEdit::new(&s.draft.text);
+        super::super::literal::restore(&mut edit, &restored.literal_spans);
+        assert_eq!(
+            restored
+                .prepare(
+                    &edit,
+                    "msg-adjacent",
+                    codenomad_client::prompt::Delivery::Steer
+                )
+                .unwrap()
+                .0
+                .text,
+            expected
+        );
+        s.draft.undo();
+        assert_eq!(s.draft.text, format!("[pasted #1]{inline}"));
+        s.draft.redo();
+        assert_eq!(
+            s.composer
+                .draft
+                .prepare(
+                    &s.draft,
+                    "msg-adjacent",
+                    codenomad_client::prompt::Delivery::Steer
+                )
+                .unwrap()
+                .0
+                .text,
+            expected
+        );
     }
 
     #[test]
