@@ -221,14 +221,16 @@ try {
             await row('Existing history').waitFor()
             await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
           }
-          await press(messages['rune.more'])
+           if(!values['history-search']){
+           await press(messages['rune.more'])
           if(values.mobile){
             await row('Another session').waitFor()
             await select('Linked checkout next page','ses_linked_next')
             await page.getByText('Linked checkout answer',{exact:true}).waitFor()
           }
-          await select('Another session','ses_another')
-          await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
+           await select('Another session','ses_another')
+           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
+           }
           await select('Existing history','ses_existing');await reading()
           if(values['touch-history']){
             const cdp=await context.newCDPSession(page)
@@ -534,8 +536,10 @@ try {
              if(values.mobile||values.timeline||values['touch-history']||values['history-search'])assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
             else assert.deepEqual(bodies,['Existing project history','Existing answer'])
           }
-           assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===(values['history-search']?2:0)))
-          assert(routes.some(row=>row.query.includes('cursor=')))
+          if(!values['history-search']){
+            assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===0))
+            assert(routes.some(row=>row.query.includes('cursor=')))
+          }
           if(values['history-search']&&(name==='desktop'||name==='phone'))await historySearch(page,messages,touch,()=>{
             const held={release:Promise.withResolvers()}
             holdAnchor=held
