@@ -206,7 +206,7 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
 
 pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
     let key = tool_key(message, &tool.id);
-    if tool.name == "execute" || task::is_task(tool) {
+    if tool.name == "execute" || task::is_task(tool) || !tool.pictures.is_empty() {
         return render(s, message, tool, &key).key(key);
     }
     if tool.name == "edit" {
@@ -306,7 +306,10 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         return block.child(text(t("toolCall.pending.waitingToRun")));
     }
     if tool.name == "todowrite" {
-        return block.children(failure).child(todo::view(tool));
+        return block
+            .children(failure)
+            .child(todo::view(tool))
+            .children(super::media::tool(s, key, &tool.pictures));
     }
     let task_body = is_task
         .then(|| task::body(s, key, tool, parts[0], !nested))
@@ -430,7 +433,7 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     if tool.name == "execute" {
         block = block.children(execute::notice(tool));
     }
-    block
+    block.children(super::media::tool(s, key, &tool.pictures))
 }
 
 fn render_error(s: &State, message: &str, key: &str, tool: &Tool) -> Option<El> {

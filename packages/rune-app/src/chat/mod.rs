@@ -8,6 +8,7 @@ mod content_tests;
 mod document;
 pub(crate) mod events;
 mod links;
+mod media;
 pub(crate) mod reader;
 pub(crate) mod reading;
 pub(crate) use reader::{resume, suspend};

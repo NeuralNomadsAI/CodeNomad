@@ -1,6 +1,31 @@
 //! Shared composer and transcript attachment chip.
-use crate::{Length, Space, layout, tokens};
+use crate::{Length, Space, layout::{self, Layout}, tokens};
 use rune::{El, Icon, TextStyle, icon, row, text};
+
+pub fn picture(image: Option<&rune::Image>, label: &str, mime: &str, error: Option<&str>) -> El {
+    let preview = image.and_then(|image| {
+        let [width, height] = image.size()?;
+        Some(
+            rune::el()
+                .pixels_fit(image.pixels(), rune::SurfaceFit::Fit)
+                .aspect_fit(width as f32 / height as f32)
+                .max_w(width as f32)
+                .max_h(512.0)
+                .role("img")
+                .label(label),
+        )
+    });
+    rune::col()
+        .full_width()
+        .separate(Space::Xs)
+        .children(preview)
+        .children(error.map(|error| text(error).wrap().role("status")))
+        .child(
+            text(format!("{label} · {mime}"))
+                .text_role(crate::TextRole::Label)
+                .wrap(),
+        )
+}
 
 pub fn chip(name: &str, glyph: Option<&'static Icon>, action: Option<El>) -> El {
     let t = tokens(layout::dark());

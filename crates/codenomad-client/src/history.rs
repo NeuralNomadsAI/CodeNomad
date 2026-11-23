@@ -27,7 +27,8 @@ pub fn retained_bytes(rows: &[Row]) -> usize {
                 + row.role.len()
                 + row.body.len()
                 + crate::content::bytes(&row.parts)
-                + crate::content::tool_text_bytes(&row.parts),
+                + crate::content::tool_text_bytes(&row.parts)
+                + crate::content::media_bytes(&row.parts),
         )
     })
 }
@@ -244,6 +245,14 @@ pub fn check(rows: &[Row]) -> Result<()> {
         > WINDOW_BYTES
     {
         return Err("resident attachments exceed their bound".into());
+    }
+    if rows
+        .iter()
+        .map(|row| crate::content::media_bytes(&row.parts))
+        .sum::<usize>()
+        > WINDOW_BYTES
+    {
+        return Err("resident image references exceed their bound".into());
     }
     if rows
         .iter()

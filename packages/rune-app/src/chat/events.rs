@@ -37,6 +37,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.renew_scope();
                 s.transcript_display.children.bind(backend.clone());
                 s.transcript_display.usage_family.bind(backend.clone());
+                s.transcript_display.pictures.bind(backend.clone());
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -312,7 +313,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         s.phase = Phase::Failed;
         changed = true;
     }
-    if s.transcript_display.children.poll() {
+    if s.transcript_display.children.poll() | s.transcript_display.pictures.poll(&s.wake) {
         s.revision += 1;
         changed = true;
     }
