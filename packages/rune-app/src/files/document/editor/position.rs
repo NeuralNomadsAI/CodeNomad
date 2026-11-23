@@ -100,6 +100,11 @@ impl Viewport {
         self.mounted.get()
     }
 
+    #[cfg(test)]
+    pub(crate) fn captured_scroll(&self) -> [f32; 2] {
+        self.offset.get()
+    }
+
     pub(crate) fn observe(&self, offset: [f32; 2]) {
         if !self.pending.get() && offset.iter().all(|value| value.is_finite()) {
             self.offset.set(offset);

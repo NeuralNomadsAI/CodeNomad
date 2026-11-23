@@ -428,7 +428,14 @@ impl Editor {
         }
         let draft = lock(&shared);
         if self.revision != draft.revision {
+            let live_selection =
+                self.position.viewport.mounted().then(|| {
+                    SavedPosition::capture(&self.edit, self.position.viewport.saved_scroll())
+                });
             self.edit = TextEdit::new(&draft.text);
+            if let Some(saved) = live_selection {
+                saved.restore_selection(&mut self.edit);
+            }
             self.revision = draft.revision;
             changed = true;
         }

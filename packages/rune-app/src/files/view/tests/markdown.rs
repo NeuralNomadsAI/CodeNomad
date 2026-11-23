@@ -117,6 +117,18 @@ fn rendered_scroll_survives_switching_to_source_and_back() {
                 .as_deref()
                 .is_some_and(|key| key.starts_with("file-source-scroll"))
         }));
+        let scope = rt.state.files.as_ref().unwrap().document.scope();
+        let viewport = rt.state.files.as_ref().unwrap().document.source_viewport();
+        let (x, y) = rt.find("file-source-toggle").unwrap();
+        for _ in 0..2 {
+            rt.pointer_down(x, y);
+            rt.pointer_up(x, y);
+        }
+        rt.frame(0.02);
+        assert!(rt.state.files.as_ref().unwrap().presentation.source);
+        rt.update(|_, tx| tx.scroll_to_instant(format!("file-source-scroll-{scope}"), 0.0, 100.0));
+        rt.frame(0.02);
+        assert_eq!(viewport.captured_scroll()[1], 100.0);
         click(&mut rt, "file-source-toggle");
         for _ in 0..30 {
             rt.frame(0.02);
