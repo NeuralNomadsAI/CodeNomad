@@ -19,14 +19,22 @@ pub(super) enum Project {
 
 fn scope(s: &State) -> Option<(Project, String, String)> {
     if let Some((tab, saved)) = workspace::active_workspace(s) {
+        let session = saved.active_session_id.clone()?;
+        let directory = s
+            .composer
+            .picker
+            .backend()
+            .filter(|backend| backend.session == session)
+            .and_then(|backend| backend.session_directory.as_deref())
+            .unwrap_or(&saved.folder);
         return Some((
             Project::Workspace(
                 saved.backend_id.clone(),
                 saved.server_id.clone(),
-                saved.folder.clone(),
+                directory.into(),
             ),
             tab.into(),
-            saved.active_session_id.clone()?,
+            session,
         ));
     }
     if s.workspace.is_some() {
@@ -35,7 +43,7 @@ fn scope(s: &State) -> Option<(Project, String, String)> {
     Some(
         settings::bound_backend(s).map_or((Project::Unbound, String::new(), String::new()), |b| {
             (
-                Project::Direct(b.base, b.workspace),
+                Project::Direct(b.base, b.session_directory.unwrap_or(b.workspace)),
                 String::new(),
                 b.session,
             )
@@ -44,6 +52,20 @@ fn scope(s: &State) -> Option<(Project, String, String)> {
 }
 
 pub(super) fn command_target(s: &State) -> Option<super::command_receipts::Target> {
+    // Moving a native conversation changes history, never its outstanding receipts.
+    if let Some((_, saved)) = workspace::active_workspace(s) {
+        return Some((
+            Project::Workspace(
+                saved.backend_id.clone(),
+                saved.server_id.clone(),
+                String::new(),
+            ),
+            saved.active_session_id.clone()?,
+        ));
+    }
+    if let Some(b) = settings::bound_backend(s) {
+        return Some((Project::Direct(b.base, String::new()), b.session));
+    }
     scope(s).map(|(project, _, session)| (project, session))
 }
 

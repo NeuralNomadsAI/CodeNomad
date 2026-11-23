@@ -74,6 +74,7 @@ fn ui() -> Ui {
         session: "session".into(),
         client: codenomad_client::http::Http::new().unwrap(),
         client_id: "test".into(),
+        session_directory: None,
         fresh_mode: false,
     };
     let mut ui = Ui::new(

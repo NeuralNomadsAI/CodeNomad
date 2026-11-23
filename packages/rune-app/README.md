@@ -57,6 +57,7 @@ node packages/rune-app/fixtures/launcher-fixture.mjs --controls
 node packages/rune-app/fixtures/recovery-fixture.mjs
 node packages/rune-app/fixtures/rust-fixture.mjs --probe-slash
 node packages/rune-app/fixtures/rust-fixture.mjs --probe-attachments
+node packages/rune-app/fixtures/rust-fixture.mjs --prompt-history --history-worktree
 node scripts/rune/headless.mjs --binary $env:RUNE_CLIENT_EXE
 ```
 

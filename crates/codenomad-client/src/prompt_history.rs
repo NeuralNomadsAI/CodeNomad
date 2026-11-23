@@ -13,23 +13,24 @@ pub const MAX_WRITE_BYTES: usize = 1024 * 1024;
 
 #[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
-struct InstanceData {
+pub struct Document {
     message_history: Vec<String>,
     agent_model_selections: Map<String, Value>,
 }
 
 fn url(backend: &Backend) -> Result<Url> {
-    if backend.workspace.is_empty() {
-        return Err("prompt history requires a workspace".into());
-    }
+    let directory = backend
+        .session_directory
+        .as_deref()
+        .ok_or("prompt history requires a session directory")?;
     let mut url = Url::parse(&format!("{}api/storage/instances", backend.base))?;
     url.path_segments_mut()
         .map_err(|_| "invalid instance storage URL")?
-        .push(&backend.workspace);
+        .push(directory);
     Ok(url)
 }
 
-async fn read_instance(backend: &Backend) -> Result<InstanceData> {
+pub async fn read_document(backend: &Backend) -> Result<Document> {
     let request = backend
         .client
         .get(url(backend)?)
@@ -43,33 +44,35 @@ async fn read_instance(backend: &Backend) -> Result<InstanceData> {
 }
 
 pub async fn read(backend: &Backend) -> Result<Vec<String>> {
-    let mut history = read_instance(backend).await?.message_history;
-    history.truncate(MAX_ENTRIES);
-    Ok(history)
+    Ok(read_document(backend).await?.history().to_vec())
 }
 
-/// Use the shared whole-document PUT, preserving model selections from a fresh read.
-/// A lost acknowledgement never replays the write.
-pub async fn append(backend: &Backend, text: &str) -> Result<()> {
-    if text.is_empty() || text.len() > MAX_WRITE_BYTES {
-        return Err("prompt history entry outside its storage budget".into());
+impl Document {
+    pub fn history(&self) -> &[String] {
+        &self.message_history[..self.message_history.len().min(MAX_ENTRIES)]
     }
-    let mut data = read_instance(backend).await?;
-    data.message_history.insert(0, text.into());
-    data.message_history.truncate(MAX_ENTRIES);
-    let body = serde_json::to_vec(&data)?;
-    if body.len() > MAX_WRITE_BYTES {
-        return Err("instance document outside its storage budget".into());
+
+    pub fn prepend(&mut self, text: String) {
+        self.message_history.insert(0, text);
+        self.message_history.truncate(MAX_ENTRIES);
     }
-    let response = backend
-        .client
-        .put(url(backend)?)
-        .header("content-type", "application/json")
-        .body(body)
-        .send()
-        .await?;
-    if response.status() != reqwest::StatusCode::NO_CONTENT {
-        return Err(format!("prompt history append returned HTTP {}", response.status()).into());
+
+    /// One whole-document PUT. An unconfirmed write is not replayed automatically.
+    pub async fn write(&self, backend: &Backend) -> Result<bool> {
+        let body = serde_json::to_vec(self)?;
+        if body.len() > MAX_WRITE_BYTES {
+            return Ok(false);
+        }
+        let response = backend
+            .client
+            .put(url(backend)?)
+            .header("content-type", "application/json")
+            .body(body)
+            .send()
+            .await?;
+        if response.status() != reqwest::StatusCode::NO_CONTENT {
+            return Err(format!("prompt history write returned HTTP {}", response.status()).into());
+        }
+        Ok(true)
     }
-    Ok(())
 }

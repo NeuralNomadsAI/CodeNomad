@@ -104,7 +104,7 @@ async fn run_configured(
 }
 
 pub(crate) async fn authenticate_and_run(
-    target: crate::backend::Backend,
+    mut target: crate::backend::Backend,
     password: String,
     token: Option<String>,
     out: Sender<Event>,
@@ -120,7 +120,10 @@ pub(crate) async fn authenticate_and_run(
         return;
     }
     match result {
-        Ok(()) => run_bound(Ok(target), out, input, wake, None).await,
+        Ok(()) => {
+            target.session_directory = target.prompt_directory().await.ok();
+            run_bound(Ok(target), out, input, wake, None).await;
+        }
         Err(error) if codenomad_client::http::authentication_expired(&error) => {
             publish(&out, &wake, Event::authentication_required(target)).await;
             drop(out);

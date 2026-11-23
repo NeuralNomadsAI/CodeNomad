@@ -347,6 +347,7 @@ mod tests {
             workspace: String::new(),
             session: String::new(),
             client_id: "fixture".into(),
+            session_directory: None,
             fresh_mode: false,
         }
     }

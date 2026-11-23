@@ -26,6 +26,7 @@ fn init_scene() -> State {
         workspace: "reader-gallery-scene".into(),
         session: "synthetic".into(),
         client_id: "reader-scene".into(),
+        session_directory: None,
         fresh_mode: false,
     };
     let mut files = Ui::new(
