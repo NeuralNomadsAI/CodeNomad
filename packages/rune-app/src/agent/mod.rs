@@ -42,6 +42,7 @@ pub struct Ui {
     handle: Handle,
     pub models: Vec<Model>,
     pub current: Option<serde_json::Value>,
+    pub usage: Option<crate::content::Usage>,
     pub permissions: Vec<Permission>,
     pub forms: Vec<Form>,
     pub drafts: Drafts,
@@ -60,6 +61,7 @@ pub struct Ui {
     reading: bool,
     activity_during_job: bool,
     request_during_job: bool,
+    usage_during_job: bool,
     trailing: Option<bool>,
 }
 pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
@@ -107,11 +109,20 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     }
 }
 impl Ui {
+    pub(crate) fn includes_cost(&self, provider: &str, id: &str) -> bool {
+        self.models.iter().any(|model| {
+            model.included
+                && model.reference["providerID"] == provider
+                && model.reference["id"] == id
+        })
+    }
+
     pub fn rebind(&mut self, handle: Handle) {
         self.handle = handle;
         self.reading = false;
         self.activity_during_job = false;
         self.request_during_job = false;
+        self.usage_during_job = false;
         self.trailing = None;
         self.busy = false;
         self.stopping = false;
@@ -196,6 +207,7 @@ impl Ui {
             handle,
             models: vec![],
             current: None,
+            usage: None,
             permissions: vec![],
             forms: vec![],
             drafts: Default::default(),
@@ -214,6 +226,7 @@ impl Ui {
             reading: false,
             activity_during_job: false,
             request_during_job: false,
+            usage_during_job: false,
             trailing: None,
         };
         ui.refresh(true);
@@ -236,6 +249,11 @@ impl Ui {
         if refresh {
             self.refresh(false);
         }
+    }
+
+    pub(crate) fn observe_usage(&mut self, usage: crate::content::Usage) {
+        self.usage = Some(usage);
+        self.usage_during_job |= self.reading || self.busy;
     }
     pub fn act(&mut self, action: Action) {
         if self.locked() {
@@ -277,8 +295,12 @@ impl Ui {
         if self.online {
             self.attention.observe(&s, current_requests);
         }
+        let current_usage = !std::mem::take(&mut self.usage_during_job);
         self.known = s.session_known;
         if s.session_known {
+            if current_usage {
+                self.usage = s.usage;
+            }
             self.current = s.current;
             if current_activity {
                 self.running = s.running;

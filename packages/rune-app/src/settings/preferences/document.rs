@@ -8,6 +8,8 @@ pub(super) enum Choice {
     Locale,
     Contrast,
     NewConversationPermissions,
+    UsageVisible,
+    UsageExpansion,
     Mode,
     Palette(bool),
 }
@@ -20,6 +22,8 @@ impl Choice {
             Self::NewConversationPermissions => {
                 patch["settings"]["newConversationPermissions"] = json!(value)
             }
+            Self::UsageVisible => patch["settings"]["showUsageMetrics"] = json!(value == "on"),
+            Self::UsageExpansion => patch["settings"]["usageMetricsExpansion"] = json!(value),
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
@@ -38,6 +42,8 @@ impl Choice {
             Self::NewConversationPermissions => {
                 snapshot["settings"]["newConversationPermissions"] == value
             }
+            Self::UsageVisible => snapshot["settings"]["showUsageMetrics"] == (value == "on"),
+            Self::UsageExpansion => snapshot["settings"]["usageMetricsExpansion"] == value,
             Self::Mode => appearance["mode"] == value,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
@@ -156,7 +162,10 @@ impl Document {
     pub(super) fn stage(&mut self, choice: Choice, value: &'static str) {
         if matches!(
             choice,
-            Choice::Contrast | Choice::NewConversationPermissions
+            Choice::Contrast
+                | Choice::NewConversationPermissions
+                | Choice::UsageVisible
+                | Choice::UsageExpansion
         ) {
             self.write.failed.remove(&choice);
         }

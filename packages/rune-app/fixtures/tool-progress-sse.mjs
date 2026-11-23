@@ -12,10 +12,11 @@ const assets = new Map([
   ['/probe.js', ['application/javascript', await readFile(path.join(bundle, 'probe.js'))]],
   ['/probe_bg.wasm', ['application/wasm', await readFile(path.join(bundle, 'probe_bg.wasm'))]],
 ])
-const event = (kind, data) => `data: ${JSON.stringify({
+const native = (type, data) => `data: ${JSON.stringify({
   type: 'instance.event', instanceId: 'workspace',
-  event: {type: `session.tool.${kind}`, data: {sessionID: 'parent', assistantMessageID: 'msg', id: 'execute', ...data}},
+  event: {type, data: {sessionID: 'parent', assistantMessageID: 'msg', id: 'execute', ...data}},
 })}\n\n`
+const event = (kind, data) => native(`session.tool.${kind}`, data)
 const progress = status => event('progress', {metadata: {toolCalls: Array.from({length: 4}, (_, i) => ({
   tool: 'write', status: i === 3 ? status : 'completed',
   input: {filePath: `fixture-${i}.txt`, content: 'x'.repeat(70 * 1024)},
@@ -28,7 +29,7 @@ async function exercise(run) {
   let streams = 0, reads = 0, ready = false
   let stream, timer, childActive = false
   const server = createServer((req, res) => {
-    const pathname = new URL(req.url, 'http://localhost').pathname
+    const {pathname, searchParams} = new URL(req.url, 'http://localhost')
     if (pathname === '/api/events') {
       streams++
       stream = res
@@ -56,7 +57,7 @@ async function exercise(run) {
       })().catch(err => res.writeHead(500).end(String(err)))
     } else if (pathname.endsWith('/session/parent')) {
       res.setHeader('Content-Type', 'application/json')
-      res.end(JSON.stringify({time: {busy: 1}}))
+      res.end(JSON.stringify({id: 'parent', projectID: 'fixture-project', time: {busy: 1}}))
       if (!timer) timer = setTimeout(() => {
         if (!stream || stream.destroyed) return
         stream.write(first)
@@ -67,7 +68,18 @@ async function exercise(run) {
     } else if (pathname === '/fixture/child' && stream) {
       childActive = true
       stream.write(event('called', {sessionID: 'child', assistantMessageID: 'child-step', id: 'read'}))
+      stream.write(native('session.step.ended', {tokens: {input: 15, output: 4}, cost: 0.005}))
+      stream.write(native('session.usage.updated', {tokens: {input: 40, output: 12}, cost: 0.02}))
+      stream.write(native('session.usage.updated', {sessionID: 'grandchild', tokens: {input: 21}, cost: 0.018}))
       res.writeHead(204).end()
+    } else if (pathname.endsWith('/api/session')) {
+      const parent = searchParams.get('parentID')
+      const cursor = searchParams.get('cursor')
+      const row = (id, parentID, input) => ({id, parentID, tokens: {input}, projectID: 'fixture-project'})
+      const data = cursor === 'children-page-2' ? [row('child', 'parent', 8)]
+        : parent === 'child' ? [row('grandchild', 'child', 13)] : []
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({data, cursor: {next: parent === 'parent' ? 'children-page-2' : null}}))
     } else if (/\/session\/(child|foreign)$/.test(pathname)) {
       const id = path.basename(pathname)
       res.setHeader('Content-Type', 'application/json')
@@ -104,7 +116,7 @@ try {
       await observe(location.origin)
     })
   })
-  console.log('Chromium WASM EventSource: same progress, recovery and connection checks.')
+  console.log('Chromium WASM EventSource: same progress, recovery, connection and usage checks.')
 } finally {
   await browser.close()
 }

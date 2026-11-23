@@ -9,6 +9,7 @@ use std::time::Duration;
 pub struct Model {
     pub reference: Value,
     pub label: String,
+    pub included: bool,
 }
 #[derive(Clone)]
 pub struct Permission {
@@ -28,6 +29,7 @@ pub struct Snapshot {
     pub models: Option<Vec<Model>>,
     pub current: Option<Value>,
     pub session_known: bool,
+    pub usage: Option<crate::content::Usage>,
     pub running: bool,
     pub root_directory: Option<String>,
     pub permissions: Option<Vec<Permission>>,
@@ -161,6 +163,10 @@ impl Backend {
             models,
             current,
             session_known: session.is_ok(),
+            usage: session
+                .as_ref()
+                .ok()
+                .and_then(|v| crate::content::Usage::decode(&v["data"])),
             running,
             root_directory: session
                 .as_ref()
@@ -266,9 +272,12 @@ pub fn models(value: &Value) -> Result<Vec<Model>> {
         if id.is_empty() || provider.is_empty() {
             return Err("empty model identity".into());
         }
+        let cost = &row["cost"][0];
+        let included = cost["input"].as_f64() == Some(0.0) && cost["output"].as_f64() == Some(0.0);
         out.push(Model {
             reference: json!({"id":id,"providerID":provider}),
             label: format!("{provider} · {name}"),
+            included,
         });
         if let Some(variants) = row["variants"].as_array().filter(|v| v.len() <= 32) {
             for variant in variants {
@@ -276,6 +285,7 @@ pub fn models(value: &Value) -> Result<Vec<Model>> {
                 out.push(Model {
                     reference: json!({"id":id,"providerID":provider,"variant":v}),
                     label: format!("{provider} · {name} · {v}"),
+                    included,
                 });
             }
         }

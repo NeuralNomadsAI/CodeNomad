@@ -251,6 +251,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "Salida",
   "contextUsagePanel.labels.cost": "Costo",
   "contextUsagePanel.included": "Incluido",
+  "contextUsagePanel.partialTotal": "Total parcial de la conversación",
+  "contextUsagePanel.totalUnavailable": "Total de la conversación no disponible",
   "contextUsagePanel.labels.totalInput": "Entrada total",
   "contextUsagePanel.labels.totalOutput": "Salida total",
   "contextUsagePanel.labels.totalCost": "Costo total",

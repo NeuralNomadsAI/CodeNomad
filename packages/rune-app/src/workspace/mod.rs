@@ -22,12 +22,12 @@ pub(crate) use state::{
     new_tab, opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume,
     retry, schedule_catalogue, select, status, strip, toggle_file_wrap, unselect_missing,
 };
+#[cfg(target_arch = "wasm32")]
+pub(crate) use state::{active_workspace, poll_cached_notifications};
 pub(crate) use state::{
     mission_event, mission_panel, mission_supported, right_panel_tab, set_right_panel_tab,
     suspend_missions,
 };
-#[cfg(target_arch = "wasm32")]
-pub(crate) use state::{active_workspace, poll_cached_notifications};
 
 use crate::composer::draft_storage::SavedParts;
 use save_snapshot::encode_for_save;
