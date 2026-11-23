@@ -178,11 +178,16 @@ fn shift_enter_resolves_both_mentions_of_the_same_folder() {
     );
     assert!(matches!(&rt.state.composer.draft.attachments[..],
         [Attachment::Path(path)] if path == "./docs"));
-    let (prompt, _) = rt.state.composer.draft.prepare(
-        &rt.state.draft.text,
-        "msg_folder",
-        codenomad_client::prompt::Delivery::Steer,
-    );
+    let (prompt, _) = rt
+        .state
+        .composer
+        .draft
+        .prepare(
+            &rt.state.draft.text,
+            "msg_folder",
+            codenomad_client::prompt::Delivery::Steer,
+        )
+        .unwrap();
     assert_eq!(
         prompt.text,
         "Voir ./docs puis user@docs et @docs2 avant ./docs/"
@@ -482,11 +487,16 @@ fn tab_only_completes_and_shift_enter_records_a_path_without_a_file() {
         },
     );
     assert_eq!(rt.state.draft.text, "@./a #%.txt ");
-    let (prompt, _) = rt.state.composer.draft.prepare(
-        &rt.state.draft.text,
-        "msg_x",
-        codenomad_client::prompt::Delivery::Steer,
-    );
+    let (prompt, _) = rt
+        .state
+        .composer
+        .draft
+        .prepare(
+            &rt.state.draft.text,
+            "msg_x",
+            codenomad_client::prompt::Delivery::Steer,
+        )
+        .unwrap();
     assert_eq!(prompt.text, "./a #%.txt");
     assert!(prompt.files.is_empty());
 }

@@ -1,5 +1,6 @@
 use super::draft::{Attachment, Draft, MAX_PARTS};
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SavedParts {
@@ -9,6 +10,10 @@ pub(crate) struct SavedParts {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Part {
+    Pasted {
+        id: u64,
+        text: Arc<str>,
+    },
     Project {
         name: String,
         path: String,
@@ -36,6 +41,7 @@ impl SavedParts {
             Part::Path { path } => json!({"type":"path","path":path}),
             Part::Agent { name } => json!({"type":"agent","name":name}),
             Part::Skill { id, name } => json!({"type":"skill","id":id,"name":name}),
+            Part::Pasted { id, text } => json!({"type":"pasted","id":id.to_string(),"text":text.as_ref()}),
         }).collect();
         json!({"complete":self.complete,"parts":parts})
     }
@@ -70,6 +76,10 @@ impl SavedParts {
                         id: field("id")?,
                         name: field("name")?,
                     },
+                    ("pasted", 3) => Part::Pasted {
+                        id: row["id"].as_str()?.parse().ok()?,
+                        text: Arc::from(row["text"].as_str()?),
+                    },
                     _ => return None,
                 })
             })
@@ -101,6 +111,10 @@ impl SavedParts {
                     id: id.clone(),
                     name: name.clone(),
                 },
+                Attachment::Pasted { id, text } => Part::Pasted {
+                    id: *id,
+                    text: text.clone(),
+                },
                 Attachment::Device { .. } => {
                     saved.complete = false;
                     continue;
@@ -128,6 +142,7 @@ impl SavedParts {
                 Part::Path { path } => Attachment::Path(path),
                 Part::Agent { name } => Attachment::Agent(name),
                 Part::Skill { id, name } => Attachment::Skill { id, name },
+                Part::Pasted { id, text } => Attachment::Pasted { id, text },
             });
         }
         (draft, !self.complete)
@@ -145,6 +160,8 @@ impl SavedParts {
                             .all(|segment| !matches!(segment, "" | "." | ".."))
                 })
         };
+        let mut pasted = std::collections::BTreeSet::new();
+        let mut pasted_bytes = 0;
         self.parts.len() <= MAX_PARTS
             && (!self.complete || !self.parts.is_empty())
             && self.parts.iter().all(|part| match part {
@@ -160,6 +177,13 @@ impl SavedParts {
                 Part::Path { path } => relative(path),
                 Part::Agent { name } => label(name),
                 Part::Skill { id, name } => label(id) && label(name),
+                Part::Pasted { id, text } => {
+                    pasted_bytes += text.len();
+                    *id != 0
+                        && !text.is_empty()
+                        && pasted.insert(*id)
+                        && pasted_bytes <= super::long_paste::MAX_BYTES
+                }
             })
     }
 }
