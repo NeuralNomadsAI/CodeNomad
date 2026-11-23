@@ -47,6 +47,20 @@ pub(super) async fn dispatch(
         signals.observe(&value);
         return Ok(());
     }
+    if value["instanceId"] == b.workspace
+        && let Some(watch) = &state.provider_usage
+        && let Some(hint) = crate::provider_usage::hint(&value)
+    {
+        if let crate::provider_usage::Hint::Refresh(directory) = hint {
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::ProviderUsageRefresh(directory),
+            ))
+            .await?;
+        } else {
+            state.provider_usage_changed(watch.observe(&hint));
+        }
+    }
     if let Some(owner) = storage_owner(&value) {
         return state.storage_changed(epoch, owner, out).await;
     }

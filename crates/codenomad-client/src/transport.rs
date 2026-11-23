@@ -18,7 +18,7 @@ pub enum WorkspaceEvent {
     ProvidersChanged {
         workspace_id: String,
     },
-    ProviderUsage(crate::provider_usage::Hint),
+    ProviderUsageRefresh(Option<String>),
     UiPreferencesChanged,
     MissionChanged {
         workspace_id: String,
@@ -76,6 +76,7 @@ pub struct Authentication {
 #[derive(Debug)]
 pub enum Event {
     Connected(crate::backend::Backend),
+    ProviderUsageWatch(crate::provider_usage::Watch),
     Workspace(WorkspaceEvent),
     Preferences(crate::settings::Owner),
     AgentHint(bool),

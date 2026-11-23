@@ -1,7 +1,7 @@
 use crate::{State, backend::Backend, platform, screen, strings::t};
 use codenomad_client::{
     Receiver, Sender, bounded,
-    provider_usage::{Hint, Usage},
+    provider_usage::{Usage, Watch},
     runtime::Instant,
 };
 use rune::{El, Tx, col, text};
@@ -15,8 +15,8 @@ pub(crate) struct Panel {
     backend: Option<Backend>,
     model: Option<(String, String, String)>,
     expanded: bool,
-    online: bool,
-    upstream: Option<(u64, bool)>,
+    watch: Option<Watch>,
+    authority: (u64, bool),
     due: Option<Instant>,
     trailing: bool,
     read: Option<(Sender<()>, Receiver<Option<Usage>>)>,
@@ -48,39 +48,38 @@ impl Panel {
         self.trailing = false;
     }
 
-    pub(crate) fn online(&mut self, online: bool) {
-        if self.online != online {
-            self.online = online;
-            self.invalidate();
-        }
+    pub(crate) fn watch(&mut self, watch: Watch) {
+        self.disconnect();
+        self.watch = Some(watch);
     }
 
-    pub(crate) fn hint(&mut self, hint: Hint) {
-        match hint {
-            Hint::Revoke => self.invalidate(),
-            Hint::Upstream {
-                generation,
-                connected,
-            } => {
-                let status = Some((generation, connected));
-                if self.upstream != status {
-                    self.upstream = status;
-                    self.online = connected;
-                    self.invalidate();
-                }
-            }
-            Hint::Refresh(directory) => {
-                if self.model.as_ref().is_some_and(|(active, _, _)| {
-                    directory.as_deref().is_none_or(|directory| {
-                        codenomad_client::same_server_path(directory, active)
-                    })
-                }) {
-                    if self.read.is_some() {
-                        self.trailing = true;
-                    } else {
-                        self.due = None;
-                    }
-                }
+    pub(crate) fn disconnect(&mut self) {
+        self.watch = None;
+        self.authority = (0, false);
+        self.invalidate();
+    }
+
+    fn sync_authority(&mut self) -> bool {
+        self.observe_authority(self.watch.as_ref().map_or((0, false), Watch::current))
+    }
+
+    fn observe_authority(&mut self, authority: (u64, bool)) -> bool {
+        if authority == self.authority {
+            return false;
+        }
+        self.authority = authority;
+        self.invalidate();
+        true
+    }
+
+    pub(crate) fn refresh(&mut self, directory: Option<&str>) {
+        if self.model.as_ref().is_some_and(|(active, _, _)| {
+            directory.is_none_or(|directory| codenomad_client::same_server_path(directory, active))
+        }) {
+            if self.read.is_some() {
+                self.trailing = true;
+            } else {
+                self.due = None;
             }
         }
     }
@@ -99,17 +98,11 @@ impl Panel {
         false
     }
 
-    fn poll(
-        &mut self,
-        now: f64,
-        tx: &mut Tx,
-        reads: &platform::reads::Reads,
-        wake: &rune::Waker,
-    ) -> bool {
+    fn poll(&mut self, now: f64, tx: &mut Tx, wake: &rune::Waker) -> bool {
         let (Some(backend), Some((_, provider, model))) = (&self.backend, &self.model) else {
             return false;
         };
-        if !self.online {
+        if !self.authority.1 {
             return false;
         }
         let clock = Instant::now();
@@ -119,6 +112,9 @@ impl Panel {
                 Err(codenomad_client::TryRecvError::Empty) => return false,
                 Err(codenomad_client::TryRecvError::Closed) => None,
             };
+            if self.sync_authority() {
+                return true;
+            }
             self.read = None;
             self.failed = result.is_none();
             self.usage = result;
@@ -140,17 +136,13 @@ impl Panel {
         let (close, cancelled) = bounded(1);
         let (out, reply) = bounded(1);
         self.read = Some((close, reply));
-        let (reads, wake, backend, provider, model) = (
-            reads.clone(),
+        let (wake, backend, provider, model) = (
             wake.clone(),
             backend.clone(),
             provider.clone(),
             model.clone(),
         );
         platform::spawn(async move {
-            let Some(_slot) = reads.background(&cancelled).await else {
-                return;
-            };
             if let Some(result) =
                 platform::reads::cancellable(&cancelled, backend.provider_usage(&provider, &model))
                     .await
@@ -183,7 +175,9 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             ))
         })
         .flatten();
-    s.status_usage.select(model) | s.status_usage.poll(now, tx, &s.reads, &s.wake)
+    s.status_usage.select(model)
+        | s.status_usage.sync_authority()
+        | s.status_usage.poll(now, tx, &s.wake)
 }
 
 pub(super) fn section(s: &State) -> Option<El> {
@@ -192,7 +186,7 @@ pub(super) fn section(s: &State) -> Option<El> {
     let body = if let Some(usage) = &panel.usage {
         view::usage(usage, s)
     } else {
-        let key = if !panel.online || panel.failed {
+        let key = if !panel.authority.1 || panel.failed {
             "providerUsage.unavailable"
         } else if panel.model.is_none() {
             "providerUsage.noSession"
@@ -242,12 +236,16 @@ mod tests {
                     json!({
                         "requestedProviderId":"google", "modelId":"models/example",
                         "providerName":"Fixture", "configured":true, "supported":true, "ok":true,
-                        "windows":{"requests:example":{"usedPercent":64}}
+                        "windows":{"requests:example":{"usedPercent":64,"resetAt":1800000000000.0}}
                     }),
                 )
                 .await;
             let usage = wait(read).await.unwrap().unwrap();
             assert_eq!(usage.windows["requests:example"].used_percent, Some(64.0));
+            assert_eq!(
+                usage.windows["requests:example"].reset_at,
+                Some(1800000000000.0)
+            );
         });
     }
 
@@ -258,31 +256,21 @@ mod tests {
         let (stop, cancelled) = bounded(1);
         let (send, reply) = bounded(1);
         panel.read = Some((stop, reply));
-        panel.hint(Hint::Refresh(Some("/fixture/unrelated".into())));
+        panel.refresh(Some("/fixture/unrelated"));
         assert!(!panel.trailing);
         for _ in 0..5 {
-            panel.hint(Hint::Refresh(Some("/fixture/checkout".into())));
+            panel.refresh(Some("/fixture/checkout"));
         }
         assert!(panel.trailing && !cancelled.is_closed());
-        panel.hint(Hint::Revoke);
+        assert!(panel.observe_authority((1, true)));
         assert!(cancelled.is_closed() && send.is_closed() && !panel.trailing);
 
-        panel.hint(Hint::Upstream {
-            generation: 1,
-            connected: true,
-        });
         let (stop, cancelled) = bounded(1);
         let (send, reply) = bounded(1);
         panel.read = Some((stop, reply));
-        panel.hint(Hint::Upstream {
-            generation: 1,
-            connected: true,
-        });
+        assert!(!panel.observe_authority((1, true)));
         assert!(!cancelled.is_closed());
-        panel.hint(Hint::Upstream {
-            generation: 2,
-            connected: true,
-        });
+        assert!(panel.observe_authority((2, true)));
         assert!(cancelled.is_closed() && send.is_closed());
 
         let (stop, cancelled) = bounded(1);

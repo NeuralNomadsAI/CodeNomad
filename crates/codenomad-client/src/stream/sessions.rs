@@ -12,13 +12,6 @@ pub(super) async fn relay(
 ) -> Result<()> {
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
-    if own
-        && b.client.supports("provider-usage")
-        && let Some(hint) = crate::provider_usage::hint(value)
-    {
-        out.send(Input::Workspace(epoch, WorkspaceEvent::ProviderUsage(hint)))
-            .await?;
-    }
     if own && value["type"] == "instance.event" {
         children::observe(b, native);
         let root = match native["type"].as_str() {

@@ -37,11 +37,20 @@ pub(crate) async fn run_with_reading(
         let _ = forward.send(Input::Command(Command::Close)).await;
     });
     let mut epoch = 1;
+    let provider_usage = backend
+        .client
+        .supports("provider-usage")
+        .then(crate::provider_usage::Watch::default);
+    if let Some(watch) = &provider_usage
+        && !publish(&out, &wake, Event::ProviderUsageWatch(watch.clone())).await
+    {
+        return Ok(());
+    }
     let make_wire = || {
-        Arc::new(stream::State::observing_preferences(
-            out.clone(),
-            wake.clone(),
-        ))
+        Arc::new(
+            stream::State::observing_preferences(out.clone(), wake.clone())
+                .with_provider_usage(provider_usage.clone()),
+        )
     };
     let mut wire = make_wire();
     stream::start(backend.clone(), epoch, tx.clone(), wire.clone());

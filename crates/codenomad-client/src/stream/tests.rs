@@ -2,6 +2,37 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn received_credentials_revoke_quota_authority_before_a_full_recovery_queue() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+            backend.workspace = "project".into();
+            let (out, recovery) = crate::bounded(1);
+            let (events, _display) = crate::bounded(1);
+            let watch = crate::provider_usage::Watch::default();
+            watch.transport(true);
+            let state = State::observing_preferences(events, Arc::new(|| {}))
+                .with_provider_usage(Some(watch.clone()));
+            assert!(out.try_send(Input::Opened(1)).is_ok());
+            let before = watch.current();
+            let payload = json!({
+        "type":"instance.event", "instanceId":"project", "event":{"type":"credential.switched"}
+    })
+    .to_string();
+            let mut routed = std::pin::pin!(dispatch(
+                &backend, 1, &out, &state, "stream", "message", &payload
+            ));
+            assert!(futures_lite::future::poll_once(&mut routed).await.is_none());
+            assert_eq!(watch.current(), (before.0 + 1, true));
+            assert!(matches!(recovery.try_recv().unwrap(), Input::Opened(1)));
+            routed.await.unwrap();
+        });
+}
+
+#[test]
 fn owner_changes_invalidate_the_intended_consumers_without_recovering_history() {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
