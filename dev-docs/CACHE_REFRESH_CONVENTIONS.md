@@ -109,7 +109,7 @@ recovery later succeeds.
 `use-app-session-capture.ts` tracks per-workspace checkpoint tokens for capture
 and topology tokens for preserved-prompt hydration. Session writes preserve
 unchanged nested field identities and invalidate the relevant token when a field
-changes or a workspace map is republished.
+changes or a publisher replaces the workspace map.
 Only cost/token changes while a session is working or compacting are deferred.
 Session membership, metadata, runtime transitions and idle usage still invalidate;
 drafts, attachments, selection, expansion, scrolls and outlines retain their triggers.
