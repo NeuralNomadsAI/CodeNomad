@@ -766,17 +766,19 @@ describe("chunked hydration", () => {
     }
     const projected = inputs.map((input, index) =>
       index === 10
-        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "live SSE text" }] }
+        ? { ...input, status: "streaming" as const, updatedAt: 999, parts: [{ type: "text" as const, text: "live SSE text", native: { phase: "done" } }] }
         : input,
     )
     projected.push(appended)
+    projected.push({ ...appended, id: "msg_zzz_two", parts: [{ type: "text" as const, text: "second streamed row" }] })
     store.hydrateMessages("session", projected, [{ id: "msg_zzz_live", sessionID: "session", role: "assistant", time: { created: 900 }, cost: 2, tokens: { input: 3, output: 4 } }], { preserveOmitted: true })
 
     assert.equal(await result, true)
     const ids = store.getSessionMessageIds("session")
     assert.ok(ids.includes("msg_zzz_live"), "a row streamed between chunks survives a latest-window snapshot commit")
+    assert.ok(ids.includes("msg_zzz_two"), "the whole arrival run stays anchored after the last shared id")
     assert.equal((store.getMessage("msg_zzz_live")?.parts["msg_zzz_live-part-0"]?.data as { text?: string })?.text, "streamed reply")
-    assert.equal((store.getMessage("msg_010")?.parts["msg_010-part-0"]?.data as { text?: string })?.text, "live SSE text", "divergent live content a snapshot does not extend is never regressed")
+    assert.equal((store.getMessage("msg_010")?.parts["msg_010-part-0"]?.data as { text?: string })?.text, "live SSE text", "committed live content newer than the snapshot is never regressed")
     assert.equal(store.getSessionUsage("session")?.totalCost, 2, "streamed usage survives the snapshot's usage rebuild")
   })
 
@@ -795,20 +797,65 @@ describe("chunked hydration", () => {
     assert.equal(store.getSessionMessageIds("session").includes("msg_zzz_live"), false, "a history replacement omits rows its page does not hold")
   })
 
-  it("lets a snapshot extend displayed partial text it was diffed against", async () => {
-    const store = createInstanceMessageStore("chunked-snapshot-extends")
+  it("arbitrates queued partials and running tools per part", async () => {
+    const store = createInstanceMessageStore("chunked-arbitration")
     const base = makeInputs(CHUNK_SIZE + 5)
-    // A queued older projection lands a partial prefix of the final text.
-    const partial = base.map((input, index) =>
+    // A queued older projection: divergent corrected text on one row and a
+    // running tool with partial output on another.
+    const queued = base.map((input, index) => {
+      if (index === 10) return { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "stale partial" }] }
+      if (index === 11) {
+        return { ...input, status: "streaming" as const, parts: [{ id: "tool_1", type: "tool" as const, tool: "bash", state: { status: "running" as const, input: {} } }] }
+      }
+      return input
+    })
+    const corrected = base.map((input, index) => {
+      if (index === 10) return { ...input, parts: [{ type: "text" as const, text: "corrected final" }] }
+      if (index === 11) {
+        return { ...input, parts: [{ id: "tool_1", type: "tool" as const, tool: "bash", state: { status: "completed" as const, input: {}, output: "done", content: [] } }] }
+      }
+      return input
+    })
+    const result = store.hydrateMessages("session", corrected, undefined, { chunked: true })
+    store.hydrateMessages("session", queued, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    assert.equal((store.getMessage("msg_010")?.parts["msg_010-part-0"]?.data as { text?: string })?.text, "corrected final", "divergent corrected snapshot text supersedes an open queued partial")
+    const tool = store.getMessage("msg_011")?.parts["tool_1"]?.data as { state?: { status?: string } } | undefined
+    assert.equal(tool?.state?.status, "completed", "a completed tool result supersedes a running partial")
+  })
+
+  it("keeps an open streamed fragment the fetched page only prefixes", async () => {
+    const store = createInstanceMessageStore("chunked-stream-continues")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    const streamed = base.map((input, index) =>
       index === 10
-        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "body-1" }] }
+        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "body-10 continues" }] }
         : input,
     )
     const result = store.hydrateMessages("session", base, undefined, { chunked: true })
-    store.hydrateMessages("session", partial, undefined, { preserveOmitted: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
 
     assert.equal(await result, true)
-    assert.equal((store.getMessage("msg_010")?.parts["msg_010-part-0"]?.data as { text?: string })?.text, "body-10", "the snapshot's full text replaces the queued older partial it extends")
+    assert.equal((store.getMessage("msg_010")?.parts["msg_010-part-0"]?.data as { text?: string })?.text, "body-10 continues", "an open fragment the page only prefixes keeps its streamed text")
+  })
+
+  it("keeps tokens published after the fetch through a same-window reload", async () => {
+    const store = createInstanceMessageStore("chunked-usage-reload")
+    const inputs = makeInputs(CHUNK_SIZE + 5)
+    const infos = makeInfos(CHUNK_SIZE + 5)
+    store.hydrateMessages("session", inputs, infos)
+
+    const reloaded = store.hydrateMessages("session", inputs, infos, { chunked: true })
+
+    // SSE published usage for one row while the reload's chunks compute,
+    // after its page was fetched.
+    store.setMessageInfo("msg_010", { id: "msg_010", sessionID: "session", role: "assistant", time: { created: 11, completed: 11 }, cost: 5, tokens: { input: 100, output: 23 } })
+
+    assert.equal(await reloaded, true)
+    const usage = store.getSessionUsage("session")!
+    assert.equal(usage.entries["msg_010"]?.cost, 5, "the published info survives the reload")
+    assert.equal(usage.entries["msg_010"]?.combinedTokens, 123, "123 published tokens are not reset")
   })
 
   it("reaches exactly the state of a single-pass hydrate", async () => {

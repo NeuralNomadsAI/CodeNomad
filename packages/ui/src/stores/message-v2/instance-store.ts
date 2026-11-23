@@ -614,6 +614,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      * against, so a row the store has since replaced is decided by content
      * freshness at the finalize pass, not by whichever writer landed first. */
     previousRecords: Map<string, MessageRecord | undefined>
+    /** Cached infos at plan time: the finalize pass re-verifies each id
+     * before letting the snapshot's info land, so usage published by SSE
+     * after the fetch survives the commit. */
+    previousInfos: Map<string, MessageInfo | undefined>
     dedupedInputs: MessageUpsertInput[]
     serverIds: string[]
     serverIdSet: Set<string>
@@ -660,10 +664,15 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     const isVisibleInfo = (info: MessageInfo) => !revertMessageId || info.id < revertMessageId
     const infoList = infos ? Array.from(infos).filter(isVisibleInfo) : undefined
+    const previousInfos = new Map<string, MessageInfo | undefined>()
+    for (const info of infoList ?? []) {
+      previousInfos.set(info.id as string, messageInfoCache.get(info.id as string))
+    }
 
     return {
       revertMessageId,
       previousRecords,
+      previousInfos,
       dedupedInputs,
       serverIds,
       serverIdSet,
@@ -725,14 +734,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         // Arrived after the snapshot was planned. The snapshot never spoke
         // about this row: a latest-window load keeps the newer content in
         // place, while a history replacement drops it exactly as the
-        // synchronous path omits rows its page does not hold.
+        // synchronous path omits rows its page does not hold. The whole
+        // arrival run stays anchored after the last shared id.
         if (keepArrivals) {
           attach(id)
           keptArrivals = true
         } else {
           omittedIds.push(id)
         }
-        precedingId = id
         continue
       }
       const record = state.messages[id]
@@ -801,35 +810,76 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     return normalized
   }
 
-  /** Concatenated text/reasoning content of a record, or undefined when its
-   * part structure carries more than prose (tools, files): text streams only
-   * append, so comparing the two signatures orders the writers. */
-  function recordTextSignature(record: MessageRecord | undefined): string | undefined {
-    if (!record) return undefined
-    let text = ""
-    for (const partId of record.partIds) {
-      const part = record.parts[partId]?.data
-      if (!part) continue
-      if (part.type === "text" || part.type === "reasoning") {
-        text += typeof part.text === "string" ? part.text : ""
-      } else {
-        return undefined
-      }
-    }
-    return text
+  function isTerminalToolStatus(status: unknown): boolean {
+    return status === "completed" || status === "error"
   }
 
-  /** Whether a fetched record may replace the resident one it was diffed
-   * against: only when the snapshot's text extends what is displayed (the
-   * resident is a strict prefix). A longer or divergent resident is newer
-   * live content a stale snapshot must not regress. */
-  function snapshotExtendsResident(resident: MessageRecord | undefined, next: MessageRecord): boolean {
-    if (resident === undefined) return true
-    const residentText = recordTextSignature(resident)
-    const nextText = recordTextSignature(next)
-    if (residentText === undefined || nextText === undefined) return false
-    if (residentText === "") return true
-    return nextText.startsWith(residentText)
+  /** Whether a streamed text fragment has its ending committed: the native
+   * provider state for text, `time.completed` for reasoning. */
+  function isCommittedProsePart(part: ClientPart): boolean {
+    if (part.type === "text") return (part as { native?: unknown }).native !== undefined
+    if (part.type === "reasoning") return (part as { time?: { completed?: unknown } }).time?.completed !== undefined
+    return true
+  }
+
+  /** Whether the resident part keeps its version against the fetched one,
+   * arbitrating per part on native evidence: a terminal tool state beats an
+   * open one, an open prose fragment keeps text the fetched page only
+   * prefixes (the stream continued past the fetch), and committed versions
+   * order by the records' server timestamps, the fetched page winning ties. */
+  function residentPartWins(resident: ClientPart, snapshot: ClientPart, residentUpdatedAt: number, snapshotUpdatedAt: number): boolean {
+    if (resident.type !== snapshot.type) return false
+    if (resident.type === "tool") {
+      const residentTerminal = isTerminalToolStatus((resident as { state?: { status?: unknown } }).state?.status)
+      const snapshotTerminal = isTerminalToolStatus((snapshot as { state?: { status?: unknown } }).state?.status)
+      if (snapshotTerminal && !residentTerminal) return false
+      if (residentTerminal && !snapshotTerminal) return true
+      return residentUpdatedAt > snapshotUpdatedAt
+    }
+    if (resident.type === "text" || resident.type === "reasoning") {
+      if (!isCommittedProsePart(resident)) {
+        const residentText = typeof (resident as { text?: unknown }).text === "string" ? (resident as { text: string }).text : ""
+        const snapshotText = typeof (snapshot as { text?: unknown }).text === "string" ? (snapshot as { text: string }).text : ""
+        return snapshotText.length < residentText.length && residentText.startsWith(snapshotText)
+      }
+      if (!isCommittedProsePart(snapshot)) return true
+    }
+    return residentUpdatedAt > snapshotUpdatedAt
+  }
+
+  /** Merges a fetched record into one the store no longer holds as the
+   * chunks diffed it: per part, the winner above decides; parts only one
+   * side holds stay. Returns the resident record when nothing of the
+   * snapshot survives. */
+  function mergeSnapshotRecord(resident: MessageRecord, next: MessageRecord): MessageRecord {
+    const ids = [...next.partIds]
+    const nextIds = new Set(next.partIds)
+    for (const id of resident.partIds) {
+      if (!nextIds.has(id)) ids.push(id)
+    }
+    let snapshotSurvives = false
+    const parts: MessageRecord["parts"] = {}
+    for (const id of ids) {
+      const residentPart = resident.parts[id]
+      const snapshotPart = next.parts[id]
+      if (!snapshotPart) {
+        if (residentPart) parts[id] = residentPart
+        continue
+      }
+      if (!residentPart) {
+        parts[id] = snapshotPart
+        snapshotSurvives = true
+        continue
+      }
+      if (residentPartWins(residentPart.data, snapshotPart.data, resident.updatedAt, next.updatedAt)) {
+        parts[id] = residentPart
+      } else {
+        parts[id] = snapshotPart
+        snapshotSurvives = true
+      }
+    }
+    if (!snapshotSurvives) return resident
+    return { ...next, parts, partIds: ids, revision: resident.revision + 1 }
   }
 
   // A chunked hydration computes its chunks across task boundaries but keeps
@@ -866,8 +916,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       for (const input of chunks[index]) {
         const info = infoById.get(input.id)
         if (!info || !plan.serverIdSet.has(info.id as string)) continue
-        // Only record the info when its content actually changed.
-        const previousInfo = messageInfoCache.get(info.id as string)
+        // Only record the info when its content changed against the
+        // plan-time basis: a newer writer (SSE-published usage) is handled
+        // by the finalize identity check, not by this comparison.
+        const previousInfo = plan.previousInfos.get(info.id as string)
         if (!previousInfo || !messageInfoEqual(previousInfo, info)) {
           pendingInfos.push(info)
         }
@@ -907,6 +959,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       clearRecordDisplayCacheForMessages(instanceId, membership.omittedIds)
     }
     for (const info of pendingInfos) {
+      // A newer writer (SSE-published usage) replaced this id after the
+      // plan: keep the published version.
+      if (messageInfoCache.get(info.id as string) !== plan.previousInfos.get(info.id as string)) continue
       messageInfoCache.set(info.id as string, info)
     }
     for (const entry of pendingRecords) {
@@ -916,26 +971,31 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       hooks?.onMessagesRemoved?.(instanceId, sessionId, membership.omittedIds)
     }
 
-    const usageInfos = (options?.preserveOmitted || membership.keptArrivals) && plan.infoList
+    // Usage merges the snapshot with the resident cache, the cache winning
+    // per id: tokens published by SSE events after the fetch must survive a
+    // reload that never saw them.
+    const usageInfos = plan.infoList
       ? new Map([
+          ...plan.infoList.map((info) => [info.id as string, info] as const),
           ...Array.from(messageInfoCache.values())
             .filter((info) => info.sessionID === sessionId && (!plan.revertMessageId || info.id < plan.revertMessageId))
             .map((info) => [info.id as string, info] as const),
-          ...plan.infoList.map((info) => [info.id as string, info] as const),
         ]).values()
-      : plan.infoList
+      : undefined
     const usageState = usageInfos ? rebuildUsageStateFromInfos(usageInfos) : undefined
 
     batch(() => {
       for (const entry of pendingRecords) {
         // The row still holds its plan-time diff basis: the snapshot updates
         // it. Otherwise a newer writer replaced it between the plan and this
-        // commit; the snapshot wins only when its text extends what the
-        // resident displays (a queued older partial must not mask it, while
-        // longer live content a stale snapshot must not regress).
-        if (state.messages[entry.id] !== entry.previous
-          && !snapshotExtendsResident(state.messages[entry.id], entry.record)) continue
-        setState("messages", entry.id, entry.record)
+        // commit, and per-part native arbitration decides what lands.
+        let record = entry.record
+        const resident = state.messages[entry.id]
+        if (resident !== undefined && resident !== entry.previous) {
+          record = mergeSnapshotRecord(resident, entry.record)
+          if (record === resident) continue
+        }
+        setState("messages", entry.id, record)
       }
       if (!options?.preserveOmitted && membership.omittedIds.length > 0) {
         setState("messages", produce((draft) => {

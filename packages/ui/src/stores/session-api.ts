@@ -2262,6 +2262,11 @@ async function loadMessages(
     try {
       if (sessions().get(instanceId)?.has(sessionId)) {
         if (revisionRetry >= MAX_LATEST_WINDOW_REVISION_RETRIES) {
+          // A load that lost its authority on its final attempt (cancelled or
+          // superseded between the retry's backoff and this check) fails
+          // silently: publishing a load error for a window nobody awaits
+          // would strand an error surface with no retry left.
+          if (!isCurrent()) return false
           const error = new Error(tGlobal("messageSection.loadError.detail"))
           setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
           throw error
