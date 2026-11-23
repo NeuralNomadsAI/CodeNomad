@@ -13,6 +13,8 @@ use rune_theme_codenomad::{
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
 
+mod diagnostics;
+
 const FEEDS: [&str; 2] = ["stable", "preview"];
 
 #[derive(Default)]
@@ -24,6 +26,8 @@ pub(super) struct Info {
     refresh: bool,
     reread_feed: bool,
     support_failed: bool,
+    release_failed: bool,
+    diagnostics: diagnostics::Diagnostics,
 }
 
 impl Info {
@@ -40,6 +44,7 @@ impl Info {
             self.owner = owner.map(str::to_owned);
             self.refresh = true;
         }
+        changed |= self.diagnostics.poll(backend, wake);
         if let Some((_, reply)) = &self.flight {
             let value = match reply.try_recv() {
                 Ok(value) => value,
@@ -94,6 +99,11 @@ impl Info {
         let value = self.current(&prefs).unwrap_or(&Value::Null);
         let feed = FEEDS.iter().position(|feed| value["updateFeed"] == *feed);
         let busy = self.flight.is_some() || prefs.update_feed_pending();
+        let offer = value.get("update").filter(|offer| offer.is_object());
+        let latest = offer.and_then(|offer| value_text(&offer["version"]));
+        let release = (!busy && !self.failed && latest.is_some()).then(|| {
+            offer.and_then(|offer| value_text(&offer["url"])).and_then(codenomad_client::settings::info::release_link)
+        }).flatten();
         let version =
             value_text(&value["serverVersion"]).or_else(|| value_text(&value["ui"]["version"]));
         let ui = value_text(&value["ui"]["version"]).filter(|ui| Some(*ui) != version);
@@ -114,13 +124,28 @@ impl Info {
             ));
 
         let update = shared.clone();
+        let source = shared.clone();
         let updates = card("settings.info.updates.title")
+            .child(row("settings.info.updates.latest", latest))
+            .children(release.map(|release| chrome::primary_action_tx(
+                t("settings.info.updates.download"), false, move |s: &mut S, tx| {
+                    let Some(info) = access(s) else { return; };
+                    let prefs = source.borrow();
+                    if !info.failed && info.flight.is_none() && !prefs.update_feed_pending()
+                        && info.current(&prefs).and_then(|m| value_text(&m["update"]["url"]))
+                            .and_then(codenomad_client::settings::info::release_link).as_ref() == Some(&release)
+                    {
+                        info.release_failed = tx.open_url(&release).is_err();
+                    }
+                })))
+            .children(self.release_failed.then(|| text(t("settings.info.actions.failed")).wrap().role("alert")))
             .child(layout::button(
                 t("settings.info.updates.refresh"),
                 busy || !prefs.can_retry(),
                 move |s: &mut S| {
                     if let Some(info) = access(s) {
                         info.refresh = true;
+                        info.release_failed = false;
                     }
                 },
             ))
@@ -191,7 +216,9 @@ impl Info {
             .children(value.as_object().map(|_| connectivity(value)));
         col()
             .full_width()
-            .children([about, updates, support, connectivity].map(chrome::card))
+            .children([about, updates, support, connectivity].map(chrome::card).into_iter().take(3))
+            .child(self.diagnostics.view(shared, access, value.as_object().is_some()))
+            .child(chrome::card(connectivity))
     }
 }
 
