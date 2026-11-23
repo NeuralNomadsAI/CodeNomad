@@ -21,6 +21,14 @@ assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only
 const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile,root=path.resolve(import.meta.dirname,'../../..')
 if(!web)requireTestSupport()
 const gitPanel=process.argv.includes('--git-panel'),gitOutput=gitPanel?process.env.RUNE_TEST_GIT_OUTPUT:undefined
+const placeWorktree=process.argv.includes('--place-worktree'),moves=[]
+const placementAmbiguous=process.argv.includes('--placement-ambiguity')
+const placementBusy=process.argv.includes('--placement-busy')
+let activePlacementChecks=0
+let failedPlacementActivity=false
+assert(!placeWorktree||gitPanel,'Placement uses the isolated Git panel fixture')
+assert(!placementAmbiguous||placeWorktree,'Ambiguity requires placement mode')
+assert(!placementBusy||placeWorktree&&!placementAmbiguous,'Busy refusal requires normal placement mode')
 if(gitOutput)assert(path.isAbsolute(gitOutput),'Git fixture output must be absolute')
 const here=path.resolve(import.meta.dirname,'..'),profile=path.join(gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile')),`launcher-${randomUUID()}`)
 const project=path.join(profile,'projects','synthetic');await mkdir(project,{recursive:true})
@@ -140,8 +148,13 @@ function add(id,title,directory=project) {
 add('ses_existing','Existing history')
 if(webMobile)for(let i=0;i<(webAndroid?70:210);i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
 stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
-add('ses_another','Another session',gitPanel?review:project)
+add('ses_another','Another session',gitPanel&&!placeWorktree?review:project)
 if(gitPanel)for(let i=0;i<50;i++)stores.get('ses_another').append('assistant',`Reading position ${i}\n\nA second paragraph in the fixture.`)
+if(placeWorktree){
+  add('ses_child','Child session').parentID='ses_existing'
+  for(const row of records.values())row.projectID='fixture_project'
+  for(let i=0;i<32;i++)stores.get('ses_existing').append('assistant',`Placement history ${i}`)
+}
 if(linked){
   add('ses_linked','Linked checkout session',linked)
   add('ses_linked_next','Linked checkout next page',linked)
@@ -194,14 +207,23 @@ const upstream=createServer(async(req,res)=>{
     if(gitPanel&&url.pathname==='/api/project')return json([{id:'fixture_project'}])
     if(gitPanel&&/^\/api\/experimental\/session\/[^/]+\/terminal$/.test(url.pathname))return json({data:[]})
     if(gitPanel&&['/api/pty','/api/shell'].includes(url.pathname))return json({data:[]})
-    if(gitPanel&&url.pathname==='/api/session/active')return json({data:{}})
+    if(gitPanel&&url.pathname==='/api/session/active'){
+      if(placementAmbiguous&&moves.length>=3&&!failedPlacementActivity){
+        failedPlacementActivity=true
+        res.statusCode=503
+        return json({error:'Synthetic activity outage'})
+      }
+      return json({data:placementBusy&&activePlacementChecks++===0?{ses_child:{}}:{}})
+    }
     if(gitCount&&url.pathname==='/api/worktree')return json(Array.from({length:gitCount},(_,i)=>({directory:i?path.join(profile,`absent-checkout-${i}`):project})))
     if(url.pathname==='/api/session'&&req.method==='GET') {
       stats.lists++
       const cursor=url.searchParams.get('cursor')
       if(gitPanel&&url.searchParams.get('project')==='fixture_project'){
         assert.equal(url.searchParams.get('directory'),null)
-        assert(['desc','asc'].includes(url.searchParams.get('order')))
+        const order=url.searchParams.get('order')
+        if(order==='asc')assert.equal(url.searchParams.get('limit'),'100')
+        else assert.equal(order,'desc')
         return json({data:[...records.values()],cursor:{}})
       }
       const directory=cursor?JSON.parse(Buffer.from(cursor,'base64url')).directory:url.searchParams.get('directory')
@@ -230,10 +252,25 @@ const upstream=createServer(async(req,res)=>{
       return json({output})
     }
     if(url.pathname==='/api/rpc/codenomad.missions/scheduleCarrierRead')return json({output:{owned:false}})
+    if(placeWorktree&&url.pathname==='/api/model')return json({data:[]})
     const match=url.pathname.match(/^\/api\/session\/([^/]+)(?:\/(.*))?$/)
     if(match){
       const [,id,action]=match,record=records.get(id),store=stores.get(id);assert(record,'known fixture session')
       if(!action)return json({data:record})
+      if(placeWorktree&&['permission','form'].includes(action))return json({data:[]})
+      if(placeWorktree&&action==='move'){
+        assert.equal(req.method,'POST')
+        assert(['ses_existing','ses_child'].includes(id))
+        const directory=JSON.parse(raw).directory
+        moves.push(id)
+        if(placementAmbiguous&&(id==='ses_child'||directory===project)){
+          res.statusCode=409
+          return json({error:'Synthetic native move refusal'})
+        }
+        assert.equal(directory,review)
+        record.location.directory=review
+        return json({data:record})
+      }
       if(action==='message')return json({data:store.rows.slice(-Number(url.searchParams.get('limit'))),cursor:url.searchParams.get('order')==='asc'?{next:'future-read-anchor'}:{}})
       if(action==='environment'){res.statusCode=204;res.end();return}
       if(gitPanel&&id==='ses_another'&&action==='move'){
@@ -374,7 +411,8 @@ try{
     }
   }else {
     if(gitPanel)await signIn(origin)
-    client=spawn(clientBinary,[gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
+    const args=gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'
+    client=spawn(clientBinary,[args],{cwd:profile,windowsHide:true,stdio:[filesState||gitPanel?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{}),...(placeWorktree?{RUNE_TEST_PLACE_WORKTREE:placementAmbiguous?'ambiguous':placementBusy?'busy':'1'}:{})}})
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
@@ -387,14 +425,23 @@ try{
   }
   assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=(webAndroid?1:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
-    await removeReview
-    assert(reviewRemoved)
-    await assert.rejects(access(review),{code:'ENOENT'})
+    if(!placeWorktree){
+      await removeReview
+      assert(reviewRemoved)
+      await assert.rejects(access(review),{code:'ENOENT'})
+    }
     assert(clientLog.split(/\r?\n/).includes('{"type":"git-panel-proof","mounted":true}'))
     assert.equal((await git('log','-1','--format=%s','main')).trim(),'Commit from Rune')
     assert.equal((await git('show','main:git-panel.txt')).trim(),'git-panel edited')
     assert.equal((await git('show','review:git-panel.txt')).trim(),'git-panel initial')
     assert.equal(await git('status','--porcelain'),'')
+    if(placeWorktree){
+      assert(!requests.some(route=>route.endsWith('/prompt')), 'No native prompt request during placement qualification')
+      assert.deepEqual(moves,placementAmbiguous?['ses_existing','ses_child','ses_existing']:['ses_existing','ses_child'])
+      assert.equal(records.get('ses_another').location.directory,project)
+      assert.equal(records.get('ses_child').location.directory,placementAmbiguous?project:review)
+      assert(clientLog.includes(`{"type":"worktree-placement-proof","draftRetained":true,"unconfirmed":${placementAmbiguous}}`))
+    }
   }
   if(filesState){
     await filesChain;assert(filesProof);assert.deepEqual(filesStages.map(s=>s.stage),filesExpected)

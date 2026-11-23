@@ -1,6 +1,8 @@
 mod diff_view;
 mod history;
+mod placement;
 pub(crate) use diff_view::reader;
+pub(crate) use placement::session_worktree;
 
 use super::{
     Lane, Mode, MutationKind, Preview, Ui,
@@ -155,7 +157,7 @@ fn basename(path: &str) -> &str {
         .unwrap_or(path)
 }
 
-fn worktree_picker(ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
+fn worktree_choices(ui: &Ui) -> Vec<(String, String)> {
     let trees: Vec<_> = ui
         .inventory
         .iter()
@@ -176,24 +178,26 @@ fn worktree_picker(ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
             (label, tree.slug.clone())
         })
         .collect();
-    let mut labels: Vec<_> = trees.iter().map(|(label, _)| label.clone()).collect();
     let mut seen = std::collections::HashSet::new();
-    for (i, label) in labels.iter_mut().enumerate() {
-        while !seen.insert(label.clone()) {
-            label.push_str(" · ");
-            label.push_str(&trees[i].1);
-        }
-    }
-    let current = trees
+    trees
+        .into_iter()
+        .map(|(mut label, slug)| {
+            while !seen.insert(label.clone()) {
+                label.push_str(" · ");
+                label.push_str(&slug);
+            }
+            (label, slug)
+        })
+        .collect()
+}
+
+fn worktree_picker(ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
+    let choices = worktree_choices(ui);
+    let labels: Vec<_> = choices.iter().map(|(label, _)| label.clone()).collect();
+    let current = choices
         .iter()
-        .position(|(_, slug)| slug == &ui.slug)
-        .and_then(|i| labels.get(i))
-        .cloned();
-    let choices: Vec<_> = labels
-        .iter()
-        .cloned()
-        .zip(trees.into_iter().map(|(_, slug)| slug))
-        .collect();
+        .find(|(_, slug)| slug == &ui.slug)
+        .map(|(label, _)| label.clone());
     let local_scope = ui.scope.clone();
     let close_scope = local_scope.clone();
     let select = move |s: &mut State, label: &str, _: &mut Tx| {
