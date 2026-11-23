@@ -66,6 +66,7 @@ try {
       const errors = [], forbiddenRequests = [], routes=[], history=[]
       let holdOlder
       let holdAnchor
+      let holdPreview
       let measured
       const policy=workspacePolicy({origin:url.origin,project:values.project,assets,missions:!!missions,markerFilters:values.timeline})
       let eventSource=0
@@ -121,6 +122,10 @@ try {
             await held.release.promise
             return route.continue().catch(()=>{})
           }
+        }
+        if(holdPreview&&p.endsWith('/session/ses_another/message/message-00000')){
+          const held=holdPreview;holdPreview=undefined
+          await held.promise
         }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/instance/api/session')&&
           requested.searchParams.get('directory')===path.join(path.dirname(values.project),'linked')){
@@ -540,11 +545,18 @@ try {
             assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===0))
             assert(routes.some(row=>row.query.includes('cursor=')))
           }
-          if(values['history-search']&&(name==='desktop'||name==='phone'))await historySearch(page,messages,touch,()=>{
-            const held={release:Promise.withResolvers()}
-            holdAnchor=held
-            return ()=>{held.release.resolve();holdAnchor=undefined}
-          })
+           if(values['history-search']&&(name==='desktop'||name==='phone'))await historySearch(page,messages,touch,{
+             holdNextAnchor(){
+               const held={release:Promise.withResolvers()}
+               holdAnchor=held
+               return ()=>{held.release.resolve();holdAnchor=undefined}
+             },
+             holdNextPreview(){
+               const held=Promise.withResolvers()
+               holdPreview=held
+               return ()=>{held.resolve();holdPreview=undefined}
+             },
+           })
           const inventory=async()=>{const response=await context.request.get(new URL('/api/workspaces',url).href);assert(response.ok());const rows=await response.json();assert(Array.isArray(rows)&&rows.length<=128);return rows.map(row=>row.id)}
           const before=await inventory(),owned=[...policy.workspaces],retained=before.filter(id=>!policy.workspaces.has(id))
           assert(owned.length>0&&owned.every(id=>before.includes(id)),'Browser must own its admitted occurrences')

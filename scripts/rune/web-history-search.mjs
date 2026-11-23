@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {installPngReader} from './png-pixels.mjs'
 
-export async function historySearch(page, messages, touch, holdNextAnchor) {
+export async function historySearch(page, messages, touch, {holdNextAnchor, holdNextPreview}) {
   const viewport=page.viewportSize()
   const cdp=touch&&await page.context().newCDPSession(page)
   const resize=async size=>{
@@ -244,19 +244,16 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
       // The inter-session preview adds content; return to the original mobile viewport.
       await resize(viewport)
     }
-    const route='**/instance/api/session/ses_another/message/message-00000'
-    const gate=Promise.withResolvers()
-    const hold=async request=>{await gate.promise;await request.fallback()}
-    await page.route(route,hold)
+    const releasePreview=holdNextPreview()
     const preview=page.waitForResponse(response=>response.url().endsWith('/session/ses_another/message/message-00000'))
+    void preview.catch(()=>{})
     const details=search.getByRole('group',{name:'Another session',exact:true})
     try{
       await press(search,'Existing ranked destination')
       await details.getByText(messages['messageSection.search.searching'],{exact:true}).waitFor()
       assert.equal(windows,beforeOpen,'Loading an excerpt must not page the transcript')
     }finally{
-      gate.resolve()
-      await page.unroute(route,hold)
+      releasePreview()
     }
     assert((await preview).ok())
     await details.getByText('history-linked',{exact:true}).waitFor()
