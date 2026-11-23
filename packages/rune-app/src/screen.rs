@@ -133,9 +133,8 @@ impl State {
                 }
             }
             Editor::Model => self.agent.as_mut().map(|a| &mut a.search),
-            Editor::Composer => {
-                (!self.screen.is_launcher() && !self.composer.pending()).then_some(&mut self.draft)
-            }
+            Editor::Composer => (!self.screen.is_launcher() && !self.composer.editing_locked())
+                .then_some(&mut self.draft),
             Editor::Reason(id) => self.agent.as_mut().and_then(|a| a.reasons.get_mut(&id)),
             Editor::Form(id) => self
                 .agent

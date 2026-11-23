@@ -30,7 +30,10 @@ pub fn physical(s: &mut State, event: &PhysicalInput, tx: &mut Tx) -> bool {
 }
 
 pub fn request(s: &mut State, tx: &mut Tx) {
-    if s.screen.is_launcher() || s.composer.pending() || s.composer.device.clipboard.is_some() {
+    if s.screen.is_launcher()
+        || s.composer.editing_locked()
+        || s.composer.device.clipboard.is_some()
+    {
         return;
     }
     let owner = Rc::new(Cell::new(true));
@@ -74,7 +77,7 @@ pub fn menu(s: &mut State, point: (f32, f32), tx: &mut Tx) {
         point,
         a != b,
         move |s: &mut State, action, tx| {
-            if !s.current_scope(&scope) || s.composer.pending() {
+            if !s.current_scope(&scope) || s.composer.editing_locked() {
                 return;
             }
             match action {

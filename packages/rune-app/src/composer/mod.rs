@@ -8,6 +8,7 @@ pub(crate) mod draft_storage;
 pub(crate) mod literal;
 mod long_paste;
 mod picker;
+pub(crate) mod recall;
 mod tokens;
 pub(crate) mod view;
 pub(crate) use actions::{Owner, acknowledge, can_send, reconcile, send, settle_pending};
