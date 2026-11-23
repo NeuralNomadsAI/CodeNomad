@@ -33,6 +33,18 @@ test('only the exact private project and bounded creation claims enter the owned
   assert(!p.allows('GET','/workspaces/foreign/instance/api/session'))
   assert(!p.allows('DELETE','/api/workspaces/foreign'))
 })
+test('mobile Preferences admits only the private read of memory settings',async()=>{
+  const smoke=workspacePolicy({origin,project,mobilePreferences:true})
+  const req=(base,cookie,method='GET',suffix='settings')=>({
+    url:()=>`${base}/api/memory/${suffix}`,method:()=>method,allHeaders:async()=>({cookie}),
+  })
+  assert(await smoke.request(req(origin,'private=fixture')))
+  assert(!await smoke.request(req(origin,'')))
+  assert(!await smoke.request(req('http://localhost:12345','private=fixture')))
+  assert(!await smoke.request(req(origin,'private=fixture','PUT')))
+  assert(!await smoke.request(req(origin,'private=fixture','GET','entries')))
+  assert(!await workspacePolicy({origin,project}).request(req(origin,'private=fixture')))
+})
 test('invalid admissions leave every workspace unowned; release requires its own claim',()=>{
   const p=workspacePolicy({origin,project}),input=creation('first')
   p.allows('POST','/api/workspaces',input)

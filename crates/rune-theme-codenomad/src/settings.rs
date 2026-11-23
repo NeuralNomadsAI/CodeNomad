@@ -5,7 +5,7 @@ use crate::{
     tokens,
 };
 use rune::{AppSpec, Cx, El, ScrollSpec, col, el, row, text};
-use rune_kit::{SegmentedControl, Select, SelectAppearance, Sidebar, SidebarRow};
+use rune_kit::{Checkbox, SegmentedControl, Select, SelectAppearance, Sidebar, SidebarRow};
 
 pub const WINDOW_SIZE: (f32, f32) = (1100.0, 760.0);
 pub const WINDOW_MIN: (f32, f32) = (760.0, 560.0);
@@ -125,13 +125,6 @@ pub fn placed_window<S: 'static>(
         ..Default::default()
     })
     .map_app(|app| app.maximized(maximized))
-}
-
-pub fn shell_entry(tabs: El, entry: El) -> El {
-    row()
-        .full_width()
-        .child(tabs.grow(1.0).shrink())
-        .child(entry)
 }
 
 pub fn nav<S: 'static>(
@@ -270,6 +263,57 @@ pub fn card(child: El) -> El {
 
 pub fn setting_row(label: &str, control: El) -> El {
     setting_row_with_info(label, None, control)
+}
+
+fn table_header(label: &str, role: &'static str) -> El {
+    col()
+        .role(role)
+        .label(label)
+        .child(text(label).wrap().a11y_hidden())
+}
+
+pub fn checkbox_table_header(label: &str, columns: [&str; 3]) -> El {
+    checkbox_row(
+        table_header(label, "columnheader"),
+        columns.map(|column| table_header(column, "columnheader")),
+        false,
+    )
+}
+
+pub fn checkbox_table_row(label: &str, cells: [El; 3]) -> El {
+    checkbox_row(table_header(label, "rowheader"), cells, true)
+}
+
+fn checkbox_row(label: El, cells: [El; 3], body: bool) -> El {
+    let tokens = tokens(layout::dark());
+    row()
+        .role("row")
+        .full_width()
+        .center_y()
+        .separate(Space::Sm)
+        .child(label.grow(1.0))
+        .children(cells.map(|cell| {
+            let column = col().w(tokens.space(Space::Lg).px() * 3.0).center();
+            if body {
+                column.role("cell").child(cell)
+            } else {
+                column.child(cell)
+            }
+        }))
+}
+
+pub fn checkbox_cell<S: 'static>(
+    label: String,
+    checked: bool,
+    disabled: bool,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    Checkbox::new(checked)
+        .label(label)
+        .hide_label()
+        .disabled(disabled)
+        .on_toggle(toggle)
+        .build(crate::kit(layout::dark()))
 }
 
 pub fn setting_row_with_info(label: &str, info: Option<El>, control: El) -> El {

@@ -1,5 +1,7 @@
 pub(super) mod behavior;
 mod document;
+mod notifications;
+pub(super) mod server;
 
 use crate::{backend::Backend, platform};
 pub(super) use codenomad_client::settings::Owner;
@@ -16,8 +18,12 @@ pub(super) struct Preferences {
     pub(super) provider_target: Option<super::providers::Target>,
     pub(super) memory: super::memory::Setting,
     pub(super) opencode_install: super::opencode::install::Install,
+    pub(super) notification_update: Option<String>,
+    pub(super) announced_update: Option<String>,
     config: Document,
     state: Document,
+    server: Document,
+    show_server: bool,
     pub(super) window_wake: Option<rune::Waker>,
     pub(super) main_wake: Option<rune::Waker>,
     pub(super) revision: u64,
@@ -70,6 +76,17 @@ impl Preferences {
         self.revision += 1;
     }
 
+    pub(super) fn take_notification_failure(&mut self) -> bool {
+        self.config.take_notification_failure()
+            | self.state.take_notification_failure()
+            | self.server.take_notification_failure()
+    }
+    #[cfg(test)]
+    pub(super) fn notification_test_config(&mut self, snapshot: Option<Value>) {
+        self.reset_notification_fixture();
+        self.config.snapshot = snapshot;
+    }
+
     pub(super) fn shortcut(&self, action: &str) -> Option<&[Value]> {
         self.config.snapshot.as_ref()?["settings"]["hotkeyOverrides"][action]
             .as_array()
@@ -88,13 +105,14 @@ impl Preferences {
             self.take_invalidations();
             self.config.prepare_drain();
             self.state.prepare_drain();
+            self.server.prepare_drain();
             // Each lane can finish a PATCH/readback, a retry preflight, and one trailing PATCH/readback.
-            if self.config.draining() || self.state.draining() {
+            if self.documents_draining() {
                 platform::block_on(async {
                     let _ = tokio::time::timeout(
                         codenomad_client::http::REQUEST_TIMEOUT * 5 + Duration::from_millis(100),
                         async {
-                            while self.config.draining() || self.state.draining() {
+                            while self.documents_draining() {
                                 self.poll_documents();
                                 if self.config.draining() || self.state.draining() {
                                     platform::sleep(Duration::from_millis(10)).await;
@@ -106,7 +124,14 @@ impl Preferences {
                 });
             }
         }
-        !self.config.has_unconfirmed() && !self.state.has_unconfirmed()
+        !self.config.has_unconfirmed()
+            && !self.state.has_unconfirmed()
+            && !self.server.has_unconfirmed()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn documents_draining(&self) -> bool {
+        self.config.draining() || self.state.draining() || self.server.draining()
     }
     pub fn bind(&mut self, owner: Option<Backend>) -> bool {
         if self.backend.as_ref().map(|b| &b.client_id) == owner.as_ref().map(|b| &b.client_id) {
@@ -123,6 +148,7 @@ impl Preferences {
             });
         self.config.rebind(same_address);
         self.state.rebind(same_address);
+        self.server.rebind(same_address);
         self.memory.bind(same_address);
         self.opencode_install.cancel_check();
         self.backend = owner;
@@ -221,13 +247,19 @@ impl Preferences {
     }
 
     pub fn invalidate(&mut self, owner: Owner) {
-        self.doc_mut(owner).invalidate();
+        if owner != Owner::Server || self.show_server {
+            self.doc_mut(owner).invalidate();
+        }
+        if owner == Owner::Config && self.show_server {
+            self.server.invalidate();
+        }
     }
 
     fn doc_mut(&mut self, owner: Owner) -> &mut Document {
         match owner {
             Owner::Config => &mut self.config,
             Owner::State => &mut self.state,
+            Owner::Server => &mut self.server,
         }
     }
 
@@ -235,6 +267,7 @@ impl Preferences {
         match owner {
             Owner::Config => &self.config,
             Owner::State => &self.state,
+            Owner::Server => &self.server,
         }
     }
 
@@ -285,6 +318,9 @@ impl Preferences {
             if config {
                 self.config.invalidate();
             }
+            if (config | stream.take_server_changed()) && self.show_server {
+                self.server.invalidate();
+            }
             if state {
                 self.state.invalidate();
             }
@@ -305,6 +341,8 @@ impl Preferences {
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         let changed = self.config.poll(backend, Owner::Config, &main, &window)
             | self.state.poll(backend, Owner::State, &main, &window)
+            | ((self.show_server || self.server.unsettled())
+                && self.server.poll(backend, Owner::Server, &main, &window))
             | self.memory.poll(backend, &main, &window)
             | self
                 .memory

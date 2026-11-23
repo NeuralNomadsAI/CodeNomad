@@ -1,4 +1,5 @@
 use super::{Backend, Owner, platform};
+use crate::settings::notification_routing::{self, Category, Destination};
 use codenomad_client::{Receiver, bounded};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,6 +11,9 @@ pub(super) enum Choice {
     NewConversationPermissions,
     UsageVisible,
     UsageExpansion,
+    LogLevel,
+    NotificationRoute(Category, Destination),
+    NotificationsFocused,
     Mode,
     Palette(bool),
 }
@@ -19,6 +23,14 @@ impl Choice {
         match self {
             Self::Locale => patch["settings"]["locale"] = json!(value),
             Self::Contrast => patch["settings"]["highContrast"] = json!(value),
+            Self::LogLevel => patch["logLevel"] = json!(value),
+            Self::NotificationRoute(category, destination) => {
+                patch["settings"]["notificationRouting"][category.key()][destination.key()] =
+                    json!(value == "true");
+            }
+            Self::NotificationsFocused => {
+                patch["settings"]["osNotificationsAllowWhenVisible"] = json!(value == "true");
+            }
             Self::NewConversationPermissions => {
                 patch["settings"]["newConversationPermissions"] = json!(value)
             }
@@ -39,6 +51,14 @@ impl Choice {
         match self {
             Self::Locale => snapshot["settings"]["locale"] == value,
             Self::Contrast => snapshot["settings"]["highContrast"] == value,
+            Self::LogLevel => snapshot["logLevel"] == value,
+            Self::NotificationRoute(category, destination) => {
+                snapshot["settings"]["notificationRouting"][category.key()][destination.key()]
+                    == (value == "true")
+            }
+            Self::NotificationsFocused => {
+                snapshot["settings"]["osNotificationsAllowWhenVisible"] == (value == "true")
+            }
             Self::NewConversationPermissions => {
                 snapshot["settings"]["newConversationPermissions"] == value
             }
@@ -92,9 +112,13 @@ pub(super) struct Document {
     write: Write,
     flight: Option<Flight>,
     barrier: Option<Flight>,
+    notification_failure: bool,
 }
 
 impl Document {
+    pub(super) fn take_notification_failure(&mut self) -> bool {
+        std::mem::take(&mut self.notification_failure)
+    }
     pub(super) fn refreshing(&self) -> bool {
         self.read.queued || self.read.reattach || self.flight.is_some() || self.barrier.is_some()
     }
@@ -166,6 +190,9 @@ impl Document {
                 | Choice::NewConversationPermissions
                 | Choice::UsageVisible
                 | Choice::UsageExpansion
+                | Choice::LogLevel
+                | Choice::NotificationRoute(..)
+                | Choice::NotificationsFocused
         ) {
             self.write.failed.remove(&choice);
         }
@@ -179,6 +206,13 @@ impl Document {
 
     pub(super) fn choice_failed(&self, choice: Choice) -> bool {
         self.write.failed.contains(&choice)
+    }
+
+    pub(super) fn unsettled(&self) -> bool {
+        self.flight.is_some()
+            || self.barrier.is_some()
+            || !self.write.pending.is_empty()
+            || self.write.retry
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -211,6 +245,8 @@ impl Document {
                         .is_some_and(|data| choice.confirmed(value, data))
                 {
                     self.write.failed.insert(choice);
+                    self.notification_failure |=
+                        current && choice != Choice::NewConversationPermissions;
                 }
             }
         }
@@ -290,6 +326,14 @@ impl Document {
         };
         let patch = if let Operation::Write(sent) = &operation {
             let mut patch = json!({});
+            if sent
+                .keys()
+                .any(|choice| matches!(choice, Choice::NotificationRoute(..)))
+                && let Some(before) = self.snapshot.as_ref()
+                && !before["settings"]["notificationRouting"].is_object()
+            {
+                patch["settings"]["notificationRouting"] = notification_routing::seed(before);
+            }
             for (&choice, &value) in sent {
                 choice.put(&mut patch, value);
             }

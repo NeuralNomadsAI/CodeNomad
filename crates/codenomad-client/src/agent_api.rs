@@ -56,6 +56,66 @@ pub enum Action {
     Cancel(String),
 }
 impl Backend {
+    pub async fn notification_label(&self) -> Option<String> {
+        if !valid_id(&self.session) || self.session.starts_with("ses_cn_schedule_") {
+            return None;
+        }
+        let project = self
+            .projects()
+            .await
+            .ok()?
+            .into_iter()
+            .find(|project| project.id == self.workspace)?;
+        let session = self.bind_root_session(&project, &self.session).await.ok()?;
+        let title = session.title.trim();
+        Some(
+            if title.is_empty() {
+                self.session.as_str()
+            } else {
+                title
+            }
+            .chars()
+            .take(256)
+            .collect(),
+        )
+    }
+
+    pub async fn notification_session(&self, pending: Option<(bool, &str)>) -> Option<String> {
+        if !valid_id(&self.session) || self.session.starts_with("ses_cn_schedule_") {
+            return None;
+        }
+        let path = format!("session/{}", self.session);
+        let record = self.control_get(&path).await.ok()?;
+        let directory = root_directory(&record, &self.session)?;
+        let present = match pending {
+            Some((true, id)) => forms(
+                &self.control_get(&format!("{path}/form")).await.ok()?,
+                &self.session,
+            )
+            .ok()?
+            .iter()
+            .any(|form| form.id == id),
+            Some((false, id)) => permissions(
+                &self.control_get(&format!("{path}/permission")).await.ok()?,
+                &self.session,
+            )
+            .ok()?
+            .iter()
+            .any(|permission| permission.id == id),
+            None => self.session_inactive_at(&directory).await,
+        };
+        present.then(|| {
+            record["data"]["title"]
+                .as_str()
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+                .unwrap_or(&self.session)
+                .chars()
+                .take(256)
+                .collect()
+        })
+    }
+
     fn control_url(&self, path: &str) -> String {
         format!(
             "{}workspaces/{}/instance/api/{path}",

@@ -38,7 +38,7 @@ Le miroir web omet aussi le conteneur `menu`, les entrées désactivées du Menu
 
 ## Vérifications reproductibles
 
-Le bundle produit est qualifié avec le vrai serveur Rust et OpenCode simulé : connexion avec cookies, deux pages de sessions, historique exact, session vide puis retour, et refus 401 sans cookie. Le smoke mobile vérifie le toucher au centre, l'IME, le redimensionnement, un message visible uniquement via SSE, la récupération d'un message absent pendant la coupure et la conservation du brouillon après révocation et réappairage. Sur l'émulateur Android, `interactive-widget=resizes-content` fait redimensionner le viewport de mise en page à l'ouverture de Gboard. Les commandes et limites du banc sont dans [Coquille web Rune](../scripts/rune/web-README.md).
+Le bundle produit est qualifié avec le vrai serveur Rust et OpenCode simulé : connexion avec cookies, deux pages de sessions, historique exact, session vide puis retour, et refus 401 sans cookie. La barre réserve des commandes tactiles d'au moins 44 px ; seule la liste d'onglets défile horizontalement. Le smoke mobile vérifie leurs rectangles distincts à 320, 390 et 430 px, le toucher au centre, l'IME, le redimensionnement, un message visible uniquement via SSE, la récupération d'un message absent pendant la coupure et la conservation du brouillon après révocation et réappairage. Sur l'émulateur Android, `interactive-widget=resizes-content` fait redimensionner le viewport de mise en page à l'ouverture de Gboard. Les commandes et limites du banc sont dans [Coquille web Rune](../scripts/rune/web-README.md).
 
 Depuis le worktree isolé, avec le `CARGO_TARGET_DIR` existant :
 
