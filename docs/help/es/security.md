@@ -29,6 +29,8 @@ La inicialización se acepta solo desde el listener loopback del propio anfitri�
 
 ## Sesiones de navegador y revocación {#sessions}
 
+Si Tauri o Electron inició el servidor local sin contraseña, la aplicación renueva la sesión caducada sin cerrar la ventana. Los borradores se conservan y las acciones fallidas no se repiten. Cerrar o revocar la sesión impide renovarla.
+
 El inicio de sesión directo crea una sesión opaca en memoria del backend y una cookie `codenomad_session` (o el nombre de cookie configurado). Las cookies son `HttpOnly`, `SameSite=Lax`, tienen ámbito `/` y se marcan `Secure` al emitirse por HTTPS. La cookie se conserva siete días aunque se reinicie el navegador; reiniciar el backend invalida las sesiones en memoria. Vuelve a autenticarte sin abandonar la vista cuando se solicite, en lugar de reenviar modificaciones fallidas.
 
 Cerrar sesión revoca la sesión directa actual. Cambiar correctamente la contraseña en el anfitrión revoca todas las sesiones directas de ese usuario, incluida la actual; vuelve a iniciar sesión. Las sesiones caducan tras 24 horas sin solicitudes autenticadas o siete días desde su creación. Ajusta estos límites con `CODENOMAD_SESSION_IDLE_SECONDS` y `CODENOMAD_SESSION_ABSOLUTE_SECONDS` en segundos enteros positivos antes de iniciar el backend. Los dispositivos de Control remoto se revocan por separado.

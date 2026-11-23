@@ -52,6 +52,7 @@ test("built preloads run autonomously in sandboxed guests and preserve applicati
       context, host: "electron", bridge: "object", node: "undefined",
       localAction: context === "local" ? "function" : "undefined",
       preferencesAction: context === "preferences" ? "function" : "undefined",
+      managedSessionAction: context !== "remote" ? "function" : "undefined",
       remoteAction: context === "remote" ? "function" : "undefined",
     })))
   } finally {
