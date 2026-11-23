@@ -29,13 +29,13 @@ import { showToastNotification, type ToastHandle, ToastVariant, type ToastPayloa
 import { uiState } from "./preferences"
 import { getInstanceLabel } from "../lib/instance-label"
 import { batch, createSignal } from "solid-js"
-import { setActiveSessionFromList } from "./session-state"
+import { replaceSessionRow, setActiveSessionFromList } from "./session-state"
 import { applySurface, beginGesture } from "./session-surface"
 import {
   instances,
   markPermissionReplied,
   hasRepliedPermission,
-  reconcilePendingSessionIndicators,
+  getSessionPendingIndicators,
   setPendingFormAddedHandler,
 } from "./instances"
 import { showAlertDialog } from "./alerts"
@@ -73,7 +73,6 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 import { createCompactionNoticeClaims, createSessionBubbles } from "./compaction-notice"
 import { TrailingResyncCoordinator } from "../lib/trailing-resync"
-import { replaceSessionRow } from "./session-state"
 
 const log = getLogger("sse")
 const claimCompactionNotice = createCompactionNoticeClaims()
@@ -837,7 +836,7 @@ function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captur
   if (!current()) return null
   const sessionId = info.id
   const fetched = createClientSession(info, instanceId)
-  let published: Session | null = null
+  let publishedRoot = false
 
   setSessions((prev) => {
     const existing = prev.get(instanceId)?.get(sessionId)
@@ -849,8 +848,7 @@ function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captur
       status: compacting ? "compacting" : fetched.status,
       retry: compacting ? null : fetched.retry,
       idleSince: getIdleSinceForStatusTransition(existing?.status, compacting ? "compacting" : fetched.status, existing?.idleSince),
-      pendingPermission: existing?.pendingPermission ?? fetched.pendingPermission,
-      pendingForm: existing?.pendingForm ?? false,
+      ...getSessionPendingIndicators(instanceId, sessionId),
       runtimeStatusKnown: compacting || existing?.runtimeStatusKnown || false,
     }
     const merged = mergeFetchedSessionRuntimeState(
@@ -859,14 +857,12 @@ function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captur
       existing,
       getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId),
     )
-    published = merged
+    publishedRoot = merged?.parentId === null
     return merged ? replaceSessionRow(prev, instanceId, merged) : prev
   })
 
   if (!current()) return null
-  reconcilePendingSessionIndicators(instanceId)
-
-  if ((published as Session | null)?.parentId === null) prependSessionListId(instanceId, sessionId)
+  if (publishedRoot) prependSessionListId(instanceId, sessionId)
 
   return fetched
 }
@@ -964,6 +960,7 @@ function handleSessionUpdate(
       cost: (info as any).cost ?? 0,
       tokens: (info as any).tokens ?? { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       location: info.location,
+      ...getSessionPendingIndicators(instanceId, info.id),
       time: info.time
         ? { ...info.time }
         : {
@@ -972,13 +969,7 @@ function handleSessionUpdate(
           },
     } as Session
 
-    setSessions((prev) => {
-      const next = new Map(prev)
-      const instanceSessions = new Map(prev.get(instanceId))
-      instanceSessions.set(newSession.id, newSession)
-      next.set(instanceId, instanceSessions)
-      return next
-    })
+    setSessions(previous => replaceSessionRow(previous, instanceId, newSession))
 
     if (!newSession.parentId) {
       prependSessionListId(instanceId, newSession.id)
@@ -995,7 +986,6 @@ function handleSessionUpdate(
       session.time = { ...session.time, ...info.time }
     })
   }
-  reconcilePendingSessionIndicators(instanceId)
 }
 
 function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): void {

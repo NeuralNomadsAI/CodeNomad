@@ -1364,6 +1364,7 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
     },
     revert: apiSession.revert,
     pendingPermission: existingSession?.pendingPermission,
+    pendingForm: existingSession?.pendingForm,
   }
 }
 

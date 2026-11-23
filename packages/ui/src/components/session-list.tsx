@@ -322,6 +322,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   })
 
   const allMatchingSessionIds = createMemo<string[]>(() => {
+    if (!props.enableFilterBar) return []
     const ids: string[] = []
     const collectIds = (threads: SessionThread[]) => {
       for (const thread of threads) {
@@ -344,9 +345,10 @@ const SessionList: Component<SessionListProps> = (props) => {
   })
 
   const isAllSelected = createMemo(() => {
+    const selected = selectedSessionIds()
+    if (!selected.size) return false
     const ids = allMatchingSessionIds()
     if (ids.length === 0) return false
-    const selected = selectedSessionIds()
     return ids.every((id) => selected.has(id))
   })
   const isSelectAllIndeterminate = createMemo(() => {

@@ -42,6 +42,7 @@ Draft and attachment signals schedule capture without materializing their saved
 maps on each edit; serialization reads the current maps at the checkpoint.
 Session rename events publish their title directly in the catalog; unseen IDs
 share one metadata read carrying the latest title observed during that read.
+Single-row event publications read interruption flags by session ID.
 
 Current daily/native-scheduled passages acquire a source identity before slices and reuse
 the bounded selected-mission inventory owner without directory or finish-counter reads.

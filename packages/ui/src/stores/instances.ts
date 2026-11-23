@@ -205,6 +205,10 @@ class InterruptionRegistry<T extends { id: string }> {
     return this.sessionCounts.get(instanceId)?.keys() ?? new Map<string, number>().keys()
   }
 
+  hasSession(instanceId: string, sessionId: string): boolean {
+    return this.sessionCounts.get(instanceId)?.has(sessionId) ?? false
+  }
+
   clear(instanceId: string, requests: readonly T[], clearPending: (sessionId: string) => void): void {
     requests.forEach(({ id }) => this.enqueuedAt.delete(id))
     for (const sessionId of this.sessionCounts.get(instanceId)?.keys() ?? []) clearPending(sessionId)
@@ -695,6 +699,13 @@ function reconcilePendingSessionIndicators(instanceId: string): void {
     new Set(permissionRegistry.sessionIds(instanceId)),
     new Set(formRegistry.sessionIds(instanceId)),
   )
+}
+
+export function getSessionPendingIndicators(instanceId: string, sessionId: string) {
+  return {
+    pendingPermission: permissionRegistry.hasSession(instanceId, sessionId),
+    pendingForm: formRegistry.hasSession(instanceId, sessionId),
+  }
 }
 
 function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName: string | undefined, backendId: BackendId, serverId?: string): Instance {
