@@ -46,8 +46,3 @@ pub static CONVERSATION: Icon = Icon {
     view: 24.0,
     body: r#"<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>"#,
 };
-pub static BELL_PLUS: Icon = Icon {
-    name: "lucide-bell-plus",
-    view: 24.0,
-    body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 20a2 2 0 0 0 4 0"/><path d="M18 13a6 6 0 0 0 2 4H4c1.3-1.3 2-3 2-5V8a6 6 0 0 1 6-6c1 0 2 .25 3 .8"/><path d="M18 3v6m-3-3h6"/></g>"#,
-};

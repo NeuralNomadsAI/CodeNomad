@@ -26,7 +26,6 @@ const TOUCH_BAR_TARGET: f32 = 44.0;
 pub enum BarAction {
     Settings,
     Conversation,
-    NotificationPermission,
 }
 
 impl BarAction {
@@ -43,7 +42,6 @@ impl BarAction {
         let icon = match self {
             Self::Settings => &icons::SETTINGS,
             Self::Conversation => &icons::CONVERSATION,
-            Self::NotificationPermission => &icons::BELL_PLUS,
         };
         bar_button(icon, label, label, TOUCH_BAR_TARGET, move |s, _| invoke(s))
     }
@@ -674,7 +672,6 @@ mod tests {
                 let actions = [
                     ("settings", BarAction::Settings),
                     ("chat", BarAction::Conversation),
-                    ("permission", BarAction::NotificationPermission),
                 ]
                 .map(|(key, action)| {
                     action
@@ -698,7 +695,7 @@ mod tests {
                     rune::Env::new(false, 1.0),
                 );
                 rt.frame(0.0);
-                let keys = ["project-tabs-new", "settings", "chat", "permission"];
+                let keys = ["project-tabs-new", "settings", "chat"];
                 let elements = rt.elements();
                 let mut bounds = keys.map(|key| {
                     elements
@@ -724,7 +721,7 @@ mod tests {
                     tap(&mut rt, point);
                 }
                 assert_eq!(rt.state.new, 1);
-                assert_eq!(rt.state.closed, ["settings", "chat", "permission"]);
+                assert_eq!(rt.state.closed, ["settings", "chat"]);
             }
         }
     }

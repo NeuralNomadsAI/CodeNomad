@@ -4,9 +4,11 @@ mod contrast;
 mod conversation;
 mod memory;
 pub(crate) mod notification_routing;
+mod notification_settings;
 mod opencode;
 mod preferences;
 mod providers;
+mod remote;
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
@@ -27,8 +29,6 @@ pub(crate) struct Host {
     window: Option<(rune::WindowHandle, Rc<Cell<bool>>, Rc<view::CloseRequest>)>,
     #[cfg(target_arch = "wasm32")]
     web: web::Panel,
-    #[cfg(target_arch = "wasm32")]
-    notification_permission_changed: Rc<Cell<bool>>,
     #[cfg(target_arch = "wasm32")]
     web_usage: Option<bool>,
     #[cfg(target_arch = "wasm32")]
@@ -146,7 +146,6 @@ pub(crate) fn poll(s: &mut State) -> bool {
         contrast_changed
             | s.settings.web.poll(&mut shared, &s.wake, paired)
             | (s.settings.web.shown() && preferences_changed)
-            | s.settings.notification_permission_changed.replace(false)
     };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
@@ -194,6 +193,7 @@ pub(crate) fn system_notification(
         let key = match category {
             notification_routing::Category::NeedsInput => "sessionEvents.notify.needsInput",
             notification_routing::Category::SessionDone => "sessionEvents.notify.done",
+            _ => return Delivery::Suppressed,
         };
         Delivery::Body(strings::with_locale(
             prefs.locale().unwrap_or_else(strings::locale),
@@ -420,41 +420,7 @@ pub(crate) fn entries(touch: bool) -> impl IntoIterator<Item = El> {
         .button(touch, strings::t("settings.title"), open)
         .key("open-preferences")];
     #[cfg(target_arch = "wasm32")]
-    return [
-        Some(web::entry(touch)),
-        Some(conversation::web_entry(touch)),
-        notification_permission_entry(touch),
-    ]
-    .into_iter()
-    .flatten();
-}
-
-#[cfg(target_arch = "wasm32")]
-fn notification_permission_entry(touch: bool) -> Option<El> {
-    use web_sys::NotificationPermission;
-    (crate::platform::notifications::permission() == Some(NotificationPermission::Default)).then(
-        || {
-            rune_theme_codenomad::tabs::BarAction::NotificationPermission
-                .button(
-                    touch,
-                    strings::t("settings.notifications.requestPermission.action"),
-                    |s: &mut State| {
-                        if let Some(permission) =
-                            crate::platform::notifications::request_permission()
-                        {
-                            let changed = s.settings.notification_permission_changed.clone();
-                            let wake = s.wake.clone();
-                            wasm_bindgen_futures::spawn_local(async move {
-                                let _ = wasm_bindgen_futures::JsFuture::from(permission).await;
-                                changed.set(true);
-                                wake();
-                            });
-                        }
-                    },
-                )
-                .key("notification-permission")
-        },
-    )
+    return [web::entry(touch), conversation::web_entry(touch)];
 }
 
 pub(crate) fn matches_shortcut(
@@ -558,7 +524,7 @@ fn open(s: &mut State) {
         request.requested.set(true);
         window.focus();
         let mut prefs = host.shared.borrow_mut();
-        prefs.opencode_install.cancel_check();
+        prefs.hide_opencode();
         if let Some(wake) = &prefs.window_wake {
             wake();
         }
@@ -591,7 +557,8 @@ fn launch_preferences(
     let host = &s.settings;
     let token = Rc::new(Cell::new(false));
     let state = view::Window::new(host.shared.clone(), token.clone())
-        .with_close_request(request.clone(), editor);
+        .with_close_request(request.clone(), editor)
+        .with_notification_permission(notification_settings::native_permission(s));
     let locale = host
         .shared
         .borrow()
@@ -622,11 +589,7 @@ pub(crate) fn close(s: &mut State) {
     {
         #[cfg(target_os = "windows")]
         crate::platform::preferences_placement::closed();
-        s.settings
-            .shared
-            .borrow_mut()
-            .opencode_install
-            .cancel_check();
+        s.settings.shared.borrow_mut().hide_opencode();
         settle_close(&s.settings.shared, warn_save_failed);
         if let Some((window, token, _)) = s.settings.window.take() {
             token.set(true);
