@@ -266,6 +266,77 @@ mod tests {
     use rune_theme_codenomad::git_diff::{LineKind, LineRef, Side, highlight};
 
     #[test]
+    fn git_image_reader_decodes_both_sides_of_svg_and_avif() {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 8 8"><path fill="#f00" d="M0 0h8v8H0z"/></svg>"##.to_vec();
+        let avif = STANDARD.decode(concat!(
+            "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAAD5bWV0YQAAAAAAAAAvaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAA",
+            "FBpY3R1cmVIYW5kbGVyAAAAAA5waXRtAAAAAAABAAAAHmlsb2MAAAAARAAAAQABAAAAAQAAASEAAAAbAAAAKGlpbmYAAAAAAAEAAAAa",
+            "aW5mZQIAAAAAAQAAYXYwMUNvbG9yAAAAAGppcHJwAAAAS2lwY28AAAAUaXNwZQAAAAAAAAAIAAAACAAAABBwaXhpAAAAAAMICAgAAAA",
+            "MYXYxQ4EADAAAAAATY29scm5jbHgAAgACAAIAAAAAF2lwbWEAAAAAAAAAAQABBAECgwQAAAAjbWRhdAoFGAi/bAIyEhgAAABQAABAA1Lt5xf080WmIA==",
+        )).unwrap();
+        for (path, mime, bytes) in [
+            ("image.svg", "image/svg+xml", svg),
+            ("image.avif", "image/avif", avif),
+        ] {
+            let mut reader = Reader::default();
+            let (wake, event) = std::sync::mpsc::channel();
+            let cache =
+                rune_theme_codenomad::git_diff::image_cache(std::sync::Arc::new(move || {
+                    let _ = wake.send(());
+                }));
+            reader
+                .replace(
+                    Diff::Image {
+                        mime: mime.into(),
+                        before: Some(bytes.clone()),
+                        after: Some(bytes),
+                    },
+                    path,
+                    false,
+                    &cache,
+                )
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while reader
+                .images
+                .iter()
+                .flatten()
+                .any(|image| !image.is_ready() && image.error().is_none())
+            {
+                event
+                    .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                    .expect(path);
+            }
+            for side in &reader.images {
+                let side = side.as_ref().expect(path);
+                assert!(side.is_ready(), "{path}: {:?}", side.error());
+                let mut rt = rune::Runtime::new(
+                    side.clone(),
+                    |image: &Image, _cx: &mut rune::Cx<Image>| {
+                        use rune_theme_codenomad::layout::Layout;
+                        rune::col().full_width().child(
+                            rune_theme_codenomad::git_diff::image(image)
+                                .unwrap()
+                                .key("git-image"),
+                        )
+                    },
+                    (600.0, 400.0),
+                    rune::Env::new(false, 1.0),
+                );
+                rt.frame(0.0);
+                let (rect, _) = rt.presented("git-image").expect(path);
+                assert!(
+                    (8.0..=64.0).contains(&rect[2])
+                        && (8.0..=64.0).contains(&rect[3])
+                        && (rect[2] - rect[3]).abs() <= 1.0,
+                    "{path}: unexpected rendered bounds {rect:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn refreshed_text_preserves_a_still_valid_selection() {
         let cache = rune_theme_codenomad::git_diff::image_cache(std::sync::Arc::new(|| {}));
         let mut reader = Reader::default();
