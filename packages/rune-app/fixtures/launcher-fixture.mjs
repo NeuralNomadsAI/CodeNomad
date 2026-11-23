@@ -18,6 +18,8 @@ import {webLiveFixture} from './web-live-fixture.mjs'
 import {androidTsServer} from './android-ts-server.mjs'
 import {androidDevice,androidLease} from './android-device.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
+const mobileSessionSearch=process.argv.includes('--mobile-session-search')
+assert(!mobileSessionSearch||webMobile&&!webAndroid,'Session search isolation requires the Chromium mobile smoke')
 const webMissions=process.argv.includes('--web-missions')
 const solid=webAndroid&&process.env.RUNE_ANDROID_SOLID_DIR
 const compare=webAndroid&&process.env.RUNE_ANDROID_COMPARE
@@ -453,7 +455,7 @@ try{
       deviceLease=androidLease(androidDevice(androidEnv),uiOrigin)
       await deviceLease.open()
     }
-    client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
+    client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args,...(mobileSessionSearch?['--mobile-session-search']:[])],{cwd:root,env:{...env,...androidEnv,RUNE_WEB_DIR:ui},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
     if(webAndroid)clientClosed=new Promise(resolve=>client.once('close',resolve))
     const handleMobileAction=async action=>{
       try{
@@ -517,7 +519,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid?1:webMissions?2:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid||mobileSessionSearch?1:webMissions?2:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
     if(!placeWorktree){
       await removeReview

@@ -113,12 +113,10 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 .key("session-new"),
             shell::control(&SEARCH, t("sessionList.filter.ariaLabel"), touch)
                 .expanded(l.show_search)
-                .on_press_tx(screen::action_tx(scope, |s, tx| {
+                .on_press(screen::action(scope, |s| {
                     if let Some(l) = s.screen.launcher_mut() {
                         l.show_search = !l.show_search;
-                        if l.show_search {
-                            tx.focus_when_shown("session-search", true);
-                        } else {
+                        if !l.show_search {
                             l.search = rune::edit::TextEdit::new("");
                         }
                     }
@@ -128,13 +126,16 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         ],
     );
     if l.show_search {
+        let name = t("sessionList.filter.ariaLabel");
         header = col().full_width().child(header).child(
-            hinted_field(&l.search, t("sessionList.filter.placeholder"))
-                .label(t("sessionList.filter.ariaLabel"))
-                .on_edit(screen::edit(scope, Editor::Search))
-                .on_key(editor_keys.clone())
-                .build(field_kit(layout::dark()))
-                .key("session-search"),
+            col().full_width().role("group").label(name).child(
+                hinted_field(&l.search, t("sessionList.filter.placeholder"))
+                    .label(name)
+                    .on_edit(screen::edit(scope, Editor::Search))
+                    .on_key(editor_keys.clone())
+                    .build(field_kit(layout::dark()))
+                    .key("session-search"),
+            ),
         );
     }
     let searching = l.show_search && !l.search.text.trim().is_empty();

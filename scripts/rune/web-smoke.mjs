@@ -8,19 +8,21 @@ import {chromium} from 'playwright'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
-import {mobileLive, revokedLauncher} from './web-live.mjs'
+import {focusOpenedSearch, mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste} from './web-paste.mjs'
 import {missionsFixture} from './web-missions.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'paste-only':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'paste-only':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
 if(values.connected){assert(values.workspace&&values.project&&values['storage-state']);url.searchParams.delete('scene')}
 else url.searchParams.set('scene', values['paste-only'] ? 'synthetic-paste' : 'synthetic')
 if(values.mobile)assert(values.connected && url.protocol==='https:')
+const searchOnly=values['mobile-session-search']
+assert(!searchOnly||values.mobile)
 if(values['paste-only'])assert(!values.connected)
 if(values.missions)assert(values.connected&&!values.mobile&&url.protocol==='http:')
 url.searchParams.set('locale', values.locale)
@@ -53,7 +55,8 @@ try {
     [['desktop',960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
   for (const [name, width, height, touch] of sizes) {
     const control=name==='phone-dpr1-control'
-    for (const colorScheme of control?['light']:['light','dark']) {
+    if(searchOnly&&control)continue
+    for (const colorScheme of control||searchOnly?['light']:['light','dark']) {
       const context = await browser.newContext({viewport: {width, height}, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch, colorScheme,
         ...(values.mobile?{...android,ignoreHTTPSErrors:true,...(control?{deviceScaleFactor:1}:{})}:{}),
         ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
@@ -220,11 +223,18 @@ try {
             }
             assert.equal(await row('Another session').count(),0)
             await press(messages['sessionList.filter.ariaLabel'])
+            await focusOpenedSearch(page, sessions, messages, (x,y)=>page.touchscreen.tap(x,y))
             await page.locator('textarea:focus').fill('Another session')
             await row('Another session').waitFor()
             assert(routes.some(row=>row.query.includes('search=Another+session')),'Use the native search before loading the next ordinary page')
             await press(messages['sessionList.filter.ariaLabel'])
             await row('Existing history').waitFor()
+            if(searchOnly){
+              assert.deepEqual(forbiddenRequests,[])
+              assert.deepEqual(errors,[])
+              records.push({name,colorScheme,sessionSearchOpened:true,routes})
+              continue
+            }
             await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
           }
           await press(messages['rune.more'])

@@ -75,6 +75,7 @@ fn a_large_session_catalogue_mounts_only_visible_rows_but_search_reaches_the_tai
             < 100
     );
     click(&mut rt, "session-search-toggle");
+    click(&mut rt, "session-search");
     rt.paste("Row 2099");
     settle(&mut rt);
     assert!(rt.find("session-catalogue-2099").is_some());
@@ -248,6 +249,14 @@ fn resizing_out_of_room_returns_focus_from_the_search_editor() {
     let mut rt = Runtime::new(state, english, (1000.0, 900.0), Env::new(false, 1.0));
     settle(&mut rt);
     click(&mut rt, "session-search-toggle");
+    assert!(rt.find("session-search").is_some());
+    assert!(rt.find("session-title").is_none());
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|element| element.focused && element.path.contains("/session-search/"))
+    );
+    click(&mut rt, "session-search");
     assert!(
         rt.elements()
             .iter()
@@ -271,6 +280,7 @@ fn escape_from_the_search_editor_closes_its_floating_panel() {
     settle(&mut rt);
     click(&mut rt, "sessions-panel-toggle");
     click(&mut rt, "session-search-toggle");
+    click(&mut rt, "session-search");
     for shift in [false, true] {
         let event = KeyEvent {
             key: Key::Function(6),

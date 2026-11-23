@@ -13,6 +13,21 @@ export function command(action) {
   })
 }
 
+export async function focusOpenedSearch(page, sidebar, messages, tap) {
+  const name=messages['sessionList.filter.ariaLabel']
+  const field=sidebar.getByRole('group',{name,exact:true})
+  await field.waitFor()
+  assert.equal(await sidebar.getByRole('button',{name,exact:true}).getAttribute('aria-expanded'),'true')
+  assert.equal(await sidebar.getByRole('button',{name:messages['rune.create'],exact:true}).count(),0,
+    'Opening session search must not open New Session')
+  const editor=page.locator('textarea:focus').and(page.getByRole('textbox',{name,exact:true}))
+  assert.equal(await editor.count(),0,'Opening search must not focus the field')
+  const box=await field.boundingBox()
+  assert(box&&box.width>0&&box.height>0)
+  await tap(box.x+box.width/2,box.y+box.height/2)
+  await editor.waitFor({state:'attached'})
+}
+
 export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){
   const text=value=>page.getByText(value,{exact:true})
   const connecting=text(messages['instanceShell.connection.connecting'])
@@ -54,6 +69,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     }
     await hit(left)
     await hit(search)
+    await focusOpenedSearch(page, sidebar, messages, tap)
     await page.locator('textarea:focus').fill('Another session')
     await sidebar.getByRole('listitem',{name:'Another session',exact:true}).waitFor()
     const afterTransport=eventSources()
