@@ -2171,7 +2171,7 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(remote_dictation::with_relay(tauri::generate_handler![
+        .invoke_handler(remote_dictation::with_relay(client_state::with_ordered_ipc(tauri::generate_handler![
             clipboard_attachments::read_clipboard_attachments,
             cli_get_status,
             cli_renew_managed_session,
@@ -2199,18 +2199,6 @@ fn main() {
             popup_titlebar_menu,
             open_remote_window,
             open_external_url,
-            client_state::client_state_claim_access,
-            client_state::client_state_load,
-            client_state::client_state_load_file_drafts,
-            client_state::client_state_save_file_draft,
-            client_state::client_state_save,
-            client_state::client_state_commit_partitions,
-            client_state::client_state_load_partition,
-            client_state::client_state_set_restore_enabled,
-            client_state::client_state_clear,
-            client_state::client_state_renderer_flushed,
-            client_state::client_state_navigation_flushed,
-            client_state::client_state_startup_command_result,
             data_profile_cleanup::data_profiles_list_others,
             data_profile_cleanup::data_profiles_delete_others,
             data_profile_cleanup::data_profiles_set_next_launch,
@@ -2232,7 +2220,7 @@ fn main() {
             browser_target_claim_open,
             browser_target_ownership,
             browser_target_release_open
-        ]))
+        ])))
         .on_menu_event(|app_handle, event| {
             if embedded_view::zoom::focused(app_handle, event.id().0.as_str()) {
                 return;

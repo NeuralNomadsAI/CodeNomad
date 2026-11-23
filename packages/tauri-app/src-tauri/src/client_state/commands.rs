@@ -4,6 +4,52 @@ use serde_json::Value;
 use tauri::{AppHandle, State, Webview};
 use url::Url;
 
+pub(crate) fn with_ordered_ipc(
+    fallback: impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool,
+) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool {
+    let (send, receive) = std::sync::mpsc::channel::<tauri::ipc::Invoke<tauri::Wry>>();
+    std::thread::Builder::new()
+        .name("client-state-ipc".into())
+        .spawn(move || {
+            let dispatch = tauri::generate_handler![
+                client_state_claim_access,
+                client_state_load,
+                client_state_load_file_drafts,
+                client_state_save_file_draft,
+                client_state_save,
+                client_state_commit_partitions,
+                client_state_load_partition,
+                client_state_set_restore_enabled,
+                client_state_clear,
+                client_state_renderer_flushed,
+                client_state_navigation_flushed,
+                client_state_startup_command_result,
+            ];
+            for invoke in receive {
+                // The prefix is reserved for this handler; unknown names still
+                // get a response, including if Tauri prunes a command at build time.
+                if !dispatch(tauri::ipc::Invoke {
+                    resolver: invoke.resolver.clone(),
+                    ..invoke
+                }) {
+                    invoke.resolver.reject("Unknown client state command");
+                }
+            }
+        })
+        .expect("start client state IPC worker");
+    move |invoke| {
+        if !invoke.message.command().starts_with("client_state_") {
+            return fallback(invoke);
+        }
+        // Enqueue in native delivery order before yielding to any executor.
+        // In particular, a flush acknowledgement cannot overtake a commit.
+        if let Err(error) = send.send(invoke) {
+            error.0.resolver.reject("Client state IPC worker stopped");
+        }
+        true
+    }
+}
+
 fn same_origin(url: &Url, expected: &str) -> bool {
     Url::parse(expected)
         .map(|expected| url.origin() == expected.origin())

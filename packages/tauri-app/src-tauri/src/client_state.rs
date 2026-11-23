@@ -15,30 +15,7 @@ mod window;
 mod window_flush;
 mod window_updates;
 
-#[doc(hidden)]
-pub use commands::{
-    __cmd__client_state_claim_access, __cmd__client_state_clear,
-    __cmd__client_state_commit_partitions, __cmd__client_state_load,
-    __cmd__client_state_load_file_drafts, __cmd__client_state_save_file_draft,
-    __cmd__client_state_load_partition, __cmd__client_state_navigation_flushed,
-    __cmd__client_state_renderer_flushed, __cmd__client_state_save,
-    __cmd__client_state_set_restore_enabled, __cmd__client_state_startup_command_result,
-    __tauri_command_name_client_state_claim_access, __tauri_command_name_client_state_clear,
-    __tauri_command_name_client_state_commit_partitions, __tauri_command_name_client_state_load,
-    __tauri_command_name_client_state_load_file_drafts, __tauri_command_name_client_state_save_file_draft,
-    __tauri_command_name_client_state_load_partition,
-    __tauri_command_name_client_state_navigation_flushed,
-    __tauri_command_name_client_state_renderer_flushed, __tauri_command_name_client_state_save,
-    __tauri_command_name_client_state_set_restore_enabled,
-    __tauri_command_name_client_state_startup_command_result,
-};
-pub use commands::{
-    client_state_claim_access, client_state_clear, client_state_commit_partitions,
-    client_state_load, client_state_load_partition, client_state_navigation_flushed,
-    client_state_load_file_drafts, client_state_save_file_draft,
-    client_state_renderer_flushed, client_state_save, client_state_set_restore_enabled,
-    client_state_startup_command_result,
-};
+pub(crate) use commands::with_ordered_ipc;
 pub(crate) use startup_command::{
     command_name as startup_state_command, run_in_local_window as run_startup_state_command,
     StartupStateSnapshot,
