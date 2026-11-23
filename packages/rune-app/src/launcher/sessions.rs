@@ -267,6 +267,7 @@ pub(super) fn retire_session(s: &mut State, id: &str) {
     }
     s.commands = None;
     s.incoming = None;
+    s.reader = None;
     s.agent = None;
     s.files = None;
     s.messages.clear();
@@ -354,6 +355,7 @@ pub fn back(s: &mut State) {
     s.agent = None;
     s.commands = None;
     s.incoming = None;
+    s.reader = None;
     s.files = None;
     if let Some(git) = &mut s.git.owner {
         git.online(false);

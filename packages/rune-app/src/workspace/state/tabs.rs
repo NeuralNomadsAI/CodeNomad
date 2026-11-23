@@ -1,9 +1,10 @@
 use super::{Cache, State, Tab, TextEdit, Tx, busy, capture, capture_files_mode, entry};
 use crate::platform;
 
-fn stash(s: &mut State) {
+fn stash(s: &mut State, tx: &mut Tx) {
     capture_files_mode(s);
     capture(s);
+    crate::chat::suspend(s, tx);
     if let Some(files) = &mut s.files {
         files.activate(false);
     }
@@ -12,7 +13,15 @@ fn stash(s: &mut State) {
     }
     let cache = Cache::take(s);
     if let Some(ui) = &mut s.workspace {
+        let stamp = ui
+            .entries
+            .iter()
+            .map(|entry| entry.history_touched)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
         let entry = &mut ui.entries[ui.active];
+        entry.history_touched = stamp;
         entry.catalogue.pause(ui.clock);
         entry.cache = Some(cache);
         entry.wanted_panels = s.shell.wanted;
@@ -91,7 +100,7 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
             crate::launcher::restore(s, saved);
         }
     }
-    tx.scroll_to_bottom_instant("history");
+    crate::chat::resume(s, tx);
     tx.instant();
 }
 pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
@@ -109,12 +118,13 @@ pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
     if busy(s) {
         return;
     }
-    stash(s);
+    stash(s, tx);
     if let Some(ui) = &mut s.workspace {
         ui.active = index;
         ui.changed();
     }
     activate(s, tx);
+    super::history_budget::enforce(s);
     capture(s);
 }
 pub fn can_new(s: &State) -> bool {
@@ -127,7 +137,7 @@ pub fn new_tab(s: &mut State, tx: &mut Tx) {
     if !can_new(s) {
         return;
     }
-    stash(s);
+    stash(s, tx);
     if let Some(ui) = &mut s.workspace {
         ui.entries
             .push(entry(format!("tab-{}", ui.next_key), Tab::Blank));
@@ -136,6 +146,7 @@ pub fn new_tab(s: &mut State, tx: &mut Tx) {
         ui.changed();
     }
     activate(s, tx);
+    super::history_budget::enforce(s);
     capture(s);
 }
 pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
@@ -155,7 +166,7 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     }
     let active = s.workspace.as_ref().is_some_and(|ui| ui.active == index);
     if active {
-        stash(s);
+        stash(s, tx);
     } else {
         capture(s);
     }

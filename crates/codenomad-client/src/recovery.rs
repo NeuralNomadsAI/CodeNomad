@@ -51,6 +51,68 @@ pub async fn run(
     commands: Receiver<Command>,
     wake: crate::Wake,
 ) -> history::Result<()> {
+    run_with_reading(backend, out, commands, wake, None).await
+}
+
+pub struct ReadingLane {
+    pub demand: demand::Observer,
+    pub events: Sender<(u64, Event)>,
+}
+
+async fn read_page(
+    reading: Option<&ReadingLane>,
+    generation: u64,
+    page: impl std::future::Future<Output = history::Result<history::Page>>,
+) -> Option<history::Result<history::Page>> {
+    match reading {
+        Some(reading) => {
+            futures_lite::future::race(
+                async {
+                    reading.demand.changed_after(generation).await;
+                    None
+                },
+                async { Some(page.await) },
+            )
+            .await
+        }
+        None => Some(page.await),
+    }
+}
+
+async fn reader_event(
+    reading: Option<&ReadingLane>,
+    generation: u64,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+    event: Event,
+) -> bool {
+    let Some(reading) = reading else {
+        return publish(out, wake, event).await;
+    };
+    futures_lite::future::race(
+        async {
+            reading.demand.changed_after(generation).await;
+            true
+        },
+        async {
+            if reading.events.send((generation, event)).await.is_err() {
+                return false;
+            }
+            wake();
+            true
+        },
+    )
+    .await
+}
+
+pub(crate) async fn run_with_reading(
+    backend: Backend,
+    out: Sender<Event>,
+    commands: Receiver<Command>,
+    wake: crate::Wake,
+    reading: Option<ReadingLane>,
+) -> history::Result<()> {
+    let reading = reading.as_ref();
     let (tx, rx) = crate::bounded(128);
     let forward = tx.clone();
     runtime::spawn(async move {
@@ -92,7 +154,32 @@ pub async fn run(
     let mut retry = None;
     let mut attempts = 0u32;
     let mut quiet = Instant::now();
+    let mut generation = 0;
+    let mut active_reader = true;
+    let mut anchored = None;
+    let mut tail_gap = false;
     loop {
+        if let Some(reading) = reading {
+            let want = reading.demand.current();
+            if want.generation != generation {
+                generation = want.generation;
+                active_reader = want.target.is_some();
+                anchored = want.target;
+                tail_gap = false;
+                resident = Vec::new();
+                known = HashSet::new();
+                owed = HashSet::new();
+                seen.entries.clear();
+                seen.bytes = 0;
+                first = None;
+                older = None;
+                repairs = 0;
+                settlement_reads = 0;
+                dirty = active_reader;
+                parked = false;
+                quiet = Instant::now();
+            }
+        }
         if retry.is_some_and(|at| Instant::now() >= at) {
             retry = None;
             epoch += 1;
@@ -145,7 +232,9 @@ pub async fn run(
             Some(Input::Hint(e, v)) if e == epoch && v > fence => {
                 dirty = true;
                 quiet = Instant::now() + Duration::from_millis(100);
-                publish(&out, &wake, Event::Reconnecting).await;
+                if reading.is_none() {
+                    publish(&out, &wake, Event::Reconnecting).await;
+                }
             }
             Some(Input::Command(Command::Retry)) => {
                 attempts = 0;
@@ -158,38 +247,46 @@ pub async fn run(
                 publish(&out, &wake, Event::Reconnecting).await;
             }
             Some(Input::Command(Command::Older)) => {
-                if let Some(target) = older
-                    .clone()
-                    .filter(|_| opened && !dirty && wire.upstream.load(SeqCst))
-                {
+                if let Some(target) = older.clone().filter(|_| {
+                    active_reader && opened && (!dirty || tail_gap) && wire.upstream.load(SeqCst)
+                }) {
                     let stamp = wire.version.load(SeqCst);
-                    match backend.page(target).await {
+                    let Some(page) = read_page(reading, generation, backend.page(target)).await
+                    else {
+                        continue;
+                    };
+                    match page {
                         Ok(page) if wire.valid(stamp) && rx.is_empty() => {
                             if let Ok(joined) = history::join(&page.rows, &resident) {
                                 resident = joined;
                                 older = page.older.clone();
                                 first = resident.first().map(|r| r.id.clone());
                                 known.extend(page.rows.iter().map(|r| r.id.clone()));
-                                publish(&out, &wake, Event::Older(page)).await;
+                                reader_event(reading, generation, &out, &wake, Event::Older(page))
+                                    .await;
                             } else {
-                                publish(&out, &wake, Event::PagingFailed).await;
+                                reader_event(reading, generation, &out, &wake, Event::PagingFailed)
+                                    .await;
                             }
                         }
                         Ok(_) => {
                             dirty = true;
                             quiet = Instant::now() + Duration::from_millis(100);
-                            publish(&out, &wake, Event::PagingFailed).await;
+                            reader_event(reading, generation, &out, &wake, Event::PagingFailed)
+                                .await;
                         }
                         Err(_) => {
-                            publish(&out, &wake, Event::PagingFailed).await;
+                            reader_event(reading, generation, &out, &wake, Event::PagingFailed)
+                                .await;
                         }
                     }
-                } else {
-                    publish(&out, &wake, Event::PagingFailed).await;
+                } else if active_reader {
+                    reader_event(reading, generation, &out, &wake, Event::PagingFailed).await;
                 }
             }
             Some(Input::Command(Command::Send(body))) => {
-                if opened && !dirty && !parked && wire.upstream.load(SeqCst) {
+                if opened && wire.upstream.load(SeqCst) && (reading.is_some() || !dirty && !parked)
+                {
                     busy = true;
                     repairs = 0;
                     settlement_reads = 0;
@@ -224,6 +321,30 @@ pub async fn run(
                 {
                     publish(&out, &wake, Event::AgentHint(false)).await;
                 }
+                if matches!(
+                    kind,
+                    "session.deleted" | "session.moved" | "session.revert.committed"
+                ) {
+                    publish(&out, &wake, Event::Failed).await;
+                    wire.cancelled.store(true, SeqCst);
+                    return Err("session scope or history changed".into());
+                }
+                if !active_reader || tail_gap {
+                    match kind {
+                        "session.step.started" => {
+                            busy = true;
+                            publish(&out, &wake, Event::ObservedRunning(true)).await;
+                        }
+                        "session.execution.succeeded"
+                        | "session.execution.failed"
+                        | "session.execution.interrupted" => {
+                            busy = false;
+                            publish(&out, &wake, Event::ObservedRunning(false)).await;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
                 if v <= fence || !seen.insert(&native) {
                     continue;
                 }
@@ -253,7 +374,8 @@ pub async fn run(
                                     return Err("resident row budget reached".into());
                                 }
                                 resident.push(row.clone());
-                                publish(&out, &wake, Event::Message(row)).await;
+                                reader_event(reading, generation, &out, &wake, Event::Message(row))
+                                    .await;
                             }
                         }
                     }
@@ -296,7 +418,14 @@ pub async fn run(
                         }
                         if matches!(fit, TextFit::Applied | TextFit::Settlement) {
                             history::check(&resident)?;
-                            publish(&out, &wake, Event::Text(id.into(), event)).await;
+                            reader_event(
+                                reading,
+                                generation,
+                                &out,
+                                &wake,
+                                Event::Text(id.into(), event),
+                            )
+                            .await;
                         }
                     }
                     kind if kind.starts_with("session.tool.") => {
@@ -310,10 +439,6 @@ pub async fn run(
                         dirty = true;
                         quiet = Instant::now() + Duration::from_millis(100);
                     }
-                    "session.deleted" | "session.moved" | "session.revert.committed" => {
-                        publish(&out, &wake, Event::Failed).await;
-                        return Err("session scope or history changed".into());
-                    }
                     "server.connected" | "session.inbox.enqueued" | "session.inbox.delivered" => {
                         dirty = true;
                         quiet = Instant::now() + Duration::from_millis(100);
@@ -323,7 +448,9 @@ pub async fn run(
             }
             _ => {}
         }
-        if dirty
+        if active_reader
+            && !tail_gap
+            && dirty
             && !parked
             && opened
             && wire.upstream.load(SeqCst)
@@ -331,12 +458,19 @@ pub async fn run(
             && rx.is_empty()
         {
             let stamp = wire.version.load(SeqCst);
-            let snapshot = if initial && backend.fresh_mode {
-                backend.empty().await
-            } else if backend.fresh_mode {
-                backend.fresh(first.as_deref()).await
-            } else {
-                backend.restore(first.as_deref()).await
+            let snapshot = async {
+                if let Some(target) = &anchored {
+                    backend.reading_window(target).await
+                } else if initial && backend.fresh_mode {
+                    backend.empty().await
+                } else if backend.fresh_mode {
+                    backend.fresh(first.as_deref()).await
+                } else {
+                    backend.restore(first.as_deref()).await
+                }
+            };
+            let Some(snapshot) = read_page(reading, generation, snapshot).await else {
+                continue;
             };
             match snapshot {
                 Ok(mut page) if wire.valid(stamp) && rx.is_empty() => {
@@ -362,6 +496,8 @@ pub async fn run(
                     connection_lost = false;
                     dirty = false;
                     initial = false;
+                    tail_gap = anchored.is_some() && page.newer.is_some();
+                    anchored = None;
                     first = page.rows.first().map(|r| r.id.clone());
                     older = page.older.clone();
                     known = page.rows.iter().map(|r| r.id.clone()).collect();
@@ -378,11 +514,11 @@ pub async fn run(
                     }
                     busy = page.running;
                     terminal = false;
-                    if !publish(&out, &wake, Event::Sync(page)).await {
+                    if !reader_event(reading, generation, &out, &wake, Event::Sync(page)).await {
                         return Ok(());
                     }
                     if done {
-                        publish(&out, &wake, Event::Done).await;
+                        reader_event(reading, generation, &out, &wake, Event::Done).await;
                     }
                 }
                 Ok(_) => {
@@ -403,7 +539,7 @@ pub async fn run(
                     eprintln!("Rune history refresh failed: {}", read_diagnostic(&error));
                     dirty = false;
                     parked = true;
-                    publish(&out, &wake, Event::Failed).await;
+                    reader_event(reading, generation, &out, &wake, Event::Failed).await;
                 }
             }
         }

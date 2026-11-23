@@ -134,6 +134,7 @@ pub fn contract() {
             | Event::PromptSettled { .. }
             | Event::Connected(_)
             | Event::AgentHint(_)
+            | Event::ObservedRunning(_)
             | Event::Workspace(_)
             | Event::Preferences(_)
             | Event::PagingFailed => {}

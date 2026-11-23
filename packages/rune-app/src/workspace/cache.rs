@@ -15,6 +15,7 @@ pub(super) struct Cache {
     draft: TextEdit,
     pending_prompt: Option<String>,
     incoming: Option<Receiver<Event>>,
+    reader: Option<crate::chat::reader::Reader>,
     commands: Option<Sender<Command>>,
     phase: Phase,
     revision: u64,
@@ -31,6 +32,21 @@ impl Cache {
             .is_some_and(|incoming| !incoming.is_closed())
     }
 
+    pub(super) fn history_weight(&self) -> (usize, usize) {
+        (
+            self.messages.len(),
+            crate::history::retained_bytes(&self.messages),
+        )
+    }
+    pub(super) fn history_protected(&self) -> bool {
+        self.phase == Phase::Streaming || self.navigation_blocked()
+    }
+    pub(super) fn evict_history(&mut self) {
+        self.messages = Vec::new();
+        self.can_older = false;
+        self.paging = false;
+        self.transcript_display.evict_rendered();
+    }
     pub fn navigation_blocked(&self) -> bool {
         self.pending_prompt.is_some()
             || self
@@ -52,6 +68,7 @@ impl Cache {
             draft: std::mem::replace(&mut s.draft, TextEdit::new("")),
             pending_prompt: s.pending_prompt.take(),
             incoming: s.incoming.take(),
+            reader: s.reader.take(),
             commands: s.commands.take(),
             phase: std::mem::replace(&mut s.phase, Phase::Ready),
             revision: s.revision,
@@ -73,6 +90,7 @@ impl Cache {
         s.draft = self.draft;
         s.pending_prompt = self.pending_prompt;
         s.incoming = self.incoming;
+        s.reader = self.reader;
         s.commands = self.commands;
         s.phase = self.phase;
         s.revision = self.revision;
@@ -94,7 +112,7 @@ pub(super) fn status(
     use rune_theme_codenomad::tabs::Status;
     if agent.is_some_and(|a| !a.ids().is_empty()) {
         Some(Status::Permission)
-    } else if *phase == Phase::Streaming {
+    } else if *phase == Phase::Streaming || agent.is_some_and(|a| a.online && a.running) {
         Some(Status::Working)
     } else if matches!(phase, Phase::Failed | Phase::Reconnecting) {
         Some(Status::Unavailable)
