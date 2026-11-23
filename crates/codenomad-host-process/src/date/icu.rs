@@ -95,14 +95,20 @@ pub(super) fn timezone() -> Option<String> {
 }
 
 pub(super) fn month_day(millis: f64, locale: &str) -> Option<String> {
-    format(millis, locale, "MMMd")
+    format(millis, locale, "MMMd", None)
 }
 
-pub(super) fn format(millis: f64, locale: &str, skeleton: &str) -> Option<String> {
+pub(super) fn format(
+    millis: f64,
+    locale: &str,
+    skeleton: &str,
+    zone: Option<&str>,
+) -> Option<String> {
     let icu = ICU.get_or_init(Icu::load).as_ref()?;
     let locale = CString::new(locale).ok()?;
     let locale = locale.as_ptr().cast();
     let skeleton = skeleton.encode_utf16().collect::<Vec<_>>();
+    let zone = zone.map(|zone| zone.encode_utf16().collect::<Vec<_>>());
     let mut pattern = [0; 128];
     let mut text = [0; 128];
     let mut status = 0;
@@ -129,8 +135,8 @@ pub(super) fn format(millis: f64, locale: &str, skeleton: &str) -> Option<String
             UDAT_PATTERN,
             UDAT_PATTERN,
             locale,
-            null(),
-            0,
+            zone.as_ref().map_or(null(), Vec::as_ptr),
+            zone.as_ref().map_or(0, |zone| zone.len() as i32),
             pattern.as_ptr(),
             len,
             &mut status,

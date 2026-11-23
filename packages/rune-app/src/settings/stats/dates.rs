@@ -73,7 +73,7 @@ pub(super) fn timezone() -> String {
             .and_then(|value| value.as_string())
     };
     #[cfg(not(target_arch = "wasm32"))]
-    let zone = codenomad_host_process::local_iana_timezone();
+    let zone = codenomad_host_process::local_time_zone();
     zone.unwrap_or_else(|| "UTC".to_owned())
 }
 
@@ -84,15 +84,8 @@ pub(super) fn date_time(millis: u64, locale: &str, _zone: &str) -> String {
         date.to_locale_string(locale, &JsValue::UNDEFINED)
             .as_string()
     };
-    #[cfg(windows)]
-    let localized = codenomad_host_process::local_date_time(millis, locale);
-    #[cfg(unix)]
-    let localized = {
-        let _ = locale;
-        (_zone != "UTC")
-            .then(|| codenomad_host_process::local_date_time(millis))
-            .flatten()
-    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let localized = codenomad_host_process::local_date_time(millis, locale, _zone);
     localized
         .unwrap_or_else(|| codenomad_client::settings::stats::utc_stamp(millis).unwrap_or_default())
 }

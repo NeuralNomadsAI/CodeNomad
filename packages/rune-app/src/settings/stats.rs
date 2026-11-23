@@ -211,7 +211,7 @@ impl Dashboard {
         self.busy = true;
         self.failed = false;
         let zone = self.zone.get_or_insert_with(dates::timezone).clone();
-        let (days, explicit, to) = (self.days, self.explicit, dates::now());
+        let (days, explicit, to) = (self.days, self.explicit.take(), dates::now());
         let restore = self.restore;
         let restore_period = restore && explicit.is_none();
         for lane in 0..3 {
@@ -309,13 +309,11 @@ impl Dashboard {
         {
             self.snapshot = None;
         }
-        if let Some(cache) =
-            cache.filter(|cache| self.explicit.is_none_or(|days| days == cache.days))
-        {
+        if let Some(cache) = cache {
             self.days = Some(cache.days);
-            if self.snapshot.is_none() {
-                self.snapshot = cache.snapshot;
-            }
+            self.snapshot = cache
+                .snapshot
+                .or_else(|| self.snapshot.take().filter(|s| s.days() == cache.days));
         }
         if flight.proof.conflicts(&proof)
             || flight.proof.identity.is_none()

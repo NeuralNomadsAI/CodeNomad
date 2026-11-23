@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {readFile} from 'node:fs/promises'
 import path from 'node:path'
+import {setTimeout as delay} from 'node:timers/promises'
 import {chromium} from 'playwright'
 import {bundleAssetPaths} from '../../../scripts/rune/web-workspace-policy.mjs'
 
@@ -22,6 +23,10 @@ const unexpected = []
 const reads = []
 const aggregates = []
 let statsRead
+let selectedPeriod = 7
+let startHeld, closeHeld
+const held = new Promise(resolve => {startHeld = resolve})
+const heldClosed = new Promise(resolve => {closeHeld = resolve})
 const usageRoute = `/api/workspaces/${project.id}/service-usage`
 const proof = {owner:'fixture-owner',identity:'fixture-root',connection:'fixture-live'}
 const day = 86_400_000
@@ -86,8 +91,9 @@ const server = createServer(async (req,res) => {
       if (p === `${usageRoute}/owner`) return json(proof)
       assert.equal(url.searchParams.get('timezone'),'Europe/Paris')
       if (p === `${usageRoute}/cache`) {
-        const days = Number(url.searchParams.get('days') ?? 7)
-        return json({days,...proof,...(days === 7 && {snapshot:snapshot(1_800_000_000_000,days,'cached')})})
+        const days = Number(url.searchParams.get('days') ?? selectedPeriod)
+        const id = days === 90 ? 'other-window' : days === 7 ? 'cached' : undefined
+        return json({days,...proof,...(id && {snapshot:snapshot(1_800_000_000_000,days,id)})})
       }
       assert.equal(p,usageRoute)
       const query = url.searchParams
@@ -97,7 +103,13 @@ const server = createServer(async (req,res) => {
       const index = aggregates.push({days,restore}) - 1
       if (index === 0) return statsRead = () => json(snapshot(to,7,'fresh'))
       if (index === 2) return res.writeHead(503).end()
-      return json(snapshot(to,restore ? 7 : days,index === 1 ? 'updated' : undefined))
+      if (index === 4) {
+        res.on('close',()=>closeHeld(!res.writableEnded))
+        startHeld()
+        return
+      }
+      if (!restore) selectedPeriod = days
+      return json(snapshot(to,restore ? selectedPeriod : days,index === 1 ? 'updated' : undefined))
     }
     if (p.startsWith('/api/remote-control/')) {
       assert(remoteAccess && local)
@@ -338,13 +350,16 @@ try {
     emit({type:'instance.eventStatus',status:'disconnected',generation:2})
     await stale.waitFor({state:'attached'})
     assert.equal(await model('updated').count(),1)
+    selectedPeriod = 90 // The other window's successful aggregate selected this period on the backend.
     emit({type:'instance.eventStatus',status:'connected',generation:2})
     await dialog.getByText('Could not refresh statistics. Check the OpenCode connection.',{exact:true}).waitFor({state:'attached'})
-    assert.equal(await model('updated').count(),1)
-    const period = page.getByRole('button',{name:'Period · Last 7 days',exact:true})
+    await model('other-window').waitFor({state:'attached'})
+    assert.equal(await model('updated').count(),0)
+    assert.deepEqual(aggregates[2],{days:7,restore:true})
+    const period = page.getByRole('button',{name:'Period · Last 90 days',exact:true})
     await period.press('Enter')
     await page.getByRole('option',{name:'Last 365 days',exact:true}).press('Enter')
-    await model('updated').waitFor({state:'detached'})
+    await model('other-window').waitFor({state:'detached'})
     await visible('Daily activity')
     assert.deepEqual(aggregates.at(-1),{days:365,restore:false})
     assert.equal(await page.getByRole('rowheader').count(),0)
@@ -353,20 +368,23 @@ try {
       Object.defineProperty(document, 'visibilityState', {configurable:true, get:()=>state})
       document.dispatchEvent(new Event('visibilitychange'))
     },state)
+    hint('session.deleted')
+    await Promise.race([held, delay(10000,undefined,{ref:false}).then(()=>assert.fail('In-flight aggregate did not start'))])
     await setVisibility('hidden')
     await stale.waitFor({state:'attached'})
+    assert.equal(await Promise.race([heldClosed,delay(10000,false,{ref:false})]),true,'Hiding the document aborts the HTTP request')
     hint('session.execution.succeeded')
     hint('session.deleted')
-    assert.equal(aggregates.length,4)
+    assert.equal(aggregates.length,5)
     await setVisibility('visible')
     await stale.waitFor({state:'detached'})
-    assert.equal(aggregates.length,5)
+    assert.equal(aggregates.length,6)
     await radio('General').press('Enter')
     hint('session.deleted')
     await page.waitForFunction(()=>!document.body.innerText.includes('Daily activity'))
-    assert.equal(aggregates.length,5)
+    assert.equal(aggregates.length,6)
     assert.deepEqual(unexpected,[])
-    console.log(JSON.stringify({fixture:'settings-stats',mobile:true,aggregates,retainedOnDisconnect:true,emptyBreakdowns:true,hiddenRefresh:false}))
+    console.log(JSON.stringify({fixture:'settings-stats',mobile:true,aggregates,restoredOtherWindow:true,emptyBreakdowns:true,hiddenAbort:true,hiddenRefresh:false}))
   }
 
   async function checkNotifications() {

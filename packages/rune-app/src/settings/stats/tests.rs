@@ -1,6 +1,40 @@
 use super::*;
 use serde_json::json;
 
+#[test]
+fn stats_reconnect_adopts_the_other_windows_saved_period_and_totals_together() {
+    for cache_first in [true, false] {
+        let mut a = pending();
+        let a_proof = proof("owner", Some("root"), "old");
+        a.days = Some(7);
+        a.snapshot = Some(snapshot(7, a_proof));
+        let b_proof = proof("owner", Some("root"), "new");
+        let cache = Reply::Cache(Some(Cached {
+            days: 90,
+            snapshot: Some(snapshot(90, b_proof.clone())),
+            proof: b_proof,
+        }));
+        if cache_first {
+            a.receive(cache, 1.0);
+            assert_eq!(a.days, Some(90));
+            assert_eq!(a.snapshot.as_ref().unwrap().days(), 90);
+            a.receive(Reply::Fresh(None), 2.0);
+        } else {
+            a.receive(Reply::Fresh(None), 1.0);
+            assert_eq!(a.days, Some(7));
+            assert_eq!(a.snapshot.as_ref().unwrap().days(), 7);
+            a.receive(cache, 2.0);
+        }
+        assert!(a.failed);
+        assert_eq!(a.days, Some(90));
+        assert_eq!(a.snapshot.as_ref().unwrap().days(), 90);
+        assert_eq!(
+            a.snapshot.as_ref().unwrap().proof.connection.as_deref(),
+            Some("new")
+        );
+    }
+}
+
 fn proof(owner: &str, identity: Option<&str>, connection: &str) -> Proof {
     Proof {
         owner: Some(owner.into()),

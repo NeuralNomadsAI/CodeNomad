@@ -28,11 +28,46 @@ pub fn usd(locale: &str, cost: f64, small_cost_precision: bool) -> String {
 }
 
 pub fn dashboard_usd(locale: &str, cost: f64) -> String {
-    let mut raw = format!("{cost:.4}");
+    let mut raw = fixed(cost, 4);
     while raw.ends_with('0') && raw.split_once('.').is_some_and(|(_, frac)| frac.len() > 2) {
         raw.pop();
     }
     currency(locale, &raw)
+}
+
+// Intl's halfExpand rounds the shortest decimal representation, not the binary float.
+fn fixed(amount: f64, places: usize) -> String {
+    let raw = amount.abs().to_string();
+    if !amount.is_finite() {
+        return amount.to_string();
+    }
+    let (whole, fraction) = raw.split_once('.').unwrap_or((&raw, ""));
+    let mut digits: Vec<_> = whole.bytes().chain(fraction.bytes().take(places)).collect();
+    digits.resize(whole.len() + places, b'0');
+    if fraction
+        .as_bytes()
+        .get(places)
+        .is_some_and(|digit| *digit >= b'5')
+    {
+        let mut carry = true;
+        for digit in digits.iter_mut().rev() {
+            if *digit == b'9' {
+                *digit = b'0';
+            } else {
+                *digit += 1;
+                carry = false;
+                break;
+            }
+        }
+        if carry {
+            digits.insert(0, b'1');
+        }
+    }
+    digits.insert(digits.len() - places, b'.');
+    if amount.is_sign_negative() {
+        digits.insert(0, b'-');
+    }
+    digits.into_iter().map(char::from).collect()
 }
 
 fn currency(locale: &str, raw: &str) -> String {
@@ -97,4 +132,6 @@ fn formats_keep_units_and_usd_but_use_the_app_locales_symbols() {
     assert_eq!(usd("fr", 0.0068, true), "0,0068\u{a0}$US");
     assert_eq!(usd("de", 1024.75, false), "1.024,75\u{a0}$");
     assert_eq!(usd("he", 0.5, false), "\u{200f}0.50\u{a0}\u{200f}$");
+    assert_eq!(dashboard_usd("fr", 0.03125), "0,0313\u{a0}$US");
+    assert_eq!(dashboard_usd("en", 9.99995), "$10.00");
 }

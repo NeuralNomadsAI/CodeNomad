@@ -207,6 +207,55 @@ fn stats_reads_the_service_contract_on_the_captured_backend() {
 }
 
 #[test]
+fn stats_fresh_preserves_257_models_while_the_cache_enforces_its_limit() {
+    use crate::settings::stats::{self, DAY};
+    run(async {
+        let to = 1_800_000_000_000;
+        let tokens = json!({"input":1,"output":1,"reasoning":0,"cache":{"read":0,"write":0}});
+        let models = (0..257)
+            .map(|i| {
+                json!({
+                    "model":{"providerID":"fixture","id":format!("m-{i}")},
+                    "steps":1,"tokens":tokens,"cost":0
+                })
+            })
+            .collect::<Vec<_>>();
+        let snapshot = json!({
+            "scope":"service","owner":"owner","connection":"live","identity":"root",
+            "stats":{"range":{"from":to-7*DAY,"to":to},"sessions":1,"subagents":0,
+                "prompts":257,"steps":257,"cost":0,"tokens":tokens,"activeDays":1,"streak":1,
+                "activity":[],"models":models}
+        });
+        let url = "/api/workspaces/project/service-usage";
+        let server = Server::start(vec![
+            reply(
+                &format!("GET {url}/cache?timezone=UTC&days=7"),
+                None,
+                200,
+                json!({"days":7,"owner":"owner","connection":"live","identity":"root","snapshot":snapshot}),
+            ),
+            reply(
+                &format!("GET {url}?timezone=UTC&from={}&to={to}", to - 7 * DAY),
+                None,
+                200,
+                snapshot,
+            ),
+        ]);
+        let backend = Backend::unauthenticated(&server.address).unwrap();
+        assert!(
+            stats::cached(&backend, "project", "UTC", Some(7))
+                .await
+                .is_err()
+        );
+        let fresh = stats::fresh(&backend, "project", "UTC", 7, to, false)
+            .await
+            .unwrap();
+        assert_eq!(fresh.stats.models.len(), 257);
+        assert_eq!(fresh.stats.models.last().unwrap().model.id, "m-256");
+    });
+}
+
+#[test]
 fn creation_is_an_independent_claimed_occurrence_and_cleanup_targets_its_owner() {
     run(async {
         let one = "11223344-5566-7788-99aa-bbccddeeff00";

@@ -1,17 +1,50 @@
-use std::{env, fs, path::Path};
+use crate::posix_date::{civil, fixed_zone, offset_name, offset_seconds};
+use std::{
+    env, fs,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-pub fn local_iana_timezone() -> Option<String> {
+pub fn local_time_zone() -> Option<String> {
     if let Ok(zone) = env::var("TZ") {
-        return zone_name(zone.strip_prefix(':').unwrap_or(&zone));
+        let value = zone.strip_prefix(':').unwrap_or(&zone);
+        return fixed_zone(value)
+            .or_else(|| known_zone(value))
+            .or_else(current_offset);
     }
-    fs::read_link("/etc/localtime")
-        .ok()
-        .and_then(|path| zone_name(path.to_str()?))
+    known_zone("/etc/localtime")
         .or_else(|| {
             fs::read_to_string("/etc/timezone")
                 .ok()
-                .and_then(|zone| zone_name(zone.trim()))
+                .and_then(|zone| known_zone(zone.trim()))
         })
+        .or_else(current_offset)
+}
+
+fn known_zone(value: &str) -> Option<String> {
+    let name = if Path::new(value).is_absolute() {
+        let file = fs::canonicalize(value).ok()?;
+        zone_name(file.to_str()?)?
+    } else {
+        zone_name(value)?
+    };
+    if let Some(fixed) = fixed_zone(&name) {
+        return Some(fixed);
+    }
+    let rooted = env::var_os("TZDIR")
+        .into_iter()
+        .map(std::path::PathBuf::from);
+    rooted
+        .chain(
+            [
+                "/usr/share/zoneinfo",
+                "/var/db/timezone/zoneinfo",
+                "/usr/share/lib/zoneinfo",
+            ]
+            .map(Into::into),
+        )
+        .any(|dir| dir.join(&name).is_file())
+        .then_some(name)
 }
 
 fn zone_name(zone: &str) -> Option<String> {
@@ -29,19 +62,40 @@ fn zone_name(zone: &str) -> Option<String> {
     .then(|| zone.to_owned())
 }
 
-pub fn local_date_time(millis: u64) -> Option<String> {
-    let seconds = libc::time_t::try_from(millis / 1000).ok()?;
+fn clock(seconds: i64, utc: bool) -> Option<libc::tm> {
+    let seconds = libc::time_t::try_from(seconds).ok()?;
     let mut out = std::mem::MaybeUninit::uninit();
-    // localtime_r initializes the caller-owned result when it returns a non-null pointer.
-    let time = unsafe { libc::localtime_r(&seconds, out.as_mut_ptr()).as_ref()? };
-    Some(format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-        time.tm_year + 1900,
-        time.tm_mon + 1,
-        time.tm_mday,
-        time.tm_hour,
-        time.tm_min,
-        time.tm_sec
+    // Both calls initialize the caller-owned result on success.
+    unsafe {
+        let result = if utc {
+            libc::gmtime_r(&seconds, out.as_mut_ptr())
+        } else {
+            libc::localtime_r(&seconds, out.as_mut_ptr())
+        };
+        (!result.is_null()).then(|| out.assume_init())
+    }
+}
+
+fn current_offset() -> Option<String> {
+    let seconds =
+        i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs()).ok()?;
+    offset_name(clock(seconds, false)?.tm_gmtoff as i64)
+}
+
+pub fn local_date_time(millis: u64, locale: &str, zone: &str) -> Option<String> {
+    let seconds = i64::try_from(millis / 1000).ok()?;
+    let offset = offset_seconds(zone);
+    let time = clock(seconds.checked_add(offset.unwrap_or(0))?, offset.is_some())?;
+    Some(civil(
+        [
+            time.tm_year + 1900,
+            time.tm_mon + 1,
+            time.tm_mday,
+            time.tm_hour,
+            time.tm_min,
+            time.tm_sec,
+        ],
+        locale,
     ))
 }
 

@@ -147,7 +147,6 @@ impl Snapshot {
                 .iter()
                 .any(|&days| period == Some(u64::from(days) * DAY))
             || stats.range.to > 8_640_000_000_000_000
-            || stats.models.len() > 256
             || stats.activity.len() > 366
             || !stats.cost.is_finite()
             || stats.cost < 0.0
@@ -194,7 +193,7 @@ pub async fn cached(
         Duration::from_secs(15),
     )
     .await?;
-    if !PERIODS.contains(&response.days) {
+    if !PERIODS.contains(&response.days) || days.is_some_and(|days| days != response.days) {
         return Err("Invalid cached statistics period".into());
     }
     response.snapshot = response
@@ -204,6 +203,7 @@ pub async fn cached(
         .transpose()?;
     if response.snapshot.as_ref().is_some_and(|value| {
         response.days != value.days()
+            || value.stats.models.len() > 256
             || !response.proof.live()
             || response.proof.identity.is_none()
             || response.proof.owner != value.proof.owner
@@ -263,8 +263,14 @@ async fn get<T: DeserializeOwned>(
         .send()
         .await?
         .error_for_status()?;
+    // The native broker admits 8 MiB of aggregates before adding the owner envelope.
+    let limit = if suffix.is_empty() {
+        8 * 1024 * 1024
+    } else {
+        1024 * 1024
+    };
     Ok(serde_json::from_value(
-        read_json_limited(response, 1024 * 1024).await?,
+        read_json_limited(response, limit + 4096).await?,
     )?)
 }
 
