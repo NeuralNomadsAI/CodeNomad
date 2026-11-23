@@ -4,7 +4,7 @@ mod diff_view;
 mod history;
 pub(crate) use diff_view::reader;
 
-use super::{Lane, Mode, Preview, Ui};
+use super::{Lane, Mode, MutationKind, Preview, Ui};
 use crate::{
     State,
     strings::{locale, t},

@@ -1,6 +1,5 @@
 use super::*;
 use crate::git::{
-    MutationKind,
     changes::{self, SECTIONS},
     menu,
 };
