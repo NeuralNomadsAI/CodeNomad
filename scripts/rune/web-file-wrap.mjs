@@ -47,6 +47,9 @@ export async function fileWrapBrowser({values,m,out,storage,url,root}) {
     }
     const boot=async page=>{
       await page.waitForFunction(()=>globalThis.__codenomadRuneBoot?.state==='ready',undefined,{timeout:60000})
+      // Interact with the final canvas, including when a restored tab replaces the launcher.
+      await (await page.waitForFunction(()=>['web.handover.done','web.gpu.failed','web.handover.failed']
+        .some(name=>performance.getEntriesByName(name).length))).dispose()
       await press(button(page,m['folderSelection.servers.dialog.connect']))
     }
     const heading=page=>mirror(page).getByRole('heading',{name:'Existing history',exact:true})
@@ -75,6 +78,7 @@ export async function fileWrapBrowser({values,m,out,storage,url,root}) {
     const open=async page=>{
       const right=button(page,m['window.menu.rightPanel'])
       await right.waitFor()
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
       const files=mirror(page).getByRole('tab',{name:m['instanceShell.rightPanel.tabs.files'],exact:true})
       if(await right.getAttribute('aria-expanded')!=='true')await press(right)
       await files.waitFor()
