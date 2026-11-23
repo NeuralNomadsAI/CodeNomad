@@ -151,8 +151,9 @@ try {
   const workspace=await opened.json();assert.equal(opened.status,201,JSON.stringify(workspace))
   const instance = `${origin}/api/storage/instances/${workspace.id}`
   const agentModelSelections = { build: { providerId: 'fixture', modelId: 'fixture' } }
+  const prior = Array.from({length:100}, (_, i) => `older ${i}`)
   if(history) {
-    const seed = await fetch(instance, {method:'PUT', headers:{'content-type':'application/json',cookie}, body:JSON.stringify({messageHistory:[],agentModelSelections})})
+    const seed = await fetch(instance, {method:'PUT', headers:{'content-type':'application/json',cookie}, body:JSON.stringify({messageHistory:prior,agentModelSelections})})
     assert.equal(seed.status,204)
   }
   for(const end=Date.now()+10000;upstreamStreams.size===0;){assert(Date.now()<end,'Rust event bridge');await new Promise(r=>setTimeout(r,50))}
@@ -170,7 +171,7 @@ try {
     assert.equal(result,0)
     const stored = await fetch(instance, {headers:{cookie}})
     assert.equal(stored.status,200)
-    assert.deepEqual(await stored.json(), {messageHistory:['/review résumé 🦀'],agentModelSelections})
+    assert.deepEqual(await stored.json(), {messageHistory:['/review résumé 🦀', ...prior.slice(0,99)],agentModelSelections})
     result=await run({RUNE_PROMPT_HISTORY_STAGE:'read'})
   }
   if(attachments&&result===0) {

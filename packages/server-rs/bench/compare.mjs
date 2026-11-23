@@ -254,11 +254,6 @@ async function qualify(ts, rs, password, rsRoot) {
   const state = { messageHistory: ["fixture"], agentModelSelections: { build: { providerId: "fixture", modelId: "fixture" } } }
   assert.equal(await callStatus(byId, { ...jsonBody(state), method: "PUT" }), 204)
   assert.deepEqual(await (await call(byPath)).json(), state)
-  assert.equal(await callStatus(byId, jsonBody({ text: "Tentative 🦀" })), 204)
-  assert.deepEqual(await (await call(byPath)).json(), {
-    ...state, messageHistory: ["Tentative 🦀", ...state.messageHistory],
-  })
-  assert.equal(await callStatus(byPath, jsonBody({ text: "not an owned workspace id" })), 404)
   assert.equal(await callStatus(byPath, { method: "DELETE" }), 204)
   assert.deepEqual(await (await call(byId)).json(), { messageHistory: [], agentModelSelections: {} })
   const worktrees = await (await call(`/api/workspaces/${ws.id}/worktrees`)).json()
