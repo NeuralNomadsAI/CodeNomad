@@ -458,6 +458,7 @@ const env=await privateEnvironment(profile)
 if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
 if(webSearch){
+  delete env.GIT_CEILING_DIRECTORIES
   const git=(...args)=>promisify(execFile)('git',['-C',project,...args],{
     windowsHide:true,env:{...env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig')},
   })

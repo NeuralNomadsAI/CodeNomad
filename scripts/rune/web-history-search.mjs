@@ -38,7 +38,7 @@ export async function historySearch(page, messages) {
     }
     assert.equal(windows,0,'Revealing technical matches must also stay local')
     const [ranked]=await Promise.all([read('ranked'),press(search,'history.workspace')])
-    assert(ranked.ok(),`Ranked broker status ${ranked.status()}`)
+    if(!ranked.ok())assert.fail(`Ranked broker status ${ranked.status()}: ${await ranked.text()}`)
     await search.getByRole('button',{name:'Existing ranked destination',exact:true}).waitFor()
     const first=search.getByRole('button',{name:'Existing ranked destination',exact:true})
     await search.locator('[aria-description="Another session · history-fixture"]').and(first).waitFor()
