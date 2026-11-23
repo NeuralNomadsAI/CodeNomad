@@ -1,11 +1,8 @@
 use super::draft::Attachment;
-#[cfg(not(target_arch = "wasm32"))]
 use crate::{State, workspace};
-#[cfg(not(target_arch = "wasm32"))]
 use rune::Tx;
 use rune::edit::TextEdit;
 use std::ops::Range;
-#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 
 pub(super) const MAX_BYTES: usize = 256 * 1024;
@@ -36,7 +33,6 @@ pub(super) fn active_tokens(edit: &TextEdit) -> impl Iterator<Item = (Range<usiz
     })
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn paste(s: &mut State, text: &str, tx: &mut Tx) -> bool {
     if text.encode_utf16().nth(150).is_none() && text.split('\n').nth(3).is_none() {
         return false;
@@ -48,7 +44,6 @@ pub(super) fn paste(s: &mut State, text: &str, tx: &mut Tx) -> bool {
     true
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn compact(s: &mut State, text: &str) -> bool {
     if text.len() > MAX_BYTES {
         return false;

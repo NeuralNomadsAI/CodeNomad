@@ -84,7 +84,9 @@ impl History {
         }
         drop(cache);
         std::cell::Ref::map(self.dates.borrow(), |cache| {
-            cache.as_ref().map_or(&[][..], |(_, dates)| dates.as_slice())
+            cache
+                .as_ref()
+                .map_or(&[][..], |(_, dates)| dates.as_slice())
         })
     }
 }

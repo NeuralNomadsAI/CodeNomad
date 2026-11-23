@@ -9,16 +9,18 @@ import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction} from './web-mobile.mjs'
 import {mobileLive, revokedLauncher} from './web-live.mjs'
+import {focusRing, longPaste} from './web-paste.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'same-origin-pairing':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'same-origin-pairing':{type:'boolean'}, 'paste-only':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
 if(values.connected){assert(values.workspace&&values.project&&values['storage-state']);url.searchParams.delete('scene')}
-else url.searchParams.set('scene', 'synthetic')
+else url.searchParams.set('scene', values['paste-only'] ? 'synthetic-paste' : 'synthetic')
 if(values.mobile)assert(values.connected && url.protocol==='https:')
+if(values['paste-only'])assert(!values.connected)
 url.searchParams.set('locale', values.locale)
 const catalogueIndex = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/catalogues.json'), 'utf8'))
 assert(catalogueIndex.locales.includes(values.locale), 'Select a supported locale from the generated catalogue')
@@ -106,7 +108,7 @@ try {
       const started = performance.now()
       try {
         let network
-        if(values.mobile){
+         if(values.mobile){
           const cdp=await mobileClientHints(page,browser)
           if(colorScheme==='dark'){
             network=cdp
@@ -204,19 +206,33 @@ try {
           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
           await select('Existing history','ses_existing');await reading()
         }else{
-        // Keyboard input is scoped to this headless page and goes through Rune's DOM bridge.
-        let focused = false
-        for (let tab = 0; tab < 12; tab++) {
-          await page.keyboard.press('Tab')
-          await page.waitForTimeout(30)
-          focused = await page.evaluate(() => document.activeElement?.tagName === 'TEXTAREA')
-          if (focused) break
-        }
-        assert(focused, 'Rune composer must be reachable through keyboard focus')
+        // Enter from the field boundary: the transcript has its own variable number of Tab stops.
+        const group = await page.getByRole('group', {name: messages['rune.prompt'], exact: true}).boundingBox()
+        const action = await page.getByRole('button', {name: messages['promptInput.overlay.send'], exact: true}).boundingBox()
+        assert(group && action && action.y > group.y, 'Composer field must have a visible area above its actions')
+        const x = group.x + group.width / 2, y = (group.y + action.y) / 2
+        if (touch) await page.touchscreen.tap(x, y)
+        else await page.mouse.click(x, y)
+        await page.locator('textarea:focus').waitFor({state: 'attached'})
+        const focused = values['paste-only'] ? await page.screenshot({path:path.join(out, `${name}-${colorScheme}-focus.png`),scale:'css'}) : null
+        await page.keyboard.press('Tab')
+        await page.waitForFunction(() => document.activeElement?.tagName !== 'TEXTAREA')
+        const unfocused = values['paste-only'] ? await page.screenshot({path:path.join(out, `${name}-${colorScheme}-blur.png`),scale:'css'}) : null
+        await page.keyboard.press('Shift+Tab')
+        await page.locator('textarea:focus').waitFor({state: 'attached'})
         const text = 'Rune web\nDeuxième ligne 🦀'
         await page.locator('textarea:focus').fill(text)
-        await page.waitForFunction(expected => document.activeElement?.value === expected, text)
-        assert.equal(await page.locator('textarea:focus').getAttribute('aria-label'), messages['rune.prompt'])
+         await page.waitForFunction(expected => document.activeElement?.value === expected, text)
+         assert.equal(await page.locator('textarea:focus').getAttribute('aria-label'), messages['rune.prompt'])
+         if(values['paste-only']) {
+           const {['space-md']: inset} = palette.numbers[colorScheme]
+           const ring = await focusRing(imagePage, [unfocused, focused], group, inset, palette[colorScheme]['focus-ring-color'])
+           const paste = await longPaste(page, messages)
+           assert.deepEqual(forbiddenRequests, [])
+           assert.deepEqual(errors, [])
+           records.push({name, colorScheme, width, height, emulatedTouch: touch, longPaste: paste, focusRing: ring, pass: true})
+           continue
+         }
         }
         const canvas = await page.locator('canvas').first().boundingBox()
         assert(canvas && canvas.width > 0 && canvas.height > 0, 'Rune must draw an actual canvas')
@@ -235,7 +251,7 @@ try {
             return {name, rect: [box.x, box.y, box.width, box.height], surface, text}
           }
           return [...(title.connected?[crop('header', text => text==='Existing history','surface-shade-light','text-muted')]:[]),
-            crop('transcript', text => text.includes(title.connected?'Existing answer':'fn main()'))]
+            crop('transcript', text => text.includes(title.connected?'Existing answer':'Synthetic message 9998'))]
         }, {connected:values.connected})
         const composerBox = await page.getByRole('group', {name: messages['rune.prompt'], exact: true}).boundingBox()
         const sendBox = await page.getByRole('button', {name: messages['promptInput.overlay.send'], exact: true}).boundingBox()
@@ -269,8 +285,8 @@ try {
           assert.equal(measured.android.touchScroll.moved,true,'Physical touch dispatch must move the portrait transcript')
           measured.live=await mobileLive({page,context,url,messages,revoke:control,
             eventSources:()=>eventSource,workspaces:policy.workspaces,fromLink:!values['same-origin-pairing']})
-        }
-        assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
+         }
+         assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
         assert.equal(errors.length, 0, 'Web app must initialize and handle multiline input without JS exceptions')
         if(values.connected){
           assert(eventSource,'Real browser EventSource must connect')
