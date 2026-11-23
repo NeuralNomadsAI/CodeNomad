@@ -11,7 +11,7 @@ export function projectLargeNativeEvents(response: Response): Response {
   const encoder = new TextEncoder()
   let line: string[] = [], lines: string[] = [], bytes = 0, units = 0, afterCR = false
   const limit = () => {
-    if (bytes > FRAME_BYTES && units > SDK_FRAME_BYTES) throw new Error("OpenCode event exceeds the frame limit")
+    if (bytes > FRAME_BYTES) throw new Error("OpenCode event exceeds the frame limit")
   }
   const fragment = (value: string) => {
     if (!value.length) return
@@ -33,9 +33,9 @@ export function projectLargeNativeEvents(response: Response): Response {
       const envelope = { type: "instance.event", event }
       const projected = projectInboxUserFiles(envelope)
       if (projected === envelope) throw new Error("OpenCode event exceeds the SDK frame limit")
-      const frame = encoder.encode(`data: ${JSON.stringify(projected.event)}\n\n`)
-      if (frame.byteLength > SDK_FRAME_BYTES) throw new Error("OpenCode event exceeds the SDK frame limit")
-      stream.enqueue(frame)
+      const frame = `data: ${JSON.stringify(projected.event)}\n\n`
+      if (frame.length > SDK_FRAME_BYTES) throw new Error("OpenCode event exceeds the SDK frame limit")
+      stream.enqueue(encoder.encode(frame))
     }
     lines = []
     bytes = units = 0

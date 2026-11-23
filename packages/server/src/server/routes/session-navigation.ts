@@ -57,7 +57,7 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Hist
         const session = await client.session.get({ sessionID: parsed.data.sessionID }, { signal })
         current()
         const location = readLocationRef(session.location)
-        if (!await manager.ownsLocation(id, location, client, { signal })) return reply.code(403).send({ error: "Session does not belong to workspace" })
+         if (!await wait(manager.ownsLocation(id, location, client, { signal }))) return reply.code(403).send({ error: "Session does not belong to workspace" })
         current()
          fences.push((await wait(captureDisplayIdentities(deps.worktreeDeletionFence, manager, id, [location.directory])))!)
         current()
@@ -66,7 +66,8 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Hist
           const latest = await client.session.get({ sessionID: parsed.data.sessionID }, { signal })
           current()
            if (latest.id !== session.id || !sameLocation(location, readLocationRef(latest.location)) || latest.projectID !== session.projectID
-             || JSON.stringify(latest.revert) !== JSON.stringify(session.revert) || !await manager.ownsLocation(id, latest.location, client, { signal })) throw new NavigationConflict("Session changed")
+             || JSON.stringify(latest.revert) !== JSON.stringify(session.revert)
+             || !await wait(manager.ownsLocation(id, latest.location, client, { signal }))) throw new NavigationConflict("Session changed")
           current()
         }
         await manager.desktopPluginsReady({ connection, location: { directory: location.directory }, signal, deadlineAt, assertCurrent: current })
@@ -101,7 +102,7 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Hist
            // Committing undo can delete the row and clear revert before the session is re-read.
            const confirmation = sessionAttachmentResultSchema.parse((await call("sessionAttachment", true)).output)
            if (confirmation.status !== "current") return reply.code(404).send({ error: "Attachment not found" })
-           await revalidate()
+           current()
           return reply.type("application/octet-stream").header("cache-control", "private, no-store")
             .header("content-disposition", "attachment").header("x-content-type-options", "nosniff").send(bytes)
         }

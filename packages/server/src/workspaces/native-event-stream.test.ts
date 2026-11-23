@@ -26,3 +26,18 @@ test("the shared SDK stream receives a large inbox as references and retains fol
   }))
   assert.deepEqual(records[1], { type: "after" })
 })
+
+test("the SDK frame ceiling is measured in UTF-16 units after projection", async () => {
+  const text = "漢".repeat(6 * 1024 * 1024)
+  const event = { type: "session.inbox.enqueued", data: { item: { type: "user", payload: {
+    text, files: [{ data: Buffer.alloc(8 * 1024 * 1024).toString("base64") }],
+  } } } }
+  const source = new Response(`data: ${JSON.stringify(event)}\n\n`, { headers: { "content-type": "text/event-stream" } })
+  const body = await projectLargeNativeEvents(source).text()
+  assert(Buffer.byteLength(body) > 16 * 1024 * 1024)
+  assert(body.length < 16 * 1024 * 1024)
+  const payload = JSON.parse(body.slice(6)).data.item.payload
+  assert.equal(payload.text, text)
+  assert.equal(payload.files[0].source.type, "deferred")
+  assert(!("data" in payload.files[0]))
+})
