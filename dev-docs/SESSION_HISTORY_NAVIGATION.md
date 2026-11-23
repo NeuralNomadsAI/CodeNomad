@@ -50,11 +50,17 @@ challenge as history queries. Never expose generic RPC or SQL access through the
    omitting content.
 - `X-CodeNomad-User-Files: reference-v1` requests user attachment labels and
   content digests without inline bytes. The accepted window identifies the
-  projection with `userFiles: "reference-v1"` and applies the same response
-  budgets. `/api/events?userFiles=reference-v1` applies the projection to
-  queued user input. Clients fetch an attachment by session, message, ordinal
-  and digest from `session-attachment`, up to 8 MiB. The plugin reads only the
-  stored message and its owned blobs; external files remain unavailable.
+   projection with `userFiles: "reference-v1"` and applies the same response
+   budgets, with shorter pages when the raw projection input reaches 64 MiB.
+   `/api/events?userFiles=reference-v1` applies the projection to queued user
+   input. Native inbox frames beyond the shared reader's 16 Mi-unit limit use
+   references before routing; streams without the opt-in reconnect for an
+   authoritative queue read. The raw inbox frame bound is 32 MiB. Clients fetch
+   an attachment by session, message, ordinal and digest from
+   `session-attachment`, up to 8 MiB. The plugin reads the stored message and
+   its owned blobs, then confirms that the requested digest is current before
+   publication. Queued files are readable once the message is stored; external
+   files remain unavailable.
 - Ownership includes directory, project and legacy workspace identity. Staged
   undo hides the same message-ID tail as the transcript. Missing/deleted targets
   return `anchor_missing` (distinct from ownership/revert conflicts); the broker rechecks location, project, revert and workspace

@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto"
-
-export const USER_FILES_REFERENCE = "reference-v1"
-export const USER_FILE_BYTES = 8 * 1024 * 1024
-export const USER_FILE_COUNT = 128
-export const USER_FILE_BASE64 = Math.ceil(USER_FILE_BYTES / 3) * 4
+import { USER_FILE_BASE64, USER_FILE_BYTES, USER_FILE_COUNT } from "./user-file-contract"
+export * from "./user-file-contract"
 
 export const userFileDigest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex")
 
@@ -34,14 +31,22 @@ export function hasOnlyUserFileReferences(message: { type: string; files?: unkno
       && typeof file.source.sha256 === "string" && /^[0-9a-f]{64}$/.test(file.source.sha256)))
 }
 
+export function isProjectedInbox(envelope: unknown): boolean {
+  const value = envelope as { type?: string; event?: { type?: string; data?: { item?: { type?: string; payload?: { files?: unknown } } } } }
+  if (value?.type !== "instance.event" || value.event?.type !== "session.inbox.enqueued") return false
+  const item = value.event.data?.item, files = item?.payload?.files
+  return item?.type === "user" && Array.isArray(files) && files.length > 0 && hasOnlyUserFileReferences({ type: "user", files })
+}
+
 export function projectInboxUserFiles<T>(envelope: T): T {
   const event = envelope as { type?: string; event?: { type?: string; data?: { item?: unknown } } }
   if (event?.type !== "instance.event" || event.event?.type !== "session.inbox.enqueued") return envelope
   const item = event.event.data?.item as { type?: string; payload?: { files?: unknown[] } } | undefined
   if (item?.type !== "user" || !Array.isArray(item.payload?.files)) return envelope
+  if (hasOnlyUserFileReferences({ type: "user", files: item.payload.files })) return envelope
   const files = item.payload.files.slice(0, USER_FILE_COUNT).map(input => {
-    const file = input as { name?: unknown; mime?: unknown; data?: unknown } | null
-    const bytes = readInlineUserFile(file?.data)
+    const file = input as { name?: unknown; mime?: unknown; data?: unknown; source?: { type?: unknown } } | null
+    const bytes = file?.source?.type === "uri" ? undefined : readInlineUserFile(file?.data)
     return userFileLabel(file ?? {}, Buffer.isBuffer(bytes) ? userFileDigest(bytes) : undefined)
   })
   return {

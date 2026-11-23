@@ -3,6 +3,7 @@ import { PRUNING_RPC_ID } from "../../opencode/session-pruning/contract"
 import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineLayoutResultSchema, outlinePreviewInputSchema, outlinePreviewResultSchema, sessionAttachmentInputSchema, sessionAttachmentResultSchema } from "../../opencode/session-pruning/navigation-contract"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../../opencode/compatibility/location"
 import { deferToolMedia, wantsDeferredMedia } from "../../opencode/session-media"
+import { awaitSessionMedia } from "../../opencode/session-media-fetch"
 import type { HistoryRouteDeps } from "./session-history"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import { hasOnlyUserFileReferences, readInlineUserFile, USER_FILES_REFERENCE, userFileDigest } from "../../opencode/user-file-reference"
@@ -44,7 +45,8 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Hist
       reply.raw.once("close", abort)
       try {
         const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)])
-        const connection = await manager.getSharedServiceConnection(id)
+         const wait = <T>(work: Promise<T>) => attachment ? awaitSessionMedia(work, signal) : work
+         const connection = await wait(manager.getSharedServiceConnection(id))
         if (!connection || !workspace || !base) throw new Error("Workspace unavailable")
         const client = connection.client
         const current = () => {
@@ -57,22 +59,22 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Hist
         const location = readLocationRef(session.location)
         if (!await manager.ownsLocation(id, location, client, { signal })) return reply.code(403).send({ error: "Session does not belong to workspace" })
         current()
-        fences.push((await captureDisplayIdentities(deps.worktreeDeletionFence, manager, id, [location.directory]))!)
+         fences.push((await wait(captureDisplayIdentities(deps.worktreeDeletionFence, manager, id, [location.directory])))!)
         current()
         const revalidate = async () => {
           current()
           const latest = await client.session.get({ sessionID: parsed.data.sessionID }, { signal })
           current()
-          if (!sameLocation(location, readLocationRef(latest.location)) || latest.projectID !== session.projectID
-            || JSON.stringify(latest.revert) !== JSON.stringify(session.revert) || !await manager.ownsLocation(id, latest.location, client, { signal })) throw new NavigationConflict("Session changed")
+           if (latest.id !== session.id || !sameLocation(location, readLocationRef(latest.location)) || latest.projectID !== session.projectID
+             || JSON.stringify(latest.revert) !== JSON.stringify(session.revert) || !await manager.ownsLocation(id, latest.location, client, { signal })) throw new NavigationConflict("Session changed")
           current()
         }
         await manager.desktopPluginsReady({ connection, location: { directory: location.directory }, signal, deadlineAt, assertCurrent: current })
         await revalidate()
-        const call = (rpcMethod: string) => {
+         const call = (rpcMethod: string, confirm = false) => {
           current()
           return client.rpc.call({ rpcID: PRUNING_RPC_ID, method: rpcMethod,
-          input: JSON.parse(JSON.stringify(parsed.data)), location: { directory: location.directory } },
+           input: confirm ? { ...parsed.data, confirm: true } : JSON.parse(JSON.stringify(parsed.data)), location: { directory: location.directory } },
         { ...locationRequestOptions(location), signal })
         }
         // The outline asks for layouts through the versioned method; a plugin
@@ -94,9 +96,12 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Hist
         if (attachment) {
           if (output.status === "too_large") return reply.code(413).send({ error: "Attachment exceeds the size limit" })
           if (output.status !== "file") return reply.code(404).send({ error: "Attachment not found" })
-          const bytes = readInlineUserFile(output.data)
-          if (!Buffer.isBuffer(bytes) || userFileDigest(bytes) !== sha256) return reply.code(404).send({ error: "Attachment not found" })
-          current()
+           const bytes = readInlineUserFile(output.data)
+           if (!Buffer.isBuffer(bytes) || userFileDigest(bytes) !== sha256) return reply.code(404).send({ error: "Attachment not found" })
+           // Committing undo can delete the row and clear revert before the session is re-read.
+           const confirmation = sessionAttachmentResultSchema.parse((await call("sessionAttachment", true)).output)
+           if (confirmation.status !== "current") return reply.code(404).send({ error: "Attachment not found" })
+           await revalidate()
           return reply.type("application/octet-stream").header("cache-control", "private, no-store")
             .header("content-disposition", "attachment").header("x-content-type-options", "nosniff").send(bytes)
         }

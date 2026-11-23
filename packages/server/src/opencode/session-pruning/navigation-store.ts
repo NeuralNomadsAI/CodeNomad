@@ -31,16 +31,48 @@ export async function readNavigationWindow(db: DatabaseSync, scope: HistoryScope
     const select = (clause: string, args: SQLInputValue[], ascending: boolean, count: number) => db.prepare(
       `SELECT id,type,seq,${storage.bytes()} AS bytes FROM ${storage.table} WHERE ${where} ${clause} ORDER BY seq ${ascending ? "ASC" : "DESC"} LIMIT ?`,
     ).all(...params, ...args, count)
-    const rows = target.kind === "around"
+    let rows = target.kind === "around"
       ? [...select("AND seq < ?", [sequence!], false, 80).reverse(), ...select("AND seq >= ?", [sequence!], true, 120)]
       : target.kind === "latest" ? select("", [], false, PAGE_SIZE).reverse()
         : target.kind === "oldest" ? select("", [], true, PAGE_SIZE)
           : target.kind === "before"
             ? [...select("AND seq < ?", [sequence!], false, 184).reverse(), ...select("AND seq >= ?", [sequence!], true, 16)]
             : [...select("AND seq <= ?", [sequence!], false, 16).reverse(), ...select("AND seq > ?", [sequence!], true, 184)]
+    if (referenceFiles) {
+      let budget = USER_WINDOW_INPUT
+      const take = (candidates: typeof rows) => {
+        const kept = []
+        for (const row of candidates) {
+          const bytes = Number(row.bytes)
+          if (bytes > budget) break
+          budget -= bytes
+          kept.push(row)
+        }
+        return kept
+      }
+      const cut = sequence === undefined ? -1 : rows.findIndex(row => Number(row.seq) === sequence)
+      let kept
+      if (target.kind === "latest") kept = take(rows.slice().reverse()).reverse()
+      else if (target.kind === "oldest") kept = take(rows)
+      else if (cut < 0) return { status: "blocked", reason: "conflict" }
+      else if (target.kind === "before") {
+        const earlier = take(rows.slice(0, cut).reverse())
+        kept = [...earlier.reverse(), ...take(rows.slice(cut))]
+        if (cut > 0 && !earlier.length) return { status: "blocked", reason: "unsupported_storage" }
+      } else if (target.kind === "after") {
+        const later = take(rows.slice(cut + 1))
+        kept = [...take(rows.slice(0, cut + 1).reverse()).reverse(), ...later]
+        if (cut + 1 < rows.length && !later.length) return { status: "blocked", reason: "unsupported_storage" }
+      } else {
+        const later = take(rows.slice(cut))
+        if (!later.length) return { status: "blocked", reason: "unsupported_storage" }
+        kept = [...take(rows.slice(0, cut).reverse()).reverse(), ...later]
+      }
+      if (!kept.length && rows.length) return { status: "blocked", reason: "unsupported_storage" }
+      rows = kept
+    }
     const ordinary = referenceFiles ? rows.filter(row => row.type !== "user") : rows
-    if (ordinary.some(row => Number(row.bytes) > MESSAGE_BYTES) || ordinary.reduce((n, row) => n + Number(row.bytes), 0) > WINDOW_BYTES
-      || (referenceFiles && rows.reduce((n, row) => n + Number(row.bytes), 0) > USER_WINDOW_INPUT)) {
+    if (ordinary.some(row => Number(row.bytes) > MESSAGE_BYTES) || ordinary.reduce((n, row) => n + Number(row.bytes), 0) > WINDOW_BYTES) {
       return { status: "blocked", reason: "unsupported_storage" }
     }
     const messages = []

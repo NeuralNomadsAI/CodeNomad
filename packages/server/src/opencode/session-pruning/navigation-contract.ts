@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { pruningBlockedSchema } from "./contract"
-import { USER_FILES_REFERENCE, USER_FILE_BASE64, USER_FILE_COUNT } from "../user-file-reference"
+import { USER_FILES_REFERENCE, USER_FILE_BASE64, USER_FILE_COUNT } from "../user-file-contract"
 
 const id = z.string().min(1).max(256)
 export const navigationTargetSchema = z.discriminatedUnion("kind", [
@@ -14,9 +14,10 @@ export type NavigationTarget = z.infer<typeof navigationTargetSchema>
 export const navigationWindowInputSchema = z.object({ sessionID: id, target: navigationTargetSchema }).strict()
 export const sessionAttachmentInputSchema = z.object({
   sessionID: id, messageID: id, fileIndex: z.number().int().min(0).max(USER_FILE_COUNT - 1), sha256: z.string().length(64),
+  confirm: z.literal(true).optional(),
 }).strict()
 export const sessionAttachmentResultSchema = z.union([
-  pruningBlockedSchema, z.object({ status: z.enum(["missing", "too_large"]) }).strict(),
+  pruningBlockedSchema, z.object({ status: z.enum(["missing", "too_large", "current"]) }).strict(),
   z.object({ status: z.literal("file"), data: z.string().max(USER_FILE_BASE64) }).strict(),
 ])
 const outlineCursorSchema = z.object({ after: z.number().int().nonnegative(), through: z.number().int().nonnegative() }).strict()

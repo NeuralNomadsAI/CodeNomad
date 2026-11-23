@@ -11,6 +11,7 @@ function userFiles(db: DatabaseSync, sessionID: string, messageID: string, index
   // SQLite walks the array once. Each JS row contains only its own potentially large field.
   return db.prepare(`SELECT f.type AS kind, substr(json_extract(f.value,'$.name'),1,1024) AS name,
     substr(json_extract(f.value,'$.mime'),1,256) AS mime, substr(json_extract(f.value,'$.uri'),1,71) AS uri,
+    substr(json_extract(f.value,'$.source.type'),1,16) AS source,
     length(json_extract(f.value,'$.data')) AS length,
     CASE WHEN length(json_extract(f.value,'$.data'))<=? THEN json_extract(f.value,'$.data') END AS inline
     FROM session_message m, json_each(
@@ -45,14 +46,16 @@ export function projectStoredUserFiles(db: DatabaseSync, sessionID: string, mess
     if (file.kind !== "object") return
     const hash = typeof file.uri === "string" ? MEDIA_REF.exec(file.uri)?.[1] : undefined
     const blob = hash && ownedBlob(db, sessionID, messageID, hash, false)
-    const inline = hash ? undefined : readInlineUserFile(file.inline)
+    const inline = hash || file.source === "uri" ? undefined : readInlineUserFile(file.inline)
     files.push(userFileLabel(file, blob && Number(blob.size) <= USER_FILE_BYTES ? hash
       : Buffer.isBuffer(inline) ? userFileDigest(inline) : undefined))
   }
   if (files.length === row.files) return { ...data, files }
 }
 
-export function readStoredUserFile(db: DatabaseSync, scope: HistoryScope, target: { messageID: string; fileIndex: number; sha256: string }, signal: AbortSignal) {
+export function readStoredUserFile(db: DatabaseSync, scope: HistoryScope, target: {
+  messageID: string; fileIndex: number; sha256: string; confirm?: true
+}, signal: AbortSignal) {
   const sessionID = scope.sessionID!, { messageID, fileIndex, sha256 } = target
   if (!/^[0-9a-f]{64}$/.test(sha256)) return { status: "missing" } as const
   signal.throwIfAborted()
@@ -70,13 +73,14 @@ export function readStoredUserFile(db: DatabaseSync, scope: HistoryScope, target
       const blob = ownedBlob(db, sessionID, messageID, hash, true)
       if (blob && Number(blob.size) > USER_FILE_BYTES) return { status: "too_large" } as const
       if (blob?.data instanceof Uint8Array) bytes = blob.data
-    } else {
+    } else if (file.source !== "uri") {
       const inline = readInlineUserFile(file.inline)
       if (inline === "too_large" || Number(file.length) > USER_FILE_BASE64) return { status: "too_large" } as const
       bytes = inline
     }
     signal.throwIfAborted()
     if (!bytes || userFileDigest(bytes) !== sha256) return { status: "missing" } as const
+    if (target.confirm) return { status: "current" } as const
     return { status: "file", data: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64") } as const
   } finally { db.exec("ROLLBACK") }
 }

@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify"
 import { z } from "zod"
-import { projectInboxUserFiles, USER_FILES_REFERENCE } from "../../opencode/user-file-reference"
+import { isProjectedInbox, projectInboxUserFiles, USER_FILES_REFERENCE } from "../../opencode/user-file-reference"
 import { EventBus } from "../../events/bus"
 import { WorkspaceEventPayload } from "../../api-types"
 import type { ClientConnectionManager } from "../../clients/connection-manager"
@@ -125,6 +125,9 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       }
     }
     const send = (event: WorkspaceEventPayload) => {
+      // The old editor expects inline data. Recover its inbox from an authoritative
+      // read rather than deliver the preprojected version of an oversized event.
+      if (userFiles !== USER_FILES_REFERENCE && isProjectedInbox(event)) return handleClose(true)
       if (userFiles === USER_FILES_REFERENCE) {
         const known = projections.get(event)
         if (known) event = known

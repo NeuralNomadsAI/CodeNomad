@@ -53,7 +53,8 @@ test("blob ownership, exact byte ceiling and missing external bytes", async () =
   try {
     const bytes = Buffer.alloc(USER_FILE_BYTES, 99), hash = userFileDigest(bytes)
     const blob = { mime: "application/octet-stream", uri: `media:${hash}` }
-    const external = { mime: "text/plain", name: "C:\\fixture\\outside.txt", source: { type: "uri", uri: "https://outside.invalid/file" } }
+    const external = { mime: "text/plain", name: "C:\\fixture\\outside.txt", data: "",
+      source: { type: "uri", uri: "https://outside.invalid/file" } }
     put("msg_0", 0, [blob, external])
     db.prepare("INSERT INTO blob VALUES (?,?)").run(hash, bytes)
     db.prepare("INSERT INTO blob_ref VALUES ('ses_foreign','msg_0',?)").run(hash)
@@ -68,9 +69,31 @@ test("blob ownership, exact byte ceiling and missing external bytes", async () =
     ])
     const result = readStoredUserFile(db, scope, target, signal)
     assert.equal(result.status, "file")
+    assert.equal(readStoredUserFile(db, scope, { ...target, fileIndex: 1, sha256: userFileDigest(Buffer.alloc(0)) }, signal).status, "missing")
     assert.equal(Buffer.from(result.data, "base64").length, USER_FILE_BYTES)
+    assert.equal(readStoredUserFile(db, scope, { ...target, confirm: true }, signal).status, "current")
+    db.prepare("UPDATE blob SET data=zeroblob(?)").run(USER_FILE_BYTES)
+    assert.equal(readStoredUserFile(db, scope, { ...target, confirm: true }, signal).status, "missing")
     db.prepare("UPDATE blob SET data=zeroblob(?)").run(USER_FILE_BYTES + 1)
     assert.equal(readStoredUserFile(db, scope, target, signal).status, "too_large")
+  } finally { db.close() }
+})
+
+test("reference windows walk forward and backward across the raw input budget", async () => {
+  const { db, put } = fixture()
+  try {
+    const file = { mime: "application/octet-stream", data: Buffer.alloc(5 * 1024 * 1024).toString("base64") }
+    for (let i = 0; i < 3; i++) put(`msg_${i}`, i, Array(4).fill(file))
+    const read = (target: Parameters<typeof readNavigationWindow>[2]) => readNavigationWindow(db, scope, target, signal, true)
+    const latest = await read({ kind: "latest" })
+    assert.equal(latest.status, "window")
+    assert.deepEqual(latest.messages.map(message => message.id), ["msg_1", "msg_2"])
+    assert.ok(latest.older)
+    const earlier = await read(latest.older)
+    assert.equal(earlier.status, "window")
+    assert.deepEqual(earlier.messages.map(message => message.id), ["msg_0", "msg_1"])
+    assert.ok(earlier.newer)
+    assert.deepEqual(await read(earlier.newer), { ...latest, resume: earlier.newer })
   } finally { db.close() }
 })
 
