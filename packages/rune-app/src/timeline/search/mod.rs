@@ -94,7 +94,11 @@ fn clear_selection(s: &mut State) {
 fn query_changed(s: &mut State, tx: &mut Tx) {
     let model = state(s);
     if model.query.text.trim() != model.text {
+        let was_short = model.short_query();
         model.text = model.query.text.trim().to_owned();
+        if !was_short && let Some(hint) = model.minimum_hint() {
+            rune_theme_codenomad::timeline::search::announce(tx, hint);
+        }
         model.reset();
         let due = tx.clock() + DEBOUNCE;
         model.due = Some(due);
@@ -136,6 +140,20 @@ pub(crate) fn keys(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
 }
 
 impl Search {
+    fn short_query(&self) -> bool {
+        !self.text.is_empty() && self.text.encode_utf16().count() < MIN_QUERY_UNITS
+    }
+
+    fn minimum_hint(&self) -> Option<String> {
+        self.short_query().then(|| {
+            rune_theme_codenomad::catalogue::format(
+                crate::strings::locale(),
+                "messageSection.search.count.minChars",
+                &[("count", &MIN_QUERY_UNITS.to_string())],
+            )
+        })
+    }
+
     fn reset(&mut self) {
         self.labels = Default::default();
         self.cursor = None;

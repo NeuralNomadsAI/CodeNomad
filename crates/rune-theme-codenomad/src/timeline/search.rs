@@ -298,6 +298,10 @@ pub fn body() -> El {
         })
 }
 
+pub fn announce(tx: &mut rune::Tx, hint: String) {
+    tx.announce(hint, rune::LiveRegion::Polite);
+}
+
 pub fn results() -> El {
     rune::col().w_full()
 }
