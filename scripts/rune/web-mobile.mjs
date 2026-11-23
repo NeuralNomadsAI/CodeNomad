@@ -104,7 +104,7 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
   } finally { await browser.close() }
 }
 
-export async function mobileInteraction(page, labels, imagePage, theme) {
+export async function mobileInteraction(page, labels, imagePage, theme, colors) {
   const cdp = await page.context().newCDPSession(page)
   const evidence = {}
   async function probe(name, check) {
@@ -127,31 +127,43 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
   }
   const inkClip=field=>({...field,height:Math.min(line,field.height)})
   const capture=async clip=>`data:image/png;base64,${(await page.screenshot({clip,scale:'css'})).toString('base64')}`
-  async function glyphMatch(baseline, reference, candidate, startX=0, align=0){
-    return imagePage.evaluate(async ([baseline,reference,candidate,startX,align])=>{
-      const [a,b,c]=await globalThis.__codenomadReadPngs([baseline,reference,candidate])
+  async function glyphMatch(baseline, reference, candidate, startX=0, align=0, resized=false){
+    return imagePage.evaluate(async ([baseline,reference,candidate,startX,align,colors])=>{
+      const [a,b,c]=await globalThis.__codenomadReadPngs([baseline,reference,candidate?.flat?candidate.png:candidate])
+      if(candidate?.flat){
+        const canvas=document.createElement('canvas')
+        canvas.width=c.width;canvas.height=c.height
+        const ctx=canvas.getContext('2d')
+        ctx.fillStyle=candidate.flat;ctx.fillRect(0,0,c.width,c.height)
+        c.pixels=ctx.getImageData(0,0,c.width,c.height).data
+      }
+      const contrast=colors&&globalThis.__codenomadTextContrast(colors['surface-field'],colors['text-primary'])
+      const isInk=(image,i)=>contrast.matches(image.pixels.subarray(i,i+3))
       const glyphs=[]
       for(let i=0;i<a.pixels.length;i+=4){
         const x=i/4%a.width,y=Math.floor(i/4/a.width)
         if(x<startX)continue
-        if(![0,1,2].some(k=>Math.abs(a.pixels[i+k]-b.pixels[i+k])>28))continue
+        if(contrast ? !isInk(b,i)||isInk(a,i) : ![0,1,2].some(k=>Math.abs(a.pixels[i+k]-b.pixels[i+k])>28))continue
         glyphs.push({i,x,y})
       }
       let best={matched:-1}
       for(let dy=-align;dy<=align;dy++)for(let dx=-align;dx<=align;dx++){
         let matched=0,minX=a.width,maxX=0,minY=a.height,maxY=0
+        let minContrast=Infinity
         for(const {i,x,y} of glyphs){
           if(x+dx<0||x+dx>=c.width||y+dy<0||y+dy>=c.height)continue
           const at=((y+dy)*c.width+x+dx)*4
-          if(![0,1,2].every(k=>Math.abs(c.pixels[at+k]-b.pixels[i+k])<=36)||
-             ![0,1,2].some(k=>Math.abs(c.pixels[at+k]-a.pixels[i+k])>20))continue
+          if(contrast ? !isInk(c,at) : ![0,1,2].every(k=>Math.abs(c.pixels[at+k]-b.pixels[i+k])<=36)||
+            ![0,1,2].some(k=>Math.abs(c.pixels[at+k]-a.pixels[i+k])>20))continue
           minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y)
+          if(contrast)minContrast=Math.min(minContrast,contrast.ratio(c.pixels.subarray(at,at+3)))
           matched++
         }
-        if(matched>best.matched)best={matched,referencePixels:glyphs.length,width:maxX-minX+1,height:maxY-minY+1,lastX:maxX,dx,dy}
+        if(matched>best.matched)best={matched,referencePixels:glyphs.length,width:maxX-minX+1,height:maxY-minY+1,lastX:maxX,dx,dy,
+          ...(contrast?{minimumMatchedContrast:matched?minContrast:null}:{})}
       }
       return best
-    },[baseline,reference,candidate,startX,align])
+    },[baseline,reference,candidate,startX,align,resized?colors:null])
   }
   function looksLikeGlyphs(match){
     return match.matched>=25&&match.matched>=match.referencePixels*0.5&&match.width>=8&&match.height>=4
@@ -274,17 +286,19 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
       assert(field&&field.height>0&&field.y>=top-1&&field.y+field.height<=bottom+1&&field.x>=left-1&&field.x+field.width<=right+1,
         'The composer field must stay visible in the smaller viewport')
       const clip=inkClip(field)
-      let draftInk
+      let draftInk,resizedDraft
       for(const until=Date.now()+2500;;){
         // CSS screenshots at fractional DPR can round the two crops differently.
-        draftInk=await glyphMatch(blank,paintedDraft,await capture(clip),0,2)
+        resizedDraft=await capture(clip)
+        draftInk=await glyphMatch(blank,paintedDraft,resizedDraft,0,2,true)
         if(looksLikeGlyphs(draftInk))break
         assert(Date.now()<until,`The resized field must paint the known draft: ${JSON.stringify(draftInk)}`)
       }
-      assert(!looksLikeGlyphs(await glyphMatch(blank,paintedDraft,blank)),'A field without draft text must fail')
+      const canvasNegative=await glyphMatch(blank,paintedDraft,{png:resizedDraft,flat:colors['surface-canvas']},0,2,true)
+      assert(!looksLikeGlyphs(canvasNegative),'A painted surface-canvas without draft text must fail')
       assert(button?.y>=top && button?.y+button?.height<=bottom+1,'Send must stay within the smaller viewport')
       await page.setViewportSize(viewport)
-      return {resized:true,canvas:shown,field,button,viewportBounds,draftInk,retainedDraft:true,fieldVisible:true,sendReachable:true}
+      return {resized:true,canvas:shown,field,button,viewportBounds,draftInk,canvasNegative,retainedDraft:true,fieldVisible:true,sendReachable:true}
     })
     return evidence
   } finally {await cdp.detach()}

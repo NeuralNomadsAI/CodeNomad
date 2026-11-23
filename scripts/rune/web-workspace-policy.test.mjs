@@ -71,3 +71,14 @@ test('the fetched creation is validated and admitted before browser delivery',as
     assert.equal(fulfilled,valid)
   }
 })
+test('only the Android benchmark may submit its exact prompt on an owned session',()=>{
+  const androidPrompt='private Android fixture text', p=workspacePolicy({origin,project,androidPrompt})
+  const input=creation('own')
+  p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
+  const route='/workspaces/one/instance/api/session/ses_existing/prompt'
+  assert(p.allows('POST',route,{text:androidPrompt}))
+  assert(!p.allows('POST',route,{text:'foreign'}))
+  assert(!p.allows('POST',route,{text:androidPrompt,files:[]}))
+  assert(!p.allows('POST',route.replace('/one/','/foreign/'),{text:androidPrompt}))
+  assert(!p.allows('POST',route.replace('ses_existing','ses_another'),{text:androidPrompt}))
+})

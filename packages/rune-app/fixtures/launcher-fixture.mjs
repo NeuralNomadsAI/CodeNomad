@@ -15,7 +15,15 @@ import {pendingOpenFixture} from './pending-open-fixture.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {webLiveFixture} from './web-live-fixture.mjs'
+import {androidTsServer} from './android-ts-server.mjs'
+import {androidDevice,androidLease} from './android-device.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
+const solid=webAndroid&&process.env.RUNE_ANDROID_SOLID_DIR
+const compare=webAndroid&&process.env.RUNE_ANDROID_COMPARE
+const probeGpu=webAndroid&&process.env.RUNE_ANDROID_GPU_PROBE==='only'
+const sampleScroll=webAndroid&&process.env.RUNE_ANDROID_SAMPLE==='scroll'
+const useTs=webAndroid&&process.env.RUNE_ANDROID_TS_SERVER==='1'
+assert(!useTs||solid&&compare,'The TS restart control runs the same Solid build and conversation')
 const sameOriginPairing=process.argv.includes('--same-origin-pairing')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
 const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile,root=path.resolve(import.meta.dirname,'../../..')
@@ -57,6 +65,8 @@ if(linked){
 }
 const records=new Map(),stores=new Map(),streams=new Set(),requests=[]
 const stats={created:0,prompts:0,lists:0}
+const fixtureModel={id:'fixture',providerID:'fixture',name:'Fixture',limit:{context:100000,output:4096},cost:[],variants:[]}
+const fixtureTokens={input:0,output:0,reasoning:0,cache:{read:0,write:0}}
 const uncertain=process.argv.includes('--uncertain-create')
 const withTools=process.argv.includes('--with-tools')
 const controls=process.argv.includes('--controls')
@@ -135,7 +145,10 @@ function clientOutput(chunk) {
 }
 function add(id,title,directory=project) {
   const row={id,title,projectID:linked||gitPanel?'fixture_project':'global',location:{directory},permissions:[{action:'*',resource:'*',effect:'deny'}],time:{created:1,busy:0,idle:1}}
-  records.set(id,row);stores.set(id,new FixtureStore(0));return row
+  if(compare)Object.assign(row,{tokens:fixtureTokens,cost:0,agent:'build',model:{id:'fixture',providerID:'fixture'}})
+  records.set(id,row)
+  stores.set(id,new FixtureStore(0,compare?{agent:row.agent,model:row.model}:undefined))
+  return row
 }
 add('ses_existing','Existing history')
 if(webMobile)for(let i=0;i<(webAndroid?70:210);i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
@@ -147,7 +160,7 @@ if(linked){
   add('ses_linked_next','Linked checkout next page',linked)
   stores.get('ses_linked_next').append('assistant','Linked checkout answer')
 }
-const mobile=webMobile?webLiveFixture({stores,project,streams}):null
+const mobile=webMobile?webLiveFixture({stores,project,streams,compare}):null
 if(withTools)stores.get('ses_existing').rows[1].content.push({type:'tool',id:'historical-read',name:'read',state:{status:'completed',input:{file:'synthetic.rs'},content:[{type:'text',text:'fn historical() {}'}]}})
 const control=controls?controlsFixture({records,stores,streams,project,stats}):null
 const upstream=createServer(async(req,res)=>{
@@ -157,10 +170,12 @@ const upstream=createServer(async(req,res)=>{
     assert.equal(req.headers.authorization,`Basic ${Buffer.from('opencode:fixture-native').toString('base64')}`)
     let raw='';for await(const chunk of req){raw+=chunk;assert(raw.length<262144)}
     const json=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data))}
+    if(useTs&&url.pathname==='/api/info')return json({version:'2.3.2',pid:process.pid})
     if(web){
-      assert(!['prompt','interrupt'].some(action=>url.pathname.endsWith(`/${action}`))&&!(url.pathname==='/api/session'&&req.method==='POST'),'Read-only web fixture')
+      assert(!(url.pathname.endsWith('/interrupt')||url.pathname.endsWith('/prompt')&&!webAndroid)&&
+        !(url.pathname==='/api/session'&&req.method==='POST'),'Web fixture admits one Android prompt only')
       if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
-      if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[]})
+      if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:compare?[fixtureModel]:[]})
       if(/^\/api\/session\/[^/]+\/(permission|form)$/.test(url.pathname))return json({data:[]})
     }
     if(control&&await control.route(req,url,raw,json,res))return
@@ -169,6 +184,22 @@ const upstream=createServer(async(req,res)=>{
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
       streams.add(res);req.on('close',()=>streams.delete(res));return
     }
+    if(compare){
+      if(url.pathname==='/api/session/active')return json({data:{}})
+      if(url.pathname==='/api/project')return json([])
+      if(url.pathname==='/api/provider')return json({data:[{id:'fixture',name:'Fixture'}]})
+      if(url.pathname==='/api/model/default')return json({data:fixtureModel})
+      if(url.pathname==='/api/agent')return json({data:[{id:'build',name:'Build',mode:'primary'},{id:'plan',name:'Plan',mode:'primary'}]})
+      if(url.pathname==='/api/command')return json({data:[]})
+      if(url.pathname==='/api/mcp')return json({location:{directory:project},data:[]})
+      if(/^\/api\/experimental\/session\/ses_existing\/instructions\/entries\/[a-z0-9._-]+$/i.test(url.pathname)&&
+        ['PUT','DELETE'].includes(req.method)){res.statusCode=204;res.end();return}
+      if(url.pathname==='/api/rpc/codenomad.pending-requests/snapshot'){
+        assert.deepEqual(JSON.parse(raw).input.directories,[project])
+        return json({output:{originDirectory:project,data:[{directory:project,status:'complete',
+          locations:[{location:{directory:project},permissions:[],forms:[]}]}]}})
+      }
+    }
     if(url.pathname==='/api/location'){
       if(gitPanel){
         const directory=url.searchParams.get('location[directory]')??project
@@ -176,7 +207,8 @@ const upstream=createServer(async(req,res)=>{
         return json({directory,project:{id:'fixture_project',canonical:project,directory}})
       }
       const directory=url.searchParams.get('location[directory]')??project
-      return json(gitCount||linked?{directory,project:{id:'fixture_project',canonical:project,directory}}:{data:{directory:project}})
+      return json(gitCount||linked?{directory,project:{id:'fixture_project',canonical:project,directory}}:
+        compare?{directory:project,project:{id:'global',canonical:project,directory:project}}:{data:{directory:project}})
     }
     if(linked&&url.pathname==='/api/worktree')return json([{directory:project},{directory:linked}])
     if(linked&&url.pathname==='/api/worktree/refresh'){res.writeHead(204);res.end();return}
@@ -229,12 +261,22 @@ const upstream=createServer(async(req,res)=>{
       if(url.pathname.endsWith('windowUserFilesV1')&&output.status==='window')output.userFiles='reference-v1'
       return json({output})
     }
+    if(compare&&url.pathname==='/api/rpc/codenomad.session-pruning/outline'){
+      const {input}=JSON.parse(raw),rows=stores.get(input.sessionID).rows
+      return json({output:{status:'outline',entries:rows.map(({id,type},seq)=>({id,type,seq,tools:0,reasoning:0,text:1})),
+        total:rows.length,cursor:null,checkpoints:[]}})
+    }
     if(url.pathname==='/api/rpc/codenomad.missions/scheduleCarrierRead')return json({output:{owned:false}})
     const match=url.pathname.match(/^\/api\/session\/([^/]+)(?:\/(.*))?$/)
     if(match){
       const [,id,action]=match,record=records.get(id),store=stores.get(id);assert(record,'known fixture session')
       if(!action)return json({data:record})
-      if(action==='message')return json({data:store.rows.slice(-Number(url.searchParams.get('limit'))),cursor:url.searchParams.get('order')==='asc'?{next:'future-read-anchor'}:{}})
+      if(action==='message'){
+        const ascending=url.searchParams.get('order')==='asc'
+        const limit=Number(url.searchParams.get('limit'))
+        const data=store.rows.slice(-limit)
+        return json({data:compare&&!ascending?data.reverse():data,cursor:ascending?{next:'future-read-anchor'}:{}})
+      }
       if(action==='environment'){res.statusCode=204;res.end();return}
       if(gitPanel&&id==='ses_another'&&action==='move'){
         assert.equal(req.method,'POST');assert.equal(record.location.directory,review)
@@ -245,7 +287,14 @@ const upstream=createServer(async(req,res)=>{
         for(const stream of streams)stream.write(`data: ${JSON.stringify(event)}\n\n`)
         return json({data:record})
       }
+      if(compare&&action==='inbox')return json({data:[]})
+      if(compare&&['agent','model'].includes(action)&&req.method==='POST'){res.statusCode=204;res.end();return}
       if(action==='prompt'){
+        if(webAndroid){
+          assert.equal(++stats.prompts,1)
+          mobile.androidTurn(record,JSON.parse(raw))
+          return json({data:{id:JSON.parse(raw).id??'inbox-android'}})
+        }
         const turn=++stats.prompts;assert(id.startsWith('ses_created_'),'send belongs to selected created session')
         const body=JSON.parse(raw),reply=store.append('assistant','',false)
         if(restoreState){assert.equal(id,turn===1?'ses_created_2':'ses_created_1');assert.equal(body.text,turn===1?'Bêta · 日本語 🦀\nsecond brouillon':'Alpha · été 🦀\npremier brouillon');restorePrompts.push({sessionID:id,turn,utf16Length:body.text.length})}
@@ -291,27 +340,28 @@ await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
 if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
-if(web)env.CNRS_FIXTURE_UI_DIR=ui
+if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
-let server,exited,log='',client,result=1,http,staticProof,diagnostic='',runLog=''
+const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
+let server,exited,log='',client,clientClosed,mobileAction,deviceLease,androidCleanup,result=1,http,staticProof,diagnostic='',runLog='',expired=false
 async function startServer(){
   runLog=''
-  server=spawn(serverBinary,[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
+  server=spawn(ts?.command??serverBinary,ts?.args??[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
   server.stdout.on('data',d=>{if(log.length<1048576)log+=d;if(runLog.length<1048576)runLog+=d})
   server.stderr.on('data',d=>{if(log.length<1048576)log+=d})
   server.stdin.on('error',()=>{})
   exited=new Promise(resolve=>{server.once('close',resolve);server.once('error',resolve)})
   for(const until=Date.now()+20000;;){
-    assert(Date.now()<until&&server.exitCode===null,'Rust startup')
-    const origin=runLog.match(/^http:\/\/127\.0\.0\.1:\d+(?=\r?$)/m)?.[0]
+    assert(Date.now()<until&&server.exitCode===null,`${ts?'TypeScript':'Rust'} startup: ${log.slice(-1000)}`)
+    const origin=ts?ts.ready(runLog):runLog.match(/^http:\/\/127\.0\.0\.1:\d+(?=\r?$)/m)?.[0]
     if(origin)return origin
     await new Promise(r=>setTimeout(r,50))
   }
 }
 async function stopServer(){
   if(!server || server.exitCode!==null)return
-  server.stdin.end('shutdown\n')
-  await Promise.race([exited,new Promise(r=>setTimeout(r,3000))])
+  server.stdin.end(ts?'codenomad:shutdown\n':'shutdown\n')
+  await Promise.race([exited,new Promise(r=>setTimeout(r,ts?15000:3000).unref())])
   if(server.exitCode===null){server.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,5000))])}
 }
 async function signIn(origin){
@@ -327,7 +377,7 @@ try{
     const storage=path.join(profile,'browser-storage.json')
     let uiOrigin=origin, paired
     if(webMobile){
-      uiOrigin=runLog.match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1];assert(uiOrigin,'Rust HTTPS fixture missing')
+      uiOrigin=ts?.https??runLog.match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1];assert(uiOrigin,'HTTPS fixture missing')
       if(!webAndroid){
         const issue=await http.post('/api/remote-control/pairings')
         assert.equal(issue.status(),200)
@@ -336,35 +386,46 @@ try{
     }else await http.storageState({path:storage})
     let workspace
     if(!webRestore){const opened=await http.post('/api/workspaces',{data:{path:project}});assert(opened.ok(),`Open isolated workspace: ${await opened.text()}`);workspace=(await opened.json()).id;assert(workspace)}
-    const wasm=await http.get('/app_bg.wasm');assert.equal(wasm.status(),200)
-    const sha256=createHash('sha256').update(await wasm.body()).digest('hex')
-    assert.equal(sha256,manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
-    staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,serverBinary,ui,paired}
+    const asset=await http.get(solid?'/index.html':'/app_bg.wasm');assert.equal(asset.status(),200)
+    const sha256=createHash('sha256').update(await asset.body()).digest('hex')
+    assert.equal(sha256,solid?createHash('sha256').update(await readFile(path.join(solid,'index.html'))).digest('hex'):
+      manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
+    staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,backend:ts?'ts':'rust',serverBinary:ts?.args[0]??serverBinary,ui:solid||ui,paired}
     const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
     const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()]
-    const androidEnv=webAndroid?Object.fromEntries(['RUNE_ANDROID_ADB','RUNE_ANDROID_SERIAL','RUNE_ANDROID_ADB_PORT'].map(key=>[key,process.env[key]])):{}
-    if(webAndroid)androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
+    const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
+    if(webAndroid){
+      androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
+      deviceLease=androidLease(androidDevice(androidEnv),uiOrigin)
+      await deviceLease.open()
+    }
     client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
-    if(mobile)client.on('message',async action=>{
+    if(webAndroid)clientClosed=new Promise(resolve=>client.once('close',resolve))
+    const handleMobileAction=async action=>{
       try{
         if(action==='restart'){
-          assert(!webAndroid)
           const {serverId}=await (await http.get('/api/meta')).json()
           const older=(await (await http.get('/api/workspaces')).json()).map(row=>row.id)
-          assert(older.length>=2)
+          assert(older.length>=(ts?1:2))
           mobile.restartHistory()
           await stopServer()
-          assert.equal(server.exitCode,0,'The original Rust listener must actually exit')
-          env.CNRS_HTTPS_BIND=new URL(uiOrigin).host
+          assert.equal(server.exitCode,0,'The original listener must actually exit')
+          if(!ts)env.CNRS_HTTPS_BIND=new URL(uiOrigin).host
           await signIn(await startServer())
-          assert(runLog.includes(`HTTPS ${uiOrigin}`))
+          if(!ts)assert(runLog.includes(`HTTPS ${uiOrigin}`))
           assert.equal((await (await http.get('/api/meta')).json()).serverId,serverId)
           const opened=await http.post('/api/workspaces',{data:{path:project}})
           assert(opened.ok())
-          client.send({value:{older,witness:(await opened.json()).id}})
-        }else client.send({value:await mobile.command(action,http)})
+          return {value:{older,witness:(await opened.json()).id}}
+        }
+        return {value:await mobile.command(action,http,ts?.https)}
       }
-      catch(error){client.send({error:String(error.message)})}
+      catch(error){return {error:String(error.message)}}
+    }
+    if(mobile)client.on('message',action=>{
+      mobileAction=handleMobileAction(action).then(reply=>{
+        if(client.connected)client.send(reply,()=>{})
+      })
     })
     for(const stream of [client.stdout,client.stderr])stream.on('data',d=>{if(diagnostic.length<262144)diagnostic+=d})
   }else if(pendingOpen){
@@ -387,13 +448,13 @@ try{
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
   if(!restoreState&&!pendingOpen){
-    const budget=web||filesState||gitPanel?300000:120000
-    let expired=false
+    const budget=webAndroid?Number(process.env.RUNE_ANDROID_CLIENT_BUDGET_MS??300000):web||filesState||gitPanel?300000:120000
+    assert(Number.isInteger(budget)&&budget>0&&budget<=300000,'Invalid client deadline')
     const timer=setTimeout(()=>{expired=true;client.kill()},budget)
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=(webAndroid?1:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid&&!probeGpu&&!sampleScroll?1:0);if(!webRestore&&!probeGpu)assert(stats.lists>=(webAndroid?1:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
     await removeReview
     assert(reviewRemoved)
@@ -423,13 +484,21 @@ try{
 }catch(error){result=1;console.error(JSON.stringify({profile,stats}));throw error}finally{
   control?.close()
   for(const gate of gates.values())gate.reject()
+  if(client?.exitCode===null&&client.signalCode===null)client.kill()
+  if(deviceLease){
+    await clientClosed
+    androidCleanup=await deviceLease.close()
+  }
+  await mobileAction
   await http?.dispose()
-  if(client?.exitCode===null)client.kill()
   await stopServer()
   for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
-  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:staticProof,profile,project,forbidden,serverExitCode:server?.exitCode},null,2));await writeFile(path.join(profile,'rust.log'),log)
+  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result:androidCleanup?.length?1:result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:staticProof,profile,project,forbidden,androidCleanup,expired,clientExitSignal:client?.signalCode,serverExitCode:server?.exitCode,serverExitSignal:server?.signalCode},null,2));await writeFile(path.join(profile,ts?'ts.log':'rust.log'),log)
   if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
   if(web)await writeFile(path.join(profile,'browser-run.log'),diagnostic)
-  if(result===0)assert.equal(server.exitCode,0,'Owned Rust server must exit cleanly')
+  if(result===0){
+    if(deviceLease)assert.deepEqual(androidCleanup,[],'Android fixture cleanup must complete')
+    assert.equal(server.exitCode,0,'Owned server must exit cleanly')
+  }
 }
 process.exitCode=result??1
