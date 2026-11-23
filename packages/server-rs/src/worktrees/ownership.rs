@@ -56,12 +56,13 @@ pub(crate) async fn capture_directory(app: &App, workspace: &Workspace, physical
         return None;
     }
     let catalogue = super::linked::catalogue(app, workspace, false).await.ok()?;
-    let source = if external { Some(catalogue.get("root").ok()?.clone()) } else { None };
+    let root = catalogue.get("root").ok()?.clone();
     let tree = catalogue
         .trees
         .into_iter()
         .filter(|tree| tree.contains_live(physical))
         .max_by_key(|tree| tree.path.as_os_str().len())?;
+    let source = (external || tree.registered() != root.registered()).then_some(root);
     let proof = DirectoryProof { tree: Some(tree), source };
     proof.live(physical).then_some(proof)
 }

@@ -45,7 +45,6 @@ fn small(path: &Path) -> Result<Vec<u8>, Error> {
 impl Physical {
     fn live(&self) -> bool {
         let canonical = |path: &Path| dunce::canonicalize(path).ok().as_deref() == Some(path);
-        let common_marker = self.admin.join("commondir");
         canonical(&self.root)
             && canonical(&self.admin)
             && canonical(&self.common)
@@ -54,12 +53,14 @@ impl Physical {
             && identity(&self.common).ok().as_ref() == Some(&self.common_id)
             && config_stamp(&self.common.join("config")) == Some(self.stamp[0])
             && config_stamp(&self.admin.join("config.worktree")) == Some(self.stamp[1])
-            && self.marker.as_ref().is_none_or(|m| small(&self.root.join(".git")).ok().as_ref() == Some(m))
-            && self.backlink.as_ref().is_none_or(|m| small(&self.admin.join("gitdir")).ok().as_ref() == Some(m))
-            && match &self.common_marker {
-                Some(marker) => small(&common_marker).ok().as_ref() == Some(marker),
-                None => std::fs::symlink_metadata(&common_marker)
+            && match (&self.marker, &self.backlink, &self.common_marker) {
+                (Some(marker), Some(backlink), Some(common_marker)) => {
+                    linked_markers(&self.root, &self.admin, &self.common)
+                        .is_ok_and(|[m, b, c]| &m == marker && &b == backlink && &c == common_marker)
+                }
+                (None, None, None) => std::fs::symlink_metadata(self.admin.join("commondir"))
                     .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+                _ => false,
             }
     }
 }
