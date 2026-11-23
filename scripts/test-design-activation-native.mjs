@@ -304,9 +304,11 @@ try {
     "design-core loads by identifier")
 
   // AC-4: the user's ask rule on the image tool applies to Design exactly as to Build.
+  const imageTool = designRequests[0].tools.find(name => name === "generate_image" || name === "experimental_image_generate")
+  assert(imageTool, "Design offers the native image tool by default")
   for (const entry of [...designRequests, ...buildRequests])
-    assert(entry.tools.includes("experimental_image_generate"), `The image tool is offered by default: ${entry.tools}`)
-  const generate = JSON.stringify([{ tool: "experimental_image_generate",
+    assert(entry.tools.includes(imageTool), `The image tool is offered by default: ${entry.tools}`)
+  const generate = JSON.stringify([{ tool: imageTool,
     args: { prompt: "Flat blue app icon", path: ".codenomad/design/icon/app-icon-minimal-a.png" } }])
   const askedFor = async () => ({
     design: await permissionRequests(await imagesSession(project("p2-ask")), `RUN ${generate}`),

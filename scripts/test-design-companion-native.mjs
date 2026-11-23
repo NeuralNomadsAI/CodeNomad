@@ -53,6 +53,7 @@ await writeFile(path.join(project, "README.md"), "Design companion fixture\n")
 const childEnv = await fixtureEnvironment(root)
 clearFixtureGitEnvironment(process.env)
 const version = spawnSync(cli, ["--version"], { env: childEnv, encoding: "utf8" }).stdout.trim()
+const imageTool = /\b2\.3\./.test(version) ? "experimental_image_generate" : "generate_image"
 const git = args => spawnSync("git", args, { cwd: project, env: childEnv, encoding: "utf8" })
 assert.equal(git(["init", "-q", project]).status, 0)
 const samePath = value => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value)
@@ -122,7 +123,7 @@ function respond(res, body) {
     const saved = [...messages.filter(message => message.role === "user").map(message => text(message.content)).join("\n").matchAll(/Saved image: (.+?) \(/g)].map(match => match[1])
     const read = new Set(calls.filter(entry => entry.name === "read").map(entry => path.resolve(project, Object.values(entry.args)[0] ?? "")))
     const unread = [...new Set(saved)].filter(file => !read.has(path.resolve(project, file)))
-    const generations = calls.filter(entry => entry.name === "experimental_image_generate").length
+    const generations = calls.filter(entry => entry.name === imageTool).length
     if (!state.readBack || saved.length < generations || !unread.length) return say(res, "Noted.")
     return call(res, unread.map(file => ({ tool: "read", args: { [pathKey("read")]: file } })))
   }
@@ -189,6 +190,7 @@ try {
   // Discovery sees only the fixture's loopback providers, whatever the caller's environment holds.
   const models = async types => (await (await fetch(`${url}/api/model?${types ? `types=${types}&` : ""}location[directory]=${encodeURIComponent(project)}`,
     { headers: { authorization }, signal: AbortSignal.timeout(30_000) })).json()).data.map(model => `${model.providerID}/${model.id}`)
+  await until("fixture image catalog", async () => (await models("image")).includes("fiximg/image"))
   results.models = await models()
   assert(results.models.every(ref => /^(fixture|fiximg)\//.test(ref)), `only fixture models are discovered: ${results.models}`)
   assert.deepEqual(await models("image"), ["fiximg/image"])
@@ -206,7 +208,7 @@ try {
     assert(data.length < 200, "the whole fixture conversation fits one native page")
     return data
   }
-  const notices = list => list.filter(message => message.type === "synthetic" && message.metadata?.source === "experimental_image_generate")
+  const notices = list => list.filter(message => message.type === "synthetic" && message.metadata?.source === imageTool)
   const readParts = list => list.flatMap(message => message.type === "assistant"
     ? message.content.filter(part => part.type === "tool" && part.name === "read" && part.state?.status === "completed").map(part => ({ message: message.id, part })) : [])
   const idle = async () => { await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(60_000) }); await delay(300) }
@@ -235,7 +237,7 @@ try {
   }
   const design = path.join(project, ".codenomad", "design", "icon")
   const file = name => path.join(design, name)
-  const gen = (prompt, name, extra = {}) => ({ tool: "experimental_image_generate", args: { prompt, path: `.codenomad/design/icon/${name}`, ...extra } })
+  const gen = (prompt, name, extra = {}) => ({ tool: imageTool, args: { prompt, path: `.codenomad/design/icon/${name}`, ...extra } })
 
   // AC-16, series 1: two generations, both read back in one answer once both are saved.
   await turn(`RUN ${JSON.stringify([gen("Flat blue app icon", "icon-minimal-a.png"), gen("Bold orange app icon", "icon-bold-a.png")])}`,
@@ -298,7 +300,7 @@ try {
   assert.equal(entries.filter(entry => entry.kind === "image").length, 3)
   const reference = await rpc("imageReference", { sessionID, target: unread.target })
   assert.deepEqual(reference, { status: "path", path: ".codenomad/design/icon/icon-mono-a.png" })
-  const generatedAt = (await messages()).findLastIndex(message => message.type === "assistant" && message.content.some(part => part.type === "tool" && part.name === "experimental_image_generate"))
+  const generatedAt = (await messages()).findLastIndex(message => message.type === "assistant" && message.content.some(part => part.type === "tool" && part.name === imageTool))
 
   if (companionUI) await companionUI.testDesignCompanionUI({ cli, client, url, password, root, location, sessionID, designZip, until, idle })
   else {
