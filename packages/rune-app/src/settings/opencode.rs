@@ -30,8 +30,9 @@ impl Status {
             recommended: Some("2.2.5".into()),
             latest: None,
             update_available: false,
-            check_failed: false,
+            check_failed: true,
             state: "connected",
+            restart: Some("settings.opencode.setup.restartAvailable"),
         });
     }
 
@@ -99,10 +100,14 @@ pub(super) fn view(s: &Window) -> El {
                 "settings.opencode.update.installed",
                 snapshot.current.as_deref(),
             ));
-        if let Some(running) = &snapshot.running {
-            card = card.child(version("settings.opencode.setup.daemon", Some(running)));
+        if snapshot.running.is_none() || snapshot.running != snapshot.current {
+            card = card.child(version(
+                "settings.opencode.setup.daemon",
+                snapshot.running.as_deref(),
+            ));
         }
-        if snapshot.update_available
+        if !status.failed
+            && snapshot.update_available
             && let Some(latest) = &snapshot.latest
         {
             card = card.child(
@@ -114,8 +119,13 @@ pub(super) fn view(s: &Window) -> El {
                 .role("status"),
             );
         }
-        if snapshot.check_failed {
-            card = card.child(text(t("settings.opencode.update.checkFailed")).role("status"));
+        if !status.failed {
+            if let Some(restart) = snapshot.restart {
+                card = card.child(text(t(restart)).role("status"));
+            }
+            if snapshot.check_failed {
+                card = card.child(text(t("settings.opencode.update.checkFailed")).role("status"));
+            }
         }
     }
     if pending {
@@ -148,8 +158,5 @@ pub(super) fn view(s: &Window) -> El {
 }
 
 fn version(label: &str, value: Option<&str>) -> El {
-    chrome::setting_row(
-        t(label),
-        text(value.unwrap_or_default()).literal_direction(),
-    )
+    chrome::setting_row(t(label), text(value.unwrap_or("—")).literal_direction())
 }

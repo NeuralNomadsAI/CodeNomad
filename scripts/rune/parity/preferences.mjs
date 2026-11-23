@@ -44,7 +44,8 @@ try {
         light:{scheme:{id:'light'}},dark:{scheme:{id:'classic'}}}}})
       if(target==='/api/meta')return route.fulfill({json:{apiContract:1,capabilities:['opencode-admin'],localRequest:true}})
       if(target==='/api/opencode/update')return route.fulfill({json:{
-        state:'ready',serviceState:'ready',currentVersion:'2.3.0',daemonVersion:'2.2.5',
+        state:'ready',serviceState:'restart_available',currentVersion:'2.3.0',daemonVersion:'2.2.5',
+        checkError:'update_check_failed',
         minimumVersion:'2.2.3',recommendedVersion:'2.2.5',target:'host',binaryPath:'opencode2',
       }})
       return route.fulfill({json:{}})
@@ -54,16 +55,17 @@ try {
     else await page.getByText('2.3.0',{exact:true}).first().waitFor({timeout:90000})
     await page.waitForFunction(id=>document.documentElement.dataset.colorScheme===id,theme==='dark'?'classic':'light')
     const solidPng=path.join(out,`solid-${theme}.png`)
-    const sourceBounds=await page.evaluate(()=>Object.fromEntries(Object.entries({
+    const sourceBounds=section==='general'?await page.evaluate(()=>Object.fromEntries(Object.entries({
       locale:'.settings-language-row .selector-trigger',
       mode:'.theme-scheme-mode .theme-scheme-appearance-options',
       palette:'.theme-scheme-picker',
     }).map(([key,query])=>{
       const {x,y,width,height}=document.querySelector(query).getBoundingClientRect()
       return [key,[x,y,width,height]]
-    })))
+    }))):null
     await page.locator('.settings-window-root').screenshot({path:solidPng,animations:'disabled'})
-    await writeFile(path.join(out,`solid-${theme}.aria.txt`),await page.locator('.settings-window-root').ariaSnapshot())
+    const sourceTree=await page.locator('.settings-window-root').ariaSnapshot()
+    await writeFile(path.join(out,`solid-${theme}.aria.txt`),sourceTree)
     await page.close()
 
     const tree=path.join(out,`rune-${theme}.json`)
@@ -92,6 +94,11 @@ try {
       assert(nodes.some(node=>node.name==='2.3.0'))
       assert(nodes.some(node=>node.name==='2.2.5'))
       assert(nodes.find(node=>node.name==='Version details')?.states.includes('collapsed'))
+      for(const label of ['A newer version is installed.', 'Could not check for OpenCode updates.']){
+        assert(sourceTree.includes(label))
+        assert(nodes.some(node=>node.name?.includes(label)))
+      }
+      continue
     }
     const actualBounds={
       locale:nodes.find(node=>node.key==='locale-trigger').bounds,
@@ -140,7 +147,7 @@ try {
     mode:{meanDelta:29,different:.14,visibleInk:240,widthDifference:52,heightDifference:3,leadingDifference:6,rowDifference:13},
     palette:{meanDelta:11,different:.07,visibleInk:65,widthDifference:22,heightDifference:2,leadingDifference:3,rowDifference:29},
   }
-  await writeFile(path.join(out,'regional-pixels.json'),JSON.stringify({budgets,evidence},null,2)+'\n')
+  if(evidence.length)await writeFile(path.join(out,'regional-pixels.json'),JSON.stringify({budgets,evidence},null,2)+'\n')
   for(const {theme,metrics,blankInk} of evidence)for(const [control,budget] of Object.entries(budgets)){
     assert(blankInk[control]<budget.visibleInk,`${theme} ${control}: blank control must fail`)
     for(const [metric,threshold] of Object.entries(budget)){

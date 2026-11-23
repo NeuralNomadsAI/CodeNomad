@@ -69,6 +69,7 @@ pub struct OpenCodeStatus {
     pub update_available: bool,
     pub check_failed: bool,
     pub state: &'static str,
+    pub restart: Option<&'static str>,
 }
 
 pub async fn opencode_status(backend: &Backend, recheck: bool) -> Result<OpenCodeStatus> {
@@ -90,12 +91,11 @@ fn open_code_status(data: Value) -> Result<OpenCodeStatus> {
             })
             .map(str::to_owned)
     };
-    let state = match (data["state"].as_str(), data["serviceState"].as_str()) {
-        (_, Some("ready")) => "connected",
-        (_, Some("restart_available")) => "restartAvailable",
+    let service = data["serviceState"].as_str();
+    let state = match (data["state"].as_str(), service) {
+        (_, Some("ready" | "restart_available")) => "connected",
         (_, Some("error")) => "serviceError",
-        (_, Some("restart_required")) => "restartRequired",
-        (_, Some("incompatible")) => "update_required",
+        (_, Some("restart_required" | "incompatible")) => "update_required",
         (Some("ready"), _) => "disconnected",
         (Some("missing"), _) => "missing",
         (Some("update_required"), _) => "update_required",
@@ -104,6 +104,11 @@ fn open_code_status(data: Value) -> Result<OpenCodeStatus> {
     };
     Ok(OpenCodeStatus {
         state,
+        restart: match service {
+            Some("restart_available") => Some("settings.opencode.setup.restartAvailable"),
+            Some("restart_required") => Some("settings.opencode.setup.restartRequired"),
+            _ => None,
+        },
         current: text("currentVersion"),
         running: text("daemonVersion"),
         minimum: text("minimumVersion"),
@@ -131,16 +136,25 @@ fn setup_status_distinguishes_daemon_from_executable_and_redacts_invalid_fields(
 #[cfg(test)]
 #[test]
 fn setup_status_keeps_restart_decisions_separate_from_update_lookup() {
-    for (service, label) in [
-        ("restart_available", "restartAvailable"),
-        ("restart_required", "restartRequired"),
+    for (service, state, label) in [
+        (
+            "restart_available",
+            "connected",
+            "settings.opencode.setup.restartAvailable",
+        ),
+        (
+            "restart_required",
+            "update_required",
+            "settings.opencode.setup.restartRequired",
+        ),
     ] {
         let status = open_code_status(serde_json::json!({
             "state":"ready", "serviceState":service, "currentVersion":"2.3.0",
             "daemonVersion":"2.2.5", "checkError":"update_check_failed"
         }))
         .unwrap();
-        assert_eq!(status.state, label);
+        assert_eq!(status.state, state);
+        assert_eq!(status.restart, Some(label));
         assert_eq!(status.running.as_deref(), Some("2.2.5"));
         assert!(status.check_failed);
         assert!(!status.update_available);
