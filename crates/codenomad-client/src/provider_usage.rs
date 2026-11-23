@@ -25,12 +25,18 @@ struct Authority {
 
 impl Watch {
     pub fn current(&self) -> (u64, bool, u64) {
+        self.0.lock().unwrap().stamp()
+    }
+
+    /// Publish without racing a newly received invalidation or congestion. The callback
+    /// must be synchronous and must not reenter this watch.
+    pub fn publish_if_current<T>(
+        &self,
+        expected: (u64, bool, u64),
+        publish: impl FnOnce() -> T,
+    ) -> Option<T> {
         let authority = self.0.lock().unwrap();
-        (
-            authority.generation,
-            authority.online && authority.upstream.is_none_or(|(_, connected)| connected),
-            authority.model_generation,
-        )
+        (expected.1 && authority.stamp() == expected && !authority.backpressure).then(publish)
     }
 
     pub fn backpressured(&self) -> bool {
@@ -71,6 +77,45 @@ impl Watch {
         authority.generation += 1;
         true
     }
+}
+
+impl Authority {
+    fn stamp(&self) -> (u64, bool, u64) {
+        (
+            self.generation,
+            self.online && self.upstream.is_none_or(|(_, connected)| connected),
+            self.model_generation,
+        )
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn congestion_parks_a_ready_quota_reply_without_changing_its_authority() {
+    let watch = Watch::default();
+    let ingress = Ingress::new(
+        watch.clone(),
+        Arc::new(|| {}),
+        "project".into(),
+        "session".into(),
+    );
+    ingress.transport(true);
+    let stamp = watch.current();
+    let (send, reply) = crate::bounded(1);
+    send.try_send(42).unwrap();
+    ingress.backpressure(true);
+    assert_eq!(
+        watch.publish_if_current(stamp, || reply.try_recv().unwrap()),
+        None
+    );
+    assert!(!reply.is_empty());
+    ingress.backpressure(false);
+    assert_eq!(
+        watch.publish_if_current(stamp, || reply.try_recv().unwrap()),
+        Some(42)
+    );
+    ingress.skipped();
+    assert_eq!(watch.publish_if_current(stamp, || 42), None);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -103,30 +103,37 @@ impl Panel {
         let (Some(backend), Some((_, provider, model))) = (&self.backend, &self.model) else {
             return false;
         };
-        if !self.authority.1 || self.watch.as_ref().is_some_and(Watch::backpressured) {
+        let Some(watch) = self.watch.clone().filter(|_| self.authority.1) else {
             return false;
-        }
+        };
         let clock = Instant::now();
-        if let Some((_, reply)) = &self.read {
-            let result = match reply.try_recv() {
-                Ok(result) => result,
-                Err(codenomad_client::TryRecvError::Empty) => return false,
-                Err(codenomad_client::TryRecvError::Closed) => None,
-            };
-            if self.sync_authority() {
-                return true;
-            }
-            self.read = None;
-            self.failed = result.is_none();
-            self.usage = result;
-            self.due = if std::mem::take(&mut self.trailing) {
-                tx.wake_at(now);
-                None
-            } else {
-                tx.wake_at(now + 60.0);
-                Some(clock + Duration::from_secs(60))
-            };
-            return true;
+        if self.read.is_some() {
+            return watch
+                .publish_if_current(self.authority, || {
+                    let Some((_, reply)) = &self.read else {
+                        return false;
+                    };
+                    let result = match reply.try_recv() {
+                        Ok(result) => result,
+                        Err(codenomad_client::TryRecvError::Empty) => return false,
+                        Err(codenomad_client::TryRecvError::Closed) => None,
+                    };
+                    self.read = None;
+                    self.failed = result.is_none();
+                    self.usage = result;
+                    self.due = if std::mem::take(&mut self.trailing) {
+                        tx.wake_at(now);
+                        None
+                    } else {
+                        tx.wake_at(now + 60.0);
+                        Some(clock + Duration::from_secs(60))
+                    };
+                    true
+                })
+                .unwrap_or_else(|| self.sync_authority());
+        }
+        if watch.backpressured() {
+            return false;
         }
         if let Some(due) = self.due
             && due > clock
