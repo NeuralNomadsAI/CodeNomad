@@ -33,7 +33,7 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
                 "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" => {
                     assert!(!config);
                     config = true;
-                    json!({"settings":{"locale":"fr"}})
+                    json!({"settings":{"locale":"he"}})
                 }
                 "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" => {
                     assert!(!state);
@@ -61,7 +61,7 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
         .await;
         {
             let prefs = root.settings.shared.borrow();
-            assert_eq!(prefs.locale(), Some("fr"));
+            assert_eq!(prefs.locale(), Some("he"));
             assert_eq!(prefs.mode(), "dark");
             assert!(prefs.stream.is_none(), "use the conversation event stream");
         }
@@ -71,8 +71,27 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
             (1100.0, 760.0),
             rune::Env::new(false, 1.0),
         );
+        runtime.state.draft = rune::TextEdit::new("keep editing");
         runtime.frame(0.0);
         assert!(runtime.find("open-preferences").is_some());
+        let has_label = |rt: &rune::Runtime<crate::State>, locale| {
+            let label = crate::strings::with_locale(locale, || crate::strings::t("settings.title"));
+            rt.accessibility_json().to_string().contains(label)
+        };
+        assert!(has_label(&runtime, "he"));
+        runtime.update(|s, _| s.settings.shared.borrow_mut().set_locale("en"));
+        super::super::poll(&mut runtime.state);
+        let write = request(&listener).await;
+        assert_eq!(write.first, "PATCH /api/storage/config/ui HTTP/1.1");
+        assert_eq!(write.body, json!({"settings":{"locale":"en"}}));
+        write.reply(200, json!({"settings":{"locale":"en"}})).await;
+        wait_until(|| {
+            runtime.update_if(|s, _| super::super::poll(s));
+            runtime.frame(0.02);
+            has_label(&runtime, "en")
+        })
+        .await;
+        assert_eq!(runtime.state.draft.text, "keep editing");
     });
 }
 

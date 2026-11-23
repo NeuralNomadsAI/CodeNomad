@@ -171,6 +171,9 @@ fn tree_content(s: &State, width: f32, touch: bool) -> El {
         .remaining()
         .reading_surface()
         .key("files-panel")
-        .child(theme::viewport(contents, true).key("workspace-tree-scroll"));
-    workspace_tree::with_actions(surface, overlays)
+        .child(
+            ui.tree_scroll
+                .apply::<State>(theme::viewport(contents, true), "workspace-tree-scroll"),
+        );
+    workspace_tree::with_actions(surface, overlays).key(format!("workspace-checkout-{directory}"))
 }

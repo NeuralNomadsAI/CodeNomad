@@ -217,6 +217,20 @@ pub async fn run(
             }
             Some(Input::Native(e, v, native)) if e == epoch => {
                 let kind = native["type"].as_str().unwrap_or_default();
+                if kind == "session.moved" && native["data"]["sessionID"] == backend.session {
+                    wire.cancelled.store(true, SeqCst);
+                    publish(
+                        &out,
+                        &wake,
+                        Event::Workspace(crate::transport::WorkspaceEvent::SessionMoved {
+                            workspace_id: backend.workspace.clone(),
+                            session_id: backend.session.clone(),
+                        }),
+                    )
+                    .await;
+                    publish(&out, &wake, Event::Failed).await;
+                    return Err("session scope changed".into());
+                }
                 if kind.starts_with("permission.")
                     || kind.starts_with("form.")
                     || kind.contains("model")
@@ -309,7 +323,7 @@ pub async fn run(
                         dirty = true;
                         quiet = Instant::now() + Duration::from_millis(100);
                     }
-                    "session.deleted" | "session.moved" | "session.revert.committed" => {
+                    "session.deleted" | "session.revert.committed" => {
                         publish(&out, &wake, Event::Failed).await;
                         return Err("session scope or history changed".into());
                     }

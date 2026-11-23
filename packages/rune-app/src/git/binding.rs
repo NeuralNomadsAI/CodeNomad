@@ -108,15 +108,34 @@ pub(super) fn sync_files(s: &mut State) {
     if let Some(owner) = &s.git.owner
         && let Some(files) = &mut s.files
     {
-        let visible = owner.shown && owner.mode() == Mode::Workspace;
-        if files.panel != visible {
-            files.show(visible);
+        let inventory = owner
+            .inventory
+            .as_ref()
+            .filter(|list| !list.trees.is_empty());
+        if files.reader.target().is_some_and(|target| {
+            owner.session_checkout_removed()
+                || inventory.is_some_and(|list| {
+                    !list.trees.iter().any(|tree| {
+                        !tree.missing
+                            && codenomad_client::same_server_path(
+                                &tree.directory,
+                                &target.directory,
+                            )
+                    })
+                })
+        }) {
+            files.close_reader();
         }
         if let Some(tree) = owner.tree()
             && !codenomad_client::same_server_path(files.tree.directory(), &tree.directory)
         {
             files.browse(tree.directory.clone());
         }
+        files.show(
+            owner.shown
+                && owner.mode() == Mode::Workspace
+                && (inventory.is_none() || owner.tree().is_some()),
+        );
     }
 }
 
@@ -134,9 +153,11 @@ pub(crate) fn event(s: &mut State, event: &WorkspaceEvent) {
 
 pub(crate) fn poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
     let preference = diff_preferences(s);
+    let workspace_preview = crate::files::has_preview(s);
     let Some(owner) = &mut s.git.owner else {
         return false;
     };
+    owner.workspace_preview = workspace_preview;
     let focus = if owner.shown && owner.mode() == Mode::Changes && owner.requests.has_completion() {
         owner
             .changes

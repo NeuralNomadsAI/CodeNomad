@@ -110,14 +110,70 @@ fn render_with<S>(cx: &mut Cx<S>, prefs: &Preferences, view: impl FnOnce(&mut Cx
 
 pub(crate) fn entry() -> El {
     #[cfg(not(target_arch = "wasm32"))]
-    return rune_theme_codenomad::layout::button(
-        strings::t("settings.title"),
-        false,
-        |s: &mut State| open(&mut s.settings),
-    )
-    .key("open-preferences");
+    return rune_theme_codenomad::layout::button(strings::t("settings.title"), false, open)
+        .key("open-preferences");
     #[cfg(target_arch = "wasm32")]
     rune::el()
+}
+
+pub(crate) fn matches_shortcut(
+    s: &State,
+    action: &str,
+    event: &rune::KeyEvent,
+    default: char,
+) -> bool {
+    let rune::Key::Command(key) = event.key else {
+        return false;
+    };
+    let mods = event.mods;
+    if !mods.ctrl && !mods.alt && !mods.cmd {
+        return false;
+    }
+    let settings = s.settings.shared.borrow();
+    let Some(overrides) = settings.shortcut(action) else {
+        return key.eq_ignore_ascii_case(&default) && mods.ctrl && !mods.shift && !mods.alt;
+    };
+    overrides.iter().any(|rule| {
+        let enabled = |name| rule[name].as_bool() == Some(true);
+        let command = enabled("mod");
+        let mac = cfg!(target_os = "macos");
+        (mac || !enabled("meta"))
+            && mods.ctrl == (enabled("ctrl") || command && !mac)
+            && (!mac || mods.cmd == (enabled("meta") || command))
+            && mods.shift == enabled("shift")
+            && mods.alt == enabled("alt")
+            && rule["key"].as_str().is_some_and(|value| {
+                let mut chars = value.chars();
+                chars
+                    .next()
+                    .is_some_and(|value| key.eq_ignore_ascii_case(&value))
+                    && chars.next().is_none()
+            })
+    })
+}
+
+#[cfg(all(test, target_os = "windows"))]
+#[test]
+fn shell_shortcuts_use_confirmed_overrides_without_changing_the_default() {
+    let s = crate::init();
+    let chord = |key| rune::KeyEvent {
+        key: rune::Key::Command(key),
+        mods: rune::Mods {
+            ctrl: true,
+            ..Default::default()
+        },
+    };
+    assert!(matches_shortcut(&s, "close-instance", &chord('w'), 'w'));
+    s.settings
+        .shared
+        .borrow_mut()
+        .fixture_shortcuts(serde_json::json!({
+            "close-instance": [],
+            "new-instance": [{"key": "t", "mod":true}]
+        }));
+    assert!(!matches_shortcut(&s, "close-instance", &chord('w'), 'w'));
+    assert!(!matches_shortcut(&s, "new-instance", &chord('n'), 'n'));
+    assert!(matches_shortcut(&s, "new-instance", &chord('t'), 'n'));
 }
 
 pub(crate) fn direct_entry(s: &State) -> El {
@@ -129,7 +185,8 @@ pub(crate) fn direct_entry(s: &State) -> El {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn open(host: &mut Host) {
+fn open(s: &mut State) {
+    let host = &s.settings;
     if let Some((window, token)) = &host.window
         && Rc::strong_count(token) > 1
     {
@@ -144,8 +201,8 @@ fn open(host: &mut Host) {
         .locale()
         .unwrap_or_else(strings::locale);
     let spec = strings::with_locale(locale, view::spec);
-    let window = crate::platform::preferences_window(spec, state, view::closed);
-    host.window = Some((window, token));
+    let window = crate::platform::preferences_window(s, spec, state, view::closed);
+    s.settings.window = Some((window, token));
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -166,6 +223,8 @@ fn warn_save_failed(locale: &'static str) {
 pub(crate) fn close(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        #[cfg(target_os = "windows")]
+        crate::platform::preferences_placement::closed();
         settle_close(&s.settings.shared, warn_save_failed);
         if let Some((window, token)) = s.settings.window.take() {
             token.set(true);

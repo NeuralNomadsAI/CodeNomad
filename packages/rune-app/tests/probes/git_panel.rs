@@ -2,7 +2,10 @@
 use super::window_restore::{tap, type_text};
 use crate::{Phase, State, init, poll, setup, view, workspace};
 use rune::{Env, Runtime};
-use std::time::{Duration, Instant};
+use std::{
+    io::Write,
+    time::{Duration, Instant},
+};
 
 const FILE: &str = "git-panel.txt";
 const STAGED: &str = "git-row-staged:file:git-panel.txt";
@@ -156,6 +159,78 @@ pub(super) fn run() {
     });
     assert!(!crate::git::has_preview(&rt.state));
     assert!(rt.find("composer").is_some());
+
+    rt.update(|s, tx| crate::launcher::choose(s, "ses_another".into(), tx));
+    wait(&mut rt, "linked conversation bound", |rt| {
+        workspace::active_session(&rt.state) == Some("ses_another")
+            && rt.state.phase == Phase::Ready
+    });
+    tap_mode(&mut rt, 0);
+    wait(&mut rt, "linked Workspace row", |rt| {
+        rt.find(&eye).is_some()
+    });
+    let (x, y) = rt.find(&eye).unwrap();
+    rt.pointer_move(x, y);
+    rt.frame(1.0 / 60.0);
+    tap(&mut rt, &eye);
+    wait(&mut rt, "linked editor", |rt| {
+        rt.find("file-editor").is_some()
+            && rt
+                .state
+                .files
+                .as_ref()
+                .is_some_and(|files| files.document.edit().text.trim() == "git-panel initial")
+    });
+    let workspace = rt
+        .state
+        .files
+        .as_ref()
+        .unwrap()
+        .reader
+        .preview()
+        .unwrap()
+        .workspace_id
+        .clone();
+    let tab = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+    rt.update(|s, _| {
+        let files = s.files.as_mut().unwrap();
+        let scope = files.document.scope();
+        files
+            .document
+            .input(scope)
+            .replace_text("unsaved linked draft");
+        files.document.changed(scope);
+    });
+    assert!(rt.state.documents.has_tab_edits(&tab));
+    tap(&mut rt, "right-panel-toggle");
+    println!(
+        "{}",
+        serde_json::json!({"type":"files-evacuation","workspace":workspace})
+    );
+    std::io::stdout().flush().unwrap();
+    wait(
+        &mut rt,
+        "move closes the reader before checkout removal",
+        |rt| rt.state.phase == Phase::Failed && !crate::files::has_preview(&rt.state),
+    );
+    assert!(rt.state.documents.has_tab_edits(&tab));
+    println!("{{\"type\":\"files-reader-closed\"}}");
+    std::io::stdout().flush().unwrap();
+    let mut receipt = String::new();
+    std::io::stdin().read_line(&mut receipt).unwrap();
+    assert_eq!(receipt.trim(), "removed");
+    rt.update(|s, tx| crate::launcher::choose(s, "ses_another".into(), tx));
+    wait(&mut rt, "evacuated session rebound at root", |rt| {
+        rt.state.phase == Phase::Ready
+            && rt.state.files.as_ref().is_some_and(|files| {
+                codenomad_client::same_server_path(
+                    files.tree.directory(),
+                    &std::env::var("RUNE_TEST_FOLDER").unwrap(),
+                )
+            })
+    });
+    assert!(!crate::files::has_preview(&rt.state));
+    assert!(rt.state.documents.has_tab_edits(&tab));
     println!("{{\"type\":\"git-panel-proof\",\"mounted\":true}}");
 }
 

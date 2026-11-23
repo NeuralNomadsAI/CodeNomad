@@ -82,6 +82,8 @@ impl Window {
 }
 
 pub(super) fn closed(s: &mut Window, _: &mut rune::Tx) {
+    #[cfg(target_os = "windows")]
+    crate::platform::preferences_placement::closed();
     s.close(super::warn_save_failed);
 }
 
