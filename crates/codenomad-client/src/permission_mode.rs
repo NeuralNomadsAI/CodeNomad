@@ -20,6 +20,7 @@ pub struct Snapshot {
     pub root: Option<String>,
 }
 
+#[derive(Clone, Copy)]
 pub enum WriteIssue {
     Unverified,
     Unconfirmed,
@@ -44,16 +45,15 @@ impl Backend {
             .send()
             .await?
             .error_for_status()?;
-        let snapshot: Snapshot = serde_json::from_value(read_json_limited(response, 4096).await?)?;
-        if snapshot.root.as_deref().is_some_and(|root| !valid_id(root)) {
-            return Err("invalid permission mode root".into());
-        }
-        Ok(snapshot)
+        snapshot(read_json_limited(response, 4096).await?)
     }
 
-    pub async fn set_permission_mode(&self, mode: Mode) -> Option<WriteIssue> {
+    pub async fn set_permission_mode(
+        &self,
+        mode: Mode,
+    ) -> std::result::Result<Snapshot, WriteIssue> {
         let Ok(url) = self.permission_mode_url() else {
-            return Some(WriteIssue::Unconfirmed);
+            return Err(WriteIssue::Unconfirmed);
         };
         let Ok(response) = self
             .client
@@ -63,18 +63,27 @@ impl Backend {
             .send()
             .await
         else {
-            return Some(WriteIssue::Unconfirmed);
+            return Err(WriteIssue::Unconfirmed);
         };
-        if response.status().is_success() {
-            return None;
+        let status = response.status();
+        let body = read_json_limited(response, 4096)
+            .await
+            .map_err(|_| WriteIssue::Unconfirmed)?;
+        if status.is_success() {
+            return snapshot(body).map_err(|_| WriteIssue::Unconfirmed);
         }
-        if response.status() == reqwest::StatusCode::CONFLICT
-            && read_json_limited(response, 4096)
-                .await
-                .is_ok_and(|body| body["code"] == "PERMISSION_BLOCK_UNVERIFIED")
+        if status == reqwest::StatusCode::CONFLICT && body["code"] == "PERMISSION_BLOCK_UNVERIFIED"
         {
-            return Some(WriteIssue::Unverified);
+            return Err(WriteIssue::Unverified);
         }
-        Some(WriteIssue::Unconfirmed)
+        Err(WriteIssue::Unconfirmed)
     }
+}
+
+fn snapshot(body: serde_json::Value) -> Result<Snapshot> {
+    let snapshot: Snapshot = serde_json::from_value(body)?;
+    if snapshot.root.as_deref().is_some_and(|root| !valid_id(root)) {
+        return Err("invalid permission mode root".into());
+    }
+    Ok(snapshot)
 }

@@ -226,6 +226,7 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
 pub fn can_change_session(s: &State) -> bool {
     s.phase != Phase::Streaming
         && !s.composer.pending()
+        && !s.status_permissions.settling()
         && crate::workspace::input_ready(s)
         && !crate::agent::navigation_blocked(s)
 }
@@ -234,6 +235,7 @@ pub(super) fn can_rebind(s: &State, id: &str) -> bool {
     !s.screen.is_launcher()
         && s.phase == Phase::Failed
         && !s.composer.pending()
+        && !s.status_permissions.writing()
         && crate::workspace::active_session(s) == Some(id)
 }
 pub fn can_visit(s: &State, back: bool) -> bool {

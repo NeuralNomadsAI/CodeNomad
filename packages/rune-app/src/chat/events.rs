@@ -120,6 +120,10 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
             Event::Sync(page) | Event::ReaderSync { page, .. } => {
+                if s.reader.is_none() {
+                    // Direct startup also uses Reconnecting to stage a fresh transcript read.
+                    s.status_permissions.synchronized();
+                }
                 chat::reader::reconcile_bookmark(s, &page.rows);
                 if let Some(reader) = &mut s.reader {
                     reader.install(page.newer.is_some());

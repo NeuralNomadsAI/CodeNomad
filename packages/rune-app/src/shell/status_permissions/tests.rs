@@ -73,6 +73,18 @@ fn status_exposes_the_folded_mode_and_keyboard_controls_in_both_themes() {
                     .to_string()
                     .contains("About permission modes")
             );
+            runtime.update(|_, tx| tx.focus("segment0", true));
+            runtime.frame(0.06);
+            let (_result, reply) = bounded(1);
+            runtime.update(|s, _| s.status_permissions.write = Some((Mode::Autonomous, reply)));
+            runtime.frame(0.08);
+            let pending = runtime.accessibility_json();
+            assert!(
+                node(&pending, "segment0").unwrap()["states"]
+                    .to_string()
+                    .contains("focused"),
+                "{pending}"
+            );
         });
     }
 }
@@ -102,7 +114,25 @@ fn a_child_uses_the_confirmed_family_mode_and_reconciles_a_lost_write_without_re
         meta.reply(200, json!({"serverId":"private", "apiContract":1, "capabilities":["conversation-permissions"]})).await;
         attestation.await.unwrap().unwrap();
         s.status_permissions.bind(&http.backend);
-        s.status_permissions.online(true);
+        let (relay, incoming) = bounded(4);
+        s.incoming = Some(incoming);
+        relay
+            .try_send(crate::transport::Event::Reconnecting)
+            .unwrap();
+        relay
+            .try_send(crate::transport::Event::Sync(crate::history::Page {
+                rows: vec![],
+                older: None,
+                newer: None,
+                running: false,
+                user_file_references: false,
+            }))
+            .unwrap();
+        assert!(crate::poll_chat(&mut s, 4));
+        assert!(
+            s.status_permissions.online,
+            "direct startup can resume permission reads"
+        );
         assert!(!s.status_permissions.poll(&s.reads, &s.wake));
         s.status_permissions.show(true);
         assert!(s.status_permissions.poll(&s.reads, &s.wake));
@@ -128,9 +158,16 @@ fn a_child_uses_the_confirmed_family_mode_and_reconciles_a_lost_write_without_re
 
         // The application rejects a gesture after the panel is hidden. This fixture
         // drives just the admitted operation and reducer below that gate.
+        let (commands, _submitted) = bounded(1);
+        s.commands = Some(commands);
+        s.draft = rune::edit::TextEdit::new("Wait until permissions settle");
+        assert!(crate::composer::can_send(&s));
+        assert!(crate::launcher::can_change_session(&s));
         s.status_permissions.write(Mode::Supervised, &s.wake);
         let put = request(&http, "PUT").await;
         assert_eq!(put.body, json!({"mode":"supervised"}));
+        assert!(!crate::composer::can_send(&s));
+        assert!(!crate::launcher::can_change_session(&s));
         assert!(!s.status_permissions.available());
         assert_eq!(
             s.status_permissions.confirmed.as_ref().unwrap().mode,
@@ -139,6 +176,11 @@ fn a_child_uses_the_confirmed_family_mode_and_reconciles_a_lost_write_without_re
         drop(put);
         wait(events.recv()).await.unwrap();
         s.status_permissions.poll(&s.reads, &s.wake);
+        assert!(!crate::composer::can_send(&s));
+        assert!(
+            s.status_permissions.issue.is_none(),
+            "a lost reply is unresolved until the read"
+        );
         request(&http, "GET").await.reply(503, json!({})).await;
         wait(events.recv()).await.unwrap();
         s.status_permissions.poll(&s.reads, &s.wake);
@@ -158,6 +200,26 @@ fn a_child_uses_the_confirmed_family_mode_and_reconciles_a_lost_write_without_re
         );
         assert!(s.status_permissions.issue.is_none());
         assert!(s.status_permissions.available());
+        // Removing this fork's block can legitimately leave inherited rules in place.
+        s.status_permissions.write(Mode::Autonomous, &s.wake);
+        request(&http, "PUT")
+            .await
+            .reply(200, json!({"mode":"supervised","rootSessionID":"ses_root"}))
+            .await;
+        wait(events.recv()).await.unwrap();
+        s.status_permissions.poll(&s.reads, &s.wake);
+        request(&http, "GET").await.reply(503, json!({})).await;
+        wait(events.recv()).await.unwrap();
+        s.status_permissions.poll(&s.reads, &s.wake);
+        assert_eq!(
+            s.status_permissions.confirmed.as_ref().unwrap().mode,
+            Mode::Supervised
+        );
+        assert!(s.status_permissions.failed);
+        assert!(
+            s.status_permissions.issue.is_none(),
+            "the reported remaining mode is authoritative"
+        );
         s.status_permissions.show(false);
         assert!(!s.status_permissions.poll(&s.reads, &s.wake));
         http.quiet().await;

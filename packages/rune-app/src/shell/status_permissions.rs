@@ -30,8 +30,8 @@ pub(crate) struct Permissions {
     failed: bool,
     confirmed: Option<Snapshot>,
     read: Option<(Sender<()>, Receiver<Option<Snapshot>>)>,
-    write: Option<(Mode, Receiver<Option<WriteIssue>>)>,
-    checking: Option<(Mode, Option<WriteIssue>)>,
+    write: Option<(Mode, Receiver<Result<Snapshot, WriteIssue>>)>,
+    checking: Option<(Mode, WriteIssue)>,
     issue: Option<WriteIssue>,
 }
 
@@ -67,6 +67,12 @@ impl Permissions {
         }
     }
 
+    pub(crate) fn synchronized(&mut self) {
+        if !self.online {
+            self.online(true);
+        }
+    }
+
     pub(crate) fn invalidate(&mut self, root: Option<&str>) {
         if let Some(backend) = &self.backend
             && root.is_none_or(|root| {
@@ -85,9 +91,19 @@ impl Permissions {
             self.dirty = true;
             if !visible {
                 self.info = false;
-                self.read = None;
+                if self.checking.is_none() {
+                    self.read = None;
+                }
             }
         }
+    }
+
+    pub(crate) fn writing(&self) -> bool {
+        self.write.is_some()
+    }
+
+    pub(crate) fn settling(&self) -> bool {
+        self.writing() || (self.online && self.checking.is_some() && !self.failed)
     }
 
     fn available(&self) -> bool {
@@ -105,7 +121,10 @@ impl Permissions {
             s.screen.is_launcher(),
             s.shell.visible(1),
             crate::workspace::files_tab(s),
-        ) || !s.status_permissions.available()
+        ) || s.composer.pending()
+            || s.screen.launcher().is_some_and(|launcher| launcher.pending)
+            || crate::git::placement_unconfirmed(s)
+            || !s.status_permissions.available()
             || s.status_permissions
                 .confirmed
                 .as_ref()
@@ -133,9 +152,15 @@ impl Permissions {
     fn poll(&mut self, reads: &platform::reads::Reads, wake: &rune::Waker) -> bool {
         let mut changed = false;
         if let Some((wanted, reply)) = &self.write
-            && let Some(issue) = arrived(reply, Some(WriteIssue::Unconfirmed))
+            && let Some(result) = arrived(reply, Err(WriteIssue::Unconfirmed))
         {
-            self.checking = Some((*wanted, issue));
+            match result {
+                Ok(snapshot) => self.confirmed = Some(snapshot),
+                Err(issue) => {
+                    self.failed = false;
+                    self.checking = Some((*wanted, issue));
+                }
+            }
             self.write = None;
             self.dirty = true;
             changed = true;
@@ -148,16 +173,17 @@ impl Permissions {
                 self.failed = snapshot.is_none();
                 if let Some(snapshot) = snapshot {
                     if let Some((wanted, issue)) = self.checking.take() {
-                        self.issue = (snapshot.mode != wanted)
-                            .then(|| issue.unwrap_or(WriteIssue::Unconfirmed));
+                        self.issue = (snapshot.mode != wanted).then_some(issue);
                     }
                     self.confirmed = Some(snapshot);
+                } else if let Some((_, issue)) = self.checking {
+                    self.issue = Some(issue);
                 }
             }
             changed = true;
         }
         if self.dirty
-            && self.visible
+            && (self.visible || self.checking.is_some())
             && self.online
             && self.read.is_none()
             && self.write.is_none()
@@ -214,7 +240,7 @@ pub(super) fn view(s: &State) -> Option<El> {
     owner.backend.as_ref()?;
     let title = t("permissions.title");
     let mode = owner.confirmed.as_ref().map(|snapshot| snapshot.mode);
-    let applying = owner.write.is_some() || owner.checking.is_some();
+    let applying = owner.writing() || (owner.checking.is_some() && !owner.failed);
     let status = if !owner.online || owner.failed {
         Some(t("permissions.unconfirmed"))
     } else if applying {
@@ -238,7 +264,7 @@ pub(super) fn view(s: &State) -> Option<El> {
                 title,
                 &MODES.map(label),
                 MODES.iter().position(|candidate| Some(*candidate) == mode),
-                !owner.available(),
+                false,
                 {
                     let scope = s.input_scope.clone();
                     move |s: &mut State, index| {
@@ -251,7 +277,8 @@ pub(super) fn view(s: &State) -> Option<El> {
                     }
                 },
             )
-            .key("permission-mode"),
+            .key("permission-mode")
+            .disabled(!owner.available()),
         );
     }
     if let Some(status) = status {
