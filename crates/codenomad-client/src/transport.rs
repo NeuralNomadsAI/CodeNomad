@@ -8,6 +8,9 @@ pub struct DirectoryChange {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceEvent {
+    SessionExecution {
+        notice: Option<String>,
+    },
     CommandsChanged,
     MentionsChanged,
     ComposerCataloguesChanged,

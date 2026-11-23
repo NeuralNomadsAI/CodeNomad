@@ -7,7 +7,6 @@ use serde_json::json;
 #[test]
 fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification() {
     use crate::shell::notifications::{self, Target};
-    use agent_api::RootActivity;
     let (jobs, incoming) = super::bounded(1);
     let (stop, _) = super::bounded(1);
     let (out, results) = super::bounded(1);
@@ -24,10 +23,7 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
         current: None,
         session_known: true,
         running: false,
-        root_activity: Some(RootActivity {
-            busy: None,
-            idle: None,
-        }),
+        root_directory: Some("/project/worktree".into()),
         permissions: Some(vec![]),
         forms: Some(vec![Form {
             id: "question".into(),
@@ -39,6 +35,8 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
     crate::settings::notification_fixture(&s);
     s.chat_title = "Private conversation".into();
     s.agent = Some(agent);
+    let (events, inbox) = super::bounded(1);
+    s.incoming = Some(inbox);
     s.notifications.record();
     let target = Target {
         tab: Some("tab-0".into()),
@@ -54,6 +52,11 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
     runtime.window_focus(false);
     runtime.frame(0.02);
     runtime.update(|s, _| {
+        let mut foreign = target.clone();
+        foreign.server = Some("other-server".into());
+        assert!(crate::settings::system_notification(
+            s, &foreign, crate::settings::notification_routing::Category::NeedsInput, false, "foreign"
+        ).is_none());
         for _ in 0..2 {
             assert!(out.try_send(super::Result::Read(snapshot(), false)).is_ok());
             assert!(crate::poll_chat(s, 8));
@@ -67,20 +70,20 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
                 "Session “Private conversation” needs your answer".into()
             )]
         );
-        let mut finished = snapshot();
-        finished.root_activity = Some(RootActivity {
-            busy: Some(10),
-            idle: Some(20),
-        });
-        assert!(out.try_send(super::Result::Read(finished, false)).is_ok());
+        assert!(events.try_send(crate::transport::Event::Workspace(
+            codenomad_client::transport::WorkspaceEvent::SessionExecution { notice: Some("finished".into()) }
+        )).is_ok());
+        assert!(crate::poll_chat(s, 8));
+        assert!(matches!(incoming.try_recv(), Ok(super::Job::Read(false))));
+        assert!(out.try_send(super::Result::Read(snapshot(), false)).is_ok());
         assert!(crate::poll_chat(s, 8));
         assert!(matches!(
             incoming.try_recv(),
-            Ok(super::Job::VerifyIdle(20))
+            Ok(super::Job::VerifyIdle(id, directory)) if id == "finished" && directory == "/project/worktree"
         ));
         notifications::collect(s, |_| Some((target.clone(), "Private project".into())));
         assert_eq!(s.notifications.recorded().len(), 1);
-        assert!(out.try_send(super::Result::VerifiedIdle(20, true)).is_ok());
+        assert!(out.try_send(super::Result::VerifiedIdle("finished".into(), true)).is_ok());
         assert!(crate::poll_chat(s, 8));
         notifications::collect(s, |_| Some((target, "Private project".into())));
         assert_eq!(
@@ -108,7 +111,7 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
         models: Some(vec![]),
         current: None,
         session_known: true,
-        root_activity: None,
+        root_directory: None,
         running: true,
         permissions: Some(vec![]),
         forms: Some(forms),

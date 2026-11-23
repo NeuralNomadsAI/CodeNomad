@@ -69,11 +69,18 @@ pub(crate) fn poll(s: &mut State) -> bool {
 
 pub(crate) fn system_notification(
     s: &State,
+    target: &crate::shell::notifications::Target,
     category: notification_routing::Category,
     focused: bool,
     label: &str,
 ) -> Option<String> {
     let prefs = s.settings.shared.borrow();
+    let backend = prefs.backend.as_ref()?;
+    if backend.base != target.backend_url
+        || backend.client.server_identity() != target.server.as_deref()
+    {
+        return None;
+    }
     let config = prefs.saved(codenomad_client::settings::Owner::Config);
     crate::shell::notifications::system_allowed(config, category, focused).then(|| {
         let key = match category {
@@ -88,7 +95,9 @@ pub(crate) fn system_notification(
 
 #[cfg(test)]
 pub(crate) fn notification_fixture(s: &State) {
-    s.settings.shared.borrow_mut().fixture();
+    let mut prefs = s.settings.shared.borrow_mut();
+    prefs.backend = Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    prefs.fixture();
 }
 
 pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {

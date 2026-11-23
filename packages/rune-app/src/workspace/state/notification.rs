@@ -10,11 +10,12 @@ pub(crate) fn notification_target(s: &State) -> Option<(Target, String)> {
         return None;
     }
     let backend = crate::settings::bound_backend(s)?;
+    let server = backend.client.server_identity().map(str::to_owned);
     Some((
         Target {
             tab: None,
             backend_url: backend.base,
-            server: None,
+            server,
             occurrence: 0,
             workspace: backend.workspace,
             session: backend.session,
@@ -71,9 +72,15 @@ pub(crate) fn owns_notification(s: &State, target: &Target) -> bool {
                 && s.screen.launcher().is_some_and(|l| l.sessions.iter().any(|r| r.id == target.session)))))
 }
 
-pub(crate) fn open_notification(s: &mut State, target: &Target, tx: &mut Tx) -> bool {
+pub(crate) enum Activation {
+    Opened,
+    Wait,
+    Gone,
+}
+
+pub(crate) fn open_notification(s: &mut State, target: &Target, tx: &mut Tx) -> Activation {
     if !owns_notification(s, target) {
-        return false;
+        return Activation::Gone;
     }
     if let Some(tab) = &target.tab {
         super::select(s, tab, tx);
@@ -82,14 +89,23 @@ pub(crate) fn open_notification(s: &mut State, target: &Target, tx: &mut Tx) -> 
             .as_ref()
             .is_some_and(|ui| ui.active_key() == tab)
         {
-            return false;
+            return Activation::Wait;
         }
+    }
+    if target.tab.is_some()
+        && super::active_session(s) != Some(&target.session)
+        && (!crate::launcher::can_change_session(s)
+            || s.screen
+                .launcher()
+                .is_none_or(|l| l.pending || l.connection.is_none() || l.project.is_none()))
+    {
+        return Activation::Wait;
     }
     if s.files
         .as_ref()
         .is_some_and(|files| files.document.confirmation().is_some())
     {
-        return true;
+        return Activation::Wait;
     }
     crate::git::close_preview(s);
     if let Some(files) = &mut s.files {
@@ -100,5 +116,5 @@ pub(crate) fn open_notification(s: &mut State, target: &Target, tx: &mut Tx) -> 
         crate::launcher::choose(s, target.session.clone(), tx);
     }
     tx.instant();
-    true
+    Activation::Opened
 }

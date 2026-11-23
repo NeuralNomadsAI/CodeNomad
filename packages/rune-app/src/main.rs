@@ -131,6 +131,8 @@ fn init() -> State {
     }
 }
 fn setup(s: &mut State, wake: rune::Waker) {
+    #[cfg(target_arch = "wasm32")]
+    let wake = shell::notifications::with_background_wake(s, wake);
     s.wake = wake.clone();
     #[cfg(feature = "test-support")]
     if platform::scene_is("transcript") {

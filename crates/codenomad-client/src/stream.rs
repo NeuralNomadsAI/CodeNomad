@@ -374,6 +374,12 @@ pub(super) async fn dispatch(
             || native["data"]["form"]["sessionID"] == b.session
             || native["type"] == "server.connected")
     {
+        if crate::history::valid_id(&b.session)
+            && native["data"]["sessionID"] == b.session
+            && let Some(event) = execution_attention(native)
+        {
+            out.send(Input::Workspace(epoch, event)).await?;
+        }
         let version = state.version.fetch_add(1, SeqCst) + 1;
         if native["type"] == "session.moved"
             && native["data"]["sessionID"] == b.session
@@ -386,6 +392,48 @@ pub(super) async fn dispatch(
             .await?;
     }
     Ok(())
+}
+
+fn execution_attention(event: &Value) -> Option<WorkspaceEvent> {
+    let notice = match event["type"].as_str()? {
+        "session.execution.succeeded" => Some(event["id"].as_str()?),
+        "session.execution.interrupted" if event["data"]["reason"] == "inactivity" => {
+            Some(event["id"].as_str()?)
+        }
+        "session.execution.started"
+        | "session.step.started"
+        | "session.execution.failed"
+        | "session.execution.interrupted" => None,
+        _ => return None,
+    };
+    if notice.is_some_and(|id| !crate::history::valid_id(id)) {
+        return None;
+    }
+    Some(WorkspaceEvent::SessionExecution {
+        notice: notice.map(str::to_owned),
+    })
+}
+
+#[test]
+fn only_success_and_inactivity_are_notification_candidates() {
+    for (kind, reason, expected) in [
+        ("session.execution.succeeded", "", Some("terminal")),
+        (
+            "session.execution.interrupted",
+            "inactivity",
+            Some("terminal"),
+        ),
+        ("session.execution.interrupted", "manual", None),
+        ("session.execution.interrupted", "shutdown", None),
+        ("session.execution.failed", "", None),
+        ("session.execution.started", "", None),
+    ] {
+        let event = json!({"id":"terminal","type":kind,"data":{"reason":reason}});
+        assert!(
+            matches!(execution_attention(&event), Some(WorkspaceEvent::SessionExecution { notice })
+            if notice.as_deref() == expected)
+        );
+    }
 }
 
 fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {

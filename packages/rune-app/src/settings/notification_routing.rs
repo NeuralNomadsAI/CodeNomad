@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Category {
     NeedsInput,
     SessionDone,

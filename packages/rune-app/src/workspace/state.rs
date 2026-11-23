@@ -8,7 +8,9 @@ mod panel_state;
 mod strip;
 
 pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
-pub(crate) use notification::{notification_target, open_notification, owns_notification};
+pub(crate) use notification::{
+    Activation, notification_target, open_notification, owns_notification,
+};
 pub use panel_state::{
     capture_files_mode, files_tab, panel_width, restore_files_mode, set_files_tab,
 };
@@ -458,21 +460,7 @@ pub fn has_conversation_stream(s: &State) -> bool {
         })
 }
 
-pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    let Some(mut ui) = s.workspace.take() else {
-        return false;
-    };
-    ui.clock = now;
-    let loading = ui.persistence.loading;
-    let loaded = ui.persistence.poll_load();
-    if let Some(saved) = loaded {
-        ui.hydrate(saved);
-        s.shell.restore_widths(ui.panel_widths);
-    }
-    let became_ready = loading && !ui.persistence.loading;
-    if became_ready {
-        ui.ready = true;
-    }
+fn poll_cached(s: &mut State, ui: &mut Ui, now: Option<f64>, tx: &mut Tx) -> bool {
     let active = Cache::take(s);
     let mut changed = false;
     let mut drafts_changed = false;
@@ -488,8 +476,10 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             {
                 drafts_changed |= drafts::capture_draft(item, s);
             }
-            changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
-            changed |= crate::git::poll(s, now, tx);
+            if let Some(now) = now {
+                changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
+                changed |= crate::git::poll(s, now, tx);
+            }
             item.cache = Some(Cache::take(s));
         }
     }
@@ -497,6 +487,35 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if drafts_changed {
         ui.changed();
     }
+    changed
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn poll_cached_notifications(s: &mut State, tx: &mut Tx) -> bool {
+    let Some(mut ui) = s.workspace.take() else {
+        return false;
+    };
+    let changed = poll_cached(s, &mut ui, None, tx);
+    s.workspace = Some(ui);
+    changed
+}
+
+pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
+    let Some(mut ui) = s.workspace.take() else {
+        return false;
+    };
+    ui.clock = now;
+    let loading = ui.persistence.loading;
+    let loaded = ui.persistence.poll_load();
+    if let Some(saved) = loaded {
+        ui.hydrate(saved);
+        s.shell.restore_widths(ui.panel_widths);
+    }
+    let became_ready = loading && !ui.persistence.loading;
+    if became_ready {
+        ui.ready = true;
+    }
+    let mut changed = poll_cached(s, &mut ui, Some(now), tx);
     ui.stage();
     let previous_error =
         ui.persistence.read_error || ui.persistence.write_error || ui.persistence.partial;

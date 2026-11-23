@@ -6,19 +6,19 @@ mod save_snapshot;
 mod snapshot_budget;
 mod state;
 pub(crate) use persistence::finish;
-#[cfg(target_arch = "wasm32")]
-pub(crate) use state::active_workspace;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use state::evict_for_probe;
 #[cfg(target_os = "windows")]
 pub(crate) use state::native_window_store;
+pub(crate) use state::{Activation, notification_target, open_notification, owns_notification};
 pub(crate) use state::{
     Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
     close, connected, draft_changed, files_tab, has_conversation_stream, input_ready, new_tab,
     opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume, retry,
     schedule_catalogue, select, set_files_tab, status, strip, unselect_missing,
 };
-pub(crate) use state::{notification_target, open_notification, owns_notification};
+#[cfg(target_arch = "wasm32")]
+pub(crate) use state::{active_workspace, poll_cached_notifications};
 
 use crate::composer::draft_storage::SavedParts;
 use save_snapshot::encode_for_save;

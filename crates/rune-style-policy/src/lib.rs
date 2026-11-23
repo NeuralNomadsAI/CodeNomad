@@ -72,6 +72,7 @@ impl Policy {
                 "run",
                 "Waker",
                 "WindowHandle",
+                "AppHandle",
                 "WindowSpec",
                 "open_window",
                 "Env",

@@ -29,27 +29,23 @@ pub struct Snapshot {
     pub current: Option<Value>,
     pub session_known: bool,
     pub running: bool,
-    pub root_activity: Option<RootActivity>,
+    pub root_directory: Option<String>,
     pub permissions: Option<Vec<Permission>>,
     pub forms: Option<Vec<Form>>,
 }
 
 /// Metadata from the session read already made by the interruption dock.
-#[derive(Clone, Copy)]
-pub struct RootActivity {
-    pub busy: Option<u64>,
-    pub idle: Option<u64>,
-}
-
-fn root_activity(session: &Value, id: &str) -> Option<RootActivity> {
+fn root_directory(session: &Value, id: &str) -> Option<String> {
     let row = &session["data"];
     if row["id"] != id || !row["parentID"].is_null() {
         return None;
     }
-    Some(RootActivity {
-        busy: row["time"]["busy"].as_u64(),
-        idle: row["time"]["idle"].as_u64(),
-    })
+    row["location"]["directory"]
+        .as_str()
+        .filter(|path| {
+            crate::absolute_server_path(path) && row["location"]["workspaceID"].is_null()
+        })
+        .map(str::to_owned)
 }
 pub enum Action {
     Model(Value),
@@ -74,6 +70,27 @@ impl Backend {
                 .error_for_status()?,
         )
         .await
+    }
+    pub async fn session_inactive_at(&self, directory: &str) -> bool {
+        if !crate::absolute_server_path(directory) {
+            return false;
+        }
+        let Ok(response) = self
+            .client
+            .get(self.control_url("session/active"))
+            .query(&[("directory", directory)])
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        else {
+            return false;
+        };
+        read_json(response).await.ok().is_some_and(|value| {
+            value["data"]
+                .as_object()
+                .is_some_and(|active| !active.contains_key(&self.session))
+        })
     }
     async fn control_post(&self, path: &str, input: Value) -> Result<()> {
         self.client
@@ -134,10 +151,10 @@ impl Backend {
             current,
             session_known: session.is_ok(),
             running,
-            root_activity: session
+            root_directory: session
                 .as_ref()
                 .ok()
-                .and_then(|row| root_activity(row, &self.session)),
+                .and_then(|row| root_directory(row, &self.session)),
             permissions,
             forms,
         }

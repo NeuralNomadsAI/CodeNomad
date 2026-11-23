@@ -92,7 +92,25 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     agent.observe_running(running);
                 }
             }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionExecution {
+                notice,
+            }) => {
+                if let Some(agent) = &mut s.agent {
+                    let verify = notice.is_some();
+                    agent.attention.execution(notice);
+                    if verify {
+                        agent.refresh(false);
+                    }
+                }
+            }
             Event::Workspace(event) => {
+                if matches!(
+                    &event,
+                    codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
+                ) && let Some(agent) = &mut s.agent
+                {
+                    agent.attention.disconnected();
+                }
                 git::event(s, &event);
                 if let Some(files) = &mut s.files {
                     files.event(event);
@@ -170,6 +188,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.attachments.cancel();
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
+                    a.attention.disconnected();
                 }
             }
             Event::PagingFailed => {
@@ -261,6 +280,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.phase = Phase::Failed;
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
+                    a.attention.disconnected();
                 }
             }
         }

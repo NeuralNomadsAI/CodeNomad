@@ -16,13 +16,13 @@ use rune::edit::TextEdit;
 enum Job {
     Read(bool),
     Act(Action),
-    VerifyIdle(u64),
+    VerifyIdle(String, String),
 }
 enum Result {
     Read(Snapshot, bool),
     Act(bool, Snapshot),
     Stop(bool),
-    VerifiedIdle(u64, bool),
+    VerifiedIdle(String, bool),
 }
 pub fn navigation_blocked(s: &crate::State) -> bool {
     s.agent.as_ref().is_some_and(Ui::navigation_blocked)
@@ -88,18 +88,9 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
                     let ok = backend.agent_action(&action).await.is_ok();
                     Result::Act(ok, backend.agent_snapshot(false).await)
                 }
-                Job::VerifyIdle(idle) => Result::VerifiedIdle(
-                    idle,
-                    backend
-                        .control_get("session/active")
-                        .await
-                        .ok()
-                        .is_some_and(|response| {
-                            response["data"]
-                                .as_object()
-                                .is_some_and(|active| !active.contains_key(&backend.session))
-                        }),
-                ),
+                Job::VerifyIdle(id, directory) => {
+                    Result::VerifiedIdle(id, backend.session_inactive_at(&directory).await)
+                }
             };
             if out.send(result).await.is_err() {
                 break;
@@ -274,7 +265,7 @@ impl Ui {
     fn snapshot(&mut self, s: Snapshot) {
         let current_activity = !std::mem::take(&mut self.activity_during_job);
         if self.online {
-            self.attention.observe(&s, current_activity);
+            self.attention.observe(&s);
         }
         self.known = s.session_known;
         if s.session_known {
@@ -330,9 +321,8 @@ impl Ui {
                     self.refresh(false)
                 }
                 Result::VerifiedIdle(idle, inactive) => {
-                    if inactive && self.online && !self.running {
-                        self.attention.confirm_idle(idle);
-                    }
+                    self.attention
+                        .confirm_idle(idle, inactive && self.online && !self.running);
                 }
             }
             changed = true;
@@ -340,8 +330,8 @@ impl Ui {
         if !self.reading && !self.busy {
             if let Some(catalog) = self.trailing.take() {
                 self.refresh(catalog)
-            } else if let Some(idle) = self.attention.take_idle_verification() {
-                let _ = self.handle.jobs.try_send(Job::VerifyIdle(idle));
+            } else if let Some((id, directory)) = self.attention.verify_idle() {
+                let _ = self.handle.jobs.try_send(Job::VerifyIdle(id, directory));
             }
         }
         changed

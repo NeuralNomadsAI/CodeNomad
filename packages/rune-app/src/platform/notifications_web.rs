@@ -23,6 +23,12 @@ pub(crate) fn focused() -> bool {
         })
 }
 
+pub(crate) fn hidden() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .is_some_and(|doc| doc.hidden())
+}
+
 pub(crate) fn show(title: &str, body: &str, click: impl FnOnce() + 'static) -> Option<Presented> {
     if permission()? != NotificationPermission::Granted {
         return None;

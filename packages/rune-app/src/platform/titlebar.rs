@@ -12,13 +12,30 @@ pub fn available() -> bool {
 }
 
 pub fn run(spec: AppSpec<State>, closing: fn(&mut State, &mut Tx)) {
+    #[cfg(any(target_os = "windows", target_arch = "wasm32"))]
+    let init = spec.init;
     let app = shell::app(spec, closing, available(), locale());
     #[cfg(target_os = "windows")]
     let app = {
+        let delivery = crate::shell::notifications::native_delivery();
         let handle = app.handle();
-        app.on_ready(move |window| {
+        app.init(move || {
+            let mut s = init();
+            s.notifications.native = delivery;
+            s
+        })
+        .on_ready(move |window| {
             let window = window.clone();
-            handle.update(move |s, _| s.notifications.attach(window));
+            handle.update(move |s, _| s.notifications.window = Some(window));
+        })
+    };
+    #[cfg(target_arch = "wasm32")]
+    let app = {
+        let handle = app.handle();
+        app.init(move || {
+            let mut s = init();
+            s.notifications.background = Some(handle);
+            s
         })
     };
     app.run();
