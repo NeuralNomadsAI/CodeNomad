@@ -158,6 +158,44 @@ fn arrows_only_move_permission_focus_and_enter_or_space_writes() {
 }
 
 #[test]
+fn reconnection_remains_unconfirmed_until_the_delayed_get_succeeds() {
+    platform::block_on(async {
+        let mut http = Http::new().await;
+        http.backend.session = "ses_child".into();
+        let (wake, events) = bounded::<()>(1);
+        let mut s = crate::init();
+        s.wake = Arc::new(move || {
+            let _ = wake.try_send(());
+        });
+        s.status_permissions = Permissions {
+            backend: Some(http.backend.clone()),
+            visible: true,
+            online: true,
+            expanded: true,
+            confirmed: Some(Snapshot {
+                mode: Mode::Supervised,
+                root: None,
+            }),
+            ..Permissions::default()
+        };
+        let poll = |s: &mut State| s.status_permissions.poll(&s.reads, &s.wake);
+        s.status_permissions.online(false);
+        assert!(s.status_permissions.unconfirmed());
+        s.status_permissions.online(true);
+        poll(&mut s);
+        let delayed = request(&http, "GET").await;
+        assert!(s.status_permissions.unconfirmed());
+        assert!(!s.status_permissions.available());
+        assert!(!poll(&mut s));
+        delayed.reply(200, json!({"mode":"supervised"})).await;
+        wait(events.recv()).await.unwrap();
+        poll(&mut s);
+        assert!(!s.status_permissions.unconfirmed());
+        assert!(s.status_permissions.available());
+    });
+}
+
+#[test]
 fn a_child_uses_the_confirmed_family_mode_and_reconciles_a_lost_write_without_replaying() {
     platform::block_on(async {
         let mut http = Http::new().await;

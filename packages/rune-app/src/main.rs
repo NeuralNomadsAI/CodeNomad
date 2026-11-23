@@ -217,7 +217,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
-    changed |= shell::status_permissions::poll(s);
+    changed |= shell::status_permissions::poll(s, tx);
     changed |= shell::status_usage::poll(s, now, tx);
     changed |= settings::poll(s);
     #[cfg(target_arch = "wasm32")]

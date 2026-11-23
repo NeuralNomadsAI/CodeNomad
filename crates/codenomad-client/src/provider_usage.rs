@@ -28,11 +28,13 @@ impl Watch {
         let authority = self.0.lock().unwrap();
         (
             authority.generation,
-            authority.online
-                && !authority.backpressure
-                && authority.upstream.is_none_or(|(_, connected)| connected),
+            authority.online && authority.upstream.is_none_or(|(_, connected)| connected),
             authority.model_generation,
         )
+    }
+
+    pub fn backpressured(&self) -> bool {
+        self.0.lock().unwrap().backpressure
     }
 
     pub(crate) fn transport(&self, online: bool) -> bool {
@@ -44,6 +46,9 @@ impl Watch {
         authority.backpressure = false;
         authority.upstream = None;
         authority.generation += 1;
+        if !online {
+            authority.model_generation += 1;
+        }
         true
     }
 
@@ -121,6 +126,16 @@ impl Ingress {
 
     pub fn transport(&self, online: bool) {
         if self.watch.transport(online) {
+            (self.wake)();
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn backpressure(&self, blocked: bool) {
+        let mut authority = self.watch.0.lock().unwrap();
+        if authority.backpressure != blocked {
+            authority.backpressure = blocked;
+            drop(authority);
             (self.wake)();
         }
     }
@@ -381,16 +396,6 @@ fn only_catalogue_churn_is_a_passive_quota_refresh() {
         assert_eq!(watch.current(), (before.0 + 1, true, before.2));
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn backpressure(&self, blocked: bool) {
-        let mut authority = self.watch.0.lock().unwrap();
-        if authority.backpressure != blocked {
-            authority.backpressure = blocked;
-            authority.generation += 1;
-            drop(authority);
-            (self.wake)();
-        }
-    }
     for (session, delta) in [("other", 0), ("session", 1)] {
         let before = watch.current();
         ingress.frame(

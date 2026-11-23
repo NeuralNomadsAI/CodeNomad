@@ -23,6 +23,7 @@ fn label(mode: Mode) -> &'static str {
 pub(crate) struct Permissions {
     backend: Option<Backend>,
     online: bool,
+    revalidating: bool,
     visible: bool,
     expanded: bool,
     info: bool,
@@ -33,6 +34,8 @@ pub(crate) struct Permissions {
     write: Option<(Mode, Receiver<Result<Snapshot, WriteIssue>>)>,
     checking: Option<(Mode, WriteIssue)>,
     issue: Option<WriteIssue>,
+    #[cfg(target_arch = "wasm32")]
+    announced_error: Option<&'static str>,
 }
 
 impl Permissions {
@@ -79,6 +82,7 @@ impl Permissions {
         self.online = online;
         self.dirty = true;
         if !online {
+            self.revalidating = true;
             self.read = None;
         }
     }
@@ -191,6 +195,7 @@ impl Permissions {
             if !self.dirty {
                 self.failed = snapshot.is_none();
                 if let Some(snapshot) = snapshot {
+                    self.revalidating = false;
                     if let Some((wanted, issue)) = self.checking.take() {
                         self.issue = (snapshot.mode != wanted).then_some(issue);
                     }
@@ -228,6 +233,17 @@ impl Permissions {
         }
         changed
     }
+
+    fn unconfirmed(&self) -> bool {
+        !self.online || self.revalidating || self.failed
+    }
+
+    fn issue_key(&self) -> Option<&'static str> {
+        self.issue.as_ref().map(|issue| match issue {
+            WriteIssue::Unverified => "permissions.blockUnverified",
+            WriteIssue::Unconfirmed => "permissions.changeFailed",
+        })
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -245,13 +261,26 @@ fn demand(launcher: bool, panel: bool, status: bool) -> bool {
     !launcher && panel && status
 }
 
-pub(crate) fn poll(s: &mut State) -> bool {
+pub(crate) fn poll(s: &mut State, _tx: &mut rune::Tx) -> bool {
     s.status_permissions.show(demand(
         s.screen.is_launcher(),
         s.shell.visible(1),
         crate::workspace::right_panel_tab(s) == crate::workspace::RightPanelTab::Status,
     ));
-    s.status_permissions.poll(&s.reads, &s.wake)
+    let owner = &mut s.status_permissions;
+    let changed = owner.poll(&s.reads, &s.wake);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let error = owner
+            .issue_key()
+            .or_else(|| (owner.visible && owner.failed).then_some("permissions.unconfirmed"));
+        if error != std::mem::replace(&mut owner.announced_error, error)
+            && let Some(key) = error
+        {
+            layout::announce_selection(_tx, t(key));
+        }
+    }
+    changed
 }
 
 pub(crate) fn confirmation(s: &State) -> Option<El> {
@@ -259,7 +288,7 @@ pub(crate) fn confirmation(s: &State) -> Option<El> {
     if !owner.settling() {
         return None;
     }
-    if !owner.failed && owner.online {
+    if !owner.unconfirmed() {
         return Some(text(t("permissions.applying")).role("status"));
     }
     Some(
@@ -283,7 +312,7 @@ pub(super) fn view(s: &State) -> Option<El> {
     let title = t("permissions.title");
     let mode = owner.confirmed.as_ref().map(|snapshot| snapshot.mode);
     let applying = owner.writing() || (owner.checking.is_some() && !owner.failed);
-    let status = if !owner.online || owner.failed {
+    let status = if owner.unconfirmed() {
         Some(t("permissions.unconfirmed"))
     } else if applying {
         Some(t("permissions.applying"))
@@ -329,14 +358,8 @@ pub(super) fn view(s: &State) -> Option<El> {
     if owner.failed {
         body = body.child(retry(s).key("permission-mode-retry"));
     }
-    if let Some(issue) = &owner.issue {
-        body = body.child(
-            text(t(match issue {
-                WriteIssue::Unverified => "permissions.blockUnverified",
-                WriteIssue::Unconfirmed => "permissions.changeFailed",
-            }))
-            .role("alert"),
-        );
+    if let Some(key) = owner.issue_key() {
+        body = body.child(text(t(key)).role("alert"));
     }
     let info = t("permissions.info.label");
     let help = format!(

@@ -34,7 +34,8 @@ fn short(millis: f64, locale: &str) -> Option<String> {
         "tr" => format!("{day:02}.{month:02}.{year:04}"),
         "fr" => format!("{day:02}/{month:02}/{year:04}"),
         "he" => format!("{day}.{month}.{year:04}"),
-        "ja" | "zh-Hans" | "ne" => format!("{year:04}/{month}/{day}"),
+        "ja" => format!("{year:04}/{month:02}/{day:02}"),
+        "zh-Hans" | "ne" => format!("{year:04}/{month}/{day}"),
         _ => format!("{day}/{month}/{year:04}"),
     };
     let mut stamp = if locale == "en" {

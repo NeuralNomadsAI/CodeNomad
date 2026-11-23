@@ -103,7 +103,7 @@ impl Panel {
         let (Some(backend), Some((_, provider, model))) = (&self.backend, &self.model) else {
             return false;
         };
-        if !self.authority.1 {
+        if !self.authority.1 || self.watch.as_ref().is_some_and(Watch::backpressured) {
             return false;
         }
         let clock = Instant::now();
@@ -164,7 +164,7 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         && !s.screen.is_launcher()
         && s.shell.visible(1)
         && crate::workspace::right_panel_tab(s) == crate::workspace::RightPanelTab::Status;
-    let model = active
+    let model = (active && s.status_usage.authority.1)
         .then(|| {
             let agent = s.agent.as_mut()?;
             agent.refresh_usage_model(generation);

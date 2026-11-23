@@ -5,6 +5,7 @@ use super::{
     limits::reread,
     opened,
 };
+use async_channel::TrySendError;
 use std::time::Duration;
 
 pub(super) async fn read_native(
@@ -55,7 +56,7 @@ pub(super) async fn read_native(
         if let Some(quota) = &quota {
             quota.transport(false);
         }
-        Ok(result)
+        Ok::<_, crate::history::Error>(result)
     };
     let route = async move {
         opened(epoch, out, state).await?;
@@ -95,7 +96,7 @@ pub(super) async fn receive_chunk(
             }
             match frames.try_send(frame) {
                 Ok(()) => {}
-                Err(crate::TrySendError::Full(frame)) => {
+                Err(TrySendError::Full(frame)) => {
                     if let Some(quota) = quota {
                         quota.backpressure(true);
                     }
@@ -105,7 +106,7 @@ pub(super) async fn receive_chunk(
                     }
                     sent?;
                 }
-                Err(crate::TrySendError::Closed(_)) => return Err("event reader closed".into()),
+                Err(TrySendError::Closed(_)) => return Err("event reader closed".into()),
             }
         }
     }
