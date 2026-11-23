@@ -317,8 +317,22 @@ pub fn disclosure<S: 'static>(
     body: El,
     toggle: impl Fn(&mut S) + 'static,
 ) -> El {
+    let toggle = std::rc::Rc::new(toggle);
+    let press = toggle.clone();
     rune_kit::Collapsible::new(label, open)
         .child(body)
-        .on_toggle(toggle)
+        .on_toggle(move |s| press(s))
         .build(crate::kit(layout::dark()))
+        .on_key(move |s, event, tx| {
+            if tx.focused() != Some("trigger")
+                || event.key != rune::Key::Enter
+                || event.mods != rune::Mods::default()
+            {
+                return false;
+            }
+            if !tx.key_repeat() {
+                toggle(s);
+            }
+            true
+        })
 }

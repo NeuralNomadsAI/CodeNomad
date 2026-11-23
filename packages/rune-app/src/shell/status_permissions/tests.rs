@@ -6,8 +6,10 @@ use std::sync::Arc;
 #[test]
 fn status_exposes_the_folded_mode_and_keyboard_controls_in_both_themes() {
     use rune::{Env, Key, KeyEvent, Mods, Runtime};
-    fn render(s: &mut State, _: &mut rune::Cx<State>) -> El {
-        view(s).unwrap()
+    fn render(s: &State, cx: &mut rune::Cx<State>) -> El {
+        layout::render(cx, |_| {
+            col().full_width().full_height().child(view(s).unwrap())
+        })
     }
     fn node<'a>(tree: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
         if tree["key"] == key {
@@ -39,6 +41,13 @@ fn status_exposes_the_folded_mode_and_keyboard_controls_in_both_themes() {
             assert!(node(&tree, "segment1").is_none());
             runtime.update(|_, tx| tx.focus("trigger", true));
             runtime.frame(0.02);
+            let focused = runtime.accessibility_json();
+            assert!(
+                node(&focused, "trigger").unwrap()["states"]
+                    .to_string()
+                    .contains("focused"),
+                "{focused}"
+            );
             let enter = KeyEvent {
                 key: Key::Enter,
                 mods: Mods::default(),
@@ -47,9 +56,17 @@ fn status_exposes_the_folded_mode_and_keyboard_controls_in_both_themes() {
             runtime.key_up(enter);
             runtime.frame(0.04);
             let tree = runtime.accessibility_json();
-            let supervised = node(&tree, "segment1").unwrap();
-            assert_eq!(supervised["role"], "radio");
-            assert!(supervised["states"].to_string().contains("selected"));
+            assert!(runtime.state.status_permissions.expanded, "{tree}");
+            let supervised = node(&tree, "segment1").unwrap_or_else(|| panic!("{tree}"));
+            assert_eq!(supervised["role"], "radio-button");
+            assert!(
+                supervised["states"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|state| state == "selected" || state == "checked"),
+                "{supervised}"
+            );
             assert!(
                 node(&tree, "permission-mode-info")
                     .unwrap()
