@@ -132,10 +132,7 @@ impl std::error::Error for Refusal {}
 
 impl Refusal {
     pub fn placement_answered(&self) -> bool {
-        ((400..500).contains(&self.status) && self.status != 408 && self.message.is_some())
-            || (self.status == 502
-                && self.message.as_deref()
-                    == Some("Native worktree operation could not be verified"))
+        (400..500).contains(&self.status) && self.status != 408 && self.message.is_some()
     }
 }
 
