@@ -71,6 +71,31 @@ pub(super) fn run() {
         visible_text(rt, "/git-reader-", "git-panel edited")
     });
     assert!(rt.find("composer").is_some());
+
+    tap_mode(&mut rt, 0);
+    let eye = format!("workspace-actions:{FILE}:pinned:preview");
+    wait(&mut rt, "Workspace row", |rt| rt.find(&eye).is_some());
+    let (x, y) = rt.find(&eye).unwrap();
+    rt.pointer_move(x, y);
+    rt.frame(1.0 / 60.0);
+    tap(&mut rt, &eye);
+    wait(&mut rt, "Workspace replaces the Git diff", |rt| {
+        !crate::git::has_preview(&rt.state) && visible_text(rt, "/file-reader-", "git-panel edited")
+    });
+    assert!(rt.find("composer").is_some());
+    tap_mode(&mut rt, 1);
+    wait(&mut rt, "Changes row after mode switch", |rt| {
+        rt.find(UNSTAGED).is_some()
+    });
+    assert!(
+        crate::files::has_preview(&rt.state),
+        "changing mode keeps the open reader"
+    );
+    tap(&mut rt, &format!("git-row-unstaged:preview:{FILE}"));
+    wait(&mut rt, "Git diff replaces Workspace", |rt| {
+        !crate::files::has_preview(&rt.state)
+            && visible_text(rt, "/git-reader-", "git-panel edited")
+    });
     tap(&mut rt, &format!("git-row-unstaged:stage:{FILE}"));
     wait(&mut rt, "staged", |rt| {
         rt.find(STAGED).is_some() && rt.find(UNSTAGED).is_none()
