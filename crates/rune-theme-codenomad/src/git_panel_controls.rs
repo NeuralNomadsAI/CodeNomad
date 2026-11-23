@@ -240,6 +240,31 @@ pub fn worktree_picker<S: 'static>(
     }
 }
 
+pub fn session_worktree_picker<S: 'static>(
+    labels: &[String],
+    current: Option<&str>,
+    name: &str,
+    unavailable: &str,
+    open: bool,
+    disabled: bool,
+    toggle: impl Fn(&mut S) + 'static,
+    close: impl Fn(&mut S) + 'static,
+    choose: impl Fn(&mut S, &str, &mut Tx) + Clone + 'static,
+    overlays: &mut Vec<El>,
+) -> El {
+    Select::new("session-worktree", labels)
+        .label(name)
+        .placeholder(unavailable)
+        .current(current)
+        .open(open)
+        .disabled(disabled)
+        .on_toggle(toggle)
+        .on_close(close)
+        .on_choose(choose)
+        .build(kit(dark()), overlays)
+        .shrink()
+}
+
 pub fn commit_message<S: 'static>(
     text: &TextEdit,
     label: &str,

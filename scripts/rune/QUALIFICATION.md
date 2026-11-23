@@ -28,6 +28,15 @@ wasm-bindgen --target web --out-name probe --out-dir "$CARGO_TARGET_DIR/browser-
 node packages/rune-app/fixtures/browser-preference-events.mjs "$CARGO_TARGET_DIR/browser-sse/probe"
 ```
 
+Les tests Windows vérifient l'ordre natif de l'index, les curseurs et les sauts par fenêtre `around`. La sonde Chromium rejoue les mêmes lectures avec le cookie de la même origine, y compris le saut résident sans requête :
+
+```sh
+cargo test --locked -p codenomad-client timeline::tests
+cargo build --locked -p codenomad-client --example browser-outline --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-name probe --out-dir "$CARGO_TARGET_DIR/browser-outline" "$CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/examples/browser-outline.wasm"
+node packages/rune-app/fixtures/browser-outline.mjs "$CARGO_TARGET_DIR/browser-outline"
+```
+
 ## Parité par composant
 
 Les composants Solid et Rune demandent des paires de captures exécutées à géométrie identique, dans chaque palette, avec références d'accessibilité et interactions dédiées. Le statut de parité reste à qualifier pour les composants de l'inventaire.

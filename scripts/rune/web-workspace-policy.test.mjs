@@ -58,6 +58,19 @@ test('owned reads retain fixed sessions, history bounds and the prohibition on n
   assert(!p.allows('POST','/api/workspaces/one/session-history/window',{sessionID:'ses_existing',extra:'x'.repeat(32768)}))
   for(const path of ['/api/session','/workspaces/one/instance/api/session','/workspaces/one/instance/api/session/ses_existing/prompt','/workspaces/one/instance/api/session/ses_existing/interrupt','/workspaces/one/instance/api/session/ses_existing/permission'])assert(!p.allows('POST',path),path)
 })
+test('command catalogue reads require an authenticated owned workspace',async()=>{
+  const p=workspacePolicy({origin,project}),input=creation('own')
+  p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
+  const req=(base,workspace,cookie,method='GET')=>({
+    url:()=>`${base}/workspaces/${workspace}/instance/api/command`,method:()=>method,
+    allHeaders:async()=>({cookie}),
+  })
+  assert(await p.request(req(origin,'one','private=fixture')))
+  assert(!await p.request(req(origin,'one','')))
+  assert(!await p.request(req(origin,'foreign','private=fixture')))
+  assert(!await p.request(req('http://localhost:12345','one','private=fixture')))
+  assert(!await p.request(req(origin,'one','private=fixture','POST')))
+})
 test('the fetched creation is validated and admitted before browser delivery',async()=>{
   for(const valid of [true,false]){
     const p=workspacePolicy({origin,project}),input=creation('own');p.allows('POST','/api/workspaces',input)
@@ -70,4 +83,15 @@ test('the fetched creation is validated and admitted before browser delivery',as
     else await assert.rejects(fulfillWorkspaceCreation(route,p))
     assert.equal(fulfilled,valid)
   }
+})
+test('only the Android benchmark may submit its exact prompt on an owned session',()=>{
+  const androidPrompt='private Android fixture text', p=workspacePolicy({origin,project,androidPrompt})
+  const input=creation('own')
+  p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
+  const route='/workspaces/one/instance/api/session/ses_existing/prompt'
+  assert(p.allows('POST',route,{text:androidPrompt}))
+  assert(!p.allows('POST',route,{text:'foreign'}))
+  assert(!p.allows('POST',route,{text:androidPrompt,files:[]}))
+  assert(!p.allows('POST',route.replace('/one/','/foreign/'),{text:androidPrompt}))
+  assert(!p.allows('POST',route.replace('ses_existing','ses_another'),{text:androidPrompt}))
 })

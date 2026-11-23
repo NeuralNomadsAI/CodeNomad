@@ -1,7 +1,7 @@
 #[cfg(target_arch = "wasm32")]
 use crate::platform;
 use crate::{
-    Phase, State, agent, chat, composer, content, files, git, settings,
+    Phase, State, agent, chat, composer, content, git, settings,
     transport::{self, Event},
     workspace,
 };
@@ -31,6 +31,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         let Some(event) = event else { break };
         let stale_activity = matches!(&event, Event::ReaderSync { version, .. }
             if s.reader.as_ref().is_some_and(|reader| reader.activity_after(*version)));
+        settings::provider_connection_event(s, &event);
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
@@ -93,6 +94,17 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Workspace(event) => {
+                if matches!(
+                    event,
+                    codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
+                ) {
+                    chat::reader::suspend(s);
+                    s.composer.picker.set_attachments_supported(false);
+                    s.attachments.cancel();
+                    s.messages.clear();
+                    s.history_detached = false;
+                    s.can_older = false;
+                }
                 git::event(s, &event);
                 if let Some(files) = &mut s.files {
                     files.event(event);
@@ -219,6 +231,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
             }
+            Event::Reasoning(id, event) => {
+                content::apply_reasoning(&mut s.messages, &id, &event);
+            }
             Event::Tool(id, tool) => {
                 if let Some(row) = s
                     .messages
@@ -241,16 +256,10 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
                 }
-                if let Event::AuthenticationRequired(expired) = event {
-                    if !settings::authentication_required(s, &expired)
-                        && s.screen.launcher().is_none()
-                    {
-                        continue;
-                    }
-                    s.commands = None;
-                    composer::settle_pending(s, transport::PromptOutcome::Rejected);
-                    #[cfg(not(target_arch = "wasm32"))]
-                    chat::authentication::expired(s, expired);
+                if let Event::AuthenticationRequired(auth) = event
+                    && !settings::conversation_authentication(s, auth)
+                {
+                    continue;
                 }
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::suspend(s);

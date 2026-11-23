@@ -72,12 +72,29 @@ impl ReadingLane {
     }
 }
 
+enum PageFailure {
+    AuthenticationExpired,
+    Read(history::Error),
+}
+
 async fn read_page(
+    backend: &Backend,
     reading: Option<&ReadingLane>,
     generation: u64,
     wire: &stream::State,
     page: impl std::future::Future<Output = history::Result<history::Page>>,
-) -> Option<history::Result<history::Page>> {
+) -> Option<Result<history::Page, PageFailure>> {
+    let page = async {
+        match page.await {
+            Err(error)
+                if crate::http::authentication_expired(&error)
+                    && matches!(backend.authentication_status().await, Ok(false)) =>
+            {
+                Err(PageFailure::AuthenticationExpired)
+            }
+            result => result.map_err(PageFailure::Read),
+        }
+    };
     let content = async {
         match reading {
             Some(reading) => {
@@ -93,11 +110,13 @@ async fn read_page(
             None => Some(page.await),
         }
     };
-    futures_lite::future::race(content, async {
+    let result = futures_lite::future::race(content, async {
         wire.placement_changed().await;
         None
     })
-    .await
+    .await;
+    result
+        .filter(|_| reading.is_none_or(|reading| reading.demand.current().generation == generation))
 }
 
 async fn reader_event(
@@ -256,7 +275,7 @@ pub(crate) async fn run_with_reading(
                 }
             }
             Some(Input::AuthenticationRequired(e)) if e == epoch => {
-                publish(&out, &wake, Event::AuthenticationRequired(backend.clone())).await;
+                publish(&out, &wake, Event::authentication_required(backend.clone())).await;
                 return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {
@@ -300,7 +319,7 @@ pub(crate) async fn run_with_reading(
                 }) {
                     let stamp = wire.version.load(SeqCst);
                     let Some(page) =
-                        read_page(reading, generation, &wire, backend.page(target)).await
+                        read_page(&backend, reading, generation, &wire, backend.page(target)).await
                     else {
                         continue;
                     };
@@ -328,7 +347,11 @@ pub(crate) async fn run_with_reading(
                             reader_event(reading, generation, &out, &wake, Event::PagingFailed)
                                 .await;
                         }
-                        Err(_) => {
+                        Err(PageFailure::AuthenticationExpired) => {
+                            expire_reading(&backend, reading, &wire, &out, &wake).await;
+                            return Ok(());
+                        }
+                        Err(PageFailure::Read(_)) => {
                             reader_event(reading, generation, &out, &wake, Event::PagingFailed)
                                 .await;
                         }
@@ -453,7 +476,6 @@ pub(crate) async fn run_with_reading(
                         }),
                     )
                     .await;
-                    publish(&out, &wake, Event::HistoryInvalidated).await;
                     return Err("session scope changed".into());
                 }
                 if kind.starts_with("permission.")
@@ -608,6 +630,33 @@ pub(crate) async fn run_with_reading(
                             .await;
                         }
                     }
+                    "session.reasoning.started"
+                    | "session.reasoning.delta"
+                    | "session.reasoning.ended" => {
+                        let Some(Event::Reasoning(id, event)) = crate::wire::decode_native(&native)
+                        else {
+                            continue;
+                        };
+                        match content::apply_reasoning(&mut resident, &id, &event) {
+                            TextFit::Applied => {
+                                history::check(&resident)?;
+                                reader_event(
+                                    reading,
+                                    generation,
+                                    &out,
+                                    &wake,
+                                    Event::Reasoning(id, event),
+                                )
+                                .await;
+                            }
+                            TextFit::Repair if !dirty && repairs < 3 => {
+                                repairs += 1;
+                                dirty = true;
+                                quiet = Instant::now() + Duration::from_millis(100);
+                            }
+                            _ => {}
+                        }
+                    }
                     kind if kind.starts_with("session.tool.") => {
                         let fit = resident
                             .iter_mut()
@@ -681,7 +730,8 @@ pub(crate) async fn run_with_reading(
                     backend.restore(first.as_deref()).await
                 }
             };
-            let Some(snapshot) = read_page(reading, generation, &wire, snapshot).await else {
+            let Some(snapshot) = read_page(&backend, reading, generation, &wire, snapshot).await
+            else {
                 continue;
             };
             match snapshot {
@@ -755,7 +805,11 @@ pub(crate) async fn run_with_reading(
                 Ok(_) => {
                     quiet = Instant::now() + Duration::from_millis(200);
                 }
-                Err(error) => {
+                Err(PageFailure::AuthenticationExpired) => {
+                    expire_reading(&backend, reading, &wire, &out, &wake).await;
+                    return Ok(());
+                }
+                Err(PageFailure::Read(error)) => {
                     if cfg!(target_arch = "wasm32")
                         && connection_lost
                         && matches!(
@@ -777,6 +831,33 @@ pub(crate) async fn run_with_reading(
     }
 }
 
+async fn close_for_authentication(wire: &stream::State, out: &Sender<Event>) {
+    wire.cancelled.store(true, SeqCst);
+    while wire.running.load(SeqCst) && !out.is_closed() {
+        runtime::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+async fn expire_reading(
+    backend: &Backend,
+    reading: Option<&ReadingLane>,
+    wire: &stream::State,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+) {
+    ReadingLane::invalidate_connection(reading);
+    close_for_authentication(wire, out).await;
+    publish(
+        out,
+        wake,
+        Event::AuthenticationRequired(crate::transport::Authentication {
+            backend: backend.clone(),
+            confirmed: true,
+        }),
+    )
+    .await;
+}
+
 async fn rejected_by_authentication(
     backend: &Backend,
     attempted: &str,
@@ -784,24 +865,11 @@ async fn rejected_by_authentication(
     wake: &crate::Wake,
     wire: &stream::State,
 ) -> bool {
-    let authenticated = async {
-        let response = backend
-            .client
-            .get(format!("{}api/auth/status", backend.base))
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok::<_, history::Error>(crate::backend::read_json_limited(response, 4096).await?)
-    }
-    .await;
-    if authenticated.is_ok_and(|status| status["authenticated"] == true) {
+    let authenticated = backend.authentication_status().await;
+    if matches!(authenticated, Ok(true)) {
         return false;
     }
-    wire.cancelled.store(true, SeqCst);
-    while wire.running.load(SeqCst) && !out.is_closed() {
-        runtime::sleep(Duration::from_millis(25)).await;
-    }
+    close_for_authentication(wire, out).await;
     publish(
         out,
         wake,
@@ -811,7 +879,15 @@ async fn rejected_by_authentication(
         },
     )
     .await;
-    publish(out, wake, Event::AuthenticationRequired(backend.clone())).await;
+    publish(
+        out,
+        wake,
+        Event::AuthenticationRequired(crate::transport::Authentication {
+            backend: backend.clone(),
+            confirmed: matches!(authenticated, Ok(false)),
+        }),
+    )
+    .await;
     true
 }
 fn can_restart(row: &crate::Message) -> bool {

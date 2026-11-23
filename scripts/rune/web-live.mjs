@@ -158,7 +158,7 @@ export async function revokedLauncher({context,url,messages}){
   } finally { await page.close() }
 }
 
-export async function navigatePair(tab, url, {fromLink=false,assets}={}){
+export async function navigatePair(tab, url, {fromLink=false,assets,waitForRune=Boolean(assets),returnLocale=url.searchParams.get('locale')}={}){
   const pairPath='/api/remote-control/pair'
   const referrer='https://rune-pair-source.test/'
   let observedReferrer
@@ -173,7 +173,8 @@ export async function navigatePair(tab, url, {fromLink=false,assets}={}){
     }
     const exchange=requested.pathname===pairPath&&req.method()==='POST'&&req.postDataJSON()?.code===url.hash.slice(1)
     return requested.origin===url.origin&&(exchange||req.method()==='GET'&&
-      (['/remote-pair','/'].includes(requested.pathname)||assets?.has(requested.pathname)))
+      (['/remote-pair','/'].includes(requested.pathname)||assets?.has(requested.pathname)||
+        assets&&!waitForRune&&requested.pathname.startsWith('/api/')))
       ?route.continue():route.abort()
   }
   await tab.route('**/*', routePair)
@@ -190,7 +191,8 @@ export async function navigatePair(tab, url, {fromLink=false,assets}={}){
     if(fromLink)assert.equal(observedReferrer,referrer,'Pairing navigation must carry a real cross-origin Referer')
     assert.equal(status,200,'Serve the pairing document even with a foreign Referer')
     assert.equal((await exchange).status(),200)
-    await tab.waitForURL(target=>target.pathname==='/' && target.searchParams.get('locale')===url.searchParams.get('locale'))
-    if(assets)await tab.waitForFunction(()=>globalThis.__codenomadRuneBoot?.state==='ready',undefined,{timeout:60000})
+    await tab.waitForURL(target=>target.pathname==='/' && target.searchParams.get('locale')===returnLocale,
+      {waitUntil:'load'})
+    if(waitForRune)await tab.waitForFunction(()=>globalThis.__codenomadRuneBoot?.state==='ready',undefined,{timeout:60000})
   } finally { await tab.unroute('**/*',routePair) }
 }

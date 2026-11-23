@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Choice {
     Locale,
+    Contrast,
     Mode,
     Palette(bool),
 }
@@ -14,6 +15,7 @@ impl Choice {
     fn put(self, patch: &mut Value, value: &'static str) {
         match self {
             Self::Locale => patch["settings"]["locale"] = json!(value),
+            Self::Contrast => patch["settings"]["highContrast"] = json!(value),
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
@@ -28,6 +30,7 @@ impl Choice {
         let appearance = &snapshot["appearancePreferences"];
         match self {
             Self::Locale => snapshot["settings"]["locale"] == value,
+            Self::Contrast => snapshot["settings"]["highContrast"] == value,
             Self::Mode => appearance["mode"] == value,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
@@ -121,12 +124,19 @@ impl Document {
     }
 
     pub(super) fn stage(&mut self, choice: Choice, value: &'static str) {
+        if choice == Choice::Contrast {
+            self.write.failed.remove(&choice);
+        }
         self.write.requested.insert(choice, value);
         self.write.pending.insert(choice);
     }
 
     pub(super) fn requested(&self, choice: Choice) -> Option<&'static str> {
         self.write.requested.get(&choice).copied()
+    }
+
+    pub(super) fn choice_failed(&self, choice: Choice) -> bool {
+        self.write.failed.contains(&choice)
     }
 
     #[cfg(not(target_arch = "wasm32"))]

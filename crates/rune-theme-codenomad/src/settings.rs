@@ -69,6 +69,49 @@ pub fn authentication_dialog<S: 'static>(
         )
 }
 
+pub fn embedded_section<S: 'static>(
+    title: &str,
+    body: El,
+    close_button: El,
+    close: impl Fn(&mut S) + 'static,
+) -> El {
+    let tokens = tokens(layout::dark());
+    col()
+        .key("embedded-preferences")
+        .absolute(0.0, 0.0)
+        .full_width()
+        .full_height()
+        .fill(tokens.color("surface-overlay"))
+        .role("dialog")
+        .label(title)
+        .child(
+            row()
+                .full_width()
+                .center_y()
+                .pad(Space::Sm)
+                .child(
+                    text(title)
+                        .text_role(TextRole::Title)
+                        .role("heading")
+                        .grow(1.0),
+                )
+                .child(close_button),
+        )
+        .child(
+            col()
+                .key("embedded-preferences-content")
+                .full_width()
+                .remaining()
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .pad(Space::Md)
+                .child(body),
+        )
+        .modal(true, close)
+        .modal_click_outside(false)
+}
+
 #[cfg(target_os = "windows")]
 pub fn placed_window<S: 'static>(
     spec: rune::WindowSpec<S>,
@@ -232,13 +275,40 @@ pub fn setting_row(label: &str, control: El) -> El {
         .child(control)
 }
 
-pub fn color_scheme(title: &str, mode: &str, segments: El, picker: El) -> El {
+pub fn color_scheme(title: &str, mode: &str, segments: El, contrast: El, picker: El) -> El {
     col()
         .full_width()
         .separate(Space::Sm)
         .child(text(title).role("heading").text_role(TextRole::Button))
-        .child(layout::action_row().child(text(mode)).child(segments))
+        .child(
+            layout::action_row()
+                .child(text(mode))
+                .child(segments)
+                .child(contrast),
+        )
         .child(picker)
+}
+
+pub fn contrast_controls<S: 'static>(
+    label: &str,
+    help: &str,
+    help_open: bool,
+    controls: El,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    row()
+        .flex_wrap()
+        .center_y()
+        .separate(Space::Xs)
+        .child(text(label))
+        .child(
+            layout::button("ⓘ", false, toggle)
+                .key("contrast-info")
+                .label(label)
+                .help(help)
+                .help_open(help_open),
+        )
+        .child(controls)
 }
 
 pub fn disclosure<S: 'static>(
