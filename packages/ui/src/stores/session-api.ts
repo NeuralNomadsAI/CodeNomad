@@ -2201,7 +2201,11 @@ async function loadMessages(
       // its stale snapshot at all (the retry re-fetches instead).
       if (!initialSeed && hasLatestRevisionConflict()) {
         retryAfterRevisionConflict = true
-      } else if (!(await seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false, true, true))) {
+      } else if (!(await seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false, true, true,
+        // A native message event admitted while the chunked seed computed (a
+        // cancelled jump, an SSE update the fetch never saw) must keep the
+        // finalize pass from publishing the stale snapshot.
+        () => getOpenCodeMessageRevision(instanceId, sessionId) === liveMessageRevision))) {
         retryAfterRevisionConflict = true
       } else {
         // The chunked seed awaited across task boundaries: the load's

@@ -737,26 +737,47 @@ describe("chunked hydration", () => {
     assert.equal((store.getMessage("msg_124")?.parts["msg_124-part-0"]?.data as { text?: string })?.text, "body-124")
   })
 
-  it("never regresses a record a live projection replaced between chunks", async () => {
+  it("publishes nothing when the native revision guard rejects the finalize pass", async () => {
+    const store = createInstanceMessageStore("chunked-guard")
+    let guarded = false
+    const result = store.hydrateMessages("session", makeInputs(CHUNK_SIZE * 2), undefined, {
+      chunked: true,
+      guard: () => !guarded,
+    })
+    assert.ok(result instanceof Promise)
+    guarded = true
+
+    assert.equal(await result, false, "a load whose native state moved while chunks computed must not publish")
+    assert.equal(store.getSessionMessageIds("session").length, 0, "no membership was installed")
+    assert.equal(store.getMessage("msg_010"), undefined, "no records were installed")
+    assert.equal(store.getSessionRevision("session"), 0)
+  })
+
+  it("keeps rows streamed between chunks and their usage, and never regresses a replaced record", async () => {
     const store = createInstanceMessageStore("chunked-live-writer")
     const inputs = makeInputs(CHUNK_SIZE * 2)
     const result = store.hydrateMessages("session", inputs, undefined, { chunked: true })
 
-    // A live projection rewrites one row while the chunks are between yields:
-    // like the projection path, it hydrates the full window with
-    // preserveOmitted and lands newer content for msg_070. The finalize pass
-    // must keep the newer content instead of overwriting it with the stale
-    // REST snapshot.
+    // Rows streamed between the chunk yields: one appended row the snapshot
+    // never knew (with usage), and one replacement of a chunk-0 record.
+    const appended = {
+      id: "msg_zzz_live", sessionId: "session", role: "assistant" as const, status: "streaming" as const,
+      createdAt: 900, updatedAt: 900, parts: [{ type: "text" as const, text: "streamed reply" }],
+    }
     const projected = inputs.map((input, index) =>
-      index === 70
-        ? { ...input, status: "streaming" as const, updatedAt: input.updatedAt! + 500, parts: [{ type: "text" as const, text: "live SSE text" }] }
+      index === 10
+        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "live SSE text" }] }
         : input,
     )
-    store.hydrateMessages("session", projected, undefined, { preserveOmitted: true })
+    projected.push(appended)
+    store.hydrateMessages("session", projected, [{ id: "msg_zzz_live", sessionID: "session", role: "assistant", time: { created: 900 }, cost: 2, tokens: { input: 3, output: 4 } }], { preserveOmitted: true })
 
     assert.equal(await result, true)
-    assert.equal((store.getMessage("msg_070")?.parts["msg_070-part-0"]?.data as { text?: string })?.text, "live SSE text")
-    assert.equal(store.getSessionMessageIds("session").length, CHUNK_SIZE * 2)
+    const ids = store.getSessionMessageIds("session")
+    assert.ok(ids.includes("msg_zzz_live"), "a row streamed between chunks survives the snapshot commit")
+    assert.equal((store.getMessage("msg_zzz_live")?.parts["msg_zzz_live-part-0"]?.data as { text?: string })?.text, "streamed reply")
+    assert.equal((store.getMessage("msg_010")?.parts["msg_010-part-0"]?.data as { text?: string })?.text, "live SSE text", "a record replaced after its chunk computed keeps the newer content")
+    assert.equal(store.getSessionUsage("session")?.totalCost, 2, "streamed usage survives the snapshot's usage rebuild")
   })
 
   it("reaches exactly the state of a single-pass hydrate", async () => {

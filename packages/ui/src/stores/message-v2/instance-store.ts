@@ -255,7 +255,7 @@ export interface InstanceMessageStore {
   state: InstanceMessageState
   setState: SetStoreFunction<InstanceMessageState>
   addOrUpdateSession: (input: SessionUpsertInput) => void
-  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean; confirmPending?: boolean; chunked?: boolean }) => void | Promise<boolean>
+  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean; confirmPending?: boolean; chunked?: boolean; guard?: () => boolean }) => void | Promise<boolean>
   reconcileEmptyAuthoritativeSnapshot: (sessionId: string) => void
   reconcileAuthoritativeMessageIds: (sessionId: string, authoritativeIds: ReadonlySet<string>, baselineRevisions: ReadonlyMap<string, number>) => void
   markSendPending: (messageId: string) => void
@@ -677,11 +677,17 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     serverIds: string[],
     serverIdSet: Set<string>,
     options?: { preserveOmitted?: boolean },
+    plannedAgainst?: ReadonlySet<string>,
   ) {
     // Preserve only requests that have not received a promptAsync response
     // yet. Accepted prompts are confirmed under the same messageID, while
     // rejected requests are marked failed and can be removed by this snapshot.
-    const previousMessageIds = state.sessions[sessionId]?.messageIds ?? []
+    const currentIds = state.sessions[sessionId]?.messageIds ?? []
+    // The id list the snapshot was planned against: ids resident now but
+    // absent from it arrived AFTER the snapshot was fetched (a row streamed
+    // between chunk yields). The snapshot never spoke about them, so they
+    // survive in place; only ids it replaces may be omitted.
+    const baselineIds: ReadonlySet<string> = plannedAgainst ?? new Set(currentIds)
     // For each previous ephemeral "sending" record absent from this snapshot,
     // preserve it ONLY while it is a still-in-flight pending send; otherwise
     // it is stale — a send that already failed, or an ephemeral record the
@@ -693,9 +699,23 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // sit between its rows, rather than all belonging to older history. Keep
     // each omitted run after its preceding shared row, using native order.
     const preservedAfter = new Map<string | undefined, string[]>()
+    let keptArrivals = false
     let precedingId: string | undefined
-    for (const id of previousMessageIds) {
+    const attach = (id: string) => {
+      const run = preservedAfter.get(precedingId) ?? []
+      run.push(id)
+      preservedAfter.set(precedingId, run)
+    }
+    for (const id of currentIds) {
       if (serverIdSet.has(id)) {
+        precedingId = id
+        continue
+      }
+      if (!baselineIds.has(id)) {
+        // Arrived after the snapshot was planned: the snapshot never spoke
+        // about this row, so the newer content survives in place.
+        attach(id)
+        keptArrivals = true
         precedingId = id
         continue
       }
@@ -705,9 +725,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       } else {
         omittedIds.push(id)
         if (options?.preserveOmitted) {
-          const run = preservedAfter.get(precedingId) ?? []
-          run.push(id)
-          preservedAfter.set(precedingId, run)
+          attach(id)
         }
       }
     }
@@ -717,7 +735,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       ...serverIds.flatMap((id) => [id, ...preservedAfter.get(id) ?? []]),
       ...pendingOptimisticIds,
     ]
-    return { previousMessageIds, pendingOptimisticIds, omittedIds, preservedAfter, incomingIds }
+    return { previousMessageIds: currentIds, pendingOptimisticIds, omittedIds, preservedAfter, incomingIds, keptArrivals }
   }
 
   // Computes the changed records for one chunk of inputs, mirroring the
@@ -749,12 +767,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         && (input.isEphemeral === undefined || previous.isEphemeral === input.isEphemeral)
         && samePromptDisplayMetadata(clientPromptDisplayMetadata, previous.clientPromptDisplayMetadata)
       if (recordUnchanged) continue
-      // A newer writer already owns this row: a live projection landed while
-      // the chunked hydration was between yields, and its content is newer
-      // than the fetched snapshot. Stale REST text must not regress what is
-      // already displayed (the read merge's live-version-wins rule, applied
-      // to rows that changed after the fetch).
-      if (previous && input.updatedAt !== undefined && previous.updatedAt > input.updatedAt) continue
       const record: MessageRecord = {
         id: input.id,
         sessionId: input.sessionId,
@@ -782,7 +794,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   async function hydrateMessagesChunked(
     sessionId: string,
     plan: HydrationPlan,
-    options?: { preserveOmitted?: boolean; confirmPending?: boolean },
+    options?: { preserveOmitted?: boolean; confirmPending?: boolean; guard?: () => boolean },
   ): Promise<boolean> {
     const chunks: MessageUpsertInput[][] = []
     for (let start = 0; start < plan.dedupedInputs.length; start += HYDRATE_CHUNK_SIZE) {
@@ -815,9 +827,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }
     }
 
+    // Recheck cancellation and the native revision right before the finalize
+    // writes: a load whose native state moved while its chunks computed (a
+    // cancelled jump, an SSE event the fetch never saw) must not publish.
+    if (options?.guard && !options.guard()) return false
     // Finalize: re-plan membership against the CURRENT rows so rows streamed
     // during the yields survive, then commit everything in one batch.
-    const membership = reconcileHydrationMembership(sessionId, plan.serverIds, plan.serverIdSet, options)
+    const membership = reconcileHydrationMembership(sessionId, plan.serverIds, plan.serverIdSet, options, new Set(plan.previousMessageIds))
     const infoChangedAny = pendingInfos.length > 0
     if (!contentChanged && membership.omittedIds.length === 0 && !infoChangedAny
       && areMessageIdListsEqual(membership.previousMessageIds, membership.incomingIds)) {
@@ -853,7 +869,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       hooks?.onMessagesRemoved?.(instanceId, sessionId, membership.omittedIds)
     }
 
-    const usageInfos = options?.preserveOmitted && plan.infoList
+    const usageInfos = (options?.preserveOmitted || membership.keptArrivals) && plan.infoList
       ? new Map([
           ...Array.from(messageInfoCache.values())
             .filter((info) => info.sessionID === sessionId && (!plan.revertMessageId || info.id < plan.revertMessageId))
@@ -866,9 +882,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     batch(() => {
       for (const entry of pendingRecords) {
         // A record the chunk diffed that a newer writer (a live projection)
-        // has since replaced keeps the newer content: stale REST text never
-        // regresses what is already displayed.
-        if (entry.previous !== undefined && state.messages[entry.id] !== entry.previous) continue
+        // has since created or replaced keeps the newer content: stale REST
+        // text never regresses what is already displayed. The diff basis
+        // includes `undefined` for rows the snapshot would create, so a row
+        // streamed in between is left alone too.
+        if (state.messages[entry.id] !== entry.previous) continue
         setState("messages", entry.id, entry.record)
       }
       if (!options?.preserveOmitted && membership.omittedIds.length > 0) {
@@ -918,7 +936,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     sessionId: string,
     inputs: MessageUpsertInput[],
     infos?: Iterable<MessageInfo>,
-    options?: { preserveOmitted?: boolean; confirmPending?: boolean; chunked?: boolean },
+    options?: { preserveOmitted?: boolean; confirmPending?: boolean; chunked?: boolean; guard?: () => boolean },
   ): void | Promise<boolean> {
     if (!Array.isArray(inputs) || inputs.length === 0) return
 
