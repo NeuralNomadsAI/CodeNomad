@@ -57,6 +57,7 @@ app.whenReady().then(async () => {
         bridge: typeof window.electronAPI, node: typeof window.require,
         localAction: typeof window.electronAPI?.newWindow,
         preferencesAction: typeof window.electronAPI?.preferencesReady,
+        managedSessionAction: typeof window.electronAPI?.renewManagedSession,
         remoteAction: typeof window.electronAPI?.retryRemoteWindow
       })`))
     }

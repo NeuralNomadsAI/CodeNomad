@@ -43,6 +43,7 @@ declare global {
     onCliError?: (callback: (data: unknown) => void) => () => void
     getCliStatus?: () => Promise<unknown>
     restartCli?: () => Promise<unknown>
+    renewManagedSession?: () => Promise<boolean>
     openDialog?: (options: ElectronDialogOptions) => Promise<ElectronDialogResult>
     getDirectoryPaths?: (paths: string[]) => Promise<string[]>
     openWorkspaceTarget?: (payload: {

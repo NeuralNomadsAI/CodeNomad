@@ -29,6 +29,8 @@
 
 ## 浏览器会话与撤销 {#sessions}
 
+如果 Tauri 或 Electron 启动的本地服务器未设置密码，应用会在当前窗口续期已到期的会话。草稿会保留，失败的操作不会重试。主动退出或撤销会话后，无法续期。
+
 直接登录会创建不透明的后端内存会话和 `codenomad_session` cookie（或配置的 cookie 名）。cookie 为 `HttpOnly`、`SameSite=Lax`，作用域为 `/`，通过 HTTPS 签发时标记为 `Secure`。Cookie 保留七天，重启浏览器后仍在；后端重启使内存会话失效。收到提示时请就地重新认证，而非重发失败的修改操作。
 
 退出登录会撤销当前直接会话。在主机成功更改密码会撤销该用户的所有直接会话，包括当前会话；请重新登录。会话在 24 小时没有经过认证的请求后，或创建七天后过期。要调整期限，请在启动后端前将 `CODENOMAD_SESSION_IDLE_SECONDS` 和 `CODENOMAD_SESSION_ABSOLUTE_SECONDS` 设为正整数秒。远程控制设备需单独撤销。
