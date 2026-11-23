@@ -95,14 +95,11 @@ impl ClientState {
             return Ok(Vec::new());
         }
         let mut drafts = read(&self.file_drafts_path())?;
+        if !self.renderer_access.is_generation_current_for(window_id, generation) {
+            return Err("File draft renderer changed".into());
+        }
         if let Some(key) = key {
             drafts.retain(|draft| draft.key == key);
-            if !self
-                .renderer_access
-                .is_generation_current_for(window_id, generation)
-            {
-                return Err("File draft renderer changed".into());
-            }
             if !drafts.is_empty() {
                 self.retain_file_draft(window_id, generation, key)?;
             }

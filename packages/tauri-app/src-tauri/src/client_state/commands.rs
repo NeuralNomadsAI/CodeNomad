@@ -147,8 +147,12 @@ pub fn client_state_load(
     state: State<'_, ClientState>,
     access_token: String,
 ) -> Result<ClientStateLoadResult, String> {
-    let (window_id, _) = validate_access(&webview, &state, &access_token)?;
-    state.load_window(&window_id)
+    let (window_id, generation) = validate_access(&webview, &state, &access_token)?;
+    let result = state.load_window(&window_id)?;
+    if validate_access(&webview, &state, &access_token)?.1 != generation {
+        return Err("Client state renderer authority changed during load".into());
+    }
+    Ok(result)
 }
 
 #[tauri::command]

@@ -760,12 +760,16 @@ fn cli_restart(
     state: tauri::State<AppState>,
 ) -> Result<CliStatus, String> {
     require_preferences_or_local_app_webview(&webview, &state)?;
+    // The stop may wait on the backend; never hold the shutdown coordinator
+    // during that wait. Recheck admission before starting a replacement.
+    shutdown::with_navigation_authority(&app, || ())
+        .ok_or("Application shutdown is in progress")?;
+    state
+        .manager
+        .stop_until(Instant::now() + Duration::from_secs(2))
+        .map_err(|e| e.to_string())?;
     shutdown::with_navigation_authority(&app, || {
         let dev_mode = is_dev_mode();
-        state
-            .manager
-            .stop_until(Instant::now() + Duration::from_secs(2))
-            .map_err(|e| e.to_string())?;
         state
             .manager
             .start(app.clone(), dev_mode)
@@ -1459,16 +1463,20 @@ async fn open_remote_window(
         require_http_url(&payload.base_url, "baseUrl")?;
         let parsed = require_http_url(entry_url, "entryUrl")?;
         if payload.proxy_session_id.is_some() && parsed.scheme() == "https" {
-            let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
-                format!(
-                    "Failed to load the local HTTPS certificate for the remote proxy window: {err}"
-                )
-            })?;
-            if let Err(err) = cert_manager::trust_cert_in_store(&local_cert.ca_cert_der) {
-                return Err(format!(
-                    "Failed to trust the local CodeNomad CA certificate. Accept the certificate installation prompt and try again: {err}"
-                ));
-            }
+            tauri::async_runtime::spawn_blocking(|| {
+                let local_cert = cert_manager::ensure_local_cert().map_err(|err| {
+                    format!(
+                        "Failed to load the local HTTPS certificate for the remote proxy window: {err}"
+                    )
+                })?;
+                cert_manager::trust_cert_in_store(&local_cert.ca_cert_der).map_err(|err| {
+                    format!(
+                        "Failed to trust the local CodeNomad CA certificate. Accept the certificate installation prompt and try again: {err}"
+                    )
+                })
+            })
+            .await
+            .map_err(|error| error.to_string())??;
         }
     }
 
