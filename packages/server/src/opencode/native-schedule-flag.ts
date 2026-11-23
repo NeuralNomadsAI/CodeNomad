@@ -5,22 +5,27 @@ import type { PluginControlLocation } from "../api-types"
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 import { effectiveMissionExperimental } from "./native-experimental-settings"
 
-export const nativeScheduleFlagSchema = z.object({ enabled: z.boolean(),
-  provenance: z.enum(["environment", "experimental-block", "all-flags", "channel-default", "automations-setting"]),
-  path: z.string().min(1).max(4096).optional() }).strict()
+const provenance = z.enum(["environment", "experimental-block", "all-flags", "channel-default", "automations-setting"])
+export const nativeScheduleFlagSchema = z.object({ enabled: z.boolean(), provenance,
+  path: z.string().min(1).max(4096).optional(), hiddenOff: z.array(z.string().min(1).max(4096)).max(256).default([]) }).strict()
 export type NativeScheduleFlag = z.infer<typeof nativeScheduleFlagSchema>
 
-/** The daemon, rather than the desktop backend, owns environment and channel defaults. */
+/** The daemon, rather than the desktop backend, owns environment and channel defaults.
+ * `scheduleSetting` also names the deciding source and hidden OFF layers; a bundle
+ * without it answers the original `scheduleFlag`. */
 export async function readNativeScheduleFlag(connection: ServiceConnection, location: PluginControlLocation) {
   connection.assertCurrent()
-  const result = nativeScheduleFlagSchema.parse(await connection.client.rpc(CODENOMAD_MISSIONS_RPC).scheduleFlag({},
-    { location, signal: AbortSignal.timeout(5_000) }))
+  const rpc = connection.client.rpc(CODENOMAD_MISSIONS_RPC), options = () => ({ location, signal: AbortSignal.timeout(5_000) })
+  let raw: unknown
+  try { raw = await rpc.scheduleSetting({}, options()) }
+  catch { connection.assertCurrent(); raw = await rpc.scheduleFlag({}, options()) }
+  const result = nativeScheduleFlagSchema.parse(raw)
   connection.assertCurrent()
   return result
 }
 
 export function nativeScheduleFlagOrigin(entries: readonly ConfigEntry[], flag: NativeScheduleFlag): string | null {
-  // Runtimes with the top-level setting name the deciding document themselves.
+  // Runtimes with the top-level setting name the deciding source themselves.
   if (flag.path) return flag.path
   if (flag.provenance === "automations-setting") return null
   if (flag.provenance === "experimental-block") return effectiveMissionExperimental(entries).origin

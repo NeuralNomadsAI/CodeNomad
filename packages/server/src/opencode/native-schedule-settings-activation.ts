@@ -9,6 +9,7 @@ import { readNativeScheduleFlag, nativeScheduleFlagOrigin, type NativeScheduleFl
 import { nativeScheduleCapability } from "./native-schedule-capability"
 import { PluginControlsError, type NativeConfigDocuments, type NativeConfigEdit, type PluginControls } from "./plugin-controls"
 import { readNativeSetting } from "./native-setting-document"
+import { INLINE_CONFIG_SOURCE } from "./missions/native-automations-setting"
 
 export type NativeScheduleActivationTarget = { scope: PluginControlScope; path: string; expectation: string; resultDigest: string }
 export type NativeScheduleActivationPlan = { authority: string; targets: NativeScheduleActivationTarget[] }
@@ -53,9 +54,13 @@ export function planNativeScheduleActivation(view: NativeConfigDocuments, flag: 
   }
   if (!flag.enabled && flag.provenance === "environment")
     throw new NativeScheduleActivationRefused({ reason: "explicit-off", provenance: "environment", layer: "environment" })
+  // Inline daemon configuration is no openable document.
+  const source = (path: string) => path === INLINE_CONFIG_SOURCE ? undefined : path
+  // OFF layers the daemon reads but no entry exposes, such as a legacy block below a newer ON.
+  for (const path of flag.hiddenOff ?? []) refuse(source(path))
   if (flag.enabled) return []
-  // Runtimes with the top-level setting are on unless a document turns them off; never write the legacy block there.
-  if (flag.provenance === "automations-setting" || flag.path) refuse(flag.path, "explicit-off", flag.provenance)
+  // Runtimes with the top-level setting are on unless a source turns them off; never write the legacy block there.
+  if (flag.provenance === "automations-setting" || flag.path) refuse(flag.path && source(flag.path), "explicit-off", flag.provenance)
   if (!project) throw new PluginControlsError("Project OpenCode configuration is unavailable", "unavailable")
   const position = nativeExperimentalTargetPosition(view.entries, project.path, view.location.directory)
   const imposed = view.entries.slice(position.after).find(entry => entry.type === "document" && entry.info.experimental !== undefined)

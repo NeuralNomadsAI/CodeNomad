@@ -282,5 +282,11 @@ test("top-level setting runtimes: on needs no write; a top-level or legacy OFF r
   await assert.rejects(f.prepare(), (error: any) => error.refusal.provenance === "automations-setting" && error.refusal.layer === "global",
     "an OFF hidden by a higher ON still refuses")
   await writeFile(f.globalFile, globalBefore)
+  const ancestor = path.join(f.root, "ancestor.jsonc")
+  f.flag({ enabled: true, provenance: "automations-setting", path: f.projectFile, hiddenOff: [ancestor] })
+  await assert.rejects(f.prepare(), (error: any) => error.refusal.layer === "inherited" && error.refusal.path === ancestor,
+    "a legacy OFF in an unowned layer below a newer ON refuses like an owned one")
+  f.flag({ enabled: true, provenance: "channel-default", hiddenOff: ["OPENCODE_CONFIG_CONTENT"] })
+  await assert.rejects(f.prepare(), (error: any) => error.refusal.layer === "imposed" && error.refusal.path === undefined)
   assert.equal(await readFile(f.projectFile, "utf8"), projectBefore)
 }))

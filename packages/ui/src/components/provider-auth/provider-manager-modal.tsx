@@ -355,6 +355,8 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
       if (payload.type === "instance.eventStatus" && payload.instanceId === instanceId && payload.status === "connected") refresh()
     })
     const reconnect = serverEvents.forInstance(() => instanceId).onOpen(() => refresh())
+    // An event that arrived during any other read (initial, reconnect, mutation) runs one trailing reread.
+    createEffect(on(loading, active => { if (!active && trailing) { trailing = false; refresh() } }, { defer: true }))
     onCleanup(() => { disposed = true; events(); status(); reconnect() })
   })
 
