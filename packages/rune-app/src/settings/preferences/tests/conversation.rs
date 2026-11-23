@@ -265,6 +265,31 @@ fn settings_sse_401_releases_the_transport_for_explicit_authentication() {
 }
 
 #[test]
+fn retry_remains_available_when_the_terminal_reader_closes_after_the_gesture() {
+    let mut root = crate::init();
+    root.phase = crate::Phase::Failed;
+    let (commands, input) = bounded(1);
+    let (events, incoming) = bounded::<Event>(1);
+    root.commands = Some(commands);
+    root.incoming = Some(incoming);
+    let mut runtime = rune::Runtime::new(
+        root,
+        crate::view,
+        (1100.0, 760.0),
+        rune::Env::new(false, 1.0),
+    );
+    runtime.update(crate::retry_connection);
+    assert!(runtime.state.phase == crate::Phase::Reconnecting);
+    assert!(matches!(input.try_recv(), Ok(Command::Retry)));
+    drop(input);
+    drop(events);
+    runtime.update(|s, _| {
+        assert!(crate::poll_chat(s, 8));
+    });
+    assert!(runtime.state.phase == crate::Phase::Failed);
+}
+
+#[test]
 fn settings_terminal_transport_close_restores_an_unsettled_prompt_before_retry() {
     let mut root = crate::init();
     root.draft = rune::edit::TextEdit::new("keep queued text");

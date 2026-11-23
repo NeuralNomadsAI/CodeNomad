@@ -378,7 +378,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
         s.revision += 1;
         changed = true;
     }
-    if s.pending_prompt.is_some()
+    if (s.pending_prompt.is_some() || s.phase == Phase::Reconnecting)
         && s.incoming
             .as_ref()
             .is_some_and(|receiver| receiver.is_closed() && receiver.is_empty())
