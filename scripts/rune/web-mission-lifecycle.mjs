@@ -21,7 +21,13 @@ export function lifecycleFixture(){
         await route.fulfill({status:503,json:{error:'fixture acknowledgement lost'}})
         return revision
       }
+      if(calls.length===4){
+        assert.equal(input.action,'stop')
+        await route.fulfill({status:503,json:{error:'fixture Stop lost before admission'}})
+        return revision
+      }
       if(calls.length===2)assert.deepEqual(input,first,'Replay reuses the exact intent')
+      else if(calls.length===5)assert.deepEqual(input,calls[3],'Stop retains its identity over a partial Play')
       else assert(!calls.slice(0,-1).some(prior=>prior.requestId===input.requestId))
       state={start:'running',pause:'paused',stop:'stopped'}[input.action]
       const {requestId,expectedRevision,graceful,action}=input
@@ -48,8 +54,13 @@ export async function checkLifecycle(page,messages,calls){
   const button=(key,scope=page)=>scope.getByRole('button',{name:messages[key],exact:true})
   const act=async(key,scope)=>{
     const target=button(key,scope)
-    await target.waitFor()
+    await enabled(target)
     await target.dispatchEvent('click')
+  }
+  const enabled=async target=>{
+    await target.waitFor()
+    const node=await target.elementHandle()
+    await page.waitForFunction(el=>el.isConnected&&!el.disabled&&el.getAttribute('aria-disabled')!=='true',node)
   }
   const pause='missionsPanel.action.pause'
   const resume='missionsPanel.action.resume'
@@ -74,7 +85,9 @@ export async function checkLifecycle(page,messages,calls){
   await button(resume).waitFor()
   await act(resume)
   await button(check).waitFor()
-  await page.getByRole('button',{name:'control.receipts (1)',exact:true}).dispatchEvent('click')
+  await enabled(button(check))
+  const receipts=page.getByRole('button',{name:'control.receipts (1)',exact:true})
+  await receipts.dispatchEvent('click')
   await page.getByText(`ses-unknown · ${messages['missions.control.activity.state.unknown']}`,{exact:true}).waitFor()
   await page.getByRole('button',{name:'control.pending (51)',exact:true}).dispatchEvent('click')
   await page.getByText('ses-pending-1',{exact:true}).waitFor()
@@ -87,8 +100,15 @@ export async function checkLifecycle(page,messages,calls){
   await dialog.waitFor({state:'detached'})
   assert.equal(calls.length,3,'Cancel never submits Stop')
   await act(stop)
+  const missingStop=page.waitForResponse(response=>response.url().endsWith('/missions/gamma/control'))
   await act(stop,dialog)
+  assert.equal((await missingStop).status(),503)
   await dialog.waitFor({state:'detached'})
+  await page.getByText(messages['missions.control.run.error'],{exact:true}).waitFor()
+  await act(check)
+  await button(replay).waitFor()
+  assert.equal(calls.length,4,'Reconciliation never sends Stop')
+  await act(replay)
   await button(check).waitFor({state:'detached'})
-  assert.deepEqual(calls.map(input=>input.action),['pause','pause','start','stop'])
+  assert.deepEqual(calls.map(input=>input.action),['pause','pause','start','stop','stop'])
 }

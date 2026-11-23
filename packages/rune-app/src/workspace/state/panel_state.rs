@@ -189,6 +189,8 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
                 });
         let Some(backend) = target else {
             changed |= entry.missions.take().is_some();
+            ui.mission_lifecycle.retain_checks_for(None);
+            ui.mission_lifecycle.confirmation = None;
             continue;
         };
         let Tab::Workspace(saved) = &mut entry.saved else {
@@ -199,6 +201,8 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
             .as_ref()
             .is_none_or(|panel| !panel.matches(&backend))
         {
+            ui.mission_lifecycle.retain_checks_for(None);
+            ui.mission_lifecycle.confirmation = None;
             let mut panel = missions::Panel::new(backend, None, s.reads.clone(), s.wake.clone());
             panel.selected.clone_from(&saved.view.selected_mission);
             entry.missions = Some(panel);

@@ -13,23 +13,29 @@ use std::collections::HashMap;
 
 const CAPACITY: usize = 64;
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Source {
     occurrence: String,
     workspace: String,
-    server: String,
+    mission: MissionKey,
     target: LifecycleTarget,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct MissionKey {
+    server: String,
+    id: String,
+}
+
 impl Source {
-    fn same_mission(&self, other: &Self) -> bool {
-        self.server == other.server && self.target.mission == other.target.mission
-    }
     pub fn new(occurrence: &str, backend: &Backend, header: &MapHeader) -> Option<Self> {
         Some(Self {
             occurrence: occurrence.into(),
             workspace: backend.workspace.clone(),
-            server: backend.client.server_identity()?.to_owned(),
+            mission: MissionKey {
+                server: backend.client.server_identity()?.into(),
+                id: header.root.id.clone(),
+            },
             target: header.lifecycle_target(),
         })
     }
@@ -64,6 +70,7 @@ impl Panel {
         if &target != source {
             return;
         }
+        owner.retain_checks_for(Some(source));
         let revision = header.root.revision;
         let ready = self.detail.authoritative();
         let working = self.observation.working();
@@ -76,6 +83,7 @@ impl Panel {
                 })
                 && Lifecycle::allow(header, action, graceful, working)
         };
+        let mut predecessor = None;
         let request = match gesture {
             Gesture::ReadField(part, offset) => {
                 self.read_control_field(part, offset);
@@ -109,11 +117,12 @@ impl Panel {
                     let request =
                         LifecycleRequest::new(LifecycleAction::Stop, revision, false).ok();
                     if request.is_some() {
+                        predecessor = durable(header);
                         owner.release_durable_intent(source, header);
                     }
                     request
                 } else {
-                    owner.feedback = Some((target, "missions.control.run.notSent.stop"));
+                    owner.set_feedback(&target, "missions.control.run.notSent.stop");
                     None
                 }
             }
@@ -132,7 +141,13 @@ impl Panel {
             _ => None,
         };
         if let Some(request) = request {
-            owner.start(source, request, self.backend.clone(), self.wake.clone());
+            owner.start(
+                source,
+                request,
+                predecessor,
+                self.backend.clone(),
+                self.wake.clone(),
+            );
         }
     }
 
@@ -140,12 +155,15 @@ impl Panel {
         &mut self,
         occurrence: &str,
         owner: &mut Lifecycle,
-        finished: &[(Source, LifecycleOutcome)],
+        finished: &[(MissionKey, LifecycleTarget, LifecycleOutcome)],
     ) {
         let Some((source, _)) = self.control_source(occurrence) else {
             return;
         };
-        if let Some((_, outcome)) = finished.iter().find(|(finished, _)| *finished == source) {
+        if let Some((_, _, outcome)) = finished
+            .iter()
+            .find(|(key, target, _)| *key == source.mission && *target == source.target)
+        {
             if let LifecycleOutcome::Acknowledged(revision) = outcome {
                 self.detail.observe(&source.target.mission, *revision);
             }
@@ -160,24 +178,51 @@ impl Panel {
                 self.detail.map_reads,
             )
         {
-            owner.start(&source, request, self.backend.clone(), self.wake.clone());
+            owner.start(
+                &source,
+                request,
+                None,
+                self.backend.clone(),
+                self.wake.clone(),
+            );
         }
     }
 }
 
 #[derive(Default)]
 pub(crate) struct Lifecycle {
-    intents: HashMap<Source, Intent>,
+    intents: HashMap<MissionKey, Intent>,
+    current: Option<Source>,
     pub confirmation: Option<(Source, u64)>,
-    pub feedback: Option<(Source, &'static str)>,
+    feedback: Option<(MissionKey, LifecycleTarget, &'static str)>,
 }
 
 struct Intent {
+    target: LifecycleTarget,
     request: LifecycleRequest,
+    predecessor: Option<LifecycleRequest>,
     flight: Option<Receiver<LifecycleOutcome>>,
     checking: Option<(bool, u64)>,
     checked: Option<u64>,
     acknowledged: Option<u64>,
+}
+
+impl Intent {
+    fn new(
+        source: &Source,
+        request: LifecycleRequest,
+        predecessor: Option<LifecycleRequest>,
+    ) -> Self {
+        Self {
+            target: source.target.clone(),
+            request,
+            predecessor,
+            flight: None,
+            checking: None,
+            checked: None,
+            acknowledged: None,
+        }
+    }
 }
 
 impl Lifecycle {
@@ -187,38 +232,40 @@ impl Lifecycle {
 
     pub fn can_stop(&self, source: &Source, header: &MapHeader) -> bool {
         !self.busy(source)
-            && (self.intents.len() < CAPACITY || self.intents.contains_key(source))
-            && self.intents.get(source).is_none_or(|intent| {
-                durable(header).as_ref() == Some(&intent.request) && intent.acknowledged.is_none()
+            && (self.intents.len() < CAPACITY || self.intents.contains_key(&source.mission))
+            && self.intents.get(&source.mission).is_none_or(|intent| {
+                intent.target == source.target
+                    && durable(header).as_ref() == Some(&intent.request)
+                    && intent.acknowledged.is_none()
             })
     }
 
     fn release_durable_intent(&mut self, source: &Source, header: &MapHeader) {
-        if self
-            .intents
-            .get(source)
-            .is_some_and(|intent| durable(header).as_ref() == Some(&intent.request))
-        {
-            self.intents.remove(source);
+        if self.intents.get(&source.mission).is_some_and(|intent| {
+            intent.target == source.target && durable(header).as_ref() == Some(&intent.request)
+        }) {
+            self.intents.remove(&source.mission);
         }
     }
 
     pub fn unresolved(&self, source: &Source, header: &MapHeader) -> bool {
-        self.intents.contains_key(source) || durable(header).is_some()
+        self.intents.contains_key(&source.mission) || durable(header).is_some()
     }
 
     pub fn busy(&self, source: &Source) -> bool {
-        self.intents.iter().any(|(key, intent)| {
-            key.same_mission(source) && (intent.flight.is_some() || intent.checking.is_some())
-        })
+        self.intents
+            .get(&source.mission)
+            .is_some_and(|intent| intent.flight.is_some() || intent.checking.is_some())
     }
 
     pub fn replayable(&self, source: &Source, revision: u64) -> bool {
-        self.intents.get(source).is_some_and(|intent| {
-            intent.checked == Some(revision)
-                && intent.flight.is_none()
-                && intent.acknowledged.is_none()
-        })
+        self.current.as_ref() == Some(source)
+            && self.intents.get(&source.mission).is_some_and(|intent| {
+                intent.target == source.target
+                    && intent.checked == Some(revision)
+                    && intent.flight.is_none()
+                    && intent.acknowledged.is_none()
+            })
     }
 
     pub fn allow(
@@ -251,25 +298,18 @@ impl Lifecycle {
     }
 
     pub fn check(&mut self, source: &Source, header: &MapHeader, resend: bool, since: u64) -> bool {
-        if self.busy(source) {
+        if self.current.as_ref() != Some(source) || self.busy(source) {
             return false;
         }
-        if !self.intents.contains_key(source)
+        if !self.intents.contains_key(&source.mission)
             && self.intents.len() < CAPACITY
             && let Some(request) = durable(header)
         {
-            self.intents.insert(
-                source.clone(),
-                Intent {
-                    request,
-                    flight: None,
-                    checking: None,
-                    checked: None,
-                    acknowledged: None,
-                },
-            );
+            self.intents
+                .insert(source.mission.clone(), Intent::new(source, request, None));
         }
-        if let Some(intent) = self.intents.get_mut(source)
+        if let Some(intent) = self.intents.get_mut(&source.mission)
+            && intent.target == source.target
             && intent.flight.is_none()
         {
             intent.checked = None;
@@ -285,8 +325,8 @@ impl Lifecycle {
         header: Option<&MapHeader>,
         observed: u64,
     ) -> Option<LifecycleRequest> {
-        let intent = self.intents.get_mut(source)?;
-        if intent.flight.is_some() {
+        let intent = self.intents.get_mut(&source.mission)?;
+        if intent.flight.is_some() || intent.target != source.target {
             return None;
         }
         if header.is_some() && intent.checking.is_some_and(|(_, since)| observed <= since) {
@@ -302,14 +342,17 @@ impl Lifecycle {
                 .as_ref()
                 .is_some_and(|receipt| completed(receipt, &intent.request))
         {
-            self.intents.remove(source);
+            self.intents.remove(&source.mission);
         } else if header.control.as_ref().is_some_and(|receipt| {
             !receipt.matches(&intent.request)
-                && receipt.expected_revision > intent.request.expected_revision
+                && receipt.expected_revision >= intent.request.expected_revision
+                && header.root.revision > intent.request.expected_revision
         }) {
-            self.intents.remove(source);
-            self.feedback = Some((source.clone(), "missions.control.run.superseded"));
-        } else if let Some((resend, _)) = checking {
+            self.intents.remove(&source.mission);
+            self.set_feedback(source, "missions.control.run.superseded");
+        } else if let Some((resend, _)) = checking
+            && self.current.as_ref() == Some(source)
+        {
             intent.checked = header
                 .control
                 .as_ref()
@@ -318,6 +361,10 @@ impl Lifecycle {
                         receipt.pending > 0
                     } else {
                         receipt.pending == 0
+                            || intent
+                                .predecessor
+                                .as_ref()
+                                .is_some_and(|older| receipt.matches(older))
                     }
                 })
                 .then_some(header.root.revision);
@@ -329,36 +376,47 @@ impl Lifecycle {
     }
 
     pub fn retain_checks_for(&mut self, source: Option<&Source>) {
-        for (key, intent) in &mut self.intents {
-            if Some(key) != source {
+        if self.current.as_ref() != source {
+            if let Some(intent) = self
+                .current
+                .as_ref()
+                .and_then(|old| self.intents.get_mut(&old.mission))
+            {
                 intent.checking = None;
                 intent.checked = None;
             }
+            self.current = source.cloned();
         }
+    }
+
+    pub fn feedback(&self, source: &Source) -> Option<&'static str> {
+        let (key, target, label) = self.feedback.as_ref()?;
+        (key == &source.mission && target == &source.target).then_some(*label)
+    }
+
+    fn set_feedback(&mut self, source: &Source, label: &'static str) {
+        self.feedback = Some((source.mission.clone(), source.target.clone(), label));
     }
 
     pub fn start(
         &mut self,
         source: &Source,
         request: LifecycleRequest,
+        predecessor: Option<LifecycleRequest>,
         backend: Backend,
         wake: Wake,
     ) {
-        if self.busy(source) || !self.intents.contains_key(source) && self.intents.len() >= CAPACITY
+        if self.busy(source)
+            || !self.intents.contains_key(&source.mission) && self.intents.len() >= CAPACITY
         {
             return;
         }
         let intent = self
             .intents
-            .entry(source.clone())
-            .or_insert_with(|| Intent {
-                request: request.clone(),
-                flight: None,
-                checking: None,
-                checked: None,
-                acknowledged: None,
-            });
-        if intent.request != request
+            .entry(source.mission.clone())
+            .or_insert_with(|| Intent::new(source, request.clone(), predecessor));
+        if intent.target != source.target
+            || intent.request != request
             || intent.flight.is_some()
             || intent.checking.is_some()
             || intent.acknowledged.is_some()
@@ -381,13 +439,7 @@ impl Lifecycle {
         });
     }
 
-    #[cfg(test)]
-    fn original(&self, source: &Source, revision: u64) -> Option<LifecycleRequest> {
-        self.replayable(source, revision)
-            .then(|| self.intents[source].request.clone())
-    }
-
-    pub fn poll(&mut self) -> Vec<(Source, LifecycleOutcome)> {
+    pub fn poll(&mut self) -> Vec<(MissionKey, LifecycleTarget, LifecycleOutcome)> {
         let mut finished = Vec::new();
         self.intents.retain(|source, intent| {
             let Some(outcome) = intent
@@ -397,7 +449,7 @@ impl Lifecycle {
             else {
                 return true;
             };
-            finished.push((source.clone(), outcome));
+            finished.push((source.clone(), intent.target.clone(), outcome));
             intent.flight = None;
             if let LifecycleOutcome::Acknowledged(revision) = outcome {
                 intent.acknowledged = Some(revision);
@@ -408,7 +460,7 @@ impl Lifecycle {
                     LifecycleAction::Pause => "missions.control.run.rejected.pause",
                     LifecycleAction::Stop => "missions.control.run.rejected.stop",
                 };
-                self.feedback = Some((source.clone(), key));
+                self.feedback = Some((source.clone(), intent.target.clone(), key));
             }
             outcome != LifecycleOutcome::Rejected
         });
@@ -437,144 +489,4 @@ fn completed(receipt: &ControlReceipt, request: &LifecycleRequest) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn source(occurrence: &str) -> Source {
-        Source {
-            occurrence: occurrence.into(),
-            workspace: occurrence.into(),
-            server: "server".into(),
-            target: header(7, None).lifecycle_target(),
-        }
-    }
-
-    fn receipt(request: &LifecycleRequest, pending: u64, unconfirmed: u64) -> serde_json::Value {
-        json!({"id":"operation","requestID":request.request_id,"action":request.action,
-            "expectedRevision":request.expected_revision,"graceful":request.graceful,
-            "pending":pending,"receipts":unconfirmed,"unconfirmedReceipts":unconfirmed,
-            "partialDescendants":0,"completedRevision":(pending == 0).then_some(request.expected_revision + 1)})
-    }
-
-    #[test]
-    fn durable_partial_allows_stop_but_unknown_ack_and_supersession_stay_distinct() {
-        let mut owner = Lifecycle::default();
-        let source = source("a");
-        let start = LifecycleRequest::new(LifecycleAction::Start, 7, false).unwrap();
-        let partial = header(8, Some(receipt(&start, 1, 0)));
-        assert!(owner.unresolved(&source, &partial));
-        assert!(owner.can_stop(&source, &partial));
-        assert!(owner.check(&source, &partial, false, 0));
-        owner.readback(&source, Some(&partial), 1);
-        assert!(owner.can_stop(&source, &partial));
-        owner.readback(&source, Some(&header(8, Some(receipt(&start, 0, 1)))), 2);
-        assert!(owner.unresolved(&source, &header(8, None)));
-        assert!(!owner.can_stop(&source, &header(8, None)));
-        let later = LifecycleRequest::new(LifecycleAction::Pause, 8, true).unwrap();
-        owner.readback(&source, Some(&header(9, Some(receipt(&later, 0, 0)))), 3);
-        assert!(!owner.unresolved(&source, &header(9, None)));
-        assert_eq!(owner.feedback.unwrap().1, "missions.control.run.superseded");
-    }
-
-    #[test]
-    fn a_delayed_post_excludes_double_click_duplicate_tab_and_reconnected_source() {
-        use crate::files::test_http::{Http, wait};
-        crate::platform::block_on(async {
-            let http = Http::new().await;
-            let a = source("tab-a");
-            let b = source("tab-b");
-            let replacement = Backend::unauthenticated(&http.backend.base).unwrap();
-            let (send, done) = bounded(1);
-            let wake: Wake = std::sync::Arc::new(move || {
-                let _ = send.try_send(());
-            });
-            let request = LifecycleRequest::new(LifecycleAction::Pause, 7, true).unwrap();
-            let mut owner = Lifecycle::default();
-            owner.start(&a, request.clone(), http.backend.clone(), wake.clone());
-            let held = http.accept().await;
-            assert_eq!(held.body["requestId"], request.request_id);
-            owner.start(&a, request.clone(), http.backend.clone(), wake.clone());
-            owner.retain_checks_for(Some(&b));
-            assert!(owner.busy(&b));
-            owner.start(&b, request.clone(), http.backend.clone(), wake.clone());
-            owner.start(&b, request.clone(), replacement, wake.clone());
-            http.quiet().await;
-            held.reply(503, json!({})).await;
-            wait(done.recv()).await.unwrap();
-            assert_eq!(owner.poll(), vec![(a, LifecycleOutcome::Unconfirmed)]);
-            assert!(!owner.busy(&b));
-            assert!(!owner.intents.contains_key(&b));
-        });
-    }
-
-    fn header(revision: u64, control: Option<serde_json::Value>) -> MapHeader {
-        serde_json::from_value(json!({
-            "root":{"version":1,"id":"mission","projectID":"project","projectCanonical":"/fixture",
-                "excerpt":"Fixture","template":"custom","status":"active","coordinatorSessionId":"session",
-                "revision":revision,"createdAt":1,"updatedAt":1,"historyTruncated":false,"bodies":{}},
-            "collections":{},"tasks":{"page":{"order":"","offset":0,"end":0,"total":0,"counts":{},"reports":0},
-                "pins":[],"reportPins":[],"version":""},
-            "control":control,
-        })).unwrap()
-    }
-
-    #[test]
-    fn absent_or_foreign_receipts_leave_exact_intent_held_and_require_a_fresh_check() {
-        let source = Source {
-            occurrence: "occurrence".into(),
-            workspace: "workspace".into(),
-            server: "server".into(),
-            target: header(7, None).lifecycle_target(),
-        };
-        let intent = LifecycleRequest::new(LifecycleAction::Pause, 7, true).unwrap();
-        let mut store = Lifecycle::default();
-        store.intents.insert(
-            source.clone(),
-            Intent {
-                request: intent.clone(),
-                flight: None,
-                checking: None,
-                checked: None,
-                acknowledged: None,
-            },
-        );
-        assert!(store.original(&source, 7).is_none());
-        assert!(store.check(&source, &header(7, None), false, 0));
-        store.readback(&source, None, 0);
-        assert!(store.original(&source, 7).is_none());
-        assert!(store.check(&source, &header(7, None), false, 0));
-        store.readback(&source, Some(&header(7, None)), 1);
-        assert_eq!(store.original(&source, 7), Some(intent.clone()));
-        assert!(store.original(&source, 8).is_none());
-        assert!(store.check(&source, &header(7, None), true, 1));
-        assert!(store.readback(&source, Some(&header(7, None)), 1).is_none());
-        assert_eq!(
-            store.readback(&source, Some(&header(7, None)), 2),
-            Some(intent.clone())
-        );
-        assert!(store.check(&source, &header(7, None), true, 2));
-        store.retain_checks_for(None);
-        assert!(store.readback(&source, Some(&header(7, None)), 3).is_none());
-        let receipt = |id: &str, pending: u64| {
-            json!({
-                "id":"control","requestID":id,"action":"pause","expectedRevision":7,"completedRevision":(pending==0).then_some(8),
-                "pending":pending,"receipts":0,"unconfirmedReceipts":0,"partialDescendants":0,"graceful":true,
-            })
-        };
-        store.readback(&source, Some(&header(8, Some(receipt("foreign", 0)))), 3);
-        assert!(store.intents.contains_key(&source));
-        store.readback(
-            &source,
-            Some(&header(8, Some(receipt(&intent.request_id, 1)))),
-            4,
-        );
-        assert!(store.intents.contains_key(&source));
-        store.readback(
-            &source,
-            Some(&header(8, Some(receipt(&intent.request_id, 0)))),
-            5,
-        );
-        assert!(!store.intents.contains_key(&source));
-    }
-}
+mod tests;

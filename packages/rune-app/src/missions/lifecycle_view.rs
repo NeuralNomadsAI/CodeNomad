@@ -112,11 +112,7 @@ pub(crate) fn controls(panel: &Panel, owner: &Lifecycle, occurrence: &str, act: 
         view = view.child(theme::note(t("missions.control.run.checking"), "status"));
     } else if owner.unresolved(&source, header) {
         view = view.child(theme::note(t("missions.control.run.error"), "alert"));
-    } else if let Some((_, key)) = owner
-        .feedback
-        .as_ref()
-        .filter(|(target, _)| target == &source)
-    {
+    } else if let Some(key) = owner.feedback(&source) {
         view = view.child(theme::note(t(key), "alert"));
     } else if pausing {
         view = view.child(theme::note(t("missions.control.run.pausing"), "status"));
