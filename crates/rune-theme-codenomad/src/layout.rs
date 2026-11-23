@@ -120,6 +120,10 @@ pub fn announce_selection(tx: &mut rune::Tx, name: &str) {
     tx.announce(name, rune::LiveRegion::Polite);
 }
 
+pub fn announce_alert(tx: &mut rune::Tx, message: &str) {
+    tx.announce(message, rune::LiveRegion::Assertive);
+}
+
 pub fn suggestion_list<S: 'static>(
     key: &str,
     anchor: &str,

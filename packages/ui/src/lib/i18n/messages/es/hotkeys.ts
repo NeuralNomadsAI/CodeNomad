@@ -1,5 +1,6 @@
 export const hotkeyMessages = {
   "hotkeys.unavailable": "Esta acción aún no tiene un atajo configurable en Rune.",
+  "hotkeys.reserved": "El editor reserva este atajo. Elige otra combinación.",
   "settings.nav.hotkeys": "Atajos de teclado",
   "hotkeys.filter": "Filtrar atajos",
   "hotkeys.resetAll": "Restablecer todos",

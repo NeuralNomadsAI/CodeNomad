@@ -474,6 +474,7 @@
   "hotkeys.empty": "Aucun raccourci",
   "hotkeys.filter": "Filtrer les raccourcis",
   "hotkeys.noResults": "Aucun raccourci trouvé.",
+  "hotkeys.reserved": "Ce raccourci est réservé par l’éditeur. Choisissez une autre combinaison.",
   "hotkeys.reset": "Réinitialiser",
   "hotkeys.resetAll": "Tout réinitialiser",
   "hotkeys.saveFailed": "Impossible d’enregistrer les raccourcis. Réessayez.",
