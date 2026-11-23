@@ -142,7 +142,7 @@ test("configuration progress names save, confirmation, removal and read separate
   } finally { release(); await page.close() }
 })
 
-test("saving a configuration under the same name requires confirmation and replaces its ID", async () => {
+test("saving a configuration under the same name requires confirmation and keeps its ID", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   const model = { version: 1, id: modelID, name: "Release brief", objective: "Original objective", notes: "", template: "custom" }
   const fixture = await setup(page, { missionModels: [model] })
@@ -159,6 +159,7 @@ test("saving a configuration under the same name requires confirmation and repla
     assert.equal(fixture.writes.length, 0)
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
     await dialog.waitFor({ state: "hidden" })
+    await field.and(page.locator(":focus")).waitFor()
     assert.equal(await field.inputValue(), ` ${model.name} `)
     assert.equal(fixture.writes.length, 0)
     await field.press("Enter")

@@ -257,7 +257,7 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
         onClick={() => void save()}>{t("missions.models.save")}</button>
       <button type="button" class={buttonClass()} aria-label={t("missions.create.brief.cancel")} onClick={() => close()}>{t("missions.control.cancel")}</button>
       <Show when={props.reading?.()}>{reading => <MissionBodyPending failed={reading().failed} changed={reading().changed} onRetry={() => reading().onRetry()} />}</Show>
-      <Show when={nameProblem()}>{problem => <span role="status">{t(problem())}</span>}</Show>
+      <Show when={nameProblem()}>{problem => <p role="status">{t(problem())}</p>}</Show>
     </Show>
     {actions.status()}
   </div>
