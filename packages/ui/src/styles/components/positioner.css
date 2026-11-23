@@ -1,0 +1,4 @@
+/* Floating geometry lands immediately; the positioned content owns its motion. */
+[data-popper-positioner] {
+  transition: none !important;
+}

@@ -9,6 +9,7 @@ import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { fixtureGesturePoint, withFixtureMiddleDrag } from "./fixture-native-gesture"
+import { TASK_STEP_MOUNT_LIMIT } from "../../src/components/tool-call/renderers/task-summary"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -218,13 +219,23 @@ test("native page output must not reuse zero-revision Markdown when a tool is re
 }))
 
 test("changing an indexed task key does not transfer a removed tool's disclosure", async () => open("mode=task&count=200", async page => {
-  const first = step(page)
+  // The list mounts its newest window; the oldest mounted row is the one a
+  // reader at the top holds. Expanding it must not transfer to its neighbour
+  // when the window later slides past it.
+  const oldestMounted = 200 - TASK_STEP_MOUNT_LIMIT
+  const first = step(page, oldestMounted)
   await first.waitFor()
   await first.locator(":scope > .tool-call-header > .tool-call-header-toggle").click()
   await first.locator("pre code").waitFor()
+  // Leave the top (releasing the expanded row's focus) and stream one step in.
+  await page.evaluate(() => {
+    (document.activeElement as HTMLElement | null)?.blur()
+    const container = document.querySelector(".tool-call-task-container") as HTMLElement | null
+    if (container) container.scrollTop = container.scrollHeight
+  })
   await page.evaluate(() => (window as any).fixture.appendTool())
   await first.waitFor({ state: "detached" })
-  assert.equal(await step(page, 1).locator(":scope > .tool-call-header > .tool-call-header-toggle").getAttribute("aria-expanded"), "false")
+  assert.equal(await step(page, oldestMounted + 1).locator(":scope > .tool-call-header > .tool-call-header-toggle").getAttribute("aria-expanded"), "false")
   assert.equal(await page.locator('.tool-call[data-part-id="appended-step"]').count(), 1)
 }))
 
@@ -286,11 +297,12 @@ test("authoritative task membership keeps the 200-step bound and clears stale tr
   await step(page, 200).waitFor()
   const counter = page.locator('.tool-call[data-part-id="parent-task"] .tool-call-task-section-meta').filter({ hasText: /^\d+\+? steps?$/ })
   assert.equal(await counter.textContent(), "200+ steps")
-  assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), 200)
+  assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), TASK_STEP_MOUNT_LIMIT)
   await page.evaluate(() => (window as any).fixture.replaceChildTools(Array.from({ length: 199 }, (_, index) => index + 2)))
   await frames(page)
   assert.equal(await counter.textContent(), "199 steps")
-  assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), 199)
+  assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), TASK_STEP_MOUNT_LIMIT)
+  assert.match(await page.locator('.tool-call[data-part-id="parent-task"] .message-hidden-parts').textContent() ?? "", new RegExp(`${199 - TASK_STEP_MOUNT_LIMIT} items hidden`))
   assert.equal(await page.locator('.tool-call[data-part-id="parent-task"] .tool-call-diagnostic-message').count(), 0)
 }))
 
@@ -300,7 +312,7 @@ for (const { count, legacy } of [{ count: 2, legacy: false }, { count: 201, lega
     const counter = parent.locator(".tool-call-task-section-meta").filter({ hasText: /^\d+\+? steps?$/ })
     await step(page, count - 1).waitFor()
     assert.equal(await counter.textContent(), `${count > 200 ? "200+" : count} steps`)
-    assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), Math.min(count, 200))
+    assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), Math.min(count, TASK_STEP_MOUNT_LIMIT))
     assert.equal(await parent.locator('[data-task-id="legacy-step"]').count(), 0, "native steps supersede the parent's legacy summary")
     await parent.evaluate(element => { (window as any).originalParentTask = element })
     await page.evaluate(() => (window as any).fixture.deleteChild())
@@ -353,7 +365,7 @@ test("audit sample: deterministic native child deltas (timings are observations,
   if (!process.env.CODENOMAD_RENDER_TASK_BASELINE && process.env.CODENOMAD_RENDER_INSTRUMENT !== "off") {
     assert.ok(samples.every(sample => sample.added === 0 && sample.removed === 0), "structural rescans must not remount unchanged task shells")
   }
-  assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), 80)
+  assert.equal(await page.locator('.tool-call[data-part-id^="step-"]').count(), TASK_STEP_MOUNT_LIMIT)
 }))
 
 test("large tool output bounds rendered text but preserves full clipboard source", async () => open("mode=task&count=1&size=2000000", async page => {

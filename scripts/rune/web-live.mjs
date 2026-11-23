@@ -120,7 +120,45 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
   return evidence
 }
 
-export async function navigatePair(tab, url, {fromLink=false}={}){
+export async function revokedLauncher({context,url,messages}){
+  const page=await context.newPage()
+  try {
+    await page.goto(url.href,{waitUntil:'domcontentloaded'})
+    const connect=page.getByRole('button',{name:messages['folderSelection.servers.dialog.connect'],exact:true})
+    await connect.waitFor()
+    const password=messages['authRecovery.password']
+    const observePassword=async()=>{
+      assert.equal(await page.getByText(password,{exact:true}).count(),0)
+      assert.equal(await page.getByLabel(password,{exact:true}).count(),0)
+      const generic=await page.getByLabel('Password input',{exact:true}).evaluateAll(fields=>fields.map(field=>{
+        const rect=field.getBoundingClientRect(),style=getComputedStyle(field)
+        return {bridge:field instanceof HTMLInputElement&&field.type==='password'&&field.parentElement===document.body&&
+          field.tabIndex===-1&&field!==document.activeElement&&style.opacity==='0'&&style.pointerEvents==='none',
+          tag:field.tagName,type:field.type,tabIndex:field.tabIndex,focused:field===document.activeElement,
+          opacity:style.opacity,pointerEvents:style.pointerEvents,rect:[rect.width,rect.height]}
+      }))
+      assert(generic.length<=1&&generic.every(field=>field.bridge),`Only Rune's hidden password proxy may carry the generic label: ${JSON.stringify(generic)}`)
+      assert.equal(await page.locator('input[type=password]').count(),generic.length,'Reject password controls with any other label')
+      const mirror=await page.locator('body').ariaSnapshot()
+      return mirror.includes('textbox "Password input"')
+    }
+    for(let i=0;i<4;i++){
+      await page.keyboard.press('Tab')
+      assert.equal(await page.locator('input[type=password]:focus').count(),0,'No launcher gesture may activate a password field')
+    }
+    const beforeRevocation=await observePassword()
+    await command('revoke')
+    const box=await connect.boundingBox();assert(box)
+    await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
+    await page.getByRole('dialog',{name:messages['authRecovery.pairingTitle'],exact:true}).waitFor()
+    const afterRevocation=await observePassword()
+    assert.equal(await connect.count(),0,'Pairing replaces the launcher form instead of covering it')
+    return {launcherRevokedNoPassword:true,passwordProxy:beforeRevocation||afterRevocation?
+      {status:'known-gap',issue:'https://github.com/anomalyco/rune/issues/594'}:{status:'not-observed'}}
+  } finally { await page.close() }
+}
+
+export async function navigatePair(tab, url, {fromLink=false,assets}={}){
   const pairPath='/api/remote-control/pair'
   const referrer='https://rune-pair-source.test/'
   let observedReferrer
@@ -134,7 +172,8 @@ export async function navigatePair(tab, url, {fromLink=false}={}){
       observedReferrer=(await req.allHeaders()).referer
     }
     const exchange=requested.pathname===pairPath&&req.method()==='POST'&&req.postDataJSON()?.code===url.hash.slice(1)
-    return requested.origin===url.origin&&(exchange||req.method()==='GET'&&['/remote-pair','/'].includes(requested.pathname))
+    return requested.origin===url.origin&&(exchange||req.method()==='GET'&&
+      (['/remote-pair','/'].includes(requested.pathname)||assets?.has(requested.pathname)))
       ?route.continue():route.abort()
   }
   await tab.route('**/*', routePair)
@@ -152,5 +191,6 @@ export async function navigatePair(tab, url, {fromLink=false}={}){
     assert.equal(status,200,'Serve the pairing document even with a foreign Referer')
     assert.equal((await exchange).status(),200)
     await tab.waitForURL(target=>target.pathname==='/' && target.searchParams.get('locale')===url.searchParams.get('locale'))
+    if(assets)await tab.waitForFunction(()=>globalThis.__codenomadRuneBoot?.state==='ready',undefined,{timeout:60000})
   } finally { await tab.unroute('**/*',routePair) }
 }

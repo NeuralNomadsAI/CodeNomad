@@ -157,6 +157,11 @@ Configuration-document reads, permissions and mutations use native distro IO.
 Never classify a plugin by its display name, ID or a `codenomad` prefix alone. A third-party
 homonym retains its ordinary controls.
 
+The right panel's [Missions gesture](MISSIONS.md#activation) uses the existing
+activation mutation with a managed-identity requirement and an exact Global rule.
+Managed attention omits a Missions disable decided by the exact Global
+`-codenomad.missions` rule. Other disables retain scoped **Re-enable**.
+
 The per-feature build scripts emit a minimal descriptor on the runtime payload's first line:
 `// CodeNomad plugin IDs: ["..."]`. These IDs are inside the SHA-256-verified payload bytes.
 Detection reads them generically; every new feature builder must emit its actual exported IDs.

@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.activation.disableConfirm": "OpenCode のグローバル設定でミッションを無効にしますか？削除や一時停止は行われません。",
   "missions.followed.title": "フォロー中の会話",
   "missions.followed.add": "会話を追加",
   "missions.followed.source": "フォロー中の会話 {number}",

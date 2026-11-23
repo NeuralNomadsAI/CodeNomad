@@ -43,6 +43,7 @@ export function workspacePolicy({origin,project,assets=new Set()}){
       if(body&&Buffer.byteLength(JSON.stringify(body))>32768)return false
       if((method==='GET'||method==='HEAD')&&assets.has(p))return true
       if(method==='GET'&&['/api/workspaces','/api/meta','/api/events','/api/auth/status'].includes(p))return true
+      if(method==='GET'&&(p==='/api/storage/config/ui'||p==='/api/storage/state/ui'))return true
       if(method==='POST'&&p==='/api/client-connections/pong')return true
       if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
       if(method==='POST'&&p==='/api/workspaces/creation/cancel')return claim(body)&&claims.has(body.requestId)

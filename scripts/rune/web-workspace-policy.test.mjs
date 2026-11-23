@@ -13,6 +13,17 @@ test('origin and cookie refusals never register a creation claim',async()=>{
   assert(!await p.request(req(origin,'private=fixture'),{allowApi:false}))
   assert(!p.allows('POST','/api/workspaces/creation/cancel',{requestId:'unadmitted'}))
 })
+test('UI preferences are read-only and require the private origin and cookie',async()=>{
+  const p=workspacePolicy({origin,project})
+  for(const path of ['/api/storage/config/ui','/api/storage/state/ui']){
+    const req=(base,cookie,method='GET')=>({url:()=>base+path,method:()=>method,allHeaders:async()=>({cookie})})
+    assert(await p.request(req(origin,'private=fixture')))
+    assert(!await p.request(req(origin,'')))
+    assert(!await p.request(req('http://localhost:12345','private=fixture')))
+    assert(!await p.request(req(origin,'private=fixture','PATCH')))
+    assert(!await p.request(req(origin,'private=fixture'),{allowApi:false}))
+  }
+})
 test('only the exact private project and bounded creation claims enter the owned policy',()=>{
   const p=workspacePolicy({origin,project})
   for(const input of [{path:project},creation(''),creation(' '),creation('x'.repeat(129)),{...creation('valid'),path:project+'/other'},{...creation('valid'),location:{directory:'/foreign'}}])assert(!p.allows('POST','/api/workspaces',input))

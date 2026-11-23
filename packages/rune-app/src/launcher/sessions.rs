@@ -137,6 +137,10 @@ pub fn list(s: &mut State, more: bool) {
     if more && !l.can_page() {
         return;
     }
+    #[cfg(target_arch = "wasm32")]
+    if !more && l.show_search && !l.search.text.trim().is_empty() {
+        l.search_results = Default::default();
+    }
     l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
@@ -221,12 +225,14 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
 }
 pub fn can_change_session(s: &State) -> bool {
     s.phase != Phase::Streaming
+        && s.pending_prompt.is_none()
         && crate::workspace::input_ready(s)
         && !crate::agent::navigation_blocked(s)
 }
 pub(super) fn can_rebind(s: &State, id: &str) -> bool {
     !s.screen.is_launcher()
         && s.phase == Phase::Failed
+        && s.pending_prompt.is_none()
         && crate::workspace::active_session(s) == Some(id)
 }
 pub fn can_visit(s: &State, back: bool) -> bool {
@@ -283,9 +289,7 @@ pub(super) fn bind(
 ) {
     let same_session =
         !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
-    let mut reauthenticated = false;
     if let Some(l) = s.screen.launcher_mut() {
-        reauthenticated = l.reauthenticated_session.take().as_deref() == Some(b.session.as_str());
         l.visits
             .record(&b.session, visit, l.listed_sessions.contains(&b.session));
         if let Some(row) = l.sessions.iter_mut().find(|row| row.id == b.session) {
@@ -309,14 +313,11 @@ pub(super) fn bind(
         s.messages.clear();
         s.can_older = false;
     } else if let Some(agent) = &mut s.agent {
-        if reauthenticated {
-            let mut next = crate::agent::Ui::new(crate::agent::start(b.clone(), s.wake.clone()));
-            next.drafts = std::mem::take(&mut agent.drafts);
-            next.reasons = std::mem::take(&mut agent.reasons);
-            *agent = next;
+        if !agent.uses_connection(&b) {
+            agent.reauthenticate(crate::agent::start(b.clone(), s.wake.clone()));
             crate::files::bind(s, &b);
         } else {
-            // The same owned occurrence and session retain their in-flight reply guard.
+            // This is the same owned occurrence and session; the in-flight reply guard stays live.
             agent.online = false;
             agent.pending_known = false;
         }

@@ -21,7 +21,7 @@ Lorsque le tunnel est bloqué mais que le backend est joignable en HTTPS de conf
 
 1. Sur l’hôte, ouvrez **Paramètres → Accès distant → Contrôle à distance**.
 2. Sous **Appairage HTTPS direct**, choisissez l’**Adresse HTTPS** si plusieurs sont proposées, puis **Créer un lien d’appairage HTTPS**.
-3. Ouvrez le lien sur l’appareil, comme un lien de tunnel.
+3. Ouvrez le lien sur l’appareil, comme un lien de tunnel. Vous pouvez cliquer dessus depuis une autre page.
 
 Le lien suit les mêmes règles de cinq minutes et d’usage unique, et remplace tout lien inutilisé ; les codes erronés répétés sont limités. Un proxy inverse doit terminer un TLS de confiance, transmettre les en-têtes `Host` et `Origin` d’origine et joindre le backend par la boucle locale ou un réseau protégé.
 

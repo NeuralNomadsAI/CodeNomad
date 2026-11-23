@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.activation.disableConfirm": "Отключить миссии в глобальной конфигурации OpenCode? Ничего не будет удалено или приостановлено.",
   "missions.followed.title": "Отслеживаемые беседы",
   "missions.followed.add": "Добавить беседу",
   "missions.followed.source": "Отслеживаемая беседа {number}",

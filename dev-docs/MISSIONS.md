@@ -16,6 +16,18 @@ schedule RPC and business bridge stay registered independently of desktop presen
 The calendar owner shares project document exclusion with admission and controls;
 the execution journal retains its task, report and lifecycle contracts.
 
+## Activation
+
+The **Missions** checkbox in **Customize right panel** uses the regular tab
+visibility preference. The gesture also writes `codenomad.missions` when shown
+or `-codenomad.missions` after confirming hide, in the connected OpenCode
+server's Global configuration. The checkbox takes direct input outside the
+visibility sweep. Closing the panel cancels an open confirmation. A failed write
+sends an app notification and retains the layout choice. The gesture requires a
+direct Global file so OpenCode can observe the write. Reset only changes the
+layout. Project rules still take precedence.
+Other Missions surfaces use their ordinary availability handling.
+
 ## Backend routing
 
 The Mission panel, reader, editor and controls resolve the project's `backendOf(instanceId)` for all Mission, schedule, recurrence and passage requests. Playbooks belong to that backend; native profile catalogues and Wayfinder Forms use its root SDK client. Workspace HTTP paths carry the raw workspace ID; presentation uses the qualified occurrence's `instanceId`, completion acknowledgements retain backend-qualified project scope, and request directories remain physical paths. Missing owners fail closed. Attachment and request generations fence reads, follow-up effects and publication; in-flight deduplication and busy cleanup retain their exact operation owner. Dispatched mutations retain their selected backend and durable request identity for explicit reconciliation.

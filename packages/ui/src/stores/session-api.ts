@@ -2186,10 +2186,22 @@ async function loadMessages(
       }
       if (!isCurrent()) return false
       const expectedRevision = nextWindow.kind === "latest" && !initialSeed ? messageRevision : undefined
-      if ((!initialSeed && hasLatestRevisionConflict())
-        || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
+      // Short-circuit: a load already raced by a native event must not seed
+      // its stale snapshot at all (the retry re-fetches instead).
+      if (!initialSeed && hasLatestRevisionConflict()) {
+        retryAfterRevisionConflict = true
+      } else if (!(await seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false, true, true,
+        // A load that lost its authority while the chunked seed computed (a
+        // cancelled or superseded jump) must not publish; ordinary streaming
+        // keeps it, with the finalize pass deciding rows by freshness.
+        () => isCurrent(),
+        nextWindow.kind === "latest"))) {
         retryAfterRevisionConflict = true
       } else {
+        // The chunked seed awaited across task boundaries: the load's
+        // authority may have ended while its chunks computed. A cancelled or
+        // superseded load must not install its window.
+        if (!isCurrent()) return false
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
         commitCurrentWindow(nextWindow, intent)
         markSessionMessagesLoaded(instanceId, sessionId)
@@ -2239,6 +2251,11 @@ async function loadMessages(
     try {
       if (sessions().get(instanceId)?.has(sessionId)) {
         if (revisionRetry >= MAX_LATEST_WINDOW_REVISION_RETRIES) {
+          // A load that lost its authority on its final attempt (cancelled or
+          // superseded between the retry's backoff and this check) fails
+          // silently: publishing a load error for a window nobody awaits
+          // would strand an error surface with no retry left.
+          if (!isCurrent()) return false
           const error = new Error(tGlobal("messageSection.loadError.detail"))
           setSessionMessagesLoadError(instanceId, sessionId, getOpencodeErrorMessage(error, tGlobal("messageSection.loadError.detail")))
           throw error

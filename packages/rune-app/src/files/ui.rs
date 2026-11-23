@@ -21,17 +21,25 @@ pub struct Row {
     pub busy: bool,
 }
 pub struct Ui {
+    pub reading: crate::chat::reading::Position,
+    pub reader_close: crate::window_control::WindowCloseState,
+    pub(super) pictures: super::markdown_images::Pictures,
+    pub presentation: super::presentation::Presentation,
     pub document: Editor,
     pub reader: Reader,
     pub tree: Tree,
     pub rows: Vec<Row>,
     pub panel: bool,
-    backend: Backend,
+    pub(super) shell_managed: bool,
+    pub(super) local: bool,
+    pub(super) actions: super::view::Actions,
+    pub host_width: Option<f32>,
+    pub(super) backend: Backend,
     reads: Reads,
     collation: std::result::Result<Collation, String>,
     incoming: Receiver<(Read, Result<Vec<Entry>>)>,
     out: Sender<(Read, Result<Vec<Entry>>)>,
-    wake: Wake,
+    pub(super) wake: Wake,
     active: bool,
     online: bool,
     due: Option<f64>,
@@ -41,9 +49,17 @@ pub struct Ui {
     pub stopped: bool,
 }
 impl Ui {
+    pub(crate) fn uses_connection(&self, backend: &Backend) -> bool {
+        self.backend.client.same_connection(&backend.client)
+    }
+
     pub fn new(backend: Backend, directory: String, reads: Reads, wake: Wake) -> Self {
         let (out, incoming) = bounded(16);
         Self {
+            reading: Default::default(),
+            reader_close: Default::default(),
+            pictures: super::markdown_images::Pictures::new(wake.clone()),
+            presentation: super::presentation::Presentation::new(wake.clone()),
             document: Editor::new(
                 backend.clone(),
                 Store::default(),
@@ -54,6 +70,10 @@ impl Ui {
             tree: Tree::new(directory),
             rows: vec![],
             panel: false,
+            shell_managed: false,
+            local: false,
+            actions: Default::default(),
+            host_width: None,
             backend,
             reads,
             collation: Collation::try_default(),
@@ -69,28 +89,87 @@ impl Ui {
             stopped: false,
         }
     }
+    pub(super) fn with_shell(mut self, local: bool) -> Self {
+        self.shell_managed = true;
+        self.local = local;
+        self
+    }
+    pub(super) fn tree_visible(&self) -> bool {
+        if self.shell_managed {
+            self.panel
+        } else {
+            self.drawer().pinned
+        }
+    }
+    pub(super) fn actions_ready(&self) -> bool {
+        self.tree_visible() && self.active && self.online && !self.stopped
+    }
     pub fn activate(&mut self, active: bool) {
         self.active = active;
+        if !active {
+            self.host_width = None;
+            self.pictures.suspend();
+            self.actions.revoke();
+        }
         self.document.activate(active);
         self.reader.activate(active);
         self.demand();
     }
     pub fn show(&mut self, show: bool) {
+        if self.panel == show {
+            return;
+        }
         self.panel = show;
         self.demand();
     }
+    pub fn browse(&mut self, directory: String) {
+        if self.tree.directory() != directory {
+            self.actions.revoke();
+            self.close_reader();
+            self.tree.switch(directory);
+            self.demand();
+        }
+    }
+    pub fn drawer(&self) -> super::layout::Drawer {
+        super::layout::resolve(self.host_width.unwrap_or(0.0), self.panel)
+    }
+    pub fn resize(&mut self, width: f32, tx: &mut rune::Tx) {
+        if !width.is_finite() || width < 0.0 || self.host_width == Some(width) {
+            return;
+        }
+        let was_pinned = self.drawer().pinned;
+        self.host_width = Some(width);
+        if !self.shell_managed
+            && was_pinned
+            && !self.drawer().pinned
+            && tx.focused().is_some_and(|key| {
+                key.starts_with("file-row-")
+                    || key.starts_with("file-eye-")
+                    || key.starts_with("file-retry-")
+            })
+        {
+            tx.focus("files-toggle", true);
+        }
+        self.demand();
+    }
     pub fn online(&mut self, online: bool) {
+        if !online {
+            self.pictures.suspend();
+        }
         self.document.online(online && !self.stopped);
         self.reader.online(online && !self.stopped);
         if online && !self.online {
             self.tree.invalidate_all();
             self.pending = None;
         }
+        if !online && self.online {
+            self.actions.revoke();
+        }
         self.online = online;
         self.demand();
     }
     fn demand(&mut self) {
-        self.tree.activate(self.active && self.panel && self.online);
+        self.tree.activate(self.actions_ready());
         self.due = Some(0.0);
         self.snapshot();
     }
@@ -118,14 +197,39 @@ impl Ui {
                 }
             }
             WorkspaceEvent::Stopped { workspace_id } if workspace_id == self.backend.workspace => {
+                self.pictures.suspend();
                 self.tree.close();
                 self.document.close();
                 self.reader.close();
                 self.pending = None;
                 self.stopped = true;
+                self.actions.revoke();
                 self.snapshot();
             }
             _ => {}
+        }
+    }
+    pub(super) fn listing_errors(
+        &self,
+    ) -> impl Iterator<Item = (&str, &codenomad_client::history::Error)> {
+        self.tree.errors().iter().filter_map(|(path, error)| {
+            self.listing_visible(path).then_some((path.as_str(), error))
+        })
+    }
+    fn listing_visible(&self, path: &str) -> bool {
+        path == "."
+            || self
+                .rows
+                .iter()
+                .any(|row| row.expanded.is_some() && row.entry.path == path)
+    }
+    pub(super) fn retry_listing(&mut self, directory: &str, path: &str) {
+        if !self.stopped
+            && directory == self.tree.directory()
+            && self.listing_visible(path)
+            && self.tree.errors().contains_key(path)
+        {
+            self.refresh(Some(path));
         }
     }
     pub fn refresh(&mut self, path: Option<&str>) {
@@ -146,14 +250,127 @@ impl Ui {
             self.launch(requests);
         }
     }
+    pub(super) fn sync_tree_focus(&mut self, tx: &mut rune::Tx) -> bool {
+        if self.stopped || !self.active || !self.tree_visible() {
+            return false;
+        }
+        // Rune polls before input and has no element focus callback. Read the resulting
+        // focus once on the next frame, leaving Tab order and scrolling to Rune.
+        if tx.input_waiting() {
+            tx.wake_after(std::time::Duration::ZERO);
+        }
+        let Some(path) = tx.focused().and_then(|key| key.strip_prefix("file-row-")) else {
+            return false;
+        };
+        if self.tree.selected() == Some(path) || !self.rows.iter().any(|row| row.entry.path == path)
+        {
+            return false;
+        }
+        self.tree.select(path.into());
+        true
+    }
+    pub fn navigate(&mut self, path: &str, key: &rune::Key, rtl: bool, tx: &mut rune::Tx) -> bool {
+        use rune::Key;
+        let Some(index) = self.rows.iter().position(|row| row.entry.path == path) else {
+            return false;
+        };
+        let row = &self.rows[index];
+        let next = match key {
+            Key::Enter => {
+                self.select(path.into(), row.expanded.is_some());
+                return true;
+            }
+            Key::Text(key) if key == " " => {
+                self.select(path.into(), row.expanded.is_some());
+                return true;
+            }
+            Key::Down => Some(
+                self.rows[(index + 1).min(self.rows.len() - 1)]
+                    .entry
+                    .path
+                    .clone(),
+            ),
+            Key::Up => Some(self.rows[index.saturating_sub(1)].entry.path.clone()),
+            Key::Home => self.rows.first().map(|row| row.entry.path.clone()),
+            Key::End => self.rows.last().map(|row| row.entry.path.clone()),
+            key if *key == if rtl { Key::Left } else { Key::Right } => {
+                match row.expanded {
+                    Some(false) => self.select(path.into(), true),
+                    Some(true) => {
+                        if let Some(child) = self
+                            .rows
+                            .get(index + 1)
+                            .filter(|child| child.parent == path)
+                        {
+                            self.focus_row(child.entry.path.clone(), tx);
+                        }
+                    }
+                    None => return false,
+                }
+                return true;
+            }
+            key if *key == if rtl { Key::Right } else { Key::Left } => {
+                if row.expanded == Some(true) {
+                    self.select(path.into(), true);
+                } else if row.parent != "." {
+                    self.focus_row(row.parent.clone(), tx);
+                }
+                return true;
+            }
+            _ => return false,
+        };
+        if let Some(path) = next {
+            self.focus_row(path, tx);
+        }
+        true
+    }
+    fn focus_row(&mut self, path: String, tx: &mut rune::Tx) {
+        let key = format!("file-row-{path}");
+        tx.focus(&key, true);
+        tx.scroll_into_view_in("workspace-tree-scroll", key);
+        self.tree.select(path);
+    }
+    pub(super) fn previews(&self, path: &str) -> bool {
+        self.reader
+            .target()
+            .is_some_and(|target| target.directory == self.tree.directory() && target.path == path)
+    }
+    pub(super) fn toggle_preview(
+        &mut self,
+        directory: &str,
+        path: &str,
+        tx: &mut rune::Tx,
+    ) -> bool {
+        if self.stopped || self.tree.directory() != directory {
+            return false;
+        }
+        if self.previews(path) {
+            self.close_reader();
+            self.reading.restore(tx);
+            false
+        } else {
+            self.open(path.into());
+            true
+        }
+    }
     pub fn open(&mut self, path: String) {
         if !self.stopped {
+            self.pictures.suspend();
+            self.reader_close = Default::default();
+            self.presentation.reset();
             self.document
                 .open(self.tree.directory().into(), path.clone());
             self.reader.open(self.tree.directory().into(), path);
         }
     }
+    pub fn reader_link(&self, target: &str, tx: &mut rune::Tx) {
+        if let Some(url) = self.backend.file_link(target) {
+            let _ = tx.open_url(&url);
+        }
+    }
     pub fn close_reader(&mut self) {
+        self.pictures.suspend();
+        self.presentation.reset();
         self.document.close();
         self.reader.close();
     }
@@ -163,6 +380,14 @@ impl Ui {
     }
     pub fn save_document(&mut self, scope: u64) {
         self.document.save(scope, &mut self.reader);
+    }
+    pub(super) fn document_kind(&self) -> Option<super::presentation::Kind> {
+        use super::presentation::Kind;
+        self.reader
+            .target()
+            .filter(|_| self.document.editable())
+            .map(|target| Kind::Text(super::document::text_format(&target.path)))
+            .or(self.presentation.kind)
     }
     pub fn refresh_document(&mut self, scope: u64) {
         self.document.refresh(scope, &mut self.reader);
@@ -212,7 +437,11 @@ impl Ui {
         if !self.incoming.is_empty() {
             (self.wake)();
         }
-        if self.active && self.panel && self.online && self.due.is_some_and(|due| now >= due) {
+        if self.active
+            && self.tree_visible()
+            && self.online
+            && self.due.is_some_and(|due| now >= due)
+        {
             self.due = None;
             let requests = self.tree.take_refresh();
             changed |= !requests.is_empty();
@@ -234,7 +463,21 @@ impl Ui {
         self.reader
             .activate(self.active && !self.document.writing());
         changed |= self.reader.poll(now);
-        changed | self.document.poll(&mut self.reader)
+        changed |= self.document.poll(&mut self.reader);
+        changed |= self
+            .presentation
+            .sync(&self.reader, self.document.revision());
+        let markdown = self.document_kind()
+            == Some(super::presentation::Kind::Text(
+                super::document::Format::Markdown,
+            ));
+        changed |= self.pictures.sync(
+            markdown.then(|| (self.document.scope(), self.document.revision())),
+            markdown && !self.presentation.source && self.active && self.online && !self.stopped,
+            &self.backend.base,
+            &self.document.edit().text,
+        );
+        changed
     }
     fn launch(&mut self, requests: Vec<Read>) {
         for read in requests {
@@ -267,6 +510,9 @@ impl Ui {
                 busy: self.tree.busy(&row.entry.path),
             })
             .collect();
+        if self.shell_managed {
+            self.actions.retain_rows(&self.rows);
+        }
     }
 }
 

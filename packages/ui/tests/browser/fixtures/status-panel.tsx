@@ -1,4 +1,6 @@
 import { render } from "solid-js/web"
+import AlertDialog from "../../../src/components/alert-dialog"
+import { Toaster } from "solid-toast"
 import { createSignal, lazy, Show } from "solid-js"
 import RightPanel from "../../../src/components/instance/shell/right-panel/RightPanel"
 import { ConfigProvider } from "../../../src/stores/preferences"
@@ -27,6 +29,8 @@ setSessionInfoByInstance(previous => new Map(previous).set(instance.id, new Map(
 }]])))
 const [activeSession, setActiveSession] = createSignal(session)
 const [width, setWidth] = createSignal(360)
+const [panelActive, setPanelActive] = createSignal(true)
+const [panelMounted, setPanelMounted] = createSignal(true)
 let streamOpens = 0
 serverEvents.onOpen(() => { streamOpens++ })
 const General = lazy(() => import("../../../src/components/settings/general-settings-section").then(module => ({ default: module.GeneralSettingsSection })))
@@ -36,10 +40,14 @@ function Fixture() {
   const { t } = useI18n()
   return <Show when={!showSettings} fallback={<div class="settings-content" style={{ padding: "24px" }}><General showStartupState={false} /></div>}>
     <div data-status-fixture style={{ width: `${width()}px`, height: "800px" }}>
-      <RightPanel isActive={() => true} t={t} instanceId={instance.id} instance={instance}
-        activeSessionId={() => activeSession().id} activeSession={activeSession} isPhoneLayout={() => false}
-        rightDrawerWidth={() => 360} rightDrawerWidthInitialized={() => true}
-        onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} />
+      <Show when={panelMounted()}>
+        <RightPanel isActive={panelActive} t={t} instanceId={instance.id} instance={instance}
+          activeSessionId={() => activeSession().id} activeSession={activeSession} isPhoneLayout={() => false}
+          rightDrawerWidth={() => 360} rightDrawerWidthInitialized={() => true}
+          onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} />
+      </Show>
+      <AlertDialog />
+      <Toaster />
     </div>
     <div data-message-usage-fixture style={{ width: "600px" }}><MessageUsage messageInfo={{
       tokens: { input: 1200, output: 300, reasoning: 80 }, cost: 0.12,
@@ -50,6 +58,8 @@ function Fixture() {
 await initializeClientState()
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).statusFixture = {
+  setPanelActive,
+  setPanelMounted,
   customization: () => JSON.parse(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY) ?? "{}"),
   update: () => setActiveSession(current => ({ ...current, model: { ...current.model },
     tokens: { ...current.tokens, output: current.tokens.output + 1 } })),

@@ -6,7 +6,8 @@ pub(crate) mod pairing;
 pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;
-pub(crate) use connection::configured_backend;
+pub(crate) mod workspace_open;
+pub(crate) use connection::configured_target;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod host;
 use std::{future::Future, time::Duration};

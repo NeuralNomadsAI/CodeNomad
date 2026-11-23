@@ -163,6 +163,8 @@ fn consecutive_sends_keep_distinct_responses_and_reenable_send() {
         tap(&mut rt, "send");
         assert!(matches!(commands.try_recv(), Ok(Command::Send(body)) if body == prompt));
         assert!(rt.state.phase == Phase::Streaming);
+        out.send_blocking(Event::PromptSettled { rejected: false })
+            .unwrap();
         for (kind, fields) in [
             (
                 "session.step.started",

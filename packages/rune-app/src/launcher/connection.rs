@@ -1,6 +1,22 @@
 use super::{Backend, Launcher, Reply, State, TextEdit, Tx};
 
+pub(super) fn watch_catalogue(l: &mut Launcher) {
+    if cfg!(target_os = "windows")
+        && l.catalogue_watch.is_none()
+        && let Some(backend) = &l.connection
+    {
+        let (watch, task) =
+            codenomad_client::stream::CatalogueWatch::new(backend.clone(), l.wake.clone());
+        l.catalogue_watch = Some(watch);
+        crate::platform::spawn(task);
+    }
+}
+
 pub fn connect(s: &mut State, _: &mut Tx) {
+    #[cfg(target_arch = "wasm32")]
+    if crate::platform::pairing::required(s) {
+        return;
+    }
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
@@ -15,11 +31,10 @@ pub fn connect(s: &mut State, _: &mut Tx) {
         l.address.text.clone()
     };
     let password = l.password.text.clone();
-    let expected_server = if l.authentication_required {
-        l.server_id.clone()
-    } else {
-        None
-    };
+    let expected_server = l
+        .authentication_required
+        .then(|| l.server_id.clone())
+        .flatten();
     l.job("rune.connect_error", async move {
         let b = Backend::connect(&address, &password).await?;
         let server_id = b.attest_server().await?;

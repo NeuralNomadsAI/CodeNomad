@@ -8,8 +8,7 @@ use crate::{
 use codenomad_client::{Receiver, Sender, bounded};
 use std::collections::{HashSet, VecDeque};
 
-const MAX_LINKED_SESSIONS: usize = 2_000;
-
+const MAX_BROWSED_SESSIONS: usize = 2_000;
 #[derive(Clone, Default)]
 pub(crate) struct Pages {
     pub rows: Vec<Session>,
@@ -25,7 +24,7 @@ impl Pages {
     fn keep(&mut self, rows: Vec<Session>, ids: &mut HashSet<String>) -> bool {
         for row in rows {
             if ids.insert(row.id.clone()) {
-                if self.rows.len() == MAX_LINKED_SESSIONS {
+                if self.rows.len() == MAX_BROWSED_SESSIONS {
                     return false;
                 }
                 self.rows.push(row);
@@ -168,14 +167,14 @@ mod tests {
             cursor: Some("opaque".into()),
             ..Default::default()
         });
-        let rows = (0..=super::MAX_LINKED_SESSIONS)
+        let rows = (0..=MAX_BROWSED_SESSIONS)
             .map(|id| Session {
                 id: id.to_string(),
                 title: String::new(),
             })
             .collect();
         assert!(!pages.keep(rows, &mut HashSet::new()));
-        assert_eq!(pages.rows.len(), super::MAX_LINKED_SESSIONS);
+        assert_eq!(pages.rows.len(), MAX_BROWSED_SESSIONS);
         assert_eq!(pages.remaining[0].cursor.as_deref(), Some("opaque"));
     }
 }

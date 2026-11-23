@@ -6,6 +6,7 @@ struct App {
     rtl: bool,
     selected: bool,
     expanded: Option<bool>,
+    busy: bool,
     clicks: usize,
     actions: usize,
 }
@@ -30,7 +31,7 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
                     selected: s.selected,
                     expanded: s.expanded,
                     icon: &icons::CHEVRON_RIGHT,
-                    busy: false,
+                    busy: s.busy,
                     actions: Some(
                         rune::text("Action")
                             .h(24.0)
@@ -45,6 +46,22 @@ fn view(s: &App, cx: &mut Cx<App>) -> El {
             .key("row")
             .on_press(|s: &mut App| s.clicks += 1),
         )
+}
+
+#[test]
+fn busy_folder_exposes_and_clears_accesskit_state() {
+    let mut rt = runtime(false, false, Some(true));
+    for busy in [true, false] {
+        rt.update(move |s, _| s.busy = busy);
+        rt.frame(0.02);
+        let (_, row) = rt
+            .accessibility_tree()
+            .nodes
+            .into_iter()
+            .find(|(_, node)| node.author_id() == Some("row"))
+            .unwrap();
+        assert_eq!(row.is_busy(), busy);
+    }
 }
 fn runtime(dark: bool, rtl: bool, expanded: Option<bool>) -> Runtime<App> {
     let mut rt = Runtime::new(

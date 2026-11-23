@@ -174,13 +174,19 @@ pub async fn admit(State((app, rune)): State<(Shared, Option<PathBuf>)>, mut req
         }
         return cors(next.run(req).await, None);
     }
+    let direct = channel.ingress || devices::direct_origin(&channel.origin);
+    let entry = direct
+        && !server
+        && matches!(*req.method(), Method::GET | Method::HEAD)
+        && matches!(path.as_str(), "/" | "/remote-pair");
     if supplied.is_some() && !origin_ok
-        || h.get(header::REFERER).is_some_and(|v| {
-            !v.to_str()
-                .ok()
-                .and_then(|s| reqwest::Url::parse(s).ok())
-                .is_some_and(|u| u.origin().ascii_serialization() == channel.origin)
-        })
+        || !entry
+            && h.get(header::REFERER).is_some_and(|v| {
+                !v.to_str()
+                    .ok()
+                    .and_then(|s| reqwest::Url::parse(s).ok())
+                    .is_some_and(|u| u.origin().ascii_serialization() == channel.origin)
+            })
     {
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
@@ -199,7 +205,7 @@ pub async fn admit(State((app, rune)): State<(Shared, Option<PathBuf>)>, mut req
             !id.is_empty() && !id.contains('/') && crate::missions::human_answer::form_reply(route, &method).is_some()
         });
     let backend_ui = !server && crate::previews::backend::enabled(&app) && preview_control(&path, &method);
-    if path == "/remote-pair" && matches!(method, Method::GET | Method::HEAD) && direct && !server {
+    if entry && path == "/remote-pair" {
         if let Some(dir) = &rune
             && let Some(page) = crate::host::ui::rune_pair_page(dir, method).await
         {
@@ -225,7 +231,8 @@ pub async fn admit(State((app, rune)): State<(Shared, Option<PathBuf>)>, mut req
     if !server && !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok {
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
-    if !backend_ui
+    if !entry
+        && !backend_ui
         && !form_reply
         && rune_ui.is_none()
         && !CATALOG.iter().any(|(methods, pat)| {
@@ -249,10 +256,12 @@ pub async fn admit(State((app, rune)): State<(Shared, Option<PathBuf>)>, mut req
         return cors(status(false), supplied);
     }
     if owner.is_none()
-        && rune_ui.is_some()
+        && entry
         && path == "/"
-        && method == Method::GET
-        && h.get(header::ACCEPT).and_then(|v| v.to_str().ok()).is_some_and(|v| v.contains("text/html"))
+        && h.get(header::ACCEPT).and_then(|v| v.to_str().ok()).is_some_and(|v| {
+            let accept = v.to_ascii_lowercase();
+            accept.contains("text/html") || accept.contains("application/xhtml")
+        })
     {
         return cors(
             (

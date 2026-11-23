@@ -115,8 +115,7 @@ pub(super) fn sync_files(s: &mut State) {
         if let Some(tree) = owner.tree()
             && !codenomad_client::same_server_path(files.tree.directory(), &tree.directory)
         {
-            files.tree.switch(tree.directory.clone());
-            files.refresh(None);
+            files.browse(tree.directory.clone());
         }
     }
 }
@@ -200,6 +199,19 @@ pub(crate) fn show(s: &mut State, visible: bool) {
 
 pub(crate) fn mode(s: &State) -> Mode {
     s.git.owner.as_ref().map_or(Mode::Workspace, Ui::mode)
+}
+
+pub(crate) fn files_checkout(s: &State, directory: &str) -> Option<String> {
+    let owner = s.git.owner.as_ref()?;
+    if let Some(tree) = owner.tree() {
+        return codenomad_client::same_server_path(directory, &tree.directory)
+            .then(|| tree.slug.clone());
+    }
+    if owner.slug != "root" {
+        return None;
+    }
+    let project = s.screen.launcher()?.project.as_ref()?;
+    codenomad_client::same_server_path(directory, &project.path).then(|| "root".into())
 }
 
 pub(crate) fn set_mode(s: &mut State, mode: Mode) {

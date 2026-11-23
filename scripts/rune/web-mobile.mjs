@@ -44,11 +44,19 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
         ? route.continue() : route.abort()
     })
     const get = (pathname, options) => context.request.get(new URL(pathname, origin).href, {maxRedirects:0,...options})
+    const entryHeaders={accept:'text/html',referer:'https://rune-pair-source.test/'}
+    const entry=method=>context.request.fetch(`${origin}/`,{method,maxRedirects:0,headers:entryHeaders})
     assert.equal((await get('/api/workspaces')).status(), 401)
     assert.deepEqual(await (await get('/api/auth/status')).json(), {authenticated:false,pairingRequired:true})
     const redirect = await get('/', {maxRedirects:0,headers:{accept:'text/html'}})
     assert.equal(redirect.status(), 302)
     assert.equal(redirect.headers().location, '/remote-pair')
+    if(fromLink)for(const method of ['GET','HEAD']){
+      const response=await entry(method)
+      assert.equal(response.status(),302,`${method} from an external page must redirect before pairing`)
+      assert.equal(response.headers().location,'/remote-pair')
+      if(method==='HEAD')assert.equal((await response.body()).length,0)
+    }
     const guide = await get('/remote-pair')
     assert.equal(guide.headers()['cache-control'], 'no-store')
     assert.equal(guide.headers()['referrer-policy'], 'no-referrer')
@@ -64,11 +72,21 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
       return matches
     }), 'The pairing card consumes the shared overlay token')
     url.searchParams.set('locale','fr')
-    await navigatePair(page,url,{fromLink})
+    await navigatePair(page,url,{fromLink,assets})
     const cookies = await context.cookies()
     assert(cookies.some(c => c.name === '__Host-codenomad_device' && c.secure && c.httpOnly && c.sameSite === 'Lax'))
     assert.equal((await (await get('/api/auth/status')).json()).authenticated, true)
     assert.equal((await get('/api/workspaces')).status(), 200)
+    const pairedEntry={}
+    if(fromLink)for(const method of ['GET','HEAD']){
+      const response=await entry(method)
+      assert.equal(response.status(),200,`${method} from an external page must serve the client after pairing`)
+      assert.match(response.headers()['content-type'],/^text\/html/)
+      const body=await response.body()
+      if(method==='GET')assert.match(body.toString('utf8'),/\.\/boot\.js/)
+      else assert.equal(body.length,0)
+      pairedEntry[method]=response.status()
+    }
     for (const pathname of ['/login', '/api/remote-control/devices', '/snippets/missing.js', '/app.d.ts']) {
       assert.equal((await get(pathname)).status(), 404, pathname)
     }
@@ -82,11 +100,11 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
     const sha256 = createHash('sha256').update(await wasm.body()).digest('hex')
     assert.equal(sha256, manifest.files.find(row => row.file === 'app_bg.wasm').sha256)
     await context.storageState({path:storage})
-    return {origin, sha256, paired:true, crossOriginLink:fromLink}
+    return {origin, sha256, paired:true, crossOriginLink:fromLink, clientBootReady:true, pairedEntry}
   } finally { await browser.close() }
 }
 
-export async function mobileInteraction(page, labels, imagePage) {
+export async function mobileInteraction(page, labels, imagePage, theme) {
   const cdp = await page.context().newCDPSession(page)
   const evidence = {}
   async function probe(name, check) {
@@ -96,6 +114,48 @@ export async function mobileInteraction(page, labels, imagePage) {
   const composer = role('group', labels.prompt)
   const send = role('button', labels.send)
   const editor = page.locator('textarea:focus')
+  const pad=theme['space-md'],gap=theme['space-sm']
+  const line=2*gap+Math.ceil(theme['font-size-base']*theme['line-height-normal'])
+  async function fieldRect(){
+    const group=await composer.boundingBox()
+    const actions=await composer.getByRole('button').evaluateAll(buttons=>Math.min(...buttons.map(button=>button.getBoundingClientRect().top)))
+    assert(group&&Number.isFinite(actions))
+    const x=Math.ceil(group.x+pad),y=Math.ceil(group.y+pad)
+    const width=Math.floor(group.x+group.width-pad)-x,height=Math.floor(actions-gap)-y
+    assert(width>0&&height>0)
+    return {x,y,width,height}
+  }
+  const inkClip=field=>({...field,height:Math.min(line,field.height)})
+  const capture=async clip=>`data:image/png;base64,${(await page.screenshot({clip,scale:'css'})).toString('base64')}`
+  async function glyphMatch(baseline, reference, candidate, startX=0, align=0){
+    return imagePage.evaluate(async ([baseline,reference,candidate,startX,align])=>{
+      const [a,b,c]=await globalThis.__codenomadReadPngs([baseline,reference,candidate])
+      const glyphs=[]
+      for(let i=0;i<a.pixels.length;i+=4){
+        const x=i/4%a.width,y=Math.floor(i/4/a.width)
+        if(x<startX)continue
+        if(![0,1,2].some(k=>Math.abs(a.pixels[i+k]-b.pixels[i+k])>28))continue
+        glyphs.push({i,x,y})
+      }
+      let best={matched:-1}
+      for(let dy=-align;dy<=align;dy++)for(let dx=-align;dx<=align;dx++){
+        let matched=0,minX=a.width,maxX=0,minY=a.height,maxY=0
+        for(const {i,x,y} of glyphs){
+          if(x+dx<0||x+dx>=c.width||y+dy<0||y+dy>=c.height)continue
+          const at=((y+dy)*c.width+x+dx)*4
+          if(![0,1,2].every(k=>Math.abs(c.pixels[at+k]-b.pixels[i+k])<=36)||
+             ![0,1,2].some(k=>Math.abs(c.pixels[at+k]-a.pixels[i+k])>20))continue
+          minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y)
+          matched++
+        }
+        if(matched>best.matched)best={matched,referencePixels:glyphs.length,width:maxX-minX+1,height:maxY-minY+1,lastX:maxX,dx,dy}
+      }
+      return best
+    },[baseline,reference,candidate,startX,align])
+  }
+  function looksLikeGlyphs(match){
+    return match.matched>=25&&match.matched>=match.referencePixels*0.5&&match.width>=8&&match.height>=4
+  }
   const center = async locator => {
     const rect = await locator.boundingBox()
     assert(rect && rect.width && rect.height)
@@ -108,6 +168,7 @@ export async function mobileInteraction(page, labels, imagePage) {
   const waitValue = value => page.waitForFunction(value =>
     document.activeElement?.tagName === 'TEXTAREA' && document.activeElement.value === value, value, {timeout:2500})
   const text = 'été 日本語 🦀'
+  let blank,paintedDraft
   try {
     await probe('touchScroll', async () => {
       const before = await rowSample()
@@ -139,48 +200,60 @@ export async function mobileInteraction(page, labels, imagePage) {
       const focus = await center(composer)
       await page.touchscreen.tap(focus.x,focus.y)
       await editor.waitFor({state:'attached',timeout:2500})
+      blank=await capture(inkClip(await fieldRect()))
       await cdp.send('Input.insertText',{text})
       await waitValue(text)
       return {...await editor.evaluate(el => ({focused:true,name:el.getAttribute('aria-label'),inputMode:el.inputMode,
         autocapitalize:el.autocapitalize,spellcheck:el.spellcheck})),tap:'center'}
     })
     await probe('compositionAndReplacement', async () => {
-      const bounds=await composer.boundingBox()
-      assert(bounds)
-      const clip={x:Math.ceil(bounds.x+2),y:Math.ceil(bounds.y+2),width:Math.floor(bounds.width-4),height:Math.floor(bounds.height/2)-4}
-      const capture=async()=>`data:image/png;base64,${(await page.screenshot({clip,scale:'css'})).toString('base64')}`
-      const before=await capture()
-      await cdp.send('Input.imeSetComposition',{text:'かな',selectionStart:2,selectionEnd:2})
-      await waitValue(`${text}かな`)
-      let preedit
+      const clip=inkClip(await fieldRect())
+      let before,prefix
       for(const until=Date.now()+2500;;){
-        preedit=await imagePage.evaluate(async ([before, after])=>{
-          const [a,b]=await globalThis.__codenomadReadPngs([before,after])
-          let first=a.width,last=0,changed=0
-          for(let i=0;i<a.pixels.length;i+=4){
-            if(![0,1,2].some(c=>Math.abs(a.pixels[i+c]-b.pixels[i+c])>16))continue
-            const x=i/4%a.width
-            first=Math.min(first,x);last=Math.max(last,x);changed++
-          }
-          return {changedInkPixels:changed,inkWidth:last-first+1}
-        },[before,await capture()])
-        if(preedit.changedInkPixels>=25&&preedit.inkWidth>=8)break
-        assert(Date.now()<until,'Rune must paint the preedit before the browser commits it')
+        before=await capture(clip)
+        prefix=await glyphMatch(blank,before,before)
+        if(looksLikeGlyphs(prefix)&&prefix.width>=30)break
+        assert(Date.now()<until,'The initial text must already be painted before starting preedit')
       }
-      await cdp.send('Input.insertText',{text:'仮名'})
-      await waitValue(`${text}仮名`)
+      const startX=prefix.lastX+1
+      const composing='かな'
+      await cdp.send('Input.imeSetComposition',{text:composing,selectionStart:2,selectionEnd:2})
+      await waitValue(text+composing)
+      // Keep samples taken before commit; the committed glyphs provide an underline-free reference.
+      const samples=[]
+      for(let probe=0;probe<3;probe++)samples.push(await capture(clip))
+      await cdp.send('Input.insertText',{text:composing})
+      await waitValue(text+composing)
+      let preedit,reference
+      for(const until=Date.now()+2500;;){
+        reference=await capture(clip)
+        const matches=await Promise.all(samples.map(sample=>glyphMatch(before,reference,sample,startX)))
+        preedit=matches.find(looksLikeGlyphs)
+        if(preedit)break
+        assert(Date.now()<until,`Rune must paint the committed glyph shapes during preedit: ${JSON.stringify(matches)}`)
+      }
+      assert(!looksLikeGlyphs(await glyphMatch(before,reference,before,startX)),'The no-glyph control must fail')
       // An external text service can replace a range without emitting key strokes.
       await editor.evaluate(el => {
         el.setRangeText('Été',0,3,'end')
         el.dispatchEvent(new InputEvent('input',{inputType:'insertReplacementText',data:'Été',bubbles:true}))
       })
-      await waitValue('Été 日本語 🦀仮名')
+      const draft='Été 日本語 🦀かな'
+      await waitValue(draft)
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+      paintedDraft=await capture(clip)
       await page.keyboard.press('Tab')
       await page.waitForFunction(()=>!document.querySelector('textarea:focus')&&[...document.querySelectorAll('textarea')].every(el=>!el.value))
       const point=await center(composer)
       await page.touchscreen.tap(point.x,point.y)
-      await waitValue('Été 日本語 🦀仮名')
-      return {composed:true,replaced:true,preedit,restoredAfterBlur:true}
+      await waitValue(draft)
+      let refocused
+      for(const until=Date.now()+2500;;){
+        refocused=await glyphMatch(blank,paintedDraft,await capture(clip))
+        if(looksLikeGlyphs(refocused))break
+        assert(Date.now()<until,'The committed glyphs must reappear in the painted editor after refocus')
+      }
+      return {composed:true,replaced:true,preedit,restoredAfterBlur:true,refocused}
     })
     await probe('visualOcclusion', async () => {
       const value = await editor.inputValue()
@@ -192,7 +265,7 @@ export async function mobileInteraction(page, labels, imagePage) {
         const canvas = document.querySelector('canvas'), height = visualViewport.height
         return Math.abs(canvas.getBoundingClientRect().height-height)<1 && Math.abs(canvas.height-height*devicePixelRatio)<=1
       })
-      const field = await composer.boundingBox(), button = await send.boundingBox()
+      const field = await fieldRect(), button = await send.boundingBox()
       const shown = await canvas.boundingBox()
       const viewportBounds = await page.evaluate(() => ({top:visualViewport.offsetTop,bottom:visualViewport.offsetTop+visualViewport.height,
         left:visualViewport.offsetLeft,right:visualViewport.offsetLeft+visualViewport.width}))
@@ -200,9 +273,18 @@ export async function mobileInteraction(page, labels, imagePage) {
       await waitValue(value)
       assert(field&&field.height>0&&field.y>=top-1&&field.y+field.height<=bottom+1&&field.x>=left-1&&field.x+field.width<=right+1,
         'The composer field must stay visible in the smaller viewport')
+      const clip=inkClip(field)
+      let draftInk
+      for(const until=Date.now()+2500;;){
+        // CSS screenshots at fractional DPR can round the two crops differently.
+        draftInk=await glyphMatch(blank,paintedDraft,await capture(clip),0,2)
+        if(looksLikeGlyphs(draftInk))break
+        assert(Date.now()<until,`The resized field must paint the known draft: ${JSON.stringify(draftInk)}`)
+      }
+      assert(!looksLikeGlyphs(await glyphMatch(blank,paintedDraft,blank)),'A field without draft text must fail')
       assert(button?.y>=top && button?.y+button?.height<=bottom+1,'Send must stay within the smaller viewport')
       await page.setViewportSize(viewport)
-      return {resized:true,canvas:shown,field,button,viewportBounds,retainedDraft:true,fieldVisible:true,sendReachable:true}
+      return {resized:true,canvas:shown,field,button,viewportBounds,draftInk,retainedDraft:true,fieldVisible:true,sendReachable:true}
     })
     return evidence
   } finally {await cdp.detach()}

@@ -29,3 +29,17 @@ export function workspaceRowContract(text){
   return {...indent[0],chevron:sizes.get('ChevronRight'),icon:sizes.get('Icon'),busy:sizes.get('RefreshCw')}
 }
 export const workspaceSource=workspaceRowContract(readFileSync(new URL('../../../'+sourcePath,import.meta.url),'utf8'))
+export function workspaceRootIcon(text){
+  const source=ts.createSourceFile('WorkspaceTree.tsx',text,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX)
+  let glyph
+  walk(source,node=>{
+    if(!ts.isJsxElement(node)||!node.openingElement.attributes.properties.some(prop=>ts.isJsxAttribute(prop)
+      &&prop.name.getText(source)==='class'&&prop.initializer?.getText(source)==='"workspace-tree-root"'))return
+    const icon=node.children.find(child=>ts.isJsxSelfClosingElement(child)&&child.tagName.getText(source)==='FolderOpen')
+    const size=icon?.attributes.properties.find(attr=>ts.isJsxAttribute(attr)&&attr.name.getText(source)==='size')?.initializer
+    if(!size||!ts.isJsxExpression(size)||!size.expression||!ts.isNumericLiteral(size.expression)) throw Error('Workspace root requires its explicit folder icon size')
+    glyph=Number(size.expression.text)
+  })
+  if(glyph===undefined)throw Error('Missing Workspace root icon')
+  return glyph
+}

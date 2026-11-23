@@ -16,10 +16,10 @@ function literal(node){
   throw Error('Nonliteral Lucide icon contract')
 }
 export async function generateWorkspaceIcons(){
-  await writeIcons('src/workspace_tree_icons.rs',glyphs)
-  await writeIcons('src/git_panel_icons.rs',gitGlyphs)
+  await generateIcons(glyphs,'src/workspace_tree_icons.rs')
+  await generateIcons(gitGlyphs,'src/git_panel_icons.rs')
 }
-async function writeIcons(output,glyphs){
+export async function generateIcons(glyphs,target){
   const folder=path.join(path.dirname(require.resolve('lucide-solid')),'../source/icons')
   const lines=['//! Generated from the installed Source Lucide dependency by generate-theme.mjs.','use rune::Icon;']
   for(const name of glyphs){
@@ -33,5 +33,5 @@ async function writeIcons(output,glyphs){
     }).join('')+'</g>'
     lines.push(`#[rustfmt::skip]\npub static ${name.toUpperCase().replaceAll('-','_')}: Icon = Icon { name: "lucide-${name}", view: 24.0, body: r#"${body}"# };`)
   }
-  await generated(output,lines.join('\n')+'\n')
+  await generated(target,lines.join('\n')+'\n')
 }

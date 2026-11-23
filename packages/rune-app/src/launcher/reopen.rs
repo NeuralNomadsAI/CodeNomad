@@ -1,5 +1,5 @@
 //! Browser recovery replaces the captured occurrence, keeping the active editor and transcript.
-use super::{Reply, attach, set_project};
+use super::{Reply, sessions::attach};
 use crate::{
     Phase, State,
     backend::Backend,
@@ -40,10 +40,10 @@ fn schedule(s: &mut State) -> Option<()> {
         {
             return Err("workspace restoration identity mismatch".into());
         }
-        let (backend, session) = backend
-            .bind_at(&opening.project, &session, None, false)
+        let (backend, session, slug) = backend
+            .bind_session_placed(&opening.project, &session, false)
             .await?;
-        Ok(Reply::Reopened(opening, backend, session.title))
+        Ok(Reply::Reopened(opening, backend, session.title, slug))
     });
     s.commands = None;
     s.incoming = None;
@@ -54,7 +54,7 @@ fn schedule(s: &mut State) -> Option<()> {
     Some(())
 }
 
-pub(super) fn apply(s: &mut State, opening: Opening, backend: Backend, title: String) {
+pub(super) fn apply(s: &mut State, opening: Opening, backend: Backend, title: String, slug: &str) {
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
@@ -63,15 +63,20 @@ pub(super) fn apply(s: &mut State, opening: Opening, backend: Backend, title: St
         s.phase = Phase::RestoreFailed;
         return;
     }
-    set_project(l, Some(project.clone()));
+    l.project = Some(project.clone());
+    l.linked = Default::default();
     l.sessions.clear();
+    l.listed_sessions.clear();
     l.next = None;
+    l.consumed_cursors.clear();
     workspace::capture(s);
     workspace::opened(s, &project);
     workspace::bound(s, &backend);
     s.transcript_display
         .bind(&backend.base, &backend.workspace, &backend.session);
     crate::files::bind(s, &backend);
+    crate::git::connected_placed(s, &backend, slug);
+    workspace::restore_files_mode(s);
     if let Some(agent) = &mut s.agent {
         agent.rebind(crate::agent::start(backend.clone(), s.wake.clone()));
     }

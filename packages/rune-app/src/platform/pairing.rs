@@ -44,8 +44,12 @@ impl Drop for FocusCheck {
     }
 }
 
+pub fn available() -> bool {
+    crate::platform::default_backend().starts_with("https:")
+}
+
 pub fn observe(s: &mut State) {
-    if s.pairing.result.is_some() || !crate::platform::default_backend().starts_with("https:") {
+    if s.pairing.result.is_some() || !available() {
         return;
     }
     let (out, input) = bounded(1);
@@ -87,6 +91,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         if let Some(l) = s.screen.launcher_mut() {
             l.password = rune::edit::TextEdit::new("");
         }
+        s.renew_scope();
         s.pairing.focus = FocusCheck::new(s.wake.clone());
     } else {
         s.pairing.focus = None;

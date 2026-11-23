@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
+import type { MessageUpsertInput } from "./types.ts"
 import {
   buildRecordDisplayData,
   clearRecordDisplayCacheForInstance,
@@ -698,5 +699,436 @@ describe("identical re-hydration stability", () => {
     ])
     assert.notEqual(store.getMessage("msg_1"), completed, "an explicit updatedAt change must replace the record")
     assert.equal(store.getMessage("msg_1")!.updatedAt, 2000)
+  })
+})
+
+describe("chunked hydration", () => {
+  const CHUNK_SIZE = 50
+  const makeInputs = (count: number): MessageUpsertInput[] => Array.from({ length: count }, (_, index) => ({
+    id: `msg_${String(index).padStart(3, "0")}`,
+    sessionId: "session",
+    role: "assistant" as const,
+    status: "complete" as const,
+    createdAt: index + 1,
+    updatedAt: index + 1,
+    parts: [{ type: "text" as const, text: `body-${index}` }],
+  }))
+  const makeInfos = (count: number) => Array.from({ length: count }, (_, index) => ({
+    id: `msg_${String(index).padStart(3, "0")}`,
+    sessionID: "session",
+    role: "assistant" as const,
+    time: { created: index + 1, completed: index + 1 },
+    cost: 1,
+    tokens: { input: 1, output: 1 },
+  }))
+
+  it("keeps partial hydration out of the visible store until the finalize pass", async () => {
+    const store = createInstanceMessageStore("chunked-progressive")
+    const result = store.hydrateMessages("session", makeInputs(CHUNK_SIZE * 2 + CHUNK_SIZE / 2), undefined, { chunked: true })
+
+    assert.ok(result instanceof Promise, "a large chunked hydration returns a promise")
+    assert.equal(store.getSessionMessageIds("session").length, 0, "no membership before the finalize pass")
+    assert.equal(store.getMessage("msg_049"), undefined, "no records before the finalize pass")
+    assert.equal(store.getSessionRevision("session"), 0, "nothing visible while chunks compute")
+
+    const committed = await result
+    assert.equal(committed, true)
+    assert.equal(store.getSessionMessageIds("session").length, CHUNK_SIZE * 2 + CHUNK_SIZE / 2)
+    assert.equal((store.getMessage("msg_124")?.parts["msg_124-part-0"]?.data as { text?: string })?.text, "body-124")
+  })
+
+  it("publishes nothing when the native revision guard rejects the finalize pass", async () => {
+    const store = createInstanceMessageStore("chunked-guard")
+    let guarded = false
+    const result = store.hydrateMessages("session", makeInputs(CHUNK_SIZE * 2), undefined, {
+      chunked: true,
+      guard: () => !guarded,
+    })
+    assert.ok(result instanceof Promise)
+    guarded = true
+
+    assert.equal(await result, false, "a load whose native state moved while chunks computed must not publish")
+    assert.equal(store.getSessionMessageIds("session").length, 0, "no membership was installed")
+    assert.equal(store.getMessage("msg_010"), undefined, "no records were installed")
+    assert.equal(store.getSessionRevision("session"), 0)
+  })
+
+  it("keeps rows streamed between chunks and their usage, and never regresses a replaced record", async () => {
+    const store = createInstanceMessageStore("chunked-live-writer")
+    const inputs = makeInputs(CHUNK_SIZE * 2)
+    const result = store.hydrateMessages("session", inputs, undefined, { chunked: true, keepStreamedArrivals: true })
+
+    // Rows streamed between the chunk yields: one appended row the snapshot
+    // never knew (with usage), and one replacement of a chunk-0 record.
+    const appended = {
+      id: "msg_zzz_live", sessionId: "session", role: "assistant" as const, status: "streaming" as const,
+      createdAt: 900, updatedAt: 900, parts: [{ type: "text" as const, text: "streamed reply" }],
+    }
+    const projected = inputs.map((input, index) =>
+      index === 10
+        ? { ...input, status: "streaming" as const, updatedAt: 999, parts: [{ type: "text" as const, text: "live SSE text", native: { phase: "done" } }] }
+        : input,
+    )
+    projected.push(appended)
+    projected.push({ ...appended, id: "msg_zzz_two", parts: [{ type: "text" as const, text: "second streamed row" }] })
+    store.hydrateMessages("session", projected, [{ id: "msg_zzz_live", sessionID: "session", role: "assistant", time: { created: 900 }, cost: 2, tokens: { input: 3, output: 4 } }], { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const ids = store.getSessionMessageIds("session")
+    assert.ok(ids.includes("msg_zzz_live"), "a row streamed between chunks survives a latest-window snapshot commit")
+    assert.ok(ids.includes("msg_zzz_two"), "the whole arrival run stays anchored after the last shared id")
+    assert.equal((store.getMessage("msg_zzz_live")?.parts["msg_zzz_live-part-0"]?.data as { text?: string })?.text, "streamed reply")
+    assert.equal((store.getMessage("msg_010")?.parts["msg_010-part-0"]?.data as { text?: string })?.text, "live SSE text", "committed live content newer than the snapshot is never regressed")
+    assert.equal(store.getSessionUsage("session")?.totalCost, 2, "streamed usage survives the snapshot's usage rebuild")
+  })
+
+  it("drops rows streamed between chunks of a history replacement", async () => {
+    const store = createInstanceMessageStore("chunked-history-drop")
+    const inputs = makeInputs(CHUNK_SIZE * 2)
+    const result = store.hydrateMessages("session", inputs, undefined, { chunked: true })
+
+    const appended = {
+      id: "msg_zzz_live", sessionId: "session", role: "assistant" as const, status: "streaming" as const,
+      createdAt: 900, updatedAt: 900, parts: [{ type: "text" as const, text: "streamed reply" }],
+    }
+    store.hydrateMessages("session", [appended], undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    assert.equal(store.getSessionMessageIds("session").includes("msg_zzz_live"), false, "a history replacement omits rows its page does not hold")
+  })
+
+  it("arbitrates queued partials and running tools per part", async () => {
+    const store = createInstanceMessageStore("chunked-arbitration")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    // A queued older projection: divergent corrected text on one row and a
+    // running tool with partial output on another.
+    const queued = base.map((input, index) => {
+      if (index === 10) return { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "stale partial" }] }
+      if (index === 11) {
+        return { ...input, status: "streaming" as const, parts: [{ id: "tool_1", type: "tool" as const, tool: "bash", state: { status: "running" as const, input: {} } }] }
+      }
+      return input
+    })
+    const corrected = base.map((input, index) => {
+      if (index === 10) return { ...input, parts: [{ type: "text" as const, text: "corrected final" }] }
+      if (index === 11) {
+        return { ...input, parts: [{ id: "tool_1", type: "tool" as const, tool: "bash", state: { status: "completed" as const, input: {}, output: "done", content: [] } }] }
+      }
+      return input
+    })
+    const result = store.hydrateMessages("session", corrected, undefined, { chunked: true })
+    store.hydrateMessages("session", queued, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    assert.equal((store.getMessage("msg_010")?.parts["msg_010-part-0"]?.data as { text?: string })?.text, "corrected final", "divergent corrected snapshot text supersedes an open queued partial")
+    const tool = store.getMessage("msg_011")?.parts["tool_1"]?.data as { state?: { status?: string } } | undefined
+    assert.equal(tool?.state?.status, "completed", "a completed tool result supersedes a running partial")
+  })
+
+  it("keeps an open streamed fragment the fetched page only prefixes", async () => {
+    const store = createInstanceMessageStore("chunked-stream-continues")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    // The fetched page holds the message still open (status streaming), so
+    // neither side carries completion evidence and the longer open stream
+    // keeps its text.
+    const fetched = base.map((input, index) =>
+      index === 10
+        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "body-10" }] }
+        : input,
+    )
+    const streamed = fetched.map((input, index) =>
+      index === 10
+        ? { ...input, parts: [{ type: "text" as const, text: "body-10 continues" }] }
+        : input,
+    )
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    assert.equal((store.getMessage("msg_010")?.parts["msg_010-part-0"]?.data as { text?: string })?.text, "body-10 continues", "an open fragment the page only prefixes keeps its streamed text")
+  })
+
+  it("pairs anonymous prose fragments by kind and ordinal", async () => {
+    const store = createInstanceMessageStore("chunked-ordinal-pairing")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    // The live stream recovered a reasoning fragment ahead of its text; the
+    // fetched page holds the final text first. Anonymous fragments carry no
+    // ids, so only kind-and-ordinal pairing keeps the old partial from
+    // showing beside the final text.
+    const streamed = base.map((input, index) =>
+      index === 10
+        ? { ...input, status: "streaming" as const, parts: [{ type: "reasoning" as const, text: "thought" }, { type: "text" as const, text: "old partial text" }] }
+        : input,
+    )
+    const fetched = base.map((input, index) =>
+      index === 10
+        ? { ...input, parts: [{ type: "text" as const, text: "final text", native: { phase: "done" } }] }
+        : input,
+    )
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const record = store.getMessage("msg_010")!
+    const texts = record.partIds.map((id) => record.parts[id]?.data).filter((part) => part?.type === "text") as Array<{ type: "text"; text: string }>
+    assert.equal(texts.length, 1, "the recovered reasoning and final text replace the old partial, not sit beside it")
+    assert.equal(texts[0]?.text, "final text")
+  })
+
+  it("lets a committed shorter final supersede an open longer stream", async () => {
+    const store = createInstanceMessageStore("chunked-shorter-final")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    const streamed = base.map((input, index) =>
+      index === 10
+        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "body-10 continues streaming" }] }
+        : input,
+    )
+    const fetched = base.map((input, index) =>
+      index === 10
+        ? { ...input, parts: [{ type: "text" as const, text: "body-1", native: { phase: "done" } }] }
+        : input,
+    )
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const record = store.getMessage("msg_010")!
+    assert.equal((record.parts[record.partIds.find((id) => record.parts[id]?.data.type === "text")!]?.data as { text?: string })?.text, "body-1", "a committed shorter final beats the open stream regardless of prefix shape")
+  })
+
+  it("carries the fetched end metadata onto a winning resident fragment", async () => {
+    const store = createInstanceMessageStore("chunked-end-metadata")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    const streamed = base.map((input, index) =>
+      index === 10
+        ? { ...input, status: "streaming" as const, updatedAt: 999, parts: [{ type: "text" as const, text: "final text", native: { phase: "done" } }] }
+        : input,
+    )
+    const fetched = base.map((input, index) =>
+      index === 10
+        ? { ...input, parts: [{ type: "reasoning" as const, text: "thought", time: { created: 5, completed: 6 } }] }
+        : input,
+    )
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const record = store.getMessage("msg_010")!
+    const reasoning = record.parts[record.partIds.find((id) => record.parts[id]?.data.type === "reasoning")!]?.data as { time?: { completed?: number } }
+    assert.equal(reasoning?.time?.completed, 6, "the fetched fragment's end time survives on the winning merged part")
+  })
+
+  it("places arrivals sharing no id with the page after it", async () => {
+    const store = createInstanceMessageStore("chunked-trailing-arrivals")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    const result = store.hydrateMessages("session", base, undefined, { chunked: true, keepStreamedArrivals: true })
+    const live = {
+      id: "msg_aaa_live", sessionId: "session", role: "user" as const, status: "sent" as const,
+      createdAt: 1, updatedAt: 1, parts: [{ type: "text" as const, text: "visible reply" }],
+    }
+    store.hydrateMessages("session", [live], undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const ids = store.getSessionMessageIds("session")
+    assert.equal(ids.at(-1), "msg_aaa_live", "an arrival sharing no id with the page lands at the end, not ahead of older messages")
+  })
+
+  it("lets an interrupted step's final text supersede its open stream", async () => {
+    const store = createInstanceMessageStore("chunked-interrupted-step")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    // The message ended through an interruption: it carries time.completed
+    // and an interruption error, so its display status is `error` and its
+    // text is final even though it is shorter than the open stream showed.
+    const fetched = base.map((input, index) =>
+      index === 10
+        ? { ...input, status: "error" as const, parts: [{ type: "text" as const, text: "BASE" }] }
+        : input,
+    )
+    const streamed = base.map((input, index) =>
+      index === 10
+        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "BASE partial" }] }
+        : input,
+    )
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const record = store.getMessage("msg_010")!
+    assert.equal((record.parts[record.partIds[0]]?.data as { text?: string })?.text, "BASE", "an ended message's text is final whatever its display status")
+    assert.equal(record.status, "error")
+  })
+
+  it("empties a stale partial when the authoritative page holds no content", async () => {
+    const store = createInstanceMessageStore("chunked-empty-content")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    const fetched = base.map((input, index) =>
+      index === 10 ? { ...input, parts: [] } : input,
+    )
+    const streamed = base.map((input, index) =>
+      index === 10
+        ? { ...input, status: "streaming" as const, parts: [{ type: "text" as const, text: "stale partial text" }] }
+        : input,
+    )
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const record = store.getMessage("msg_010")!
+    assert.equal(record.partIds.length, 0, "an authoritative step with no content drops the stale partial")
+    assert.equal(record.status, "complete")
+  })
+
+  it("reuses the resident record when the merge changes nothing", async () => {
+    const store = createInstanceMessageStore("chunked-merge-reuse")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    const result = store.hydrateMessages("session", base, undefined, { chunked: true })
+    // A projection lands the very same content and metadata for one row.
+    store.hydrateMessages("session", base, undefined, { preserveOmitted: true })
+    const revision = store.getMessage("msg_010")!.revision
+
+    assert.equal(await result, true)
+    // Store setters merge into the resident object, so identity cannot tell
+    // reuse from a redundant write; the record revision can.
+    assert.equal(store.getMessage("msg_010")?.revision, revision, "a merge that changes nothing publishes nothing")
+  })
+
+  const reply = (text: string, status: "streaming" | "complete", committed: boolean) => ({
+    status, isEphemeral: status === "streaming",
+    parts: [{ type: "text" as const, text: committed ? `${text} final` : text, ...(committed ? { native: { phase: "done" } } : {}) }],
+  })
+
+  it("takes status and isEphemeral from the resident version when its end wins", async () => {
+    const store = createInstanceMessageStore("chunked-status-resident")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    // SSE completes the reply between chunks while the fetched page still
+    // holds it open: the completed stream is the later version of the row.
+    const fetched = base.map((input, index) => index === 10 ? { ...input, ...reply("BASE par", "streaming", false) } : input)
+    const streamed = base.map((input, index) => index === 10 ? { ...input, ...reply("BASE par", "complete", true) } : input)
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const record = store.getMessage("msg_010")!
+    assert.equal((record.parts[record.partIds[0]]?.data as { text?: string })?.text, "BASE par final")
+    assert.equal(record.status, "complete", "the status comes from the same version as the winning end")
+    assert.equal(record.isEphemeral, false, "so does isEphemeral")
+  })
+
+  it("takes status and isEphemeral from the fetched version when its end wins", async () => {
+    const store = createInstanceMessageStore("chunked-status-snapshot")
+    const base = makeInputs(CHUNK_SIZE + 5)
+    const fetched = base.map((input, index) => index === 10 ? { ...input, ...reply("BASE par", "complete", true) } : input)
+    const streamed = base.map((input, index) => index === 10 ? { ...input, ...reply("BASE par", "streaming", false) } : input)
+    const result = store.hydrateMessages("session", fetched, undefined, { chunked: true })
+    store.hydrateMessages("session", streamed, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    const record = store.getMessage("msg_010")!
+    assert.equal((record.parts[record.partIds[0]]?.data as { text?: string })?.text, "BASE par final")
+    assert.equal(record.status, "complete")
+    assert.equal(record.isEphemeral, false)
+  })
+
+  it("keeps tokens published after the fetch through a same-window reload", async () => {
+    const store = createInstanceMessageStore("chunked-usage-reload")
+    const inputs = makeInputs(CHUNK_SIZE + 5)
+    const infos = makeInfos(CHUNK_SIZE + 5)
+    store.hydrateMessages("session", inputs, infos)
+
+    const reloaded = store.hydrateMessages("session", inputs, infos, { chunked: true })
+
+    // SSE published usage for one row while the reload's chunks compute,
+    // after its page was fetched.
+    store.setMessageInfo("msg_010", { id: "msg_010", sessionID: "session", role: "assistant", time: { created: 11, completed: 11 }, cost: 5, tokens: { input: 100, output: 23 } })
+
+    assert.equal(await reloaded, true)
+    const usage = store.getSessionUsage("session")!
+    assert.equal(usage.entries["msg_010"]?.cost, 5, "the published info survives the reload")
+    assert.equal(usage.entries["msg_010"]?.combinedTokens, 123, "123 published tokens are not reset")
+  })
+
+  it("reaches exactly the state of a single-pass hydrate", async () => {
+    const inputs = makeInputs(CHUNK_SIZE * 2 + 10)
+    const infos = makeInfos(CHUNK_SIZE * 2 + 10)
+    const control = createInstanceMessageStore("chunked-parity-control")
+    const chunked = createInstanceMessageStore("chunked-parity")
+
+    control.hydrateMessages("session", inputs, infos)
+    assert.equal(await chunked.hydrateMessages("session", inputs, infos, { chunked: true }), true)
+
+    assert.deepEqual(chunked.getSessionMessageIds("session"), control.getSessionMessageIds("session"))
+    for (const id of control.getSessionMessageIds("session")) {
+      const fromChunked = chunked.getMessage(id)!
+      const fromControl = control.getMessage(id)!
+      assert.equal(fromChunked.revision, fromControl.revision)
+      assert.equal(fromChunked.status, fromControl.status)
+      assert.deepEqual(fromChunked.partIds, fromControl.partIds)
+      assert.equal(
+        (fromChunked.parts[fromChunked.partIds[0]]?.data as { text?: string })?.text,
+        (fromControl.parts[fromControl.partIds[0]]?.data as { text?: string })?.text,
+      )
+    }
+    assert.equal(chunked.getSessionRevision("session"), control.getSessionRevision("session"))
+    assert.deepEqual(chunked.state.messageInfoVersion, control.state.messageInfoVersion)
+    assert.deepEqual(chunked.getSessionUsage("session"), control.getSessionUsage("session"))
+  })
+
+  it("keeps small chunked batches fully synchronous", () => {
+    const store = createInstanceMessageStore("chunked-small")
+    const result = store.hydrateMessages("session", makeInputs(CHUNK_SIZE - 5), undefined, { chunked: true })
+
+    assert.equal(result, undefined, "a batch within one chunk never defers")
+    assert.equal(store.getSessionMessageIds("session").length, CHUNK_SIZE - 5)
+    assert.equal(store.getMessage(`msg_${String(CHUNK_SIZE - 6).padStart(3, "0")}`) !== undefined, true)
+  })
+
+  it("bumps the session revision once for the whole batch", async () => {
+    let changes = 0
+    const store = createInstanceMessageStore("chunked-revision", {
+      onSessionChanged: (_instanceId, sessionId) => {
+        if (sessionId === "session") changes += 1
+      },
+    })
+    await store.hydrateMessages("session", makeInputs(CHUNK_SIZE * 3), undefined, { chunked: true })
+
+    assert.equal(changes, 1, "per-chunk commits must not each invalidate downstream caches")
+    assert.equal(store.getSessionRevision("session"), 1)
+  })
+
+  it("aborts remaining chunks when a concurrent mutation fences the batch", async () => {
+    const store = createInstanceMessageStore("chunked-fence")
+    const result = store.hydrateMessages("session", makeInputs(CHUNK_SIZE * 3), undefined, { chunked: true })
+    assert.ok(result instanceof Promise)
+
+    store.upsertMessage({
+      id: "live_update",
+      sessionId: "session",
+      role: "user",
+      status: "sending",
+      parts: [{ type: "text", text: "interrupting" }],
+    })
+
+    assert.equal(await result, false, "a fenced hydration reports that it did not complete")
+    const ids = store.getSessionMessageIds("session")
+    assert.equal(ids.length, 1, "no membership from the fenced snapshot; the newer writer owns the session")
+    assert.equal(ids.includes("msg_050"), false)
+    assert.equal(ids.includes("live_update"), true, "the newer writer owns the session")
+  })
+
+  it("rebuilds the latest todo snapshot from unchanged records too", async () => {
+    const inputs = makeInputs(CHUNK_SIZE * 2 + 5)
+    inputs[10] = {
+      ...inputs[10],
+      parts: [{ id: "todo", type: "tool" as const, tool: "todowrite", state: { status: "completed", input: {}, metadata: {}, output: "", content: [] } }],
+    }
+    const store = createInstanceMessageStore("chunked-todos")
+    store.hydrateMessages("session", inputs)
+    assert.ok(store.getLatestTodoSnapshot("session"), "the initial hydrate records the completed todo")
+
+    assert.equal(await store.hydrateMessages("session", inputs, undefined, { chunked: true }), true)
+    const snapshot = store.getLatestTodoSnapshot("session")
+    assert.ok(snapshot, "an all-unchanged re-hydration rebuilds the todo snapshot in its final pass")
+    assert.equal(snapshot?.messageId, inputs[10].id)
+    assert.equal(snapshot?.partId, "todo")
   })
 })

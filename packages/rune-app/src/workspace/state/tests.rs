@@ -291,6 +291,55 @@ fn files_follow_their_occurrence_through_tab_switches_and_hidden_stream_events()
 }
 
 #[test]
+#[cfg(feature = "test-support")]
+fn closing_active_or_cached_tab_keeps_a_draft_after_its_reader_closed() {
+    let mut s = init();
+    s.phase = Phase::Ready;
+    let mut workspace = Ui::new();
+    workspace.ready = true;
+    let mut other = init();
+    other.phase = Phase::Ready;
+    let mut second = entry("tab-1".into(), Tab::Blank);
+    second.cache = Some(Cache::take(&mut other));
+    workspace.entries.push(second);
+    s.workspace = Some(workspace);
+    let mut files = crate::files::Ui::new(
+        backend("draft-session"),
+        "/fixture".into(),
+        s.reads.clone(),
+        s.wake.clone(),
+    )
+    .with_documents(s.documents.clone(), "tab-0".into());
+    files.open("draft.txt".into());
+    files.reader.scene(Ok(codenomad_client::files::Preview {
+        workspace_id: "fixture".into(),
+        path: "draft.txt".into(),
+        bytes: b"original".to_vec(),
+        version: Some("v1".into()),
+    }));
+    files.document.online(true);
+    files.document.poll(&mut files.reader);
+    let scope = files.document.scope();
+    files.document.input(scope).replace_text("unsaved");
+    files.document.changed(scope);
+    files.close_reader();
+    s.files = Some(files);
+    let mut rt = runtime(s);
+    rt.frame(0.0);
+    rt.update(|s, tx| close(s, "tab-0", tx));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().entries.len(), 2);
+    rt.update(|s, tx| select(s, "tab-1", tx));
+    rt.update(|s, tx| close(s, "tab-0", tx));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().entries.len(), 2);
+    rt.update(|s, tx| select(s, "tab-0", tx));
+    rt.update(|s, _| s.files.as_mut().unwrap().open("draft.txt".into()));
+    assert_eq!(
+        rt.state.files.as_ref().unwrap().document.edit().text,
+        "unsaved"
+    );
+}
+
+#[test]
 fn two_occurrences_keep_their_drafts_when_the_user_selects_another_tab() {
     let mut s = init();
     s.phase = Phase::Ready;

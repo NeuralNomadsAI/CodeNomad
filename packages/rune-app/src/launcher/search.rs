@@ -18,12 +18,6 @@ impl Search {
     pub fn pending(&self) -> bool {
         self.result.is_some()
     }
-
-    pub(crate) fn matches(&self, project: &str, query: &str) -> bool {
-        self.scope
-            .as_ref()
-            .is_some_and(|(owner, text)| owner == project && text == query)
-    }
 }
 
 pub(super) fn poll(s: &mut State) -> bool {

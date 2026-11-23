@@ -268,7 +268,7 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
         Some(id) => format!("conversation-session-{id}"),
         None => "conversation-draft".into(),
     });
-    if project || !s.chat_title.is_empty() {
+    if project || !s.chat_title.is_empty() || s.files.is_some() {
         center = center.child(header(s, project, docked, touch));
     } else if let Some(warning) = connection_warning(s) {
         center = center.child(shell::floating_notice(warning));
@@ -326,6 +326,7 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
             shell::spacer(),
             shell::panel_title(title).key("chat-title").role("heading"),
             shell::spacer(),
+            crate::files::view::toggle(s),
             connection_warning(s).unwrap_or_else(col),
         ],
     )

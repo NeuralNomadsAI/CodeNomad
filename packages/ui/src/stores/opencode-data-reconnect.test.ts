@@ -175,9 +175,10 @@ test("a message.list read completes while stream events keep arriving, without r
     ctx.mock.timers.tick(0)
     await microtasks()
 
-    // Rotation has drained: fast-path deltas apply synchronously now.
+    // Rotation has drained: fast-path deltas reach the reducer on the frame lane.
     f.delta("probe ")
-    assert.equal(f.sdkText(), "seed probe ", "deltas emit synchronously on the fast path")
+    await converge(ctx, () => f.sdkText() === "seed probe ")
+    assert.equal(f.sdkText(), "seed probe ", "deltas reach the reducer on the fast path")
 
     const control = f.controlledList(f.authoritativePage)
     f.data().session.message.invalidate(sessionId)

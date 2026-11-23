@@ -43,10 +43,9 @@ pub struct Launcher {
     pub show_search: bool,
     pub visits: Visits,
     pub connection: Option<Backend>,
+    pub(crate) authentication_required: bool,
     pub(crate) catalogue_watch: Option<codenomad_client::stream::CatalogueWatch>,
     pub(crate) catalogue_generation: u64,
-    pub(crate) authentication_required: bool,
-    reauthenticated_session: Option<String>,
     pub server_id: Option<String>,
     pub projects: Vec<Project>,
     pub project: Option<Project>,
@@ -72,7 +71,7 @@ enum Reply {
     Created(Backend, String, String, String, Option<u64>),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
     #[cfg(target_arch = "wasm32")]
-    Reopened(crate::workspace::opening::Opening, Backend, String),
+    Reopened(crate::workspace::opening::Opening, Backend, String, String),
 }
 type Selection = (Backend, String, Option<usize>, Instant, String);
 enum Restored {
@@ -136,10 +135,9 @@ impl Launcher {
             show_search: false,
             visits: Visits::default(),
             connection: None,
+            authentication_required: false,
             catalogue_watch: None,
             catalogue_generation: 0,
-            authentication_required: false,
-            reauthenticated_session: None,
             server_id: None,
             projects: vec![],
             project: None,
@@ -183,14 +181,13 @@ impl Launcher {
 }
 
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
-    let mut changed = search::poll(s);
-    changed |= linked::poll(s);
+    let browser_changed = cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s));
     let blocked = !can_change_session(s);
     let selected = crate::workspace::active_session(s).map(str::to_owned);
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
-    changed |= !l.pending && l.visits.poll_checks();
+    let mut changed = browser_changed | (!l.pending && l.visits.poll_checks());
     changed |= connection::poll_boot(l);
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
         if changed {
@@ -203,21 +200,26 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.listing = false;
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
-            l.catalogue_watch = None;
             let reauthenticated = std::mem::take(&mut l.authentication_required);
+            l.catalogue_watch = None;
             l.connection = Some(b);
             l.server_id = Some(server_id);
             l.projects = projects;
             l.password = TextEdit::new("");
+            if reauthenticated {
+                connection::watch_catalogue(l);
+            }
             crate::workspace::connected(s);
-            if reauthenticated
-                && let Some(id) = crate::workspace::active_session(s).map(str::to_owned)
-            {
-                if let Some(launcher) = s.screen.launcher_mut() {
-                    launcher.reauthenticated_session = Some(id.clone());
+            if reauthenticated {
+                crate::workspace::renew_connection(s);
+                if let Some(id) = selected {
+                    s.show_chat();
+                    choose(s, id, tx);
+                } else {
+                    crate::git::project_opened(s);
+                    crate::workspace::restore_files_mode(s);
+                    crate::workspace::resume(s, tx);
                 }
-                s.show_chat();
-                choose(s, id, tx);
             } else {
                 crate::workspace::resume(s, tx);
             }
@@ -231,15 +233,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.folder = TextEdit::new(&project.path);
             set_project(l, Some(project.clone()));
-            if cfg!(target_os = "windows")
-                && l.catalogue_watch.is_none()
-                && let Some(backend) = &l.connection
-            {
-                let (watch, task) =
-                    codenomad_client::stream::CatalogueWatch::new(backend.clone(), l.wake.clone());
-                l.catalogue_watch = Some(watch);
-                crate::platform::spawn(task);
-            }
+            l.linked = Default::default();
+            connection::watch_catalogue(l);
             l.apply_listing(rows, false, None);
             l.search = TextEdit::new("");
             crate::workspace::opened(s, &project);
@@ -257,6 +252,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     crate::workspace::restore_files_mode(s);
                 }
             }
+            #[cfg(target_arch = "wasm32")]
             linked::load(s);
         }
         Ok(Reply::Listed(rows, cursor)) => {
@@ -269,12 +265,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             } else if cfg!(target_os = "windows") {
                 l.apply_directory_refresh(rows, selected.as_deref());
                 crate::workspace::schedule_catalogue(s);
-                linked::load(s);
             } else {
                 l.apply_listing(rows, false, selected.as_deref());
                 if l.next.is_none() {
                     l.check_omitted_visits();
                 }
+                #[cfg(target_arch = "wasm32")]
                 linked::load(s);
             }
         }
@@ -298,13 +294,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Ok(Reply::Selected(missing, selection, dismiss)) => {
             l.sessions.retain(|row| !missing.contains(&row.id));
-            l.listed_sessions.retain(|id| !missing.contains(id));
             if let Some(pages) = &mut l.linked.pages {
                 pages.rows.retain(|row| !missing.contains(&row.id));
             }
             l.search_results
                 .rows
                 .retain(|row| !missing.contains(&row.id));
+            l.listed_sessions.retain(|id| !missing.contains(id));
             l.visits.forget(&missing);
             if let Some((backend, _, _, verified, _)) = &selection {
                 l.visits.verified(&backend.session, *verified);
@@ -329,8 +325,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         #[cfg(target_arch = "wasm32")]
-        Ok(Reply::Reopened(opening, backend, title)) => {
-            reopen::apply(s, opening, backend, title);
+        Ok(Reply::Reopened(opening, backend, title, slug)) => {
+            reopen::apply(s, opening, backend, title, &slug)
         }
         Err(error) => {
             let key = match error.to_string().as_str() {
