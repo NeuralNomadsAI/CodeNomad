@@ -9,9 +9,13 @@ export async function mobileMoreActions(page, messages, press) {
   const trigger = composer.getByRole('button', {name,exact:true})
   const editor = page.locator('textarea:focus')
   const draft = 'Brouillon mobile'
-  const field = await composer.boundingBox()
-  assert(field)
-  await page.touchscreen.tap(field.x+field.width/2,field.y+20)
+  const focus = async () => {
+    const field = await composer.boundingBox()
+    assert(field)
+    await page.touchscreen.tap(field.x+field.width/2,field.y+20)
+    await editor.waitFor({state:'attached'})
+  }
+  await focus()
   await editor.fill(draft)
   const value = text => page.waitForFunction(text => document.activeElement?.value === text,text)
   await value(draft)
@@ -27,6 +31,8 @@ export async function mobileMoreActions(page, messages, press) {
   // The current Rune browser mirror exposes a disabled menu row as text.
   assert.equal(await page.getByRole('menuitem',{name:queueName,exact:true}).count(),0)
   await press(messages['promptInput.clear.title'],'menuitem')
+  await queue.waitFor({state:'detached'})
+  await focus()
   await value('')
   await page.keyboard.press('Control+z')
   await value(draft)
