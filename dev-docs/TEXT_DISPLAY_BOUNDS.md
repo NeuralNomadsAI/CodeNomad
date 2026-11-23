@@ -71,12 +71,12 @@ from rendering" message, without a reveal; copy returns them whole.
   each nested row is a whole tool card, so the scroller's layout cost is charged per
   mounted row. The omitted gap renders the shared hidden-parts placeholder and one
   reveal mounts `TASK_STEP_REVEAL_STEP` (100) more rows, keyed `task:steps` in the
-  record display cache like a text reveal. The window's start advances — dropping
-  its leading row — only while no reader holds it: the leading row out of sight and
-  no focus or selection in any mounted row. A streamed step never unmounts the row
-  being read; a reveal always widens the window at once. The ceiling
-  (`TASK_STEP_MOUNT_CEILING`, the scan bound) can never outrank reader protection —
-  a held window never exceeds what a full reveal would mount anyway.
+  record display cache like a text reveal. The window's start may slide forward only
+  up to the boundary of what the reader is actually reading — the first row still in
+  sight, or nearer still a row holding focus or the selection, wherever it sits. The
+  boundary is read from the DOM (row identity against the current keys) on each
+  window change, so it survives the scan bound dropping older rows and never depends
+  on a remembered anchor; the scan bound itself caps what a held window can mount.
 - Search navigation marks the hit's part search-revealed (`markRecordPartSearchRevealed`
   in the record display cache): every text window of that part gains one base reveal
   step, and the reader's own reveals stack on top of it, so a hit beyond a window's

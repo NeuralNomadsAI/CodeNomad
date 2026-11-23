@@ -272,6 +272,83 @@ test("a selection survives steps past the revealed window's edge", { timeout: 90
     "the released row leaves the window")
 }, "steps=160"))
 
+test("a selection survives the scan bound dropping the old anchor", { timeout: 90_000 }, async () => withPage(async page => {
+  const steps = sectionByTitle(page, /^Steps$/)
+  await steps.waitFor()
+  await steps.locator(".tool-call-task-summary > .tool-call").first().waitFor()
+
+  // 190 steps with one reveal mount 130 rows; the reader selects step-61.
+  await steps.locator(".message-hidden-parts").getByRole("button").click()
+  await page.locator('.tool-call[data-part-id="child-0061-tool"]').waitFor()
+  const selected = await page.evaluate(() => {
+    const row = document.querySelector('.tool-call[data-part-id="child-0061-tool"]')
+    const node = row?.querySelector(".tool-call-summary-title")?.firstChild ?? row?.firstChild
+    if (!node) return false
+    const document_ = node.ownerDocument
+    document_.getSelection()?.removeAllRanges()
+    const range = document_.createRange()
+    range.selectNodeContents(node)
+    document_.getSelection()?.addRange(range)
+    return true
+  })
+  assert.ok(selected, "step-61's text is selected")
+
+  // Streaming to 261 steps drops the rows before step-61 from the 200-key
+  // scan window — the protection must follow the selected row, not the old
+  // window anchor.
+  await page.evaluate(() => (window as any).fixture.pushChildSteps(71))
+  // The paged message window loads the newest 200 messages, so the counter
+  // tops out at the scan bound while the child itself has 261 steps.
+  await steps.locator(".tool-call-task-section-meta").filter({ hasText: "200 steps" }).waitFor()
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+
+  assert.equal(await page.locator('.tool-call[data-part-id="child-0061-tool"]').count(), 1,
+    "the selected row stays mounted when the scan bound passes its neighbourhood")
+  const selectionHeld = await page.evaluate(() => {
+    const selection = document.getSelection()
+    return Boolean(selection && !selection.isCollapsed && selection.toString().length > 0)
+  })
+  assert.ok(selectionHeld, "the selection survives the scan bound")
+}, "steps=190"))
+
+test("a visible row in the middle of the list stays mounted", { timeout: 90_000 }, async () => withPage(async page => {
+  const steps = sectionByTitle(page, /^Steps$/)
+  await steps.waitFor()
+  const container = steps.locator(".tool-call-task-container")
+  await steps.locator(".tool-call-task-summary > .tool-call").first().waitFor()
+
+  // One reveal mounts 130 of 160 steps; the reader scrolls up to step-65
+  // with nothing focused or selected.
+  await steps.locator(".message-hidden-parts").getByRole("button").click()
+  await page.locator('.tool-call[data-part-id="child-0065-tool"]').waitFor()
+  await container.evaluate(() => {
+    const container = document.querySelector(".tool-call-task-container") as HTMLElement | null
+    const row = document.querySelector('.tool-call[data-part-id="child-0065-tool"]') as HTMLElement | null
+    if (container && row) {
+      container.scrollTop = row.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+    }
+  })
+  // A programmatic scroll alone keeps bottom-following; an upward gesture, the
+  // way a real reader scrolling up reads, releases it.
+  await container.hover()
+  await page.mouse.wheel(0, -4)
+  await page.waitForTimeout(200)
+
+  await page.evaluate(() => (window as any).fixture.pushChildSteps(10))
+  await steps.locator(".tool-call-task-section-meta").filter({ hasText: "170 steps" }).waitFor()
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+
+  const visible = await page.evaluate(() => {
+    const container = document.querySelector(".tool-call-task-container") as HTMLElement | null
+    const row = document.querySelector('.tool-call[data-part-id="child-0065-tool"]') as HTMLElement | null
+    if (!container || !row) return { mounted: Boolean(row), visible: false }
+    const box = row.getBoundingClientRect(), top = container.getBoundingClientRect().top
+    return { mounted: true, visible: box.bottom > top && box.top < container.getBoundingClientRect().bottom }
+  })
+  assert.ok(visible.mounted, "the row being read stays mounted")
+  assert.ok(visible.visible, "the row being read stays in sight")
+}, "steps=160"))
+
 test("Show more after a search reveal extends the window further", { timeout: 90_000 }, async () => withPage(async page => {
   const output = sectionByTitle(page, /^Output$/)
   await output.waitFor()

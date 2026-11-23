@@ -6,13 +6,6 @@ export const TASK_STEP_RENDER_LIMIT = 200
 export const TASK_STEP_MOUNT_LIMIT = 30
 /** Task steps one reveal of the steps gap mounts. */
 export const TASK_STEP_REVEAL_STEP = 100
-/**
- * Absolute ceiling on rows mounted while a reader holds the window: the scan
- * bound itself, so reader protection (focus, selection, the row in sight) can
- * never be outranked by the ceiling — a held window never exceeds what a full
- * reveal would mount anyway.
- */
-export const TASK_STEP_MOUNT_CEILING = TASK_STEP_RENDER_LIMIT
 
 export function isTaskStepListTruncated(count: number): boolean {
   return count > TASK_STEP_RENDER_LIMIT

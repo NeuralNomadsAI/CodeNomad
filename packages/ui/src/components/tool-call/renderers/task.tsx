@@ -16,7 +16,7 @@ import { getMessageContentIcon } from "../../message-content-icons"
 import { getTaskToolSearchText } from "../search-text"
 import { copyTextChunksToClipboard, copyToClipboard } from "../../../lib/clipboard"
 import LoadErrorState from "../../load-error-state"
-import { collectChildTaskSteps, getLegacyTaskSummary, getTaskOutputCopyText, getTruncatedTaskStepTitleCopyText, isTaskScanTruncated, isTaskStepListTruncated, resolveTaskStepTruncation, stringifyLegacyTaskSummary, TASK_STEP_MOUNT_CEILING, TASK_STEP_MOUNT_LIMIT, TASK_STEP_REVEAL_STEP, TASK_STEP_RENDER_LIMIT } from "./task-summary"
+import { collectChildTaskSteps, getLegacyTaskSummary, getTaskOutputCopyText, getTruncatedTaskStepTitleCopyText, isTaskScanTruncated, isTaskStepListTruncated, resolveTaskStepTruncation, stringifyLegacyTaskSummary, TASK_STEP_MOUNT_LIMIT, TASK_STEP_REVEAL_STEP, TASK_STEP_RENDER_LIMIT } from "./task-summary"
 import { getRevealedRecordText, revealHiddenRecordText } from "../../../stores/message-v2/record-display-cache"
 import { useI18n } from "../../../lib/i18n"
 import { getMessageWindowPageKey } from "../../message-history-pagination"
@@ -466,59 +466,66 @@ export const taskRenderer: ToolRenderer = {
     // layout per mounted row, so the omitted rows stay in the store until the
     // gap's reveal mounts them. Reveal state lives in the record display
     // cache, so a recycled card keeps what its reader expanded. The window's
-    // start only advances — dropping its leading row — while that row is out
-    // of sight and holds no focus or selection: a streamed step must never
-    // unmount the row being read. A reveal always widens the window (its start
-    // moves back to the new limit), and a mounted ceiling always bounds it.
+    // start may slide forward only up to the boundary of what the reader is
+    // actually reading — the first row still in sight, or nearer still a row
+    // holding focus or the selection, wherever it sits. The boundary is read
+    // from the DOM on each window change, so it survives the scan bound
+    // dropping older rows and never depends on a remembered anchor; the scan
+    // bound itself caps what a held window can mount.
     let stepsContainerEl: HTMLDivElement | undefined
     const registerStepsContainer = (element: HTMLDivElement) => {
       stepsContainerEl = element
       scrollHelpers?.registerContainer(element)
     }
-    const readerHoldsWindow = () => {
+    const stepsBoundaryIndex = (rowIndexOf: (row: HTMLElement) => number) => {
       const container = stepsContainerEl
-      if (!container) return false
+      if (!container) return Number.POSITIVE_INFINITY
+      const rows = Array.from(container.querySelectorAll<HTMLElement>(".tool-call-task-summary > .tool-call, .tool-call-task-summary > .tool-call-task-item"))
+      if (rows.length === 0) return Number.POSITIVE_INFINITY
+      const top = container.getBoundingClientRect().top
+      let boundaryRow: HTMLElement | undefined
+      for (const row of rows) {
+        if (row.getBoundingClientRect().bottom > top) { boundaryRow = row; break }
+      }
       const doc = container.ownerDocument
-      // The leading row in sight: a reader at the top is reading it.
-      const leading = container.querySelector(".tool-call-task-summary > .tool-call, .tool-call-task-summary > .tool-call-task-item")
-      if (leading instanceof HTMLElement && leading.getBoundingClientRect().bottom > container.getBoundingClientRect().top) return true
-      // Any mounted row holding focus or the selection: unmounting that row
-      // would clear it, wherever in the window it sits.
       for (const node of [doc.activeElement, doc.getSelection()?.anchorNode ?? null]) {
         for (let element = node; element && element !== container; element = element.parentElement) {
-          if (element instanceof HTMLElement && element.matches(".tool-call, .tool-call-task-item")) return true
+          if (element instanceof HTMLElement && element.matches(".tool-call, .tool-call-task-item")) {
+            if (!boundaryRow || rows.indexOf(element) < rows.indexOf(boundaryRow)) boundaryRow = element
+            break
+          }
         }
       }
-      return false
+      if (!boundaryRow) return Number.POSITIVE_INFINITY
+      return rowIndexOf(boundaryRow)
     }
     const stepsRevealTarget = () => textRevealTarget("task:steps")
     const revealSteps = () => revealHiddenRecordText(stepsRevealTarget())
     const mountedStepLimit = createMemo(() => TASK_STEP_MOUNT_LIMIT + getRevealedRecordText(stepsRevealTarget()) * TASK_STEP_REVEAL_STEP)
-    const windowStart = (total: number, anchorIndex: number) => {
+    const windowStart = (total: number, rowIndexOf: (row: HTMLElement) => number) => {
       const desired = Math.max(0, total - mountedStepLimit())
-      // Hold the anchor row while a reader holds the window (in sight, focus or
-      // selection) and the ceiling allows: a reveal can still move the start
-      // back (min), a streamed step cannot move it forward past the anchor.
-      if (anchorIndex >= 0 && readerHoldsWindow()) {
-        const held = Math.min(anchorIndex, desired)
-        if (total - held <= TASK_STEP_MOUNT_CEILING) return held
-      }
-      return desired
+      return Math.min(desired, stepsBoundaryIndex(rowIndexOf))
     }
-    const visibleChildToolKeys = createMemo((previous?: { keys: string[]; hidden: number; anchor?: string }) => {
+    const visibleChildToolKeys = createMemo((previous?: { keys: string[]; hidden: number }) => {
       const keys = childToolKeys()
-      const anchorIndex = previous?.anchor === undefined ? -1 : keys.indexOf(previous.anchor)
-      const start = windowStart(keys.length, anchorIndex)
-      const next = { keys: keys.slice(start), hidden: start, anchor: keys[start] }
+      const rowIndexOf = (row: HTMLElement) => {
+        const partId = row.getAttribute("data-part-id")
+        return partId ? keys.findIndex(key => splitToolKey(key)?.partId === partId) : -1
+      }
+      const start = windowStart(keys.length, rowIndexOf)
+      const next = { keys: keys.slice(start), hidden: start }
       if (previous && previous.hidden === next.hidden && previous.keys.length === next.keys.length
         && previous.keys.every((key, index) => key === next.keys[index])) return previous
       return next
     })
-    const visibleLegacyItems = createMemo((previous?: { items: TaskSummaryItem[]; hidden: number; anchor?: string }) => {
+    const visibleLegacyItems = createMemo((previous?: { items: TaskSummaryItem[]; hidden: number }) => {
       const items = legacyItems()
-      const anchorIndex = previous?.anchor === undefined ? -1 : items.findIndex(item => item.id === previous.anchor)
-      const start = windowStart(items.length, anchorIndex)
-      const next = { items: items.slice(start), hidden: start, anchor: items[start]?.id }
+      const rowIndexOf = (row: HTMLElement) => {
+        const id = row.getAttribute("data-task-id")
+        return id ? items.findIndex(item => item.id === id) : -1
+      }
+      const start = windowStart(items.length, rowIndexOf)
+      const next = { items: items.slice(start), hidden: start }
       if (previous && previous.hidden === next.hidden && previous.items.length === next.items.length
         && previous.items.every((item, index) => item === next.items[index])) return previous
       return next
