@@ -170,8 +170,13 @@ const upstream=createServer(async(req,res)=>{
     if(url.pathname==='/api/session'&&req.method==='GET') {
       stats.lists++
       const cursor=url.searchParams.get('cursor')
+      if(gitPanel&&url.searchParams.get('project')==='fixture_project'){
+        assert.equal(url.searchParams.get('directory'),null)
+        assert.equal(url.searchParams.get('order'),'desc')
+        return json({data:[...records.values()],cursor:{}})
+      }
       const directory=cursor?JSON.parse(Buffer.from(cursor,'base64url')).directory:url.searchParams.get('directory')
-      assert(directory===project||linked&&directory===linked,'An ordinary page uses its own checkout')
+      assert(directory===project||linked&&directory===linked||gitPanel&&directory===review,'An ordinary page uses its own checkout')
       let rows=[...records.values()].filter(row=>row.location.directory===directory)
       let next
       if(!cursor){

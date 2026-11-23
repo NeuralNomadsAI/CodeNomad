@@ -85,6 +85,17 @@ pub(super) fn run() {
     });
 
     type_text(&mut rt, "git-commit-message", "Commit from Rune");
+    wait(
+        &mut rt,
+        "commit available after status reconciliation",
+        |rt| {
+            rt.elements().iter().any(|element| {
+                !element.exiting
+                    && element.focusable
+                    && element.key.as_deref() == Some("git-commit")
+            })
+        },
+    );
     tap(&mut rt, "git-commit");
     wait(&mut rt, "committed", |rt| rt.find(STAGED).is_none());
     tap_mode(&mut rt, 2);
