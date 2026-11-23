@@ -1,16 +1,19 @@
 //! Permission receipts: a session's asked and replied permissions, recorded from native events.
+mod recovery;
 use axum::{
     Json,
     extract::{Path, Query, State, rejection::QueryRejection},
     http::{StatusCode as Status, header},
     response::{IntoResponse, Response},
 };
+pub(crate) use recovery::Recovery;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    fs, io,
+    fs,
+    io::{self, Read},
     path::{Path as FsPath, PathBuf},
     sync::LazyLock,
     time::Duration,
@@ -129,8 +132,19 @@ fn snapshot(value: &Value) -> Option<Snapshot> {
 }
 fn read(file: &FsPath) -> Result<Option<Record>, Error> {
     let failed = || error(Status::INTERNAL_SERVER_ERROR, "Permission receipt unavailable");
-    match fs::read(file) {
-        Ok(bytes) if bytes.len() <= 1024 * 1024 => serde_json::from_slice(&bytes).map(Some).map_err(|_| failed()),
+    const MAX: u64 = 1024 * 1024;
+    match fs::File::open(file) {
+        Ok(file) => {
+            if !file.metadata().is_ok_and(|m| m.is_file() && m.len() <= MAX) {
+                return Err(failed());
+            }
+            let mut bytes = Vec::new();
+            file.take(MAX + 1).read_to_end(&mut bytes).map_err(|_| failed())?;
+            if bytes.len() as u64 > MAX {
+                return Err(failed());
+            }
+            serde_json::from_slice(&bytes).map(Some).map_err(|_| failed())
+        }
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         _ => Err(failed()),
     }
@@ -140,16 +154,71 @@ fn persist(file: &FsPath, record: &Record) -> Result<(), Error> {
         .map_err(|_| error(Status::SERVICE_UNAVAILABLE, "Permission receipt unavailable"))?;
     crate::storage::write(file, &json!(record))
 }
-pub async fn observe(app: &App, event: &Value, recipients: &[Workspace]) -> Result<(), Error> {
+async fn capture(
+    app: &App,
+    scope: &str,
+    request: Snapshot,
+    current: impl FnOnce() -> bool + Send + 'static,
+    reanchored: impl FnOnce() + Send + 'static,
+) -> Result<(), Error> {
+    let file = dir(app, scope, &request.session_id).join(format!("{}.json", hash(&request.request_id)));
+    let serial = SERIAL.lock().await;
+    tokio::task::spawn_blocking(move || {
+        let _serial = serial;
+        if !current() {
+            return Ok(());
+        }
+        match read(&file)? {
+            None => {
+                persist(&file, &Record { request, receipt: None })?;
+                Ok(())
+            }
+            // A native settlement can persist before its already-read snapshot.
+            Some(mut entry)
+                if entry.request.action.is_none()
+                    && request.action.is_some()
+                    && entry.receipt.as_ref().is_some_and(|receipt| receipt.origin == "native") =>
+            {
+                entry.request = request;
+                entry.receipt.as_mut().unwrap().request = entry.request.clone();
+                persist(&file, &entry)?;
+                reanchored();
+                Ok(())
+            }
+            Some(_) => Ok(()),
+        }
+    })
+    .await
+    .map_err(|_| upstream_error())?
+}
+
+pub async fn observe(
+    app: &Shared,
+    endpoint: &std::sync::Arc<Endpoint>,
+    event: &Value,
+    recipients: &[Workspace],
+) -> Result<(), Error> {
     let kind = event["type"].as_str().unwrap_or_default();
     if !matches!(kind, "permission.asked" | "permission.replied" | "session.deleted") || recipients.is_empty() {
         return Ok(());
     }
     let data = &event["data"];
     let Some(session) = id(&data["sessionID"]) else { return Ok(()) };
-    let endpoint = app.native.endpoint().ok_or_else(upstream_error)?;
-    let scope = scope(app, &endpoint).await?;
+    let scope = scope(app, endpoint).await?;
+    if !app.native.current(endpoint) {
+        return Err(upstream_error());
+    }
+    if kind == "permission.asked" {
+        if let Some(request) = snapshot(data) {
+            let (owner, endpoint) = (app.clone(), endpoint.clone());
+            capture(app, &scope, request, move || owner.native.current(&endpoint), || {}).await?;
+        }
+        return Ok(());
+    }
     let _serial = SERIAL.lock().await;
+    if !app.native.current(endpoint) {
+        return Err(upstream_error());
+    }
     let folder = dir(app, &scope, session);
     if kind == "session.deleted" {
         return match fs::remove_dir_all(folder) {
@@ -158,14 +227,7 @@ pub async fn observe(app: &App, event: &Value, recipients: &[Workspace]) -> Resu
             Err(_) => Err(error(Status::SERVICE_UNAVAILABLE, "Permission receipt unavailable")),
         };
     }
-    if kind == "permission.asked" {
-        if let Some(request) = snapshot(data) {
-            let file = folder.join(format!("{}.json", hash(&request.request_id)));
-            if read(&file)?.is_none() {
-                persist(&file, &Record { request, receipt: None })?;
-            }
-        }
-    } else if let (Some(request), Some(decision @ ("once" | "always" | "reject"))) =
+    if let (Some(request), Some(decision @ ("once" | "always" | "reject"))) =
         (id(&data["requestID"]), data["reply"].as_str())
     {
         let file = folder.join(format!("{}.json", hash(request)));

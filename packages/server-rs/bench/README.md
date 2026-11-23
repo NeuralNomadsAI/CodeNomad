@@ -39,6 +39,7 @@ node roundtrip.mjs $OpenCode
 | (native-daemon modes) | Sign-in on both servers, then the Rust local admission surface (device, authority and server-pairing refusals; workspace claims, instance storage, `pending-requests`). |
 | `http` | Linked worktrees: creation, session move, evacuation on deletion, refusal of a modified checkout; owned locations and VCS reads. |
 | `receipt-worktree` | Anchored receipts in linked checkouts, including outside the browse root. Covers missing and file-valued project projections, refusal in an unrelated workspace, and inventory calls and elapsed time for repeated reads. |
+| `receipt-reconnect` | A permission raised with the native event stream disconnected is captured on reconnect, then a direct native reply produces an anchored receipt with the original source and resources. |
 | `files` | Files and Git on a rich repository (rename, gitlink, conflict, CRLF, large and binary files), mutations, refusals, watches. |
 | `contract` | Session placement header, foreign sessions, outline in a worktree, `pending-requests`. |
 | `history-bytes` | Validated history JSON across the HTTP broker with a native RPC response at exactly 24 MiB, including numbers that expand when serialized again. |

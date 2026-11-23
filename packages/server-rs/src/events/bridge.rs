@@ -143,6 +143,7 @@ struct Lanes {
     jobs: AtomicUsize,
     bytes: AtomicUsize,
     failed: CancellationToken,
+    receipts: Arc<crate::sessions::receipts::Recovery>,
 }
 
 impl Lanes {
@@ -229,6 +230,10 @@ pub async fn bridge(app: Shared) {
                 let next = tokio::select! {
                     biased;
                     _ = lanes.failed.cancelled() => break,
+                    _ = app.opened.notified(), if connected => {
+                        lanes.receipts.schedule();
+                        continue;
+                    }
                     next = tokio::time::timeout(Duration::from_secs(60), stream.next()) => next,
                 };
                 let next = match next {
@@ -247,6 +252,7 @@ pub async fn bridge(app: Shared) {
                     status(&app, "connected", None);
                     // Reference: bundled plugins are provisioned on every OpenCode connection.
                     crate::extensions::lifecycle::connected();
+                    tokio::spawn(lanes.receipts.clone().run(app.clone(), endpoint.clone(), lanes.failed.clone()));
                 }
                 permissions.enqueue(&app, &endpoint, &lanes.failed, &event);
                 if kind == "server.connected" {
@@ -258,6 +264,14 @@ pub async fn bridge(app: Shared) {
                 // Integration events can contain backend-only data and need the TS sanitizer.
                 if kind.starts_with("worktree.") || kind == "server.connected" {
                     crate::worktrees::linked::invalidate(&app);
+                }
+                if kind == "server.connected" {
+                    lanes.receipts.schedule();
+                }
+                if kind == "session.deleted"
+                    && let Some(id) = event["data"]["sessionID"].as_str()
+                {
+                    lanes.receipts.retire(id);
                 }
                 if matches!(kind.as_str(), "integration.updated" | "rpc") {
                     continue;
@@ -295,6 +309,7 @@ pub async fn bridge(app: Shared) {
 async fn route(app: &Shared, routes: &Routes, Job { event, endpoint, received: (routed, received), .. }: Job) {
     let kind = event["type"].as_str().unwrap_or_default();
     let inbox = kind.starts_with("session.inbox.");
+    let receipt_event = matches!(kind, "permission.asked" | "permission.replied" | "session.deleted");
     let session = event["data"]["sessionID"]
         .as_str()
         .or_else(|| event["data"]["form"]["sessionID"].as_str())
@@ -317,7 +332,7 @@ async fn route(app: &Shared, routes: &Routes, Job { event, endpoint, received: (
                 let native_dir = workspace.location["directory"].as_str().unwrap_or_default();
                 directory.as_deref().map_or_else(
                     || GLOBAL.split(' ').any(|g| g == kind) || kind == "session.deleted",
-                    |dir| dir == native_dir || Path::new(dir).starts_with(&app.scope),
+                    |dir| dir == native_dir || Path::new(dir).starts_with(&app.scope) || receipt_event,
                 ) && event["location"].get("workspaceID").is_none()
             })
             .cloned()
@@ -367,7 +382,10 @@ async fn route(app: &Shared, routes: &Routes, Job { event, endpoint, received: (
                         continue;
                     };
                     inbox_proofs.insert(workspace.id, (physical, identity, proof));
-                } else if !crate::worktrees::owns_event(app, &workspace, dir).await {
+                } else if !crate::worktrees::owns_event(app, &workspace, dir).await
+                    && !(receipt_event
+                        && crate::worktrees::ownership::owns_loaded(app, &workspace, &endpoint, dir).await)
+                {
                     continue;
                 }
             }
@@ -407,7 +425,7 @@ async fn route(app: &Shared, routes: &Routes, Job { event, endpoint, received: (
     let (took, count, sid) = (routed.elapsed().as_millis(), recipients.len(), sid.unwrap_or("-"));
     crate::bench::route_trace(format_args!("event {kind} {took}ms to {count} at {received} sid {sid}"));
     crate::sessions::favorites::deleted(app, &event);
-    if crate::sessions::receipts::observe(app, &event, &recipients).await.is_err() {
+    if crate::sessions::receipts::observe(app, &endpoint, &event, &recipients).await.is_err() {
         eprintln!("Permission receipt persistence unavailable");
     }
 }

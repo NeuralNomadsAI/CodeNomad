@@ -209,6 +209,54 @@ fn catalogue_proof(catalogue: &super::inventory::Catalogue, path: &Path, externa
     Some(DirectoryProof { tree: Some(tree.clone()), source, external })
 }
 
+pub(crate) struct LoadedOwnership {
+    inventory: Option<std::sync::Arc<super::inventory::Catalogue>>,
+    directory_only: bool,
+    revision: u64,
+}
+
+impl LoadedOwnership {
+    pub(crate) async fn load(
+        app: &crate::Shared,
+        w: &Workspace,
+        endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    ) -> Self {
+        let revision = app.linked_events.lock().unwrap().0;
+        let inventory = super::inventory::receipt_catalogue(app, w, endpoint).await;
+        let directory_only = inventory.is_none() && matches!(super::root_only(w).await, Ok(Some(true)));
+        Self { inventory, directory_only, revision }
+    }
+
+    pub(crate) fn owns(&self, app: &App, w: &Workspace, directory: &str) -> bool {
+        if !crate::files::paths::local_absolute(directory) {
+            return false;
+        }
+        let Some(path) = resolve_directory(directory) else { return false };
+        if existing_directory(&path).is_none() {
+            return false;
+        }
+        let external = !within(&w.path, &path);
+        if path == w.path || !external && self.directory_only {
+            return true;
+        }
+        self.inventory
+            .as_ref()
+            .and_then(|inventory| registered_proof(inventory, &path, external))
+            .is_some_and(|proof| proof.live_at(&path, None, true))
+            && app.linked_events.lock().unwrap().0 == self.revision
+    }
+}
+
+pub(crate) async fn owns_loaded(
+    app: &crate::Shared,
+    w: &Workspace,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    directory: &str,
+) -> bool {
+    let proof = LoadedOwnership::load(app, w, endpoint).await;
+    proof.owns(app, w, directory) && app.native.current(endpoint)
+}
+
 /// Request-local validated checkout inventory for history fan-out and provenance.
 pub(crate) struct HistoryInventory(Option<super::inventory::Catalogue>);
 
