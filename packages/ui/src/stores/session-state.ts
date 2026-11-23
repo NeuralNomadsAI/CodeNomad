@@ -1,5 +1,5 @@
 import { batch, createSignal } from "solid-js"
-import { carrySessionProjection, sessionCheckpoint, sessionIndicatorRows, sessionTopology } from "./session-projection"
+import { carrySessionProjection, childSessionIds, sessionCheckpoint, sessionIndicatorRows, sessionTopology } from "./session-projection"
 import { beginGesture, type SurfaceGesture } from "./session-surface"
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 
@@ -990,8 +990,8 @@ function getParentSessions(instanceId: string): Session[] {
 }
 
 function getChildSessions(instanceId: string, parentId: string): Session[] {
-  const allSessions = getSessions(instanceId)
-  return allSessions.filter((s) => s.parentId === parentId)
+  const rows = sessions().get(instanceId)
+  return rows ? childSessionIds(rows, parentId).map(id => rows.get(id)!) : []
 }
 
 function getDescendantSessions(instanceId: string, parentId: string): Session[] {
@@ -1271,16 +1271,14 @@ function getThreadTotals(instanceId: string, parentSessionId: string): ThreadTot
   return threadTotalsByInstance().get(instanceId)?.get(parentSessionId)
 }
 
-function updateThreadTotalsForParent(instanceId: string, parentSessionId: string): void {
-  const family = getSessionFamily(instanceId, parentSessionId)
-  const totals = computeThreadTotals(family, sessionInfoByInstance().get(instanceId))
-
+function updateThreadTotalsForParents(instanceId: string, parentIds: Iterable<string>): void {
+  const info = sessionInfoByInstance().get(instanceId)
   setThreadTotalsByInstance((prev) => {
-    const next = new Map(prev)
-    const instanceTotals = new Map(next.get(instanceId))
-    instanceTotals.set(parentSessionId, totals)
-    next.set(instanceId, instanceTotals)
-    return next
+    const instanceTotals = new Map(prev.get(instanceId))
+    for (const parentId of parentIds) {
+      instanceTotals.set(parentId, computeThreadTotals(getSessionFamily(instanceId, parentId), info))
+    }
+    return new Map(prev).set(instanceId, instanceTotals)
   })
 }
 
@@ -1288,7 +1286,7 @@ function updateThreadTotalsForSession(instanceId: string, sessionId: string): vo
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions?.has(sessionId)) return
   const familyIds = [...getSessionAncestorIdsFromMap(instanceSessions, sessionId), sessionId]
-  for (const familyId of familyIds) updateThreadTotalsForParent(instanceId, familyId)
+  updateThreadTotalsForParents(instanceId, familyIds)
 }
 
 const automaticCleanupRequests = new Map<string, {
@@ -1392,7 +1390,7 @@ export {
   setSessionInfoByInstance,
   threadTotalsByInstance,
   getThreadTotals,
-  updateThreadTotalsForParent,
+  updateThreadTotalsForParents,
   updateThreadTotalsForSession,
   getSessionDraftPrompt,
   getSessionDraftPromptsForInstance,

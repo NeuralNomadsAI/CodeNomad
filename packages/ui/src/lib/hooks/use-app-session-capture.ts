@@ -54,7 +54,6 @@ import {
 const log = getLogger("actions")
 const MAX_CAPTURED_SCROLL_SNAPSHOTS = 96
 const CAPTURE_DEBOUNCE_MS = 500
-const CAPTURE_MAX_WAIT_MS = 2000
 const NO_SESSION_ROWS: SessionRows = new Map()
 const capturedSessionData = new WeakMap<object, {
   rows: SessionRows
@@ -280,10 +279,8 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     if (navigationGeneration === null) unlockInput?.()
     schedule()
   }
-  let captureDeadline: number | undefined
   const capture = () => {
     timer = null
-    captureDeadline = undefined
     if (enabled() && !disposed && !releasing && nativeShutdownGeneration === null) {
       const state = mergedState()
       if (state.tabs.length > 0) nativeFallbackState = state
@@ -292,10 +289,8 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   }
   const schedule = () => {
     if (!enabled() || disposed || releasing || nativeShutdownGeneration !== null) return
-    const now = performance.now()
-    if (!timer) captureDeadline = now + CAPTURE_MAX_WAIT_MS
     if (timer) clearTimeout(timer)
-    timer = setTimeout(capture, Math.min(CAPTURE_DEBOUNCE_MS, (captureDeadline ?? now) - now))
+    timer = setTimeout(capture, CAPTURE_DEBOUNCE_MS)
   }
   const flush = async (nativeShutdownGenerationRequest?: number) => {
     const nativeShutdown = nativeShutdownGenerationRequest !== undefined

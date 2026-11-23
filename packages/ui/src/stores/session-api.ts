@@ -56,7 +56,7 @@ import {
   loading,
   setLoading,
   cleanupBlankSessions,
-  updateThreadTotalsForParent,
+  updateThreadTotalsForParents,
   setSessionPage,
   prependSessionListId,
   removeSessionListId,
@@ -1043,7 +1043,7 @@ async function fetchSessions(instanceId: string, options?: {
       cursors: new Set(response.nextCursor ? [response.nextCursor] : []),
       pages: 1,
     })
-    for (const rootId of rootIds) updateThreadTotalsForParent(instanceId, rootId)
+    updateThreadTotalsForParents(instanceId, rootIds)
 
     reconcilePendingSessionIndicators(instanceId)
 
@@ -1218,7 +1218,7 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
     if (root && !roots.includes(root.id)) roots.push(root.id)
   }
   setSessionPage(instanceId, roots, Boolean(response.nextCursor), false, response.nextCursor)
-  for (const rootId of roots) updateThreadTotalsForParent(instanceId, rootId)
+  updateThreadTotalsForParents(instanceId, roots)
 }
 
 export function excludeMissingMoveFromSearch(instanceId: string, sessionId: string): void {
