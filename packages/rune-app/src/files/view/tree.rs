@@ -44,7 +44,11 @@ fn tree_content(s: &State, width: f32, touch: bool) -> El {
                     let path = path.clone();
                     let directory = ui.tree.directory().to_owned();
                     move |s, tx| {
-                        if s.files.as_mut().and_then(|ui| ui.toggle_preview(&directory, &path)) == Some(false) {
+                        if s.files
+                            .as_mut()
+                            .and_then(|ui| ui.toggle_preview(&directory, &path))
+                            == Some(false)
+                        {
                             crate::chat::reading::restore_position(s, tx);
                         }
                     }

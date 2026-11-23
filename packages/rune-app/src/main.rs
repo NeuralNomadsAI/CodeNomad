@@ -352,12 +352,24 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::ObservedRunning(running) => {
-                s.phase = if running {
-                    Phase::Streaming
-                } else {
-                    Phase::Ready
-                };
+                if let Some(reader) = &mut s.reader {
+                    reader.observed_running(running);
+                }
+                if s.phase != Phase::Reconnecting
+                    && s.phase != Phase::Failed
+                    && (running
+                        || s.reader
+                            .as_ref()
+                            .is_none_or(chat::reader::Reader::independent_status))
+                {
+                    s.phase = if running {
+                        Phase::Streaming
+                    } else {
+                        Phase::Ready
+                    };
+                }
                 if let Some(agent) = &mut s.agent {
+                    agent.running = running;
                     agent.refresh(false);
                 }
             }
@@ -404,6 +416,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
             }
             Event::Reconnecting | Event::ConnectionLost => {
+                if let Some(reader) = &mut s.reader {
+                    reader.reconnecting();
+                }
                 #[cfg(target_arch = "wasm32")]
                 if matches!(event, Event::ConnectionLost) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
@@ -473,9 +488,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     #[cfg(not(target_arch = "wasm32"))]
                     chat::authentication::expired(s, expired);
                 }
-                if let Some(reader) = &mut s.reader {
-                    reader.stop_content();
-                }
+                chat::reader::suspend(s);
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
@@ -584,7 +597,9 @@ fn composer(s: &State, scroll_stack: Option<&Cx<State>>) -> El {
                         } else {
                             "rune.older"
                         }),
-                        s.paging || !matches!(s.phase, Phase::Ready | Phase::Streaming),
+                        s.paging
+                            || !(matches!(s.phase, Phase::Ready | Phase::Streaming)
+                                || retry && s.phase == Phase::Reconnecting),
                         crate::screen::action_tx(
                             &scope,
                             if retry {

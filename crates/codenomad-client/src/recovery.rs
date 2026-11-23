@@ -488,6 +488,9 @@ pub(crate) async fn run_with_reading(
                     | "session.execution.failed"
                     | "session.execution.interrupted" => {
                         terminal = busy;
+                        if reading.is_some() {
+                            publish(&out, &wake, Event::ObservedRunning(false)).await;
+                        }
                         parked = false;
                         dirty = true;
                         quiet = Instant::now() + Duration::from_millis(100);

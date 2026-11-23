@@ -71,7 +71,12 @@ pub(crate) fn viewport(s: &State, history: El) -> El {
 
 pub(crate) fn restore_position(s: &mut State, tx: &mut Tx) {
     tx.instant();
-    Reading::restore(&s.transcript_display.reading_mut().bookmark(), tx);
+    let reading = s.transcript_display.reading_mut();
+    let bookmark = s.reader.as_ref().map_or_else(
+        || reading.bookmark(false),
+        |reader| reader.bookmark(reading),
+    );
+    Reading::restore(&bookmark, tx);
 }
 
 pub(super) fn row(s: &State, id: String, view: El) -> El {

@@ -4,7 +4,7 @@ use crate::platform;
 fn stash(s: &mut State, tx: &mut Tx) {
     capture_files_mode(s);
     capture(s);
-    crate::chat::suspend(s, tx);
+    crate::chat::suspend(s);
     if let Some(files) = &mut s.files {
         files.activate(false);
     }

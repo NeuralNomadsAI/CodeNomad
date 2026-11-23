@@ -24,6 +24,7 @@ pub(crate) struct Reader {
     pending_scroll: bool,
     gap: bool,
     parked: bool,
+    terminal_since_sync: bool,
 }
 
 impl Reader {
@@ -43,6 +44,7 @@ impl Reader {
                 pending_scroll: false,
                 gap: false,
                 parked: false,
+                terminal_since_sync: false,
             },
             ReadingLane {
                 demand,
@@ -91,7 +93,7 @@ impl Reader {
         !self.hidden && self.parked
     }
 
-    fn resume(&mut self, current: Bookmark) {
+    pub(super) fn resume(&mut self, current: Bookmark) {
         let target = match &current {
             Bookmark::Latest => Target::Latest,
             Bookmark::Message { id, .. } => Target::Around(id.clone()),
@@ -115,6 +117,24 @@ impl Reader {
         self.parked = true;
     }
 
+    pub(crate) fn observed_running(&mut self, running: bool) {
+        self.terminal_since_sync = !running;
+    }
+
+    pub(crate) fn reconnecting(&mut self) {
+        if self.resume_pending && !self.hidden {
+            self.resume(self.bookmark.clone());
+        }
+    }
+
+    pub(crate) fn bookmark(&self, reading: &Reading) -> Bookmark {
+        if self.resume_pending || self.hidden {
+            self.bookmark.clone()
+        } else {
+            reading.bookmark(self.gap)
+        }
+    }
+
     pub(crate) fn renderer_ready(&mut self, tx: &mut Tx) {
         if std::mem::take(&mut self.pending_scroll) {
             Reading::restore(&self.bookmark, tx);
@@ -122,12 +142,13 @@ impl Reader {
     }
 }
 
-pub(crate) fn suspend(s: &mut State, _tx: &mut Tx) {
+pub(crate) fn suspend(s: &mut State) {
     if let Some(reader) = &mut s.reader {
-        if !reader.resume_pending && !reader.hidden {
-            reader.bookmark = s.transcript_display.reading_mut().bookmark(reader.gap);
-        }
+        reader.bookmark = reader.bookmark(s.transcript_display.reading_mut());
         reader.stop_content();
+        if reader.terminal_since_sync && s.phase == crate::Phase::Streaming {
+            s.phase = crate::Phase::Ready;
+        }
         s.paging = false;
         s.transcript_display.evict_rendered();
     }
@@ -217,6 +238,60 @@ mod tests {
     }
 
     #[test]
+    fn a_disconnect_reissues_an_uninstalled_around_snapshot() {
+        let mut state = init();
+        let (mut reader, lane) = Reader::open();
+        reader.resume(Bookmark::Message {
+            id: "saved-anchor".into(),
+            offset: -17.0,
+        });
+        let previous = lane.demand.current();
+        state.reader = Some(reader);
+        let (out, incoming) = bounded(1);
+        state.incoming = Some(incoming);
+        lane.events
+            .try_send((
+                previous.generation,
+                0,
+                Event::Sync(crate::history::Page {
+                    rows: vec![],
+                    older: None,
+                    newer: Some(serde_json::json!({"kind":"after"})),
+                    running: false,
+                }),
+            ))
+            .unwrap();
+        lane.connection.store(1, SeqCst);
+        out.try_send(Event::Reconnecting).unwrap();
+        assert!(poll_chat(&mut state, 8));
+        assert!(state.reader.as_ref().unwrap().resume_pending);
+        let resumed = lane.demand.current();
+        assert_eq!(resumed.target, previous.target);
+        assert_ne!(resumed.generation, previous.generation);
+    }
+
+    #[test]
+    fn terminal_observation_settles_when_suspension_cancels_the_tail_read() {
+        let mut state = init();
+        let (reader, _lane) = Reader::open();
+        state.reader = Some(reader);
+        state.phase = Phase::Streaming;
+        let (out, incoming) = bounded(1);
+        state.incoming = Some(incoming);
+        out.try_send(Event::ObservedRunning(false)).unwrap();
+        assert!(poll_chat(&mut state, 8));
+        assert!(
+            state.phase == Phase::Streaming,
+            "visible tail still needs the content read"
+        );
+        suspend(&mut state);
+        assert!(
+            state.phase == Phase::Ready,
+            "hidden execution status settles without content"
+        );
+    }
+
+    #[test]
     fn retry_keeps_the_original_anchor_even_without_cached_rows() {
         let mut state = init();
         let (mut reader, lane) = Reader::open();
@@ -228,7 +303,7 @@ mod tests {
         let previous = lane.demand.current();
         reader.failed();
         state.reader = Some(reader);
-        state.phase = Phase::Ready;
+        state.phase = Phase::Reconnecting;
         state.history_error = true;
         assert!(!state.can_older && state.messages.is_empty());
         let mut rt = Runtime::new(state, crate::view, (960.0, 760.0), Env::new(false, 1.0));
