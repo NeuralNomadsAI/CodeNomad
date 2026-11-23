@@ -644,7 +644,7 @@ function pruneDraftPrompts(instanceId: string, validSessionIds: Set<string>) {
   })
 }
 
-function withSession(instanceId: string, sessionId: string, updater: (session: Session) => void | boolean) {
+function withSession(instanceId: string, sessionId: string, updater: (session: Session, previous: Readonly<Session>) => void | boolean) {
   setSessions((prev) => {
     const instanceSessions = prev.get(instanceId)
     if (!instanceSessions) return prev
@@ -658,7 +658,7 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
     const tokens = current.tokens && { ...current.tokens, cache: { ...current.tokens.cache } }
     const retry = current.retry && { ...current.retry }
     const updatedSession: Session = { ...current, time, location, model, tokens, retry }
-    const result = updater(updatedSession)
+    const result = updater(updatedSession, current)
     if (result === false) {
       return prev
     }
