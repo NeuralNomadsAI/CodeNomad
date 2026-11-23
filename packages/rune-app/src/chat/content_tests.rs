@@ -25,6 +25,7 @@ fn replacing_a_window_keeps_overlap_identity() {
             older: None,
             newer: Some(json!({"kind":"after","messageID":"shared"})),
             running: false,
+            user_file_references: false,
         }))
         .unwrap();
     assert!(crate::poll_chat(&mut state, 1));

@@ -7,6 +7,7 @@ use rune::{Env, Mods, Runtime};
 fn runtime() -> Runtime<State> {
     let mut state = init();
     state.phase = Phase::Ready;
+    state.composer.picker.set_attachments_supported(true);
     let (send, _receive) = bounded(1);
     state.commands = Some(send);
     let mut rt = Runtime::new(state, view, (680.0, 640.0), Env::new(false, 1.0));
@@ -16,6 +17,58 @@ fn runtime() -> Runtime<State> {
     rt.pointer_up(x, y);
     rt.frame(0.0);
     rt
+}
+
+#[test]
+fn attachment_support_follows_the_window_marker() {
+    let mut rt = runtime();
+    let (events, incoming) = bounded(1);
+    rt.state.incoming = Some(incoming);
+    for supported in [false, true] {
+        let mut window = serde_json::json!({"status":"window","messages":[],"latest":true});
+        if supported {
+            window["userFiles"] = serde_json::json!("reference-v1");
+        }
+        events
+            .try_send(crate::transport::Event::Sync(
+                crate::history::decode(window).unwrap(),
+            ))
+            .unwrap();
+        rt.update(|s, _| {
+            crate::poll_chat(s, 1);
+            s.draft.clear();
+        });
+        rt.frame(0.0);
+        assert_eq!(rt.find("attachments-disabled").is_none(), supported);
+        let (x, y) = rt.find("composer").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.0);
+        rt.paste("@ref");
+        rt.frame(0.0);
+        rt.update(|s, _| {
+            let picker = &mut s.composer.picker;
+            picker.mentions.directory = Some("/project".into());
+            picker.mentions.files.push(Item::File(ProjectMatch {
+                path: "ref.txt".into(),
+                kind: EntryKind::File,
+            }));
+            picker.refresh_entries();
+        });
+        press(&mut rt, Key::Enter, Mods::default());
+        assert_eq!(
+            rt.state.composer.draft.attachments.len(),
+            usize::from(supported)
+        );
+        assert_eq!(
+            rt.state.draft.text,
+            if supported {
+                "@./ref.txt "
+            } else {
+                "./ref.txt "
+            }
+        );
+    }
 }
 fn press(rt: &mut Runtime<State>, key: Key, mods: Mods) {
     let event = KeyEvent { key, mods };

@@ -341,6 +341,7 @@ pub fn opened(s: &mut State, project: &Project) {
         }
     } else {
         let mut drafts = std::collections::BTreeMap::new();
+        let mut attachment_drafts = std::collections::BTreeSet::new();
         item.cleared.clear();
         for w in ui.closed.iter().filter(|w| {
             same_folder(&w.folder, &project.path)
@@ -348,6 +349,7 @@ pub fn opened(s: &mut State, project: &Project) {
                 && (backend_id.is_none() || w.server_id == l.server_id)
         }) {
             for (id, text) in &w.drafts {
+                attachment_drafts.remove(id);
                 if text.is_empty() {
                     drafts.remove(id);
                     item.cleared.insert(id.clone());
@@ -356,8 +358,14 @@ pub fn opened(s: &mut State, project: &Project) {
                     item.cleared.remove(id);
                 }
             }
+            attachment_drafts.extend(w.attachment_drafts.iter().cloned());
         }
-        item.pending_drafts = drafts.keys().chain(item.cleared.iter()).cloned().collect();
+        item.pending_drafts = drafts
+            .keys()
+            .chain(item.cleared.iter())
+            .chain(attachment_drafts.iter())
+            .cloned()
+            .collect();
         item.saved = Tab::Workspace(Workspace {
             backend_id: backend_id.clone(),
             server_id: if backend_id.is_some() {
@@ -370,6 +378,7 @@ pub fn opened(s: &mut State, project: &Project) {
             workspace_id: Some(project.id.clone()),
             active_session_id: None,
             drafts,
+            attachment_drafts,
             view: Default::default(),
         });
     }

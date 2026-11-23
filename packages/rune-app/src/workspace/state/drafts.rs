@@ -17,6 +17,11 @@ pub fn capture(s: &mut State) {
             b.session == key || b.session.is_empty() && key == "__no_session_draft__"
         });
         if owns_draft {
+            if s.composer.attachments_missing || !s.composer.draft.attachments.is_empty() {
+                changed |= saved.attachment_drafts.insert(key.into());
+            } else {
+                changed |= saved.attachment_drafts.remove(key);
+            }
             if s.draft.text.is_empty() {
                 if saved.drafts.remove(key).is_some() {
                     item.cleared.insert(key.into());
@@ -40,6 +45,11 @@ pub fn draft_changed(s: &mut State, _: &mut Tx) {
 
 pub fn bound(s: &mut State, backend: &Backend) -> String {
     capture(s);
+    let same_session =
+        !s.screen.is_launcher() && super::active_session(s) == Some(&backend.session);
+    if !same_session {
+        s.composer = Default::default();
+    }
     let Some(ui) = &mut s.workspace else {
         return String::new();
     };
@@ -50,6 +60,8 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
         return String::new();
     };
     saved.active_session_id = Some(backend.session.clone());
+    s.composer.attachments_missing = saved.attachment_drafts.contains(&backend.session)
+        && s.composer.draft.attachments.is_empty();
     let draft = saved
         .drafts
         .get(&backend.session)
@@ -72,8 +84,10 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         .iter()
         .rev()
         .filter(|w| same_project(&scope, w))
-        .find_map(|w| w.drafts.get(id))
-        .cloned();
+        .find_map(|w| {
+            let missing = w.attachment_drafts.contains(id);
+            (missing || w.drafts.contains_key(id)).then(|| (w.drafts.get(id).cloned(), missing))
+        });
     for (index, item) in ui.entries.iter_mut().enumerate() {
         if !matches!(&item.saved, Tab::Workspace(w) if same_project(&scope, w))
             || !item.pending_drafts.remove(id)
@@ -84,9 +98,13 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
             continue;
         };
         saved.drafts.remove(id);
+        saved.attachment_drafts.remove(id);
         item.cleared.remove(id);
         if index == ui.active {
-            match &current {
+            if current.as_ref().is_some_and(|(_, missing)| *missing) {
+                saved.attachment_drafts.insert(id.into());
+            }
+            match current.as_ref().and_then(|(text, _)| text.as_ref()) {
                 Some(text) if !text.is_empty() => {
                     saved.drafts.insert(id.into(), text.clone());
                 }
@@ -99,5 +117,6 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
     }
     for w in ui.closed.iter_mut().filter(|w| same_project(&scope, w)) {
         w.drafts.remove(id);
+        w.attachment_drafts.remove(id);
     }
 }

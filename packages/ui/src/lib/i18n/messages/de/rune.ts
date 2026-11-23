@@ -1,4 +1,7 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "Dieser Server unterstützt keinen Anhangsverlauf.",
+  "rune.attachments_missing": "Die Anhänge des Entwurfs wurden nicht wiederhergestellt.",
+  "rune.attachments_keep_text": "Nur Text behalten",
   "rune.loading": "Laden",
   "rune.ready": "Bereit",
   "rune.streaming": "Antwort läuft",

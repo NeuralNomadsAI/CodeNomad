@@ -16,6 +16,7 @@ pub struct Owner {
     pub unconfirmed: Option<String>,
     pub command_unconfirmed: Option<(String, String)>,
     pub restored: bool,
+    pub attachments_missing: bool,
 }
 struct Send {
     id: String,
@@ -46,6 +47,8 @@ pub fn can_send(s: &State) -> bool {
         && s.composer.sending.is_none()
         && !s.composer.picker.open()
         && !s.composer.picker.command_pending(&s.draft.text)
+        && !s.composer.attachments_missing
+        && (s.composer.picker.attachments_supported() || s.composer.draft.attachments.is_empty())
         && s.composer.unconfirmed.is_none()
         && !repeats_uncertain_command(s)
         && s.composer.draft.can_send(&s.draft)
@@ -218,6 +221,7 @@ mod tests {
         let (sender, receiver) = codenomad_client::bounded(1);
         let mut s = crate::init();
         s.phase = Phase::Ready;
+        s.composer.picker.set_attachments_supported(true);
         s.commands = Some(sender);
         s.composer.draft.attach(Attachment::Skill {
             id: "review".into(),

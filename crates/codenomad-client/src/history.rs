@@ -16,6 +16,7 @@ pub struct Page {
     pub older: Option<Value>,
     pub newer: Option<Value>,
     pub running: bool,
+    pub user_file_references: bool,
 }
 pub fn valid_id(id: &str) -> bool {
     !id.is_empty()
@@ -93,6 +94,7 @@ pub fn decode(v: Value) -> Result<Page> {
         older: cursor(&v["older"], "before")?,
         newer,
         running,
+        user_file_references: v["userFiles"] == "reference-v1",
     })
 }
 fn stored_size(row: &mut Value) -> Result<usize> {

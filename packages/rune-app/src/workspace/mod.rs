@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 mod cache;
 pub(crate) mod opening;
 mod persistence;
@@ -49,6 +49,7 @@ pub struct Workspace {
     pub workspace_id: Option<String>,
     pub active_session_id: Option<String>,
     pub drafts: BTreeMap<String, String>,
+    pub(crate) attachment_drafts: BTreeSet<String>,
     pub(crate) view: ViewState,
 }
 
@@ -152,6 +153,9 @@ pub fn encode(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
                         value[key] = Value::String(entry.clone());
                     }
                 }
+                if !workspace.attachment_drafts.is_empty() {
+                    value["attachmentDrafts"] = json!(workspace.attachment_drafts);
+                }
                 if workspace.view != ViewState::default() {
                     value["viewState"] = json!({
                         "version": 1,
@@ -198,6 +202,7 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                     "activeSessionId",
                     "drafts",
                     "attachments",
+                    "attachmentDrafts",
                     "scrollSnapshots",
                     "unseenIdleSince",
                     "generationRecovery",
@@ -240,6 +245,18 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                     ))
                 })
                 .collect::<Result<_, Error>>()?;
+            let attachment_drafts = match value.get("attachmentDrafts") {
+                None => BTreeSet::new(),
+                Some(ids) => {
+                    let ids = ids.as_array().ok_or(Error::Malformed)?;
+                    if ids.len() > MAX_DRAFTS {
+                        return Err(Error::Limit);
+                    }
+                    ids.iter()
+                        .map(|id| id.as_str().map(str::to_owned).ok_or(Error::Malformed))
+                        .collect::<Result<_, _>>()?
+                }
+            };
             Ok(Tab::Workspace(Workspace {
                 backend_id: optional_string(value, "backendId")?,
                 server_id: optional_string(value, "serverId")?,
@@ -255,6 +272,7 @@ fn tab(value: &Value) -> Result<Tab, Error> {
                 workspace_id: optional_string(value, "workspaceId")?,
                 active_session_id: optional_string(value, "activeSessionId")?,
                 drafts,
+                attachment_drafts,
                 view: view_state(value.get("viewState"))?,
             }))
         }
@@ -321,7 +339,10 @@ fn validate(snapshot: &Snapshot) -> Result<(), Error> {
         let Tab::Workspace(workspace) = tab else {
             continue;
         };
-        if workspace.occurrence >= MAX_TABS as u64 || workspace.drafts.len() > MAX_DRAFTS {
+        if workspace.occurrence >= MAX_TABS as u64
+            || workspace.drafts.len() > MAX_DRAFTS
+            || workspace.attachment_drafts.len() > MAX_DRAFTS
+        {
             return Err(Error::Limit);
         }
         take(&workspace.folder, 4096, false, &mut remaining)?;
@@ -355,6 +376,12 @@ fn validate(snapshot: &Snapshot) -> Result<(), Error> {
                 return Err(Error::Malformed);
             }
             take(text, MAX_DRAFT, true, &mut remaining)?;
+        }
+        for id in &workspace.attachment_drafts {
+            take(id, 256, false, &mut remaining)?;
+            if !draft_id(id) {
+                return Err(Error::Malformed);
+            }
         }
     }
     Ok(())

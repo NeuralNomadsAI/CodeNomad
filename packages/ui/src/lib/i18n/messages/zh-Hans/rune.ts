@@ -1,4 +1,7 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "此服务器不支持附件历史记录。",
+  "rune.attachments_missing": "草稿中的附件未恢复。",
+  "rune.attachments_keep_text": "仅保留文本",
   "rune.loading": "加载中",
   "rune.ready": "就绪",
   "rune.streaming": "正在回复",

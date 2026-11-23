@@ -1,4 +1,7 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "Bu sunucu ek geçmişini desteklemiyor.",
+  "rune.attachments_missing": "Taslağın ekleri geri yüklenmedi.",
+  "rune.attachments_keep_text": "Yalnızca metni tut",
   "rune.loading": "Yükleniyor",
   "rune.ready": "Hazır",
   "rune.streaming": "Yanıt geliyor",

@@ -1,4 +1,7 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "This server does not support attachment history.",
+  "rune.attachments_missing": "Draft files were not restored.",
+  "rune.attachments_keep_text": "Keep text only",
   "rune.loading": "Loading",
   "rune.ready": "Ready",
   "rune.streaming": "Streaming",

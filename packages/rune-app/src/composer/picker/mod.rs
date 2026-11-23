@@ -26,6 +26,7 @@ pub struct Picker {
     pub entries: Vec<Item>,
     pub selected: usize,
     selection_moved: bool,
+    attachments_supported: bool,
     pub generation: u64,
 }
 
@@ -75,6 +76,19 @@ impl Picker {
 
     pub fn slash(&self) -> bool {
         matches!(self.current, Some((Query::Command(_), _)))
+    }
+
+    pub fn attachments_supported(&self) -> bool {
+        self.attachments_supported
+    }
+
+    pub fn set_attachments_supported(&mut self, supported: bool) {
+        if self.attachments_supported != supported {
+            self.attachments_supported = supported;
+            if self.open() && !self.slash() {
+                self.refresh_preserving_selection();
+            }
+        }
     }
 
     pub fn mentions_changed(&mut self, reads: &Reads, wake: &Waker) {
@@ -169,19 +183,23 @@ impl Picker {
         let commands = self.commands.poll(self.backend.as_ref(), reads, wake);
         let mentions = self.mentions.poll(self.backend.as_ref(), reads, wake);
         if self.open() && if self.slash() { commands } else { mentions } {
-            let active = (self.slash() || self.selection_moved)
-                .then(|| self.entries.get(self.selected).cloned())
-                .flatten();
-            self.refresh_entries();
-            let active = active.and_then(|active| {
-                self.entries
-                    .iter()
-                    .position(|item| item.identity() == active.identity())
-            });
-            self.selection_moved &= active.is_some();
-            self.selected = active.unwrap_or(0);
+            self.refresh_preserving_selection();
         }
         commands || mentions
+    }
+
+    fn refresh_preserving_selection(&mut self) {
+        let active = (self.slash() || self.selection_moved)
+            .then(|| self.entries.get(self.selected).cloned())
+            .flatten();
+        self.refresh_entries();
+        let active = active.and_then(|active| {
+            self.entries
+                .iter()
+                .position(|item| item.identity() == active.identity())
+        });
+        self.selection_moved &= active.is_some();
+        self.selected = active.unwrap_or(0);
     }
 
     fn token(&self, edit: &TextEdit) -> Option<Query> {
@@ -209,6 +227,9 @@ impl Picker {
             matching(&self.commands.items, text, &mut self.entries);
         } else {
             self.mentions.entries(text, &mut self.entries);
+            if !self.attachments_supported {
+                self.entries.retain(|item| !matches!(item, Item::Skill(_)));
+            }
         }
     }
 
@@ -255,9 +276,16 @@ impl Picker {
         match (token, item) {
             (Query::Command(_), Item::Command(command)) => self.commands.choose(edit, command),
             (Query::Mention(range), _) if self.token(edit).as_ref() == Some(token) => {
+                let mode = if !self.attachments_supported {
+                    mentions::Mode::Text
+                } else if path_only {
+                    mentions::Mode::Path
+                } else {
+                    mentions::Mode::Attachment
+                };
                 let Some(keep_open) =
                     self.mentions
-                        .choose(edit, draft, range.clone(), item, tab, path_only)
+                        .choose(edit, draft, range.clone(), item, tab, mode)
                 else {
                     return false;
                 };

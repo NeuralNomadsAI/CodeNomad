@@ -122,7 +122,37 @@ pub fn view(s: &State) -> El {
             .key("refresh-command-catalogue"),
         );
     }
+    if !s.composer.picker.attachments_supported() {
+        actions = actions.child(
+            layout::button(
+                t("promptInput.attachFiles.ariaLabel"),
+                true,
+                |_: &mut State| {},
+            )
+            .key("attachments-disabled")
+            .description_static(t("rune.attachments_unavailable")),
+        );
+    }
+    if s.composer.attachments_missing {
+        actions = actions.child(
+            layout::button_tx(
+                t("rune.attachments_keep_text"),
+                false,
+                screen::action_tx(&scope, |s, tx| {
+                    s.composer.attachments_missing = false;
+                    crate::workspace::draft_changed(s, tx);
+                }),
+            )
+            .key("keep-draft-text")
+            .description_static(t("rune.attachments_missing")),
+        );
+    }
     body.child(actions)
+        .children(
+            s.composer
+                .attachments_missing
+                .then(|| text(t("rune.attachments_missing")).role("alert")),
+        )
         .children(
             s.composer
                 .send_error

@@ -302,7 +302,6 @@ pub(super) fn bind(
         crate::files::bind(s, &b);
         s.agent = None;
         s.attachments = Default::default();
-        s.composer = Default::default();
         s.messages.clear();
         s.can_older = false;
     } else if let Some(agent) = &mut s.agent {

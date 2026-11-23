@@ -1,4 +1,7 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "यो सर्भरले संलग्न फाइलको इतिहास समर्थन गर्दैन।",
+  "rune.attachments_missing": "मस्यौदाका संलग्न फाइलहरू पुनर्स्थापित भएनन्।",
+  "rune.attachments_keep_text": "पाठ मात्र राख्नुहोस्",
   "rune.loading": "लोड हुँदैछ",
   "rune.ready": "तयार",
   "rune.streaming": "जवाफ आउँदैछ",

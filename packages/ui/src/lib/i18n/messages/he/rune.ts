@@ -1,4 +1,7 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "שרת זה אינו תומך בהיסטוריית קבצים מצורפים.",
+  "rune.attachments_missing": "הקבצים המצורפים לטיוטה לא שוחזרו.",
+  "rune.attachments_keep_text": "שמירת הטקסט בלבד",
   "rune.loading": "טוען",
   "rune.ready": "מוכן",
   "rune.streaming": "תגובה בתהליך",

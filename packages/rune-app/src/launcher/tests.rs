@@ -166,6 +166,7 @@ fn a_selection_reply_cannot_replace_a_session_that_resumed_streaming() {
                 older: None,
                 newer: None,
                 running: true,
+                user_file_references: false,
             }))
             .is_ok()
     );

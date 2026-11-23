@@ -12,6 +12,13 @@ use codenomad_client::{files::EntryKind, prompt_catalogue::ProjectMatch};
 use rune::{Waker, edit::TextEdit};
 use std::ops::Range;
 
+#[derive(PartialEq, Eq)]
+pub(super) enum Mode {
+    Text,
+    Path,
+    Attachment,
+}
+
 #[derive(Default)]
 pub(super) struct Mentions {
     pub(super) directory: Option<String>,
@@ -130,7 +137,7 @@ impl Mentions {
         range: Range<usize>,
         item: &Item,
         tab: bool,
-        path_only: bool,
+        mode: Mode,
     ) -> Option<bool> {
         let insertion = match item {
             Item::File(file) => {
@@ -146,7 +153,12 @@ impl Mentions {
                 } else {
                     format!("./{path}")
                 };
-                if path_only {
+                if mode == Mode::Text {
+                    let ending = if folder && path != "." { "/" } else { "" };
+                    replace(edit, range, &format!("{normalized}{ending} "));
+                    return Some(false);
+                }
+                if mode == Mode::Path {
                     draft.attach(Attachment::Path(normalized));
                 } else {
                     let directory = self.directory.as_deref()?;
@@ -179,10 +191,15 @@ impl Mentions {
                 }
             }
             Item::Agent(agent) => {
-                draft.attach(Attachment::Agent(agent.name.clone()));
+                if mode != Mode::Text {
+                    draft.attach(Attachment::Agent(agent.name.clone()));
+                }
                 format!("@{} ", agent.name)
             }
             Item::Skill(skill) => {
+                if mode == Mode::Text {
+                    return None;
+                }
                 draft.attach(Attachment::Skill {
                     id: skill.id.clone(),
                     name: skill.name.clone(),

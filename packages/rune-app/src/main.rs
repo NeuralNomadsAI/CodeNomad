@@ -251,6 +251,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Sync(page) => {
+                s.composer
+                    .picker
+                    .set_attachments_supported(page.user_file_references);
                 git::online(s, true);
                 if let Some(files) = &mut s.files {
                     files.online(true);
@@ -285,6 +288,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
             }
             Event::Reconnecting => {
+                s.composer.picker.set_attachments_supported(false);
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
@@ -302,6 +306,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.history_error = true;
             }
             Event::HistoryInvalidated => {
+                s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();
                 s.messages.clear();
                 s.history_detached = false;
@@ -334,6 +339,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Done => s.phase = Phase::Ready,
             Event::Failed => {
+                s.composer.picker.set_attachments_supported(false);
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);

@@ -12,6 +12,7 @@ fn workspace(id: &str, draft: &str) -> Workspace {
         workspace_id: None,
         active_session_id: Some(id.into()),
         drafts: BTreeMap::from([(id.into(), draft.into())]),
+        attachment_drafts: Default::default(),
         view: Default::default(),
     }
 }
@@ -27,6 +28,46 @@ fn backend(session: &str) -> Backend {
 }
 fn runtime(s: State) -> rune::Runtime<State> {
     rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0))
+}
+
+#[test]
+fn reopening_a_saved_draft_without_its_files_blocks_every_send() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries[0] = entry("tab-0".into(), Tab::Workspace(workspace("alpha", "")));
+    ui.entries[0].binding = Some(backend("alpha"));
+    s.workspace = Some(ui);
+    s.draft = TextEdit::new("from the attached file");
+    s.composer
+        .draft
+        .attach(crate::composer::draft::Attachment::Project {
+            name: "report.txt".into(),
+            path: "./report.txt".into(),
+            uri: "file:///fixture/report.txt".into(),
+            directory: false,
+        });
+    capture(&mut s);
+    let bytes = super::super::encode(&s.workspace.as_ref().unwrap().snapshot()).unwrap();
+
+    let mut restored = init();
+    let mut ui = Ui::new();
+    ui.hydrate(super::super::decode(&bytes).unwrap());
+    ui.ready = true;
+    restored.workspace = Some(ui);
+    restored.draft = TextEdit::new(bound(&mut restored, &backend("alpha")));
+    restored.composer.picker.set_attachments_supported(true);
+    restored.phase = Phase::Ready;
+    let (out, commands) = bounded(1);
+    restored.commands = Some(out);
+    let mut rt = runtime(restored);
+    rt.update(|s, tx| crate::composer::send(s, tx, false));
+    rt.frame(0.0);
+    assert!(rt.state.composer.attachments_missing);
+    assert!(!crate::composer::can_send(&rt.state));
+    assert!(commands.try_recv().is_err());
+    assert_eq!(rt.state.draft.text, "from the attached file");
+    assert!(rt.find("keep-draft-text").is_some());
 }
 
 #[test]

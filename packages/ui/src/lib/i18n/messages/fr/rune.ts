@@ -1,4 +1,7 @@
 export const runeMessages = {
+  "rune.attachments_unavailable": "Ce serveur ne prend pas en charge l’historique des pièces jointes.",
+  "rune.attachments_missing": "Les pièces jointes du brouillon n’ont pas été restaurées.",
+  "rune.attachments_keep_text": "Garder le texte seul",
   "rune.loading": "Chargement",
   "rune.ready": "Prêt",
   "rune.streaming": "Réponse en cours",
