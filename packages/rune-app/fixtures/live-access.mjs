@@ -11,12 +11,36 @@ import {privateEnvironment} from './private-profile.mjs'
 
 export const args=process.argv.slice(2).filter((arg,i,all)=>arg!=='--opencode'&&all[i-1]!=='--opencode')
 const marker='.rune-private-opencode'
+const forbidden='the shared OpenCode service is forbidden'
 
 export function requirePrivateCli(){
   const argv=process.argv.slice(2), index=argv.indexOf('--opencode'), cli=argv[index+1]
   assert(index>=0&&index===argv.lastIndexOf('--opencode')&&cli&&path.isAbsolute(cli),
-    'Pass --opencode <absolute executable>; the shared OpenCode service is forbidden')
+    `Pass --opencode <absolute executable>; ${forbidden}`)
   return cli
+}
+
+export async function attestNative(origin,child,authorization,request=fetch){
+  const endpoint=new URL(origin)
+  assert(endpoint.protocol==='http:'&&endpoint.hostname==='127.0.0.1'&&endpoint.pathname==='/'&&
+    !endpoint.search&&!endpoint.hash&&!endpoint.username&&!endpoint.password&&endpoint.port&&endpoint.port!=='0',
+    `Expected the fixture child's loopback listener; ${forbidden}`)
+  const alive=()=>assert(child.pid&&child.exitCode===null&&child.signalCode===null,'Private OpenCode has exited')
+  const read=async(route,init={})=>{
+    const url=new URL(route,endpoint)
+    assert.equal(url.origin,endpoint.origin,`Fixture cannot address another OpenCode endpoint; ${forbidden}`)
+    alive()
+    const response=await request(url,{...init,headers:{...init.headers,authorization,'content-type':'application/json'},
+      redirect:'error',signal:AbortSignal.timeout(30000)})
+    if(!response.ok)throw Error(`Private OpenCode ${url.pathname}: HTTP ${response.status}`)
+    return response.json().catch(()=>({}))
+  }
+  try{
+    const info=await read('/api/info')
+    assert.equal(info.pid,child.pid,'OpenCode PID differs from the fixture child')
+    alive()
+  }catch(cause){throw Error(`Could not attest the private OpenCode process; ${forbidden}: ${cause.message}`,{cause})}
+  return read
 }
 
 export async function privateManifest(file){
@@ -112,19 +136,9 @@ export async function withNative(run,{profile,pruning=true}={}){
     for(const end=Date.now()+60000;!origin;await delay(50)){
       if(error)throw error
       assert(Date.now()<end&&child.exitCode===null,'Private OpenCode did not start')
-      origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0]
+      origin=log.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1]
     }
-    const read=async(route,init={})=>{
-      const url=new URL(route,origin)
-      assert.equal(url.origin,origin,'Fixture cannot address another OpenCode service')
-      assert.equal(child.exitCode,null,'Private OpenCode has exited')
-      const response=await fetch(url,{...init,headers:{...init.headers,authorization,'content-type':'application/json'},
-        redirect:'error',signal:AbortSignal.timeout(30000)})
-      if(!response.ok)throw Error(`Private OpenCode ${url.pathname}: HTTP ${response.status}`)
-      return response.json().catch(()=>({}))
-    }
-    const info=await read('/api/info')
-    assert.equal(info.pid,child.pid,'OpenCode endpoint does not belong to the fixture child')
+    const read=await attestNative(origin,child,authorization)
     await plugin?.activate({project,url:origin,authorization},()=>assert.equal(child.exitCode,null))
     return await run({profile,project,origin:`${origin}/`,password,read,env,pid:child.pid})
   } finally {
