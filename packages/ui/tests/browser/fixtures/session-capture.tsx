@@ -53,15 +53,15 @@ document.body.append(draftInput)
   draftValue: (id: string, sessionId: string) => getSessionDraftPrompt(id, sessionId),
   catalog: () => captureSessionCatalog([...sessions().get("first")!.values()]),
   appear: () => setSessions(previous => {
-    const rows = previous.get("first")!
+    const rows = new Map(previous.get("first"))
     rows.set("missing", { ...structuredClone(rows.get("parent")!), id: "missing" })
-    return new Map(previous)
+    return new Map(previous).set("first", rows)
   }),
   rename: (from: string, to: string) => setSessions(previous => {
-    const rows = previous.get("first")!, row = rows.get(from)!
+    const rows = new Map(previous.get("first")), row = rows.get(from)!
     rows.delete(from)
     rows.set(to, { ...row, id: to })
-    return new Map(previous)
+    return new Map(previous).set("first", rows)
   }),
   mutate(path: string, value: unknown) {
     withSession("first", "parent", row => {
@@ -92,8 +92,9 @@ document.body.append(draftInput)
   draft: (value: string) => setSessionDraftPrompt("first", "parent", value),
   attach: () => addAttachment("first", "parent", createFileAttachment("/synthetic/note.txt", "note.txt")),
   remove: () => setSessions(previous => {
-    previous.get("second")!.delete("child")
-    return new Map(previous)
+    const rows = new Map(previous.get("second"))
+    rows.delete("child")
+    return new Map(previous).set("second", rows)
   }),
   decode: (payload: any) => decodeClientSnapshotV2(payload.snapshot, 1, async key => payload.partitions[key] ?? null),
   dispose,

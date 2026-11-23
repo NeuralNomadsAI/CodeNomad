@@ -21,6 +21,9 @@ test("capture defers only busy usage through both real-store effects and keeps f
   try {
     for (const host of ["electron", "tauri"]) {
       const page = await browser.newPage()
+      const clockStart = new Date("2025-01-01T00:00:00Z")
+      await page.clock.install({ time: clockStart })
+      await page.clock.pauseAt(new Date(+clockStart + 1_000))
       const errors: string[] = []
       page.on("pageerror", error => errors.push(error.message))
       await page.addInitScript(({ host }) => {
@@ -80,7 +83,7 @@ test("capture defers only busy usage through both real-store effects and keeps f
       await page.waitForFunction(() => Boolean((window as any).fixture))
       // Capture and persistence have separate quiet periods; advance both before
       // checking that busy usage produced no additional checkpoint.
-      const settle = () => page.waitForTimeout(850)
+      const settle = () => page.clock.runFor(850)
       const count = () => page.evaluate(() => (window as any).receipts.length)
       const state = () => page.evaluate(() => (window as any).fixture.state())
       const change = (field: string, id = "first", sessionId = "parent") =>
@@ -107,6 +110,25 @@ test("capture defers only busy usage through both real-store effects and keeps f
       await usage(); await usage("second", "child"); await settle()
       assert.equal(await count(), initial, `${host}: busy usage must not checkpoint`)
       assert.equal(await page.evaluate(() => (window as any).fixture.hydrated()), hydrated, "busy usage must not rehydrate preserved drafts")
+
+      for (let elapsed = 0; elapsed < 2_600; elapsed += 100) {
+        if (elapsed % 200 === 0) await change("title")
+        if (elapsed % 300 === 0) await page.evaluate(elapsed => (window as any).fixture.draft(`ongoing ${elapsed}`), elapsed)
+        await page.clock.runFor(100)
+      }
+      assert.ok(await count() > initial, "a commit starts while catalog events and typing are still arriving")
+      const checkpoint = await page.evaluate(async () => {
+        const w = window as any
+        return (await w.fixture.decode(w.persisted)).session.tabs[0].drafts.parent
+      })
+      assert.equal(checkpoint, "ongoing 1800")
+
+      const beforeExplicit = await count()
+      await page.evaluate(() => (window as any).fixture.draft("flush before quiet"))
+      assert.equal(await count(), beforeExplicit)
+      await page.evaluate(() => (window as any).__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__())
+      assert.equal(await count(), beforeExplicit + 1)
+      assert.equal((await state()).tabs[0].drafts.parent, "flush before quiet")
 
       for (const phase of ["close", "navigation"] as const) await t.test(`${host}: a held ${phase} write rejects late typing and unlocks on cancellation`, async () => {
         const generation = phase === "close" ? 1 : 101

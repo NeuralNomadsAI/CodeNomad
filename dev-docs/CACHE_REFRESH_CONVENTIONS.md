@@ -36,12 +36,17 @@ Keep domain-specific implementations where authority, lifetime or runtime differ
 Session list placement is cached by topology (parent and native location), independently
 of row metadata. Single-row publications retain unaffected descendant indexes and
 family trees; bulk inventory publication rebuilds the affected workspace's indexes
-on demand. Client-state capture tracks workspace checkpoint tokens, waits for a
-quiet period, and encodes changed catalog chunks. Explicit flushes capture immediately.
+on demand. Client-state capture tracks workspace checkpoint tokens and encodes
+changed catalog chunks after 500 ms of quiet. Draft and attachment edits wait
+for the same quiet period, up to 2 s from their first dirty change; at that
+deadline they reuse the last catalog checkpoint. Persistence waits for 250 ms
+of quiet, up to another 500 ms before starting or queueing the commit. Explicit
+flushes capture fresh data and start persistence immediately.
 Draft and attachment signals schedule capture without materializing their saved
 maps on each edit; serialization reads the current maps at the checkpoint.
 Session rename events publish their title directly in the catalog; unseen IDs
-share one metadata read carrying the latest title observed during that read.
+share one metadata read carrying the latest title and archive changes observed
+during that read, fenced by newer snapshots.
 Single-row event publications read interruption flags by session ID.
 
 Current daily/native-scheduled passages acquire a source identity before slices and reuse

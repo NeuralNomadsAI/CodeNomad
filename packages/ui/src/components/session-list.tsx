@@ -9,7 +9,7 @@ import type { SessionThread } from "../stores/session-state"
 import { clearSessionIdleFade, getRetrySeconds, idleFadeClassForSession, shouldShowSessionStatusForRow } from "../stores/session-status"
 import { createDeadlineMemo } from "../lib/deadline-memo"
 import { Archive, ArchiveRestore, Bot, User, Copy, Trash2, Pencil, ShieldAlert, Search, Square, CheckSquare, MinusSquare, Split, RotateCw, Star } from "lucide-solid"
-import { childActivityKind, childActivityLabel } from "./session-child-activity"
+import { childActivityKind, childActivityLabel, createDescendantActivity } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
@@ -45,7 +45,7 @@ import {
   isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession, getWorktrees } from "../stores/worktrees"
-import { getDescendantActivity, collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, isSessionArchived, projectSessionFamilies, projectSessionSearchResults, projectUnarchivedSessionThreads, sortSessionIdsDeepestFirst, type SessionFamilySort, type SessionArchiveFilter } from "../stores/session-tree"
+import { collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, isSessionArchived, projectSessionFamilies, projectSessionSearchResults, projectUnarchivedSessionThreads, sortSessionIdsDeepestFirst, type SessionFamilySort, type SessionArchiveFilter } from "../stores/session-tree"
 import { setSessionArchived } from "../stores/session-archive"
 import { normalizeSessionDirectory } from "../stores/session-list-options"
 import { getLogger } from "../lib/logger"
@@ -785,11 +785,11 @@ const SessionList: Component<SessionListProps> = (props) => {
 
     const isActive = () => props.activeSessionId === sessionId()
     // A parent's chevron carries its subsessions' visible status, expanded or not.
-    const descendantActivity = createDeadlineMemo((now, wakeAt) => rowProps.hasChildren ? getDescendantActivity(
-      listedSessions(), sessionId(),
-      session => !session.retry && session.generationRecovery !== "interrupted"
+    const descendantActivity = createDescendantActivity(
+      listedSessions, () => rowProps.hasChildren ? sessionId() : undefined,
+      (session, now, wakeAt) => !session.retry && session.generationRecovery !== "interrupted"
         && shouldShowSessionStatusForRow(props.instanceId, session, now, preferences().keepUnseenSubagentIdleStatus, wakeAt),
-    ) : undefined)
+    )
     const childActivity = () => rowProps.hasChildren ? descendantActivity() : undefined
     // The row and descendants whose Idle or Interrupted badge "Mark as read" clears.
     const readableHierarchy = (now: number, wakeAt?: (deadline: number) => void) => [rowProps.session, ...getDescendantSessions(props.instanceId, sessionId())]

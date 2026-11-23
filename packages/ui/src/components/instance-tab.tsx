@@ -96,6 +96,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
             <span
               class={`status-indicator session-status ml-auto ${statusClassName()}`}
               title={statusTitle() ?? undefined}
+              role="img"
               aria-label={t("instanceTab.status.ariaLabel", { status: statusTitle() ?? "" })}
             >
               {aggregatedStatus() === "permission" ? (

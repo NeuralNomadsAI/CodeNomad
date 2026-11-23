@@ -55,6 +55,7 @@ import {
 const log = getLogger("actions")
 const MAX_CAPTURED_SCROLL_SNAPSHOTS = 96
 const CAPTURE_DEBOUNCE_MS = 500
+const DRAFT_CAPTURE_MAX_WAIT_MS = 2_000
 const NO_SESSION_ROWS: SessionRows = new Map()
 const capturedSessionData = new WeakMap<object, {
   rows: SessionRows
@@ -88,7 +89,7 @@ function captureRuntimeState(
   const seenInterruptions = captureSeenInterruptions(instanceId, sessions)
   return { unseenIdleSince, generationRecovery, ...(Object.keys(seenInterruptions).length ? { seenInterruptions } : {}) }
 }
-export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>) {
+export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>, reuseCatalog = false) {
   const tabs = appTabs()
   const occurrenceKey = (project: Pick<RestorableWorkspaceTabState, "folder" | "backendId" | "serverId">) =>
     workspaceInstallationKey(project.folder, project.backendId, project.serverId)
@@ -119,7 +120,7 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     const rows = sessionRows().get(id) ?? NO_SESSION_ROWS
     const seenRevision = seenInterruptionsRevision()
     let sessionData = capturedSessionData.get(tab)
-    if (!sessionData || sessionData.rows !== rows || sessionData.seenRevision !== seenRevision) {
+    if (!sessionData || !reuseCatalog && (sessionData.rows !== rows || sessionData.seenRevision !== seenRevision)) {
       const sessions = [...rows.values()]
       sessionData = {
         rows, seenRevision, sessionIds: sessionData?.rows === rows ? sessionData.sessionIds : new Set(rows.keys()),
@@ -199,6 +200,16 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   let disposed = false
   const hydrationController = new AbortController()
   let timer: ReturnType<typeof setTimeout> | null = null
+  let draftDeadline: ReturnType<typeof setTimeout> | null = null
+  const cancelDraftDeadline = () => {
+    if (draftDeadline !== null) clearTimeout(draftDeadline)
+    draftDeadline = null
+  }
+  const cancelCapture = () => {
+    if (timer !== null) clearTimeout(timer)
+    timer = null
+    cancelDraftDeadline()
+  }
   let preservation: RestorableSessionPreservation | null = null
   let nativeFallbackState: RestorableSessionState | null = null
   const hydratePreservedPrompts = (instanceId: string, recoverOnly = false) => {
@@ -218,11 +229,11 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     const consumed = recoverDeletedWorkspacePrompts(instanceId, snapshot)
     if (consumed) retirePreservedWorkspacePrompts(preservation, runtimeTabId, consumed)
   }
-  const mergedState = () => {
+  const mergedState = (reuseCatalog = false) => {
     // Flush can run before the hydration effect; move prompt bytes before
     // merge applies the native deletion tombstones to the saved tab.
     for (const instanceId of openInstanceTabIds()) hydratePreservedPrompts(instanceId, true)
-    const captured = captureState(scrollAuthority)
+    const captured = captureState(scrollAuthority, reuseCatalog)
     return mergeRestorableSessionState(captured.state, preservation, {
       currentTabIds: captured.tabIds, currentTabAuthorities: captured.authorities,
     })
@@ -280,17 +291,18 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     if (navigationGeneration === null) unlockInput?.()
     schedule()
   }
-  const capture = () => {
-    timer = null
+  const capture = (reuseCatalog = false) => {
+    if (reuseCatalog) cancelDraftDeadline()
+    else cancelCapture()
     if (enabled() && !disposed && !releasing && nativeShutdownGeneration === null) {
-      const state = mergedState()
+      const state = mergedState(reuseCatalog)
       if (state.tabs.length > 0) nativeFallbackState = state
       updateRestorableSession(state)
     }
   }
   const schedule = () => {
     if (!enabled() || disposed || releasing || nativeShutdownGeneration !== null) return
-    if (timer) clearTimeout(timer)
+    if (timer !== null) clearTimeout(timer)
     timer = setTimeout(capture, CAPTURE_DEBOUNCE_MS)
   }
   const flush = async (nativeShutdownGenerationRequest?: number) => {
@@ -302,8 +314,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     }
     // Record a scroll that has not settled yet; it may reschedule the capture cleared below.
     messageStoreBus.flushScrollSnapshots()
-    if (timer) clearTimeout(timer)
-    timer = null
+    cancelCapture()
     if (enabled() && !releasing) {
       const current = mergedState()
       const state = nativeShutdown
@@ -492,12 +503,19 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions()
     outlineCacheRevision(); seenInterruptionsRevision()
     checkpointSessions()
-    trackSessionDraftChanges()
-    trackSessionAttachmentChanges()
     for (const tab of tabs) if (tab.kind === "instance") {
       captureTabViewState(tab.instance.id)
     }
     schedule()
+  })
+  createEffect(() => {
+    if (!enabled() || disposed || releasing || nativeShutdownGeneration !== null) return
+    trackSessionDraftChanges()
+    trackSessionAttachmentChanges()
+    schedule()
+    // Only draft/attachment changes start this deadline. A forced draft save
+    // keeps the last catalog checkpoint and leaves the quiet-period save armed.
+    draftDeadline ??= setTimeout(() => capture(true), DRAFT_CAPTURE_MAX_WAIT_MS)
   })
   createEffect(() => {
     if (!enabled()) return
@@ -547,8 +565,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   onCleanup(() => {
     disposed = true
     unlockInput?.()
-    if (timer) clearTimeout(timer)
-    timer = null
+    cancelCapture()
     hydrationController.abort(new Error("App session capture disposed"))
     nativeDisposed = true
     nativeUnlisteners.forEach((unlisten) => unlisten())

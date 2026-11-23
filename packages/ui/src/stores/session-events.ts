@@ -57,7 +57,7 @@ import { tGlobal } from "../lib/i18n"
 import { excludeMissingMoveFromSearch, fetchSessions, invalidateRestorePlacementRead, loadMessages, refreshSessionCatalog, removeSessionProjection, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
-import { getWorktrees, onWorktreesPublished, reloadWorktrees } from "./worktrees"
+import { getDirectoryOnlyWorktree, getWorktrees, onWorktreesPublished, reloadWorktrees } from "./worktrees"
 import { isWorkspaceSessionDirectory } from "./workspace-session-scope"
 import { isWorkspaceServedDirectory } from "./workspace-served-directory"
 import { locationAuthorityKey } from "./request-locations"
@@ -89,9 +89,17 @@ const pendingSessionFetches = new Map<string, {
 const sessionInfoReads = new Map<string, {
   signal: AbortSignal
   current: () => boolean
-  title?: string
+  metadata: SessionInfoObservation
   result: Promise<Session | null>
 }>()
+type SessionInfoDelta =
+  | { title: { value: string; at: number }; archive?: never }
+  | { archive: { archived: boolean; at: number }; title?: never }
+type SessionInfoObservation = {
+  title?: { value: string; at: number }
+  archive?: { archived: boolean; at: number }
+  projectedArchive?: { time: Session["time"]; snapshotAt: number }
+}
 const nativeLifecycleGenerations = new Map<string, number>()
 // The live backoff countdown of one session; it ends when that session's next
 // attempt starts or its run settles.
@@ -287,22 +295,11 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       return
     case "session.archived":
     case "session.unarchived":
-      if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
-      withSession(instanceId, event.data.sessionID, session => {
-        const { archived: _archived, ...time } = session.time
-        session.time = { ...time, updated: Math.max(time.updated, event.created),
-          ...(event.type === "session.archived" ? { archived: event.created } : {}) }
-      })
+      applySessionInfoDelta(instanceId, event.data.sessionID,
+        { archive: { archived: event.type === "session.archived", at: event.created } })
       return
     case "session.renamed":
-      if (!sessions().get(instanceId)?.has(event.data.sessionID)) {
-        void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory, event.data.title)
-      } else {
-        withSession(instanceId, event.data.sessionID, session => {
-          if (session.title === event.data.title) return false
-          session.title = event.data.title
-        })
-      }
+      applySessionInfoDelta(instanceId, event.data.sessionID, { title: { value: event.data.title, at: event.created } })
       return
     case "session.agent.selected":
       if (!sessions().get(instanceId)?.has(event.data.sessionID)) void fetchSessionInfo(instanceId, event.data.sessionID, event.location?.directory)
@@ -518,8 +515,8 @@ function handleSessionMoved(instanceId: string, data: SessionMoved["data"]): voi
     const moves = pendingSessionMoves.get(instanceId) ?? new Map<string, SessionMove>()
     pendingSessionMoves.delete(instanceId)
     if (!authority.current()) return
-    // A known row and a registered destination can be projected from the event.
-    const needsInventory = [...moves].some(([id, move]) => !move.data
+    // A folder-only list can gain display roots when a move splits a family.
+    const needsInventory = !!getDirectoryOnlyWorktree(instanceId) || [...moves].some(([id, move]) => !move.data
       || !sessions().get(instanceId)?.has(id) || !listsSessionDirectory(instanceId, move.data.location.directory))
     void Promise.all([...moves].map(([movedId, move]) => settleSessionMove(instanceId, movedId, move)))
       .then(() => {
@@ -797,7 +794,44 @@ function isInstanceGenerationCurrent(instanceId: string, generation: number): bo
   return instances().has(instanceId) && getOpenCodeInstanceGeneration(instanceId) === generation
 }
 
-function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string, title?: string): Promise<Session | null> {
+function applyArchiveDelta(time: Session["time"], delta: NonNullable<SessionInfoObservation["archive"]>): Session["time"] {
+  const { archived: _archived, ...rest } = time
+  return { ...rest, updated: Math.max(time.updated, delta.at), ...(delta.archived ? { archived: delta.at } : {}) }
+}
+
+/** Keep events that join cold hydration, including after a list page installs the row. */
+function applySessionInfoDelta(instanceId: string, sessionId: string, delta: SessionInfoDelta): void {
+  const existing = sessions().get(instanceId)?.get(sessionId)
+  if (!existing) {
+    void fetchSessionInfo(instanceId, sessionId, undefined, delta)
+    return
+  }
+  const held = sessionInfoReads.get(`${instanceId}\0${sessionId}`)
+  const metadata = held?.current() ? held.metadata : undefined
+  const snapshotAt = observedSessionInfoTime(existing, metadata)
+  if (metadata) {
+    Object.assign(metadata, delta)
+    if (snapshotAt > (delta.title?.at ?? delta.archive!.at)) return
+  }
+  if (delta.title) {
+    const { value } = delta.title
+    if (existing.title !== value) withSession(instanceId, sessionId, session => { session.title = value })
+  } else {
+    const time = applyArchiveDelta(existing.time, delta.archive)
+    withSession(instanceId, sessionId, session => { session.time = time })
+    if (metadata) {
+      metadata.projectedArchive = { time: sessions().get(instanceId)!.get(sessionId)!.time, snapshotAt }
+    }
+  }
+}
+
+function observedSessionInfoTime(row: Session | undefined, metadata: SessionInfoObservation | undefined): number {
+  if (!row) return 0
+  const projected = metadata?.projectedArchive
+  return projected && projected.time === row.time ? projected.snapshotAt : row.time.updated
+}
+
+function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string, metadata: SessionInfoObservation = {}): Promise<Session | null> {
   const authority = captureEventAuthority(instanceId)
   const instance = instances().get(instanceId)
   if (!instance?.client || !authority.current()
@@ -805,7 +839,7 @@ function fetchSessionInfo(instanceId: string, sessionId: string, directory?: str
   const key = `${instanceId}\0${sessionId}`
   const held = sessionInfoReads.get(key)
   if (held?.signal === authority.signal && held.current()) {
-    if (title !== undefined) held.title = title
+    Object.assign(held.metadata, metadata)
     return held.result
   }
 
@@ -813,13 +847,13 @@ function fetchSessionInfo(instanceId: string, sessionId: string, directory?: str
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const current = () => authority.current() && isInstanceGenerationCurrent(instanceId, generation)
   const captured = sessions().get(instanceId)?.get(sessionId)
-  const observation = { ...authority, current, title, result: Promise.resolve<Session | null>(null) }
+  const observation = { ...authority, current, metadata, result: Promise.resolve<Session | null>(null) }
   const result = (async () => {
     try {
       const info = await getRootClient(instanceId).session.get({ sessionID: sessionId }, { signal: authority.signal })
       // A project closed or a client replaced during the read publishes nothing.
       if (info.id !== sessionId || !current()) return null
-      return publishFetchedSessionInfo(instanceId, observation.title === undefined ? info : { ...info, title: observation.title }, captured, current)
+      return publishFetchedSessionInfo(instanceId, info, captured, current, metadata)
     } catch (error) {
       if (authority.current()) log.error("Failed to fetch session info", error)
       return null
@@ -832,7 +866,7 @@ function fetchSessionInfo(instanceId: string, sessionId: string, directory?: str
   return result
 }
 
-function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captured: Session | undefined, current = captureEventAuthority(instanceId).current): Session | null {
+function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captured: Session | undefined, current = captureEventAuthority(instanceId).current, metadata?: SessionInfoObservation): Session | null {
   if (!current()) return null
   const sessionId = info.id
   const fetched = createClientSession(info, instanceId)
@@ -857,6 +891,24 @@ function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captur
       existing,
       getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId),
     )
+    if (merged && metadata) {
+      // A list page may have installed a row during the point read. Reapply
+      // each event field against its own timestamp, independent of other deltas.
+      const existingAt = observedSessionInfoTime(existing, metadata)
+      const pointAt = fetched.time.updated
+      const newest = existing && existingAt >= pointAt ? existing : fetched
+      const newestAt = Math.max(existingAt, pointAt)
+      if (metadata.title) merged.title = newestAt > metadata.title.at ? newest.title : metadata.title.value
+      if (metadata.archive) {
+        if (newestAt <= metadata.archive.at) {
+          merged.time = applyArchiveDelta(merged.time, metadata.archive)
+        } else if (newest.time !== merged.time) {
+          const { archived: _archived, ...time } = merged.time
+          merged.time = { ...time, updated: Math.max(time.updated, newestAt),
+            ...(newest.time.archived === undefined ? {} : { archived: newest.time.archived }) }
+        }
+      }
+    }
     publishedRoot = merged?.parentId === null
     return merged ? replaceSessionRow(prev, instanceId, merged) : prev
   })

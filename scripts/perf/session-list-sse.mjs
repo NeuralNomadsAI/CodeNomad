@@ -1,14 +1,13 @@
 // Run against a sourcemapped production UI build, with no native app or daemon.
-// node scripts/perf/session-list-sse.mjs <dist> <probes> <artifacts> [seconds] [--exercise-clock]
+// node scripts/perf/session-list-sse.mjs <dist> <artifacts> [seconds] [--exercise-clock]
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import { execFile } from "node:child_process"
 import { readFile, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises"
 import { resolve, join, extname, sep } from "node:path"
-import { promisify } from "node:util"
 import { chromium } from "playwright"
+import { sampleSessionList } from "./session-list-probes.mjs"
 
-const [dist, probes, artifacts, seconds = "90", ...flags] = process.argv.slice(2)
+const [dist, artifacts, seconds = "90", ...flags] = process.argv.slice(2)
 const root = resolve(dist)
 const output = resolve(artifacts)
 await mkdir(output, { recursive: true })
@@ -101,7 +100,7 @@ await new Promise(ok => server.listen(0, "127.0.0.1", ok))
 let context, activity
 try {
   context = await chromium.launchPersistentContext(profile, {
-    headless: true, args: ["--remote-debugging-port=0"], serviceWorkers: "block",
+    headless: true, serviceWorkers: "block",
     viewport: { width: 1400, height: 950 },
   })
   await context.addInitScript(({ folder, catalog }) => {
@@ -129,7 +128,6 @@ try {
   })
   const editor = page.locator("textarea:visible").first()
   await editor.focus({ timeout: 12000 })
-  const port = (await readFile(join(profile, "DevToolsActivePort"), "utf8")).trim().split(/\s/)[0]
   const emit = event => {
     const payload = JSON.stringify({ type: "instance.event", instanceId: workspace.id, event })
     for (const stream of streams) stream.write(`data: ${payload}\n\n`)
@@ -150,6 +148,13 @@ try {
     })
     const header = page.locator(".session-header-indicators .session-status-text").filter({ hasText: /Retrying/i }).first()
     await header.filter({ hasText: /[123]/ }).waitFor({ timeout: 6_000 })
+    const tabStatus = page.getByRole("tab").getByRole("img", { name: /^Instance status: .+/ })
+    await tabStatus.waitFor({ timeout: 6_000 })
+    const accessibility = await context.newCDPSession(page)
+    const { nodes } = await accessibility.send("Accessibility.getFullAXTree")
+    await accessibility.detach()
+    assert.ok(nodes.some(node => !node.ignored && node.role?.value === "image"
+      && /^Instance status: .+/.test(node.name?.value)), "Chromium exposes the project-tab status name")
     await page.keyboard.press("a")
     assert.equal(await editor.inputValue(), "a")
     await page.keyboard.press("Backspace")
@@ -166,6 +171,7 @@ try {
     }, { capture: true })
   })
   const commitsBefore = await page.evaluate(() => window.perfCommits)
+  const finishSample = await sampleSessionList(context, page)
   measuring = true
   let seq = 0
   activity = setInterval(() => {
@@ -175,18 +181,13 @@ try {
     if (ordinal % 12 === 0) emit(rename(sessionID, ordinal * 2 + 1, `Renamed twice ${ordinal}`))
     if (ordinal % 3 === 0) void page.keyboard.press(ordinal % 6 === 0 ? "Backspace" : "a").catch(() => {})
   }, 83)
-  const run = promisify(execFile)
-  const sampleMs = Number(seconds) * 1000 + 1500
-  const count = new Promise(resolve => setTimeout(() => {
-    clearInterval(activity)
-    resolve(seq)
-  }, sampleMs))
-  const result = await Promise.all([
-    run(process.execPath, [join(probes, "probe2.mjs"), port, seconds, output], { timeout: sampleMs + 180000 }),
-    run(process.execPath, [join(probes, "longtasks.mjs"), port, seconds, join(dist, "assets"), "16"], { maxBuffer: 16 * 1024 * 1024, timeout: sampleMs + 180000 }),
-  ])
-  await writeFile(join(output, "longtasks.txt"), result[1].stdout)
-  const counters = { eventTicks: await count, streams: streams.size,
+  await new Promise(resolve => setTimeout(resolve, Number(seconds) * 1000))
+  measuring = false
+  clearInterval(activity)
+  const { tasks, ...report } = await finishSample()
+  await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2))
+  await writeFile(join(output, "longtasks.json"), JSON.stringify(tasks, null, 2))
+  const counters = { eventTicks: seq, streams: streams.size,
     mockPartitionCommits: await page.evaluate(start => window.perfCommits - start, commitsBefore) }
   const keys = await page.evaluate(() => window.perfKeys.sort((a, b) => a - b))
   assert.ok(keys.length > 0, "the production composer received keyboard input")
@@ -194,7 +195,8 @@ try {
     p95: keys[Math.ceil(keys.length * 0.95) - 1], max: keys.at(-1) }
   await writeFile(join(output, "fixture.json"), JSON.stringify(counters, null, 2))
   await writeFile(join(output, "session-reads.json"), JSON.stringify(Object.fromEntries(sessionReads), null, 2))
-  console.log(counters)
+  console.log({ ...counters, ...report, sessionPointReads: [...sessionReads].reduce(
+    (count, [url, reads]) => /\/api\/session\/ses_\d+/.test(url) ? count + reads : count, 0) })
 } finally {
   clearInterval(activity)
   await context?.close()

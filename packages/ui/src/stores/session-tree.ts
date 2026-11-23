@@ -178,8 +178,17 @@ export function getDescendantActivity(
 ): DescendantActivity | undefined {
   const parent = rows.get(parentId)
   if (!parent) return
+  return countDescendantActivity(rows, parentId, sessionDescendants(rows, parentId), showIdleStatus)
+}
+
+export function countDescendantActivity(
+  rows: ReadonlyMap<string, Session>,
+  parentId: string,
+  descendants: readonly Session[],
+  showIdleStatus: (session: Session) => boolean,
+): DescendantActivity | undefined {
   let activity: DescendantActivity | undefined
-  for (const session of sessionDescendants(rows, parentId)) {
+  for (const session of descendants) {
     const kind = session.pendingPermission || session.pendingForm ? "permission"
       : session.status !== "idle" ? session.status : showIdleStatus(session) ? "idle" : null
     if (!kind) continue

@@ -68,19 +68,8 @@ export interface SessionInfo {
   contextAvailableTokens: number | null
 }
 
-type WorkspaceSessions = Map<string, Map<string, Session>>
-const [sessions, publishSessions] = createSignal<WorkspaceSessions>(new Map())
-
-function setSessions(update: WorkspaceSessions | ((previous: WorkspaceSessions) => WorkspaceSessions)): WorkspaceSessions {
-  return publishSessions(previous => {
-    const next = typeof update === "function" ? update(previous) : update
-    if (next === previous || next.size !== previous.size) return next
-    for (const [id, rows] of next) if (previous.get(id) !== rows) return next
-    // A publisher may announce edits to a retained map. Rebuild its snapshot
-    // when it supplies no replacement workspace map to identify the edit.
-    return new Map(Array.from(next, ([id, rows]) => [id, new Map(rows)]))
-  })
-}
+// Published workspace maps are snapshots. Replace every changed map.
+const [sessions, setSessions] = createSignal<Map<string, Map<string, Session>>>(new Map())
 const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<string, string>>(new Map())
 const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
 // The Location authority key each instance's `agents` list was read for.

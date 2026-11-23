@@ -11,6 +11,7 @@ import { changeWorkspaceFileDrafts, MAX_FILE_DRAFT_BYTES, normalizeWorkspaceFile
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
 export type { ClientSnapshotV2 }
 const SAVE_DEBOUNCE_MS = 250
+const SAVE_MAX_WAIT_MS = 500
 const FLUSH_MAX_ATTEMPTS = 3
 const MAX_V1_SNAPSHOT_BYTES = 1024 * 1024
 const MAX_LAYOUT_ENTRIES = 64
@@ -42,6 +43,7 @@ let revision = 0
 let dirty = false
 let writeBlock: false | "snapshot" | "transaction" = false
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+let saveDeadline: number | undefined
 let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
@@ -133,6 +135,7 @@ function canWriteSnapshot(): boolean {
 const cancelSaveTimer = () => {
   if (saveTimer !== null) clearTimeout(saveTimer)
   saveTimer = null
+  saveDeadline = undefined
 }
 
 // Explicit flushes (navigation, close, host requests) verify even unchanged
@@ -212,9 +215,12 @@ function withoutPartitionCaches(state: RestorableSessionState | null): Restorabl
 function scheduleSave() {
   dirty = true
   if (!canWriteSnapshot()) return
-  cancelSaveTimer()
+  const now = performance.now()
+  saveDeadline ??= now + SAVE_MAX_WAIT_MS
+  if (saveTimer !== null) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => void enqueuePendingSave()
-    .catch((error) => console.warn("[client-state] failed to save client snapshot", error)), SAVE_DEBOUNCE_MS)
+    .catch((error) => console.warn("[client-state] failed to save client snapshot", error)),
+  Math.min(SAVE_DEBOUNCE_MS, saveDeadline - now))
 }
 function resetLoadedState(snapshot: ClientSnapshotV1 | null = null, resetRevision = false) {
   confirmedPartitionKeys = undefined
