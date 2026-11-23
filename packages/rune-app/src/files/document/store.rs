@@ -156,10 +156,12 @@ pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     }
 }
 impl Store {
-    pub(super) fn take_position(&self, key: &Key) -> Option<SavedPosition> {
-        let mut store = lock(&self.0);
-        let index = store.positions.iter().position(|(saved, _)| saved == key)?;
-        store.positions.remove(index).map(|(_, position)| position)
+    pub(super) fn source_position(&self, key: &Key) -> Option<SavedPosition> {
+        lock(&self.0)
+            .positions
+            .iter()
+            .find(|(saved, _)| saved == key)
+            .map(|(_, position)| *position)
     }
 
     pub(super) fn remember_position(&self, key: Key, position: SavedPosition) {
@@ -408,7 +410,7 @@ mod tests {
         }
         assert!(
             store
-                .take_position(&Key {
+                .source_position(&Key {
                     path: "file-0".into(),
                     ..key.clone()
                 })
@@ -420,7 +422,7 @@ mod tests {
         };
         assert!(
             store
-                .take_position(&Key {
+                .source_position(&Key {
                     instance: "tab-b".into(),
                     ..recent.clone()
                 })
@@ -428,13 +430,13 @@ mod tests {
         );
         assert!(
             store
-                .take_position(&Key {
+                .source_position(&Key {
                     directory: "/other".into(),
                     ..recent.clone()
                 })
                 .is_none()
         );
-        assert!(store.take_position(&recent).is_some());
+        assert!(store.source_position(&recent).is_some());
     }
 
     #[test]

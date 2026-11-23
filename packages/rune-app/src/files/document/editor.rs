@@ -248,7 +248,7 @@ impl Editor {
         }
         self.edit = TextEdit::new(&lock(&draft).text);
         self.revision = lock(&draft).revision;
-        self.position = Position::new(self.store.take_position(&key));
+        self.position = Position::new(self.store.source_position(&key));
         self.draft = Some(draft);
         self.key = Some(key);
         self.saved_key = saved_key;
@@ -260,7 +260,10 @@ impl Editor {
                 let draft = lock(draft);
                 draft.original.is_some() || draft.recovered
             };
-            if has_text && (self.project.is_none() || self.native_project.is_some()) {
+            if has_text
+                && self.position.viewport.mounted()
+                && (self.project.is_none() || self.native_project.is_some())
+            {
                 self.store.remember_position(
                     key.clone(),
                     SavedPosition::capture(&self.edit, self.position.viewport.saved_scroll()),

@@ -92,7 +92,7 @@ Workspace uses the shared file-row actions. Windows local connections offer fold
 
 The source reader shares its word-wrap choice across project tabs and file readers in a window. The workspace snapshot stores the Solid layout key `opencode-session-right-panel-files-word-wrap-v1` as `on` or `off`. Web readers also use that key in same-origin localStorage. Diff and Markdown block wrapping keep their own controls.
 
-Source selection and both scroll offsets survive reopening in the same project tab and checkout. The window keeps five recently closed source positions in memory, separate from file drafts. Reopening clamps the selection to UTF-8 boundaries and the viewport to the current file's extent.
+Source selection and both scroll offsets survive reopening in the same project tab and checkout. The window keeps five recently closed source positions in memory, separate from file drafts. Selection uses line and UTF-16 column and clamps to UTF-8 boundaries. The source viewport restores pixel offsets within the current extent; a changed wrap width can move the first visible line.
 
 The typed workspace write API requires an observed opaque version and sends the exact directory/path with `expectedVersion` to the shared Rust server. It distinguishes saved content from a conflict, bounds UTF-8 content and serialized JSON before dispatch, and performs one request. Document owners retain their drafts and reconcile uncertain mutations before dependent reads.
 

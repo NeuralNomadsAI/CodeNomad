@@ -112,7 +112,11 @@ fn rendered_scroll_survives_switching_to_source_and_back() {
         let before = offset(&rt);
         assert_eq!(before, 350.0);
         click(&mut rt, "file-source-toggle");
-        assert!(rt.find("file-source-scroll").is_some());
+        assert!(rt.elements().iter().any(|node| {
+            node.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("file-source-scroll"))
+        }));
         click(&mut rt, "file-source-toggle");
         for _ in 0..30 {
             rt.frame(0.02);

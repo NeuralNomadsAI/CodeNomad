@@ -32,7 +32,10 @@ fn reopening_source_restores_selection_and_both_scroll_axes() {
         let selected = selection(&rt);
         assert_ne!(selected[0], selected[1]);
         let initial = source_rect(&rt);
-        rt.update(|_, tx| tx.scroll_to_instant("file-source-scroll", 200.0, 500.0));
+        rt.update(|s, tx| {
+            let scope = s.files.as_ref().unwrap().document.scope();
+            tx.scroll_to_instant(format!("file-source-scroll-{scope}"), 200.0, 500.0);
+        });
         rt.frame(0.02);
         let scrolled = source_rect(&rt);
         assert!(scrolled[0] < initial[0] && scrolled[1] < initial[1]);
@@ -42,6 +45,14 @@ fn reopening_source_restores_selection_and_both_scroll_axes() {
         let other = source_rect(&rt);
         assert_eq!(other[..2], initial[..2]);
         assert_ne!(selection(&rt), selected);
+        click(&mut rt, "file-close");
+        rt.update(|state, _| state.files.as_mut().unwrap().open("main.rs".into()));
+        rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
+        http.request("GET", "main.rs")
+            .await
+            .reply(500, serde_json::json!({"error":"temporary"}))
+            .await;
+        settle(&mut rt).await;
         click(&mut rt, "file-close");
         open(&mut rt, &http, "main.rs", &contents).await;
         for _ in 0..10 {

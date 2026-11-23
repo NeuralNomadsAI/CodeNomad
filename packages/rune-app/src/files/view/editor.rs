@@ -15,6 +15,7 @@ pub(super) fn source(
     let dark = layout::dark();
     let wrap = crate::workspace::file_wrap(s);
     let scope = ui.document.scope();
+    let scroll_key = format!("file-source-scroll-{scope}");
     let disabled = !ui.document.writable();
     let save = |ui: &mut Ui, _: &mut rune::Tx| ui.save_document(ui.document.scope());
     let label = t("instanceShell.rightPanel.actions.save");
@@ -65,6 +66,7 @@ pub(super) fn source(
         .key("file-editor");
     Some(
         theme::editor::editor_view(dark, field, &ui.document.edit().text, wrap, view_width)
+            .key(&scroll_key)
             .on_scroll_offset({
                 let viewport = ui.document.source_viewport();
                 move |scroll| viewport.observe(scroll.offset)
@@ -80,7 +82,7 @@ pub(super) fn source(
                             .as_ref()
                             .is_some_and(|ui| ui.document.scope() == scope)
                     {
-                        viewport.restore(tx);
+                        viewport.restore(&scroll_key, tx);
                     }
                 }
             }),
