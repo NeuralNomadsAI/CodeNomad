@@ -25,6 +25,17 @@ enum Source {
     Cleanups,
 }
 
+#[derive(Debug)]
+pub struct DirectoryChanged;
+
+impl std::fmt::Display for DirectoryChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Mission directory changed")
+    }
+}
+
+impl std::error::Error for DirectoryChanged {}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Envelope {
@@ -233,7 +244,7 @@ impl DirectoryRead {
     fn accept(&mut self, value: Value) -> Result<Option<DirectoryPage>> {
         if value["available"] == false {
             return Err(match value["reason"].as_str() {
-                Some("changed") => "Mission directory changed",
+                Some("changed") => return Err(DirectoryChanged.into()),
                 Some("damaged") => "Mission directory damaged",
                 Some("plugin-failed") => "Missions plugin failed",
                 Some("plugin-unavailable") => "Missions plugin unavailable",
@@ -282,7 +293,7 @@ impl DirectoryRead {
                 || first.window != *window
                 || first.digest != page.digest
             {
-                return Err("Mission directory changed".into());
+                return Err(DirectoryChanged.into());
             }
         } else {
             self.first = Some(Identity {
