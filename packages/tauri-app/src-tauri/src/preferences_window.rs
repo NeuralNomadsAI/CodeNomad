@@ -1101,9 +1101,9 @@ mod tests {
         assert!(persisted().get("preferences").is_none());
         assert_eq!(state.last_preferences(), Some(request));
         assert!(matches!(preferences.prepare_shutdown(8), ShutdownPrepare::Skip));
-        assert!(state.confirm_root_durability().unwrap_err().contains("injected sync failure"));
+        assert!(state.prepare_ownership_release().unwrap_err().contains("injected sync failure"));
         failure.store(0, Ordering::Relaxed);
-        state.confirm_root_durability().unwrap();
+        state.prepare_ownership_release().unwrap();
     }
 
     #[test]

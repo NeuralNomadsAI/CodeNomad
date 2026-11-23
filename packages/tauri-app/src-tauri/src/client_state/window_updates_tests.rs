@@ -389,6 +389,54 @@ fn release_retries_a_failed_flush_even_after_captures_were_merged() {
 }
 
 #[test]
+fn final_publication_failure_after_fifo_barrier_retains_ownership_and_allows_retry() {
+    for fail_after_rename in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let fail = Arc::new(AtomicBool::new(false));
+        let writer_fail = fail.clone();
+        let state = ClientState::initialize_at_with_writer(
+            directory.path(),
+            Arc::new(move |path, bytes, valid| {
+                if !writer_fail.swap(false, Ordering::SeqCst) {
+                    return crate::client_state::write_atomically(path, bytes, valid);
+                }
+                if fail_after_rename {
+                    crate::client_state::write_atomically_with_sync(path, bytes, valid, |_| {
+                        Err("final sync failed".into())
+                    })
+                } else {
+                    Err("final write failed".into())
+                }
+            }),
+        ).unwrap();
+        let id = state.active_window_id().unwrap();
+        let queue = crate::client_state::IpcQueue::new();
+        assert!(capture(&state, &id, 42)); // No worker wakeup; the final drain must write it.
+        let deadline = || std::time::Instant::now() + TIMEOUT;
+        assert!(queue.seal_and_drain_until(deadline()));
+        fail.store(true, Ordering::SeqCst);
+        let error = state.prepare_ownership_release().unwrap_err();
+        assert!(error.contains(if fail_after_rename { "final sync failed" } else { "final write failed" }));
+        assert!(state.is_primary());
+        assert!(!capture(&state, &id, 60));
+        assert!(queue.enqueue(Box::new(|| {})).is_err());
+
+        state.resume_window_captures();
+        queue.reopen();
+        assert!(capture(&state, &id, 60));
+        let (done, flushed) = mpsc::channel();
+        state.window_flush.schedule(move || done.send(()).unwrap()).unwrap();
+        flushed.recv_timeout(TIMEOUT).unwrap();
+        queue.enqueue(Box::new(|| {})).unwrap();
+        assert!(queue.seal_and_drain_until(deadline()));
+        state.prepare_ownership_release().unwrap();
+        state.finish_ownership_release();
+        assert_eq!(read_state(&state)["windows"][&id]["window"]["bounds"], json!(bounds(60)));
+        assert!(ClientState::initialize_at(directory.path()).unwrap().is_primary());
+    }
+}
+
+#[test]
 fn scheduled_flush_drains_trailing_events_before_ownership_handoff() {
     let directory = tempfile::tempdir().unwrap();
     let block = Arc::new(AtomicBool::new(false));

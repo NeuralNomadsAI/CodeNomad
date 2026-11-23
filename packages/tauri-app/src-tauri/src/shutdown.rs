@@ -876,9 +876,14 @@ fn start_cleanup(app: AppHandle) {
             emit_flush_cancellations(&app, cancellations);
             return;
         }
-        if let Err(error) = app.state::<client_state::ClientState>().confirm_root_durability() {
+        let client_state = app.state::<client_state::ClientState>();
+        let reopen = || {
+            client_state.resume_window_captures();
+            queue.reopen();
+        };
+        if let Err(error) = client_state.prepare_ownership_release() {
             eprintln!("[tauri] shutdown canceled: {error}");
-            let cancellations = coordinator.cleanup_failed(|| queue.reopen());
+            let cancellations = coordinator.cleanup_failed(reopen);
             emit_flush_cancellations(&app, cancellations);
             return;
         }
@@ -895,7 +900,7 @@ fn start_cleanup(app: AppHandle) {
         };
         if let Err(error) = result {
             eprintln!("[tauri] shutdown cleanup remains unconfirmed: {error}");
-            let cancellations = coordinator.cleanup_failed(|| queue.reopen());
+            let cancellations = coordinator.cleanup_failed(reopen);
             emit_flush_cancellations(&app, cancellations);
             return;
         }
@@ -912,7 +917,7 @@ fn start_cleanup(app: AppHandle) {
             // The failed installer must not be replayed. Restore the owned
             // backend after reopening navigation, so even immediate readiness
             // can restore the windows. A newer quit still wins recovery admission.
-            let cancellations = coordinator.cleanup_failed(|| queue.reopen());
+            let cancellations = coordinator.cleanup_failed(reopen);
             emit_flush_cancellations(&app, cancellations);
             let recovery = app.try_state::<AppState>().map(|state| {
                 state.manager.start(app.clone(), crate::is_dev_mode())
@@ -1120,9 +1125,18 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
                 move |persist_deadline| {
                     // WM_ENDSESSION blocks native dispatch, so we can only
                     // drain writes already queued and save captured geometry.
-                    persist_app.state::<client_state::IpcQueue>()
+                    if !persist_app.state::<client_state::IpcQueue>()
                         .seal_and_drain_until(persist_deadline)
-                        && client_state::flush_without_window_capture(&persist_app)
+                    {
+                        return false;
+                    }
+                    match persist_app.state::<client_state::ClientState>().prepare_ownership_release() {
+                        Ok(()) => true,
+                        Err(error) => {
+                            eprintln!("[client-state] failed to flush state: {error}");
+                            false
+                        }
+                    }
                 },
                 |deadline| {
                     if let Some(state) = cleanup_app.try_state::<AppState>() {

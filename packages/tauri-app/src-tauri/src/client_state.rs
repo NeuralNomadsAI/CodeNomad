@@ -557,6 +557,9 @@ impl ClientState {
 
     fn flush(&self) -> Result<(), String> {
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if self.window_captures_stopped()? {
+            return Ok(());
+        }
         let unsupported = self
             .state
             .lock()
@@ -653,12 +656,17 @@ impl ClientState {
             && self.state.lock().is_ok_and(|state| !state.unsupported_future_envelope)
     }
 
-    pub(crate) fn confirm_root_durability(&self) -> Result<(), String> {
+    // The renderer FIFO is sealed before this final, fallible publication.
+    pub(crate) fn prepare_ownership_release(&self) -> Result<(), String> {
+        self.set_window_captures_stopped(true);
+        self.window_flush.stop();
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
-        if self.root_sync_pending.load(Ordering::Relaxed) {
-            self.write_current_state()?;
-        }
-        Ok(())
+        self.flush_pending_window_captures()
+    }
+
+    pub(crate) fn resume_window_captures(&self) {
+        self.window_flush.resume();
+        self.set_window_captures_stopped(false);
     }
 
     pub(crate) fn queue_new_window(app: &AppHandle, window_id: String) -> Result<(), String> {
@@ -797,18 +805,19 @@ impl ClientState {
     }
 
     fn release_locks(&self) {
-        self.stop_window_captures();
-        self.window_flush.stop();
+        // Best effort when the state is being dropped outside orderly shutdown.
+        if let Err(error) = self.prepare_ownership_release() {
+            eprintln!("[client-state] failed to drain final window state: {error}");
+        }
+        self.finish_ownership_release();
+    }
+
+    fn finish_ownership_release(&self) {
         // Lock order fences takeover until root publication and partition GC leave write_lock.
         let _write = self
             .write_lock
             .lock()
             .unwrap_or_else(|err| err.into_inner());
-        // Also drain a capture admitted before stop whose wakeup wasn't sent yet,
-        // or retry geometry merged by a worker whose publication failed.
-        if let Err(error) = self.flush_pending_window_captures() {
-            eprintln!("[client-state] failed to drain final window state: {error}");
-        }
         self.process.release_locks();
     }
 
@@ -876,19 +885,8 @@ fn write_atomically_with_sync(
 
 pub fn release(app: &AppHandle) {
     if let Some(state) = app.try_state::<ClientState>() {
-        state.release_locks();
+        state.finish_ownership_release();
     }
-}
-
-#[cfg(windows)]
-pub fn flush_without_window_capture(app: &AppHandle) -> bool {
-    if let Some(state) = app.try_state::<ClientState>() {
-        if let Err(err) = state.flush() {
-            eprintln!("[client-state] failed to flush state: {err}");
-            return false;
-        }
-    }
-    true
 }
 
 #[cfg(test)]

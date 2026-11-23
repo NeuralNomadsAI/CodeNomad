@@ -254,11 +254,15 @@ impl ClientState {
         }
     }
 
-    pub(super) fn stop_window_captures(&self) {
+    pub(super) fn set_window_captures_stopped(&self, stopped: bool) {
         self.pending_windows
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .stopped = true;
+            .stopped = stopped;
+    }
+
+    pub(super) fn window_captures_stopped(&self) -> Result<bool, String> {
+        Ok(self.pending_windows.lock().map_err(|error| error.to_string())?.stopped)
     }
 
     // Caller holds write_lock, after the worker has joined and before ownership
