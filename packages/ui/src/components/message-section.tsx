@@ -1282,7 +1282,7 @@ export default function MessageSection(props: MessageSectionProps) {
           // so Solid keeps existing result buttons and their keyboard focus.
           setSearchMatches(previous => page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map((hit, index) => previous[index] ?? ({
             id: `${hit.sessionID}:${hit.messageID}:${hit.partIndex}`,
-            sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind,
+            sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind, partIndex: hit.partIndex,
             role: hit.role === "user" ? "user" : "assistant", start: 0, end: query.length,
             occurrence: 0, preview: hit.excerpt,
           })))
