@@ -64,17 +64,17 @@ impl Placement {
         } else {
             app.native.endpoint().ok_or_else(crate::opencode::upstream_error)?
         };
-        let current = || {
+        let current = |displays: &[Arc<AtomicBool>]| {
             app.native.current(&endpoint)
                 && app.workspace(id).is_ok()
                 && same_identity(&workspace.path, workspace_physical.as_ref())
                 && displays.iter().all(|d| d.load(Relaxed))
         };
-        if media && !current() {
+        if media && !current(&displays) {
             return Err(crate::opencode::upstream_error());
         }
         let source = crate::opencode::session_record_at(app, &endpoint, session).await?;
-        if media && !current() {
+        if media && !current(&displays) {
             return Err(crate::opencode::upstream_error());
         }
         // Reference: `ownsLocation(id, session.location)`, linked worktrees included.
@@ -109,7 +109,7 @@ impl Placement {
                 let proof = crate::worktrees::ownership::media_directory(app, &workspace, &endpoint, &path, &anchor)
                     .await
                     .map_err(|_| crate::opencode::upstream_error())?;
-                if !current() {
+                if !current(&displays) {
                     return Err(crate::opencode::upstream_error());
                 }
                 proof
