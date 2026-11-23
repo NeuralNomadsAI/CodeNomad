@@ -140,7 +140,7 @@ try {
        if(outlineGate&&method==='POST'&&p.endsWith('/session-history/outline')){
          const gate=outlineGate
          outlineGate=undefined
-         await gate
+         if(await gate===503)return route.fulfill({status:503})
        }
        await route.continue()
     })

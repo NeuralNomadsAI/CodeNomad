@@ -95,8 +95,9 @@ export function historyResponse(pathname, raw, {stores,records,project,linked,di
     }))
     if(webOutline&&rows.length>24){
       const head={after:-1,through:23,digest:'a'.repeat(64)}
-      const tail={after:23,through:rows.length-1,digest:'b'.repeat(64),changed:true}
       const unchanged=input.known?.some(c=>c.after===head.after&&c.through===head.through&&c.digest===head.digest)??false
+      const tail={after:23,through:rows.length-1,digest:(unchanged?'c':'b').repeat(64),changed:true}
+      if(unchanged)Object.assign(entries[24],{tools:1,toolName:'outline-delta',layout:'TX'})
       return {output:{status:'outline',entries:unchanged?entries.slice(24):entries,
         total:entries.length,cursor:null,checkpoints:[{...head,changed:!unchanged},tail]}}
     }

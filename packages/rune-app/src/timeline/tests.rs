@@ -595,3 +595,60 @@ fn marker_names_are_bounded_and_only_the_current_marker_reports_position() {
         1
     );
 }
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn hidden_history_invalidation_revokes_the_shared_seed_and_another_occurrence() {
+    use crate::files::test_http::{Http, wait};
+    use serde_json::json;
+    use std::sync::Arc;
+
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let mut backend = http.backend.clone();
+        backend.session_directory = Some("/project".into());
+        let client = backend.clone();
+        let load = tokio::spawn(async move {
+            client.attest_server().await.unwrap();
+            client
+                .read_outline_cached(
+                    &Default::default(),
+                    Some("/project"),
+                    None,
+                    |_| panic!("a cold read cannot publish a saved seed"),
+                )
+                .await
+                .unwrap()
+        });
+        http.accept()
+            .await
+            .reply(200, json!({"apiContract":1,"serverId":"installation"}))
+            .await;
+        let record = json!({"data":{"id":"session","projectID":"project","location":{"directory":"/project"}}});
+        http.accept().await.reply(200, record.clone()).await;
+        http.accept()
+            .await
+            .reply(
+                200,
+                json!({"status":"outline","total":1,"cursor":null,
+                    "entries":[{"id":"old","seq":1,"type":"user","tools":0,"reasoning":0}],
+                    "checkpoints":[{"after":-1,"through":1,"digest":"a".repeat(64),"changed":true}]
+                }),
+            )
+            .await;
+        http.accept().await.reply(200, record).await;
+        let outline = Arc::new(wait(load).await.unwrap());
+        let mut s = crate::init();
+        super::observe(&mut s, &crate::transport::Event::Connected(backend.clone()));
+        super::owner(&mut s).outline = Some(outline.clone());
+        let active = std::mem::take(&mut s.transcript_display.timeline);
+        crate::workspace::outlines::remember(&mut s, outline.clone());
+        super::observe(&mut s, &crate::transport::Event::Connected(backend.clone()));
+        assert!(s.workspace.is_none());
+        assert!(crate::workspace::outlines::seed(&s, &backend, "/project").is_some());
+        super::observe(&mut s, &crate::transport::Event::HistoryInvalidated);
+        assert!(crate::workspace::outlines::seed(&s, &backend, "/project").is_none());
+        s.transcript_display.timeline = active;
+        assert!(super::sync_outline_mutation(&mut s));
+        assert!(super::owner(&mut s).outline.is_none());
+    });
+}

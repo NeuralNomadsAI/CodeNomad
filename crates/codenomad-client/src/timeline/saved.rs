@@ -66,6 +66,20 @@ pub struct Metadata {
 }
 
 impl Outline {
+    pub fn belongs_to_session(&self, server: &str, session: &str) -> bool {
+        self.saved
+            .as_ref()
+            .is_some_and(|m| m.identity.server == server && m.identity.session == session)
+    }
+
+    pub(super) fn has_complete_metadata(&self) -> bool {
+        self.entries.iter().all(|entry| {
+            (entry.tools == 0 || entry.tool_name.is_some())
+                && (entry.kind != super::Kind::Assistant
+                    || (entry.text.is_some() && entry.layout.is_some()))
+        })
+    }
+
     pub fn saved_weight(&self) -> Option<usize> {
         let meta = self.saved.as_ref()?;
         Some(

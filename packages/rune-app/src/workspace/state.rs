@@ -82,7 +82,6 @@ pub struct Ui {
     file_wrap: Option<bool>,
     clock: f64,
     pub(super) persistence: Persistence,
-    pub(super) outlines: super::outlines::Cache,
     ready: bool,
     touched: bool,
     staged_revision: Option<u64>,
@@ -104,7 +103,6 @@ impl Ui {
             file_wrap: None,
             clock: 0.0,
             persistence: Persistence::new(),
-            outlines: Default::default(),
             ready: false,
             touched: false,
             staged_revision: None,
@@ -505,7 +503,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     let became_ready = loading && !ui.persistence.loading;
     if let Some(store) = &ui.persistence.store {
-        ui.outlines.poll(store, s.wake.clone());
+        s.saved_outlines.poll(store, s.wake.clone());
     }
     if became_ready {
         ui.ready = true;
@@ -534,6 +532,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
     }
     active.apply(s);
+    changed |= crate::timeline::sync_outline_mutation(s);
     changed |= panel_state::poll_missions(&mut ui, s, tx);
     if drafts_changed {
         ui.changed();

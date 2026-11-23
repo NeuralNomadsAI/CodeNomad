@@ -232,6 +232,7 @@ fn saved_outline_revalidates_sparse_ranges_and_refuses_a_different_undo_boundary
     let cursor = json!({"after":40,"through":2000});
     let mut after_undo = page(-1, 40, None, vec![entry("old", 1)]);
     after_undo["total"] = 1.into();
+    let upgraded = after_undo.clone();
     http_probe(
         vec![
             (RECORD, None, session.clone(), false),
@@ -260,7 +261,10 @@ fn saved_outline_revalidates_sparse_ranges_and_refuses_a_different_undo_boundary
             ),
             (RECORD, None, session, false),
             (RECORD, None, reverted.clone(), false),
-            (OUTLINE, Some(cold), after_undo, false),
+            (OUTLINE, Some(cold.clone()), after_undo, false),
+            (RECORD, None, reverted.clone(), false),
+            (RECORD, None, reverted.clone(), false),
+            (OUTLINE, Some(cold), upgraded, false),
             (RECORD, None, reverted, false),
         ],
         async |mut backend, revision| {
@@ -277,6 +281,7 @@ fn saved_outline_revalidates_sparse_ranges_and_refuses_a_different_undo_boundary
             let saved = decode_saved_outlines(&bytes).pop().unwrap();
             let current = backend
                 .read_outline_cached(&revision, Some(ROOT), Some(saved.clone()), |seed| {
+                    let seed = seed.unwrap();
                     assert!(Arc::ptr_eq(&seed, &saved));
                     assert_eq!(seed.entries[1].id, "gone");
                 })
@@ -291,12 +296,22 @@ fn saved_outline_revalidates_sparse_ranges_and_refuses_a_different_undo_boundary
                 ["old", "new"]
             );
             let reverted = backend
-                .read_outline_cached(&revision, Some(ROOT), Some(Arc::new(current)), |_| {
-                    panic!("the previous undo boundary cannot be shown")
+                .read_outline_cached(&revision, Some(ROOT), Some(Arc::new(current)), |seed| {
+                    assert!(seed.is_none(), "the previous undo boundary cannot be shown");
                 })
                 .await
                 .unwrap();
             assert_eq!(reverted.entries.len(), 1);
+            let mut legacy = reverted;
+            legacy.entries[0].layout = None;
+            legacy.entries[0].omitted = None;
+            let current = backend
+                .read_outline_cached(&revision, Some(ROOT), Some(Arc::new(legacy)), |seed| {
+                    assert!(seed.unwrap().entries[0].layout.is_none());
+                })
+                .await
+                .unwrap();
+            assert!(current.entries[0].layout.is_some());
         },
     );
 }
@@ -402,10 +417,14 @@ fn undo_between_pages_discards_the_entire_outline() {
             (RECORD, None, next_record, invalidate),
         ])
         .unwrap_err();
-        assert!(matches!(
-            error.downcast_ref::<Blocked>(),
-            Some(Blocked::Conflict)
-        ));
+        if invalidate {
+            assert!(matches!(
+                error.downcast_ref::<Blocked>(),
+                Some(Blocked::Conflict)
+            ));
+        } else {
+            assert!(error.is::<OutlineIdentityChanged>());
+        }
     }
 }
 

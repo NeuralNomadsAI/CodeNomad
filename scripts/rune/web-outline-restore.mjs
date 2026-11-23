@@ -7,6 +7,8 @@ const outlineRequest=request=>request.method()==='POST'&&request.url().endsWith(
 export async function outlineRestore({page,m,boot,connect,draft,holdNext}){
   const rail=page.getByRole('navigation',{name:m['messageTimeline.ariaLabel']})
   const tool=rail.getByRole('button',{name:'read',exact:true})
+  const deltaMarker=rail.getByRole('button',{name:'outline-delta',exact:true})
+  const passage=page.getByRole('paragraph').filter({hasText:/^Existing project history$/})
   const scrollToHead=async()=>{
     await rail.waitFor()
     const box=await rail.boundingBox()
@@ -46,11 +48,36 @@ export async function outlineRestore({page,m,boot,connect,draft,holdNext}){
     await scrollToHead()
     await draft()
   }finally{
-    release.resolve()
+    release.resolve(503)
   }
-  const delta=await (await fresh).json()
+  assert.equal((await fresh).status(),503)
+  const error=page.getByText(m['history.navigation.outlineUnavailable'],{exact:true})
+  await error.waitFor()
+  await tool.waitFor()
+  const retry=page.getByRole('button',{name:m['messageSection.search.retry'],exact:true})
+  const resume=Promise.withResolvers()
+  holdNext(resume.promise)
+  const refreshed=page.waitForResponse(response=>outlineRequest(response.request()))
+  void refreshed.catch(()=>{})
+  let before
+  try{
+    await retry.click({force:true})
+    await error.waitFor({state:'detached'})
+    await passage.waitFor()
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+    before=await passage.boundingBox()
+    assert(before&&before.height>0&&before.y>=0)
+    assert.equal(await deltaMarker.count(),0)
+  }finally{resume.resolve()}
+  const result=await refreshed
+  assert.deepEqual(result.request().postDataJSON().known,offered.known)
+  const delta=await result.json()
   assert.equal(delta.checkpoints[0].changed,false)
   assert(delta.entries.every(row=>row.seq>delta.checkpoints[0].through))
+  await deltaMarker.waitFor()
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+  const after=await passage.boundingBox()
+  assert(after&&Math.abs(after.y-before.y)<=1,'The delta must leave the transcript reading position unchanged')
   await page.evaluate(({key,disk})=>{
     const items=JSON.parse(disk);items[0][0]='0'.repeat(64)
     sessionStorage.setItem(key,JSON.stringify(items))
@@ -60,5 +87,6 @@ export async function outlineRestore({page,m,boot,connect,draft,holdNext}){
   assert.equal((await cold).postDataJSON().known,undefined,'Reject the corrupt cache and read cold')
   await scrollToHead()
   await draft()
-  return {cold:true,known:offered.known.length,unchanged:1,corruptFallback:true,draftPreserved:true}
+  return {cold:true,known:offered.known.length,unchanged:1,retainedOn503:true,deltaPainted:true,
+    readingPosition:[before.y,after.y],corruptFallback:true,draftPreserved:true}
 }

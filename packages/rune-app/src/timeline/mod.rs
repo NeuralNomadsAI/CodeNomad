@@ -19,7 +19,10 @@ pub(crate) use view::{view, watch};
 use crate::{State, backend::Backend, platform, transport::Event};
 use codenomad_client::{
     Receiver, Sender, bounded,
-    timeline::{self, MarkerKind, Outline, OutlineRevision, Resident, WindowPosition},
+    timeline::{
+        self, MarkerKind, Outline, OutlineIdentityChanged, OutlineRevision, Resident,
+        WindowPosition,
+    },
 };
 use std::{
     cell::Cell,
@@ -54,7 +57,7 @@ impl From<timeline::Marker<'_>> for Marker {
 }
 
 enum ScanUpdate {
-    Seed(Arc<Outline>),
+    Seed(Option<Arc<Outline>>),
     Complete(crate::history::Result<Outline>),
 }
 type Scan = (Sender<()>, Receiver<ScanUpdate>);
@@ -63,7 +66,7 @@ type Scan = (Sender<()>, Receiver<ScanUpdate>);
 pub(crate) struct Timeline {
     backend: Option<Backend>,
     outline: Option<Arc<Outline>>,
-    provisional: bool,
+    mutation: Option<(Rc<Cell<u64>>, u64)>,
     cold_only: bool,
     scan: Option<Scan>,
     revision: Arc<OutlineRevision>,
@@ -109,10 +112,43 @@ pub(crate) fn filters_changed(s: &mut State) {
 fn cancel_scan(t: &mut Timeline) {
     t.revision.invalidate();
     t.scan = None;
-    if std::mem::take(&mut t.provisional) {
-        t.outline = None;
-        t.changed = true;
-        t.index_changed = true;
+}
+
+fn revoke_outline(t: &mut Timeline) {
+    t.outline = None;
+    t.markers.clear();
+    t.folded.clear();
+    t.has_raw_markers = false;
+    t.version = t.version.wrapping_add(1);
+    t.index_changed = true;
+    t.changed = true;
+}
+
+fn invalidate_outline(s: &mut State) {
+    let t = owner(s);
+    cancel_scan(t);
+    revoke_outline(t);
+    t.previews = Default::default();
+    t.cold_only = true;
+    t.refresh = true;
+    t.outline_error = false;
+    if let Some((clock, seen)) = &mut t.mutation {
+        *seen = clock.get();
+    }
+    cancel_jump(s);
+    search::invalidate(s);
+}
+
+pub(crate) fn sync_outline_mutation(s: &mut State) -> bool {
+    if owner(s)
+        .mutation
+        .as_ref()
+        .is_some_and(|(clock, seen)| clock.get() != *seen)
+    {
+        invalidate_outline(s);
+        true
+    } else {
+        false
     }
 }
 
@@ -137,10 +173,13 @@ pub(crate) fn suspend(s: &mut State) {
 pub(crate) fn observe(s: &mut State, event: &Event) {
     if matches!(event, Event::HistoryInvalidated)
         && let Some(backend) = s.transcript_display.timeline.backend.clone()
-        && let Some(project) = project_root(s).map(str::to_owned)
     {
-        crate::workspace::outlines::invalidate(s, &backend, &project);
+        crate::workspace::outlines::invalidate(s, &backend);
     }
+    let mutation = match event {
+        Event::Connected(backend) => s.saved_outlines.mutation(backend),
+        _ => None,
+    };
     let t = owner(s);
     match event {
         Event::Connected(backend) => {
@@ -153,24 +192,16 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
             if !same {
                 *t = Timeline::default();
             }
+            if t.mutation.is_none() {
+                t.mutation = mutation.map(|clock| {
+                    let seen = clock.get();
+                    (clock, seen)
+                });
+            }
             t.backend = Some(backend.clone());
             t.refresh = true;
         }
-        Event::HistoryInvalidated => {
-            cancel_scan(t);
-            t.previews = Default::default();
-            t.outline = None;
-            t.provisional = false;
-            t.cold_only = true;
-            t.markers.clear();
-            t.has_raw_markers = false;
-            t.version = t.version.wrapping_add(1);
-            t.resident.clear();
-            t.refresh = true;
-            t.changed = true;
-            cancel_jump(s);
-            search::invalidate(s);
-        }
+        Event::HistoryInvalidated => invalidate_outline(s),
         Event::ConnectionLost
         | Event::Reconnecting
         | Event::AuthenticationRequired(_)
@@ -292,6 +323,7 @@ fn reproject(s: &mut State) -> bool {
 }
 
 pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
+    let mut changed = sync_outline_mutation(s);
     if !demanded(s) {
         owner(s).previews.hide();
         if std::mem::take(&mut owner(s).visible) {
@@ -302,11 +334,12 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 suspend(s);
             }
         }
-        return if search::is_open(s) {
-            navigation::poll(s, tx)
-        } else {
-            navigation::apply_alignment(s, tx)
-        };
+        return changed
+            | if search::is_open(s) {
+                navigation::poll(s, tx)
+            } else {
+                navigation::apply_alignment(s, tx)
+            };
     }
     let reads = s.reads.clone();
     let wake = s.wake.clone();
@@ -321,18 +354,17 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
         t.changed = true;
     }
     t.visible = true;
-    let mut changed = false;
     let mut remember = None;
     while let Some(update) = t.scan.as_ref().and_then(|(_, in_)| in_.try_recv().ok()) {
         changed = true;
         match update {
-            ScanUpdate::Seed(seed) if t.outline.is_none() => {
+            ScanUpdate::Seed(Some(seed)) if t.outline.is_none() => {
                 t.outline = Some(seed);
-                t.provisional = true;
                 t.changed = true;
                 t.index_changed = true;
             }
-            ScanUpdate::Seed(_) => {}
+            ScanUpdate::Seed(None) => revoke_outline(t),
+            ScanUpdate::Seed(Some(_)) => {}
             ScanUpdate::Complete(result) => {
                 t.scan = None;
                 t.outline_error = result.is_err();
@@ -343,10 +375,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                         t.outline = Some(index);
                         t.cold_only = false;
                     }
-                    Err(_) if t.provisional => t.outline = None,
+                    Err(error) if error.is::<OutlineIdentityChanged>() => revoke_outline(t),
                     Err(_) => continue,
                 }
-                t.provisional = false;
                 t.changed = true;
                 t.index_changed = true;
             }

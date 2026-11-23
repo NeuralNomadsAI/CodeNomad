@@ -149,6 +149,15 @@ impl std::fmt::Display for Blocked {
 }
 impl std::error::Error for Blocked {}
 
+#[derive(Debug)]
+pub struct OutlineIdentityChanged;
+impl std::fmt::Display for OutlineIdentityChanged {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str("outline session identity changed")
+    }
+}
+impl std::error::Error for OutlineIdentityChanged {}
+
 impl Backend {
     /// A cold scan publishes only after the last page. Drop the future to cancel the read.
     #[cfg(test)]
@@ -161,7 +170,7 @@ impl Backend {
         revision: &OutlineRevision,
         project: Option<&str>,
         saved: Option<Arc<Outline>>,
-        show_saved: impl FnOnce(Arc<Outline>),
+        show_saved: impl FnOnce(Option<Arc<Outline>>),
     ) -> Result<Outline> {
         if !valid_id(&self.workspace) || !valid_id(&self.session) {
             return Err("invalid outline scope".into());
@@ -178,17 +187,19 @@ impl Backend {
         };
         let (undo, identity) = self.outline_session(project).await?;
         current()?;
+        let check_seed = saved.is_some();
         let saved = saved.filter(|seed| {
             seed.saved
                 .as_ref()
                 .is_some_and(|m| Some(&m.identity) == identity.as_ref())
         });
-        if let Some(seed) = &saved {
-            show_saved(seed.clone());
+        if check_seed {
+            show_saved(saved.clone());
         }
         let mut scan = Scan::default();
         let mut known = saved
             .as_deref()
+            .filter(|seed| seed.has_complete_metadata())
             .and_then(|seed| seed.saved.as_ref())
             .map_or(&[][..], |m| m.checkpoints.as_slice());
         loop {
@@ -213,7 +224,7 @@ impl Backend {
             // Each broker page is stable within its own request. The native undo boundary
             // and the live revision together fence the complete multi-page scan.
             if self.outline_session(project).await? != (undo.clone(), identity.clone()) {
-                return Err(Blocked::Conflict.into());
+                return Err(OutlineIdentityChanged.into());
             }
             current()?;
             if let Some(total) = total {
@@ -251,7 +262,7 @@ impl Backend {
         .await?;
         let record = value.get("data").unwrap_or(&value);
         if record["id"] != self.session {
-            return Err("outline session identity changed".into());
+            return Err(OutlineIdentityChanged.into());
         }
         Ok((
             record["revert"].clone(),

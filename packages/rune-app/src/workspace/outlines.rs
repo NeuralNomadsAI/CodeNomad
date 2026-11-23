@@ -7,15 +7,23 @@ use codenomad_client::{
     Receiver, bounded,
     timeline::{self, Outline},
 };
-use std::sync::Arc;
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet},
+    rc::{Rc, Weak},
+    sync::Arc,
+};
 
+type Session = (String, String);
 #[derive(Default)]
-pub(super) struct Cache {
+pub(crate) struct Cache {
     entries: Vec<Arc<Outline>>,
     started: bool,
     loading: Option<Receiver<Vec<Arc<Outline>>>>,
     saving: Option<Receiver<()>>,
     dirty: bool,
+    mutations: HashMap<Session, Weak<Cell<u64>>>,
+    invalidated_while_loading: HashSet<Session>,
 }
 
 impl Cache {
@@ -40,6 +48,14 @@ impl Cache {
             let Ok(entries) = rx.try_recv() else { return };
             self.loading = None;
             for entry in entries {
+                if self
+                    .invalidated_while_loading
+                    .iter()
+                    .any(|(server, session)| entry.belongs_to_session(server, session))
+                {
+                    self.dirty = true;
+                    continue;
+                }
                 if !self
                     .entries
                     .iter()
@@ -48,6 +64,7 @@ impl Cache {
                     self.entries.push(entry);
                 }
             }
+            self.invalidated_while_loading.clear();
             self.trim();
         }
         if let Some(rx) = &self.saving {
@@ -71,6 +88,31 @@ impl Cache {
         }
     }
 
+    pub(crate) fn mutation(&mut self, backend: &Backend) -> Option<Rc<Cell<u64>>> {
+        let key = session(backend)?;
+        if let Some(clock) = self.mutations.get(&key).and_then(Weak::upgrade) {
+            return Some(clock);
+        }
+        self.mutations.retain(|_, clock| clock.strong_count() > 0);
+        let clock = Rc::new(Cell::new(0));
+        self.mutations.insert(key, Rc::downgrade(&clock));
+        Some(clock)
+    }
+
+    fn invalidate(&mut self, backend: &Backend) {
+        let Some(key) = session(backend) else { return };
+        if let Some(clock) = self.mutation(backend) {
+            clock.set(clock.get().wrapping_add(1));
+        }
+        let before = self.entries.len();
+        self.entries
+            .retain(|outline| !outline.belongs_to_session(&key.0, &key.1));
+        self.dirty |= before != self.entries.len();
+        if !self.started || self.loading.is_some() {
+            self.invalidated_while_loading.insert(key);
+        }
+    }
+
     fn trim(&mut self) {
         let mut bytes = 0;
         let keep = self
@@ -86,10 +128,15 @@ impl Cache {
     }
 }
 
+fn session(backend: &Backend) -> Option<Session> {
+    Some((
+        backend.client.server_identity()?.to_owned(),
+        backend.session.clone(),
+    ))
+}
+
 pub(crate) fn seed(s: &State, backend: &Backend, project: &str) -> Option<Arc<Outline>> {
-    s.workspace
-        .as_ref()?
-        .outlines
+    s.saved_outlines
         .entries
         .iter()
         .find(|outline| outline.saved_for(backend, project))
@@ -97,9 +144,7 @@ pub(crate) fn seed(s: &State, backend: &Backend, project: &str) -> Option<Arc<Ou
 }
 
 pub(crate) fn remember(s: &mut State, outline: Arc<Outline>) {
-    let Some(cache) = s.workspace.as_mut().map(|w| &mut w.outlines) else {
-        return;
-    };
+    let cache = &mut s.saved_outlines;
     if outline.saved_weight().is_none()
         || cache.entries.iter().any(|o| o.same_saved_outline(&outline))
     {
@@ -112,16 +157,7 @@ pub(crate) fn remember(s: &mut State, outline: Arc<Outline>) {
     (s.wake)();
 }
 
-pub(crate) fn invalidate(s: &mut State, backend: &Backend, project: &str) {
-    let Some(cache) = s.workspace.as_mut().map(|w| &mut w.outlines) else {
-        return;
-    };
-    let before = cache.entries.len();
-    cache
-        .entries
-        .retain(|outline| !outline.saved_for(backend, project));
-    if cache.entries.len() != before {
-        cache.dirty = true;
-        (s.wake)();
-    }
+pub(crate) fn invalidate(s: &mut State, backend: &Backend) {
+    s.saved_outlines.invalidate(backend);
+    (s.wake)();
 }
