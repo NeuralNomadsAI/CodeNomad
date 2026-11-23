@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Session } from "../types/session"
 import { handleNativeSessionEvent } from "./session-events"
-import { getListedSessionMap, getSessionCheckpoint, getSessionFamily, getSessionThreads, replaceSessionRow, setSessionPage, setSessions } from "./session-state"
+import { getListedSessionMap, getSessionCheckpoint, getSessionFamily, getSessionThreads, getSessionTopology, replaceSessionRow, setSessionPage, setSessions, withSession } from "./session-state"
 import { projectSessionFamilies, projectUnarchivedSessionThreads } from "./session-tree"
 
 test("a session event among 6,000 rows only rebuilds the affected family", t => {
@@ -62,4 +62,25 @@ test("a session event among 6,000 rows only rebuilds the affected family", t => 
   const afterDiscovery = project()
   assert.ok(afterDiscovery.slice(0, -1).every((thread, index) => thread === initial[index]))
   assert.equal(afterDiscovery.at(-1)?.children.length, 2)
+})
+
+test("catalog checkpoints detect nested edits and republished workspace maps", t => {
+  const instanceId = "projection-mutated-catalog"
+  const row = { id: "root", instanceId, parentId: null, status: "working", time: { created: 1, updated: 1 },
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } } as Session
+  const rows = new Map([[row.id, row]])
+  setSessions(new Map([[instanceId, rows]]))
+  t.after(() => setSessions(new Map()))
+  const initial = getSessionCheckpoint(instanceId)
+  withSession(instanceId, "root", row => { row.tokens.cache.write++ })
+  assert.equal(getSessionCheckpoint(instanceId), initial, "busy usage is deferred")
+  withSession(instanceId, "root", row => { row.time.updated++ })
+  assert.notEqual(getSessionCheckpoint(instanceId), initial)
+  assert.equal(row.time.updated, 1, "retained snapshots keep their original values")
+  const topology = getSessionTopology(instanceId)
+  setSessions(previous => {
+    previous.get(instanceId)!.set("child", { ...row, id: "child", parentId: "root" })
+    return new Map(previous)
+  })
+  assert.notEqual(getSessionTopology(instanceId), topology)
 })

@@ -78,7 +78,9 @@ test("capture defers only busy usage through both real-store effects and keeps f
       await page.route("**/api/events", route => route.fulfill({ contentType: "text/event-stream", body: ": ready\n\n" }))
       await page.goto(fixture.url)
       await page.waitForFunction(() => Boolean((window as any).fixture))
-      const settle = () => page.waitForTimeout(500)
+      // Capture and persistence have separate quiet periods; advance both before
+      // checking that busy usage produced no additional checkpoint.
+      const settle = () => page.waitForTimeout(850)
       const count = () => page.evaluate(() => (window as any).receipts.length)
       const state = () => page.evaluate(() => (window as any).fixture.state())
       const change = (field: string, id = "first", sessionId = "parent") =>

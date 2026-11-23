@@ -68,7 +68,19 @@ export interface SessionInfo {
   contextAvailableTokens: number | null
 }
 
-const [sessions, setSessions] = createSignal<Map<string, Map<string, Session>>>(new Map())
+type WorkspaceSessions = Map<string, Map<string, Session>>
+const [sessions, publishSessions] = createSignal<WorkspaceSessions>(new Map())
+
+function setSessions(update: WorkspaceSessions | ((previous: WorkspaceSessions) => WorkspaceSessions)): WorkspaceSessions {
+  return publishSessions(previous => {
+    const next = typeof update === "function" ? update(previous) : update
+    if (next === previous || next.size !== previous.size) return next
+    for (const [id, rows] of next) if (previous.get(id) !== rows) return next
+    // A publisher may announce edits to a retained map. Rebuild its snapshot
+    // when it supplies no replacement workspace map to identify the edit.
+    return new Map(Array.from(next, ([id, rows]) => [id, new Map(rows)]))
+  })
+}
 const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<string, string>>(new Map())
 const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
 // The Location authority key each instance's `agents` list was read for.
@@ -640,14 +652,37 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
     const current = instanceSessions.get(sessionId)
     if (!current) return prev
 
-    const updatedSession: Session = { ...current }
+    const time = { ...current.time }
+    const location = current.location && { ...current.location }
+    const model = current.model && { ...current.model }
+    const tokens = current.tokens && { ...current.tokens, cache: { ...current.tokens.cache } }
+    const retry = current.retry && { ...current.retry }
+    const updatedSession: Session = { ...current, time, location, model, tokens, retry }
     const result = updater(updatedSession)
     if (result === false) {
       return prev
     }
 
+    // Preserve unchanged nested identities, including a model object
+    // deliberately replaced by an authoritative selection.
+    if (updatedSession.time === time && shallowFieldsEqual(current.time, time)) updatedSession.time = current.time
+    if (updatedSession.location === location && shallowFieldsEqual(current.location, location)) updatedSession.location = current.location
+    if (updatedSession.model === model && shallowFieldsEqual(current.model, model)) updatedSession.model = current.model
+    if (updatedSession.retry === retry && current.retry && retry && shallowFieldsEqual(current.retry, retry)) updatedSession.retry = current.retry
+    if (updatedSession.tokens === tokens && tokens && current.tokens) {
+      if (shallowFieldsEqual(current.tokens.cache, tokens.cache)) tokens.cache = current.tokens.cache
+      if (shallowFieldsEqual(current.tokens, tokens)) updatedSession.tokens = current.tokens
+    }
     return replaceSessionRow(prev, instanceId, updatedSession)
   })
+}
+
+function shallowFieldsEqual<T extends object>(a: T, b: T): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  const keys = Object.keys(a) as (keyof T)[]
+  return keys.length === Object.keys(b).length
+    && keys.every(key => Object.prototype.hasOwnProperty.call(b, key) && Object.is(a[key], b[key]))
 }
 
 /** Publish one row while retaining projections that it cannot affect. */

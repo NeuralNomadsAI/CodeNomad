@@ -101,9 +101,10 @@ recovery later succeeds.
 
 ### Client-state capture checkpoints
 
-`use-app-session-capture.ts` shares a value-diffed scalar session projection between
-capture scheduling and preserved-prompt hydration. It snapshots catalog fields and
-runtime/attention inputs even when instance Maps or nested metadata mutate in place.
+`use-app-session-capture.ts` tracks per-workspace checkpoint tokens for capture
+and topology tokens for preserved-prompt hydration. Session writes preserve
+unchanged nested field identities and invalidate the relevant token when a field
+changes or a workspace map is republished.
 Only cost/token changes while a session is working or compacting are deferred.
 Session membership, metadata, runtime transitions and idle usage still invalidate;
 drafts, attachments, selection, expansion, scrolls and outlines retain their triggers.
