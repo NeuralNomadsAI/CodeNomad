@@ -1704,8 +1704,10 @@ impl<T: UserEvent> WebviewDispatch<T> for WryWebviewDispatcher<T> {
   }
 
   fn set_cookie(&self, cookie: Cookie<'_>) -> Result<()> {
+    // GTK may dispatch another IPC while waiting for the cookie store.
+    let window_id = *self.window_id.lock().unwrap();
     self.context.send_user_message(Message::Webview(
-      *self.window_id.lock().unwrap(),
+      window_id,
       self.webview_id,
       WebviewMessage::SetCookie(cookie.into_owned()),
     ))?;
