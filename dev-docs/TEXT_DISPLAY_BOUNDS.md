@@ -71,14 +71,18 @@ from rendering" message, without a reveal; copy returns them whole.
   each nested row is a whole tool card, so the scroller's layout cost is charged per
   mounted row. The omitted gap renders the shared hidden-parts placeholder and one
   reveal mounts `TASK_STEP_REVEAL_STEP` (100) more rows, keyed `task:steps` in the
-  record display cache like a text reveal. While the card's scroller is not
-  bottom-following the window holds its anchor row and only appends, so a streamed
-  step never unmounts the row being read; following slides the window again, and a
-  mounted ceiling (`TASK_STEP_MOUNT_CEILING`) always bounds the list.
+  record display cache like a text reveal. The window's start advances — dropping
+  its leading row — only while no reader holds it: the leading row out of sight and
+  no focus or selection in any mounted row. A streamed step never unmounts the row
+  being read; a reveal always widens the window at once. The ceiling
+  (`TASK_STEP_MOUNT_CEILING`, the scan bound) can never outrank reader protection —
+  a held window never exceeds what a full reveal would mount anyway.
 - Search navigation marks the hit's part search-revealed (`markRecordPartSearchRevealed`
-  in the record display cache): every text window of that part widens by one step, so
-  a hit beyond a window's rendered prefix still lands in view and the highlight pass
-  finds it. The mark is idempotent and clears with the instance's render caches.
+  in the record display cache): every text window of that part gains one base reveal
+  step, and the reader's own reveals stack on top of it, so a hit beyond a window's
+  rendered prefix still lands in view — and further **Show more** clicks keep
+  extending — while the highlight pass finds it. The mark is idempotent and clears
+  with the instance's render caches.
 - A reveal at transcript level (text parts, errors) holds the pre-reveal cut point
   through the transcript list's `alignElement` (`TranscriptAlignmentContext`): an
   absolutely positioned marker in the row is held before the text grows, so neither

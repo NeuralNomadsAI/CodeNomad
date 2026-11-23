@@ -22,10 +22,14 @@ function longText(label: string, paragraphs: number) {
     `${label} paragraph ${index}: ${"measured bounded content ".repeat(48)}`).join("\n\n")
 }
 
-// ~38k prompt and ~64k report: both beyond the nested card pane bound, the
-// report beyond the transcript-wide prose bound too.
+// ?steps=N and ?report=N override the scenario sizes for boundary cases.
+const initialSteps = Math.min(2_000, Math.max(1, Number(new URLSearchParams(location.search).get("steps") ?? 90)))
+const reportParagraphs = Math.max(1, Number(new URLSearchParams(location.search).get("report") ?? 50))
+
+// ~38k prompt and a parameterized report: both beyond the nested card pane
+// bound, the default report beyond the transcript-wide prose bound too.
 const PROMPT_TEXT = longText("Prompt", 30)
-const REPORT_TEXT = longText("Report", 50)
+const REPORT_TEXT = longText("Report", reportParagraphs)
 
 const parentMessage = {
   id: "parent-0", type: "assistant", agent: "build", model, time: { created: 1, completed: 2 },
@@ -51,8 +55,8 @@ function childStep(index: number) {
   }
 }
 
-// 90 steps: beyond the mounted tail window, below the scan overflow bound.
-let childHistory: any[] = Array.from({ length: 90 }, (_, index) => childStep(index))
+// initialSteps: 90 by default — beyond the mounted tail window, below the scan overflow bound.
+let childHistory: any[] = Array.from({ length: initialSteps }, (_, index) => childStep(index))
 const history: Record<string, any[]> = { [parentId]: [parentMessage], [childId]: childHistory }
 
 const client: any = {

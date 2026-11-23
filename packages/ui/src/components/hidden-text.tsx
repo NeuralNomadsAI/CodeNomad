@@ -38,8 +38,9 @@ export function createTextWindow(options: {
   const steps = () => {
     const target = options.target()
     if (!target) return localSteps()
-    // Search navigation reveals the whole part, beyond any section's own reveal.
-    return Math.max(getRevealedRecordText(target), getRecordPartSearchReveal(target.instanceId, target.messageId, target.partId))
+    // Search navigation reveals the whole part once; the reader's own reveals
+    // stack on top of that base step.
+    return getRevealedRecordText(target) + getRecordPartSearchReveal(target.instanceId, target.messageId, target.partId)
   }
   const window = createMemo(() => getRenderTextWindow(options.source(), options.limit(), steps()), undefined, { equals: sameWindow })
   const reveal = () => {

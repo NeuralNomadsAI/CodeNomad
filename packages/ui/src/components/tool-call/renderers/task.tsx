@@ -475,29 +475,31 @@ export const taskRenderer: ToolRenderer = {
       stepsContainerEl = element
       scrollHelpers?.registerContainer(element)
     }
-    const readerPinsLeadingRow = (leading: string | undefined) => {
+    const readerHoldsWindow = () => {
       const container = stepsContainerEl
-      if (!container || !leading) return false
-      const partId = splitToolKey(leading)?.partId
-      const row = partId
-        ? container.querySelector(`.tool-call[data-part-id="${CSS.escape(partId)}"]`)
-        : container.querySelector(`[data-task-id="${CSS.escape(leading)}"]`)
-      if (!(row instanceof HTMLElement)) return false
-      if (row.getBoundingClientRect().bottom > container.getBoundingClientRect().top) return true
+      if (!container) return false
       const doc = container.ownerDocument
-      if (row.contains(doc.activeElement)) return true
-      const selection = doc.getSelection()
-      return Boolean(selection?.anchorNode && row.contains(selection.anchorNode))
+      // The leading row in sight: a reader at the top is reading it.
+      const leading = container.querySelector(".tool-call-task-summary > .tool-call, .tool-call-task-summary > .tool-call-task-item")
+      if (leading instanceof HTMLElement && leading.getBoundingClientRect().bottom > container.getBoundingClientRect().top) return true
+      // Any mounted row holding focus or the selection: unmounting that row
+      // would clear it, wherever in the window it sits.
+      for (const node of [doc.activeElement, doc.getSelection()?.anchorNode ?? null]) {
+        for (let element = node; element && element !== container; element = element.parentElement) {
+          if (element instanceof HTMLElement && element.matches(".tool-call, .tool-call-task-item")) return true
+        }
+      }
+      return false
     }
     const stepsRevealTarget = () => textRevealTarget("task:steps")
     const revealSteps = () => revealHiddenRecordText(stepsRevealTarget())
     const mountedStepLimit = createMemo(() => TASK_STEP_MOUNT_LIMIT + getRevealedRecordText(stepsRevealTarget()) * TASK_STEP_REVEAL_STEP)
-    const windowStart = (total: number, anchorIndex: number, leading: string | undefined) => {
+    const windowStart = (total: number, anchorIndex: number) => {
       const desired = Math.max(0, total - mountedStepLimit())
-      // Hold the anchor row while a reader pins it and the ceiling allows: a
-      // reveal can still move the start back (min), a streamed step cannot
-      // move it forward past the anchor.
-      if (anchorIndex >= 0 && readerPinsLeadingRow(leading)) {
+      // Hold the anchor row while a reader holds the window (in sight, focus or
+      // selection) and the ceiling allows: a reveal can still move the start
+      // back (min), a streamed step cannot move it forward past the anchor.
+      if (anchorIndex >= 0 && readerHoldsWindow()) {
         const held = Math.min(anchorIndex, desired)
         if (total - held <= TASK_STEP_MOUNT_CEILING) return held
       }
@@ -506,7 +508,7 @@ export const taskRenderer: ToolRenderer = {
     const visibleChildToolKeys = createMemo((previous?: { keys: string[]; hidden: number; anchor?: string }) => {
       const keys = childToolKeys()
       const anchorIndex = previous?.anchor === undefined ? -1 : keys.indexOf(previous.anchor)
-      const start = windowStart(keys.length, anchorIndex, keys[anchorIndex])
+      const start = windowStart(keys.length, anchorIndex)
       const next = { keys: keys.slice(start), hidden: start, anchor: keys[start] }
       if (previous && previous.hidden === next.hidden && previous.keys.length === next.keys.length
         && previous.keys.every((key, index) => key === next.keys[index])) return previous
@@ -515,7 +517,7 @@ export const taskRenderer: ToolRenderer = {
     const visibleLegacyItems = createMemo((previous?: { items: TaskSummaryItem[]; hidden: number; anchor?: string }) => {
       const items = legacyItems()
       const anchorIndex = previous?.anchor === undefined ? -1 : items.findIndex(item => item.id === previous.anchor)
-      const start = windowStart(items.length, anchorIndex, items[anchorIndex]?.id)
+      const start = windowStart(items.length, anchorIndex)
       const next = { items: items.slice(start), hidden: start, anchor: items[start]?.id }
       if (previous && previous.hidden === next.hidden && previous.items.length === next.items.length
         && previous.items.every((item, index) => item === next.items[index])) return previous

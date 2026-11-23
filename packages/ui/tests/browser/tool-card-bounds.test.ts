@@ -20,7 +20,7 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-async function withPage(run: (page: Page) => Promise<void>) {
+async function withPage(run: (page: Page) => Promise<void>, query?: string) {
   const page = await browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })
   page.setDefaultTimeout(10_000)
   const errors: string[] = []
@@ -29,7 +29,7 @@ async function withPage(run: (page: Page) => Promise<void>) {
   try {
     // Outside the tiered runner the standalone daemon skips warmup; the first
     // fixture page of such a run pays the cold dependency graph.
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.goto(query ? `${url}?${query}` : url, { waitUntil: "domcontentloaded", timeout: 90_000 })
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await run(page)
     assert.deepEqual(errors, [])
@@ -215,4 +215,95 @@ test("a search hit beyond the pane cap reveals the card's hidden text", { timeou
   }, undefined, { timeout: 15_000 })
   assert.equal(await outputPane.locator(".message-hidden-text").count(), 0,
     "the hit's block reveals instead of leaving the match outside the card")
-}))
+}, "report=60"))
+
+test("a selection survives steps past the revealed window's edge", { timeout: 90_000 }, async () => withPage(async page => {
+  const steps = sectionByTitle(page, /^Steps$/)
+  await steps.waitFor()
+  const rows = steps.locator(".tool-call-task-summary > .tool-call")
+  const container = steps.locator(".tool-call-task-container")
+  await rows.first().waitFor()
+
+  // Reveal once: 160 steps mount 130 rows, the gap keeps the remaining 30.
+  await steps.locator(".message-hidden-parts").getByRole("button").click()
+  await page.locator('.tool-call[data-part-id="child-0030-tool"]').waitFor()
+  const rowsAfterReveal = await rows.count()
+  assert.ok(rowsAfterReveal > TASK_STEP_MOUNT_LIMIT, `one reveal mounts a wide window (${rowsAfterReveal} rows)`)
+
+  // The reader selects text in the leading row (step-30) — exactly the row
+  // the old ceiling dropped. The selection pins wherever the row sits.
+  const selected = await page.evaluate(() => {
+    const row = document.querySelector('.tool-call[data-part-id="child-0030-tool"]')
+    const node = row?.querySelector(".tool-call-summary-title")?.firstChild ?? row?.firstChild
+    if (!node) return false
+    const document_ = node.ownerDocument
+    document_.getSelection()?.removeAllRanges()
+    const range = document_.createRange()
+    range.selectNodeContents(node)
+    document_.getSelection()?.addRange(range)
+    return true
+  })
+  assert.ok(selected, "the leading row's text is selected")
+
+  for (const [total, batch] of [[161, 1], [171, 10]] as const) {
+    await page.evaluate(count => (window as any).fixture.pushChildSteps(count), batch)
+    await steps.locator(".tool-call-task-section-meta").filter({ hasText: `${total} steps` }).waitFor()
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+    assert.equal(await page.locator('.tool-call[data-part-id="child-0030-tool"]').count(), 1,
+      `at ${total} steps the selected row stays mounted`)
+    const selectionHeld = await page.evaluate(() => {
+      const selection = document.getSelection()
+      return Boolean(selection && !selection.isCollapsed && selection.toString().length > 0)
+    })
+    assert.ok(selectionHeld, `at ${total} steps the selection survives`)
+  }
+
+  // Releasing the selection lets the window slide past the released row.
+  await page.evaluate(() => {
+    document.getSelection()?.removeAllRanges()
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    const container = document.querySelector(".tool-call-task-container") as HTMLElement | null
+    if (container) container.scrollTop = container.scrollHeight
+  })
+  await page.evaluate(() => (window as any).fixture.pushChildSteps(1))
+  await steps.locator(".tool-call-task-section-meta").filter({ hasText: "172 steps" }).waitFor()
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+  assert.equal(await page.locator('.tool-call[data-part-id="child-0030-tool"]').count(), 0,
+    "the released row leaves the window")
+}, "steps=160"))
+
+test("Show more after a search reveal extends the window further", { timeout: 90_000 }, async () => withPage(async page => {
+  const output = sectionByTitle(page, /^Output$/)
+  await output.waitFor()
+  const outputPane = output.locator(".tool-call-task-section-body .tool-call-markdown")
+  await outputPane.locator(".message-hidden-text").waitFor()
+
+  // Paragraph 300 sits near 380 000 characters: beyond even the search step's
+  // 270 000-character window, so the reader must be able to keep revealing.
+  await page.keyboard.press("Control+f")
+  const search = page.locator(".message-search-input")
+  await search.waitFor()
+  await search.fill("Report paragraph 60")
+  await page.waitForFunction(() => /\d/.test(document.querySelector(".message-search-count")?.textContent ?? ""), undefined, { timeout: 10_000 })
+  await page.keyboard.press("Enter")
+  await page.keyboard.press("Escape")
+  const searchWindowLength = await (page.waitForFunction(() => {
+    const sections = document.querySelectorAll('.tool-call[data-part-id="parent-task"] section')
+    for (const section of sections) {
+      if (section.textContent?.includes("Output")) return (section.querySelector(".tool-call-markdown")?.textContent ?? "").length
+    }
+    return 0
+  }, undefined, { timeout: 20_000 })).then(handle => handle.jsonValue() as Promise<number>)
+  assert.ok(searchWindowLength > 200_000, `the search reveal widened the window (${searchWindowLength})`)
+
+  const notice = outputPane.locator(".message-hidden-text")
+  assert.equal(await notice.count(), 1, "a megabyte-scale report keeps its reveal line")
+  await notice.getByRole("button").click()
+  await page.waitForFunction(target => {
+    const sections = document.querySelectorAll('.tool-call[data-part-id="parent-task"] section')
+    for (const section of sections) {
+      if (section.textContent?.includes("Output")) return (section.querySelector(".tool-call-markdown")?.textContent ?? "").length > target
+    }
+    return false
+  }, ((searchWindowLength) + 100_000) as number, { timeout: 20_000 })
+}, "report=490"))
