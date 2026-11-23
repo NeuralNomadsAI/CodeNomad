@@ -101,8 +101,19 @@ impl Preferences {
     }
 
     pub fn watch(&mut self, wake: &rune::Waker) {
+        self.watch_project(None, wake);
+    }
+
+    pub fn watch_project(&mut self, project: Option<&str>, wake: &rune::Waker) {
         if self.authentication_required {
             return;
+        }
+        if self
+            .stream
+            .as_ref()
+            .is_some_and(|watch| watch.project() != project)
+        {
+            self.unwatch();
         }
         if self
             .closing_stream
@@ -115,7 +126,7 @@ impl Preferences {
         if self.stream.is_none()
             && let Some(backend) = &self.backend
         {
-            let (watch, task) = PreferencesWatch::task(backend.clone(), wake.clone());
+            let (watch, task) = PreferencesWatch::task(backend.clone(), project, wake.clone());
             self.stream = Some(watch);
             platform::spawn(task);
         }

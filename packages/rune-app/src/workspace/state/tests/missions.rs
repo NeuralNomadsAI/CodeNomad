@@ -19,6 +19,52 @@ fn detail_page(source: &str, text: &str, digest: &str) -> serde_json::Value {
 }
 
 #[test]
+fn project_observer_qualifies_changes_without_a_conversation_id() {
+    crate::platform::block_on(async {
+        let http = test_http::Http::new().await;
+        let (notify, signal) = bounded(8);
+        let wake: rune::Waker = std::sync::Arc::new(move || {
+            let _ = notify.try_send(());
+        });
+        let (watch, worker) = codenomad_client::settings::PreferencesWatch::task(
+            http.backend.clone(),
+            Some("project-b"),
+            wake,
+        );
+        crate::platform::spawn(worker);
+        let stream = http.accept().await;
+        assert!(stream.header.starts_with("GET /api/events?"));
+        let body = ["project-a", "project-b"].map(|id| format!("data: {}\n\n", json!({
+            "type":"instance.event","instanceId":id,
+            "event":{"type":"rpc.codenomad.missions.changed","data":{"missionID":"alpha","revision":4}}
+        }))).concat();
+        stream.send(&format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()), body.as_bytes()).await;
+        let events = test_http::wait(async {
+            loop {
+                signal.recv().await.unwrap();
+                let (_, events) = watch.take_missions();
+                if !events.is_empty() {
+                    break events;
+                }
+            }
+        })
+        .await;
+        assert_eq!(
+            events,
+            vec![
+                codenomad_client::transport::WorkspaceEvent::MissionChanged {
+                    workspace_id: "project-b".into(),
+                    mission_id: "alpha".into(),
+                    revision: 4,
+                }
+            ]
+        );
+        let stopped = watch.stop();
+        assert!(test_http::wait(stopped.recv()).await.is_err());
+    });
+}
+
+#[test]
 fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
     crate::platform::block_on(async {
         let http = test_http::Http::new().await;
@@ -178,6 +224,18 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         assert!(
             matches!(&ui.entries[ui.active].saved,Tab::Workspace(w) if w.view.selected_mission.as_deref()==Some("alpha"))
         );
+        // A cached stream from another project cannot substitute for B's observer.
+        let (conversation_a, incoming) = bounded(1);
+        rt.update(move |s, _| {
+            let active = Cache::take(s);
+            s.incoming = Some(incoming);
+            let mut other = entry("tab-a".into(), Tab::Blank);
+            other.cache = Some(Cache::take(s));
+            active.apply(s);
+            s.workspace.as_mut().unwrap().entries.push(other);
+            assert!(has_conversation_stream(s));
+            assert_eq!(mission_observation_project(s), Some("header-windows"));
+        });
 
         let changed = codenomad_client::transport::WorkspaceEvent::MissionChanged {
             workspace_id: "header-windows".into(),
@@ -217,6 +275,7 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         tick(&mut rt);
         click(&mut rt, "right-panel-tab-0");
         assert!(rt.find("missions-panel").is_none());
+        assert!(mission_observation_project(&rt.state).is_none());
         rt.update(|s, _| {
             mission_event(s, Some(&changed));
             mission_event(s, None);
@@ -248,5 +307,6 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         cleanups.disconnected().await;
         http.quiet().await;
         assert_eq!(right_panel_tab(&rt.state), RightPanelTab::Missions);
+        drop(conversation_a);
     });
 }

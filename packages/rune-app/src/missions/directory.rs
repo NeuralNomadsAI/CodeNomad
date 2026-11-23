@@ -372,7 +372,8 @@ impl Panel {
                 .iter()
                 .find(|row| row.id == *id)
                 .map(|row| row.revision);
-            changed |= self.observation.settle(revision, self.now, &self.wake);
+            let floor = self.detail.revision_floor(id, revision);
+            changed |= self.observation.settle(floor, self.now, &self.wake);
             changed |= self.detail.poll(
                 &self.backend,
                 project,
