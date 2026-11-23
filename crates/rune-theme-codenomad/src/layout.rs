@@ -353,7 +353,10 @@ mod tests {
             rt.frame(0.0);
             rt.update(|_, tx| tx.focus("save", true));
             rt.frame(0.01);
-            for key in [rune::Key::Enter, rune::Key::Text(" ".into())] {
+            for (index, key) in [rune::Key::Enter, rune::Key::Text(" ".into())]
+                .into_iter()
+                .enumerate()
+            {
                 let key = rune::KeyEvent {
                     key,
                     mods: rune::Mods::default(),
@@ -361,8 +364,9 @@ mod tests {
                 rt.key(key.clone());
                 rt.repeat_key(key.clone());
                 rt.key_up(key);
+                rt.frame(0.02 + index as f64 * 0.01);
+                assert_eq!(rt.state.1, if disabled { 0 } else { index + 1 });
             }
-            assert_eq!(rt.state.1, if disabled { 0 } else { 2 });
         }
     }
     #[test]
