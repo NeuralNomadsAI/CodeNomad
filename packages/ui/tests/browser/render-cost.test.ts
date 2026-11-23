@@ -219,13 +219,20 @@ test("native page output must not reuse zero-revision Markdown when a tool is re
 }))
 
 test("changing an indexed task key does not transfer a removed tool's disclosure", async () => open("mode=task&count=200", async page => {
-  // The list mounts its newest window; the oldest mounted row is the one the
-  // next appended tool slides out of the window.
+  // The list mounts its newest window; the oldest mounted row is the one a
+  // reader at the top holds. Expanding it must not transfer to its neighbour
+  // when the window later slides past it.
   const oldestMounted = 200 - TASK_STEP_MOUNT_LIMIT
   const first = step(page, oldestMounted)
   await first.waitFor()
   await first.locator(":scope > .tool-call-header > .tool-call-header-toggle").click()
   await first.locator("pre code").waitFor()
+  // Leave the top (releasing the expanded row's focus) and stream one step in.
+  await page.evaluate(() => {
+    (document.activeElement as HTMLElement | null)?.blur()
+    const container = document.querySelector(".tool-call-task-container") as HTMLElement | null
+    if (container) container.scrollTop = container.scrollHeight
+  })
   await page.evaluate(() => (window as any).fixture.appendTool())
   await first.waitFor({ state: "detached" })
   assert.equal(await step(page, oldestMounted + 1).locator(":scope > .tool-call-header > .tool-call-header-toggle").getAttribute("aria-expanded"), "false")

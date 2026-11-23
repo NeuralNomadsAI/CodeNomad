@@ -142,3 +142,77 @@ test("streaming steps keep the fixed-height container following the newest step"
   assert.equal(await steps.locator(".tool-call-task-summary > .tool-call").count(), TASK_STEP_MOUNT_LIMIT,
     "the mounted window keeps its bound while the list grows")
 }))
+
+test("an incoming step never unmounts the row being read at the top", { timeout: 60_000 }, async () => withPage(async page => {
+  const steps = sectionByTitle(page, /^Steps$/)
+  await steps.waitFor()
+  const container = steps.locator(".tool-call-task-container")
+  const rows = steps.locator(".tool-call-task-summary > .tool-call")
+  await rows.first().waitFor()
+
+  // A reader at the top of the list holds focus on the oldest mounted row.
+  // A programmatic scrollTop jump alone does not break bottom-following; an
+  // upward gesture does, the way a reader scrolling up does.
+  await container.evaluate(element => { element.scrollTop = 0 })
+  await container.hover()
+  await page.mouse.wheel(0, -5)
+  await page.waitForTimeout(100)
+  const oldest = rows.first()
+  const oldestId = await oldest.getAttribute("data-part-id")
+  const focusTarget = oldest.locator("button").first()
+  await focusTarget.focus()
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent !== undefined), true)
+
+  await page.evaluate(() => (window as any).fixture.pushChildSteps(1))
+  await steps.locator(".tool-call-task-section-meta").filter({ hasText: "91 steps" }).waitFor()
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+
+  assert.equal(await rows.count(), TASK_STEP_MOUNT_LIMIT + 1, "the reading window appends without sliding")
+  assert.equal(await steps.locator(`.tool-call[data-part-id="${oldestId}"]`).count(), 1, "the row being read stays mounted")
+  const focusHeld = await page.evaluate(id => {
+    const row = document.querySelector(`.tool-call[data-part-id="${id}"]`)
+    return row ? row.contains(document.activeElement) : false
+  }, oldestId)
+  assert.ok(focusHeld, "focus stays with the row being read")
+  assert.ok(await container.evaluate(element => element.scrollTop < 40), "the reading position stays at the top")
+
+  // Leaving the row (releasing its focus) and scrolling back to the bottom
+  // resumes the sliding window.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+  await container.evaluate(element => { element.scrollTop = element.scrollHeight })
+  await container.hover()
+  await page.mouse.wheel(0, 5)
+  await page.waitForTimeout(100)
+  await page.evaluate(() => (window as any).fixture.pushChildSteps(1))
+  await steps.locator(".tool-call-task-section-meta").filter({ hasText: "92 steps" }).waitFor()
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+  assert.equal(await rows.count(), TASK_STEP_MOUNT_LIMIT, "following again bounds the mounted window")
+}))
+
+test("a search hit beyond the pane cap reveals the card's hidden text", { timeout: 60_000 }, async () => withPage(async page => {
+  const output = sectionByTitle(page, /^Output$/)
+  await output.waitFor()
+  const outputPane = output.locator(".tool-call-task-section-body .tool-call-markdown")
+  await outputPane.locator(".message-hidden-text").waitFor()
+
+  // Paragraph 40 sits beyond the 20 000-character window; the transcript search must land on it.
+  await page.keyboard.press("Control+f")
+  const search = page.locator(".message-search-input")
+  await search.waitFor()
+  await search.fill("Report paragraph 40")
+  // The debounced native history query lands asynchronously; wait for its count.
+  await page.waitForFunction(() => /\d/.test(document.querySelector(".message-search-count")?.textContent ?? ""), undefined, { timeout: 10_000 })
+  await page.keyboard.press("Enter")
+  await page.keyboard.press("Escape")
+  await page.waitForFunction(() => {
+    const sections = document.querySelectorAll('.tool-call[data-part-id="parent-task"] section')
+    for (const section of sections) {
+      if (section.textContent?.includes("Output")) {
+        return (section.querySelector(".tool-call-markdown")?.textContent ?? "").includes("Report paragraph 40")
+      }
+    }
+    return false
+  }, undefined, { timeout: 15_000 })
+  assert.equal(await outputPane.locator(".message-hidden-text").count(), 0,
+    "the hit's block reveals instead of leaving the match outside the card")
+}))

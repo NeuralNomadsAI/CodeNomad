@@ -16,7 +16,7 @@ import { getMessageContentIcon } from "../../message-content-icons"
 import { getTaskToolSearchText } from "../search-text"
 import { copyTextChunksToClipboard, copyToClipboard } from "../../../lib/clipboard"
 import LoadErrorState from "../../load-error-state"
-import { collectChildTaskSteps, getLegacyTaskSummary, getTaskOutputCopyText, getTruncatedTaskStepTitleCopyText, isTaskScanTruncated, isTaskStepListTruncated, resolveTaskStepTruncation, stringifyLegacyTaskSummary, TASK_STEP_MOUNT_LIMIT, TASK_STEP_REVEAL_STEP, TASK_STEP_RENDER_LIMIT } from "./task-summary"
+import { collectChildTaskSteps, getLegacyTaskSummary, getTaskOutputCopyText, getTruncatedTaskStepTitleCopyText, isTaskScanTruncated, isTaskStepListTruncated, resolveTaskStepTruncation, stringifyLegacyTaskSummary, TASK_STEP_MOUNT_CEILING, TASK_STEP_MOUNT_LIMIT, TASK_STEP_REVEAL_STEP, TASK_STEP_RENDER_LIMIT } from "./task-summary"
 import { getRevealedRecordText, revealHiddenRecordText } from "../../../stores/message-v2/record-display-cache"
 import { useI18n } from "../../../lib/i18n"
 import { getMessageWindowPageKey } from "../../message-history-pagination"
@@ -465,19 +465,61 @@ export const taskRenderer: ToolRenderer = {
     // The steps list mounts only its newest window: its nested scroller pays
     // layout per mounted row, so the omitted rows stay in the store until the
     // gap's reveal mounts them. Reveal state lives in the record display
-    // cache, so a recycled card keeps what its reader expanded.
+    // cache, so a recycled card keeps what its reader expanded. The window's
+    // start only advances — dropping its leading row — while that row is out
+    // of sight and holds no focus or selection: a streamed step must never
+    // unmount the row being read. A reveal always widens the window (its start
+    // moves back to the new limit), and a mounted ceiling always bounds it.
+    let stepsContainerEl: HTMLDivElement | undefined
+    const registerStepsContainer = (element: HTMLDivElement) => {
+      stepsContainerEl = element
+      scrollHelpers?.registerContainer(element)
+    }
+    const readerPinsLeadingRow = (leading: string | undefined) => {
+      const container = stepsContainerEl
+      if (!container || !leading) return false
+      const partId = splitToolKey(leading)?.partId
+      const row = partId
+        ? container.querySelector(`.tool-call[data-part-id="${CSS.escape(partId)}"]`)
+        : container.querySelector(`[data-task-id="${CSS.escape(leading)}"]`)
+      if (!(row instanceof HTMLElement)) return false
+      if (row.getBoundingClientRect().bottom > container.getBoundingClientRect().top) return true
+      const doc = container.ownerDocument
+      if (row.contains(doc.activeElement)) return true
+      const selection = doc.getSelection()
+      return Boolean(selection?.anchorNode && row.contains(selection.anchorNode))
+    }
     const stepsRevealTarget = () => textRevealTarget("task:steps")
     const revealSteps = () => revealHiddenRecordText(stepsRevealTarget())
     const mountedStepLimit = createMemo(() => TASK_STEP_MOUNT_LIMIT + getRevealedRecordText(stepsRevealTarget()) * TASK_STEP_REVEAL_STEP)
-    const visibleChildToolKeys = createMemo(() => {
+    const windowStart = (total: number, anchorIndex: number, leading: string | undefined) => {
+      const desired = Math.max(0, total - mountedStepLimit())
+      // Hold the anchor row while a reader pins it and the ceiling allows: a
+      // reveal can still move the start back (min), a streamed step cannot
+      // move it forward past the anchor.
+      if (anchorIndex >= 0 && readerPinsLeadingRow(leading)) {
+        const held = Math.min(anchorIndex, desired)
+        if (total - held <= TASK_STEP_MOUNT_CEILING) return held
+      }
+      return desired
+    }
+    const visibleChildToolKeys = createMemo((previous?: { keys: string[]; hidden: number; anchor?: string }) => {
       const keys = childToolKeys()
-      const visible = Math.min(keys.length, mountedStepLimit())
-      return { keys: keys.slice(-visible), hidden: keys.length - visible }
+      const anchorIndex = previous?.anchor === undefined ? -1 : keys.indexOf(previous.anchor)
+      const start = windowStart(keys.length, anchorIndex, keys[anchorIndex])
+      const next = { keys: keys.slice(start), hidden: start, anchor: keys[start] }
+      if (previous && previous.hidden === next.hidden && previous.keys.length === next.keys.length
+        && previous.keys.every((key, index) => key === next.keys[index])) return previous
+      return next
     })
-    const visibleLegacyItems = createMemo(() => {
+    const visibleLegacyItems = createMemo((previous?: { items: TaskSummaryItem[]; hidden: number; anchor?: string }) => {
       const items = legacyItems()
-      const visible = Math.min(items.length, mountedStepLimit())
-      return { items: items.slice(-visible), hidden: items.length - visible }
+      const anchorIndex = previous?.anchor === undefined ? -1 : items.findIndex(item => item.id === previous.anchor)
+      const start = windowStart(items.length, anchorIndex, items[anchorIndex]?.id)
+      const next = { items: items.slice(start), hidden: start, anchor: items[start]?.id }
+      if (previous && previous.hidden === next.hidden && previous.items.length === next.items.length
+        && previous.items.every((item, index) => item === next.items[index])) return previous
+      return next
     })
     // Coverage controls full-copy traversal, not a claim about omitted tool
     // rows. Native cursors can point to an empty boundary page; scan budgets
@@ -577,7 +619,7 @@ export const taskRenderer: ToolRenderer = {
                 fallback={
                   <div
                     class="message-text tool-call-markdown tool-call-task-container"
-                    ref={scrollHelpers?.registerContainer}
+                    ref={registerStepsContainer}
                     onScroll={
                       scrollHelpers ? (event) => scrollHelpers.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined
                     }
@@ -631,7 +673,7 @@ export const taskRenderer: ToolRenderer = {
               >
                 <div
                   class="message-text tool-call-markdown tool-call-task-container"
-                  ref={scrollHelpers?.registerContainer}
+                  ref={registerStepsContainer}
                   onScroll={
                     scrollHelpers ? (event) => scrollHelpers.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined
                   }

@@ -10,6 +10,7 @@ import { addInstance } from "../../../src/stores/instances"
 import { setSessions, setActiveSession } from "../../../src/stores/session-state"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages } from "../../../src/stores/session-api"
+import { serverApi } from "../../../src/lib/api-client"
 import "../../../src/index.css"
 
 const instanceId = "tool-card-bounds-instance", parentId = "parent", childId = "child"
@@ -72,6 +73,16 @@ const client: any = {
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
+serverApi.querySessionHistory = async (_instanceId: string, input: { query: string }) => {
+  const query = input.query.trim().toLocaleLowerCase()
+  const taskText = `${PROMPT_TEXT}\n\n${REPORT_TEXT}`
+  const hits = query && taskText.toLocaleLowerCase().includes(query)
+    ? [{ sessionID: parentId, messageID: parentMessage.id, role: "assistant", partIndex: 0,
+        kind: "tool" as const, excerpt: REPORT_TEXT.slice(0, 200) }]
+    : []
+  return { status: "page" as const, scanned: 1, tools: 1, reasoning: 0, skipped: 0,
+    hits, candidates: [], cursor: null }
+}
 addInstance({ id: instanceId, folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client })
 setSessions(previous => new Map(previous).set(instanceId, new Map([parentId, childId].map(id => [id, {
   id, instanceId, parentId: id === parentId ? null : parentId,

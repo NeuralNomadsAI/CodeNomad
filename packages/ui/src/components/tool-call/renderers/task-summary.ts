@@ -6,6 +6,8 @@ export const TASK_STEP_RENDER_LIMIT = 200
 export const TASK_STEP_MOUNT_LIMIT = 30
 /** Task steps one reveal of the steps gap mounts. */
 export const TASK_STEP_REVEAL_STEP = 100
+/** Mounted row ceiling while a non-following reader holds the window's anchor. */
+export const TASK_STEP_MOUNT_CEILING = TASK_STEP_MOUNT_LIMIT + TASK_STEP_REVEAL_STEP
 
 export function isTaskStepListTruncated(count: number): boolean {
   return count > TASK_STEP_RENDER_LIMIT
