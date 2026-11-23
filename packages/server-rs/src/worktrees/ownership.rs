@@ -37,8 +37,8 @@ impl DirectoryProof {
                 std::fs::symlink_metadata(path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
             };
             let no_repository = |path: &Path| {
-                absent(&path.join("HEAD"))
-                    || absent(&path.join("commondir")) && (absent(&path.join("objects")) || absent(&path.join("refs")))
+                (absent(&path.join("commondir")) && (absent(&path.join("objects")) || absent(&path.join("refs"))))
+                    || head_cannot_name_repository(&path.join("HEAD"))
             };
             path.starts_with(root)
                 && path.ancestors().take_while(|ancestor| *ancestor != root).all(|ancestor| {
@@ -59,6 +59,23 @@ impl DirectoryProof {
             && self.tree.as_ref().is_none_or(|tree| {
                 tree.contains_live(physical) && (!self.external || no_nested_git(physical, tree.registered()))
             })
+    }
+}
+
+fn head_cannot_name_repository(path: &Path) -> bool {
+    use std::io::{ErrorKind, Read};
+    match std::fs::symlink_metadata(path) {
+        Err(error) => error.kind() == ErrorKind::NotFound,
+        // Keep links and ambiguous reads closed; Git resolves the external
+        // target's actual common directory during the asynchronous admission.
+        Ok(meta) if meta.is_file() && meta.len() <= 4096 => {
+            let mut head = Vec::new();
+            std::fs::File::open(path).and_then(|file| file.take(4097).read_to_end(&mut head)).is_ok()
+                && head.len() <= 4096
+                && !head.starts_with(b"ref:")
+                && !head.get(..40).is_some_and(|oid| oid.iter().all(u8::is_ascii_hexdigit))
+        }
+        _ => false,
     }
 }
 

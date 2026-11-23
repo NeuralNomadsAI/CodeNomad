@@ -57,7 +57,8 @@ async function upstream(profile) {
   await git('-C',directory,'worktree','add','--quiet','--detach',localTree,'HEAD')
   await mkdir(treeNested)
   await mkdir(path.join(treeNested,'.git','objects'),{recursive:true})
-  await writeFile(path.join(treeNested,'.git','HEAD'),'ref: refs/heads/main\n')
+  await mkdir(path.join(treeNested,'.git','refs'))
+  await writeFile(path.join(treeNested,'.git','HEAD'),'Not a Git HEAD.\n')
   await git('init','--quiet',independent)
   await git('init','--quiet',localIndependent)
   const calls = [], sessions = new Map(), password = randomUUID(),state={carrier:'absent'}

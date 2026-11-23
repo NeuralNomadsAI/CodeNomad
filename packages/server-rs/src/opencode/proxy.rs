@@ -239,12 +239,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     } else {
         None
     };
-    let directory = requested
-        .as_deref()
-        .or_else(|| actual.as_ref().and_then(|r| r["location"]["directory"].as_str()))
-        .unwrap_or(opened);
+    let session_directory = actual.as_ref().and_then(|r| r["location"]["directory"].as_str());
+    let directory = requested.as_deref().or(session_directory).unwrap_or(opened);
     let identity_now = || {
-        let path = crate::files::paths::canonical(&app.scope, directory)?;
+        let path = crate::files::paths::canonical(&app.scope, session_directory?)?;
         let identity = crate::files::host_identity(&path).ok()?;
         Some((path, identity))
     };
@@ -261,10 +259,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         Some(record) => match crate::worktrees::placement(&app, &workspace, &record["location"]).await {
             Ok(slug) => Some(slug),
             Err(elsewhere) => {
-                if input_checkout.is_some()
-                    && record["location"].get("workspaceID").is_none()
-                    && record["location"]["directory"] == directory
-                {
+                if input_checkout.is_some() && record["location"].get("workspaceID").is_none() {
                     None
                 } else {
                     let mut body = json!({"error":"Session does not belong to workspace"});
