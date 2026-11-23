@@ -322,7 +322,7 @@ fn reader_content(s: &State) -> El {
             if let Some(ui) = &mut s.files {
                 if scope == ui.document.scope() {
                     ui.close_reader();
-                    ui.reading.restore(tx);
+                    crate::chat::reading::restore_position(s, tx);
                 }
             }
         }),
