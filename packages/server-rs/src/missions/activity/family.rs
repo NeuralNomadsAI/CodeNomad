@@ -100,4 +100,3 @@ pub fn family(mission: &Mission, trees: &HashMap<String, Tree>, observed: bool) 
     }
     Family { state: "observed", members }
 }
-

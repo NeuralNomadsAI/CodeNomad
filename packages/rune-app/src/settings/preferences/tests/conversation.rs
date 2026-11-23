@@ -322,10 +322,7 @@ fn settings_direct_authentication_accepts_a_rotated_password_and_keeps_the_draft
                 login.reply(401, json!({})).await;
                 wait_until(|| {
                     update(&mut runtime);
-                    runtime
-                        .accessibility_json()
-                        .to_string()
-                        .contains("direct-recovery-error")
+                    runtime.find("direct-recovery-error").is_some()
                 })
                 .await;
                 assert!(runtime.state.direct_authentication.password.text.is_empty());

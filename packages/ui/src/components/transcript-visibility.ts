@@ -11,6 +11,7 @@ export const TRANSCRIPT_PRESETS: ToolCallExpansionPreset[] = ["nothing", "minima
 
 const transcriptDetailPresets = {
   nothing: {
+    toolGroupVisibility: "collapsed",
     systemMessagesVisibility: "hidden",
     showThinkingBlocks: false,
     diagnosticsExpansion: "hidden",
@@ -19,6 +20,7 @@ const transcriptDetailPresets = {
     usageMetricsExpansion: "collapsed",
   },
   minimal: {
+    toolGroupVisibility: "collapsed",
     systemMessagesVisibility: "hidden",
     showThinkingBlocks: false,
     diagnosticsExpansion: "collapsed",
@@ -27,6 +29,7 @@ const transcriptDetailPresets = {
     usageMetricsExpansion: "collapsed",
   },
   balanced: {
+    toolGroupVisibility: "collapsed",
     systemMessagesVisibility: "hidden",
     showThinkingBlocks: false,
     diagnosticsExpansion: "expanded",
@@ -35,6 +38,7 @@ const transcriptDetailPresets = {
     usageMetricsExpansion: "collapsed",
   },
   everything: {
+    toolGroupVisibility: "expanded",
     systemMessagesVisibility: "expanded",
     showThinkingBlocks: true,
     diagnosticsExpansion: "expanded",
@@ -49,6 +53,7 @@ const transcriptDetailPresets = {
     | "showThinkingBlocks"
     | "diagnosticsExpansion"
     | "systemMessagesVisibility"
+    | "toolGroupVisibility"
     | "toolInputsVisibility"
     | "showUsageMetrics"
     | "usageMetricsExpansion"
@@ -64,6 +69,7 @@ export function transcriptPreset(current: Preferences): ToolCallExpansionPresetS
   return transcriptVisibility(current, { kind: "thinking", key: "thinking", label: "" }) === expectedThinking &&
     current.diagnosticsExpansion === detail.diagnosticsExpansion &&
     current.systemMessagesVisibility === detail.systemMessagesVisibility &&
+    current.toolGroupVisibility === detail.toolGroupVisibility &&
     current.toolInputsVisibility === detail.toolInputsVisibility &&
     current.showUsageMetrics === detail.showUsageMetrics &&
     current.usageMetricsExpansion === detail.usageMetricsExpansion
@@ -89,6 +95,7 @@ export type TranscriptVisibilityRow =
   | { kind: "inputs"; key: "inputs"; label: string }
   | { kind: "usage"; key: "usage"; label: string }
   | { kind: "system"; key: "system"; label: string }
+  | { kind: "toolGroups"; key: "toolGroups"; label: string }
 
 export function transcriptVisibilityRows(t: (key: string) => string): TranscriptVisibilityRow[] {
   return [
@@ -97,6 +104,7 @@ export function transcriptVisibilityRows(t: (key: string) => string): Transcript
     { kind: "inputs", key: "inputs", label: t("settings.behavior.toolInputsVisibility.title") },
     { kind: "usage", key: "usage", label: t("settings.behavior.usageMetrics.title") },
     { kind: "system", key: "system", label: t("transcriptFilters.systemMessages") },
+    { kind: "toolGroups", key: "toolGroups", label: t("transcriptFilters.toolGroups") },
     ...getConfigurableToolEntries().map((entry) => ({
       kind: "tool" as const, key: entry.tool, label: entry.labelKey ? t(entry.labelKey) : entry.label,
     })),
@@ -118,11 +126,13 @@ export function transcriptVisibility(current: Preferences, row: TranscriptVisibi
     case "inputs": return current.toolInputsVisibility
     case "usage": return current.showUsageMetrics ? current.usageMetricsExpansion : "hidden"
     case "system": return current.systemMessagesVisibility ?? "hidden"
+    case "toolGroups": return current.toolGroupVisibility
   }
 }
 
 export function transcriptVisibilityPatch(current: Preferences, row: TranscriptVisibilityRow, mode: VisibilityPreference): Partial<Preferences> {
   if (row.kind === "system") return { systemMessagesVisibility: mode }
+  if (row.kind === "toolGroups") return { toolGroupVisibility: mode }
   if (row.kind === "diagnostics") return { diagnosticsExpansion: mode }
   if (row.kind === "inputs") return { toolInputsVisibility: mode }
   if (row.kind === "usage") return {

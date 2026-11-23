@@ -96,7 +96,6 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     }
 }
 impl Ui {
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn reauthenticate(&mut self, handle: Handle) {
         let mut replacement = Self::new(handle);
         replacement.drafts = std::mem::take(&mut self.drafts);

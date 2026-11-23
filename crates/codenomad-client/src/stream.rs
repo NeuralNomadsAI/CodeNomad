@@ -9,6 +9,8 @@ use std::{
     },
     time::Duration,
 };
+mod catalogue;
+pub use catalogue::{CatalogueChanges, CatalogueWatch};
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_browser.rs"]
 mod browser;
@@ -35,6 +37,7 @@ pub struct State {
     pub alive: AtomicBool,
     pub upstream: AtomicBool,
     preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
+    catalogue: Option<Arc<catalogue::Signals>>,
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -195,6 +198,9 @@ pub(crate) async fn read(
 }
 
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {
+    if let Some(signals) = &state.catalogue {
+        signals.invalidate(None);
+    }
     state.alive.store(true, SeqCst);
     state.upstream.store(true, SeqCst);
     out.send(Input::Opened(epoch)).await?;
@@ -234,10 +240,17 @@ pub(super) async fn dispatch(
     }
     let value: Value = serde_json::from_str(data.trim())?;
     if let Some(owner) = storage_owner(&value) {
+        if state.catalogue.is_some() {
+            return Ok(());
+        }
         return state.storage_changed(epoch, owner, out).await;
     }
     if data.len() > NATIVE_EVENT_LIMIT {
         return Err("oversized SSE event".into());
+    }
+    if let Some(signals) = &state.catalogue {
+        signals.observe(&value);
+        return Ok(());
     }
     if let Some(event) = workspace_event(b, &value) {
         out.send(Input::Workspace(epoch, event)).await?;
@@ -276,6 +289,17 @@ pub(super) async fn dispatch(
         out.send(Input::Hint(epoch, version)).await?;
     } else if own
         && value["type"] == "instance.event"
+        && !matches!(
+            native["type"].as_str(),
+            Some(
+                "session.created"
+                    | "session.forked"
+                    | "session.renamed"
+                    | "session.archived"
+                    | "session.unarchived"
+                    | "worktree.updated"
+            )
+        )
         && (native["data"]["sessionID"] == b.session
             || native["data"]["form"]["sessionID"] == b.session
             || native["type"] == "server.connected")

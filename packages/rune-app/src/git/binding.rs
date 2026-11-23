@@ -53,11 +53,18 @@ fn apply_preference(owner: &mut Ui, preference: DiffPreferences) -> bool {
 }
 
 pub(crate) fn connected(s: &mut State, backend: &Backend) {
-    if s.git
-        .owner
-        .as_mut()
-        .is_some_and(|owner| owner.bind(backend))
-    {
+    connect(s, backend, None);
+}
+
+pub(crate) fn connected_placed(s: &mut State, backend: &Backend, slug: &str) {
+    connect(s, backend, Some(slug));
+}
+
+fn connect(s: &mut State, backend: &Backend, placement: Option<&str>) {
+    if s.git.owner.as_mut().is_some_and(|owner| match placement {
+        Some(slug) => owner.bind_placed(backend, Some(slug)),
+        None => owner.bind(backend),
+    }) {
         sync_files(s);
         return;
     }
@@ -73,12 +80,11 @@ pub(crate) fn connected(s: &mut State, backend: &Backend) {
                 .filter(|project| project.id == backend.workspace)
                 .map(|project| project.path.clone())
         });
-    s.git.owner = Some(Ui::new(
-        backend.clone(),
-        root,
-        s.reads.clone(),
-        s.wake.clone(),
-    ));
+    let mut owner = Ui::new(backend.clone(), root, s.reads.clone(), s.wake.clone());
+    if let Some(slug) = placement {
+        owner.bind_placed(backend, Some(slug));
+    }
+    s.git.owner = Some(owner);
 }
 
 pub(crate) fn project_opened(s: &mut State) {

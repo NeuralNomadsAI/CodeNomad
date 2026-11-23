@@ -1,16 +1,26 @@
 //! One serialized opening action at a time; HTTP never runs on the UI thread.
+mod connection;
+mod projects;
+mod sessions;
+#[cfg(test)]
+mod tests;
 pub(crate) mod view;
 mod visits;
 use crate::{
     Phase, State,
     backend::Backend,
-    catalog::{Project, Session, SessionMissing, Sessions},
+    catalog::{Project, Session, Sessions},
     history::Result,
 };
-use codenomad_client::{Receiver, bounded};
+use codenomad_client::{Receiver, bounded, runtime::Instant};
+pub use connection::connect;
+pub use projects::{choose_project, open, restore};
 use rune::{Tx, edit::TextEdit};
-use std::future::Future;
-pub const MAX_BROWSED_SESSIONS: usize = 2_000;
+#[cfg(feature = "test-support")]
+pub use sessions::back;
+use sessions::{bind, dismiss_origin_panel, retire_session};
+pub use sessions::{can_change_session, can_visit, choose, create, list, visit};
+use std::{collections::HashSet, future::Future};
 pub(crate) use visits::Visits;
 
 pub struct Launcher {
@@ -25,11 +35,15 @@ pub struct Launcher {
     pub connection: Option<Backend>,
     pub(crate) authentication_required: bool,
     reauthenticated_session: Option<String>,
+    pub(crate) catalogue_watch: Option<codenomad_client::stream::CatalogueWatch>,
+    pub(crate) catalogue_generation: u64,
     pub server_id: Option<String>,
     pub projects: Vec<Project>,
     pub project: Option<Project>,
     pub sessions: Vec<Session>,
+    pub listed_sessions: HashSet<String>,
     pub next: Option<String>,
+    pub(crate) consumed_cursors: HashSet<u64>,
     pub pending: bool,
     listing: bool,
     pub error: Option<&'static str>,
@@ -43,14 +57,14 @@ pub struct Launcher {
 enum Reply {
     Connected(Backend, Vec<Project>, String),
     Opened(crate::workspace::opening::Opening, Sessions, Restored),
-    Listed(Sessions, bool),
-    Created(Backend, String, String, Option<u64>),
+    Listed(Sessions, Option<String>),
+    Created(Backend, String, String, String, Option<u64>),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
-type Selection = (Backend, String, Option<usize>);
+type Selection = (Backend, String, Option<usize>, Instant, String);
 enum Restored {
     Empty,
-    Bound(Backend, String),
+    Bound(Backend, String, String),
     Missing(String),
 }
 impl Launcher {
@@ -110,11 +124,15 @@ impl Launcher {
             connection: None,
             authentication_required: false,
             reauthenticated_session: None,
+            catalogue_watch: None,
+            catalogue_generation: 0,
             server_id: None,
             projects: vec![],
             project: None,
             sessions: vec![],
+            listed_sessions: HashSet::new(),
             next: None,
+            consumed_cursors: HashSet::new(),
             pending: starting,
             listing: false,
             error: None,
@@ -135,6 +153,7 @@ impl Launcher {
             return;
         }
         self.pending = true;
+        self.catalogue_generation = self.catalogue_generation.wrapping_add(1);
         self.error = None;
         let (out, input) = bounded(1);
         self.result = Some(input);
@@ -148,494 +167,19 @@ impl Launcher {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pending_selection_cannot_consume_the_departing_draft() {
-        let mut state = crate::init();
-        crate::gallery::shell::fixture(&mut state);
-        let (out, commands) = bounded(1);
-        state.commands = Some(out);
-        state.draft = TextEdit::new("keep this draft");
-        state.screen.launcher_mut().unwrap().pending = true;
-        let mut rt = rune::Runtime::new(
-            state,
-            crate::view,
-            (1000.0, 800.0),
-            rune::Env::new(false, 1.0),
-        );
-        rt.update(crate::send);
-        assert!(commands.try_recv().is_err());
-        assert_eq!(rt.state.draft.text, "keep this draft");
-        rt.update(|s, tx| {
-            s.screen.launcher_mut().unwrap().listing = true;
-            crate::send(s, tx);
-        });
-        assert!(
-            matches!(commands.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "keep this draft")
-        );
-        rt.update(|s, _| s.phase = Phase::Streaming);
-        assert!(!can_change_session(&rt.state));
-    }
-
-    #[test]
-    fn a_selection_reply_cannot_replace_a_session_that_resumed_streaming() {
-        let mut state = crate::init();
-        crate::gallery::shell::fixture(&mut state);
-        let (out, input) = bounded(1);
-        let launcher = state.screen.launcher_mut().unwrap();
-        launcher.result = Some(input);
-        launcher.pending = true;
-        let (events, incoming) = bounded(1);
-        state.incoming = Some(incoming);
-        assert!(
-            events
-                .try_send(crate::transport::Event::Sync(crate::history::Page {
-                    rows: vec![],
-                    older: None,
-                    newer: None,
-                    running: true,
-                }))
-                .is_ok()
-        );
-        let backend = Backend {
-            client: codenomad_client::http::Http::new().unwrap(),
-            base: "http://127.0.0.1:9/".into(),
-            workspace: "header-windows".into(),
-            session: "another".into(),
-            client_id: "fixture".into(),
-            fresh_mode: false,
-        };
-        assert!(
-            out.try_send(Ok(Reply::Selected(
-                vec![],
-                Some((backend, "Another".into(), None)),
-                None
-            )))
-            .is_ok()
-        );
-        let mut rt = rune::Runtime::new(
-            state,
-            crate::view,
-            (1000.0, 800.0),
-            rune::Env::new(false, 1.0),
-        );
-        rt.update(|s, tx| {
-            crate::poll(s, 0.0, tx);
-        });
-        assert!(rt.state.phase == Phase::Streaming);
-        assert_eq!(rt.state.chat_title, "Fixture conversation");
-        assert!(!rt.state.screen.launcher().unwrap().pending);
-    }
-
-    #[test]
-    fn a_rebind_of_the_current_session_keeps_the_last_history_until_sync() {
-        let mut state = crate::init();
-        crate::gallery::shell::fixture(&mut state);
-        let backend = Backend {
-            client: codenomad_client::http::Http::new().unwrap(),
-            base: "http://127.0.0.1:9/".into(),
-            workspace: "header-windows".into(),
-            session: "session".into(),
-            client_id: "fixture".into(),
-            fresh_mode: false,
-        };
-        let launcher = state.screen.launcher_mut().unwrap();
-        let project = launcher.project.clone().unwrap();
-        launcher.connection = Some(backend.clone());
-        state.workspace = Some(crate::workspace::Ui::new());
-        crate::workspace::opened(&mut state, &project);
-        crate::workspace::bound(&mut state, &backend);
-        state.draft = TextEdit::new("held draft");
-        let mut agent =
-            crate::agent::Ui::new(crate::agent::start(backend.clone(), state.wake.clone()));
-        agent
-            .reasons
-            .insert("pending".into(), TextEdit::new("unsent answer"));
-        agent.busy = true;
-        state.agent = Some(agent);
-        state.phase = Phase::Failed;
-        assert!(can_rebind(&state, "session") && crate::agent::navigation_blocked(&state));
-        let mut rt = rune::Runtime::new(
-            state,
-            crate::view,
-            (1100.0, 800.0),
-            rune::Env::new(false, 1.0),
-        );
-        rt.update(move |s, tx| bind(s, backend, "Fixture conversation".into(), None, tx));
-        assert_eq!(rt.state.draft.text, "held draft");
-        assert_eq!(rt.state.messages.len(), 1);
-        assert_eq!(rt.state.messages[0].body, "Fixture message");
-        assert!(rt.state.phase == Phase::Loading);
-        assert_eq!(
-            rt.state.agent.as_ref().unwrap().reasons["pending"].text,
-            "unsent answer"
-        );
-        assert!(rt.state.agent.as_ref().unwrap().busy);
-    }
-    #[test]
-    fn session_choices_remain_visible_in_the_scrolling_launcher() {
-        for viewport in [(320.0, 640.0), (1400.0, 1600.0)] {
-            let mut state = crate::init();
-            let mut launcher = Launcher::with_boot(std::sync::Arc::new(|| {}), None);
-            launcher.connection = Some(Backend {
-                client: codenomad_client::http::Http::new().unwrap(),
-                base: "http://127.0.0.1:9/".into(),
-                workspace: String::new(),
-                session: String::new(),
-                client_id: "fixture".into(),
-                fresh_mode: false,
-            });
-            launcher.project = Some(Project {
-                id: "project".into(),
-                path: "/fixture".into(),
-            });
-            launcher.sessions = vec![Session {
-                id: "existing".into(),
-                title: "Existing history".into(),
-            }];
-            state.screen = crate::Screen::Launcher(launcher);
-            let mut runtime =
-                rune::Runtime::new(state, crate::view, viewport, rune::Env::new(false, 1.0));
-            for _ in 0..8 {
-                runtime.frame(1.0 / 60.0);
-            }
-            if viewport.0 < 610.0 {
-                let (x, y) = runtime.find("sessions-panel-toggle").unwrap();
-                runtime.pointer_down(x, y);
-                runtime.pointer_up(x, y);
-            }
-            runtime.update(|_, tx| {
-                tx.scroll_into_view("session-existing");
-                tx.instant();
-            });
-            for _ in 0..12 {
-                runtime.frame(1.0 / 60.0);
-            }
-            let choice = runtime
-                .elements()
-                .into_iter()
-                .find(|e| e.path.ends_with("/session-existing"))
-                .unwrap();
-            let [_, y, _, height] = choice.rect;
-            assert!(
-                height > 0.0 && y < viewport.1 && y + height > 0.0,
-                "session choice must have visible geometry: {:?}",
-                choice.rect
-            );
-            let (x, y) = runtime.find("session-existing").unwrap();
-            assert!(x >= 0.0 && x < viewport.0 && y >= 0.0 && y < viewport.1);
-        }
-    }
-    #[test]
-    fn bootstrap_failure_reaches_the_rendered_launcher() {
-        let (out, input) = bounded(1);
-        let mut state = crate::init();
-        state.screen =
-            crate::Screen::Launcher(Launcher::with_boot(std::sync::Arc::new(|| {}), Some(input)));
-        out.try_send(Err("private backend startup detail".into()))
-            .unwrap();
-        let mut runtime = rune::Runtime::new(
-            state,
-            crate::view,
-            (640.0, 800.0),
-            rune::Env::new(false, 1.0),
-        );
-        runtime.poll = Some(crate::poll);
-        runtime.frame(0.0);
-        assert_eq!(
-            runtime.state.screen.launcher().unwrap().error,
-            Some("rune.connect_error")
-        );
-        let tree = runtime.accessibility_json().to_string();
-        assert!(tree.contains(crate::strings::t("rune.connect_error")));
-        assert!(!tree.contains("private backend startup detail"));
-    }
-    #[test]
-    fn shared_fields_edit_their_inner_models_and_stale_launcher_input_is_discarded() {
-        let mut state = crate::init();
-        let mut launcher = Launcher::fixture();
-        launcher.address = TextEdit::new("");
-        launcher.password = TextEdit::new("");
-        state.screen = crate::Screen::Launcher(launcher);
-        let mut rt = rune::Runtime::new(
-            state,
-            crate::view,
-            (640.0, 800.0),
-            rune::Env::new(false, 1.0),
-        );
-        rt.frame(0.0);
-        for (key, value) in [
-            ("server-address", "synthetic-server"),
-            ("server-password", "synthetic-password"),
-        ] {
-            let node = rt
-                .elements()
-                .into_iter()
-                .find(|node| node.key.as_deref() == Some(key))
-                .unwrap();
-            assert_eq!(node.fill, rune_theme_codenomad::field_kit(false).c.bg_base);
-            let (x, y) = rt.find(key).unwrap();
-            rt.pointer_down(x, y);
-            rt.pointer_up(x, y);
-            rt.paste(value);
-            rt.frame(0.02);
-        }
-        assert_eq!(
-            rt.state.screen.launcher().unwrap().address.text,
-            "synthetic-server"
-        );
-        assert_eq!(
-            rt.state.screen.launcher().unwrap().password.text,
-            "synthetic-password"
-        );
-        rt.state.show_chat();
-        rt.state.draft = TextEdit::new("current composer");
-        rt.paste("late password edit");
-        rt.frame(0.02);
-        assert_eq!(
-            rt.state.screen.launcher().unwrap().password.text,
-            "synthetic-password"
-        );
-        assert_eq!(rt.state.draft.text, "current composer");
-    }
-}
-pub fn connect(s: &mut State, _: &mut Tx) {
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    if l.pending {
-        return;
-    }
-    let address = if l.authentication_required {
-        let Some(backend) = &l.connection else { return };
-        backend.base.clone()
-    } else {
-        l.host = None;
-        l.address.text.clone()
-    };
-    let password = l.password.text.clone();
-    let expected_server = if l.authentication_required {
-        l.server_id.clone()
-    } else {
-        None
-    };
-    l.job("rune.connect_error", async move {
-        let b = Backend::connect(&address, &password).await?;
-        let server_id = b.attest_server().await?;
-        if expected_server.is_some_and(|expected| expected != server_id) {
-            return Err("Server identity changed during authentication".into());
-        }
-        let projects = b.projects().await?;
-        Ok(Reply::Connected(b, projects, server_id))
-    });
-}
-pub fn choose_project(s: &mut State, path: &str, tx: &mut Tx) {
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    l.folder = TextEdit::new(path);
-    open(s, tx);
-}
-pub fn open(s: &mut State, tx: &mut Tx) {
-    if !crate::workspace::input_ready(s) {
-        return;
-    }
-    if !crate::workspace::prepare_open(s, tx) {
-        if let Some(l) = s.screen.launcher_mut() {
-            l.error = Some("rune.open_error");
-        }
-        return;
-    }
-    let intent = s
-        .workspace
-        .as_ref()
-        .map(|ui| ui.active_key().to_string())
-        .unwrap_or_else(|| "launcher".into());
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    let Some(b) = l.connection.clone() else {
-        return;
-    };
-    if l.pending {
-        return;
-    }
-    let pending = match l.openings.begin(b.clone(), &intent) {
-        Ok(pending) => pending,
-        Err(_) => {
-            l.error = Some("rune.open_error");
-            return;
-        }
-    };
-    let folder = l.folder.text.trim().to_string();
-    l.job("rune.open_error", async move {
-        let opening = pending.create(&folder).await?;
-        let rows = b.sessions(&opening.project, None).await?;
-        Ok(Reply::Opened(opening, rows, Restored::Empty))
-    });
-}
-pub fn list(s: &mut State, more: bool) {
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
-        return;
-    };
-    if l.pending || more && (l.next.is_none() || l.sessions.len() >= MAX_BROWSED_SESSIONS) {
-        return;
-    }
-    l.listing = true;
-    let cursor = if more { l.next.clone() } else { None };
-    l.job("rune.list_error", async move {
-        Ok(Reply::Listed(
-            b.sessions(&p, cursor.as_deref()).await?,
-            more,
-        ))
-    });
-}
-pub fn create(s: &mut State, _: &mut Tx) {
-    if !can_change_session(s) {
-        return;
-    }
-    let dismiss = s.shell.floating_sessions();
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    if l.creation_uncertain || l.title.text.trim().is_empty() {
-        return;
-    }
-    let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
-        return;
-    };
-    let title = l.title.text.clone();
-    // A create request is never automatically retried. Refresh reconciles a lost response.
-    l.job("rune.create_error", async move {
-        let session = b.create_session(&p, &title).await?;
-        Ok(Reply::Created(
-            b.bind(&p, &session.id, true).await?,
-            session.title,
-            title,
-            dismiss,
-        ))
-    });
-}
-pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
-    if !s.screen.is_launcher()
-        && crate::workspace::active_session(s) == Some(id.as_str())
-        && s.phase != Phase::Failed
-    {
-        if s.shell.floating_sessions().is_some() {
-            s.shell.close_floating(tx);
-        }
-    } else {
-        choose_from(s, vec![(id, None)], s.shell.floating_sessions());
-    }
-}
-fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss: Option<u64>) {
-    let recovery = candidates
-        .first()
-        .is_some_and(|(id, step)| step.is_none() && can_rebind(s, id));
-    if candidates.is_empty()
-        || !crate::workspace::input_ready(s)
-        || !recovery && !can_change_session(s)
-    {
-        return;
-    }
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
-        return;
-    };
-    if l.pending {
-        return;
-    }
-    l.job("rune.open_error", async move {
-        let mut missing = Vec::new();
-        for (id, step) in candidates {
-            match b.bind_session(&p, &id, false).await {
-                Ok((bound, session)) => {
-                    return Ok(Reply::Selected(
-                        missing,
-                        Some((bound, session.title, step)),
-                        dismiss,
-                    ));
-                }
-                Err(err) if err.is::<SessionMissing>() => missing.push(id),
-                Err(err) if missing.is_empty() => return Err(err),
-                Err(_) => break,
-            }
-        }
-        Ok(Reply::Selected(missing, None, dismiss))
-    });
-}
-pub fn can_change_session(s: &State) -> bool {
-    s.phase != Phase::Streaming
-        && crate::workspace::input_ready(s)
-        && !crate::agent::navigation_blocked(s)
-}
-fn can_rebind(s: &State, id: &str) -> bool {
-    !s.screen.is_launcher()
-        && s.phase == Phase::Failed
-        && crate::workspace::active_session(s) == Some(id)
-}
-pub fn can_visit(s: &State, back: bool) -> bool {
-    s.screen
-        .launcher()
-        .is_some_and(|l| l.visits.steps(back, shown(s)).next().is_some())
-}
-pub fn visit(s: &mut State, back: bool) {
-    let Some(l) = s.screen.launcher() else { return };
-    let candidates = l
-        .visits
-        .steps(back, shown(s))
-        .map(|(step, id)| (id.into(), Some(step)))
-        .collect();
-    choose_from(s, candidates, None);
-}
-fn shown(s: &State) -> Option<&str> {
-    (!s.screen.is_launcher())
-        .then(|| crate::workspace::active_session(s))
-        .flatten()
-}
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let blocked = !can_change_session(s);
     let selected = crate::workspace::active_session(s).map(str::to_owned);
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
-    let mut boot_changed = false;
-    if let Some(result) = l
-        .boot
-        .as_ref()
-        .and_then(|receiver| receiver.try_recv().ok())
-    {
-        l.boot = None;
-        l.pending = false;
-        boot_changed = true;
-        match result {
-            Ok((backend, host)) => {
-                l.address = TextEdit::new(&backend.base);
-                l.host = Some(host);
-                // Bootstrap owns the authenticated cookie jar even if project listing fails.
-                l.connection = Some(backend.clone());
-                l.job("rune.list_error", async move {
-                    let server_id = backend.attest_server().await?;
-                    let projects = backend.projects().await?;
-                    Ok(Reply::Connected(backend, projects, server_id))
-                });
-            }
-            Err(_) => l.error = Some("rune.connect_error"),
-        }
-    }
+    let mut changed = !l.pending && l.visits.poll_checks();
+    changed |= connection::poll_boot(l);
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
-        if boot_changed {
+        if changed {
             tx.instant();
         }
-        return boot_changed;
+        return changed;
     };
     l.result = None;
     l.pending = false;
@@ -643,14 +187,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
             let reauthenticated = std::mem::take(&mut l.authentication_required);
+            l.catalogue_watch = None;
             l.connection = Some(b);
             l.server_id = Some(server_id);
             l.projects = projects;
             l.password = TextEdit::new("");
             crate::workspace::connected(s);
-            if reauthenticated
-                && let Some(id) = crate::workspace::active_session(s).map(str::to_owned)
-            {
+            if reauthenticated && let Some(id) = selected {
                 if let Some(launcher) = s.screen.launcher_mut() {
                     launcher.reauthenticated_session = Some(id.clone());
                 }
@@ -669,55 +212,51 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.folder = TextEdit::new(&project.path);
             l.project = Some(project.clone());
-            l.sessions = rows.rows;
-            l.next = rows.next;
+            if cfg!(target_os = "windows")
+                && l.catalogue_watch.is_none()
+                && let Some(backend) = &l.connection
+            {
+                let (watch, task) =
+                    codenomad_client::stream::CatalogueWatch::new(backend.clone(), l.wake.clone());
+                l.catalogue_watch = Some(watch);
+                crate::platform::spawn(task);
+            }
+            l.apply_listing(rows, false, None);
             l.search = TextEdit::new("");
-            l.creation_uncertain = false;
             crate::workspace::opened(s, &project);
             match restored {
-                Restored::Bound(backend, title) => bind(s, backend, title, None, tx),
+                Restored::Bound(backend, title, slug) => {
+                    bind(s, backend, title, None, &slug, tx);
+                }
                 Restored::Missing(id) => {
                     retire_session(s, &id);
                     crate::git::project_opened(s);
+                    crate::workspace::restore_files_mode(s);
                 }
-                Restored::Empty => crate::git::project_opened(s),
+                Restored::Empty => {
+                    crate::git::project_opened(s);
+                    crate::workspace::restore_files_mode(s);
+                }
             }
         }
-        Ok(Reply::Listed(mut rows, more)) => {
-            if !more {
-                l.creation_uncertain = false;
-            }
-            if more {
-                let remaining = MAX_BROWSED_SESSIONS.saturating_sub(l.sessions.len());
-                let mut ids = l
-                    .sessions
-                    .iter()
-                    .map(|row| row.id.clone())
-                    .collect::<std::collections::HashSet<_>>();
-                l.sessions.extend(
-                    rows.rows
-                        .into_iter()
-                        .filter(|row| ids.insert(row.id.clone()))
-                        .take(remaining),
-                );
+        Ok(Reply::Listed(rows, cursor)) => {
+            if let Some(cursor) = cursor {
+                l.consume_cursor(&cursor);
+                l.apply_listing(rows, true, selected.as_deref());
+                if l.next.is_none() {
+                    l.check_omitted_visits();
+                }
+            } else if cfg!(target_os = "windows") {
+                l.apply_directory_refresh(rows, selected.as_deref());
+                crate::workspace::schedule_catalogue(s);
             } else {
-                let ids = rows
-                    .rows
-                    .iter()
-                    .map(|row| row.id.clone())
-                    .collect::<std::collections::HashSet<_>>();
-                if let Some(old) = l
-                    .sessions
-                    .iter()
-                    .find(|row| Some(&row.id) == selected.as_ref() && !ids.contains(&row.id))
-                {
-                    rows.rows.push(old.clone());
+                l.apply_listing(rows, false, selected.as_deref());
+                if l.next.is_none() {
+                    l.check_omitted_visits();
                 }
-                l.sessions = rows.rows;
             }
-            l.next = rows.next;
         }
-        Ok(Reply::Created(b, title, submitted, dismiss)) => {
+        Ok(Reply::Created(b, title, slug, submitted, dismiss)) => {
             if l.title.text == submitted {
                 l.title = TextEdit::new("");
                 l.show_title = false;
@@ -732,12 +271,16 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 );
             } else {
                 dismiss_origin_panel(s, dismiss, tx);
-                bind(s, b, title, None, tx);
+                bind(s, b, title, None, &slug, tx);
             }
         }
         Ok(Reply::Selected(missing, selection, dismiss)) => {
             l.sessions.retain(|row| !missing.contains(&row.id));
+            l.listed_sessions.retain(|id| !missing.contains(id));
             l.visits.forget(&missing);
+            if let Some((backend, _, _, verified, _)) = &selection {
+                l.visits.verified(&backend.session, *verified);
+            }
             if let Some(id) = selected
                 .as_deref()
                 .filter(|id| s.phase == Phase::Failed && missing.iter().any(|m| m == id))
@@ -746,13 +289,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 tx.instant();
                 return true;
             }
-            if let Some((b, title, visit)) = selection.filter(|(b, _, _)| {
+            if let Some((b, title, visit, _, slug)) = selection.filter(|(b, _, _, _, _)| {
                 !blocked
                     || s.phase == Phase::Failed && selected.as_deref() == Some(b.session.as_str())
             }) {
                 l.show_title = false;
                 dismiss_origin_panel(s, dismiss, tx);
-                bind(s, b, title, visit, tx);
+                bind(s, b, title, visit, &slug, tx);
             } else if !blocked {
                 l.error = Some("rune.open_error");
             }
@@ -771,157 +314,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.error = Some(key);
         }
     }
+    if let Some(l) = s.screen.launcher_mut()
+        && !l.pending
+    {
+        l.visits.poll_checks();
+    }
     tx.instant();
     true
-}
-fn dismiss_origin_panel(s: &mut State, origin: Option<u64>, tx: &mut Tx) {
-    if origin.is_some() && origin == s.shell.floating_sessions() {
-        s.shell.close_floating(tx);
-    }
-}
-pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
-    let intent = s
-        .workspace
-        .as_ref()
-        .map(|ui| ui.active_key().to_string())
-        .unwrap_or_else(|| "launcher".into());
-    let Some(l) = s.screen.launcher_mut() else {
-        return;
-    };
-    if l.pending {
-        return;
-    }
-    let Some(backend) = l.connection.clone() else {
-        return;
-    };
-    let local = l.local_connection();
-    let identity = if local {
-        saved.backend_id.is_none()
-    } else {
-        saved.backend_id.as_deref()
-            == Some(if cfg!(target_arch = "wasm32") {
-                "web"
-            } else {
-                "external"
-            })
-            && saved.server_id.is_some()
-            && saved.server_id == l.server_id
-    };
-    if !identity {
-        l.error = Some("rune.restore_error");
-        return;
-    }
-    let pending = match l.openings.begin(backend.clone(), &intent) {
-        Ok(pending) => pending,
-        Err(_) => {
-            l.error = Some("rune.restore_error");
-            return;
-        }
-    };
-    l.job("rune.restore_error", async move {
-        let opening = pending.create(&saved.folder).await?;
-        let rows = backend.sessions(&opening.project, None).await?;
-        let bound = if let Some(id) = &saved.active_session_id {
-            match backend.bind_session(&opening.project, id, false).await {
-                Ok((bound, session)) => Restored::Bound(bound, session.title),
-                Err(err) if err.is::<SessionMissing>() => Restored::Missing(id.clone()),
-                Err(err) => return Err(err),
-            }
-        } else {
-            Restored::Empty
-        };
-        Ok(Reply::Opened(opening, rows, bound))
-    });
-}
-fn retire_session(s: &mut State, id: &str) {
-    if !crate::workspace::unselect_missing(s, id) {
-        return;
-    }
-    s.commands = None;
-    s.incoming = None;
-    s.agent = None;
-    s.files = None;
-    s.messages.clear();
-    s.chat_title.clear();
-    s.draft = TextEdit::new("");
-    s.phase = Phase::Ready;
-    s.show_launcher();
-    if let Some(l) = s.screen.launcher_mut() {
-        l.sessions.retain(|row| row.id != id);
-        l.error = Some("rune.open_error");
-    }
-}
-fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut Tx) {
-    let same_session =
-        !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
-    let mut reauthenticated = false;
-    if let Some(l) = s.screen.launcher_mut() {
-        reauthenticated = l.reauthenticated_session.take().as_deref() == Some(b.session.as_str());
-        l.visits.record(&b.session, visit);
-        if let Some(row) = l.sessions.iter_mut().find(|row| row.id == b.session) {
-            row.title.clone_from(&title);
-        } else {
-            l.sessions.insert(
-                0,
-                Session {
-                    id: b.session.clone(),
-                    title: title.clone(),
-                },
-            );
-        }
-    }
-    let draft = crate::workspace::bound(s, &b);
-    s.transcript_display.bind(&b.base, &b.workspace, &b.session);
-    s.chat_title = title;
-    if !same_session {
-        crate::files::bind(s, &b);
-        s.agent = None;
-        s.messages.clear();
-        s.can_older = false;
-    } else if let Some(agent) = &mut s.agent {
-        if reauthenticated {
-            let mut reauthenticated =
-                crate::agent::Ui::new(crate::agent::start(b.clone(), s.wake.clone()));
-            reauthenticated.drafts = std::mem::take(&mut agent.drafts);
-            reauthenticated.reasons = std::mem::take(&mut agent.reasons);
-            *agent = reauthenticated;
-            crate::files::bind(s, &b);
-        } else {
-            // This is the same owned occurrence and session; the in-flight reply guard stays live.
-            agent.online = false;
-            agent.pending_known = false;
-        }
-    }
-    s.draft = TextEdit::new(draft);
-    s.phase = Phase::Loading;
-    s.paging = false;
-    s.history_error = false;
-    s.revision += 1;
-    crate::transport::start_bound(s, b);
-    s.show_chat();
-    crate::workspace::capture(s);
-    if !same_session {
-        tx.scroll_to_bottom_instant("history");
-    }
-}
-#[cfg(feature = "test-support")]
-pub fn back(s: &mut State) {
-    if !matches!(s.phase, Phase::Ready | Phase::Failed)
-        || (!s.draft.text.is_empty() && s.workspace.is_none())
-        || crate::agent::navigation_blocked(s)
-        || s.screen.launcher().is_none()
-    {
-        return;
-    }
-    crate::workspace::capture(s);
-    s.agent = None;
-    s.commands = None;
-    s.incoming = None;
-    s.files = None;
-    if let Some(git) = &mut s.git.owner {
-        git.online(false);
-        git.close_preview();
-    }
-    s.show_launcher();
-    list(s, false);
 }
