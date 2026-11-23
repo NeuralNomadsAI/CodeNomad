@@ -12,7 +12,7 @@ use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 pub enum Source {
     Path(std::path::PathBuf),
-    Png(Arc<[u8]>),
+    Png(rune::clipboard::ClipboardImage),
 }
 #[cfg(target_arch = "wasm32")]
 pub type Source = web_sys::File;
@@ -25,7 +25,7 @@ pub fn drop_files(s: &mut State, paths: &[std::path::PathBuf]) {
             Some(Offer {
                 name: path.file_name()?.to_string_lossy().into_owned(),
                 mime: super::device_file::mime(path).into(),
-            source: Source::Path(path.clone()),
+                source: Source::Path(path.clone()),
             })
         }),
     );
@@ -37,7 +37,9 @@ pub fn paste(s: &mut State, content: &rune::clipboard::ClipboardContent) -> bool
         drop_files(s, content.files());
         return true;
     }
-    let Some(image) = content.image() else { return false };
+    let Some(image) = content.image() else {
+        return false;
+    };
     if !device::available(s) {
         return true;
     }
@@ -45,9 +47,14 @@ pub fn paste(s: &mut State, content: &rune::clipboard::ClipboardContent) -> bool
     if image.png().len() > MAX_FILE {
         s.composer.device.notice = Some(device::notice(name, Error::TooLarge));
     } else {
-        device::enqueue(s, [Offer {
-            name: name.into(), mime: "image/png".into(), source: Source::Png(image.png().into()),
-        }]);
+        device::enqueue(
+            s,
+            [Offer {
+                name: name.into(),
+                mime: "image/png".into(),
+                source: Source::Png(image.clone()),
+            }],
+        );
     }
     true
 }
@@ -100,7 +107,7 @@ pub async fn read(source: &Source, limit: usize) -> Result<Arc<[u8]>, Error> {
     #[cfg(not(target_arch = "wasm32"))]
     return match source {
         Source::Path(path) => super::device_file::read(path.clone(), limit.min(MAX_FILE)).await,
-        Source::Png(bytes) if bytes.len() <= limit => Ok(bytes.clone()),
+        Source::Png(image) if image.png().len() <= limit => Ok(image.png().into()),
         Source::Png(_) => Err(Error::Limit),
     };
     #[cfg(target_arch = "wasm32")]

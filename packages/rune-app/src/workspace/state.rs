@@ -512,7 +512,8 @@ pub fn status(s: &State) -> Option<&'static str> {
     let ui = s.workspace.as_ref()?;
     if ui.persistence.read_error {
         Some("rune.restore_error")
-    } else if ui.persistence.write_error || ui.persistence.partial || ui.has_unsaved_large_drafts() {
+    } else if ui.persistence.write_error || ui.persistence.partial || ui.has_unsaved_large_drafts()
+    {
         Some("rune.save_error")
     } else {
         None

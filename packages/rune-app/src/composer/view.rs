@@ -29,7 +29,9 @@ pub fn view(s: &State, compact: bool) -> El {
             .disabled(s.composer.pending())
             .on_edit(screen::edit(&scope, screen::Editor::Composer))
             .on_input_change(screen::action_tx(&scope, changed))
-            .on_input_key(move |s: &mut State, event, tx| s.current_scope(&edit_scope) && key(s, event, tx))
+            .on_input_key(move |s: &mut State, event, tx| {
+                s.current_scope(&edit_scope) && key(s, event, tx)
+            })
             .on_input_paste(move |s: &mut State, content, _| {
                 s.current_scope(&paste_scope) && platform::device_picker::paste(s, content)
             })

@@ -9,7 +9,9 @@ pub(super) struct LiveDraft {
 
 impl Ui {
     pub(crate) fn has_unsaved_large_drafts(&self) -> bool {
-        self.entries.iter().any(|entry| entry.live_drafts.values().any(|draft| draft.text.is_some()))
+        self.entries
+            .iter()
+            .any(|entry| entry.live_drafts.values().any(|draft| draft.text.is_some()))
     }
 }
 
@@ -29,11 +31,19 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
         return false;
     };
     const MAX_WINDOW_DEVICE_BYTES: usize = 64 * 1024 * 1024;
-    let retained: usize = ui.entries.iter().enumerate()
-        .flat_map(|(index, entry)| entry.live_drafts.iter()
-            .filter(move |(key, _)| index != ui.active || key.as_str() != id))
+    let retained: usize = ui
+        .entries
+        .iter()
+        .enumerate()
+        .flat_map(|(index, entry)| {
+            entry
+                .live_drafts
+                .iter()
+                .filter(move |(key, _)| index != ui.active || key.as_str() != id)
+        })
         .filter_map(|(_, draft)| draft.parts.as_ref())
-        .map(|(draft, _)| draft.inline_usage().1).sum();
+        .map(|(draft, _)| draft.inline_usage().1)
+        .sum();
     if retained.saturating_add(s.composer.draft.inline_usage().1) > MAX_WINDOW_DEVICE_BYTES {
         return false;
     }
@@ -73,7 +83,11 @@ pub fn capture(s: &mut State) {
     let Some(mut ui) = s.workspace.take() else {
         return;
     };
-    if ui.entries.get_mut(ui.active).is_some_and(|item| capture_draft(item, s)) {
+    if ui
+        .entries
+        .get_mut(ui.active)
+        .is_some_and(|item| capture_draft(item, s))
+    {
         ui.changed();
     }
     ui.stage();
@@ -163,7 +177,8 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
         s.composer.attachments_missing |= saved.attachment_drafts.contains(&backend.session)
             && s.composer.draft.attachments.is_empty();
     }
-    let draft = live.and_then(|draft| draft.text.as_ref())
+    let draft = live
+        .and_then(|draft| draft.text.as_ref())
         .or_else(|| saved.drafts.get(&backend.session))
         .cloned()
         .unwrap_or_default();

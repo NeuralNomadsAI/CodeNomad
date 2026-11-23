@@ -1,5 +1,8 @@
 use crate::{Phase, State, content::Part, init, platform, poll, setup, view};
-use rune::{Env, Key, KeyEvent, Mods, Runtime};
+use rune::{
+    Env, Key, KeyEvent, Mods, Runtime,
+    clipboard::{ClipboardContent, ClipboardImage},
+};
 use std::time::{Duration, Instant};
 
 fn wait(rt: &mut Runtime<State>, label: &str, ready: impl Fn(&State) -> bool) {
@@ -41,18 +44,22 @@ pub fn run() {
             let backend = platform::configured_target(false)?;
             let password = platform::setting("RUNE_PASSWORD").unwrap_or_default();
             backend.authenticate(&password, None).await?;
-            for (part, name) in row
-                .parts
-                .iter()
-                .zip(["sample.txt", "selected.txt", "dropped.txt", "pasted.txt", "clipboard.png"])
-            {
+            for (part, name) in row.parts.iter().zip([
+                "sample.txt",
+                "selected.txt",
+                "dropped.txt",
+                "pasted.txt",
+                "clipboard.png",
+            ]) {
                 let Part::File(file) = part else {
                     panic!("expected file")
                 };
                 assert_eq!(file.name.as_deref(), Some(name));
                 let reference = file.reference.as_ref().expect("stored file reference");
                 let bytes = backend.attachment_bytes(reference).await?;
-                let expected = if name == "clipboard.png" { capture.as_slice() } else {
+                let expected = if name == "clipboard.png" {
+                    capture.as_slice()
+                } else {
                     "Rune attachment fixture 🦀\r\n".as_bytes()
                 };
                 assert_eq!(bytes.as_slice(), expected);
@@ -109,14 +116,30 @@ pub fn run() {
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     rt.frame(0.0);
-    rt.paste_content(rune::ClipboardContent::new("must not replace the draft")
-        .with_files([here.join("pasted.txt")]));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    clipboard.set_content(
+        ClipboardContent::new("must not replace the draft").with_files([here.join("pasted.txt")]),
+    );
+    rt.state.composer.picker.set_attachments_supported(false);
+    rt.update(|_, tx| tx.request_paste());
     rt.frame(0.0);
-    wait(&mut rt, "native clipboard file", |s| s.composer.draft.attachments.len() == 4);
-    let capture = rune::clipboard::ClipboardImage::from_png(std::fs::read(here.join("capture.png")).unwrap()).unwrap();
-    rt.paste_content(rune::ClipboardContent::default().with_image(capture));
+    assert_eq!(rt.state.composer.draft.attachments.len(), 3);
+    assert!(!rt.state.composer.device.busy());
+    rt.state.composer.picker.set_attachments_supported(true);
+    rt.update(|_, tx| tx.request_paste());
     rt.frame(0.0);
-    wait(&mut rt, "native clipboard capture", |s| s.composer.draft.attachments.len() == 5);
+    wait(&mut rt, "native clipboard file", |s| {
+        s.composer.draft.attachments.len() == 4
+    });
+    let capture =
+        ClipboardImage::from_png(std::fs::read(here.join("capture.png")).unwrap()).unwrap();
+    clipboard.set_content(ClipboardContent::default().with_image(capture));
+    rt.update(|_, tx| tx.request_paste());
+    rt.frame(0.0);
+    wait(&mut rt, "native clipboard capture", |s| {
+        s.composer.draft.attachments.len() == 5
+    });
     assert_eq!(rt.state.draft.text, "@./sample.txt ");
     enter(&mut rt);
     wait(&mut rt, "authoritative stored reference", |s| {

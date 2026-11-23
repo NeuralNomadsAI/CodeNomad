@@ -21,7 +21,9 @@ fn saving_preserves_valid_siblings_of_an_invalid_tab() {
     broken
         .drafts
         .insert("ses_bad".into(), "X".repeat(MAX_DRAFT + 1));
-    broken.drafts.insert("ses_sibling".into(), "same tab survives".into());
+    broken
+        .drafts
+        .insert("ses_sibling".into(), "same tab survives".into());
     let mut good = workspace();
     good.occurrence = 1;
     good.drafts

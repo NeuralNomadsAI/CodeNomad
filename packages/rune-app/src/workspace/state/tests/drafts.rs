@@ -5,7 +5,10 @@ fn switching_conversation_restores_the_exact_device_bytes() {
     let mut s = init();
     let mut ui = Ui::new();
     ui.ready = true;
-    ui.entries[0] = entry("tab-0".into(), Tab::Workspace(workspace("alpha", "read it")));
+    ui.entries[0] = entry(
+        "tab-0".into(),
+        Tab::Workspace(workspace("alpha", "read it")),
+    );
     ui.entries[0].binding = Some(backend("alpha"));
     s.workspace = Some(ui);
     s.draft = TextEdit::new("read it");
@@ -50,7 +53,8 @@ fn oversized_paste_keeps_the_last_valid_draft_and_the_same_tab_sibling() {
         let ui = s.workspace.as_ref().unwrap();
         assert_eq!(crate::workspace::status(s), Some("rune.save_error"));
         assert!(super::super::tabs::close_blocked(s, 0));
-        let snapshot = crate::workspace::decode(&crate::workspace::encode(&ui.snapshot()).unwrap()).unwrap();
+        let snapshot =
+            crate::workspace::decode(&crate::workspace::encode(&ui.snapshot()).unwrap()).unwrap();
         assert!(matches!(&snapshot.tabs[0], Tab::Workspace(tab) if
             tab.drafts["alpha"] == "last valid version" && tab.drafts["beta"] == "other draft"));
         s.draft = TextEdit::new(bound(s, &backend("beta")));

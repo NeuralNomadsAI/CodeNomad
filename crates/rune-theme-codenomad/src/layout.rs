@@ -87,15 +87,22 @@ pub fn composer_field(edit: &TextEdit, placeholder: &str, compact: bool) -> rune
     }
 }
 pub fn native_composer_input(edit: &TextEdit, placeholder: &str) -> El {
-    input(edit).placeholder(placeholder, tokens(dark()).color("text-faint"))
+    input(edit).hint(placeholder)
 }
 pub fn native_composer_field(editor: El, compact: bool) -> El {
-    let mut field = rune::auto_grow(editor, if compact { 1 } else { 5 }, usize::MAX)
+    let t = tokens(dark());
+    let minimum = if compact {
+        t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0
+    } else {
+        104.0
+    };
+    let field = rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
+        .min_h(minimum)
         .max_h(320.0);
-    if !compact {
-        field = field.min_h(104.0);
-    }
-    rune::col().w_full().child(field).fill(tokens(dark()).color("surface-field"))
+    rune::col()
+        .w_full()
+        .child(field)
+        .fill(t.color("surface-field"))
 }
 pub fn announce_selection(tx: &mut rune::Tx, name: &str) {
     tx.announce(name, rune::LiveRegion::Polite);
