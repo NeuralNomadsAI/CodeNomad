@@ -76,20 +76,34 @@ function windowsStopScript(targets: readonly ProcessTreeRow[]): string {
   // Each Process object binds its handle before the creation-time check, so the stop cannot
   // reach a process that took the ID after the listing.
   return `$ErrorActionPreference = 'Continue'
+$failed = @()
 foreach ($target in @(${list})) {
   $process = Get-Process -Id $target.Id -ErrorAction SilentlyContinue
   if ($null -eq $process) { continue }
-  try { $null = $process.Handle; $ticks = $process.StartTime.ToUniversalTime().Ticks } catch { continue }
-  if (($ticks - $ticks % 10) -ne [long]$target.Ticks) { continue }
-  Stop-Process -InputObject $process -Force -ErrorAction SilentlyContinue
-}`
+  try {
+    $null = $process.Handle
+    $ticks = $process.StartTime.ToUniversalTime().Ticks
+    if (($ticks - $ticks % 10) -ne [long]$target.Ticks) { continue }
+    Stop-Process -InputObject $process -Force -ErrorAction Stop
+    if (!$process.WaitForExit(2000)) { throw "Process $($target.Id) still running" }
+  } catch {
+    $message = $_.Exception.Message
+    try { if ($process.HasExited) { continue } } catch {}
+    $failed += "$($target.Id): $message"
+  }
+}
+if ($failed.Count) { Write-Error ($failed -join "; "); exit 1 }
+exit 0`
 }
 
-function powershell(script: string, timeoutMs: number): Promise<string | undefined> {
-  return new Promise(resolve => {
+function powershell(script: string, timeoutMs: number, strict = false): Promise<string | undefined> {
+  return new Promise((resolve, reject) => {
     execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script],
       { encoding: "utf8", timeout: timeoutMs, windowsHide: true, maxBuffer: 64 * 1024 * 1024 },
-      (error, stdout) => resolve(error ? undefined : stdout))
+      (error, stdout, stderr) => {
+        if (error && strict) reject(new Error(stderr.trim() || "Windows process enumeration or stop failed"))
+        else resolve(error ? undefined : stdout)
+      })
   })
 }
 
@@ -108,4 +122,16 @@ export async function stopWindowsProcessTree(rootPid: number, rootStartedBy: Dat
   if (targets.length === 0 || deadline - Date.now() <= 0) return 0
   await powershell(windowsStopScript([...targets].reverse()), deadline - Date.now())
   return targets.length
+}
+
+export async function captureWindowsProcessTree(rootPid: number, rootParent: number, observed: Date): Promise<ProcessTreeRow[]> {
+  const listing = await powershell(WINDOWS_PROCESS_ROWS, 30_000, true)
+  if (listing === undefined) throw new Error("Cannot enumerate fixture-owned Windows processes")
+  const rows = parseWindowsProcessRows(listing)
+  if (!rows.some(row => row.pid === rootPid && row.parentPid === rootParent)) return []
+  return windowsTreeStopTargets(rootPid, rows, observed)
+}
+
+export async function stopCapturedWindowsProcesses(targets: readonly ProcessTreeRow[]): Promise<void> {
+  if (targets.length) await powershell(windowsStopScript([...targets].reverse()), 30_000, true)
 }
