@@ -63,6 +63,18 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
     if let Some(cache) = item.cache.take() {
         cache.apply(s);
         s.renew_scope();
+        if super::active_session(s).is_none()
+            && s.screen
+                .launcher()
+                .and_then(|l| l.connection.as_ref())
+                .is_some_and(|backend| {
+                    s.files
+                        .as_ref()
+                        .is_some_and(|files| !files.uses_connection(backend))
+                })
+        {
+            crate::git::project_opened(s);
+        }
         if let Some(files) = &mut s.files {
             files.activate(true);
         }
@@ -200,7 +212,7 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
         return true;
     }
     if ui.active == index {
-        crate::agent::navigation_blocked(s)
+        s.pending_prompt.is_some() || crate::agent::navigation_blocked(s)
     } else {
         ui.entries[index]
             .cache

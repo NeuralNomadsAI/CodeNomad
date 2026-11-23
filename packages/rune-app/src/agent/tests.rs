@@ -9,6 +9,7 @@ fn settled_requests_and_removed_models_reject_late_actions_before_dispatch() {
     let (stop, _) = super::bounded(1);
     let (_, results) = super::bounded(1);
     let mut ui = super::Ui::new(super::Handle {
+        connection: None,
         jobs,
         stop,
         results,

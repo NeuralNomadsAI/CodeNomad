@@ -192,11 +192,26 @@ pub async fn run(
                     busy = true;
                     repairs = 0;
                     settlement_reads = 0;
-                    if backend.send(body).await.is_err() {
+                    let result = backend.send(body).await;
+                    if let Err(error) = &result {
+                        if crate::http::authentication_expired(error) {
+                            wire.cancelled.store(true, SeqCst);
+                            while wire.alive.load(SeqCst) {
+                                runtime::sleep(Duration::from_millis(25)).await;
+                            }
+                            publish(&out, &wake, Event::AuthenticationRequired(backend.clone()))
+                                .await;
+                            return Ok(());
+                        }
                         eprintln!("Rune prompt delivery failed");
+                    }
+                    let rejected = result.is_err();
+                    publish(&out, &wake, Event::PromptSettled { rejected }).await;
+                    if rejected {
                         publish(&out, &wake, Event::Failed).await;
                     }
                 } else {
+                    publish(&out, &wake, Event::PromptSettled { rejected: true }).await;
                     publish(&out, &wake, Event::Failed).await;
                 }
             }

@@ -41,6 +41,10 @@ pub struct Ui {
     pub stopped: bool,
 }
 impl Ui {
+    pub(crate) fn uses_connection(&self, backend: &Backend) -> bool {
+        self.backend.client.same_connection(&backend.client)
+    }
+
     pub fn new(backend: Backend, directory: String, reads: Reads, wake: Wake) -> Self {
         let (out, incoming) = bounded(16);
         Self {

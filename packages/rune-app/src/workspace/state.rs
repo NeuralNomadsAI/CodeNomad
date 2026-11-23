@@ -298,6 +298,23 @@ pub fn connected(s: &mut State) {
         ui.ready = true;
     }
 }
+pub(crate) fn renew_connection(s: &mut State) {
+    let Some(current) = s.screen.launcher().and_then(|l| l.connection.as_ref()) else {
+        return;
+    };
+    if let Some(ui) = &mut s.workspace {
+        for item in &mut ui.entries {
+            if let Some(backend) = &mut item.binding
+                && backend.base == current.base
+                && backend.client.server_identity().is_some()
+                && backend.client.server_identity() == current.client.server_identity()
+            {
+                backend.client = current.client.clone();
+                backend.client_id.clone_from(&current.client_id);
+            }
+        }
+    }
+}
 impl Drop for Ui {
     fn drop(&mut self) {
         self.openings.close();
@@ -430,16 +447,24 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     let active = Cache::take(s);
     let mut changed = false;
+    let mut drafts_changed = false;
     for item in &mut ui.entries {
         if let Some(cache) = item.cache.take() {
             cache.apply(s);
+            let awaiting_prompt = s.pending_prompt.is_some();
             changed |= crate::poll_chat(s, 8);
+            if awaiting_prompt && s.pending_prompt.is_none() {
+                drafts_changed |= drafts::capture_draft(item, &s.draft.text);
+            }
             changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
             changed |= crate::git::poll(s, now, tx);
             item.cache = Some(Cache::take(s));
         }
     }
     active.apply(s);
+    if drafts_changed {
+        ui.changed();
+    }
     ui.stage();
     let previous_error = ui.persistence.read_error || ui.persistence.write_error;
     let snapshot = ui.snapshot();
@@ -463,6 +488,8 @@ pub fn status(s: &State) -> Option<&'static str> {
     }
 }
 
+#[cfg(test)]
+mod authentication_tests;
 mod catalogue;
 #[cfg(test)]
 mod tests;

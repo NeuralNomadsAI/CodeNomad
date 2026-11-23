@@ -43,10 +43,9 @@ pub struct Launcher {
     pub show_search: bool,
     pub visits: Visits,
     pub connection: Option<Backend>,
+    pub(crate) authentication_required: bool,
     pub(crate) catalogue_watch: Option<codenomad_client::stream::CatalogueWatch>,
     pub(crate) catalogue_generation: u64,
-    pub(crate) authentication_required: bool,
-    reauthenticated_session: Option<String>,
     pub server_id: Option<String>,
     pub projects: Vec<Project>,
     pub project: Option<Project>,
@@ -136,10 +135,9 @@ impl Launcher {
             show_search: false,
             visits: Visits::default(),
             connection: None,
+            authentication_required: false,
             catalogue_watch: None,
             catalogue_generation: 0,
-            authentication_required: false,
-            reauthenticated_session: None,
             server_id: None,
             projects: vec![],
             project: None,
@@ -203,21 +201,26 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.listing = false;
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
-            l.catalogue_watch = None;
             let reauthenticated = std::mem::take(&mut l.authentication_required);
+            l.catalogue_watch = None;
             l.connection = Some(b);
             l.server_id = Some(server_id);
             l.projects = projects;
             l.password = TextEdit::new("");
+            if reauthenticated {
+                connection::watch_catalogue(l);
+            }
             crate::workspace::connected(s);
-            if reauthenticated
-                && let Some(id) = crate::workspace::active_session(s).map(str::to_owned)
-            {
-                if let Some(launcher) = s.screen.launcher_mut() {
-                    launcher.reauthenticated_session = Some(id.clone());
+            if reauthenticated {
+                crate::workspace::renew_connection(s);
+                if let Some(id) = selected {
+                    s.show_chat();
+                    choose(s, id, tx);
+                } else {
+                    crate::git::project_opened(s);
+                    crate::workspace::restore_files_mode(s);
+                    crate::workspace::resume(s, tx);
                 }
-                s.show_chat();
-                choose(s, id, tx);
             } else {
                 crate::workspace::resume(s, tx);
             }
@@ -231,15 +234,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.folder = TextEdit::new(&project.path);
             set_project(l, Some(project.clone()));
-            if cfg!(target_os = "windows")
-                && l.catalogue_watch.is_none()
-                && let Some(backend) = &l.connection
-            {
-                let (watch, task) =
-                    codenomad_client::stream::CatalogueWatch::new(backend.clone(), l.wake.clone());
-                l.catalogue_watch = Some(watch);
-                crate::platform::spawn(task);
-            }
+            connection::watch_catalogue(l);
             l.apply_listing(rows, false, None);
             l.search = TextEdit::new("");
             crate::workspace::opened(s, &project);

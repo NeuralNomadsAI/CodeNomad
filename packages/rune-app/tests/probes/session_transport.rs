@@ -124,13 +124,14 @@ pub fn contract() {
                     .send(Command::Send(prompts[completed].into()))
                     .unwrap();
             }
-            Event::AuthenticationRequired(_) | Event::Failed => panic!("adapter failed"),
+            Event::AuthenticationRequired(..) | Event::Failed => panic!("adapter failed"),
             Event::Sync(_)
             | Event::History(_)
             | Event::Older(_)
             | Event::Reconnecting
             | Event::ConnectionLost
             | Event::WorkspaceMissing
+            | Event::PromptSettled { .. }
             | Event::Connected(_)
             | Event::AgentHint(_)
             | Event::Workspace(_)

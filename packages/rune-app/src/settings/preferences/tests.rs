@@ -423,6 +423,7 @@ fn settings_sse_refreshes_only_the_invalidated_owner() {
 struct Request {
     socket: tokio::net::TcpStream,
     first: String,
+    headers: String,
     body: Value,
 }
 
@@ -905,6 +906,7 @@ async fn request_with_timeout(listener: &TcpListener, deadline: Duration) -> Req
         Request {
             socket,
             first: header.lines().next().unwrap().into(),
+            headers: header,
             body: if length == 0 {
                 Value::Null
             } else {
@@ -918,9 +920,13 @@ async fn request_with_timeout(listener: &TcpListener, deadline: Duration) -> Req
 
 impl Request {
     async fn reply(mut self, status: u16, data: Value) {
+        self.reply_with_headers(status, data, "").await;
+    }
+
+    async fn reply_with_headers(&mut self, status: u16, data: Value, headers: &str) {
         let body = data.to_string();
         self.socket.write_all(format!(
-            "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n{body}",
             body.len()
         ).as_bytes()).await.unwrap();
     }

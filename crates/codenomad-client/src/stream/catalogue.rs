@@ -102,29 +102,35 @@ impl CatalogueWatch {
             let (out, events) = bounded(2);
             let mut epoch = 0;
             let mut delay = 250;
-            while !cancelled.is_closed() {
+            'watch: while !cancelled.is_closed() {
                 epoch += 1;
                 let state = Arc::new(State {
                     catalogue: Some(observer.clone()),
                     ..State::default()
                 });
                 start(backend.clone(), epoch, out.clone(), state.clone());
-                futures_lite::future::race(
+                let expired = futures_lite::future::race(
                     async {
                         while let Ok(event) = events.recv().await {
                             match event {
                                 Input::Opened(_) => delay = 250,
+                                Input::AuthenticationRequired(_) => return true,
                                 Input::Closed(_) => break,
                                 _ => {}
                             }
                         }
+                        false
                     },
                     async {
                         let _ = cancelled.recv().await;
+                        false
                     },
                 )
                 .await;
                 state.cancelled.store(true, SeqCst);
+                if expired {
+                    break 'watch;
+                }
                 futures_lite::future::race(runtime::sleep(Duration::from_millis(delay)), async {
                     let _ = cancelled.recv().await;
                 })

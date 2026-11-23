@@ -239,18 +239,18 @@ pub(super) async fn dispatch(
         return Ok(());
     }
     let value: Value = serde_json::from_str(data.trim())?;
-    if let Some(signals) = &state.catalogue {
-        if data.len() > NATIVE_EVENT_LIMIT && storage_owner(&value).is_none() {
-            return Err("oversized SSE event".into());
-        }
-        signals.observe(&value);
-        return Ok(());
-    }
     if let Some(owner) = storage_owner(&value) {
+        if state.catalogue.is_some() {
+            return Ok(());
+        }
         return state.storage_changed(epoch, owner, out).await;
     }
     if data.len() > NATIVE_EVENT_LIMIT {
         return Err("oversized SSE event".into());
+    }
+    if let Some(signals) = &state.catalogue {
+        signals.observe(&value);
+        return Ok(());
     }
     if let Some(event) = workspace_event(b, &value) {
         out.send(Input::Workspace(epoch, event)).await?;
