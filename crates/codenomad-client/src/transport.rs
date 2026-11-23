@@ -80,6 +80,7 @@ pub enum Event {
         outcome: PromptOutcome,
     },
     Text(String, crate::content::TextEvent),
+    Reasoning(String, crate::content::ReasoningEvent),
     Tool(String, std::sync::Arc<crate::content::Tool>),
     Done,
     AuthenticationRequired(Authentication),

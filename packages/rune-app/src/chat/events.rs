@@ -231,6 +231,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
             }
+            Event::Reasoning(id, event) => {
+                content::apply_reasoning(&mut s.messages, &id, &event);
+            }
             Event::Tool(id, tool) => {
                 if let Some(row) = s
                     .messages

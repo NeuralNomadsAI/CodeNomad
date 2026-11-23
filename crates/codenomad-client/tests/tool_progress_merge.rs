@@ -11,6 +11,7 @@ pub fn reconnect_preserves_running_progress_until_an_authoritative_update() {
         decode_message(&json!({"id":"reply","type":"assistant","content":[
             {"type":"tool","id":"call","name":"bash","state":state}
         ]}))
+        .map(std::sync::Arc::new)
         .unwrap()
         .into()
     };
