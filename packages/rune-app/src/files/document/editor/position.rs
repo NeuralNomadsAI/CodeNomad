@@ -60,7 +60,7 @@ pub(crate) struct Viewport {
 }
 
 impl Viewport {
-    pub(super) fn offset(&self) -> [f32; 2] {
+    pub(super) fn saved_scroll(&self) -> [f32; 2] {
         self.offset.get()
     }
 

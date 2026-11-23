@@ -166,7 +166,9 @@ impl Store {
         let mut store = lock(&self.0);
         store.positions.retain(|(saved, _)| saved != &key);
         store.positions.push_front((key, position));
-        store.positions.truncate(5);
+        if store.positions.len() > 5 {
+            store.positions.pop_back();
+        }
     }
     pub(crate) fn block_file_draft_updates(&self, blocked: bool) {
         lock(&self.0).read_blocked = blocked;

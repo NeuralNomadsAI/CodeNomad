@@ -263,7 +263,7 @@ impl Editor {
             if has_text && (self.project.is_none() || self.native_project.is_some()) {
                 self.store.remember_position(
                     key.clone(),
-                    SavedPosition::capture(&self.edit, self.position.viewport.offset()),
+                    SavedPosition::capture(&self.edit, self.position.viewport.saved_scroll()),
                 );
             }
             self.store.sync_saved(key, self.saved_key.as_ref(), draft);
