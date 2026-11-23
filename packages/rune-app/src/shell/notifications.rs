@@ -9,6 +9,11 @@ use std::collections::{HashSet, VecDeque};
 
 const RETAINED: usize = 128;
 
+#[cfg(target_arch = "wasm32")]
+mod web;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use web::with_background_wake;
+
 #[derive(Default)]
 pub(crate) struct Attention {
     requests: [HashSet<String>; 2],
@@ -212,7 +217,7 @@ impl Host {
 
     fn focused(&self) -> bool {
         #[cfg(target_arch = "wasm32")]
-        return crate::platform::notifications::focused();
+        return web::focused();
         #[cfg(not(target_arch = "wasm32"))]
         self.focused
     }
@@ -243,10 +248,7 @@ impl Host {
                 .flatten()
                 .map(|_presented| Presented::Native { _presented });
             #[cfg(target_arch = "wasm32")]
-            return (!cfg!(feature = "test-support"))
-                .then(|| crate::platform::notifications::show(title, body, action))
-                .flatten()
-                .map(|_presented| Presented::Native { _presented });
+            return web::present(title, body, action);
             #[cfg(not(any(target_os = "windows", target_arch = "wasm32")))]
             {
                 let _ = (title, body, action);
@@ -291,35 +293,6 @@ impl Host {
 
 pub(crate) fn focus_changed(s: &mut State, focused: bool, _: &mut Tx) {
     s.notifications.focused = focused;
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn with_background_wake(s: &mut State, wake: rune::Waker) -> rune::Waker {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering::Relaxed},
-    };
-    let Some(handle) = s.notifications.background.take() else {
-        return wake;
-    };
-    let scheduled = Arc::new(AtomicBool::new(false));
-    Arc::new(move || {
-        if !crate::platform::notifications::hidden() {
-            wake();
-        } else if !scheduled.swap(true, Relaxed) {
-            let scheduled = scheduled.clone();
-            // On Web, AppHandle updates are drained by the user event, before the RAF.
-            handle.update_if(move |s, tx| {
-                scheduled.store(false, Relaxed);
-                let mut changed = crate::poll_chat(s, 64);
-                changed |= crate::settings::poll(s);
-                collect(s, crate::workspace::notification_target);
-                changed |= crate::workspace::poll_cached_notifications(s, tx);
-                changed |= crate::settings::poll(s);
-                changed | poll(s, tx)
-            });
-        }
-    })
 }
 
 pub(crate) fn collect(s: &mut State, target: impl FnOnce(&State) -> Option<(Target, String)>) {
@@ -482,105 +455,4 @@ pub(crate) fn system_allowed(config: Option<&Value>, category: Category, focused
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn notice_waits_for_the_confirmed_route_instead_of_claiming_delivery_early() {
-        let mut s = crate::init();
-        crate::settings::notification_fixture(&s);
-        s.notifications.record();
-        s.notifications.focused = false;
-        let target = Target {
-            tab: None,
-            backend_url: "http://127.0.0.1:9/".into(),
-            server: None,
-            occurrence: 0,
-            workspace: "workspace".into(),
-            session: "session".into(),
-        };
-        crate::settings::invalidate(&s, codenomad_client::settings::Owner::Config);
-        for _ in 0..2 {
-            deliver(
-                &mut s,
-                Notice {
-                    target: target.clone(),
-                    category: Category::NeedsInput,
-                    id: "1:question".into(),
-                    project: "Private project".into(),
-                    label: "Conversation".into(),
-                },
-            );
-        }
-        assert_eq!(s.notifications.deferred.len(), 1);
-        assert!(s.notifications.delivered.is_empty());
-        assert!(s.notifications.recorded().is_empty());
-        crate::settings::notification_fixture(&s);
-        let notice = s.notifications.deferred.pop_front().unwrap();
-        deliver(&mut s, notice);
-        assert_eq!(s.notifications.recorded().len(), 1);
-    }
-
-    #[test]
-    fn system_delivery_requires_confirmed_routing_and_the_focus_override() {
-        let defaults = json!({});
-        let allow = json!({"settings":{"osNotificationsAllowWhenVisible":true}});
-        let disabled = json!({"settings":{"notificationRouting":{"needsInput":{"system":false}}}});
-        assert!(!system_allowed(None, Category::NeedsInput, false));
-        assert!(!system_allowed(
-            Some(&disabled),
-            Category::NeedsInput,
-            false
-        ));
-        assert!(!system_allowed(Some(&defaults), Category::NeedsInput, true));
-        assert!(system_allowed(Some(&defaults), Category::NeedsInput, false));
-        assert!(system_allowed(Some(&allow), Category::SessionDone, true));
-    }
-
-    #[test]
-    fn notification_observation_requires_a_root_and_a_new_confirmed_idle() {
-        use crate::agent_api::Form;
-        let mut attention = Attention::default();
-        let mut snapshot = Snapshot {
-            models: None,
-            current: None,
-            session_known: true,
-            running: false,
-            root_directory: None,
-            permissions: None,
-            forms: Some(vec![Form {
-                id: "form-1".into(),
-                title: "Question".into(),
-                fields: vec![],
-            }]),
-        };
-        attention.observe(&snapshot, true);
-        assert!(attention.pending.is_empty());
-        snapshot.root_directory = Some("/checkout".into());
-        attention.observe(&snapshot, true);
-        assert!(
-            attention.pending.is_empty(),
-            "revisiting does not announce existing requests"
-        );
-        attention.request(true, "form-1".into());
-        attention.observe(&snapshot, true);
-        attention.observe(&snapshot, true);
-        assert_eq!(attention.pending.len(), 1);
-        attention.execution(Some("done".into()));
-        assert_eq!(
-            attention.verify_idle(),
-            Some(("done".into(), "/checkout".into()))
-        );
-        assert!(attention.verify_idle().is_none());
-        attention.execution(None);
-        attention.confirm_idle("done".into(), true);
-        assert_eq!(attention.pending.len(), 1);
-        attention.execution(Some("next".into()));
-        attention.confirm_idle("next".into(), true);
-        assert!(matches!(
-            attention.pending.as_slice(),
-            [(Category::NeedsInput, _), (Category::SessionDone, _)]
-        ));
-    }
-}
+mod tests;
