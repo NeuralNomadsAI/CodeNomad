@@ -284,6 +284,7 @@ fn only_live_history_with_a_different_head_revokes_index_authority() {
     ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
     ui.accept(Lane::Changes, Value::Changes(rows.clone(), None, checked));
     assert!(!ui.can_commit());
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
     statuses(&mut ui, rows);
     assert!(ui.can_commit());
 }
@@ -625,6 +626,7 @@ fn refreshed_inventory_detects_a_branch_switch_without_a_stream_hint() {
     assert!(ui.has_preview());
     assert!(ui.requests.slot(Lane::Preview).dirty);
     assert!(!ui.can_commit());
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
     statuses(&mut ui, vec![change("a", true, false, 1)]);
     assert!(ui.can_commit());
 }

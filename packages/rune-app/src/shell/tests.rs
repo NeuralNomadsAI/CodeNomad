@@ -45,10 +45,8 @@ fn a_large_session_catalogue_mounts_only_visible_rows_but_search_reaches_the_tai
             .count()
             < 100
     );
-    rt.update(|s, tx| {
-        s.screen.launcher_mut().unwrap().search = rune::edit::TextEdit::new("Row 2099");
-        tx.instant();
-    });
+    click(&mut rt, "session-search-toggle");
+    rt.paste("Row 2099");
     settle(&mut rt);
     assert!(rt.find("session-catalogue-2099").is_some());
 }

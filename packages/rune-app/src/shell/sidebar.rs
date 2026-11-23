@@ -107,28 +107,36 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 .key("session-search"),
         );
     }
-    let searching = l.show_search && !l.search.text.trim().is_empty();
+    let query = l.search.text.trim();
+    let searching = l.show_search && !query.is_empty();
+    let folded = query.to_lowercase();
+    let has_results = searching
+        && l.project
+            .as_ref()
+            .is_some_and(|project| l.search_results.matches(&project.id, query));
     let mut seen = std::collections::HashSet::new();
-    let rows: Vec<_> = if searching {
-        (0..l.search_results.rows.len())
-            .map(|index| (2, index))
-            .collect()
-    } else {
-        l.sessions
-            .iter()
-            .enumerate()
-            .map(|(i, row)| (0, i, row))
-            .chain(
-                l.linked
-                    .pages
-                    .iter()
-                    .flat_map(|page| page.rows.iter().enumerate().map(|(i, row)| (1, i, row))),
-            )
-            .filter_map(|(source, index, row)| {
-                seen.insert(row.id.as_str()).then_some((source, index))
-            })
-            .collect()
-    };
+    let rows: Vec<_> = l
+        .sessions
+        .iter()
+        .enumerate()
+        .map(|(i, row)| (0, i, row))
+        .chain(
+            l.linked
+                .pages
+                .iter()
+                .flat_map(|page| page.rows.iter().enumerate().map(|(i, row)| (1, i, row))),
+        )
+        .filter(|(_, _, row)| !searching || row.title.to_lowercase().contains(&folded))
+        .chain(
+            l.search_results
+                .rows
+                .iter()
+                .enumerate()
+                .filter(|_| has_results)
+                .map(|(i, row)| (2, i, row)),
+        )
+        .filter_map(|(source, index, row)| seen.insert(row.id.as_str()).then_some((source, index)))
+        .collect();
     let count = rows.len();
     let rows = std::rc::Rc::new(rows);
     let keys = rows.clone();
