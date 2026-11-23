@@ -12,6 +12,7 @@ const remoteAccess = process.argv.includes('--remote-access')
 const remoteReceipts = process.argv.includes('--remote-receipts')
 const notifications = process.argv.includes('--notifications')
 const shortcuts = process.argv.includes('--shortcuts')
+const about = process.argv.includes('--info')
 const noDeviceRegistry = process.argv.includes('--no-device-registry')
 const local = opencodeMode === '--local-opencode' || remoteAccess
 const files = await bundleAssetPaths(bundle)
@@ -26,6 +27,8 @@ let account = 'First fixture account', detached = false
 let contrast = 'on', permissions = 'autonomous'
 let notificationRouting, notifyFocused
 let hotkeyOverrides = { 'new-instance': [{key:'n',mod:true}], 'file-save': [{key:'n',mod:true}] }
+let updateFeed = 'stable', infoReads = 0
+const feedWrites = []
 const writes = []
 const memoryRequests = []
 const opencodeRequests = []
@@ -53,7 +56,14 @@ const server = createServer(async (req,res) => {
   const p = url.pathname
   const json = value => res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(value))
   try {
-    if (p === '/api/meta') return json({apiContract:1,serverId:'fixture-settings',capabilities:['integrations'],localRequest:local})
+    if (p === '/api/meta') {
+      const meta = {apiContract:1,serverId:'fixture-settings',capabilities:['integrations'],localRequest:local}
+      if (!about) return json(meta)
+      infoReads++
+      return json({...meta,updateFeed,serverVersion:'9.0.1',ui:{version:'9.0.2',source:'fixture'},
+        listeningMode:'all',host:'192.0.2.10',localUrl:'http://127.0.0.1:3456',
+        remoteUrl:'https://192.0.2.10:3457',workspaceRoot:directory,system:{platform:'win32',arch:'x64'}})
+    }
     if (p === '/api/opencode/update') {
       opencodeRequests.push(`${req.method}${url.search}`)
       assert(local,'The remote pane must not try to read or mutate OpenCode')
@@ -188,6 +198,17 @@ const server = createServer(async (req,res) => {
       return json({deleted:true})
     }
     if (p === '/api/storage/config/server') {
+      if (about) {
+        if (req.method === 'PATCH') {
+          let body = ''
+          for await (const chunk of req) body += chunk
+          const patch = JSON.parse(body)
+          assert.deepEqual(patch,{updateFeed:'preview'})
+          updateFeed = patch.updateFeed
+          feedWrites.push(patch)
+        }
+        return json({updateFeed})
+      }
       assert(local,'Only the local OpenCode pane reads server configuration')
       if (req.method === 'PATCH') {
         let body = ''
@@ -290,11 +311,29 @@ try {
   releaseState()
   await click(directory)
   await visible('No session selected')
-  if (shortcuts) await checkShortcuts()
+  if (about) await checkInfo()
+  else if (shortcuts) await checkShortcuts()
   else if (notifications) await checkNotifications()
   else if (remoteAccess) await checkRemoteAccess()
   else if (opencodeMode) await checkOpenCode()
   else await checkProviders()
+
+  async function checkInfo() {
+    await click('Settings')
+    await radio('Info').press('Enter')
+    await visible('9.0.1')
+    await visible('9.0.2')
+    await visible('https://192.0.2.10:3457')
+    await visible('Specific network interface')
+    const before = infoReads
+    const preview = radio('Previews and stable releases')
+    await preview.press('Enter')
+    await page.getByRole('radio',{name:'Previews and stable releases',exact:true,checked:true}).waitFor({state:'attached'})
+    assert.deepEqual(feedWrites,[{updateFeed:'preview'}])
+    assert.equal(infoReads,before+1)
+    assert.equal(await page.getByRole('button',{name:'Download update'}).count(),0)
+    console.log(JSON.stringify({fixture:'info-preferences',feedWrites,confirmedRead:true}))
+  }
 
   async function checkShortcuts() {
     await click('Settings')

@@ -1,6 +1,7 @@
 //! Preferences owns its native window; its confirmed host settings also feed the shell.
 mod behavior;
 mod contrast;
+mod info;
 mod memory;
 pub(crate) mod notification_routing;
 mod notification_settings;

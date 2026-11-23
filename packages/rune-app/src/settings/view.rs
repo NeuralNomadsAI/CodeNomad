@@ -3,7 +3,7 @@ mod general;
 mod tests;
 
 use super::{
-    notification_settings, opencode,
+    info, notification_settings, opencode,
     preferences::{Owner, Preferences},
     providers, remote, render_with,
 };
@@ -41,6 +41,7 @@ pub(super) struct Window {
     logging: opencode::logging::Logging,
     pub(super) providers: providers::Catalog,
     remote: remote::Remote,
+    info: info::Info,
     notification_permission: notification_settings::Permission,
 }
 
@@ -58,6 +59,7 @@ enum Section {
     Providers,
     Shortcuts,
     Remote,
+    Info,
 }
 
 impl Default for Section {
@@ -111,6 +113,7 @@ impl Window {
     }
 
     fn request_close(&mut self, tx: &mut rune::Tx) {
+        self.info.close();
         self.shared.borrow_mut().hide_opencode();
         self.logging.close();
         self.remote.close();
@@ -235,6 +238,13 @@ pub(super) fn spec() -> AppSpec<Window> {
                     .window_wake
                     .as_ref()
                     .is_some_and(|wake| s.remote.poll(&prefs, wake));
+            let info_changed = s.section == Section::Info
+                && !s.confirm_close
+                && !s.closing
+                && prefs
+                    .window_wake
+                    .as_ref()
+                    .is_some_and(|wake| s.info.poll(&prefs, wake));
             drop(prefs);
             let providers_changed = if s.section == Section::Providers {
                 let prefs = s.shared.borrow();
@@ -246,6 +256,7 @@ pub(super) fn spec() -> AppSpec<Window> {
             updated
                 | status_changed
                 | remote_changed
+                | info_changed
                 | providers_changed
                 | editor_changed
                 | recording_ended
@@ -306,6 +317,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         let providers_label = t("settings.nav.providers");
         let shortcuts_label = t("settings.nav.hotkeys");
         let remote_label = t("settings.nav.remote");
+        let info_label = t("settings.nav.info");
         let section = match s.section {
             Section::General => general_label,
             Section::OpenCode => opencode_label,
@@ -313,6 +325,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::Providers => providers_label,
             Section::Shortcuts => shortcuts_label,
             Section::Remote => remote_label,
+            Section::Info => info_label,
         };
         let nav = chrome::nav(
             t("settings.title"),
@@ -348,6 +361,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     remote_label,
                     s.section == Section::Remote,
                 ),
+                ("settings-info", info_label, s.section == Section::Info),
             ],
             |s: &mut Window, key| {
                 s.picker.set(None);
@@ -360,6 +374,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     "settings-providers" => Section::Providers,
                     "settings-hotkeys" => Section::Shortcuts,
                     "settings-remote" => Section::Remote,
+                    "settings-info" => Section::Info,
                     _ => Section::General,
                 };
                 if s.section != Section::OpenCode {
@@ -377,6 +392,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 }
                 if s.section != Section::Remote {
                     s.remote.close();
+                }
+                if s.section != Section::Info {
+                    s.info.close();
                 }
             },
         );
@@ -457,6 +475,13 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 s.remote.view(&s.shared, |s: &mut Window| {
                     (s.section == Section::Remote && !s.closing && !s.confirm_close)
                         .then_some(&mut s.remote)
+                }),
+            ),
+            Section::Info => (
+                "info",
+                s.info.view(&s.shared, |s: &mut Window| {
+                    (s.section == Section::Info && !s.confirm_close && !s.closing)
+                        .then_some(&mut s.info)
                 }),
             ),
         };

@@ -12,6 +12,7 @@ pub(super) enum Choice {
     ShortcutReset,
     NewConversationPermissions,
     LogLevel,
+    UpdateFeed,
     NotificationRoute(Category, Destination),
     NotificationsFocused,
     Mode,
@@ -37,6 +38,7 @@ impl Choice {
             Self::Locale => patch["settings"]["locale"] = json!(value),
             Self::Contrast => patch["settings"]["highContrast"] = json!(value),
             Self::LogLevel => patch["logLevel"] = json!(value),
+            Self::UpdateFeed => patch["updateFeed"] = json!(value),
             Self::NotificationRoute(category, destination) => {
                 patch["settings"]["notificationRouting"][category.key()][destination.key()] =
                     json!(value == "true");
@@ -75,6 +77,7 @@ impl Choice {
             Self::Locale => snapshot["settings"]["locale"] == value,
             Self::Contrast => snapshot["settings"]["highContrast"] == value,
             Self::LogLevel => snapshot["logLevel"] == value,
+            Self::UpdateFeed => snapshot["updateFeed"] == value,
             Self::NotificationRoute(category, destination) => {
                 snapshot["settings"]["notificationRouting"][category.key()][destination.key()]
                     == (value == "true")
@@ -251,6 +254,7 @@ impl Document {
             Choice::Contrast
                 | Choice::NewConversationPermissions
                 | Choice::LogLevel
+                | Choice::UpdateFeed
                 | Choice::NotificationRoute(..)
                 | Choice::NotificationsFocused
                 | Choice::Shortcut(_)

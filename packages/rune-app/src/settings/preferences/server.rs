@@ -71,4 +71,21 @@ impl Preferences {
             self.server.retry();
         }
     }
+
+    pub(in crate::settings) fn stage_update_feed(&mut self, feed: &'static str) {
+        if self.can_retry() && !self.update_feed_pending() && matches!(feed, "stable" | "preview") {
+            if self.server.read_failed() {
+                self.server.invalidate();
+            }
+            self.server.stage(Choice::UpdateFeed, feed);
+        }
+    }
+
+    pub(in crate::settings) fn update_feed_pending(&self) -> bool {
+        self.server.requested(Choice::UpdateFeed).is_some() && !self.update_feed_failed()
+    }
+
+    pub(in crate::settings) fn update_feed_failed(&self) -> bool {
+        self.server.choice_failed(Choice::UpdateFeed)
+    }
 }

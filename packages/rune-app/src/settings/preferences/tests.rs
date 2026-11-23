@@ -2,6 +2,7 @@ use super::*;
 mod appearance;
 mod behavior;
 mod events;
+mod info;
 mod memory;
 mod notifications;
 mod opencode;
