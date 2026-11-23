@@ -129,6 +129,8 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
                 super::shortcuts::Action::NextPrompt
             }
             .label(s);
+            // Keep editor focus in the selecting gesture. Mouse release in Rune's web
+            // host updates the editing proxy without activating it (Rune #1713).
             item.select_before_close = true;
             Rc::new(item)
         }));
