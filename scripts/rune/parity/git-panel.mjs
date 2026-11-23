@@ -32,13 +32,14 @@ function elements(tree) {
   return nodes
 }
 
-function native(scene, theme, stem, script, mark = "end", width, locale = "fr", commitDetail = false) {
+function native(scene, theme, stem, script, mark = "end", width, locale = "fr", detail) {
   const tree = path.join(out, `${stem}.json`)
   const png = path.join(out, `${stem}.png`)
   const env = { ...process.env, RUNE_LOCALE: locale, CODENOMAD_PROFILE: "trial-git-parity" }
   for (const key of Object.keys(env)) if (key.startsWith("RUNE_") && key !== "RUNE_LOCALE") delete env[key]
   if (width) env.RUNE_GIT_PANEL_WIDTH = String(width)
-  if (commitDetail) env.RUNE_GIT_COMMIT_DETAIL = commitDetail === "hash" ? "hash" : "1"
+  if (detail === "commit" || detail === "hash") env.RUNE_GIT_COMMIT_DETAIL = detail
+  else if (detail) env.RUNE_GIT_PANEL_STATE = detail
   const args = ["--scene", scene, "--theme", theme, "--tree", tree, "--snap", png,
     "--size", `${viewport.width}x${viewport.height}`, "--scale", "1"]
   if (script) args.push("--script", script, "--at", `mark:${mark}`)
@@ -110,6 +111,7 @@ try {
       const geometry = {}
       for (const [label, query, key] of [
         ["context", ".git-panel-context", "git-context"],
+        ["worktree", ".git-panel-worktree", "git-worktree-trigger"],
         ["tools", ".git-panel-tools", "git-tools"],
         ["modes", ".git-panel-switch", "git-mode"],
         mode === "changes"
@@ -126,6 +128,8 @@ try {
       }
       const row = geometry[mode === "changes" ? "stagedHeader" : "firstCommit"]
       assert(Math.abs(row.solid[3] - row.rune[3]) <= 2, `${mode}/${theme}: row height differs by more than 2 px`)
+      assert(Math.abs(geometry.worktree.solid[2] - geometry.worktree.rune[2]) <= 2, `${name}: worktree control must span the panel`)
+      assert(Math.abs(geometry.worktree.solid[3] - geometry.worktree.rune[3]) <= 2, `${name}: worktree control height differs by more than 2 px`)
       const [solidWidth, runeWidth] = [geometry.modes.solid[2], geometry.modes.rune[2]]
       // Allow font raster/measurement differences, not a full-width or equal-column selector.
       assert(Math.abs(solidWidth - runeWidth) <= 8, `${name}: selector width ${runeWidth} vs ${solidWidth} px`)
@@ -150,7 +154,7 @@ try {
       const summary = page.locator(".git-commit-summary")
       await summary.getByText("2 fichiers modifiés", { exact: true }).waitFor()
       await page.screenshot({ path: path.join(out, `solid-commit-detail-${theme}.png`) })
-      const detail = JSON.parse(await readFile(native("git-commits", theme, `rune-commit-detail-${theme}`, settle, "end", undefined, locale, true), "utf8"))
+      const detail = JSON.parse(await readFile(native("git-commits", theme, `rune-commit-detail-${theme}`, settle, "end", undefined, locale, "commit"), "utf8"))
       for (const [solid, key] of [[back, "git-history-back"], [summary, "git-commit-summary"]]) {
         const a = await solid.boundingBox()
         const b = detail.elements.find(node => node.key === key)?.rect
@@ -168,7 +172,7 @@ try {
     { t: 0.2, type: "tap", key: "git-history-back" },
     { t: 0.6, type: "mark", name: "end" },
   ] }))
-  const history = JSON.parse(await readFile(native("git-commits", "dark", "commit-back", back, "end", undefined, "fr", true), "utf8"))
+  const history = JSON.parse(await readFile(native("git-commits", "dark", "commit-back", back, "end", undefined, "fr", "commit"), "utf8"))
   assert(elements(history).some(node => node.role === "button" && node.name?.startsWith("Make Git history")))
   const focus = path.join(out, "commit-focus-script.json")
   await writeFile(focus, JSON.stringify({ events: [
@@ -219,6 +223,32 @@ try {
   assert(menu.some(node => node.role === "menu-item" && node.key?.endsWith(":item:stage") && node.states.includes("focused")))
   const narrowModes = narrow.elements.find(node => node.key === "git-mode")?.rect
   assert(narrowModes && narrowModes[2] < 180, "The mode selector must fit a compact panel")
+  const catalogue = JSON.parse(await readFile(path.join(root, "crates/rune-theme-codenomad/assets/catalogues/fr.json"), "utf8"))
+  for (const [mode, emptyKey, failure] of [
+    ["changes", "instanceShell.gitChanges.empty", "fixture status refused"],
+    ["commits", "gitPanel.emptyHistory", "fixture history refused"],
+  ]) {
+    const view = async state => {
+      const filename = native(`git-${mode}`, "dark", `${mode}-${state}`, settle, "end", undefined, "fr", state)
+      return elements(JSON.parse(await readFile(filename, "utf8")))
+    }
+    const empty = catalogue[emptyKey]
+    assert(empty)
+    assert((await view("empty")).some(node => node.role === "status" && node.name === empty))
+    const failed = await view("error")
+    assert(failed.some(node => node.role === "alert" && node.name?.includes(failure)))
+    assert(!failed.some(node => node.name === empty), "Read failure must not claim the checkout is empty")
+  }
+  for (const [state, diagnostic] of [
+    ["uninitialized", catalogue["filesPanel.gitInit.notRepository"]],
+    ["no-git", "Git is missing from the backend PATH. Restart CodeNomad after changing PATH."],
+  ]) {
+    const filename = native("git-changes", "dark", state, settle, "end", undefined, "fr", state)
+    const tree = JSON.parse(await readFile(filename, "utf8"))
+    assert(tree.elements.some(node => node.path.includes("/git-branch/") && node.text === "CodeNomad"))
+    assert(elements(tree).some(node => node.name === diagnostic))
+    assert.equal(elements(tree).some(node => node.key === "git-init"), state === "uninitialized")
+  }
   await writeFile(path.join(out, "report.json"), JSON.stringify(report, null, 2) + "\n")
   console.log(`Git captures and accessibility trees: ${out}`)
 } finally {

@@ -212,6 +212,10 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
 }
 
 pub(crate) fn show(s: &mut State, visible: bool) {
+    #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+    if s.git.scene {
+        return;
+    }
     if let Some(owner) = &mut s.git.owner {
         owner.show(visible);
     }

@@ -14,7 +14,16 @@ const UNSTAGED: &str = "git-row-unstaged:file:git-panel.txt";
 fn wait(rt: &mut Runtime<State>, step: &str, ready: impl Fn(&Runtime<State>) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(25);
     while !ready(rt) {
-        assert!(Instant::now() < deadline, "Git panel timeout: {step}");
+        if Instant::now() >= deadline {
+            let alerts: Vec<_> = rt
+                .elements()
+                .into_iter()
+                .filter(|el| !el.exiting && el.role == "alert")
+                .filter_map(|el| el.text.or(el.label))
+                .collect();
+            eprintln!("Git panel probe: timed out at {step}; alerts: {alerts:?}");
+            std::process::exit(1);
+        }
         rt.frame(1.0 / 60.0);
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -59,10 +68,14 @@ pub(super) fn run() {
     wait(&mut rt, "conversation", |rt| {
         !rt.state.screen.is_launcher() && rt.state.phase == Phase::Ready
     });
-    if rt.find("right-panel-tab-1").is_none() {
-        tap(&mut rt, "right-panel-toggle");
+    if !press(&mut rt, "right-panel-tab-1")
+        && !(press(&mut rt, "right-panel-toggle") && press(&mut rt, "right-panel-tab-1"))
+    {
+        eprintln!(
+            "Git panel probe: Files tab (right-panel-tab-1) is missing. Build with the Shell Files panel mounted."
+        );
+        std::process::exit(1);
     }
-    tap(&mut rt, "right-panel-tab-1");
     wait(&mut rt, "Files mounted", |rt| rt.find("git-mode").is_some());
     tap_mode(&mut rt, 1);
     wait(&mut rt, "working-tree status", |rt| {
@@ -236,6 +249,16 @@ pub(super) fn run() {
 
 fn tap_mode(rt: &mut Runtime<State>, index: usize) {
     tap(rt, &format!("git-mode/segment{index}"));
+}
+
+fn press(rt: &mut Runtime<State>, key: &str) -> bool {
+    let Some((x, y)) = rt.find(key) else {
+        return false;
+    };
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    true
 }
 
 fn commit_key(rt: &Runtime<State>) -> Option<String> {

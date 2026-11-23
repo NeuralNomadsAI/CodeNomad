@@ -86,14 +86,6 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
             panel = panel.child(theme::note(error, "alert"));
         }
     }
-    if ui.repository() == Repository::NoGit
-        && ui.mode != Mode::Workspace
-        && mode_lanes
-            .iter()
-            .all(|lane| ui.requests.slot(*lane).error.is_none())
-    {
-        panel = panel.child(theme::note(t("filesPanel.gitInit.gitRequired"), "alert"));
-    }
     if ui.mode != Mode::Workspace
         && let Some((ok, message)) = &ui.mutation_message
     {
@@ -139,7 +131,10 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
 }
 
 fn branch(ui: &Ui) -> String {
-    if ui.repository() == Repository::Uninitialized {
+    if matches!(
+        ui.repository(),
+        Repository::Uninitialized | Repository::NoGit
+    ) {
         return ui
             .tree()
             .map(|tree| basename(&tree.directory))
@@ -254,7 +249,8 @@ fn changes_view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
                 ui.body_bounds = bounds;
             }
         }));
-    if ui.changes.count() == 0 {
+    let status = ui.requests.slot(Lane::Changes);
+    if ui.changes.count() == 0 && (ui.loading() || ui.changes.ready() && status.error.is_none()) {
         body = body.child(theme::note(
             t(if ui.loading() {
                 "instanceInfo.loading"

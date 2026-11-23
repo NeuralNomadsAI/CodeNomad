@@ -36,7 +36,7 @@ impl Ui {
         if lane == Lane::Changes {
             self.index_checked = None;
         }
-        self.requests.slot_mut(lane).error = Some(read_error(error));
+        self.requests.slot_mut(lane).error = Some(error.to_string());
     }
 
     pub(super) fn accept(&mut self, lane: Lane, value: Value) {
@@ -187,7 +187,7 @@ impl Ui {
                 None
             }
             (Mutation::Init(_), Err(error)) => Some((false, init_error(error))),
-            (_, Err(error)) => Some((false, read_error(error))),
+            (_, Err(error)) => Some((false, error.to_string())),
         };
     }
 
@@ -218,24 +218,18 @@ fn same_tree(a: &Worktree, b: &Worktree) -> bool {
         }
 }
 
-fn read_error(error: Error) -> String {
+fn init_error(error: Error) -> String {
     if error
         .downcast_ref::<Refusal>()
         .is_some_and(|err| err.code.as_deref() == Some("git_required"))
     {
-        crate::strings::t("filesPanel.gitInit.gitRequired").into()
-    } else {
-        error.to_string()
+        return error.to_string();
     }
-}
-
-fn init_error(error: Error) -> String {
     let key = error.downcast_ref::<Refusal>().and_then(|err| {
         Some(match err.code.as_deref() {
             Some("git_init_unsupported") => "filesPanel.gitInit.unsupported",
             Some("git_init_repository_exists") => "filesPanel.gitInit.exists",
             Some("git_init_directory_mismatch") => "filesPanel.gitInit.mismatch",
-            Some("git_required") => "filesPanel.gitInit.gitRequired",
             _ if matches!(err.status, 403 | 404) => "filesPanel.gitInit.notOwned",
             _ if err.status == 409 => "filesPanel.gitInit.deleting",
             _ => return None,
