@@ -1,10 +1,22 @@
 use super::{MAX_FILE_BYTES, reject_svgz};
 
+#[cfg(not(target_arch = "wasm32"))]
+mod avif;
+
 const MAX_SIDE: usize = 8192;
 const MAX_TRANSCRIPT_PIXELS: usize = 8 * 1024 * 1024;
 
 pub fn can_decode(bytes: &[u8]) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    if bytes.get(4..12) == Some(b"ftypavif") {
+        return native_avif(bytes, |width, height| !oversized(width, height));
+    }
     admit(bytes, cfg!(target_arch = "wasm32"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_avif(bytes: &[u8], accepts: fn(usize, usize) -> bool) -> bool {
+    bytes.len() <= MAX_FILE_BYTES && avif::still(bytes, accepts).is_some()
 }
 
 fn admit(bytes: &[u8], browser: bool) -> bool {
@@ -53,7 +65,11 @@ pub fn transcript_dimensions(width: usize, height: usize) -> bool {
 }
 
 pub(crate) fn transcript_raster(bytes: &[u8]) -> bool {
-    can_decode(bytes)
+    #[cfg(not(target_arch = "wasm32"))]
+    if bytes.get(4..12) == Some(b"ftypavif") {
+        return native_avif(bytes, transcript_dimensions);
+    }
+    admit(bytes, cfg!(target_arch = "wasm32"))
         && imagesize::blob_size(bytes)
             .ok()
             .is_some_and(|size| transcript_dimensions(size.width, size.height))
@@ -114,7 +130,6 @@ fn jpeg_size(mut bytes: &[u8]) -> Option<(usize, usize)> {
 }
 
 // Inspect declared image extents without invoking the codec or allocating from box lengths.
-// The decoder must still bound bitstream allocation: declared extents aren't authoritative.
 fn avif_oversized(
     bytes: &[u8],
     animated: bool,
@@ -191,7 +206,7 @@ mod tests {
         assert!(admit(&png, false));
         assert!(can_decode(b"\xef\xbb\xbf <svg/>"));
         assert!(!can_decode(&[0x1f, 0x8b]));
-        assert!(can_decode(b"\0\0\0\x0cftypavif"));
+        assert!(admit(b"\0\0\0\x0cftypavif", true));
     }
 
     #[test]
@@ -231,9 +246,9 @@ mod tests {
             ]
             .concat()
         };
-        assert!(can_decode(&avif(8192)));
-        assert!(!can_decode(&avif(8193)));
-        assert!(can_decode(&avif(0)));
+        assert!(admit(&avif(8192), true));
+        assert!(!admit(&avif(8193), true));
+        assert!(admit(&avif(0), true));
     }
 
     #[test]

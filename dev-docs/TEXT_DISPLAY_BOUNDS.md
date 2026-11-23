@@ -96,7 +96,8 @@ Rune transcript images have separate byte and geometry budgets: 5 MiB of image
 data, 8,192 pixels per side and 8 Mi pixels in total per preview; inline sources
 share 256 KiB of retained encoded data per message. The passive-raster admission
 gate in `crates/codenomad-client/src/files/images/admission.rs` checks declared
-dimensions before decode, including AVIF sequence tracks. A rejected image
+dimensions before decode, including AVIF sequence tracks on web and AV1 sequence
+headers in native AVIF stills. A rejected image
 keeps its label without contributing bytes to the tool text window or copy.
 
 Copy actions, search (native history queries) and the timeline read native
