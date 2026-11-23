@@ -1,4 +1,8 @@
-use super::{Error, MAX_DRAFT, MAX_DRAFTS, Snapshot, Tab, draft_id, encode, validate};
+use super::{
+    Error, MAX_BYTES, MAX_DRAFT, MAX_DRAFTS, MAX_STRINGS, Snapshot, Tab, Workspace, draft_id,
+    encode, snapshot_budget::choose, snapshot_bytes, snapshot_string_units, validate,
+};
+use crate::composer::draft_storage::SavedParts;
 
 pub(super) fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Error> {
     if let Ok(bytes) = encode(snapshot) {
@@ -48,59 +52,129 @@ pub(super) fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Er
             .attachment_parts
             .retain(|id, parts| saved.attachment_drafts.contains(id) && parts.valid());
     }
+    fit_text(&mut valid)?;
+    fit_parts(&mut valid).map(|bytes| (bytes, true))
+}
+
+fn priority(active: bool, saved: &Workspace, id: &str) -> u8 {
+    if saved.active_session_id.as_deref() == Some(id)
+        || id == "__no_session_draft__"
+        || id.starts_with("__recovered_draft__")
+    {
+        if active { 2 } else { 1 }
+    } else {
+        0
+    }
+}
+
+fn fit_text(snapshot: &mut Snapshot) -> Result<(), Error> {
+    let excess = snapshot_string_units(snapshot)?.saturating_sub(MAX_STRINGS);
+    if excess == 0 {
+        return Ok(());
+    }
     let mut candidates = Vec::new();
-    for (tab, entry) in valid.tabs.iter().enumerate() {
+    for (tab, entry) in snapshot.tabs.iter().enumerate() {
         let Tab::Workspace(saved) = entry else {
             continue;
         };
         for (id, text) in &saved.drafts {
-            candidates.push((text.encode_utf16().count(), tab, id.clone()));
+            candidates.push((
+                tab,
+                id.clone(),
+                (
+                    priority(snapshot.active == Some(tab), saved, id),
+                    id.len() + text.encode_utf16().count(),
+                ),
+            ));
         }
     }
-    candidates.sort_unstable();
-    while validate(&valid).is_err() {
-        let (_, tab, id) = candidates.pop().ok_or(Error::Limit)?;
-        if let Tab::Workspace(saved) = &mut valid.tabs[tab] {
-            saved.drafts.remove(&id);
+    let weights = candidates
+        .iter()
+        .map(|(_, _, weight)| *weight)
+        .collect::<Vec<_>>();
+    for index in choose(&weights, excess).ok_or(Error::Limit)? {
+        let (tab, id, _) = &candidates[index];
+        if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
+            saved.drafts.remove(id);
+            if let Some(parts) = saved.attachment_parts.get_mut(id) {
+                parts.mark_incomplete();
+            }
         }
     }
-    if let Ok(bytes) = encode(&valid) {
-        return Ok((bytes, true));
+    Ok(())
+}
+
+fn fit_parts(snapshot: &mut Snapshot) -> Result<Vec<u8>, Error> {
+    let bytes = snapshot_bytes(snapshot)?;
+    let excess = bytes.len().saturating_sub(MAX_BYTES);
+    if excess == 0 {
+        return Ok(bytes);
     }
-    // Keep draft text and the missing-parts marker when shedding attachment payloads.
     let mut payloads = Vec::new();
-    for (tab, entry) in valid.tabs.iter().enumerate() {
+    for (tab, entry) in snapshot.tabs.iter().enumerate() {
         let Tab::Workspace(saved) = entry else {
             continue;
         };
         for (id, parts) in &saved.attachment_parts {
-            let bytes = serde_json::to_vec(&parts.encode())
-                .map_err(|_| Error::Malformed)?
-                .len();
-            payloads.push((bytes, tab, id.clone()));
+            let size = part_bytes(parts)?;
+            let mut trimmed = parts.clone();
+            let trim = if trimmed.discard_pasted_text() {
+                size.saturating_sub(part_bytes(&trimmed)?)
+            } else {
+                0
+            };
+            let clear = size.saturating_sub(part_bytes(&SavedParts::missing())?);
+            payloads.push((
+                tab,
+                id.clone(),
+                priority(snapshot.active == Some(tab), saved, id),
+                trim,
+                trimmed,
+                clear,
+            ));
         }
     }
-    payloads.sort_unstable();
-    for (_, tab, id) in payloads.iter().rev() {
-        let Tab::Workspace(saved) = &mut valid.tabs[*tab] else {
-            continue;
-        };
-        if saved
-            .attachment_parts
-            .get_mut(id)
-            .is_some_and(|parts| parts.discard_pasted_text())
-            && let Ok(bytes) = encode(&valid)
-        {
-            return Ok((bytes, true));
+    for tier in 0..=2 {
+        for only_paste in [true, false] {
+            let weights = payloads
+                .iter()
+                .map(|(_, _, priority, trim, _, clear)| {
+                    (
+                        *priority,
+                        if *priority > tier {
+                            0
+                        } else if only_paste {
+                            *trim
+                        } else {
+                            *clear
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            let Some(selected) = choose(&weights, excess) else {
+                continue;
+            };
+            for index in selected {
+                let (tab, id, _, _, trimmed, _) = &payloads[index];
+                if let Tab::Workspace(saved) = &mut snapshot.tabs[*tab] {
+                    saved.attachment_parts.insert(
+                        id.clone(),
+                        if only_paste {
+                            trimmed.clone()
+                        } else {
+                            SavedParts::missing()
+                        },
+                    );
+                }
+            }
+            return encode(snapshot);
         }
     }
-    while let Some((_, tab, id)) = payloads.pop() {
-        if let Tab::Workspace(saved) = &mut valid.tabs[tab] {
-            saved.attachment_parts.remove(&id);
-        }
-        if let Ok(bytes) = encode(&valid) {
-            return Ok((bytes, true));
-        }
-    }
-    encode(&valid).map(|bytes| (bytes, true))
+    Err(Error::Limit)
+}
+
+fn part_bytes(parts: &SavedParts) -> Result<usize, Error> {
+    serde_json::to_vec(&parts.encode())
+        .map(|bytes| bytes.len())
+        .map_err(|_| Error::Malformed)
 }

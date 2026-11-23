@@ -48,7 +48,7 @@ fn saving_preserves_valid_siblings_of_an_invalid_tab() {
 }
 
 #[test]
-fn byte_budget_sheds_one_large_paste_without_erasing_its_tab_or_smaller_drafts() {
+fn byte_budget_keeps_the_active_draft_and_sheds_the_smallest_sufficient_payload() {
     use crate::composer::draft_storage::SavedParts;
     let mut tab = workspace();
     tab.active_session_id = Some("ses_3".into());
@@ -82,18 +82,15 @@ fn byte_budget_sheds_one_large_paste_without_erasing_its_tab_or_smaller_drafts()
     assert_eq!(saved_tab.active_session_id, tab.active_session_id);
     assert_eq!(saved_tab.drafts, tab.drafts);
     assert_eq!(saved_tab.attachment_drafts, tab.attachment_drafts);
-    assert_eq!(
-        saved_tab.attachment_parts["ses_4"],
-        tab.attachment_parts["ses_4"]
-    );
     let degraded = saved_tab
         .attachment_parts
         .iter()
         .filter(|(id, parts)| **parts != tab.attachment_parts[*id])
         .collect::<Vec<_>>();
-    let [(_, degraded)] = degraded.as_slice() else {
+    let [(id, degraded)] = degraded.as_slice() else {
         panic!("one degraded draft")
     };
+    assert_eq!(id.as_str(), "ses_4");
     let (parts, incomplete) = degraded.restore();
     assert!(incomplete);
     assert_eq!(
@@ -101,6 +98,19 @@ fn byte_budget_sheds_one_large_paste_without_erasing_its_tab_or_smaller_drafts()
         [crate::composer::draft::Attachment::Agent("reviewer".into())]
     );
     assert_eq!(encode(&saved).unwrap(), bytes);
+
+    let mut prefers_small = tab.clone();
+    prefers_small.active_session_id = Some("ses_4".into());
+    let (reserved, partial) = encode_for_save(&snapshot(prefers_small)).unwrap();
+    assert!(partial);
+    let reopened = decode(&reserved).unwrap();
+    let [Tab::Workspace(reopened)] = reopened.tabs.as_slice() else {
+        panic!("one live tab")
+    };
+    assert_eq!(
+        reopened.attachment_parts["ses_4"],
+        tab.attachment_parts["ses_4"]
+    );
 
     #[cfg(not(target_arch = "wasm32"))]
     {

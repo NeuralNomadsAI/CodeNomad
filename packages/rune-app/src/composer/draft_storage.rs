@@ -35,6 +35,17 @@ enum Part {
 }
 
 impl SavedParts {
+    pub(crate) fn missing() -> Self {
+        Self {
+            complete: false,
+            parts: Vec::new(),
+            literal_spans: Vec::new(),
+        }
+    }
+
+    pub(crate) fn mark_incomplete(&mut self) {
+        self.complete = false;
+    }
     pub(crate) fn encode(&self) -> Value {
         let parts: Vec<_> = self.parts.iter().map(|part| match part {
             Part::Project { name, path, uri, directory } => {

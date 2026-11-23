@@ -3,6 +3,7 @@ mod cache;
 pub(crate) mod opening;
 mod persistence;
 mod save_snapshot;
+mod snapshot_budget;
 mod state;
 pub(crate) use persistence::finish;
 #[cfg(target_arch = "wasm32")]
@@ -139,6 +140,14 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
 
 pub fn encode(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
     validate(snapshot)?;
+    let bytes = snapshot_bytes(snapshot)?;
+    if bytes.len() > MAX_BYTES {
+        return Err(Error::Limit);
+    }
+    Ok(bytes)
+}
+
+fn snapshot_bytes(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
     let tabs: Vec<Value> = snapshot
         .tabs
         .iter()
@@ -192,11 +201,7 @@ pub fn encode(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
         .collect();
     let value = json!({"version": 1, "revision": snapshot.revision, "savedAt": snapshot.saved_at,
         "layout": layout, "session": {"tabs": tabs, "activeTabIndex": active}});
-    let bytes = serde_json::to_vec(&value).map_err(|_| Error::Malformed)?;
-    if bytes.len() > MAX_BYTES {
-        return Err(Error::Limit);
-    }
-    Ok(bytes)
+    serde_json::to_vec(&value).map_err(|_| Error::Malformed)
 }
 
 fn tab(value: &Value) -> Result<Tab, Error> {
@@ -341,6 +346,13 @@ fn view_state(value: Option<&Value>) -> Result<ViewState, Error> {
 }
 
 fn validate(snapshot: &Snapshot) -> Result<(), Error> {
+    if snapshot_string_units(snapshot)? > MAX_STRINGS {
+        return Err(Error::Limit);
+    }
+    Ok(())
+}
+
+fn snapshot_string_units(snapshot: &Snapshot) -> Result<usize, Error> {
     if snapshot.revision > MAX_SAFE
         || snapshot.saved_at > MAX_SAFE
         || snapshot.tabs.len() > MAX_TABS
@@ -362,7 +374,7 @@ fn validate(snapshot: &Snapshot) -> Result<(), Error> {
         Some(index) if index < snapshot.tabs.len() => {}
         _ => return Err(Error::Malformed),
     }
-    let mut remaining = MAX_STRINGS;
+    let mut remaining = usize::MAX;
     for tab in &snapshot.tabs {
         let Tab::Workspace(workspace) = tab else {
             continue;
@@ -419,7 +431,7 @@ fn validate(snapshot: &Snapshot) -> Result<(), Error> {
             return Err(Error::Malformed);
         }
     }
-    Ok(())
+    Ok(usize::MAX - remaining)
 }
 
 fn take(value: &str, max: usize, empty: bool, remaining: &mut usize) -> Result<(), Error> {

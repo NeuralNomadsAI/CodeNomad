@@ -10,6 +10,8 @@ pub const MAX_FILE: usize = 5 * 1024 * 1024;
 pub const MAX_FILES: usize = 10;
 pub const MAX_TOTAL: usize = 20 * 1024 * 1024;
 pub const MAX_PARTS: usize = 64;
+const MAX_PASTE_HISTORY_ENTRIES: usize = 2 * MAX_PARTS;
+const MAX_PASTE_HISTORY_BYTES: usize = 4 * super::long_paste::MAX_BYTES;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Attachment {
@@ -128,7 +130,11 @@ impl Draft {
     }
 
     pub fn can_send(&self, edit: &TextEdit) -> bool {
-        !edit.text.trim_matches(whitespace).is_empty() || self.requires_attachment_support()
+        let (count, bytes) = self.part_usage(Some(edit));
+        count <= MAX_PARTS
+            && bytes <= super::long_paste::MAX_BYTES
+            && (!edit.text.trim_matches(whitespace).is_empty()
+                || self.requires_attachment_support())
     }
 
     pub fn requires_attachment_support(&self) -> bool {
@@ -147,20 +153,63 @@ impl Draft {
     }
 
     pub fn attach(&mut self, item: Attachment) -> bool {
-        if self.attachments.len() >= MAX_PARTS {
+        self.attach_bounded(None, item)
+    }
+
+    pub fn attach_for(&mut self, edit: &TextEdit, item: Attachment) -> bool {
+        self.attach_bounded(Some(edit), item)
+    }
+
+    pub fn active_count(&self, edit: &TextEdit) -> usize {
+        self.part_usage(Some(edit)).0
+    }
+
+    fn part_usage(&self, edit: Option<&TextEdit>) -> (usize, usize) {
+        let active = edit
+            .filter(|_| {
+                self.attachments
+                    .iter()
+                    .any(|part| matches!(part, Attachment::Pasted { .. }))
+            })
+            .map(|edit| {
+                super::long_paste::active_tokens(edit)
+                    .map(|(_, id)| id)
+                    .collect::<std::collections::BTreeSet<_>>()
+            });
+        self.attachments
+            .iter()
+            .fold((0, 0), |(count, bytes), part| match part {
+                Attachment::Pasted { id, text }
+                    if active.as_ref().is_none_or(|ids| ids.contains(id)) =>
+                {
+                    (count + 1, bytes + text.len())
+                }
+                Attachment::Pasted { .. } => (count, bytes),
+                _ => (count + 1, bytes),
+            })
+    }
+
+    fn attach_bounded(&mut self, edit: Option<&TextEdit>, item: Attachment) -> bool {
+        let (count, active_paste_bytes) = self.part_usage(edit);
+        if count >= MAX_PARTS {
             return false;
         }
         if let Attachment::Pasted { id, text } = &item {
-            let mut bytes = text.len();
+            let mut history_bytes = text.len();
+            let mut history_entries = 1;
             for part in &self.attachments {
                 if let Attachment::Pasted { id: previous, text } = part {
                     if id == previous {
                         return false;
                     }
-                    bytes += text.len();
+                    history_bytes += text.len();
+                    history_entries += 1;
                 }
             }
-            if bytes > super::long_paste::MAX_BYTES {
+            if text.len() + active_paste_bytes > super::long_paste::MAX_BYTES
+                || history_bytes > MAX_PASTE_HISTORY_BYTES
+                || history_entries > MAX_PASTE_HISTORY_ENTRIES
+            {
                 return false;
             }
         }

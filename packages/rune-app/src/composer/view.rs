@@ -164,6 +164,7 @@ pub fn view(s: &State, compact: bool) -> El {
                     if s.composer.draft.attachments.get(index) == Some(&captured) {
                         s.composer.draft.remove(&mut s.draft, index);
                         changed(s, tx);
+                        tx.focus("composer", false);
                     }
                 }),
             )
@@ -314,7 +315,7 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
             Some(Item::Agent(_) | Item::Skill(_)) => true,
             _ => false,
         };
-    if adds_part && s.composer.draft.attachments.len() >= super::draft::MAX_PARTS {
+    if adds_part && s.composer.draft.active_count(&s.draft) >= super::draft::MAX_PARTS {
         layout::announce_selection(tx, t("promptInput.attachFiles.errorTitle"));
         return;
     }

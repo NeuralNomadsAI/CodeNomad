@@ -75,7 +75,7 @@ fn compact(s: &mut State, text: &str) -> bool {
         id,
         text: Arc::from(text.replace("\r\n", "\n").replace('\r', "\n")),
     };
-    if !s.composer.draft.attach(part) {
+    if !s.composer.draft.attach_for(&s.draft, part) {
         return false;
     }
     let prior = s.draft.clone();
@@ -193,6 +193,75 @@ mod tests {
         );
         assert!(prompt.files.is_empty());
         assert!(input.try_recv().is_err());
+    }
+
+    #[test]
+    fn removing_a_chip_refocuses_the_editor_for_keyboard_undo() {
+        let mut s = crate::init();
+        s.phase = crate::Phase::Ready;
+        let mut rt = Runtime::new(s, crate::view, (800.0, 650.0), Env::new(false, 1.0));
+        rt.update(|_, tx| tx.focus("composer", false));
+        let long = "line 1\nline 2\nline 3\nline 4";
+        rt.paste(long);
+        for _ in 0..20 {
+            rt.frame(1.0 / 60.0);
+        }
+        let (x, y) = rt.find("remove-0").expect("visible chip control");
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.0);
+        assert!(rt.state.draft.text.is_empty());
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| node.focused && node.path.contains("/composer/"))
+        );
+        rt.key(KeyEvent {
+            key: Key::Command('z'),
+            mods: Mods {
+                cmd: true,
+                ctrl: !cfg!(target_os = "macos"),
+                ..Mods::default()
+            },
+        });
+        rt.frame(0.0);
+        assert!(rt.find("attachment-0").is_some());
+        assert_eq!(
+            rt.state
+                .composer
+                .draft
+                .resolve_text(&rt.state.draft.text)
+                .as_deref(),
+            Some(long)
+        );
+    }
+
+    #[test]
+    fn detached_pastes_leave_room_for_pasted_text_and_other_parts() {
+        use crate::composer::draft::MAX_PARTS;
+        let mut s = crate::init();
+        let mut tx = Tx::default();
+        let text = "test\nexisting\nclipboard\ncontents";
+        for _ in 0..MAX_PARTS {
+            assert!(paste(&mut s, text, &mut tx));
+        }
+        assert_eq!(s.composer.draft.active_count(&s.draft), MAX_PARTS);
+        s.composer.draft.remove(&mut s.draft, 0);
+        assert!(s.composer.draft.attach_for(
+            &s.draft,
+            Attachment::Device {
+                name: "device.txt".into(),
+                mime: "text/plain".into(),
+                bytes: Arc::from([]),
+                token: None,
+            }
+        ));
+        assert_eq!(s.composer.draft.active_count(&s.draft), MAX_PARTS);
+        s.composer.draft.remove(&mut s.draft, 1);
+        assert!(paste(&mut s, text, &mut tx));
+        assert!(s.draft.text.contains("[pasted #65]"));
+        assert_eq!(s.composer.draft.active_count(&s.draft), MAX_PARTS);
+        assert_eq!(s.composer.draft.attachments.len(), MAX_PARTS + 2);
     }
 
     #[test]

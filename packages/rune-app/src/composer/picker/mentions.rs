@@ -159,7 +159,7 @@ impl Mentions {
                     return Some(false);
                 }
                 if mode == Mode::Path {
-                    draft.attach(Attachment::Path(normalized));
+                    draft.attach_for(edit, Attachment::Path(normalized));
                 } else {
                     let directory = self.directory.as_deref()?;
                     let separators = if directory.starts_with('/') {
@@ -171,16 +171,19 @@ impl Mentions {
                     let absolute = format!("{directory}/{}", if path == "." { "" } else { path });
                     let uri = codenomad_client::server_file_uri(&absolute).ok()?;
                     let label = path.rsplit('/').next().unwrap_or(path);
-                    draft.attach(Attachment::Project {
-                        name: if folder {
-                            format!("{label}/")
-                        } else {
-                            label.into()
+                    draft.attach_for(
+                        edit,
+                        Attachment::Project {
+                            name: if folder {
+                                format!("{label}/")
+                            } else {
+                                label.into()
+                            },
+                            path: normalized,
+                            uri,
+                            directory: folder,
                         },
-                        path: normalized,
-                        uri,
-                        directory: folder,
-                    });
+                    );
                 }
                 if folder && path != "." {
                     format!("@{path}/ ")
@@ -192,7 +195,7 @@ impl Mentions {
             }
             Item::Agent(agent) => {
                 if mode != Mode::Text {
-                    draft.attach(Attachment::Agent(agent.name.clone()));
+                    draft.attach_for(edit, Attachment::Agent(agent.name.clone()));
                 }
                 format!("@{} ", agent.name)
             }
@@ -200,10 +203,13 @@ impl Mentions {
                 if mode == Mode::Text {
                     return None;
                 }
-                draft.attach(Attachment::Skill {
-                    id: skill.id.clone(),
-                    name: skill.name.clone(),
-                });
+                draft.attach_for(
+                    edit,
+                    Attachment::Skill {
+                        id: skill.id.clone(),
+                        name: skill.name.clone(),
+                    },
+                );
                 String::new()
             }
             Item::Command(_) => return None,
