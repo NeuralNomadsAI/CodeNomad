@@ -237,6 +237,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     if l.show_title || s.screen.is_launcher() {
         pane = pane.child(
             col()
+                .key("session-create-form")
                 .pad(Space::Sm)
                 .separate(Space::Xs)
                 .child(
