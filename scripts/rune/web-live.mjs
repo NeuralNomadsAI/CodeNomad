@@ -13,18 +13,27 @@ export function command(action) {
   })
 }
 
-export async function focusOpenedSearch(page, sidebar, messages, tap) {
+export async function openSessionSearch(page, sidebar, messages, tap) {
   const name=messages['sessionList.filter.ariaLabel']
+  const create=sidebar.getByRole('button',{name:messages['rune.create'],exact:true})
+  const before=await create.count()
+  const trigger=sidebar.getByRole('button',{name,exact:true})
+  const touch=async locator=>{
+    await locator.waitFor()
+    const box=await locator.boundingBox()
+    assert(box&&box.width>0&&box.height>0)
+    await tap(box.x+box.width/2,box.y+box.height/2)
+  }
+  await touch(trigger)
   const field=sidebar.getByRole('group',{name,exact:true})
   await field.waitFor()
-  assert.equal(await sidebar.getByRole('button',{name,exact:true}).getAttribute('aria-expanded'),'true')
-  assert.equal(await sidebar.getByRole('button',{name:messages['rune.create'],exact:true}).count(),0,
+  assert.equal(await trigger.getAttribute('aria-expanded'),'true')
+  // A project without a conversation already shows the creation form.
+  assert.equal(await create.count(),before,
     'Opening session search must not open New Session')
   const editor=page.locator('textarea:focus').and(page.getByRole('textbox',{name,exact:true}))
   assert.equal(await editor.count(),0,'Opening search must not focus the field')
-  const box=await field.boundingBox()
-  assert(box&&box.width>0&&box.height>0)
-  await tap(box.x+box.width/2,box.y+box.height/2)
+  await touch(field)
   await editor.waitFor({state:'attached'})
 }
 
@@ -68,8 +77,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
       await tap(box.x+box.width/2,box.y+box.height/2)
     }
     await hit(left)
-    await hit(search)
-    await focusOpenedSearch(page, sidebar, messages, tap)
+    await openSessionSearch(page, sidebar, messages, tap)
     await page.locator('textarea:focus').fill('Another session')
     await sidebar.getByRole('listitem',{name:'Another session',exact:true}).waitFor()
     const afterTransport=eventSources()

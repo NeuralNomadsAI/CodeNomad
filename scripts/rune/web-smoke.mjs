@@ -8,7 +8,7 @@ import {chromium} from 'playwright'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction, mobileTabBar} from './web-mobile.mjs'
-import {focusOpenedSearch, mobileLive, revokedLauncher} from './web-live.mjs'
+import {openSessionSearch, mobileLive, revokedLauncher} from './web-live.mjs'
 import {focusRing, longPaste} from './web-paste.mjs'
 import {missionsFixture} from './web-missions.mjs'
 
@@ -222,8 +222,7 @@ try {
               linkedContinuationRecovered=true
             }
             assert.equal(await row('Another session').count(),0)
-            await press(messages['sessionList.filter.ariaLabel'])
-            await focusOpenedSearch(page, sessions, messages, (x,y)=>page.touchscreen.tap(x,y))
+            await openSessionSearch(page, sessions, messages, (x,y)=>page.touchscreen.tap(x,y))
             await page.locator('textarea:focus').fill('Another session')
             await row('Another session').waitFor()
             assert(routes.some(row=>row.query.includes('search=Another+session')),'Use the native search before loading the next ordinary page')
