@@ -34,7 +34,7 @@ Si **Restaurer l’état précédent** est activé, rouvrez le même fichier dan
 
 Fermer le lecteur avec son bouton de fermeture final revient à la conversation ; la zone de saisie reste disponible sous le lecteur. Masquer le volet avec **Volet droit**, ou une fenêtre trop étroite pour lui, laisse le lecteur ouvert avec la largeur libérée ; réafficher le volet le conserve tel quel. Changer de session/worktree efface le lecteur sélectionné, sans promettre d’enregistrer son brouillon. Ouvrir un aperçu navigateur remplace le lecteur ; ouvrir un fichier remet cette vue en mode chat.
 
-Remplacer ou fermer le lecteur affecte uniquement l’onglet de projet courant. Des onglets ouverts sur le même projet peuvent lire des fichiers différents ou garder un fichier à côté du chat, du web ou d’un contenu de Mission. Le choix source/rendu, la sélection dans l’éditeur et le défilement sont conservés lors des changements d’onglet tant que la cible et le modèle restent en mémoire ; enregistrez les brouillons importants avant un rechargement. Le mode Fichiers est restauré par onglet ; les préférences de diff et de retour à la ligne restent partagées.
+Remplacer ou fermer le lecteur affecte uniquement l’onglet de projet courant. Des onglets ouverts sur le même projet peuvent lire des fichiers différents ou garder un fichier à côté du chat, du web ou d’un contenu de Mission. Le choix source/rendu, la sélection dans l’éditeur et le défilement sont conservés lors des changements d’onglet tant que la cible et le modèle restent en mémoire. Le mode Fichiers est restauré par onglet ; les préférences de diff et de retour à la ligne restent partagées.
 
 ## Aperçus bornés et en lecture seule {#preview-limits}
 

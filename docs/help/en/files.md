@@ -34,7 +34,7 @@ With **Restore previous state** enabled, reopen the same file in the same projec
 
 Closing the reader with its trailing close button returns to the conversation; the composer remains available below the reader. Hiding the panel with **Right panel**, or a window too narrow for it, leaves the reader open with the freed width; showing the panel again keeps it as it was. Changing session/worktree clears the selected reader, not a promise to save its draft. Opening a browser preview replaces the reader; opening a file returns that view to chat mode.
 
-Reader replacement and closure affect only the current project tab. Duplicate tabs can read different files or keep a file beside chat/web/Mission content. Source/rendered choice, editor selection and scroll survive tab switches while their in-memory target/model is retained; save important drafts before a reload. Files mode is restored per tab; diff and wrap preferences remain shared.
+Reader replacement and closure affect only the current project tab. Duplicate tabs can read different files or keep a file beside chat/web/Mission content. Source/rendered choice, editor selection and scroll survive tab switches while their in-memory target/model is retained. Files mode is restored per tab; diff and wrap preferences remain shared.
 
 ## Read-only and bounded previews {#preview-limits}
 
