@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
-  armLive, assistantRow, delta, emitEvent, readFixture, readTestingSessionId as sessionId, textOf,
+  armLive, assistantRow, delta, emitEvent, readFixture, readTestingSessionId as sessionId, settleDeltas, textOf,
 } from "./opencode-data-read-testing.ts"
 
 /** Quiet means no new fetch for a window covering many fetch round trips, so
@@ -53,6 +53,7 @@ describe("OpenCode data trailing read", () => {
       assert.equal(data.session.message.more(sessionId), true, "the page's cursor was lost")
 
       delta(instanceId, "!")
+      await settleDeltas(() => textOf(data, "live") === "base.!")
       assert.equal(textOf(data, "live"), "base.!", "streaming stopped reaching the reducer")
       assert.equal(reads, 1)
     } finally {

@@ -125,7 +125,7 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
         assert.deepEqual(store.getSessionMessageIds(sessionId), latestIds)
         uiGate.resolve()
       }
-      await waitFor(() => getOpenCodeSessionInbox(instanceId, sessionId, "/work").length > 0 && !hasReasoning("m250"), "both reconstructions completed")
+      await waitFor(() => getOpenCodeSessionInbox(instanceId, sessionId, "/work").length > 0 && latestIds.every(id => !hasReasoning(id)), "both reconstructions completed")
       assert.deepEqual(store.getSessionMessageIds(sessionId), latestIds)
       assert.equal(store.getMessageWindow(sessionId)?.olderCursor, "after200")
       assert.ok(latestIds.every(id => !hasReasoning(id)))
