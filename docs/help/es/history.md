@@ -31,7 +31,7 @@ La línea de tiempo se oculta cuando la conversación es demasiado estrecha (men
 
 ## Elegir la operación de historial adecuada {#operation-reference}
 
-En Rune, la búsqueda despliega el resultado seleccionado. Si está oculto, muestra su tipo en **Contenido de los mensajes** y vuelve a seleccionarlo.
+En Rune, la búsqueda despliega el resultado seleccionado. Si está oculto, muestra su tipo o las entradas de herramientas en **Contenido de los mensajes** y vuelve a seleccionarlo. Un resultado oculto de otra sesión te deja en la conversación actual.
 
 | Operación | Dónde | Ámbito y consecuencia |
 | --- | --- | --- |

@@ -178,6 +178,15 @@ pub(crate) fn transcript_mode(s: &State, row: TranscriptRow) -> &'static str {
     s.settings.shared.borrow().transcript_mode(row, false)
 }
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn locale(s: &State) -> &'static str {
+    s.settings
+        .shared
+        .borrow()
+        .locale()
+        .unwrap_or_else(strings::locale)
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn fixture_transcript(s: &mut State, settings: serde_json::Value) {
     s.settings.shared.borrow_mut().fixture_transcript(settings);

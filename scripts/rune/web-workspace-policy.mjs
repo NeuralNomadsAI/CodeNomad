@@ -68,7 +68,7 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
       if(method==='POST'&&p==='/api/workspaces/creation/cancel')return claim(body)&&claims.has(body.requestId)
       const scoped=p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(.*)$/)
-      if(scoped&&workspaces.has(scoped[1])&&method==='GET'&&scoped[2]==='session/ses_another/message/message-00000')return true
+      if(scoped&&workspaces.has(scoped[1])&&method==='GET'&&/^session\/ses_another\/message\/message-0000[01]$/.test(scoped[2]))return true
       if(scoped&&workspaces.has(scoped[1])&&method==='POST'&&scoped[2]==='session/ses_existing/prompt')
         return typeof androidPrompt==='string'&&body?.text===androidPrompt&&Object.keys(body).length===1
       if(scoped&&workspaces.has(scoped[1])&&method==='GET')return /^(command|model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another|ses_linked|ses_linked_next)(?:\/(permission|form))?$/.test(scoped[2])

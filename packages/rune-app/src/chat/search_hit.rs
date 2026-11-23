@@ -59,6 +59,11 @@ impl SearchHit {
         if !super::anchors::part_visible(s, row, index) {
             return Landing::Filtered;
         }
+        if let Part::Tool(tool) = &row.parts[index]
+            && super::tools::match_hidden_by_inputs(s, &row.id, tool, self.query(self.part))
+        {
+            return Landing::Filtered;
+        }
         Landing::Visible(key, steps)
     }
 

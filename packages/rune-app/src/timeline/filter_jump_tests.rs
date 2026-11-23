@@ -40,6 +40,27 @@ fn highlight(message: &str, kind: Kind, part: u64) -> SearchHit {
     )
 }
 
+#[test]
+fn hidden_arguments_refuse_only_hits_without_a_rendered_occurrence() {
+    use crate::chat::search_hit::Landing;
+    let mut s = crate::init();
+    crate::settings::fixture_transcript(&mut s, json!({"toolInputsVisibility":"hidden"}));
+    let target = highlight("test", Kind::Tool, 0);
+    for (output, visible) in [("Other output", false), ("Needle also in the output", true)] {
+        let row = row(json!({"id":"test","type":"assistant","content":[
+            {"type":"tool","id":"call","name":"grep","state":{"status":"completed","input":{"extra":"Needle"},"content":[{"type":"text","text":output}]}}
+        ]}));
+        assert_eq!(
+            matches!(target.landing(&s, &row, 0), Landing::Visible(..)),
+            visible
+        );
+        assert_eq!(
+            matches!(target.landing(&s, &row, 0), Landing::Filtered),
+            !visible
+        );
+    }
+}
+
 fn runtime(rows: Vec<Row>) -> Runtime<State> {
     let mut s = crate::init();
     s.messages = rows;

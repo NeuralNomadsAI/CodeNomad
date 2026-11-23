@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {installPngReader} from './png-pixels.mjs'
 
-export async function historySearch(page, messages) {
+export async function historySearch(page, messages, holdNextAnchor) {
   const press=(root,key)=>root.getByRole('button',{name:messages[key]??key,exact:true}).click({force:true})
   await press(page,'messageSection.search.ariaLabel')
   const search=page.getByRole('region',{name:messages['messageSection.search.ariaLabel']})
@@ -40,10 +40,17 @@ export async function historySearch(page, messages) {
     await Promise.all([read('query'),technical.click({force:true})])
     assert.equal(await technical.getAttribute('aria-checked'),'true')
     const rail=page.getByRole('navigation',{name:messages['messageTimeline.ariaLabel']})
-    const grep=rail.getByRole('button',{name:'grep',exact:true})
+    const grep=rail.getByRole('button',{name:'grep',exact:true}).first()
     const toolHit='Existing technical tool match'
     const toolBody=page.getByText('Found Existing technical tool match',{exact:true}).and(page.locator('p, pre, code'))
     const filtered=search.getByText(messages['history.destinationFiltered'],{exact:true})
+    const alert=page.getByRole('alert').filter({hasText:messages['history.destinationFiltered']})
+    const source=page.getByRole('heading',{name:'Existing history',exact:true})
+    const rejected=async()=>{
+      await alert.waitFor()
+      await source.waitFor()
+      assert.equal(await page.getByRole('heading',{name:'Another session',exact:true}).count(),0)
+    }
     const setTool=async mode=>{
       const response=await page.request.patch(new URL('/api/storage/config/ui',page.url()).href,{data:{
         settings:{toolCallExpansionDefaults:{tools:{grep:mode}}},
@@ -80,6 +87,9 @@ export async function historySearch(page, messages) {
       assert(active,`The active occurrence is painted for ${hit}`)
     }
     assert.equal(windows,0,'Revealing technical matches must also stay local')
+    await press(search,'Existing arguments only')
+    await rejected()
+    assert.equal(windows,0,'Arguments-only refusal must also stay local')
     // Rune exposes the select trigger as a button in the unfocused web mirror.
     const picker=search.getByRole('button',{name:`${messages['history.scope']}: ${messages['history.session']}`,exact:true})
     await picker.click({force:true})
@@ -89,12 +99,31 @@ export async function historySearch(page, messages) {
     await search.getByRole('button',{name:'Existing ranked destination',exact:true}).waitFor()
     const first=search.getByRole('button',{name:'Existing ranked destination',exact:true})
     await search.locator('[aria-description="Another session · history-fixture"]').and(first).waitFor()
-    assert.deepEqual(await search.getByRole('button').filter({hasText:/^Existing /}).allTextContents(),
-      ['Existing ranked destination','Existing answer'])
+    const rankedNames=await search.getByRole('button').filter({hasText:/^Existing /}).allTextContents()
+    assert.equal(rankedNames[0],'Existing ranked destination')
+    assert.deepEqual(rankedNames.slice(1).sort(),['Existing answer','Existing remote tool match'])
+    const remotePreview=page.waitForResponse(response=>response.url().endsWith('/session/ses_another/message/message-00001'))
+    await press(search,'Existing remote tool match')
+    assert((await remotePreview).ok())
+    const open=search.getByRole('button',{name:messages['history.openSession'],exact:true})
+    const release=holdNextAnchor()
+    try{
+      const proposed=page.waitForRequest(request=>request.url().endsWith('/session-history/window')
+        && request.postDataJSON()?.target?.messageID==='message-00001')
+      await open.focus()
+      await page.keyboard.press('Enter')
+      assert.equal((await proposed).postDataJSON().sessionID,'ses_another')
+      await setTool('hidden')
+      await grep.waitFor({state:'detached'})
+    }finally{release()}
+    await rejected()
+    assert.equal(windows,1,'Only the destination preflight may read a window on refusal')
+    await setTool('collapsed')
+    await grep.waitFor()
     const preview=page.waitForResponse(response=>response.url().endsWith('/session/ses_another/message/message-00000'))
     await press(search,'Existing ranked destination')
     assert((await preview).ok())
-    assert.equal(windows,0,'Preview must not read a transcript window')
+    assert.equal(windows,1,'Preview must not read a transcript window')
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
     const [destination]=await Promise.all([read('window'),press(search,'history.openSession')])
     const requested=destination.request().postDataJSON()

@@ -5,7 +5,12 @@ mod tests;
 mod view;
 pub(crate) use view::{HOST, overlay, trigger};
 
-use crate::{State, history::Result, platform};
+use crate::{
+    State,
+    chat::search_hit::Landing,
+    history::{Result, Row},
+    platform,
+};
 use codenomad_client::{
     Receiver, Sender, bounded,
     search::{MIN_QUERY_UNITS, Page, Ranked},
@@ -20,6 +25,7 @@ type Destination = (
     String,
     String,
     crate::chat::search_hit::SearchHit,
+    Row,
 );
 
 enum Message {
@@ -160,13 +166,9 @@ impl Search {
     }
 }
 
-pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    if !state(s).open {
+pub(crate) fn settle_destination(s: &mut State, tx: &mut Tx) -> bool {
+    if !is_open(s) {
         return false;
-    }
-    if !visible(s) {
-        close(s);
-        return true;
     }
     let model = state(s);
     if tx.input_waiting() && model.destination.is_some() {
@@ -179,16 +181,33 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         .and_then(|(_, inbox)| inbox.try_recv().ok());
     if let Some(destination) = destination {
         state(s).destination = None;
-        if let Ok((backend, title, slug, mut hit)) = destination
+        if let Ok((backend, title, slug, mut hit, row)) = destination
             && crate::launcher::can_change_session(s)
         {
-            close(s);
-            crate::launcher::bind_search(s, backend, title, &slug, hit.message.clone(), tx);
-            hit.restore_pending = true;
-            s.transcript_display.search_highlight = Some(hit);
+            match hit.landing(s, &row, 0) {
+                Landing::Visible(..) => {
+                    close(s);
+                    crate::launcher::bind_search(s, backend, title, &slug, hit.message.clone(), tx);
+                    hit.restore_pending = true;
+                    s.transcript_display.search_highlight = Some(hit);
+                }
+                Landing::Filtered => super::navigation::refuse_filtered(s),
+                Landing::Missing => state(s).open_error = true,
+            }
         } else {
             state(s).open_error = true;
         }
+        return true;
+    }
+    false
+}
+
+pub(crate) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
+    if !state(s).open {
+        return false;
+    }
+    if !visible(s) {
+        close(s);
         return true;
     }
     let timeline = &s.transcript_display.timeline;
@@ -362,6 +381,7 @@ fn open_result(s: &mut State, _: &mut Tx) {
     let model = state(s);
     model.open_error = false;
     model.destination = Some((signal, inbox));
+    super::navigation::set_filtered(s, false);
     platform::spawn(async move {
         let Some(_permit) = reads.background(&cancelled).await else {
             return;
@@ -370,7 +390,17 @@ fn open_result(s: &mut State, _: &mut Tx) {
             let (backend, session, slug) = backend
                 .bind_session_placed(&project, &hit.session, false)
                 .await?;
-            Ok((backend, session.title, slug, target))
+            let codenomad_client::timeline::AnchorWindow::Loaded(page) =
+                backend.resolve_anchor(&hit.message, &[]).await?
+            else {
+                return Err("missing destination window".into());
+            };
+            let row = page
+                .rows
+                .into_iter()
+                .find(|row| row.id == hit.message)
+                .ok_or("missing search destination")?;
+            Ok((backend, session.title, slug, target, row))
         };
         if let Some(result) = platform::reads::cancellable(&cancelled, bind).await
             && out.send(result).await.is_ok()

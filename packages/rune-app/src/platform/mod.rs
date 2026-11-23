@@ -10,6 +10,8 @@ pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;
 #[cfg(target_arch = "wasm32")]
+pub(crate) mod web_alert;
+#[cfg(target_arch = "wasm32")]
 mod web_attachment;
 pub(crate) mod workspace_open;
 pub(crate) use connection::configured_target;

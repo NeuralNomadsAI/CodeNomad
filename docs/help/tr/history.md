@@ -31,7 +31,7 @@ Konuşma çok dar olduğunda (420 CSS pikselinin altında) zaman çizelgesi gizl
 
 ## Doğru geçmiş işlemini seçin {#operation-reference}
 
-Rune'da arama, seçilen daraltılmış sonucu açar. Sonuç gizliyse **Mesaj içeriği** bölümünde türünü gösterip yeniden seçin.
+Rune'da arama, seçilen daraltılmış sonucu açar. Sonuç gizliyse **Mesaj içeriği** bölümünde türünü veya araç girdilerini gösterip sonucu yeniden seçin. Başka bir oturumdaki gizli sonuç, geçerli konuşmayı açık bırakır.
 
 | Operasyon | Nerede | Kapsam ve sonuç |
 | --- | --- | --- |

@@ -534,9 +534,13 @@ try {
              if(values.mobile||values.timeline||values['touch-history']||values['history-search'])assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
             else assert.deepEqual(bodies,['Existing project history','Existing answer'])
           }
-          assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===(values['history-search']?1:0)))
+           assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===(values['history-search']?2:0)))
           assert(routes.some(row=>row.query.includes('cursor=')))
-          if(values['history-search']&&name==='desktop')await historySearch(page,messages)
+          if(values['history-search']&&name==='desktop')await historySearch(page,messages,()=>{
+            const held={release:Promise.withResolvers()}
+            holdAnchor=held
+            return ()=>{held.release.resolve();holdAnchor=undefined}
+          })
           const inventory=async()=>{const response=await context.request.get(new URL('/api/workspaces',url).href);assert(response.ok());const rows=await response.json();assert(Array.isArray(rows)&&rows.length<=128);return rows.map(row=>row.id)}
           const before=await inventory(),owned=[...policy.workspaces],retained=before.filter(id=>!policy.workspaces.has(id))
           assert(owned.length>0&&owned.every(id=>before.includes(id)),'Browser must own its admitted occurrences')

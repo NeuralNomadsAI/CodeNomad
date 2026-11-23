@@ -26,12 +26,12 @@ pub(super) struct Navigation {
 }
 
 pub(crate) fn cancel_jump(s: &mut State) {
+    set_filtered(s, false);
     let j = &mut owner(s).jump;
     j.serial = j.serial.wrapping_add(1);
     j.flight = None;
     j.align = None;
     j.retry = None;
-    j.filtered = false;
     j.locked = false;
 }
 
@@ -58,7 +58,7 @@ pub(super) fn cancel_search(s: &mut State) {
     {
         cancel_jump(s);
     }
-    owner(s).jump.filtered = false;
+    set_filtered(s, false);
 }
 
 pub(super) fn select(s: &mut State, id: &str, tx: &mut Tx) {
@@ -151,7 +151,19 @@ fn start(s: &mut State, target: Marker, tx: &mut Tx) {
 
 pub(super) fn refuse_filtered(s: &mut State) {
     s.transcript_display.search_highlight = None;
-    owner(s).jump.filtered = true;
+    set_filtered(s, true);
+}
+
+pub(super) fn set_filtered(s: &mut State, filtered: bool) {
+    if std::mem::replace(&mut owner(s).jump.filtered, filtered) == filtered {
+        return;
+    }
+    #[cfg(target_arch = "wasm32")]
+    crate::platform::web_alert::history_filtered(filtered.then(|| {
+        crate::strings::with_locale(crate::settings::locale(s), || {
+            crate::strings::t("history.destinationFiltered")
+        })
+    }));
 }
 
 fn locate(s: &State, row: &crate::history::Row, m: &Marker) -> Landing {

@@ -15,6 +15,7 @@ use rune_theme_codenomad::{
     Space, TextRole, ansi,
     layout::{self, Layout},
     markdown,
+    timeline::search::Query,
 };
 use serde_json::Value;
 use std::{io, sync::Arc};
@@ -242,18 +243,72 @@ fn is_patch(tool: &Tool) -> bool {
     matches!(tool.name.as_str(), "apply_patch" | "patch")
 }
 
-fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
-    let claimed = std::cell::Cell::new(false);
-    let query = super::search_hit::query(
+fn tool_query<'a>(s: &'a State, message: &str, tool: &Tool) -> Option<Query<'a>> {
+    super::search_hit::query(
         s,
         message,
         codenomad_client::search::Kind::Tool,
         tool.part_index,
     )
-    .map(|query| rune_theme_codenomad::timeline::search::Query {
+}
+
+pub(super) fn match_hidden_by_inputs(
+    s: &State,
+    message: &str,
+    tool: &Arc<Tool>,
+    query: Query<'_>,
+) -> bool {
+    if settings::transcript_mode(s, TranscriptRow::Inputs) != "hidden" || tool.input.is_null() {
+        return false;
+    }
+    if !tool
+        .input
+        .as_str()
+        .map(std::borrow::Cow::Borrowed)
+        .or_else(|| {
+            input_json(
+                &tool.input,
+                super::document::search_limit(Some(query)),
+                true,
+            )
+            .map(std::borrow::Cow::Owned)
+        })
+        .is_some_and(|input| query.matches(&input))
+    {
+        return false;
+    }
+    // Use the actual output renderer: shell commands, patches and errors can expose the same hit.
+    let claimed = std::cell::Cell::new(false);
+    let key = tool_key(message, &tool.id);
+    let _ = render_body(
+        s,
+        message,
+        tool,
+        &key,
+        Some(Query {
+            claimed: Some(&claimed),
+            ..query
+        }),
+    );
+    !claimed.get()
+}
+
+fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
+    let claimed = std::cell::Cell::new(false);
+    let query = tool_query(s, message, tool).map(|query| Query {
         claimed: Some(&claimed),
         ..query
     });
+    render_body(s, message, tool, key, query)
+}
+
+fn render_body(
+    s: &State,
+    message: &str,
+    tool: &Arc<Tool>,
+    key: &str,
+    query: Option<Query<'_>>,
+) -> El {
     let active = query.is_some_and(|q| q.active);
     let expanded = active
         || s.transcript_display.expanded(

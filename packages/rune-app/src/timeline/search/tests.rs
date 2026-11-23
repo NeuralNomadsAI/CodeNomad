@@ -86,6 +86,53 @@ fn ranked_groups_keep_consecutive_runs_without_reordering() {
 }
 
 #[test]
+fn an_other_session_preflight_applies_filters_at_completion() {
+    let mut s = crate::init();
+    let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    backend.session = "source".into();
+    super::super::observe(&mut s, &crate::transport::Event::Connected(backend.clone()));
+    s.chat_title = "Source".into();
+    state(&mut s).open = true;
+    let (guard, _) = bounded(1);
+    let (reply, received) = bounded(1);
+    state(&mut s).destination = Some((guard, received));
+    backend.session = "other".into();
+    let row = crate::history::decode_message(&serde_json::json!({
+        "id":"step","type":"assistant","content":[
+            {"type":"tool","id":"call","name":"grep","state":{"status":"completed","output":"Needle"}}
+        ]
+    })).unwrap().into();
+    let result = crate::chat::search_hit::SearchHit::new(
+        &hit("other", "step", Kind::Tool, 0),
+        "Needle",
+        false,
+    );
+    reply
+        .try_send(Ok((backend, "Other".into(), "root".into(), result, row)))
+        .unwrap();
+    let mut rt = Runtime::new(s, view, (900., 600.), Env::new(false, 1.0));
+    rt.update(|s, tx| {
+        crate::settings::fixture_transcript(
+            s,
+            serde_json::json!({"toolCallExpansionDefaults":{"tools":{"grep":"hidden"}}}),
+        );
+        assert!(settle_destination(s, tx));
+        assert!(s.transcript_display.timeline.jump.filtered);
+        assert!(state(s).open && state(s).destination.is_none());
+        assert_eq!(s.chat_title, "Source");
+        assert_eq!(
+            s.transcript_display
+                .timeline
+                .backend
+                .as_ref()
+                .unwrap()
+                .session,
+            "source"
+        );
+    });
+}
+
+#[test]
 fn preview_selection_revokes_a_previous_distant_jump_and_keeps_the_broker_excerpt() {
     let mut s = crate::init();
     let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();

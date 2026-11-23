@@ -31,7 +31,7 @@ Bei zu schmaler Unterhaltung (unter 420 CSS-Pixeln) ist die Timeline ausgeblende
 
 ## Richtigen Verlaufsvorgang wählen {#operation-reference}
 
-In Rune klappt die Suche das gewählte Ergebnis auf. Ist es ausgeblendet, blende seinen Typ unter **Nachrichteninhalt** ein und wähle es erneut.
+In Rune klappt die Suche das gewählte Ergebnis auf. Ist es ausgeblendet, blende seinen Typ oder die Tool-Eingaben unter **Nachrichteninhalt** ein und wähle es erneut. Bei einem ausgeblendeten Ergebnis in einer anderen Sitzung bleibt die aktuelle Unterhaltung geöffnet.
 
 | Vorgang | Wo | Umfang und Folgen |
 | --- | --- | --- |
