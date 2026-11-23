@@ -184,6 +184,7 @@ fn question_receipt_uses_native_answers_and_reveals_other_choices() {
         Env::new(false, 1.0),
     );
     rt.frame(0.0);
+    let tree = rt.accessibility_json().to_string();
     let mut click = |key: &str| {
         let (x, y) = rt.find(key).unwrap();
         rt.pointer_down(x, y);
@@ -193,7 +194,6 @@ fn question_receipt_uses_native_answers_and_reveals_other_choices() {
         }
         rt.accessibility_json().to_string()
     };
-    let tree = click("toggle-tool-answer:3:ask");
     assert!(tree.contains("Primary route") && tree.contains("Answer unavailable"));
     assert!(!tree.contains("Route B"));
     assert!(click("tool-answer:3:ask-question-0-choices").contains("Route B"));

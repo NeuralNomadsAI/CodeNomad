@@ -212,6 +212,7 @@ pub(crate) fn reconcile_bookmark(s: &mut State, rows: &[crate::history::Row]) {
 }
 
 pub(crate) fn suspend(s: &mut State) {
+    crate::settings::transcript_filters::close(s);
     if let Some(reader) = &mut s.reader {
         reader.bookmark = reader.bookmark(s.transcript_display.reading_mut());
         reader.stop_content();

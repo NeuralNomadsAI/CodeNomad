@@ -327,6 +327,12 @@ fn task_uses_its_own_background_report_and_keeps_the_synthetic_row_hidden() {
     };
     let mut state = init();
     state.phase = Phase::Ready;
+    crate::settings::fixture_transcript(
+        &mut state,
+        json!({
+            "toolCallExpansionDefaults":{"tools":{"task":"collapsed"}}
+        }),
+    );
     state.messages = vec![
         launch("first", 10).into(),
         report_row("older", 20, "First result").into(),
@@ -372,12 +378,6 @@ fn loaded_child_cards_replace_the_legacy_summary() {
     state.messages.push(parent.into());
     let mut rt = Runtime::new(state, crate::view, (960.0, 900.0), Env::new(false, 1.0));
     rt.frame(0.0);
-    let (x, y) = rt.find("toggle-tool-parent:6:launch").unwrap();
-    rt.pointer_down(x, y);
-    rt.pointer_up(x, y);
-    for _ in 0..12 {
-        rt.frame(1.0 / 60.0);
-    }
     assert!(
         rt.accessibility_json()
             .to_string()

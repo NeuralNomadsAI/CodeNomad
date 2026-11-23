@@ -7,6 +7,7 @@ use crate::{
     State,
     content::{Part, Tool},
     screen,
+    settings::{self, TranscriptRow},
     strings::{locale, t},
 };
 use rune::{El, col, text};
@@ -18,6 +19,7 @@ use rune_theme_codenomad::{
 use serde_json::Value;
 use std::{io, sync::Arc};
 pub(super) mod children;
+mod diagnostics;
 mod execute;
 mod question;
 mod search;
@@ -205,6 +207,10 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
     }
 }
 
+pub(super) fn visible(s: &State, tool: &Tool) -> bool {
+    settings::transcript_mode(s, TranscriptRow::tool(&tool.name)) != "hidden"
+}
+
 pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
     let key = tool_key(message, &tool.id);
     if matches!(tool.name.as_str(), "execute" | "question")
@@ -226,17 +232,38 @@ pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
         Arc::as_ptr(tool) as usize,
         std::rc::Rc::as_ptr(&s.input_scope) as usize,
         locale(),
-        ["", "-tool_input", "-tool_output", "-wrap", "-error"].map(|suffix| {
+        [
+            settings::transcript_mode(s, TranscriptRow::tool(&tool.name)),
+            settings::transcript_mode(s, TranscriptRow::Inputs),
+            settings::transcript_mode(s, TranscriptRow::Diagnostics),
+        ],
+        [
+            "",
+            "-tool_input",
+            "-tool_output",
+            "-wrap",
+            "-error",
+            "-diagnostics",
+        ]
+        .map(|suffix| {
             let section = format!("{key}{suffix}");
-            (display.toggled(&section), display.steps(&section))
+            (
+                display.expanded(&section, false),
+                display.expanded(&section, true),
+                display.toggled(&section),
+                display.steps(&section),
+            )
         }),
     );
     markdown::hold_frame(key.clone(), stamp, || render(s, message, tool, &key)).key(key)
 }
 
 fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
-    let expanded = s.transcript_display.toggled(&key)
-        ^ matches!(tool.name.as_str(), "bash" | "shell" | "edit" | "write");
+    let expanded = s.transcript_display.expanded(
+        key,
+        tool.status == "error"
+            || settings::transcript_mode(s, TranscriptRow::tool(&tool.name)) == "expanded",
+    );
     let is_task = task::is_task(tool);
     let nested = message.starts_with("child:");
     let report = is_task.then(|| task::report(s, tool)).flatten();
@@ -275,8 +302,8 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                 &title,
                 false,
                 screen::action(&s.input_scope, move |s| {
-                    Display::toggle(s, &toggle);
-                    if is_task && !s.transcript_display.toggled(&toggle) {
+                    Display::set_expanded(s, &toggle, !expanded);
+                    if is_task && expanded {
                         s.transcript_display.children.release(&toggle);
                     }
                 }),
@@ -304,8 +331,9 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         .separate(Space::Sm)
         .inset_surface()
         .child(header);
+    let diagnostics = || diagnostics::view(s, key, tool);
     if !expanded {
-        return block;
+        return block.children(diagnostics());
     }
     let failure = render_error(s, message, key, tool);
     if tool.name == "question"
@@ -313,16 +341,20 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     {
         return block
             .child(questions)
-            .children(super::media::tool(s, key, &tool.pictures));
+            .children(super::media::tool(s, key, &tool.pictures))
+            .children(diagnostics());
     }
     if pending && tool.name != "todowrite" && tool.input.as_str().is_none_or(str::is_empty) {
-        return block.child(text(t("toolCall.pending.waitingToRun")));
+        return block
+            .child(text(t("toolCall.pending.waitingToRun")))
+            .children(diagnostics());
     }
     if tool.name == "todowrite" {
         return block
             .children(failure)
             .child(todo::view(tool))
-            .children(super::media::tool(s, key, &tool.pictures));
+            .children(super::media::tool(s, key, &tool.pictures))
+            .children(diagnostics());
     }
     let task_body = is_task
         .then(|| task::body(s, key, tool, parts[0], !nested))
@@ -333,9 +365,14 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         .flatten();
     if let Some(details) = task_body.or(execute_details) {
         block = block.child(details);
-    } else if !tool.input.is_null() {
+    } else if !tool.input.is_null()
+        && settings::transcript_mode(s, TranscriptRow::Inputs) != "hidden"
+    {
         let input_key = format!("{key}-tool_input");
-        let show = s.transcript_display.toggled(&input_key);
+        let show = s.transcript_display.expanded(
+            &input_key,
+            settings::transcript_mode(s, TranscriptRow::Inputs) == "expanded",
+        );
         let toggle = input_key.clone();
         block = block.child(
             layout::button(
@@ -345,7 +382,9 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                     "toolCall.header.showInputTitle"
                 }),
                 false,
-                screen::action(&s.input_scope, move |s| Display::toggle(s, &toggle)),
+                screen::action(&s.input_scope, move |s| {
+                    Display::set_expanded(s, &toggle, !show)
+                }),
             )
             .key(format!("toggle-{input_key}"))
             .expanded(show),
@@ -446,7 +485,9 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     if tool.name == "execute" {
         block = block.children(execute::notice(tool));
     }
-    block.children(super::media::tool(s, key, &tool.pictures))
+    block
+        .children(super::media::tool(s, key, &tool.pictures))
+        .children(diagnostics())
 }
 
 fn render_error(s: &State, message: &str, key: &str, tool: &Tool) -> Option<El> {
@@ -486,7 +527,7 @@ enum Section {
     Error,
 }
 
-fn tool_key(message: &str, call: &str) -> String {
+pub(crate) fn tool_key(message: &str, call: &str) -> String {
     let escaped = call.replace('%', "%25").replace('/', "%2F");
     format!("tool-{message}:{}:{escaped}", escaped.len())
 }

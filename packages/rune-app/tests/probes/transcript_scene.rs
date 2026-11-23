@@ -9,5 +9,9 @@ pub fn load(s: &mut State) {
             .into(),
     ];
     s.phase = Phase::Ready;
-    crate::settings::fixture_message_usage(s, "collapsed");
+    crate::settings::fixture_transcript(
+        s,
+        serde_json::from_str(include_str!("../../fixtures/transcript-settings.json"))
+            .expect("transcript fixture preferences"),
+    );
 }

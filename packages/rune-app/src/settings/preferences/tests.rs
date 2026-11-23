@@ -3,6 +3,7 @@ mod appearance;
 mod behavior;
 mod memory;
 mod providers;
+mod transcript;
 
 #[test]
 fn contrast_applies_immediately_and_reconciles_an_unconfirmed_write() {

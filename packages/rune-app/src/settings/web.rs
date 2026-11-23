@@ -30,7 +30,7 @@ pub(super) struct Panel {
     contrast_help: bool,
     permissions: super::behavior::Permissions,
     memory_help_failed: bool,
-    usage_picker: bool,
+    transcript_picker: Option<super::TranscriptRow>,
     catalog: Catalog,
 }
 
@@ -73,7 +73,7 @@ fn close(s: &mut State) {
     prefs.provider_target = None;
     prefs.memory.show(false);
     panel.memory_help_failed = false;
-    panel.usage_picker = false;
+    panel.transcript_picker = None;
 }
 
 pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<El> {
@@ -101,7 +101,7 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 2 => Section::Conversation,
                 _ => Section::General,
             };
-            panel.usage_picker = false;
+            panel.transcript_picker = None;
             if panel.section != Section::Providers {
                 panel.catalog.suspend();
             }
@@ -142,12 +142,12 @@ pub(super) fn view(s: &State, prefs: &Preferences, system_more: bool) -> Option<
                 s.settings.web.catalog.toggle()
             })
         }
-        Section::Conversation => super::conversation::row(
+        Section::Conversation => super::conversation::content(
             prefs,
-            panel.usage_picker,
+            panel.transcript_picker,
             &mut layers,
-            |s: &mut State, open| s.settings.web.usage_picker = open,
-            |s: &mut State, mode| s.settings.shared.borrow_mut().set_usage_visibility(mode),
+            |s: &mut State, row| s.settings.web.transcript_picker = row,
+            |s: &mut State, row, mode| s.settings.shared.borrow_mut().set_transcript(row, mode),
         ),
     };
     Some(

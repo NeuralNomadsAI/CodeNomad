@@ -1,4 +1,5 @@
 use super::{Backend, Owner, platform};
+use crate::settings::transcript_preset::{self, Row};
 use codenomad_client::{Receiver, bounded};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -8,22 +9,30 @@ pub(super) enum Choice {
     Locale,
     Contrast,
     NewConversationPermissions,
-    UsageVisible,
-    UsageExpansion,
+    TranscriptPreset,
+    TranscriptRow(Row),
     Mode,
     Palette(bool),
 }
 
 impl Choice {
-    fn put(self, patch: &mut Value, value: &'static str) {
+    fn put(self, patch: &mut Value, value: &'static str, snapshot: &Value) {
         match self {
             Self::Locale => patch["settings"]["locale"] = json!(value),
             Self::Contrast => patch["settings"]["highContrast"] = json!(value),
             Self::NewConversationPermissions => {
                 patch["settings"]["newConversationPermissions"] = json!(value)
             }
-            Self::UsageVisible => patch["settings"]["showUsageMetrics"] = json!(value == "on"),
-            Self::UsageExpansion => patch["settings"]["usageMetricsExpansion"] = json!(value),
+            Self::TranscriptPreset => {
+                if let Value::Object(fields) = transcript_preset::patch(value) {
+                    for (key, value) in fields {
+                        patch["settings"][key] = value;
+                    }
+                }
+            }
+            Self::TranscriptRow(row) => {
+                row.put(&mut patch["settings"], &snapshot["settings"], value)
+            }
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
@@ -42,8 +51,8 @@ impl Choice {
             Self::NewConversationPermissions => {
                 snapshot["settings"]["newConversationPermissions"] == value
             }
-            Self::UsageVisible => snapshot["settings"]["showUsageMetrics"] == (value == "on"),
-            Self::UsageExpansion => snapshot["settings"]["usageMetricsExpansion"] == value,
+            Self::TranscriptPreset => transcript_preset::confirmed(value, &snapshot["settings"]),
+            Self::TranscriptRow(row) => row.mode(&snapshot["settings"]) == value,
             Self::Mode => appearance["mode"] == value,
             Self::Palette(dark) => {
                 let mode = if dark { "dark" } else { "light" };
@@ -144,12 +153,26 @@ impl Document {
     }
 
     pub(super) fn stage(&mut self, choice: Choice, value: &'static str) {
+        let obsolete = |prior: &Choice| match choice {
+            Choice::TranscriptPreset => matches!(prior, Choice::TranscriptRow(_)),
+            Choice::TranscriptRow(_) => {
+                *prior == Choice::TranscriptPreset && self.write.failed.contains(prior)
+            }
+            _ => false,
+        };
+        self.write.requested.retain(|prior, _| !obsolete(prior));
+        self.write
+            .pending
+            .retain(|prior| self.write.requested.contains_key(prior));
+        self.write
+            .failed
+            .retain(|prior| self.write.requested.contains_key(prior));
         if matches!(
             choice,
             Choice::Contrast
                 | Choice::NewConversationPermissions
-                | Choice::UsageVisible
-                | Choice::UsageExpansion
+                | Choice::TranscriptPreset
+                | Choice::TranscriptRow(_)
         ) {
             self.write.failed.remove(&choice);
         }
@@ -189,12 +212,23 @@ impl Document {
     fn settle(&mut self, operation: Operation, snapshot: Option<Value>, current: bool) {
         if let Operation::Write(sent) = &operation {
             for (&choice, &value) in sent {
-                if !self.write.pending.contains(&choice)
+                if self.write.requested.get(&choice) == Some(&value)
+                    && !self.write.pending.contains(&choice)
                     && !snapshot
                         .as_ref()
                         .is_some_and(|data| choice.confirmed(value, data))
                 {
-                    self.write.failed.insert(choice);
+                    if choice == Choice::TranscriptPreset
+                        && self
+                            .write
+                            .pending
+                            .iter()
+                            .any(|prior| matches!(prior, Choice::TranscriptRow(_)))
+                    {
+                        self.write.requested.remove(&choice);
+                    } else {
+                        self.write.failed.insert(choice);
+                    }
                 }
             }
         }
@@ -261,8 +295,16 @@ impl Document {
             self.read.queued = false;
             Operation::Read { retry: false }
         } else if !self.read.failed && !self.write.pending.is_empty() {
+            // A preset is one authoritative write. Build following per-row edits from its receipt.
+            let preset = self.write.pending.contains(&Choice::TranscriptPreset);
+            let mut pending = std::mem::take(&mut self.write.pending);
+            if preset {
+                self.write.pending.extend(
+                    pending.extract_if(.., |choice| matches!(choice, Choice::TranscriptRow(_))),
+                );
+            }
             Operation::Write(
-                std::mem::take(&mut self.write.pending)
+                pending
                     .into_iter()
                     .filter_map(|choice| self.requested(choice).map(|value| (choice, value)))
                     .collect(),
@@ -275,7 +317,11 @@ impl Document {
         let patch = if let Operation::Write(sent) = &operation {
             let mut patch = json!({});
             for (&choice, &value) in sent {
-                choice.put(&mut patch, value);
+                choice.put(
+                    &mut patch,
+                    value,
+                    self.snapshot.as_ref().unwrap_or(&Value::Null),
+                );
             }
             Some(patch)
         } else {

@@ -20,6 +20,7 @@ mod rtl_tests;
 mod tests;
 mod tool_diff;
 pub(crate) use tool_diff::Preferences as ToolDiffPreferences;
+mod tool_groups;
 mod tools;
 pub(crate) mod transcript;
 pub(crate) mod transport;

@@ -14,6 +14,9 @@ use rune_theme_codenomad::{
 
 const PART_LIMIT: usize = 1000;
 
+#[cfg(test)]
+mod tests;
+
 pub(super) fn part_window(len: usize, steps: usize) -> (usize, usize) {
     let initial = if len > PART_LIMIT {
         PART_LIMIT / 2
@@ -99,6 +102,7 @@ pub fn message(s: &State, i: usize) -> El {
     let usage_after = super::usage::last_text(m).filter(|&index| index < head || index >= tail);
     let mut reveal_start = (head > initial).then(|| head.saturating_sub(PART_LIMIT));
     let mut reasoning_end = 0;
+    let mut group_end = 0;
     for (index, part) in m.parts.iter().enumerate() {
         if index == head && head < tail {
             let hidden = tail - head;
@@ -138,6 +142,9 @@ pub fn message(s: &State, i: usize) -> El {
             );
         }
         let visible = index < head || index >= tail;
+        if index < group_end {
+            continue;
+        }
         let body =
             match part {
                 Part::Text(body) => {
@@ -154,7 +161,20 @@ pub fn message(s: &State, i: usize) -> El {
                         None
                     }
                 }
-                Part::Tool(tool) if visible => Some(tools::view(s, &m.id, tool)),
+                Part::Tool(tool) if visible && tools::visible(s, tool) => {
+                    let limit = if index < head && head < tail {
+                        head
+                    } else {
+                        m.parts.len()
+                    };
+                    match super::tool_groups::view(s, &m.id, &m.parts[index..limit], m.completed) {
+                        Some((group, count)) => {
+                            group_end = index + count;
+                            Some(group)
+                        }
+                        None => Some(tools::view(s, &m.id, tool)),
+                    }
+                }
                 Part::Tool(_) => None,
                 Part::Reasoning(_) if visible && index >= reasoning_end => {
                     let limit = if index < head && head < tail {

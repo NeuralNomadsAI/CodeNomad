@@ -33,6 +33,7 @@ struct StreamRender {
 struct SessionDisplay {
     reading: super::reading::Reading,
     toggled: HashSet<String>,
+    expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     compact_diffs: (u64, HashSet<String>),
@@ -84,6 +85,18 @@ impl Display {
 
     pub fn toggled(&self, key: &str) -> bool {
         self.active.toggled.contains(key)
+    }
+
+    pub(super) fn expanded(&self, key: &str, default: bool) -> bool {
+        self.active.expansion.get(key).copied().unwrap_or(default)
+    }
+
+    pub(super) fn set_expanded(s: &mut State, key: &str, expanded: bool) {
+        s.transcript_display
+            .active
+            .expansion
+            .insert(key.into(), expanded);
+        s.revision += 1;
     }
 
     pub(super) fn compact_split(&self, epoch: u64, key: &str) -> bool {
