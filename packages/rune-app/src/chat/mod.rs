@@ -9,6 +9,7 @@ mod document;
 pub(crate) mod events;
 mod links;
 mod media;
+pub(crate) mod message_actions;
 pub(crate) mod reader;
 pub(crate) mod reading;
 mod receipts;

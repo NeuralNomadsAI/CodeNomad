@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.filter.includeSubsessions": "उप-सत्रहरू",
   "session.pruning.maintenance_required": "हालको कार्य सकिएपछि सफाइ फेरि प्रयास गर्नुहोस्।",
   "session.pruning.unavailable": "CodeNomad फेरि खोलेर प्रयास गर्नुहोस्।",
+  "session.messageActions.serverUnavailable": "यो सर्भरले यो कार्य समर्थन गर्दैन।",
   "session.pruning.conflict": "सन्देश पुनः लोड गरेर सामग्री फेरि चयन गर्नुहोस्।",
   "session.pruning.not_deletable": "यस सत्रका पूरा भएका उपकरण र तर्क मात्र हटाउन सकिन्छ।",
   "session.pruning.unsupported_storage": "सफाइ प्लगइनले यस सत्रको भण्डारण प्रमाणित गर्न सकेन। सफाइ अस्वीकार गरियो।",

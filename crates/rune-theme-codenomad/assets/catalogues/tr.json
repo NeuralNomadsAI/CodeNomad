@@ -2216,6 +2216,7 @@
   "rune.tool_pending": "Hazırlanıyor",
   "rune.unsupported_question": "Desteklenmeyen form",
   "rune.yes": "Evet",
+  "session.messageActions.serverUnavailable": "Bu sunucu bu işlemi desteklemiyor.",
   "session.pruning.blocked": "Yeniden denemeden önce mesajı yeniden yükleyin.",
   "session.pruning.conflict": "Mesajı yeniden yükleyip içeriği tekrar seçin.",
   "session.pruning.maintenance_required": "Geçerli işlem bitince temizlemeyi yeniden deneyin.",

@@ -66,7 +66,13 @@ impl Groups {
             return index;
         }
         let mut run: Option<Run> = None;
-        for (row, message) in s.messages.iter().enumerate() {
+        for (row, message) in s
+            .transcript_display
+            .messages
+            .visible(&s.messages)
+            .iter()
+            .enumerate()
+        {
             if message.role != "assistant"
                 || message.parts.is_empty() && !message.body.trim().is_empty()
             {

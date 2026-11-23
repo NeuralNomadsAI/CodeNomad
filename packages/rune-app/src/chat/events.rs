@@ -47,6 +47,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.transcript_display.usage_family.bind(backend.clone());
                 s.transcript_display.pictures.bind(backend.clone());
                 s.transcript_display.receipts.bind(backend.clone());
+                s.transcript_display.messages.bind(backend.clone());
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -58,6 +59,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    s.transcript_display.messages.refresh();
                     workspace::mission_event(s, None);
                     s.transcript_display.receipts.reconnect();
                     s.transcript_display.pictures.retry_interrupted();
@@ -199,6 +201,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.paging = false;
             }
             Event::Reconnecting | Event::ConnectionLost => {
+                s.transcript_display.messages.offline();
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::reconnecting(s);
                 #[cfg(target_arch = "wasm32")]
@@ -221,7 +224,9 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.paging = false;
                 s.history_error = true;
             }
+            Event::RevertChanged => s.transcript_display.messages.invalidate_boundary(),
             Event::HistoryInvalidated => {
+                s.transcript_display.messages.invalidate_boundary();
                 s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
                 s.transcript_display.pictures.clear();

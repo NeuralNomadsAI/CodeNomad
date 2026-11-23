@@ -245,6 +245,14 @@ pub(crate) async fn run_with_reading(
                     }
                     continue;
                 }
+                if matches!(kind, "session.revert.staged" | "session.revert.cleared") {
+                    publish(&out, &wake, Event::RevertChanged).await;
+                    reader.clear_window_on_revert();
+                    reader.parked = false;
+                    reader.dirty = reader.active_reader;
+                    reader.quiet = Instant::now();
+                    continue;
+                }
                 if matches!(kind, "session.deleted" | "session.revert.committed") {
                     publish(&out, &wake, Event::HistoryInvalidated).await;
                     if kind == "session.deleted" {

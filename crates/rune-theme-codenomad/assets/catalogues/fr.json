@@ -2216,6 +2216,7 @@
   "rune.tool_pending": "Préparation",
   "rune.unsupported_question": "Formulaire non pris en charge",
   "rune.yes": "Oui",
+  "session.messageActions.serverUnavailable": "Ce serveur ne prend pas en charge cette action.",
   "session.pruning.blocked": "Rechargez le message avant de réessayer.",
   "session.pruning.conflict": "Rechargez le message puis sélectionnez à nouveau le contenu.",
   "session.pruning.maintenance_required": "Attendez la fin de l’opération en cours, puis réessayez le nettoyage.",

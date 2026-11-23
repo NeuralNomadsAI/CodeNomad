@@ -9,7 +9,6 @@ use rune::{El, col, text};
 use rune_theme_codenomad::{
     Space, TextRole, catalogue,
     layout::{self, Layout},
-    markdown,
 };
 
 const PART_LIMIT: usize = 1000;
@@ -51,7 +50,7 @@ pub fn rows(s: &State) -> El {
     let locale = locale();
     let groups = Groups::project(s);
     layout::transcript_rows(
-        s.messages.len(),
+        s.transcript_display.messages.visible(&s.messages).len(),
         |s: &State, i| s.messages[i].id.clone().into(),
         move |s: &State, i| {
             crate::strings::with_locale(locale, || {
@@ -80,7 +79,7 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
     if matches!(m.parts.as_slice(), [Part::SubagentReport(_)]) {
         return col().key(m.id.clone());
     }
-    let mut header = layout::action_row().child(
+    let header = layout::action_row().child(
         text(t(if m.role == "user" {
             "messageItem.speaker.you"
         } else {
@@ -88,35 +87,7 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
         }))
         .text_role(TextRole::Label),
     );
-    if !m.body.trim().is_empty() {
-        let id = m.id.clone();
-        header = header.child(
-            markdown::copy_button(
-                t("messageItem.actions.copy"),
-                screen::action_tx(&s.input_scope, move |s, tx| {
-                    let Some(row) = s.messages.iter().find(|row| row.id == id) else {
-                        return;
-                    };
-                    if row.role == "user" || row.parts.is_empty() {
-                        tx.copy(row.body.as_str());
-                    } else {
-                        let prose = row
-                            .parts
-                            .iter()
-                            .filter_map(|part| match part {
-                                Part::Text(body) if !body.text.trim().is_empty() => {
-                                    Some(body.text.as_str())
-                                }
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>();
-                        tx.copy(prose.join("\n\n"));
-                    }
-                }),
-            )
-            .key(format!("copy-message-{}", m.id)),
-        );
-    }
+    let header = super::message_actions::header(s, m, header);
     let mut view = col()
         .key(m.id.clone())
         .full_width()

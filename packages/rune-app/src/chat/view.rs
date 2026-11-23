@@ -7,6 +7,7 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let mut overlays = Vec::new();
     let worktree = git::session_worktree(s, &mut overlays);
     overlays.extend(super::media::preview(s));
+    super::message_actions::overlays(s, &mut overlays);
     let controls = (!git::has_preview(s) && !crate::files::has_preview(s)).then(|| {
         layout::action_row().child(crate::settings::transcript_filters::trigger(
             s,
@@ -16,6 +17,7 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     });
     let body = rune_theme_codenomad::interruption::session_surface(expanded)
         .children(controls)
+        .children(super::message_actions::restore(s))
         .child(shell::reader(s, || {
             let history = rune_theme_codenomad::interruption::history(expanded)
                 .drawn_rect_into(&s.tool_diff_preferences.history_bounds)

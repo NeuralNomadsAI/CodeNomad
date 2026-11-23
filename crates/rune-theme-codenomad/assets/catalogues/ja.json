@@ -2216,6 +2216,7 @@
   "rune.tool_pending": "準備中",
   "rune.unsupported_question": "未対応のフォーム",
   "rune.yes": "はい",
+  "session.messageActions.serverUnavailable": "このサーバーではこの操作はサポートされていません。",
   "session.pruning.blocked": "再試行する前にメッセージを再読み込みしてください。",
   "session.pruning.conflict": "メッセージを再読み込みして内容を選択し直してください。",
   "session.pruning.maintenance_required": "現在の処理が完了してから、クリーンアップを再試行してください。",

@@ -2216,6 +2216,7 @@
   "rune.tool_pending": "Preparing",
   "rune.unsupported_question": "Unsupported form",
   "rune.yes": "Yes",
+  "session.messageActions.serverUnavailable": "This server doesn’t support this action.",
   "session.pruning.blocked": "Reload the message before retrying.",
   "session.pruning.conflict": "Reload the message and select the content again.",
   "session.pruning.maintenance_required": "Wait for the current operation to finish, then retry cleanup.",

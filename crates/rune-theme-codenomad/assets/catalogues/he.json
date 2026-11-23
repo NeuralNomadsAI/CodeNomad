@@ -2216,6 +2216,7 @@
   "rune.tool_pending": "בהכנה",
   "rune.unsupported_question": "טופס לא נתמך",
   "rune.yes": "כן",
+  "session.messageActions.serverUnavailable": "שרת זה אינו תומך בפעולה זו.",
   "session.pruning.blocked": "יש לטעון מחדש את ההודעה לפני ניסיון נוסף.",
   "session.pruning.conflict": "יש לטעון את ההודעה מחדש ולבחור את התוכן שוב.",
   "session.pruning.maintenance_required": "יש להמתין לסיום הפעולה הנוכחית ולנסות לנקות שוב.",

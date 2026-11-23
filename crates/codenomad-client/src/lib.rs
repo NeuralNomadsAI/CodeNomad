@@ -14,6 +14,7 @@ pub mod git;
 pub mod history;
 pub mod http;
 pub mod interruption_receipts;
+pub mod message_actions;
 pub mod missions;
 pub mod prompt;
 pub mod prompt_catalogue;

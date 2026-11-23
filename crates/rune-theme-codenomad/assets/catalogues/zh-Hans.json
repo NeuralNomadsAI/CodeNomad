@@ -2216,6 +2216,7 @@
   "rune.tool_pending": "准备中",
   "rune.unsupported_question": "不支持的表单",
   "rune.yes": "是",
+  "session.messageActions.serverUnavailable": "此服务器不支持此操作。",
   "session.pruning.blocked": "请重新加载消息后再试。",
   "session.pruning.conflict": "请重新加载消息并再次选择内容。",
   "session.pruning.maintenance_required": "请等待当前操作完成后重试清理。",

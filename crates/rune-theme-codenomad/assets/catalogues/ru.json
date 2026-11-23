@@ -2216,6 +2216,7 @@
   "rune.tool_pending": "Подготовка",
   "rune.unsupported_question": "Форма не поддерживается",
   "rune.yes": "Да",
+  "session.messageActions.serverUnavailable": "Этот сервер не поддерживает данное действие.",
   "session.pruning.blocked": "Перезагрузите сообщение перед повторной попыткой.",
   "session.pruning.conflict": "Перезагрузите сообщение и выберите содержимое снова.",
   "session.pruning.maintenance_required": "Дождитесь завершения текущей операции и повторите очистку.",

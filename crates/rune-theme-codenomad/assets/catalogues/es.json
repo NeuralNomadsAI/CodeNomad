@@ -2216,6 +2216,7 @@
   "rune.tool_pending": "Preparando",
   "rune.unsupported_question": "Formulario no compatible",
   "rune.yes": "Sí",
+  "session.messageActions.serverUnavailable": "Este servidor no admite esta acción.",
   "session.pruning.blocked": "Recarga el mensaje antes de reintentar.",
   "session.pruning.conflict": "Recarga el mensaje y vuelve a seleccionar el contenido.",
   "session.pruning.maintenance_required": "Espera a que termine la operación actual y vuelve a intentar la limpieza.",

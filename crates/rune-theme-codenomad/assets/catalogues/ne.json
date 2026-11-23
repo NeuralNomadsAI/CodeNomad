@@ -2216,6 +2216,7 @@
   "rune.tool_pending": "तयारी",
   "rune.unsupported_question": "असमर्थित फाराम",
   "rune.yes": "हो",
+  "session.messageActions.serverUnavailable": "यो सर्भरले यो कार्य समर्थन गर्दैन।",
   "session.pruning.blocked": "फेरि प्रयास गर्नुअघि सन्देश पुनः लोड गर्नुहोस्।",
   "session.pruning.conflict": "सन्देश पुनः लोड गरेर सामग्री फेरि चयन गर्नुहोस्।",
   "session.pruning.maintenance_required": "हालको कार्य सकिएपछि सफाइ फेरि प्रयास गर्नुहोस्।",

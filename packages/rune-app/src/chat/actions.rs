@@ -20,6 +20,7 @@ pub struct Display {
     pub(crate) usage_family: super::usage::family::Totals,
     pub(super) pictures: super::media::Pictures,
     pub(crate) receipts: super::receipts::Receipts,
+    pub(crate) messages: super::message_actions::Actions,
 }
 
 #[derive(Default)]
@@ -45,6 +46,7 @@ impl Display {
         self.receipts.clear();
     }
     pub(super) fn suspend_rendered(&mut self) {
+        self.messages.suspend();
         self.diffs = Default::default();
         self.stream = StreamRender::default();
         self.live_ansi.get_mut().clear();
@@ -72,6 +74,7 @@ impl Display {
                 ..Self::default()
             };
         } else if self.session != session {
+            self.messages = Default::default();
             let next = self.saved.remove(session).unwrap_or_default();
             self.saved.insert(
                 std::mem::replace(&mut self.session, session.into()),
