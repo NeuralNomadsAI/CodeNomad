@@ -71,6 +71,7 @@ pub(crate) struct Ui {
     inventory: Option<Worktrees>,
     slug: String,
     session_slug: String,
+    workspace_preview: bool,
     scope: std::rc::Rc<()>,
     tree_epoch: u64,
     index_revision: u64,
@@ -119,6 +120,7 @@ impl Ui {
             inventory: None,
             slug: "root".into(),
             session_slug: "root".into(),
+            workspace_preview: false,
             scope: std::rc::Rc::new(()),
             tree_epoch: 0,
             index_revision: 0,
@@ -273,6 +275,17 @@ impl Ui {
             .trees
             .iter()
             .find(|tree| tree.slug == self.slug && !tree.missing)
+    }
+
+    pub(super) fn session_checkout_removed(&self) -> bool {
+        self.session_slug != "root"
+            && self.inventory.as_ref().is_some_and(|inventory| {
+                !inventory.trees.is_empty()
+                    && !inventory
+                        .trees
+                        .iter()
+                        .any(|tree| tree.slug == self.session_slug)
+            })
     }
 
     fn select_tree(&mut self, slug: String) {

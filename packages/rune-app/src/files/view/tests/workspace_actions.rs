@@ -136,6 +136,15 @@ fn right_panel_exposes_only_the_actions_for_its_host_and_row_kind() {
             clipboard.text().as_deref().map(String::as_str),
             Some(long_name.as_str())
         );
+        click(&mut rt, "git-mode/segment1");
+        settle_shell(&mut rt);
+        assert!(rt.find("workspace-tree-scroll").is_none());
+        click(&mut rt, "git-mode/segment0");
+        settle_shell(&mut rt);
+        assert!(
+            (rt.find(&long_row).unwrap().1 - scrolled).abs() < 1.0,
+            "returning to Workspace restores the scroll offset"
+        );
         #[cfg(windows)]
         {
             rt.update(|s, tx| {

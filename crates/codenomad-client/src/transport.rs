@@ -19,6 +19,10 @@ pub enum WorkspaceEvent {
     WorktreesChanged {
         workspace_id: String,
     },
+    SessionMoved {
+        workspace_id: String,
+        session_id: String,
+    },
     Stopped {
         workspace_id: String,
     },
