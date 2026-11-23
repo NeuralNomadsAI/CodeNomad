@@ -19,7 +19,11 @@ pub fn rows(s: &State) -> El {
     layout::transcript_rows(
         s.messages.len(),
         |s: &State, i| s.messages[i].id.clone().into(),
-        move |s: &State, i| crate::strings::with_locale(locale, || message(s, i)),
+        move |s: &State, i| {
+            crate::strings::with_locale(locale, || {
+                super::reading::row(s, s.messages[i].id.clone(), message(s, i))
+            })
+        },
     )
     .key("rows")
     .virtual_rows_version(s.revision)

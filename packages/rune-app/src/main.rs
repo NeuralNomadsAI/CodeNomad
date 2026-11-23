@@ -338,10 +338,13 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         .is_some_and(|a| a.picker || !a.ids().is_empty());
     rune_theme_codenomad::interruption::session_surface(expanded)
         .child(shell::reader(s, || {
-            rune_theme_codenomad::interruption::history(expanded)
-                .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
-                .on_layout_tx(chat::ToolDiffPreferences::history_layout)
-                .child(transcript::rows(s))
+            chat::reading::viewport(
+                s,
+                rune_theme_codenomad::interruption::history(expanded)
+                    .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
+                    .on_layout_tx(chat::ToolDiffPreferences::history_layout)
+                    .child(transcript::rows(s)),
+            )
         }))
         .child(agent_view::view(s, cx))
         .child(composer(s))
