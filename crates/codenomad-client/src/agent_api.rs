@@ -18,12 +18,29 @@ pub struct Permission {
     pub resources: Vec<String>,
     pub message: String,
     pub supported: bool,
+    pub tool: Option<ToolTarget>,
 }
 #[derive(Clone)]
 pub struct Form {
     pub id: String,
     pub title: String,
     pub fields: Vec<Value>,
+    pub tool: Option<ToolTarget>,
+    pub infer_websearch: bool,
+}
+
+#[derive(Clone)]
+pub struct ToolTarget {
+    pub message: String,
+    pub call: String,
+}
+
+fn target(message: &Value, call: &Value) -> Option<ToolTarget> {
+    let id = |value: &Value| value.as_str().filter(|id| valid_id(id)).map(str::to_owned);
+    Some(ToolTarget {
+        message: id(message)?,
+        call: id(call)?,
+    })
 }
 pub struct Snapshot {
     pub models: Option<Vec<Model>>,
@@ -392,6 +409,14 @@ pub fn permissions(value: &Value, session: &str) -> Result<Vec<Permission>> {
                 .take(4096)
                 .collect(),
             supported: resources.len() <= 64,
+            tool: target(
+                &row["source"]["messageID"],
+                row.get("partID")
+                    .or_else(|| row.get("partId"))
+                    .or_else(|| row["metadata"].get("partID"))
+                    .or_else(|| row["metadata"].get("partId"))
+                    .unwrap_or(&row["source"]["id"]),
+            ),
         });
     }
     Ok(out)
@@ -412,10 +437,32 @@ pub fn forms(value: &Value, session: &str) -> Result<Vec<Form>> {
             .filter(|v| !v.is_empty() && v.len() <= 32)
             .ok_or("invalid question fields")?
             .clone();
+        let metadata = &row["metadata"];
+        let source = metadata
+            .get("tool")
+            .filter(|v| v.is_object())
+            .or_else(|| metadata.get("source").filter(|v| v.is_object()))
+            .unwrap_or(&Value::Null);
+        let explicit = |keys: &[&str]| {
+            keys.iter()
+                .find_map(|key| source.get(*key))
+                .or_else(|| {
+                    keys.iter()
+                        .filter(|key| **key != "id")
+                        .find_map(|key| metadata.get(*key))
+                })
+                .unwrap_or(&Value::Null)
+        };
+        let tool = target(
+            explicit(&["messageID", "messageId"]),
+            explicit(&["id", "callID", "callId"]),
+        );
         out.push(Form {
             id,
             title: string(&row["title"], 4096)?,
             fields,
+            infer_websearch: tool.is_none() && metadata["kind"] == "websearch.provider",
+            tool,
         });
     }
     Ok(out)

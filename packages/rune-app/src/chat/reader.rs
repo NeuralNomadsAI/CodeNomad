@@ -179,6 +179,15 @@ pub(crate) fn invalidate(s: &mut State) {
     }
 }
 
+pub(super) fn refresh_after_message_action(s: &mut State) {
+    if let Some(reader) = &mut s.reader {
+        reader.resume(Bookmark::Latest);
+        s.paging = false;
+    } else if let Some(command) = &s.commands {
+        let _ = command.try_send(crate::transport::Command::Latest);
+    }
+}
+
 pub(crate) fn settle_bookmark(s: &mut State, attempted: &str, confirmed: Option<&str>) {
     s.transcript_display
         .reading_mut()
@@ -212,6 +221,7 @@ pub(crate) fn reconcile_bookmark(s: &mut State, rows: &[crate::history::Row]) {
 }
 
 pub(crate) fn suspend(s: &mut State) {
+    crate::settings::transcript_filters::close(s);
     if let Some(reader) = &mut s.reader {
         reader.bookmark = reader.bookmark(s.transcript_display.reading_mut());
         reader.stop_content();
@@ -219,8 +229,8 @@ pub(crate) fn suspend(s: &mut State) {
             s.phase = crate::Phase::Ready;
         }
         s.paging = false;
-        s.transcript_display.evict_rendered();
     }
+    s.transcript_display.suspend_rendered();
 }
 
 pub(crate) fn resume(s: &mut State, tx: &mut Tx) {

@@ -3,6 +3,7 @@ mod document;
 mod notifications;
 pub(super) mod server;
 
+use super::transcript_preset::{self, Row};
 use crate::{backend::Backend, platform};
 pub(super) use codenomad_client::settings::Owner;
 use codenomad_client::settings::PreferencesWatch;
@@ -35,46 +36,60 @@ pub(super) struct Preferences {
 
 impl Preferences {
     pub(super) fn usage_visibility(&self, pending: bool) -> &'static str {
-        let settings = self
-            .saved(Owner::Config)
-            .map(|data| &data["settings"])
-            .unwrap_or(&Value::Null);
-        let requested = |choice| {
-            (pending && !self.config.choice_failed(choice))
-                .then(|| self.config.requested(choice))
-                .flatten()
-        };
-        if !requested(Choice::UsageVisible).map_or_else(
-            || settings["showUsageMetrics"].as_bool() == Some(true),
-            |value| value == "on",
-        ) {
-            return "hidden";
-        }
-        match requested(Choice::UsageExpansion)
-            .or_else(|| settings["usageMetricsExpansion"].as_str())
-        {
-            Some("expanded") => "expanded",
-            Some("collapsed") => "collapsed",
-            _ if settings["toolCallExpansionDefaults"]["preset"] == "everything" => "expanded",
-            _ => "collapsed",
-        }
+        self.transcript_mode(Row::Usage, pending)
     }
 
+    #[cfg(test)]
     pub(super) fn set_usage_visibility(&mut self, mode: &'static str) {
-        if self.saved(Owner::Config).is_none()
-            || !self.can_retry()
-            || mode == self.usage_visibility(true)
+        self.set_transcript(Some(Row::Usage), mode);
+    }
+
+    fn transcript_settings(&self) -> &Value {
+        self.saved(Owner::Config)
+            .map_or(&Value::Null, |data| &data["settings"])
+    }
+
+    pub(super) fn transcript_mode(&self, row: Row, pending: bool) -> &'static str {
+        let choice = Choice::TranscriptRow(row);
+        if pending {
+            if let Some(mode) = self
+                .config
+                .requested(choice)
+                .filter(|_| !self.config.choice_failed(choice))
+            {
+                return mode;
+            }
+            if let Some(preset) = self
+                .config
+                .requested(Choice::TranscriptPreset)
+                .filter(|_| !self.config.choice_failed(Choice::TranscriptPreset))
+            {
+                return row.mode(&transcript_preset::patch(preset));
+            }
+        }
+        row.mode(self.transcript_settings())
+    }
+
+    pub(super) fn transcript_preset(&self) -> &'static str {
+        transcript_preset::selected(self.transcript_settings())
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn fixture_transcript(&mut self, settings: Value) {
+        self.config.snapshot = Some(json!({ "settings": settings }));
+    }
+
+    pub(super) fn set_transcript(&mut self, row: Option<Row>, mode: &'static str) {
+        if self.saved(Owner::Config).is_some()
+            && self.can_retry()
+            && row.is_none_or(|row| self.transcript_mode(row, true) != mode)
         {
-            return;
+            self.config.stage(
+                row.map_or(Choice::TranscriptPreset, Choice::TranscriptRow),
+                mode,
+            );
+            self.revision += 1;
         }
-        self.config.stage(
-            Choice::UsageVisible,
-            if mode == "hidden" { "off" } else { "on" },
-        );
-        if mode != "hidden" {
-            self.config.stage(Choice::UsageExpansion, mode);
-        }
-        self.revision += 1;
     }
 
     pub(super) fn take_notification_failure(&mut self) -> bool {
@@ -648,7 +663,7 @@ impl Preferences {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub(super) fn fixture_usage(&mut self, mode: &str) {
         let config = self
             .config

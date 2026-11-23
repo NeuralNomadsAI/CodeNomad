@@ -7,6 +7,14 @@ use crate::{
 };
 
 pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
+    drain_chat(s, limit, true)
+}
+
+pub(crate) fn poll_hidden_chat(s: &mut State, limit: usize) -> bool {
+    drain_chat(s, limit, false)
+}
+
+fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
     if changed
         && s.reader
@@ -37,6 +45,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.renew_scope();
                 s.transcript_display.children.bind(backend.clone());
                 s.transcript_display.usage_family.bind(backend.clone());
+                s.transcript_display.pictures.bind(backend.clone());
+                s.transcript_display.receipts.bind(backend.clone());
+                s.transcript_display.messages.bind(backend.clone());
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -48,7 +59,10 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    s.transcript_display.messages.refresh();
                     workspace::mission_event(s, None);
+                    s.transcript_display.receipts.reconnect();
+                    s.transcript_display.pictures.retry_interrupted();
                     s.transcript_display.usage_family.refresh();
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
@@ -147,6 +161,12 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     crate::shell::notifications::relay_notice(s, event);
                 }
             }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::PermissionReceiptsChanged { message },
+            ) => {
+                s.transcript_display.receipts.invalidate(message);
+                continue;
+            }
             Event::Workspace(event) => {
                 if matches!(
                     event,
@@ -224,6 +244,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
             }
             Event::Reconnecting | Event::ConnectionLost => {
+                s.transcript_display.messages.offline();
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::reconnecting(s);
                 #[cfg(target_arch = "wasm32")]
@@ -247,8 +268,12 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
                 s.history_error = true;
             }
+            Event::RevertChanged => s.transcript_display.messages.invalidate_boundary(),
             Event::HistoryInvalidated => {
+                s.transcript_display.messages.invalidate_boundary();
+                s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
+                s.transcript_display.pictures.clear();
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();
@@ -259,7 +284,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.phase = Phase::Reconnecting;
             }
             Event::WorkspaceMissing => {
+                s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
+                s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -323,7 +350,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.history_error = true;
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
+                s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
+                s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
@@ -359,7 +388,10 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         s.phase = Phase::Failed;
         changed = true;
     }
-    if s.transcript_display.children.poll() {
+    if s.transcript_display.children.poll()
+        | s.transcript_display.pictures.poll(&s.reads, &s.wake)
+        | super::receipts::Receipts::poll(s, visible)
+    {
         s.revision += 1;
         changed = true;
     }

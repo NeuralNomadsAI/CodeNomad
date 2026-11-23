@@ -42,6 +42,8 @@ export const messagingMessages = {
   "promptInput.skills.empty": "यस डाइरेक्टरीमा कुनै सीप उपलब्ध छैन।",
   "toolCall.image.label": "तस्बिर {number}",
   "toolCall.image.unavailable": "यो तस्बिर देखाउन सकिएन।",
+  "toolCall.image.openExternal": "ब्राउजरमा तस्बिर खोल्नुहोस्",
+  "messageItem.attachment.enlarge": "तस्बिर ठूलो पार्नुहोस्",
   "promptInput.btw.title": "/btw — छुट्टै प्रश्न",
   "promptInput.btw.commandDescription": "कुराकानीमा नथपी छुट्टै प्रश्न सोध्नुहोस्",
   "promptInput.btw.question": "तपाईंको प्रश्न",

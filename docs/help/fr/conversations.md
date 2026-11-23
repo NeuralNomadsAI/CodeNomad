@@ -117,6 +117,8 @@ Un objectif appartient à sa conversation : les sous-sessions et les bifurcation
 
 ## Bifurquer, annuler et récupérer une exécution échouée {#fork-errors}
 
+Dans Rune, l’annulation place le texte d’origine dans le composeur s’il est vide. **Rétablir le dernier message**, au-dessus de la conversation, restaure l’historique. Le serveur doit prendre en charge l’annulation et la suppression des outils et raisonnements.
+
 1. Sur un message, choisissez **Bifurquer après ce message** pour créer une conversation après ce point sans remplacer l’originale.
 2. Pour annuler, examinez attentivement **Annuler les changements jusqu'ici (supprime les messages)**. La palette propose **Annuler le dernier message** et **Rétablir le dernier message** pour l’annulation en cours. Annuler est désactivé sans message utilisateur annulable ; Rétablir est désactivé sans annulation en cours.
 3. Si l’exécution échoue, consultez **Erreur de session**, l’erreur de réponse et les détails **Échec de l'envoi** avant d’envoyer à nouveau.

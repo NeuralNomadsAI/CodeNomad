@@ -141,6 +141,8 @@ fn setup(s: &mut State, wake: rune::Waker) {
     s.wake = wake.clone();
     #[cfg(feature = "test-support")]
     if platform::scene_is("transcript") {
+        #[cfg(target_arch = "wasm32")]
+        transcript::load_scene(s);
         return;
     }
     #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
@@ -216,13 +218,14 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= s.composer.picker.poll(&s.reads, &s.wake);
     changed |= composer::device::poll(s, tx);
     changed |= chat::attachments::poll(s, tx);
+    changed |= chat::message_actions::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
     {
         changed |= platform::pairing::poll(s, tx);
     }
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
-    changed |= settings::poll(s) | settings::poll_window_actions(s, tx);
+    changed |= settings::poll(s, tx) | settings::poll_window_actions(s, tx);
     #[cfg(target_arch = "wasm32")]
     {
         changed |= settings::poll_stats(s, now, tx);
@@ -308,7 +311,7 @@ fn run_app() {
                     s.phase = Phase::Ready;
                 }),
                 #[cfg(not(target_arch = "wasm32"))]
-                ("transcript", probes::transcript_scene::load),
+                ("transcript", transcript::load_scene),
                 #[cfg(not(target_arch = "wasm32"))]
                 ("git-changes", probes::git_scene::changes),
                 #[cfg(not(target_arch = "wasm32"))]

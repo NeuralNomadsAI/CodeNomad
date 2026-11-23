@@ -15,6 +15,7 @@ use std::{cell::Cell, rc::Rc};
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {
     General,
+    Conversation,
     OpenCode,
     Notifications,
     Shortcuts,
@@ -30,6 +31,7 @@ impl Section {
     fn label(self) -> &'static str {
         t(match self {
             Self::General => "settings.nav.general",
+            Self::Conversation => "settings.nav.chat",
             Self::OpenCode => "settings.nav.opencode",
             Self::Notifications => "settings.nav.notifications",
             Self::Shortcuts => "settings.nav.hotkeys",
@@ -57,6 +59,7 @@ pub(super) struct Panel {
     permissions: super::behavior::Permissions,
     memory_help_failed: bool,
     memory_editor: super::memory::editor::Editor,
+    transcript_picker: Option<super::TranscriptRow>,
     catalog: Catalog,
     scope: super::host_support::HostSupport,
     config_files: super::config_files::Editor,
@@ -252,6 +255,7 @@ fn close(s: &mut State) {
     prefs.provider_target = None;
     prefs.memory.show(false);
     panel.memory_help_failed = false;
+    panel.transcript_picker = None;
 }
 
 fn request_notification_permission(s: &mut State) {
@@ -291,6 +295,7 @@ pub(super) fn view(
     let local = panel.local(prefs);
     let sections: Vec<_> = [
         Section::General,
+        Section::Conversation,
         Section::OpenCode,
         Section::Notifications,
         Section::Shortcuts,
@@ -332,6 +337,7 @@ pub(super) fn view(
                 return;
             }
             panel.section = section;
+            panel.transcript_picker = None;
             panel.recording_shortcut = false;
             panel.shortcut_capture = Default::default();
             if section != Section::OpenCode {
@@ -386,6 +392,13 @@ pub(super) fn view(
                 s.settings.web.catalog.toggle()
             })
         }
+        Section::Conversation => super::conversation::content(
+            prefs,
+            panel.transcript_picker,
+            &mut layers,
+            |s: &mut State, row| s.settings.web.transcript_picker = row,
+            |s: &mut State, row, mode| s.settings.shared.borrow_mut().set_transcript(row, mode),
+        ),
         Section::Shortcuts => super::shortcuts::editor::view(
             &s.settings.shared,
             &panel.shortcut_filter,

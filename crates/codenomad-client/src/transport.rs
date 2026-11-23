@@ -52,6 +52,9 @@ pub enum WorkspaceEvent {
     MissionActivityChanged {
         workspace_id: String,
     },
+    PermissionReceiptsChanged {
+        message: Option<String>,
+    },
     NativeFilesystemChanged {
         workspace_id: String,
     },
@@ -129,6 +132,7 @@ pub enum Event {
     WorkspaceMissing,
     Reconnecting,
     HistoryInvalidated,
+    RevertChanged,
     PagingFailed,
 }
 

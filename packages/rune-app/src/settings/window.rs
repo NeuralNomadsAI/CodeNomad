@@ -1,7 +1,7 @@
+#[cfg(target_arch = "wasm32")]
+use super::web;
 #[cfg(not(target_arch = "wasm32"))]
 use super::{Preferences, memory, notification_settings, providers, view};
-#[cfg(target_arch = "wasm32")]
-use super::{conversation, web};
 use crate::State;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::strings;
@@ -18,7 +18,7 @@ pub(crate) fn entries(touch: bool) -> impl IntoIterator<Item = El> {
         .button(touch, strings::t("settings.title"), open)
         .key("open-preferences")];
     #[cfg(target_arch = "wasm32")]
-    return [web::entry(touch), conversation::web_entry(touch)];
+    return [web::entry(touch)];
 }
 
 pub(crate) fn direct_entry(s: &State, touch: bool) -> El {

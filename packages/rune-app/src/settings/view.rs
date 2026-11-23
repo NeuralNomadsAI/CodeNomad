@@ -398,12 +398,15 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             ),
             Section::Conversation => (
                 "conversation",
-                super::conversation::row(
+                super::conversation::content(
                     &prefs,
-                    s.picker.get() == Some(Picker::Usage),
+                    match s.picker.get() {
+                        Some(Picker::Transcript(row)) => Some(row),
+                        _ => None,
+                    },
                     &mut layers,
-                    |s: &mut Window, open| s.picker.set(open.then_some(Picker::Usage)),
-                    |s: &mut Window, mode| s.shared.borrow_mut().set_usage_visibility(mode),
+                    |s: &mut Window, row| s.picker.set(row.map(Picker::Transcript)),
+                    |s: &mut Window, row, mode| s.shared.borrow_mut().set_transcript(row, mode),
                 ),
             ),
             Section::General => (

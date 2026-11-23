@@ -623,6 +623,7 @@ fn server_search_follows_scoped_worktree_cursors_and_binds_the_exact_match() {
             .unwrap();
         assert_eq!(bound.session, info.id);
         assert_eq!(slug, "linked");
+        assert_eq!(bound.session_directory.as_deref(), Some("/linked"));
     });
 }
 

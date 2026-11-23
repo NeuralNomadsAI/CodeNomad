@@ -41,6 +41,13 @@ pub(super) async fn relay(
     {
         out.send(Input::Workspace(epoch, event)).await?;
     }
+    if own
+        && value["type"] == "instance.event"
+        && native["data"]["sessionID"] != b.session
+        && crate::content::FamilyChange::tracks(native)
+    {
+        return Ok(out.send(Input::Native(epoch, 0, native.clone())).await?);
+    }
     let catalogues = (own && value["type"] == "instance.event")
         .then(|| match native["type"].as_str() {
             Some("command.updated") => Some(WorkspaceEvent::CommandsChanged),

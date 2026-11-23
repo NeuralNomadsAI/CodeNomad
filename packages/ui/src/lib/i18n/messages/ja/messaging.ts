@@ -42,6 +42,8 @@ export const messagingMessages = {
   "promptInput.skills.empty": "このディレクトリにはスキルがありません。",
   "toolCall.image.label": "画像 {number}",
   "toolCall.image.unavailable": "この画像を表示できません。",
+  "toolCall.image.openExternal": "画像をブラウザーで開く",
+  "messageItem.attachment.enlarge": "画像を拡大",
   "promptInput.btw.title": "/btw — 補足の質問",
   "promptInput.btw.commandDescription": "会話に追加せずに補足の質問をする",
   "promptInput.btw.question": "質問",

@@ -18,6 +18,9 @@ pub struct Display {
     pub(super) diffs: super::tool_diff::Cache,
     pub(super) children: super::tools::children::Children,
     pub(crate) usage_family: super::usage::family::Totals,
+    pub(super) pictures: super::media::Pictures,
+    pub(crate) receipts: super::receipts::Receipts,
+    pub(crate) messages: super::message_actions::Actions,
 }
 
 #[derive(Default)]
@@ -31,20 +34,32 @@ struct StreamRender {
 struct SessionDisplay {
     reading: super::reading::Reading,
     toggled: HashSet<String>,
+    expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
+    diagram_sources: HashMap<String, BTreeSet<usize>>,
     compact_diffs: (u64, HashSet<String>),
 }
 impl Display {
     pub(crate) fn evict_rendered(&mut self) {
+        self.suspend_rendered();
+        self.receipts.clear();
+    }
+    pub(super) fn suspend_rendered(&mut self) {
+        self.messages.suspend();
         self.diffs = Default::default();
         self.stream = StreamRender::default();
         self.live_ansi.get_mut().clear();
         self.children.clear();
         self.usage_family.close();
+        self.pictures.clear();
+        self.receipts.suspend();
     }
-    pub(super) fn reading_mut(&mut self) -> &mut super::reading::Reading {
+    pub(crate) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
+    }
+    pub(super) fn reading(&self) -> &super::reading::Reading {
+        &self.active.reading
     }
 
     pub fn bind(&mut self, server: &str, workspace: &str, session: &str) {
@@ -59,6 +74,7 @@ impl Display {
                 ..Self::default()
             };
         } else if self.session != session {
+            self.messages = Default::default();
             let next = self.saved.remove(session).unwrap_or_default();
             self.saved.insert(
                 std::mem::replace(&mut self.session, session.into()),
@@ -68,12 +84,26 @@ impl Display {
             self.live_ansi.get_mut().clear();
             self.children.clear();
             self.usage_family.close();
+            self.pictures.clear();
+            self.receipts.clear();
             self.diffs = Default::default();
         }
     }
 
     pub fn toggled(&self, key: &str) -> bool {
         self.active.toggled.contains(key)
+    }
+
+    pub(super) fn expanded(&self, key: &str, default: bool) -> bool {
+        self.active.expansion.get(key).copied().unwrap_or(default)
+    }
+
+    pub(super) fn set_expanded(s: &mut State, key: &str, expanded: bool) {
+        s.transcript_display
+            .active
+            .expansion
+            .insert(key.into(), expanded);
+        s.revision += 1;
     }
 
     pub(super) fn compact_split(&self, epoch: u64, key: &str) -> bool {
@@ -163,15 +193,20 @@ impl Display {
     }
 
     pub fn toggle_code(s: &mut State, key: &str, index: usize) {
-        let blocks = s
-            .transcript_display
-            .active
-            .unwrapped
-            .entry(key.into())
-            .or_default();
-        if !blocks.remove(&index) {
-            blocks.insert(index);
-        }
+        toggle_index(&mut s.transcript_display.active.unwrapped, key, index);
+        s.revision += 1;
+    }
+
+    pub(super) fn diagram_sources(&self, key: &str) -> BTreeSet<usize> {
+        self.active
+            .diagram_sources
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn toggle_diagram_source(s: &mut State, key: &str, index: usize) {
+        toggle_index(&mut s.transcript_display.active.diagram_sources, key, index);
         s.revision += 1;
     }
 
@@ -192,6 +227,13 @@ impl Display {
             .or_default();
         *steps = steps.saturating_add(1);
         s.revision += 1;
+    }
+}
+
+fn toggle_index(groups: &mut HashMap<String, BTreeSet<usize>>, key: &str, index: usize) {
+    let indices = groups.entry(key.into()).or_default();
+    if !indices.remove(&index) {
+        indices.insert(index);
     }
 }
 

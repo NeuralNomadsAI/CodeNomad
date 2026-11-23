@@ -1,4 +1,4 @@
-use super::Part;
+use super::{Part, PictureSource, media};
 use crate::history::Result;
 use serde_json::Value;
 
@@ -14,8 +14,9 @@ pub struct File {
     pub mime: String,
     pub name: Option<String>,
     pub reference: Option<Reference>,
+    pub picture: Option<PictureSource>,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Reference {
     pub message: String,
     pub ordinal: usize,
@@ -65,6 +66,7 @@ pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
             name: string(skill, "name")?.into(),
         }));
     }
+    let mut image_bytes = media::ROW_IMAGE_BYTES;
     for (index, file) in files.iter().enumerate() {
         let mime = string(file, "mime")?;
         let source = &file["source"];
@@ -83,6 +85,24 @@ pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
             }
             _ => return Err("invalid native file source".into()),
         };
+        let picture = media::is_image(mime).then(|| {
+            if let Some(reference) = &reference {
+                return PictureSource::Attachment(reference.clone());
+            }
+            let picture = match source["type"].as_str() {
+                Some("uri") => source["uri"]
+                    .as_str()
+                    .map(|uri| PictureSource::uri(mime, uri)),
+                Some("inline" | "file") => file["data"]
+                    .as_str()
+                    .or_else(|| source["data"].as_str())
+                    .map(|data| PictureSource::inline(mime, data)),
+                _ => None,
+            };
+            picture
+                .unwrap_or(PictureSource::Unavailable)
+                .fit(&mut image_bytes)
+        });
         parts.push(Part::File(File {
             id: format!("{id}-file-{index}"),
             mime: mime.into(),
@@ -92,6 +112,7 @@ pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
                 .map(str::to_owned)
                 .or_else(|| source["uri"].as_str().and_then(basename)),
             reference,
+            picture,
         }));
     }
     Ok(parts)

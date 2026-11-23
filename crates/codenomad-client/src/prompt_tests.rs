@@ -110,6 +110,7 @@ impl Server {
                 workspace: "workspace".into(),
                 session: "session".into(),
                 client_id: "prompt-fixture".into(),
+                session_directory: None,
                 fresh_mode: false,
             },
             requests,
@@ -405,6 +406,10 @@ fn legacy_file_blobs_keep_labels_without_retaining_inline_bytes_or_device_paths(
         };
         assert_eq!(file.name.as_deref(), Some("shot.png"));
         assert!(file.reference.is_none());
+        assert_eq!(
+            file.picture,
+            Some(crate::content::PictureSource::Unavailable)
+        );
         assert!(!format!("{file:?}").contains("AAEC/w=="));
         assert!(!format!("{file:?}").contains("D:/device"));
     });

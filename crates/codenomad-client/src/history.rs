@@ -27,7 +27,8 @@ pub fn retained_bytes(rows: &[Row]) -> usize {
                 + row.role.len()
                 + row.body.len()
                 + crate::content::bytes(&row.parts)
-                + crate::content::tool_text_bytes(&row.parts),
+                + crate::content::tool_text_bytes(&row.parts)
+                + crate::content::media_bytes(&row.parts),
         )
     })
 }
@@ -45,10 +46,15 @@ pub fn decode_message(v: &Value) -> Result<Message> {
         .ok_or("invalid message id")?;
     let role = v["type"].as_str().ok_or("missing message type")?;
     let parts = crate::content::decode(v)?;
-    let body = if role == "user" {
-        v["text"].as_str().ok_or("invalid native user text")?.into()
-    } else {
-        crate::content::text_body(&parts)
+    let body = match role {
+        "user" => v["text"].as_str().ok_or("invalid native user text")?.into(),
+        "system" => v["text"].as_str().unwrap_or_default().into(),
+        "compaction" => v["summary"]
+            .as_str()
+            .or_else(|| v["error"]["message"].as_str())
+            .unwrap_or_default()
+            .into(),
+        _ => crate::content::text_body(&parts),
     };
     Ok(Message {
         id: id.into(),
@@ -244,6 +250,14 @@ pub fn check(rows: &[Row]) -> Result<()> {
         > WINDOW_BYTES
     {
         return Err("resident attachments exceed their bound".into());
+    }
+    if rows
+        .iter()
+        .map(|row| crate::content::media_bytes(&row.parts))
+        .sum::<usize>()
+        > WINDOW_BYTES
+    {
+        return Err("resident image references exceed their bound".into());
     }
     if rows
         .iter()
