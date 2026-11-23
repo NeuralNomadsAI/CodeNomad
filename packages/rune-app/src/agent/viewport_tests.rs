@@ -284,6 +284,7 @@ fn audit_settlement_during_edit(permission: bool) {
                 Snapshot {
                     models: None,
                     current: None,
+                    directory: None,
                     session_known: true,
                     running: false,
                     permissions: Some(vec![]),

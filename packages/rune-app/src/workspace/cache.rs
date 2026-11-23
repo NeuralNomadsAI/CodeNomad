@@ -27,6 +27,7 @@ pub(super) struct Cache {
     launcher_visible: bool,
     input_scope: std::rc::Rc<()>,
     status_permissions: crate::shell::status_permissions::Permissions,
+    status_usage: crate::shell::status_usage::Panel,
 }
 impl Cache {
     pub(super) fn has_conversation_stream(&self) -> bool {
@@ -90,6 +91,7 @@ impl Cache {
             launcher_visible: s.screen.is_launcher(),
             input_scope: s.input_scope.clone(),
             status_permissions: std::mem::take(&mut s.status_permissions),
+            status_usage: std::mem::take(&mut s.status_usage),
         }
     }
     pub fn apply(self, s: &mut State) {
@@ -119,6 +121,7 @@ impl Cache {
         }
         s.input_scope = self.input_scope;
         s.status_permissions = self.status_permissions;
+        s.status_usage = self.status_usage;
     }
 }
 pub(super) fn status(

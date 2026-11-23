@@ -27,6 +27,7 @@ pub struct Form {
 pub struct Snapshot {
     pub models: Option<Vec<Model>>,
     pub current: Option<Value>,
+    pub directory: Option<String>,
     pub session_known: bool,
     pub running: bool,
     pub permissions: Option<Vec<Permission>>,
@@ -73,16 +74,16 @@ impl Backend {
             .ok()
             .map(|v| v["data"]["model"].clone())
             .filter(|v| !v.is_null());
+        let directory = session
+            .as_ref()
+            .ok()
+            .and_then(|v| v["data"]["location"]["directory"].as_str());
         let running = session.as_ref().ok().is_some_and(|v| {
             v["data"]["time"]["busy"].as_f64().unwrap_or(0.0)
                 > v["data"]["time"]["idle"].as_f64().unwrap_or(0.0)
         });
         let models = if catalog {
-            if let Some(directory) = session
-                .as_ref()
-                .ok()
-                .and_then(|v| v["data"]["location"]["directory"].as_str())
-            {
+            if let Some(directory) = directory {
                 let response = self
                     .client
                     .get(self.control_url("model"))
@@ -113,6 +114,9 @@ impl Backend {
         Snapshot {
             models,
             current,
+            directory: directory
+                .filter(|directory| crate::absolute_server_path(directory))
+                .map(str::to_owned),
             session_known: session.is_ok(),
             running,
             permissions,

@@ -3,6 +3,7 @@ pub(crate) mod render;
 mod right_panel;
 mod sidebar;
 pub(crate) mod status_permissions;
+pub(crate) mod status_usage;
 
 use crate::{Phase, Screen, State, components::button_tx, launcher_view, strings::t, workspace};
 use rune::{Cx, El, Tx, col, text};

@@ -21,6 +21,7 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
     let snapshot = |forms| agent_api::Snapshot {
         models: Some(vec![]),
         current: None,
+        directory: None,
         session_known: true,
         running: true,
         permissions: Some(vec![]),

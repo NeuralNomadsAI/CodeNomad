@@ -40,6 +40,7 @@ pub struct Ui {
     handle: Handle,
     pub models: Vec<Model>,
     pub current: Option<serde_json::Value>,
+    pub directory: Option<String>,
     pub permissions: Vec<Permission>,
     pub forms: Vec<Form>,
     pub drafts: Drafts,
@@ -187,6 +188,7 @@ impl Ui {
             handle,
             models: vec![],
             current: None,
+            directory: None,
             permissions: vec![],
             forms: vec![],
             drafts: Default::default(),
@@ -257,6 +259,7 @@ impl Ui {
     fn snapshot(&mut self, s: Snapshot) {
         let current_activity = !std::mem::take(&mut self.activity_during_job);
         self.known = s.session_known;
+        self.directory = s.directory;
         if s.session_known {
             self.current = s.current;
             if current_activity {

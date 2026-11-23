@@ -151,6 +151,14 @@ pub(crate) fn bound_backend(s: &State) -> Option<crate::backend::Backend> {
     s.settings.shared.borrow().backend.clone()
 }
 
+pub(crate) fn show_provider_usage_credit_balance(s: &State) -> bool {
+    s.settings
+        .shared
+        .borrow()
+        .saved(codenomad_client::settings::Owner::Config)
+        .is_some_and(|config| config["settings"]["showProviderUsageCreditBalance"] == true)
+}
+
 pub(crate) fn stop_before_conversation(s: &State) -> Option<codenomad_client::Receiver<()>> {
     s.settings.shared.borrow_mut().stop_before_conversation()
 }

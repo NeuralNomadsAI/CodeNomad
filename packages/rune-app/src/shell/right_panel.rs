@@ -52,9 +52,18 @@ pub fn view(s: &State, width: f32, touch: bool, floating: bool) -> El {
             }
             RightPanelTab::Missions => workspace::mission_panel(s).remaining(),
             RightPanelTab::Status => col()
-                .pad(Space::Md)
-                .separate(Space::Sm)
-                .child(text(connection(s)))
-                .children(super::status_permissions::view(s)),
+                .remaining()
+                .scroll(rune::ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(
+                    col()
+                        .full_width()
+                        .pad(Space::Md)
+                        .separate(Space::Sm)
+                        .child(text(connection(s)))
+                        .children(super::status_permissions::view(s))
+                        .children(super::status_usage::section(s)),
+                ),
         })
 }

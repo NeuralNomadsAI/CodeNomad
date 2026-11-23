@@ -39,6 +39,7 @@ enum Startup {
 }
 
 fn launch(s: &mut crate::State, startup: Startup) {
+    s.status_usage.attach();
     s.status_permissions.attach(match &startup {
         Startup::Bound(backend) => Some(backend),
         Startup::Configured { .. } => None,

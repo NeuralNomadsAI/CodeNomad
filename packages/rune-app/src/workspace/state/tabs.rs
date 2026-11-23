@@ -15,6 +15,7 @@ fn stash(s: &mut State) {
         git.activate(false);
     }
     s.status_permissions.show(false);
+    s.status_usage.invalidate();
     let cache = Cache::take(s);
     if let Some(ui) = &mut s.workspace {
         let stamp = ui

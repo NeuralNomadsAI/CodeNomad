@@ -18,6 +18,7 @@ pub enum WorkspaceEvent {
     ProvidersChanged {
         workspace_id: String,
     },
+    ProviderUsage(crate::provider_usage::Hint),
     UiPreferencesChanged,
     MissionChanged {
         workspace_id: String,

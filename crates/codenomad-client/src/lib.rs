@@ -19,6 +19,7 @@ pub mod prompt;
 pub mod prompt_catalogue;
 mod prompt_command;
 mod prompt_receipt;
+pub mod provider_usage;
 pub mod recovery;
 pub mod runtime;
 mod server_path;
