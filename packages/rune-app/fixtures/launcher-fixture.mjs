@@ -199,8 +199,8 @@ const upstream=createServer(async(req,res)=>{
     const json=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data))}
     if(useTs&&url.pathname==='/api/info')return json({version:'2.3.2',pid:process.pid})
     if(web){
-      assert(!(url.pathname.endsWith('/interrupt')||url.pathname.endsWith('/prompt')&&!webAndroid)&&
-        !(url.pathname==='/api/session'&&req.method==='POST'),'Web fixture admits one Android prompt only')
+      assert(!(url.pathname.endsWith('/interrupt')||url.pathname.endsWith('/prompt')&&!webAndroid&&!webMoreActions)&&
+        !(url.pathname==='/api/session'&&req.method==='POST'),'Web fixture admits prompts only in the Android and mobile menu scenes')
       if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
       if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:compare?[fixtureModel]:[]})
       if(/^\/api\/session\/[^/]+\/(permission|form)$/.test(url.pathname))return json({data:[]})

@@ -130,7 +130,7 @@ impl std::error::Error for Blocked {}
 
 impl Backend {
     /// A cold scan publishes only after the last page. Drop the future to cancel the read.
-    pub async fn outline(&self, revision: &OutlineRevision) -> Result<Outline> {
+    pub async fn read_outline(&self, revision: &OutlineRevision) -> Result<Outline> {
         if !valid_id(&self.workspace) || !valid_id(&self.session) {
             return Err("invalid outline scope".into());
         }

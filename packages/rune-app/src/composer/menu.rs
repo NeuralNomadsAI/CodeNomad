@@ -262,4 +262,34 @@ mod tests {
         });
         assert_eq!(rt.state.draft.text, "A");
     }
+
+    #[test]
+    fn idle_menu_has_a_menu_role_and_an_inactive_queue_item() {
+        fn node<'a>(tree: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+            if tree["key"] == key {
+                return Some(tree);
+            }
+            tree["children"]
+                .as_array()?
+                .iter()
+                .find_map(|child| node(child, key))
+        }
+        let mut s = crate::init();
+        s.phase = Phase::Ready;
+        s.draft = rune::edit::TextEdit::new("draft");
+        let mut rt = Runtime::new(s, crate::view, (960.0, 640.0), Env::new(false, 1.0));
+        rt.frame(0.0);
+        click(&mut rt, "composer-more:trigger");
+        let tree = rt.accessibility_json();
+        assert_eq!(node(&tree, "composer-more:menu").unwrap()["role"], "menu");
+        let queue = node(&tree, "composer-more:item:queue").unwrap();
+        assert_eq!(queue["role"], "menuitem");
+        assert!(
+            queue["states"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|state| state == "disabled")
+        );
+    }
 }

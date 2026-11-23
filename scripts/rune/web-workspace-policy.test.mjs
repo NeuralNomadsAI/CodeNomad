@@ -94,7 +94,7 @@ test('the fetched creation is validated and admitted before browser delivery',as
     assert.equal(fulfilled,valid)
   }
 })
-test('only the Android benchmark may submit its exact prompt on an owned session',()=>{
+test('the Android benchmark may submit only its exact prompt on an owned session',()=>{
   const androidPrompt='private Android fixture text', p=workspacePolicy({origin,project,androidPrompt})
   const input=creation('own')
   p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
@@ -104,4 +104,21 @@ test('only the Android benchmark may submit its exact prompt on an owned session
   assert(!p.allows('POST',route,{text:androidPrompt,files:[]}))
   assert(!p.allows('POST',route.replace('/one/','/foreign/'),{text:androidPrompt}))
   assert(!p.allows('POST',route.replace('ses_existing','ses_another'),{text:androidPrompt}))
+})
+
+test('the mobile menu scene admits only its queued prompt, fixture file and history write',()=>{
+  const menuPrompt='fixture prompt',p=workspacePolicy({origin,project,menuPrompt}),input=creation('own')
+  const route='/workspaces/one/instance/api/session/ses_existing/prompt'
+  const draft={text:menuPrompt,delivery:'queue',resume:false,
+    files:[{name:'mobile-menu.txt',uri:'data:text/plain;base64,bWVudSBmaWxl'}]}
+  const storage=folder=>`/api/storage/instances/${encodeURIComponent(folder)}`
+  const history={messageHistory:[menuPrompt],agentModelSelections:{}}
+  assert(!p.allows('POST',route,draft))
+  p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
+  assert(p.allows('POST',route,draft))
+  assert(!p.allows('POST',route,{...draft,delivery:'steer'}))
+  assert(!p.allows('POST',route,{...draft,files:[]}))
+  assert(!p.allows('POST',route.replace('ses_existing','ses_another'),draft))
+  assert(p.allows('PUT',storage(project),history))
+  assert(!p.allows('PUT',storage('D:/other'),history))
 })

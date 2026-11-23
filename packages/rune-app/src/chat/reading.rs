@@ -148,7 +148,7 @@ pub(crate) fn jump_user(s: &mut State, previous: bool, tx: &mut Tx) -> bool {
         use codenomad_client::timeline::{Kind, OutlineRevision};
         let revision = OutlineRevision::default();
         let outline =
-            codenomad_client::runtime::until_closed(&send, backend.outline(&revision)).await;
+            codenomad_client::runtime::until_closed(&send, backend.read_outline(&revision)).await;
         let id = if let Some(Ok(outline)) = outline {
             let position = current
                 .as_ref()
