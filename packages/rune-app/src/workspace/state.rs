@@ -54,7 +54,6 @@ pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
     Some((&entry.key, saved))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn contains_project(s: &State, id: &str) -> bool {
     s.workspace.as_ref().is_some_and(|ui| {
         ui.entries.iter().any(|entry| {

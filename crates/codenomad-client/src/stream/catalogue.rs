@@ -19,11 +19,20 @@ pub(super) struct Signals {
     providers: Mutex<CatalogueChanges>,
     stopped: Mutex<CatalogueChanges>,
     wake: Wake,
+    generation: std::sync::atomic::AtomicU64,
 }
 
 impl Signals {
     pub(super) fn reconnected(&self) {
-        if self.mark(&self.pending, None) | self.mark(&self.providers, None) {
+        self.mark(&self.pending, None);
+        self.mark(&self.providers, None);
+        self.generation.fetch_add(1, SeqCst);
+        (self.wake)();
+    }
+
+    fn disconnected(&self) {
+        if self.generation.load(SeqCst) % 2 == 1 {
+            self.generation.fetch_add(1, SeqCst);
             (self.wake)();
         }
     }
@@ -104,6 +113,7 @@ impl CatalogueWatch {
             pending: Mutex::default(),
             providers: Mutex::default(),
             stopped: Mutex::default(),
+            generation: Default::default(),
             wake,
         });
         let (stop, cancelled) = bounded(1);
@@ -138,6 +148,7 @@ impl CatalogueWatch {
                 )
                 .await;
                 state.cancelled.store(true, SeqCst);
+                observer.disconnected();
                 if expired {
                     break 'watch;
                 }
@@ -161,10 +172,11 @@ impl CatalogueWatch {
         std::mem::take(&mut *self.signals.pending.lock().unwrap())
     }
 
-    pub fn take_provider_changes(&self) -> (CatalogueChanges, CatalogueChanges) {
+    pub fn take_provider_changes(&self) -> (CatalogueChanges, CatalogueChanges, u64) {
         (
             std::mem::take(&mut *self.signals.providers.lock().unwrap()),
             std::mem::take(&mut *self.signals.stopped.lock().unwrap()),
+            self.signals.generation.load(SeqCst),
         )
     }
 }
@@ -180,6 +192,7 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             stopped: Mutex::default(),
+            generation: Default::default(),
             wake: Arc::new(|| {}),
         };
         for frame in [
@@ -203,6 +216,7 @@ mod tests {
             pending: Mutex::default(),
             providers: Mutex::default(),
             stopped: Mutex::default(),
+            generation: Default::default(),
             wake: Arc::new(|| {}),
         };
         for (id, kind) in [

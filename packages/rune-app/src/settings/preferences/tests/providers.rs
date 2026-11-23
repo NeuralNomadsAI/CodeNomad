@@ -38,6 +38,18 @@ fn providers_refresh_the_captured_location_and_revoke_a_stopped_project() {
         rt.frame(0.0);
         click(&mut rt, "settings-providers");
         tick(&mut rt);
+        read_snapshot(&listener, "First account").await;
+        wait_until(|| {
+            tick(&mut rt);
+            rt.accessibility_json()
+                .to_string()
+                .contains("First account")
+        })
+        .await;
+        click(&mut rt, "trigger");
+        click(&mut rt, "settings-general");
+        click(&mut rt, "settings-providers");
+        tick(&mut rt);
         assert!(
             timeout(Duration::from_millis(100), listener.accept())
                 .await
@@ -98,11 +110,17 @@ fn providers_refresh_the_captured_location_and_revoke_a_stopped_project() {
         provider_changed(&root, "captured");
         tick(&mut rt);
         let late = request(&listener).await;
-        provider_stopped(&root, "captured");
+        crate::settings::provider_connection_event(&root, &crate::transport::Event::ConnectionLost);
         tick(&mut rt);
         let tree = rt.accessibility_json().to_string();
         assert!(!tree.contains("New account") && !tree.contains("Obsolete account"));
         drop(late);
+        provider_stopped(&root, "captured");
+        crate::settings::provider_connection_event(
+            &root,
+            &crate::transport::Event::AgentHint(true),
+        );
+        tick(&mut rt);
         assert!(
             timeout(Duration::from_millis(100), listener.accept())
                 .await
@@ -129,7 +147,7 @@ async fn reply_snapshot(listener: &TcpListener, session: Request, account: &str)
         )
         .await;
     let mut endpoints = Vec::new();
-    for _ in 0..2 {
+    for _ in 0..4 {
         let query = request(listener).await;
         let url = query.first.split_whitespace().nth(1).unwrap();
         let (endpoint, parameters) = url.split_once('?').unwrap();
@@ -137,6 +155,10 @@ async fn reply_snapshot(listener: &TcpListener, session: Request, account: &str)
         endpoints.push(endpoint.to_owned());
         let data = if endpoint.ends_with("/integration") {
             json!([{"id":"example","name":"Example","connections":[{"type":"credential","label":account}]}])
+        } else if endpoint.ends_with("/websearch/provider") {
+            json!([])
+        } else if endpoint.ends_with("/model") {
+            json!([{"id":"model","providerID":"example"}])
         } else {
             assert!(endpoint.ends_with("/provider"));
             json!([{"id":"example","name":"Example"}])
@@ -148,5 +170,7 @@ async fn reply_snapshot(listener: &TcpListener, session: Request, account: &str)
             )
             .await;
     }
-    assert_ne!(endpoints[0], endpoints[1]);
+    endpoints.sort();
+    endpoints.dedup();
+    assert_eq!(endpoints.len(), 4);
 }

@@ -69,6 +69,49 @@ pub fn authentication_dialog<S: 'static>(
         )
 }
 
+pub fn embedded_section<S: 'static>(
+    title: &str,
+    body: El,
+    close_button: El,
+    close: impl Fn(&mut S) + 'static,
+) -> El {
+    let tokens = tokens(layout::dark());
+    col()
+        .key("embedded-preferences")
+        .absolute(0.0, 0.0)
+        .full_width()
+        .full_height()
+        .fill(tokens.color("surface-overlay"))
+        .role("dialog")
+        .label(title)
+        .child(
+            row()
+                .full_width()
+                .center_y()
+                .pad(Space::Sm)
+                .child(
+                    text(title)
+                        .text_role(TextRole::Title)
+                        .role("heading")
+                        .grow(1.0),
+                )
+                .child(close_button),
+        )
+        .child(
+            col()
+                .key("embedded-preferences-content")
+                .full_width()
+                .remaining()
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .pad(Space::Md)
+                .child(body),
+        )
+        .modal(true, close)
+        .modal_click_outside(false)
+}
+
 #[cfg(target_os = "windows")]
 pub fn placed_window<S: 'static>(
     spec: rune::WindowSpec<S>,

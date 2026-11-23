@@ -34,7 +34,11 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     };
     if let Some(watch) = &l.catalogue_watch {
         let changes = watch.take();
-        for entry in &mut ui.entries {
+        for entry in ui
+            .entries
+            .iter_mut()
+            .filter(|_| cfg!(target_os = "windows"))
+        {
             let Some(project) = &entry.project else {
                 continue;
             };

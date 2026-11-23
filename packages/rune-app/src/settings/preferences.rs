@@ -12,7 +12,6 @@ use serde_json::json;
 #[derive(Default)]
 pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) provider_target: Option<super::providers::Target>,
     config: Document,
     state: Document,
@@ -97,7 +96,6 @@ impl Preferences {
         self.state.retry();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn can_retry(&self) -> bool {
         self.backend.is_some() && !self.authentication_required
     }
@@ -138,6 +136,9 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
+        if let Some(target) = &mut self.provider_target {
+            target.transport(false);
+        }
         self.unwatch();
         self.revision += 1;
         if let Some(wake) = &self.window_wake {

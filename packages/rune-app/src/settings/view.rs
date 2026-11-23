@@ -217,7 +217,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     s.opencode = opencode::Status::default();
                 }
                 if s.section != Section::Providers {
-                    s.providers = providers::Catalog::default();
+                    s.providers.suspend();
                 }
             },
         );
@@ -248,7 +248,14 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             ),
             Section::Providers => (
                 "providers",
-                providers::view(s, prefs.can_retry() && prefs.provider_target.is_some()),
+                providers::view(
+                    s,
+                    prefs.can_retry()
+                        && prefs
+                            .provider_target
+                            .as_ref()
+                            .is_some_and(providers::Target::online),
+                ),
             ),
         };
         chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers).on_window_focus(
