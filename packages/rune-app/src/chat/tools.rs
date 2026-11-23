@@ -5,27 +5,32 @@ use super::{
 };
 use crate::{
     State,
-    content::{Part, Tool},
+    content::Tool,
     screen,
     settings::{self, TranscriptRow},
     strings::{locale, t},
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, ansi, catalogue,
+    Space, TextRole, ansi,
     layout::{self, Layout},
     markdown,
 };
 use serde_json::Value;
 use std::{io, sync::Arc};
 pub(super) mod children;
+mod clipboard;
+use clipboard::{Section, copy};
 mod diagnostics;
+mod edit;
 mod execute;
 mod question;
+mod read;
 mod search;
 mod shell;
 mod task;
 mod todo;
+mod write;
 
 fn string<'a>(value: &'a Value, keys: &[&str]) -> &'a str {
     keys.iter()
@@ -35,30 +40,11 @@ fn string<'a>(value: &'a Value, keys: &[&str]) -> &'a str {
 }
 
 fn path(tool: &Tool) -> &str {
-    let input = string(
-        &tool.input,
-        if tool.name == "read" {
-            &["filePath", "path", "name", "file"]
-        } else {
-            &["filePath", "path"]
-        },
-    );
-    if tool.name != "edit" || !input.is_empty() {
-        return input;
+    match tool.name.as_str() {
+        "read" => read::path(tool),
+        "edit" => edit::path(tool),
+        _ => write::path(tool),
     }
-    let metadata = string(&tool.metadata, &["filePath"]);
-    if !metadata.is_empty() {
-        metadata
-    } else {
-        single_diff(tool).map_or("", |file| string(file, &["file"]))
-    }
-}
-
-fn single_diff(tool: &Tool) -> Option<&Value> {
-    let [file] = tool.metadata["files"].as_array()?.as_slice() else {
-        return None;
-    };
-    Some(file)
 }
 
 fn input_json(value: &Value) -> Option<String> {
@@ -107,8 +93,8 @@ fn title(tool: &Tool) -> String {
                 .filter(|name| !name.is_empty())
                 .unwrap_or(path)
         }
-        "bash" | "shell" => string(&tool.input, &["description"]),
-        "glob" | "grep" => string(&tool.input, &["pattern"]).trim(),
+        "bash" | "shell" => shell::summary(tool),
+        "glob" | "grep" => search::pattern(tool),
         _ => "",
     };
     if !summary.is_empty() {
@@ -116,15 +102,7 @@ fn title(tool: &Tool) -> String {
         title.extend(summary.chars().take(250));
     }
     if name == "websearch" {
-        for value in [
-            string(&tool.input, &["query"]),
-            string(&tool.metadata, &["provider"]),
-        ] {
-            if !value.is_empty() {
-                title.push_str(" · ");
-                title.extend(value.chars().take(100));
-            }
-        }
+        search::web_title(tool, &mut title);
     }
     if task::is_task(tool) {
         let detail = task::detail(tool);
@@ -135,27 +113,10 @@ fn title(tool: &Tool) -> String {
             title.push_str(&detail);
         }
     }
-    let params: &[(&str, &str, &str)] = match name {
-        "read" => &[
-            ("offset", "toolCall.renderer.read.detail.offset", "offset"),
-            ("limit", "toolCall.renderer.read.detail.limit", "limit"),
-        ],
-        "bash" | "shell" => &[("timeout", "toolCall.renderer.bash.title.timeout", "timeout")],
-        _ => &[],
-    };
-    for &(field, key, param) in params {
-        if let Some(value) = tool.input[field].as_number() {
-            let value = if field == "timeout" {
-                if value.as_f64().is_none_or(|v| v <= 0.0) {
-                    continue;
-                }
-                format!("{value}ms")
-            } else {
-                value.to_string()
-            };
-            title.push_str(" · ");
-            title.push_str(&catalogue::format(locale(), key, &[(param, &value)]));
-        }
+    match name {
+        "read" => read::detail(tool, &mut title),
+        "bash" | "shell" => shell::detail(tool, &mut title),
+        _ => (),
     }
     title
 }
@@ -170,33 +131,12 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
         *parts = shell::output(tool);
         "bash"
     } else if tool.name == "edit" {
-        let diff = string(&tool.metadata, &["diff"]);
-        let patch = single_diff(tool).map_or("", |file| string(file, &["patch"]));
-        parts[0] = [diff, patch, &tool.output, live]
-            .into_iter()
-            .find(|text| {
-                let bytes = text
-                    .chars()
-                    .scan(TOOL_LIMIT, |left, c| {
-                        *left = left.checked_sub(c.len_utf16())?;
-                        Some(c.len_utf8())
-                    })
-                    .sum::<usize>();
-                text[..bytes].lines().any(tool_diff::is_hunk)
-            })
-            .unwrap_or_else(|| {
-                [diff, patch, &tool.output]
-                    .into_iter()
-                    .find(|text| !text.trim().is_empty())
-                    .unwrap_or_default()
-            });
+        parts[0] = edit::output(tool, live);
         "diff"
     } else if tool.name == "write" {
-        parts[0] = tool.input["content"]
-            .as_str()
-            .or_else(|| tool.metadata["content"].as_str())
-            .unwrap_or_default();
-        markdown::language_for_path(path(tool))
+        let (content, language) = write::output(tool);
+        parts[0] = content;
+        language
     } else {
         parts[0] = if tool.output.is_empty() && tool.status != "completed" {
             live
@@ -520,89 +460,9 @@ fn render_error(s: &State, message: &str, key: &str, tool: &Tool) -> Option<El> 
     })
 }
 
-#[derive(Clone, Copy)]
-enum Section {
-    Input,
-    Output,
-    Error,
-}
-
 pub(crate) fn tool_key(message: &str, call: &str) -> String {
     let escaped = call.replace('%', "%25").replace('/', "%2F");
     format!("tool-{message}:{}:{escaped}", escaped.len())
-}
-
-fn copy(s: &State, message: &str, call: &str, section: Section) -> El {
-    let base = tool_key(message, call);
-    let (message, call) = (message.to_owned(), call.to_owned());
-    let key = format!(
-        "copy-{base}-{}",
-        match section {
-            Section::Input => "input",
-            Section::Output => "output",
-            Section::Error => "error",
-        }
-    );
-    markdown::copy_button(
-        t(if matches!(section, Section::Input) {
-            "toolCall.io.copyInputAriaLabel"
-        } else {
-            "toolCall.io.copyOutputAriaLabel"
-        }),
-        screen::action_tx(&s.input_scope, move |s, tx| {
-            let Some(tool) = lookup(s, &message, &call) else {
-                return;
-            };
-            match section {
-                Section::Input => {
-                    if let Ok(source) = serde_json::to_string_pretty(&tool.input) {
-                        tx.copy(source);
-                    }
-                }
-                Section::Output => {
-                    if task::is_task(tool) {
-                        tx.copy(task::output(tool, task::report(s, tool)));
-                        return;
-                    }
-                    if tool.name == "todowrite"
-                        && let Some(source) = todo::copy(tool)
-                    {
-                        tx.copy(source);
-                        return;
-                    }
-                    let mut parts = [""; 4];
-                    output(tool, &mut parts);
-                    tx.copy(parts.concat());
-                }
-                Section::Error => tx.copy(error(tool)),
-            }
-        }),
-    )
-    .key(key)
-}
-
-fn lookup<'a>(s: &'a State, message: &str, call: &str) -> Option<&'a Tool> {
-    if let Some((child, id)) = message
-        .strip_prefix("child:")
-        .and_then(|v| v.split_once(':'))
-    {
-        return s
-            .transcript_display
-            .children
-            .steps(child)
-            .iter()
-            .find(|(row, tool)| row == id && tool.id == call)
-            .map(|(_, tool)| tool.as_ref());
-    }
-    s.messages
-        .iter()
-        .find(|m| m.id == message)?
-        .parts
-        .iter()
-        .find_map(|part| match part {
-            Part::Tool(tool) if tool.id == call => Some(tool.as_ref()),
-            _ => None,
-        })
 }
 
 #[cfg(test)]
