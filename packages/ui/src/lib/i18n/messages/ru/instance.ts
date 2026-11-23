@@ -158,6 +158,8 @@ export const instanceMessages = {
   "filesPanel.gitInit.gitRequired": "Git недоступен для CodeNomad.",
   "filesPanel.viewer": "Просмотр файла",
   "filesPanel.readOnly": "Только чтение",
+  "filesPanel.draftConflict": "Файл на диске изменился. Ваш черновик сохранён.",
+  "filesPanel.draftLimit": "Не удалось сохранить черновик. Перед закрытием сохраните или скопируйте последние правки.",
   "filesPanel.binary": "Предпросмотр этого двоичного файла недоступен.",
   "filesPanel.image.before": "До",
   "filesPanel.image.after": "После",

@@ -262,6 +262,8 @@
   "expandButton.toggleAriaLabel": "Alternar altura de entrada del chat",
   "filesPanel.binary": "Vista previa no disponible para este archivo binario.",
   "filesPanel.commits": "Commits",
+  "filesPanel.draftConflict": "El archivo cambió en el disco. Se conservó tu borrador.",
+  "filesPanel.draftLimit": "No se pudo conservar el borrador. Guarda o copia los cambios recientes antes de cerrar.",
   "filesPanel.gitInit.action": "Inicializar Git",
   "filesPanel.gitInit.deleting": "Esta carpeta se está eliminando.",
   "filesPanel.gitInit.error": "No se pudo inicializar Git: {message}",

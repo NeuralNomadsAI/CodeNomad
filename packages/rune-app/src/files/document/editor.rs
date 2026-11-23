@@ -1,7 +1,7 @@
 use super::{
     Content, content,
     source_text::{Snapshot, lf},
-    store::{Error, Key, Pending, Shared, Store, Writes, lock},
+    store::{Error, Key, Pending, SavedKey, Shared, Store, Writes, lock, version},
 };
 use crate::{files::reader::Reader, platform};
 use codenomad_client::{
@@ -42,8 +42,10 @@ pub struct Editor {
     writes: Writes,
     written: u64,
     instance: String,
+    project: Option<String>,
     wake: Wake,
     key: Option<Key>,
+    saved_key: Option<SavedKey>,
     draft: Option<Shared>,
     intent: Intent,
     receipt: u64,
@@ -65,8 +67,10 @@ impl Editor {
             writes,
             written,
             instance,
+            project: None,
             wake,
             key: None,
+            saved_key: None,
             draft: None,
             intent: Intent::Idle,
             receipt: 0,
@@ -81,6 +85,14 @@ impl Editor {
     }
     pub fn key(&self) -> Option<&Key> {
         self.key.as_ref()
+    }
+    pub(crate) fn set_project(&mut self, project: String) {
+        self.project = Some(project);
+    }
+    pub(crate) fn not_retained(&self) -> bool {
+        self.draft
+            .as_ref()
+            .is_some_and(|draft| lock(draft).not_retained)
     }
     pub fn dirty(&self) -> bool {
         self.draft.as_ref().is_some_and(|draft| lock(draft).dirty())
@@ -131,22 +143,29 @@ impl Editor {
     }
     pub fn editable(&self) -> bool {
         self.active
+            && self.draft.as_ref().is_some_and(|draft| {
+                let draft = lock(draft);
+                draft.original.is_some() || draft.recovered
+            })
+    }
+    pub fn writable(&self) -> bool {
+        self.editable()
+            && self.online
+            && self.dirty()
+            && !self.pending()
             && self
                 .draft
                 .as_ref()
                 .is_some_and(|draft| lock(draft).original.is_some())
     }
-    pub fn writable(&self) -> bool {
-        self.editable() && self.online && self.dirty() && !self.pending()
-    }
     pub fn input(&mut self, scope: u64) -> &mut TextEdit {
         self.rejected = TextEdit::new("");
         if scope != self.scope
             || !self.active
-            || self
-                .draft
-                .as_ref()
-                .is_none_or(|draft| lock(draft).original.is_none())
+            || self.draft.as_ref().is_none_or(|draft| {
+                let draft = lock(draft);
+                draft.original.is_none() && !draft.recovered
+            })
         {
             &mut self.rejected
         } else {
@@ -161,18 +180,31 @@ impl Editor {
             directory,
             path,
         };
-        let draft = self.store.open(&key);
+        let saved_key = self
+            .backend
+            .client
+            .server_identity()
+            .zip(self.project.as_ref())
+            .map(|(server, project)| SavedKey {
+                server: server.into(),
+                project: project.clone(),
+                directory: key.directory.clone(),
+                path: key.path.clone(),
+            });
+        let draft = self.store.open_saved(&key, saved_key.as_ref());
         self.edit = TextEdit::new(&lock(&draft).text);
         self.revision = lock(&draft).revision;
         self.draft = Some(draft);
         self.key = Some(key);
+        self.saved_key = saved_key;
     }
     pub fn close(&mut self) {
         self.cancel_check();
         if let (Some(key), Some(draft)) = (&self.key, &self.draft) {
-            self.store.sync(key, draft);
+            self.store.sync_saved(key, self.saved_key.as_ref(), draft);
         }
         self.key = None;
+        self.saved_key = None;
         self.draft = None;
         self.receipt = 0;
         self.observed = None;
@@ -198,7 +230,7 @@ impl Editor {
         if let (Some(key), Some(shared)) = (&self.key, &self.draft) {
             {
                 let mut draft = lock(shared);
-                if draft.original.is_none() {
+                if draft.original.is_none() && !draft.recovered {
                     self.edit = TextEdit::new(&draft.text);
                     return;
                 }
@@ -206,7 +238,7 @@ impl Editor {
                 draft.revision += 1;
                 self.revision = draft.revision;
             }
-            self.store.sync(key, shared);
+            self.store.sync_saved(key, self.saved_key.as_ref(), shared);
         }
     }
     fn cancel_check(&mut self) {
@@ -260,7 +292,7 @@ impl Editor {
         };
         drop(draft);
         if let Some(key) = &self.key {
-            self.store.sync(key, shared);
+            self.store.sync_saved(key, self.saved_key.as_ref(), shared);
         }
     }
     pub fn refresh(&mut self, scope: u64, reader: &mut Reader) {
@@ -300,6 +332,8 @@ impl Editor {
             }
             Intent::Discard(_) => {
                 draft.original = None;
+                draft.version = None;
+                draft.recovered = false;
                 draft.text.clear();
                 draft.revision += 1;
                 draft.uncertain = None;
@@ -307,7 +341,7 @@ impl Editor {
                 self.edit = TextEdit::new("");
                 drop(draft);
                 if let Some(key) = &self.key {
-                    self.store.sync(key, &shared);
+                    self.store.sync_saved(key, self.saved_key.as_ref(), &shared);
                 }
                 self.intent = Intent::Refreshing(reader.reread());
             }
@@ -356,6 +390,31 @@ impl Editor {
         }
         if let (Some(preview), Some(shared)) = (reader.preview(), &self.draft) {
             let mut draft = lock(shared);
+            let observed = version(preview.version.as_deref());
+            if draft.recovered && draft.original.is_none() {
+                let same = observed.is_some() && observed == draft.version;
+                draft.original = disk_text(&preview.path, &preview.bytes);
+                draft.error = (!same).then_some(Error::Conflict(None));
+                if same {
+                    draft.recovered = false;
+                }
+                return;
+            }
+            if draft.dirty()
+                && !draft.recovered
+                && observed != draft.version
+                && draft
+                    .original
+                    .as_ref()
+                    .is_some_and(|original| original.wire.as_bytes() == preview.bytes)
+            {
+                draft.version = observed.clone();
+                drop(draft);
+                if let Some(key) = &self.key {
+                    self.store.sync_saved(key, self.saved_key.as_ref(), shared);
+                }
+                return;
+            }
             if draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some() && !refreshed {
                 return;
             }
@@ -365,6 +424,7 @@ impl Editor {
                     draft.revision += 1;
                 }
                 draft.original = Some(text);
+                draft.version = observed;
                 draft.error = None;
             } else {
                 draft.original = None;
@@ -406,11 +466,13 @@ impl Editor {
         }
         if disk.wire == text.wire {
             draft.original = Some(text);
+            draft.version = super::store::version(preview.version.as_deref());
+            draft.recovered = false;
             draft.uncertain = None;
             draft.error = None;
             drop(draft);
             if let Some(key) = &self.key {
-                self.store.sync(key, &shared);
+                self.store.sync_saved(key, self.saved_key.as_ref(), &shared);
             }
             *lock(&self.writes) += 1;
             return;
@@ -423,10 +485,11 @@ impl Editor {
             draft.error = Some(Error::MissingVersion);
             return;
         };
-        if draft
-            .original
-            .as_ref()
-            .is_none_or(|original| original.wire != disk.wire)
+        if draft.recovered && draft.version.as_ref() != Some(version)
+            || draft
+                .original
+                .as_ref()
+                .is_none_or(|original| original.wire != disk.wire)
         {
             draft.pending = Some(Pending::Check(id));
             self.intent = Intent::Overwrite {
@@ -445,11 +508,12 @@ impl Editor {
         };
         lock(&shared).pending = Some(Pending::Write(id));
         reader.activate(false);
-        let (backend, store, wake, writes) = (
+        let (backend, store, wake, writes, saved_key) = (
             self.backend.clone(),
             self.store.clone(),
             self.wake.clone(),
             self.writes.clone(),
+            self.saved_key.clone(),
         );
         platform::spawn(async move {
             let result = backend
@@ -465,6 +529,7 @@ impl Editor {
                 match result {
                     Ok(WriteResult::Saved) => {
                         draft.original = Some(text);
+                        draft.recovered = false;
                         draft.uncertain = None;
                         draft.error = None;
                     }
@@ -477,7 +542,7 @@ impl Editor {
                     }
                 }
             }
-            store.sync(&key, &shared);
+            store.sync_saved(&key, saved_key.as_ref(), &shared);
             if saved {
                 *lock(&writes) += 1;
             }

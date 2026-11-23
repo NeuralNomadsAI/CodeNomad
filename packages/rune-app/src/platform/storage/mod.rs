@@ -1,6 +1,8 @@
 use crate::history::Result;
 use crate::workspace::MAX_BYTES;
 
+const FILE_DRAFT_BYTES: usize = 256 * 1024;
+
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
@@ -68,28 +70,34 @@ mod native {
             })
         }
         pub fn load(&self) -> Result<Option<Vec<u8>>> {
-            let path = self.directory.join("state.json");
+            self.load_document("state.json", MAX_BYTES)
+        }
+        fn load_document(&self, name: &str, limit: usize) -> Result<Option<Vec<u8>>> {
+            let path = self.directory.join(name);
             plain(&path, false)?;
             let file = match File::open(path) {
                 Ok(file) => file,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                 Err(e) => return Err(e.into()),
             };
-            if file.metadata()?.len() > MAX_BYTES as u64 {
+            if file.metadata()?.len() > limit as u64 {
                 return Err("state too large".into());
             }
             let mut bytes = Vec::new();
-            file.take(MAX_BYTES as u64 + 1).read_to_end(&mut bytes)?;
-            if bytes.len() > MAX_BYTES {
+            file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+            if bytes.len() > limit {
                 return Err("state too large".into());
             }
             Ok(Some(bytes))
         }
         pub fn save(&self, bytes: &[u8]) -> Result<()> {
-            if bytes.len() > MAX_BYTES {
+            self.save_document("state.json", bytes, MAX_BYTES)
+        }
+        fn save_document(&self, name: &str, bytes: &[u8], limit: usize) -> Result<()> {
+            if bytes.len() > limit {
                 return Err("state too large".into());
             }
-            let destination = self.directory.join("state.json");
+            let destination = self.directory.join(name);
             plain(&destination, false)?;
             let temporary = self.directory.join(format!(
                 ".state-{}.tmp",
@@ -137,6 +145,22 @@ mod native {
                 files.lock().map_err(|_| "state store unavailable")?.load()
             })
             .await?
+        }
+        pub async fn load_file_drafts(&self) -> Result<Option<Vec<u8>>> {
+            let files = self.files.clone();
+            tokio::task::spawn_blocking(move || {
+                files
+                    .lock()
+                    .map_err(|_| "state store unavailable")?
+                    .load_document("workspace-file-drafts.json", FILE_DRAFT_BYTES)
+            })
+            .await?
+        }
+        pub fn save_file_drafts(&self, bytes: &[u8]) -> Result<()> {
+            self.files
+                .lock()
+                .map_err(|_| "state store unavailable")?
+                .save_document("workspace-file-drafts.json", bytes, FILE_DRAFT_BYTES)
         }
         pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
             let files = self.files.clone();
@@ -247,6 +271,7 @@ impl Drop for BrowserListener {
 #[cfg(target_arch = "wasm32")]
 impl Store {
     const KEY: &'static str = "codenomad.rune.alpha.client-state.v1";
+    const FILE_DRAFTS: &'static str = "codenomad.rune.alpha.workspace-file-drafts.v1";
     const RELEASED: &'static str = "codenomad.rune.alpha.records-released";
     pub async fn open() -> Result<Self> {
         use wasm_bindgen::JsCast;
@@ -292,6 +317,27 @@ impl Store {
             return Err("state too large".into());
         }
         Ok(raw.map(String::into_bytes))
+    }
+    pub async fn load_file_drafts(&self) -> Result<Option<Vec<u8>>> {
+        let raw = self
+            .storage
+            .get_item(Self::FILE_DRAFTS)
+            .map_err(|_| "file draft read failed")?;
+        if raw
+            .as_ref()
+            .is_some_and(|text| text.len() > FILE_DRAFT_BYTES)
+        {
+            return Err("file draft store too large".into());
+        }
+        Ok(raw.map(String::into_bytes))
+    }
+    pub fn save_file_drafts(&self, bytes: &[u8]) -> Result<()> {
+        if bytes.len() > FILE_DRAFT_BYTES {
+            return Err("file draft store too large".into());
+        }
+        self.storage
+            .set_item(Self::FILE_DRAFTS, std::str::from_utf8(bytes)?)
+            .map_err(|_| "file draft write failed".into())
     }
     pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
         if self.staged.payload.borrow().0 != bytes {

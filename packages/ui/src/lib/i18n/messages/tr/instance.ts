@@ -147,6 +147,8 @@ export const instanceMessages = {
   "filesPanel.gitInit.gitRequired": "Git, CodeNomad için kullanılamıyor.",
   "filesPanel.viewer": "Dosya önizlemesi",
   "filesPanel.readOnly": "Salt okunur",
+  "filesPanel.draftConflict": "Diskteki dosya değişti. Taslağınız korundu.",
+  "filesPanel.draftLimit": "Taslağınız korunamadı. Kapatmadan önce son düzenlemelerinizi kaydedin veya kopyalayın.",
   "filesPanel.binary": "Bu ikili dosya için önizleme kullanılamıyor.",
   "filesPanel.image.before": "Önce",
   "filesPanel.image.after": "Sonra",

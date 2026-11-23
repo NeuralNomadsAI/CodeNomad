@@ -436,10 +436,14 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     };
     ui.clock = now;
     let loading = ui.persistence.loading;
-    let loaded = ui.persistence.poll_load();
-    if let Some(saved) = loaded {
-        ui.hydrate(saved);
-        s.shell.restore_widths(ui.panel_widths);
+    if let Some((saved, drafts)) = ui.persistence.poll_load() {
+        if let Some(bytes) = drafts {
+            s.documents.hydrate_file_drafts(&bytes);
+        }
+        if let Some(saved) = saved {
+            ui.hydrate(saved);
+            s.shell.restore_widths(ui.panel_widths);
+        }
     }
     let became_ready = loading && !ui.persistence.loading;
     if became_ready {
@@ -466,10 +470,20 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         ui.changed();
     }
     ui.stage();
-    let previous_error = ui.persistence.read_error || ui.persistence.write_error;
+    let previous_error = (
+        ui.persistence.read_error,
+        ui.persistence.write_error,
+        ui.persistence.file_draft_error,
+    );
     let snapshot = ui.snapshot();
     ui.persistence.poll_save(&snapshot, now, tx, s.wake.clone());
-    let error = ui.persistence.read_error || ui.persistence.write_error;
+    #[cfg(target_arch = "wasm32")]
+    let _ = ui.persistence.flush_file_drafts(&s.documents);
+    let error = (
+        ui.persistence.read_error,
+        ui.persistence.write_error,
+        ui.persistence.file_draft_error,
+    );
     s.workspace = Some(ui);
     if became_ready {
         resume(s, tx);
@@ -483,6 +497,8 @@ pub fn status(s: &State) -> Option<&'static str> {
         Some("rune.restore_error")
     } else if ui.persistence.write_error {
         Some("rune.save_error")
+    } else if ui.persistence.file_draft_error {
+        Some("filesPanel.draftLimit")
     } else {
         None
     }

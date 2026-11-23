@@ -277,10 +277,35 @@ pub fn run() {
             |tab| matches!(tab, Tab::Workspace(w) if w.drafts.values().all(String::is_empty))
         ));
     }
+    let file_drafts = std::env::var("RUNE_TEST_FILE_DRAFTS").as_deref() == Ok("1");
+    if file_drafts {
+        rt.update(|state, _| state.files.as_mut().unwrap().open("draft.txt".into()));
+        wait(&mut rt, "file draft baseline verified", |state| {
+            state.files.as_ref().is_some_and(|files| {
+                files.reader.receipt().1 && files.document.editable() && !files.reader.busy()
+            })
+        });
+        const TEXT: &str = "retained · été 日本語 🦀";
+        if stage == "prepare" {
+            super::files_document::edit(&mut rt, TEXT);
+        }
+        let doc = &rt.state.files.as_ref().unwrap().document;
+        assert!(doc.dirty());
+        assert!(!doc.not_retained());
+        assert_eq!(doc.edit().text, TEXT);
+        assert_eq!(
+            matches!(
+                doc.error(),
+                Some(crate::files::document::store::Error::Conflict(_))
+            ),
+            stage == "verify"
+        );
+    }
     finish(rt);
     println!(
         "{}",
         json!({"type":"window-restore-stage","stage":stage,"occurrences":2,
-        "selectedSession":"ses_created_2","draftsDistinct":true,"flushAndRelease":true,"nativeWindow":false})
+        "selectedSession":"ses_created_2","draftsDistinct":true,"flushAndRelease":true,"nativeWindow":false,
+        "fileDrafts":file_drafts})
     );
 }

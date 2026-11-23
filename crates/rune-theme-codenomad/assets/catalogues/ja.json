@@ -262,6 +262,8 @@
   "expandButton.toggleAriaLabel": "チャット入力欄の高さを切り替え",
   "filesPanel.binary": "このバイナリファイルはプレビューできません。",
   "filesPanel.commits": "コミット",
+  "filesPanel.draftConflict": "ディスク上のファイルが変更されました。下書きは保持されています。",
+  "filesPanel.draftLimit": "下書きを保持できませんでした。閉じる前に最新の変更を保存するかコピーしてください。",
   "filesPanel.gitInit.action": "Git を初期化",
   "filesPanel.gitInit.deleting": "このフォルダーは削除中です。",
   "filesPanel.gitInit.error": "Git を初期化できません: {message}",

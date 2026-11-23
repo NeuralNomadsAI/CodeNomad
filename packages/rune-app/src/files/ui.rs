@@ -391,6 +391,10 @@ impl Ui {
         self.document = Editor::new(self.backend.clone(), store, instance, self.wake.clone());
         self
     }
+    pub(super) fn with_draft_project(mut self, project: String) -> Self {
+        self.document.set_project(project);
+        self
+    }
     pub fn save_document(&mut self, scope: u64) {
         self.document.save(scope, &mut self.reader);
     }

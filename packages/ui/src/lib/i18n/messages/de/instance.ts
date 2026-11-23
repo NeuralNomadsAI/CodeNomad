@@ -158,6 +158,8 @@ export const instanceMessages = {
   "filesPanel.gitInit.gitRequired": "Git ist für CodeNomad nicht verfügbar.",
   "filesPanel.viewer": "Dateivorschau",
   "filesPanel.readOnly": "Schreibgeschützt",
+  "filesPanel.draftConflict": "Die Datei wurde auf dem Datenträger geändert. Ihr Entwurf bleibt erhalten.",
+  "filesPanel.draftLimit": "Der Entwurf konnte nicht gespeichert werden. Speichern oder kopieren Sie Ihre letzten Änderungen vor dem Schließen.",
   "filesPanel.binary": "Keine Vorschau für diese Binärdatei verfügbar.",
   "filesPanel.image.before": "Vorher",
   "filesPanel.image.after": "Nachher",

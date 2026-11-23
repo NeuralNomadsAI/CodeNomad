@@ -158,6 +158,8 @@ export const instanceMessages = {
   "filesPanel.gitInit.gitRequired": "Git n'est pas disponible pour CodeNomad.",
   "filesPanel.viewer": "Aperçu du fichier",
   "filesPanel.readOnly": "Lecture seule",
+  "filesPanel.draftConflict": "Le fichier a changé sur le disque. Votre brouillon a été conservé.",
+  "filesPanel.draftLimit": "Impossible de conserver ce brouillon. Enregistrez ou copiez vos dernières modifications avant de fermer.",
   "filesPanel.binary": "Aperçu indisponible pour ce fichier binaire.",
   "filesPanel.image.before": "Avant",
   "filesPanel.image.after": "Après",

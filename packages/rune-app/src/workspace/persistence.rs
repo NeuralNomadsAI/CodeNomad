@@ -3,14 +3,18 @@ use crate::{history::Result, platform::storage::Store};
 use codenomad_client::{Receiver, bounded};
 use std::path::PathBuf;
 
+type Loaded = (Store, Option<Snapshot>, Option<Vec<u8>>);
+
 pub(super) struct Persistence {
     pub loading: bool,
     pub read_error: bool,
     pub write_error: bool,
+    pub file_draft_error: bool,
     pub store: Option<Store>,
-    loaded: Option<Receiver<Result<(Store, Option<Snapshot>)>>>,
+    loaded: Option<Receiver<Result<Loaded>>>,
     saving: Option<Receiver<(u64, bool)>>,
     saved: u64,
+    saved_file_drafts: u64,
     due: f64,
 }
 impl Persistence {
@@ -19,10 +23,12 @@ impl Persistence {
             loading: false,
             read_error: false,
             write_error: false,
+            file_draft_error: false,
             store: None,
             loaded: None,
             saving: None,
             saved: 0,
+            saved_file_drafts: 0,
             due: 0.0,
         }
     }
@@ -54,22 +60,23 @@ impl Persistence {
                         })
                     })
                     .transpose()?;
-                Ok((store, snapshot))
+                let drafts = store.load_file_drafts().await.ok().flatten();
+                Ok((store, snapshot, drafts))
             }
             .await;
             let _ = out.send(result).await;
             wake();
         });
     }
-    pub fn poll_load(&mut self) -> Option<Snapshot> {
+    pub fn poll_load(&mut self) -> Option<(Option<Snapshot>, Option<Vec<u8>>)> {
         let result = self.loaded.as_ref()?.try_recv().ok()?;
         self.loaded = None;
         self.loading = false;
         match result {
-            Ok((store, snapshot)) => {
+            Ok((store, snapshot, drafts)) => {
                 self.saved = snapshot.as_ref().map_or(0, |s| s.revision);
                 self.store = Some(store);
-                snapshot
+                Some((snapshot, drafts))
             }
             Err(_) => {
                 self.read_error = true;
@@ -147,6 +154,22 @@ impl Persistence {
         }
         ok
     }
+    pub fn flush_file_drafts(&mut self, documents: &crate::files::document::store::Store) -> bool {
+        let Some((revision, bytes)) = documents.file_draft_snapshot(self.saved_file_drafts) else {
+            return true;
+        };
+        if self
+            .store
+            .as_ref()
+            .is_none_or(|store| store.save_file_drafts(&bytes).is_err())
+        {
+            self.file_draft_error = true;
+            return false;
+        }
+        self.saved_file_drafts = revision;
+        self.file_draft_error = false;
+        true
+    }
 }
 pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
     super::capture_files_mode(s);
@@ -154,7 +177,8 @@ pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
     if let Some(mut ui) = s.workspace.take() {
         ui.openings.close();
         let snapshot = ui.snapshot();
-        if ui.persistence.flush(&snapshot) {
+        let drafts_saved = ui.persistence.flush_file_drafts(&s.documents);
+        if ui.persistence.flush(&snapshot) && drafts_saved {
             ui.release_all();
         } else {
             crate::platform::release_records_on_exit(Vec::new(), ui.openings.clone());

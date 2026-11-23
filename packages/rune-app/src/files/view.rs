@@ -316,6 +316,9 @@ fn reader_content(s: &State) -> El {
     let error =
         match ui.document.error() {
             Some(super::document::store::Error::Conflict(Some(reason))) => Some(reason),
+            Some(super::document::store::Error::Conflict(None)) => {
+                Some(t("filesPanel.draftConflict").into())
+            }
             save_error => ui.reader.error().map(str::to_owned).or_else(|| {
                 save_error.map(|_| t("instanceShell.rightPanel.toast.saveError").into())
             }),
@@ -331,6 +334,11 @@ fn reader_content(s: &State) -> El {
             actions,
         ))
         .children(error.map(|message| text(message).role("alert").pad(Space::Md)))
+        .children(ui.document.not_retained().then(|| {
+            text(t("filesPanel.draftLimit"))
+                .role("alert")
+                .pad(Space::Md)
+        }))
         .children(
             (ui.reader.busy() && ui.reader.preview().is_none()).then(|| {
                 text(t("instanceInfo.loading"))

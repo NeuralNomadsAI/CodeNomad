@@ -22,7 +22,10 @@ const webPending=process.argv.includes('--web-pending-open'),webRestore=process.
 if(!web)requireTestSupport()
 const gitPanel=process.argv.includes('--git-panel'),gitOutput=gitPanel?process.env.RUNE_TEST_GIT_OUTPUT:undefined
 if(gitOutput)assert(path.isAbsolute(gitOutput),'Git fixture output must be absolute')
-const here=path.resolve(import.meta.dirname,'..'),profile=path.join(gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile')),`launcher-${randomUUID()}`)
+const restoreFileDrafts=process.argv.includes('--file-draft-restart')
+const draftOutput=restoreFileDrafts?process.env.RUNE_TEST_FILES_OUTPUT:undefined
+if(draftOutput)assert(path.isAbsolute(draftOutput),'Files fixture output must be absolute')
+const here=path.resolve(import.meta.dirname,'..'),profile=path.join(draftOutput??gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile')),`launcher-${randomUUID()}`)
 const project=path.join(profile,'projects','synthetic');await mkdir(project,{recursive:true})
 const forbidden=path.join(profile,'forbidden');if(web)await mkdir(forbidden)
 const ui=path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected')
@@ -70,6 +73,8 @@ assert(!filesState||(!web&&!controls&&!withTools&&!uncertain&&!workspaceClaims&&
 if(filesState){await mkdir(path.join(project,'src'));await writeFile(path.join(project,'initial.txt'),'initial');await writeFile(path.join(project,'src/initial.ts'),'initial')}
 assert(!workspaceClaims||(!web&&!controls&&!withTools&&!uncertain),'Workspace claims use their own qualification mode')
 assert(!restoreState||(!web&&!controls&&!withTools&&!uncertain&&!workspaceClaims),'Restore uses its own qualification mode')
+assert(!restoreFileDrafts||restoreState,'File draft restart requires --restore-state')
+if(restoreFileDrafts)await writeFile(path.join(project,'draft.txt'),'original')
 const gates=new Map(),visibleProof=[],restoreStages=[],restorePrompts=[]
 const filesStages=[],filesExpected=['reader-visible','create','rename','delete','collapsed','hidden','tabbed']
 if(documentState)filesExpected.push('document-external','document-cancelled','document-race','document-conflict','document-saved')
@@ -360,13 +365,18 @@ try{
     await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0
   }else if(restoreState){
     for(const stage of ['prepare','resume','verify']){
+      if(restoreFileDrafts&&stage==='verify')await writeFile(path.join(project,'draft.txt'),'external')
       clientLines=''
-      client=spawn(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage}})
+      client=spawn(clientBinary,['--probe-window-restore'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,RUNE_TEST_FILE_DRAFTS:restoreFileDrafts?'1':'0'}})
       client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
       const timer=setTimeout(()=>client.kill(),120000)
       try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
       assert.equal(result,0,`Restore stage ${stage}`)
       assert.equal(restoreStages.at(-1)?.stage,stage,'Each process publishes its stage proof')
+      if(restoreFileDrafts){
+        assert.equal(restoreStages.at(-1)?.fileDrafts,true)
+        assert.equal(await readFile(path.join(project,'draft.txt'),'utf8'),stage==='verify'?'external':'original')
+      }
       assert.equal(stats.created,2,'Restore must not create native sessions');assert.equal(stats.prompts,stage==='prepare'?0:2,'Only explicit resumed sends submit prompts')
     }
   }else {
