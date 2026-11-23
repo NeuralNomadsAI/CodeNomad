@@ -106,7 +106,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                             .as_ref()
                             .is_some_and(|reader| reader.activity_after(version)),
                     ),
-                    _ => unreachable!(),
+                    _ => continue,
                 };
                 chat::reader::reconcile_bookmark(s, &page.rows);
                 if let Some(reader) = &mut s.reader {
