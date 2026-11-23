@@ -34,6 +34,7 @@ pub struct Ui {
     pub(super) local: bool,
     pub(super) actions: super::view::Actions,
     pub host_width: Option<f32>,
+    pub(super) reader_width: Option<f32>,
     pub(super) backend: Backend,
     reads: Reads,
     collation: std::result::Result<Collation, String>,
@@ -74,6 +75,7 @@ impl Ui {
             local: false,
             actions: Default::default(),
             host_width: None,
+            reader_width: None,
             backend,
             reads,
             collation: Collation::try_default(),
@@ -108,6 +110,7 @@ impl Ui {
         self.active = active;
         if !active {
             self.host_width = None;
+            self.reader_width = None;
             self.pictures.suspend();
             self.actions.revoke();
         }

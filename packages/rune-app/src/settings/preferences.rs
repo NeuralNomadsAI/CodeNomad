@@ -23,6 +23,17 @@ pub(super) struct Preferences {
 }
 
 impl Preferences {
+    pub(super) fn shortcut(&self, action: &str) -> Option<&[Value]> {
+        self.config.snapshot.as_ref()?["settings"]["hotkeyOverrides"][action]
+            .as_array()
+            .map(Vec::as_slice)
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_shortcuts(&mut self, overrides: Value) {
+        self.config.snapshot = Some(json!({"settings": {"hotkeyOverrides": overrides}}));
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn flush(&mut self) -> bool {
         use std::time::Duration;

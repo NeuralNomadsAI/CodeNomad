@@ -22,6 +22,35 @@ fn click(rt: &mut Runtime<State>, key: &str) {
 }
 
 #[test]
+fn right_panel_selects_files_and_restores_its_focus_on_shrink() {
+    let mut state = init();
+    fixture(&mut state);
+    let project = state.screen.launcher().unwrap().project.clone().unwrap();
+    state.workspace = Some(crate::workspace::Ui::new());
+    crate::workspace::opened(&mut state, &project);
+    let mut rt = Runtime::new(state, english, (1400.0, 900.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    click(&mut rt, "right-panel-tab-1");
+    assert!(crate::workspace::files_tab(&rt.state));
+    rt.update(|_, tx| tx.focus("right-panel-tab-1", true));
+    settle(&mut rt);
+    rt.set_viewport((580.0, 900.0), 1.0);
+    settle(&mut rt);
+    assert!(rt.find("right-panel").is_none());
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.focused && e.key.as_deref() == Some("right-panel-toggle"))
+    );
+    rt.set_viewport((1400.0, 900.0), 1.0);
+    settle(&mut rt);
+    assert!(rt.find("right-panel-tab-1").is_some());
+    assert!(crate::workspace::files_tab(&rt.state));
+    click(&mut rt, "right-panel-tab-0");
+    assert!(!crate::workspace::files_tab(&rt.state));
+}
+
+#[test]
 fn a_large_session_catalogue_mounts_only_visible_rows_but_search_reaches_the_tail() {
     let mut state = init();
     fixture(&mut state);
