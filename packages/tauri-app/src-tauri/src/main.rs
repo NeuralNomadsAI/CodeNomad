@@ -417,8 +417,8 @@ fn claim_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) -> bool
     claim_unowned_remote_proxy_session(&profiles, &mut claims, session_id)
 }
 
-#[tauri::command(async)]
-fn window_control(
+#[tauri::command]
+async fn window_control(
     webview: tauri::Webview,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
@@ -439,7 +439,7 @@ fn window_control(
             }
         }
         "close" => {
-            if webview.label() == preferences_window::LABEL && !preferences_window::approve_close(&app)? {
+            if webview.label() == preferences_window::LABEL && !preferences_window::approve_close(&app).await? {
                 return Ok(());
             }
             window.close()
@@ -741,6 +741,12 @@ struct WakeLockConfig {
     sleep: bool,
 }
 
+const DEFAULT_WAKE_LOCK_CONFIG: WakeLockConfig = WakeLockConfig {
+    display: false,
+    idle: true,
+    sleep: false,
+};
+
 #[tauri::command(async)]
 fn cli_get_status(
     webview: tauri::Webview,
@@ -764,42 +770,53 @@ async fn cli_renew_managed_session(
         .map_err(|_| "Session renewal unavailable".to_string())
 }
 
-#[tauri::command(async)]
-fn cli_restart(
+#[tauri::command]
+async fn cli_restart(
     webview: tauri::Webview,
     app: AppHandle,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<CliStatus, String> {
     require_preferences_or_local_app_webview(&webview, &state)?;
-    // The stop may wait on the backend; never hold the shutdown coordinator
-    // during that wait. Recheck admission before starting a replacement.
-    shutdown::with_navigation_authority(&app, || ())
-        .ok_or("Application shutdown is in progress")?;
-    let generation = state
-        .manager
-        .stop_until_generation(Instant::now() + Duration::from_secs(2))
-        .map_err(|e| e.to_string())?;
-    state.manager.start_checked(app, is_dev_mode(), Some(generation))
-        .map_err(|e| e.to_string())?;
-    Ok(state.manager.status())
+    let manager = state.manager.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // Admit before stopping, without holding the coordinator across the
+        // wait. start_checked rechecks admission before starting a replacement.
+        shutdown::with_navigation_authority(&app, || ())
+            .ok_or("Application shutdown is in progress")?;
+        let generation = manager
+            .stop_until_generation(Instant::now() + Duration::from_secs(2))
+            .map_err(|error| error.to_string())?;
+        manager
+            .start_checked(app, is_dev_mode(), Some(generation))
+            .map_err(|error| error.to_string())?;
+        Ok(manager.status())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // Windows keepawake uses SetThreadExecutionState: acquire, release and window
 // destruction must use the same thread. Unix uses OS service requests instead.
-#[cfg_attr(windows, tauri::command)]
-#[cfg_attr(not(windows), tauri::command(async))]
+#[cfg(windows)]
+#[tauri::command]
 fn wake_lock_start(
     webview: tauri::Webview,
     state: tauri::State<AppState>,
     config: Option<WakeLockConfig>,
 ) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
-    let config = config.unwrap_or(WakeLockConfig {
-        display: false,
-        idle: true,
-        sleep: false,
-    });
-    change_wake_lock(webview.app_handle(), webview.label(), Some(config))
+    apply_wake_lock(webview.app_handle(), webview.label(), Some(config.unwrap_or(DEFAULT_WAKE_LOCK_CONFIG)))
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+async fn wake_lock_start(
+    webview: tauri::Webview,
+    state: tauri::State<'_, AppState>,
+    config: Option<WakeLockConfig>,
+) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
+    change_wake_lock(webview.app_handle(), webview.label(), Some(config.unwrap_or(DEFAULT_WAKE_LOCK_CONFIG))).await
 }
 
 fn acquire_wake_lock(state: &mut WakeLockState, label: &str, config: WakeLockConfig) -> Result<(), String> {
@@ -819,11 +836,18 @@ fn acquire_wake_lock(state: &mut WakeLockState, label: &str, config: WakeLockCon
     Ok(())
 }
 
-#[cfg_attr(windows, tauri::command)]
-#[cfg_attr(not(windows), tauri::command(async))]
+#[cfg(windows)]
+#[tauri::command]
 fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<AppState>) -> Result<(), String> {
     require_local_app_webview(&webview, &state)?;
-    change_wake_lock(webview.app_handle(), webview.label(), None)
+    apply_wake_lock(webview.app_handle(), webview.label(), None)
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+async fn wake_lock_stop(webview: tauri::Webview, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    require_local_app_webview(&webview, &state)?;
+    change_wake_lock(webview.app_handle(), webview.label(), None).await
 }
 
 fn apply_wake_lock(app: &AppHandle, label: &str, config: Option<WakeLockConfig>) -> Result<(), String> {
@@ -842,20 +866,15 @@ fn apply_wake_lock(app: &AppHandle, label: &str, config: Option<WakeLockConfig>)
     Ok(())
 }
 
-#[cfg(windows)]
-fn change_wake_lock(app: &AppHandle, label: &str, config: Option<WakeLockConfig>) -> Result<(), String> {
-    apply_wake_lock(app, label, config)
-}
-
 #[cfg(not(windows))]
-fn change_wake_lock(app: &AppHandle, label: &str, config: Option<WakeLockConfig>) -> Result<(), String> {
+async fn change_wake_lock(app: &AppHandle, label: &str, config: Option<WakeLockConfig>) -> Result<(), String> {
     let worker = app.clone();
     let label = label.to_owned();
-    let (done, reply) = std::sync::mpsc::sync_channel(1);
+    let (done, reply) = tokio::sync::oneshot::channel();
     app.state::<AppState>().wake_lock_worker.enqueue(Box::new(move || {
         let _ = done.send(apply_wake_lock(&worker, &label, config));
     }))?;
-    reply.recv().map_err(|err| err.to_string())?
+    reply.await.map_err(|err| err.to_string())?
 }
 
 fn release_destroyed_window_wake_lock(app: &AppHandle, label: &str) {

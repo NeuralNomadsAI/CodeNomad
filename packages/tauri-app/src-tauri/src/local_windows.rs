@@ -1,12 +1,14 @@
 use crate::client_state::{self, ClientState, NavigationKind};
 use crate::identity::{local_window_id, local_window_label};
 use crate::launch::LaunchIntent;
+use crate::shutdown::ShutdownCoordinator;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, Webview, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
 const MAX_LOCAL_WINDOWS: usize = 16;
+const SHUTDOWN_IN_PROGRESS: &str = "Application shutdown is in progress";
 const MAX_FOLDER_ATTEMPTS: u8 = 3;
 #[cfg(target_os = "windows")]
 const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true,ownership:true});";
@@ -221,7 +223,7 @@ impl Registry {
         connect_only: bool,
     ) -> Result<LocalWindowRecord, String> {
         let label = local_window_label(&id)?;
-        if self.records.contains_key(&label) {
+        if self.records.contains_key(&label) || self.pending.contains(&id) {
             return Err("Local window is already registered".to_string());
         }
         if !connect_only && !self.has_user_window_capacity() {
@@ -323,6 +325,38 @@ pub(crate) struct LocalWindows {
     startup_restore_deferred: std::sync::atomic::AtomicBool,
 }
 
+struct PendingNewWindow {
+    id: String,
+    existing: bool,
+}
+
+impl PendingNewWindow {
+    fn construct(
+        self,
+        windows: &LocalWindows,
+        shutdown: &ShutdownCoordinator,
+        persisted: bool,
+        build: impl FnOnce(LocalWindowRecord, bool) -> Result<LocalWindowRecord, String>,
+    ) -> Result<LocalWindowRecord, String> {
+        // Convert the reservation directly into a shutdown-visible record.
+        let admitted = shutdown.admit_local_window_build(|| {
+            let mut registry = windows.registry.lock().map_err(|error| error.to_string())?;
+            registry.pending.remove(&self.id);
+            registry.add(self.id.clone(), persisted)
+        });
+        match admitted {
+            Some(result) => {
+                let (record, _building) = result?;
+                build(record, !self.existing)
+            }
+            None => {
+                windows.release_new_window(&self.id);
+                Err(SHUTDOWN_IN_PROGRESS.into())
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 struct LaunchDispatch {
     pending: VecDeque<LaunchIntent>,
@@ -330,6 +364,36 @@ struct LaunchDispatch {
 }
 
 impl LocalWindows {
+    fn schedule_new_window(
+        &self,
+        shutdown: &ShutdownCoordinator,
+        saved: Vec<String>,
+        enqueue: impl FnOnce(PendingNewWindow) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let (id, existing) = shutdown
+            .with_navigation_authority(|| {
+                self.registry
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .reserve_new_window(saved)
+            })
+            .ok_or(SHUTDOWN_IN_PROGRESS)??;
+        let enqueued = enqueue(PendingNewWindow {
+            id: id.clone(),
+            existing,
+        });
+        if enqueued.is_err() {
+            self.release_new_window(&id);
+        }
+        enqueued
+    }
+
+    fn release_new_window(&self, id: &str) {
+        if let Ok(mut registry) = self.registry.lock() {
+            registry.pending.remove(id);
+        }
+    }
+
     pub(crate) fn defer_startup_restore(&self) {
         self.startup_restore_deferred
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -573,10 +637,13 @@ impl LocalWindows {
 
     /// The windows whose renderer state a shutdown preserves: hidden launch windows hold none.
     pub(crate) fn user_window_labels(&self) -> Vec<String> {
-        self.records()
-            .into_iter()
+        self.registry
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .records
+            .values()
             .filter(|record| !record.connect_only)
-            .map(|record| record.label)
+            .map(|record| record.label.clone())
             .collect()
     }
 
@@ -718,11 +785,14 @@ fn register(
     persisted: bool,
     connect_only: bool,
 ) -> Result<LocalWindowRecord, String> {
-    app.state::<LocalWindows>()
-        .registry
-        .lock()
-        .map_err(|error| error.to_string())?
-        .add_window(id, persisted, connect_only)
+    crate::shutdown::with_navigation_authority(app, || {
+        app.state::<LocalWindows>()
+            .registry
+            .lock()
+            .map_err(|error| error.to_string())?
+            .add_window(id, persisted, connect_only)
+    })
+    .ok_or(SHUTDOWN_IN_PROGRESS)?
 }
 
 pub(crate) fn create_local_window(
@@ -730,24 +800,27 @@ pub(crate) fn create_local_window(
     id: String,
     persisted: bool,
 ) -> Result<LocalWindowRecord, String> {
-    build_local_window(app, id, persisted, false, false)
+    let record = register(app, id, persisted, false)?;
+    build_local_window(app, record, false)
 }
 
-/// `connect_only` builds the hidden launch window: it stays hidden unless it is promoted.
 fn build_local_window(
     app: &AppHandle,
-    id: String,
-    persisted: bool,
-    connect_only: bool,
+    record: LocalWindowRecord,
     new_record: bool,
 ) -> Result<LocalWindowRecord, String> {
-    let record = register(app, id.clone(), persisted, connect_only)?;
-    let script = local_window_initialization_script(&id, &record.automation_instance);
+    let id = &record.id;
+    let persisted = record.persisted;
+    let script = local_window_initialization_script(id, &record.automation_instance);
     let data_directory = app
         .state::<crate::AppState>()
         .webview_data_directory
         .join("local");
     let badge_binding = crate::notification_badge::prepare_window(app, &record.label);
+    let state = app.state::<ClientState>();
+    if new_record && persisted {
+        state.admit_new_window_capture(id.clone());
+    }
     let builder = WebviewWindowBuilder::new(app, &record.label, local_window_initial_url())
         .data_directory(data_directory)
         .initialization_script(script)
@@ -791,6 +864,7 @@ fn build_local_window(
         Err(error) => {
             crate::notification_badge::remove_window(app, &record.label, badge_binding);
             app.state::<LocalWindows>().remove_runtime(&record.label);
+            state.unregister_window(id);
             return Err(error.to_string());
         }
     };
@@ -801,12 +875,10 @@ fn build_local_window(
     let _ = window.eval(BOOT_SPLASH_SCRIPT);
     crate::menu_bar::hide(&window.as_ref().window());
     if let Err(error) =
-        client_state::setup_local_window(app, &window, &id, persisted, !connect_only)
+        client_state::setup_local_window(app, &window, id, persisted, !record.connect_only)
     {
         app.state::<LocalWindows>().remove_runtime(&record.label);
-        if let Some(state) = app.try_state::<ClientState>() {
-            state.unregister_window(&id);
-        }
+        state.unregister_window(id);
         let _ = window.destroy();
         return Err(error);
     }
@@ -824,17 +896,16 @@ fn build_local_window(
     #[cfg(windows)]
     if let Err(error) = crate::shutdown::schedule_windows_session_end_handler(&window) {
         app.state::<LocalWindows>().remove_runtime(&record.label);
-        if let Some(state) = app.try_state::<ClientState>() {
-            state.unregister_window(&id);
-        }
+        state.unregister_window(id);
         let _ = window.destroy();
         return Err(error);
     }
     if new_record && persisted {
-        app.state::<ClientState>().register_ephemeral_window(id.clone());
+        state.register_ephemeral_window(id.clone());
         // Admit only after successful construction and before the first
         // renderer can claim its document. Shutdown drains this publication.
-        if let Err(error) = ClientState::queue_new_window(app, id) {
+        if let Err(error) = ClientState::queue_new_window(app, id.clone()) {
+            state.discard_new_window_capture(id);
             eprintln!("[client-state] failed to admit new window state: {error}");
         }
     }
@@ -865,35 +936,25 @@ fn schedule_new_window(
     app: &AppHandle,
     complete: impl FnOnce(&AppHandle, Result<LocalWindowRecord, String>) + Send + 'static,
 ) -> Result<(), String> {
-    let windows = app.state::<LocalWindows>();
     let saved = app.state::<ClientState>().window_ids();
-    let (id, existing) = windows
-        .registry
-        .lock()
-        .map_err(|error| error.to_string())?
-        .reserve_new_window(saved)?;
-    let dispatch = app.clone();
-    let pending_id = id.clone();
-    let enqueued = app.run_on_main_thread(move || {
-        release_new_window(&dispatch, &pending_id);
-        if crate::shutdown::with_navigation_authority(&dispatch, || ()).is_none() {
-            complete(&dispatch, Err("Application shutdown is in progress".into()));
-            return;
-        }
-        let persisted = dispatch.state::<ClientState>().can_register_window();
-        let result = build_local_window(&dispatch, pending_id, persisted, false, !existing);
-        complete(&dispatch, result);
-    }).map_err(|error| error.to_string());
-    if enqueued.is_err() {
-        release_new_window(app, &id);
-    }
-    enqueued
-}
-
-fn release_new_window(app: &AppHandle, id: &str) {
-    if let Ok(mut registry) = app.state::<LocalWindows>().registry.lock() {
-        registry.pending.remove(id);
-    }
+    app.state::<LocalWindows>().schedule_new_window(
+        &app.state::<ShutdownCoordinator>(),
+        saved,
+        |pending| {
+            let dispatch = app.clone();
+            app.run_on_main_thread(move || {
+                let persisted = dispatch.state::<ClientState>().can_register_window();
+                let result = pending.construct(
+                    &dispatch.state::<LocalWindows>(),
+                    &dispatch.state::<ShutdownCoordinator>(),
+                    persisted,
+                    |record, new_record| build_local_window(&dispatch, record, new_record),
+                );
+                complete(&dispatch, result);
+            })
+            .map_err(|error| error.to_string())
+        },
+    )
 }
 
 pub(crate) fn restore_windows(app: &AppHandle) -> Result<(), String> {
@@ -958,7 +1019,8 @@ fn handle_intent(app: &AppHandle, intent: LaunchIntent) -> Result<bool, String> 
     let windows = app.state::<LocalWindows>();
     if intent.is_connect_only() && windows.mru_label().is_none() {
         // Nothing to run the connection in: a hidden, unpersisted window runs it and closes once it settles.
-        let record = build_local_window(app, uuid::Uuid::new_v4().to_string(), false, true, false)?;
+        let record = register(app, uuid::Uuid::new_v4().to_string(), false, true)?;
+        let record = build_local_window(app, record, false)?;
         windows.queue_connection(
             app,
             &record.label,

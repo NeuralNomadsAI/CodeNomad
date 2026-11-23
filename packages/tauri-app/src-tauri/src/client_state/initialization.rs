@@ -143,6 +143,24 @@ impl ClientState {
     }
 
     #[cfg(test)]
+    pub(crate) fn initialize_at_with_publication_checks(
+        app_data_dir: &Path,
+        before_rename: impl Fn() -> Result<(), String> + Send + Sync + 'static,
+        sync_directory: impl Fn() -> Result<(), String> + Send + Sync + 'static,
+    ) -> Result<Self, String> {
+        Self::initialize_at_with_writer(
+            app_data_dir,
+            std::sync::Arc::new(move |path, bytes, valid| {
+                before_rename()?;
+                super::write_atomically_with_sync(path, bytes, valid, |parent| {
+                    sync_directory()?;
+                    super::partitions::sync_directory(parent)
+                })
+            }),
+        )
+    }
+
+    #[cfg(test)]
     pub(super) fn initialize_at_with_writer(
         app_data_dir: &Path,
         write_state: StateWriter,

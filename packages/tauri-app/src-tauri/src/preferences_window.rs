@@ -645,6 +645,24 @@ pub(crate) fn preferences_get_request(
 }
 
 pub(crate) fn admit_accept_request(invoke: tauri::ipc::Invoke<tauri::Wry>) {
+    reply_to_accept_request(
+        invoke,
+        |webview| {
+            crate::require_preferences_or_local_app_webview(
+                webview,
+                &webview.app_handle().state::<AppState>(),
+            )
+            .map(|_| ())
+        },
+        crate::shutdown::preferences_renderer_flushed,
+    );
+}
+
+fn reply_to_accept_request<R: tauri::Runtime>(
+    invoke: tauri::ipc::Invoke<R>,
+    authorize: impl FnOnce(&tauri::Webview<R>) -> Result<(), String>,
+    renderer_flushed: impl FnOnce(AppHandle<R>, u64) + Send + 'static,
+) {
     #[derive(Deserialize)]
     struct Args {
         request: PreferencesRequest,
@@ -659,7 +677,7 @@ pub(crate) fn admit_accept_request(invoke: tauri::ipc::Invoke<tauri::Wry>) {
             return Err("Preferences request acceptance requires the Preferences window".to_string());
         }
         let incarnation = preferences.incarnation();
-        crate::require_preferences_or_local_app_webview(webview, &app.state::<AppState>())?;
+        authorize(webview)?;
         let tauri::ipc::InvokeBody::Json(body) = invoke.message.payload() else {
             return Err("Invalid Preferences request body".into());
         };
@@ -669,7 +687,7 @@ pub(crate) fn admit_accept_request(invoke: tauri::ipc::Invoke<tauri::Wry>) {
         let reply = resolver.clone();
         enqueue_request(app, &preferences, incarnation, request, move |result| {
             if let Some(generation) = generation.filter(|_| matches!(result, Ok(true))) {
-                crate::shutdown::preferences_renderer_flushed(worker, generation);
+                renderer_flushed(worker, generation);
             }
             match result {
                 Ok(_) => reply.resolve(()),
@@ -830,13 +848,15 @@ pub(crate) fn suspend_guard(app: &AppHandle) {
     state.pending_transition = None;
 }
 
-pub(crate) fn approve_close(app: &AppHandle) -> Result<bool, String> {
+pub(crate) async fn approve_close(app: &AppHandle) -> Result<bool, String> {
     let incarnation = app.state::<PreferencesWindow>().incarnation();
-    let (done, reply) = std::sync::mpsc::sync_channel(1);
-    if !enqueue_close(app, incarnation, move |result| { let _ = done.send(result); })? {
+    let (done, reply) = tokio::sync::oneshot::channel();
+    if !enqueue_close(app, incarnation, move |result| {
+        let _ = done.send(result);
+    })? {
         return Ok(false);
     }
-    reply.recv().map_err(|error| error.to_string())?
+    reply.await.map_err(|error| error.to_string())?
 }
 
 fn enqueue_close(
@@ -935,37 +955,72 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn admitted_preferences_writes_drain_without_native_dispatch() {
+    fn admitted_preferences_ipc_replies_drain_without_native_dispatch() {
         use crate::client_state::{ClientState, IpcQueue};
-        use std::{sync::mpsc, time::{Duration, Instant}};
+        use std::{
+            sync::mpsc,
+            time::{Duration, Instant},
+        };
+        use tauri::{
+            ipc::{CallbackFn, InvokeResponse},
+            test,
+            webview::InvokeRequest,
+        };
+
         let directory = tempfile::tempdir().unwrap();
-        let app = tauri::test::mock_builder()
+        let (flushed, acknowledged) = mpsc::channel();
+        let app = test::mock_builder()
             .manage(ClientState::initialize_at(directory.path()).unwrap())
             .manage(IpcQueue::new())
             .manage(PreferencesWindow::default())
-            .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+            .invoke_handler(move |invoke| {
+                assert_eq!(invoke.message.command(), "preferences_accept_request");
+                let flushed = flushed.clone();
+                reply_to_accept_request(invoke, |_| Ok(()), move |app, generation| {
+                    flushed.send((generation, app.state::<ClientState>().preferences())).unwrap();
+                });
+                true
+            })
+            .build(test::mock_context(test::noop_assets())).unwrap();
+        let window = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("index.html".into()))
+            .build().unwrap();
+        let url = window.url().unwrap();
         let state = app.state::<ClientState>();
         let preferences = app.state::<PreferencesWindow>();
         let queue = app.state::<IpcQueue>();
-        let request = preferences.request();
-        let incarnation = preferences.new_incarnation(request.clone());
+        let incarnation = preferences.new_incarnation(preferences.request());
+        let request = PreferencesRequest { section: "speech".into(), ..preferences.request() };
         let (resume, gate) = mpsc::channel();
         queue.enqueue(Box::new(move || gate.recv_timeout(Duration::from_secs(5)).unwrap())).unwrap();
-        let (saved, save_result) = mpsc::channel();
-        assert!(enqueue_request(app.handle(), &preferences, incarnation, request.clone(), move |result| {
-            saved.send(result).unwrap();
-        }).unwrap());
+        let (reply, save_result) = mpsc::channel();
+        window.as_ref().clone().on_message(
+            InvokeRequest {
+                cmd: "preferences_accept_request".into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url,
+                body: json!({ "request": request, "generation": 5 }).into(),
+                headers: Default::default(),
+                invoke_key: test::INVOKE_KEY.to_string(),
+            },
+            Box::new(move |_, _, result, _, _| { let _ = reply.send(result); }),
+        );
         let worker = app.handle().clone();
         let (closed, close_result) = mpsc::channel();
+        let expected = request.clone();
         assert!(preferences.admit_close(incarnation, || queue.enqueue(Box::new(move || {
-            assert_eq!(worker.state::<ClientState>().preferences(), Some(request));
+            assert_eq!(worker.state::<ClientState>().preferences(), Some(expected));
             closed.send(persist_close_request(&worker, incarnation).unwrap()).unwrap();
         }))).unwrap());
         assert!(matches!(preferences.prepare_shutdown(6), ShutdownPrepare::JoinClose));
+        // Keep this dispatch thread in the barrier instead of pumping native events.
         assert!(!queue.seal_and_drain_until(Instant::now() + Duration::from_millis(20)));
+        assert!(matches!(save_result.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        assert!(matches!(acknowledged.try_recv(), Err(mpsc::TryRecvError::Empty)));
         resume.send(()).unwrap();
         assert!(queue.seal_and_drain_until(Instant::now() + Duration::from_secs(5)));
-        assert!(save_result.try_recv().unwrap().unwrap());
+        assert!(matches!(save_result.try_recv().unwrap(), InvokeResponse::Ok(_)));
+        assert_eq!(acknowledged.try_recv().unwrap(), (5, Some(request)));
         assert_eq!(close_result.try_recv().unwrap(), (Ok(()), Some(6)));
         assert!(state.preferences().is_none());
     }
@@ -994,18 +1049,61 @@ mod tests {
     }
 
     #[test]
-    fn failed_close_leaves_preferences_open_for_shutdown_prepare() {
-        let preferences = PreferencesWindow::default();
+    fn close_refuses_before_publication_but_approves_when_only_durability_is_pending() {
+        use crate::client_state::ClientState;
+        use std::sync::{
+            atomic::{AtomicU8, Ordering},
+            Arc,
+        };
+
+        let directory = tempfile::tempdir().unwrap();
+        let failure = Arc::new(AtomicU8::new(0));
+        let before_rename = failure.clone();
+        let sync_directory = failure.clone();
+        let state = ClientState::initialize_at_with_publication_checks(
+            directory.path(),
+            move || (before_rename.load(Ordering::Relaxed) != 1)
+                .then_some(()).ok_or_else(|| "injected write failure".into()),
+            move || (sync_directory.load(Ordering::Relaxed) != 2)
+                .then_some(()).ok_or_else(|| "injected sync failure".into()),
+        ).unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(state)
+            .manage(PreferencesWindow::default())
+            .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+        let preferences = app.state::<PreferencesWindow>();
+        let state = app.state::<ClientState>();
         let incarnation = preferences.new_incarnation(preferences.request());
         preferences.state.lock().unwrap().renderer_ready = true;
+        let request = preferences.request();
+        assert!(state.set_preferences(Some(request.clone())).unwrap());
+        let persisted = || -> serde_json::Value {
+            let bytes = std::fs::read(directory.path().join("client-state.json")).unwrap();
+            serde_json::from_slice(&bytes).unwrap()
+        };
+
+        failure.store(1, Ordering::Relaxed);
         assert!(preferences.begin_close(incarnation));
         assert!(matches!(preferences.prepare_shutdown(7), ShutdownPrepare::JoinClose));
         assert_eq!(
-            preferences.persist_close(incarnation, || Err("write failed".into())),
-            Some((Err("write failed".into()), Some(7)))
+            persist_close_request(app.handle(), incarnation),
+            Some((Err("injected write failure".into()), Some(7)))
         );
+        assert_eq!(state.preferences(), Some(request.clone()));
+        assert_eq!(persisted()["preferences"], json!(request));
         assert!(matches!(preferences.prepare_shutdown(7), ShutdownPrepare::Renderer));
+
+        failure.store(2, Ordering::Relaxed);
         assert!(preferences.begin_close(incarnation));
+        assert!(matches!(preferences.prepare_shutdown(8), ShutdownPrepare::JoinClose));
+        assert_eq!(persist_close_request(app.handle(), incarnation), Some((Ok(()), Some(8))));
+        assert!(state.preferences().is_none());
+        assert!(persisted().get("preferences").is_none());
+        assert_eq!(state.last_preferences(), Some(request));
+        assert!(matches!(preferences.prepare_shutdown(8), ShutdownPrepare::Skip));
+        assert!(state.confirm_root_durability().unwrap_err().contains("injected sync failure"));
+        failure.store(0, Ordering::Relaxed);
+        state.confirm_root_durability().unwrap();
     }
 
     #[test]

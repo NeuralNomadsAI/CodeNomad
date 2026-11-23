@@ -173,6 +173,7 @@ impl ClientState {
         if !self.is_primary() {
             return Ok(false);
         }
+        let clearing = request.is_none();
         let previous = {
             let mut state = self.state.lock().map_err(|err| err.to_string())?;
             if state.unsupported_future_envelope {
@@ -201,6 +202,10 @@ impl ClientState {
                 let mut state = self.state.lock().map_err(|err| err.to_string())?;
                 state.preferences = previous.0;
                 state.last_preferences = previous.1;
+            } else if clearing {
+                // The close already removed the restore record from the published root.
+                eprintln!("[client-state] {}", String::from(error));
+                return Ok(true);
             }
             return Err(error.into());
         }
@@ -660,8 +665,15 @@ impl ClientState {
         let worker = app.clone();
         app.state::<IpcQueue>()
             .enqueue(Box::new(move || {
-                if let Err(error) = worker.state::<Self>().add_window(window_id) {
-                    eprintln!("[client-state] failed to persist a new window: {error}");
+                let state = worker.state::<Self>();
+                match state.add_window(window_id.clone()) {
+                    Ok(true) => {}
+                    Ok(false) => state.discard_new_window_capture(&window_id),
+                    Err(error) => {
+                        // A directory-sync error has already promoted the record.
+                        state.discard_new_window_capture(&window_id);
+                        eprintln!("[client-state] failed to persist a new window: {error}");
+                    }
                 }
             }))
             .map_err(str::to_string)
@@ -682,20 +694,26 @@ impl ClientState {
             return Ok(false);
         }
         let mut next = {
-            let state = self.state.lock().map_err(|err| err.to_string())?;
+            let mut state = self.state.lock().map_err(|err| err.to_string())?;
             if state.unsupported_future_envelope {
                 return Ok(false);
             }
+            self.apply_window_captures(&mut state)?;
             state.clone()
         };
         // Keep the tentative record and serialization off the lock used by native window setup.
         next.add_window(window_id.clone())?;
+        self.snapshot_new_window_capture(&mut next, &window_id)?;
         let bytes = serde_json::to_vec(&next).map_err(|err| err.to_string())?;
         let result = self.publish_root(&bytes, &|| true);
         if matches!(result, Err(PublicationError::BeforeRename(_))) {
             return result.map(|()| false).map_err(Into::into);
         }
-        *self.state.lock().map_err(|err| err.to_string())? = next;
+        {
+            let mut state = self.state.lock().map_err(|err| err.to_string())?;
+            *state = next;
+            self.finish_new_window_capture(&state, &window_id);
+        }
         if result.is_ok() {
             self.window_captures_published();
         }
@@ -713,6 +731,7 @@ impl ClientState {
     }
 
     pub(crate) fn unregister_window(&self, window_id: &str) {
+        self.discard_new_window_capture(window_id);
         self.renderer_access.remove(window_id);
         if let Ok(mut readers) = self.file_draft_readers.lock() {
             readers.remove(window_id);

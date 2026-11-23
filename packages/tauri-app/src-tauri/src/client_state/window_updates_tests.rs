@@ -92,6 +92,42 @@ fn captures_do_not_wait_for_disk_and_latest_geometry_is_flushed() {
 }
 
 #[test]
+fn new_window_publishes_focus_and_latest_geometry_captured_while_fifo_waits() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = Arc::new(ClientState::initialize_at(directory.path()).unwrap());
+    let first = state.active_window_id().unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let fifo = crate::client_state::IpcQueue::new();
+    let (release, hold) = mpsc::channel();
+    fifo.enqueue(Box::new(move || hold.recv_timeout(TIMEOUT * 2).unwrap()))
+        .unwrap();
+    state.admit_new_window_capture(id.clone());
+    let writing = Arc::clone(&state);
+    let new_id = id.clone();
+    let (done, published) = mpsc::channel();
+    fifo.enqueue(Box::new(move || {
+        done.send(writing.add_window(new_id)).unwrap();
+    }))
+    .unwrap();
+
+    assert!(capture(&state, &id, 10));
+    assert!(state.capture_active_window(id.clone()));
+    // The separate geometry flush can run even while the FIFO is still held.
+    state.flush().unwrap();
+    assert_eq!(read_state(&state)["activeWindowId"], first);
+    assert!(read_state(&state)["windows"].get(&id).is_none());
+    assert!(capture(&state, &id, 20));
+    assert!(state.queue_window_capture(&id, None, true, false, 1.0));
+    release.send(()).unwrap();
+    assert!(published.recv_timeout(TIMEOUT).unwrap().unwrap());
+
+    let saved = read_state(&state);
+    assert_eq!(saved["activeWindowId"], id);
+    assert_eq!(saved["windows"][&id]["window"]["bounds"], json!(bounds(20)));
+    assert_eq!(saved["windows"][&id]["window"]["maximized"], true);
+}
+
+#[test]
 fn native_getters_run_without_any_client_state_lock() {
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();

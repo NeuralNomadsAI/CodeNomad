@@ -28,6 +28,132 @@ fn pending_windows_reserve_saved_ids_and_count_against_capacity() {
 }
 
 #[test]
+fn scheduled_new_window_cannot_register_between_shutdown_snapshot_and_admission() {
+    use std::sync::mpsc::{channel, RecvTimeoutError};
+    use std::time::Duration;
+
+    let windows = LocalWindows::default();
+    let shutdown = ShutdownCoordinator::default();
+    let queue = |id| queued_window(&windows, &shutdown, vec![id]);
+    let admitted = queue(id(1))
+        .construct(&windows, &shutdown, true, |record, new_record| {
+            assert!(!new_record);
+            Ok(record)
+        })
+        .unwrap();
+    let pending = queue(id(2));
+    let timeout = Duration::from_secs(1);
+    std::thread::scope(|scope| {
+        let (snapshot_tx, snapshot_rx) = channel();
+        let (resume_tx, resume_rx) = channel();
+        let (shutdown_ref, windows_ref) = (&shutdown, &windows);
+        let quitting = scope.spawn(move || {
+            shutdown_ref
+                .begin_shutdown(
+                    std::iter::once_with(move || {
+                        let labels = windows_ref.user_window_labels();
+                        snapshot_tx.send(()).unwrap();
+                        resume_rx.recv().unwrap();
+                        labels
+                    })
+                    .flatten(),
+                )
+                .unwrap()
+        });
+        snapshot_rx.recv_timeout(timeout).unwrap();
+
+        let (dispatch_tx, dispatch_rx) = channel();
+        let (result_tx, result_rx) = channel();
+        scope.spawn(move || {
+            dispatch_tx.send(()).unwrap();
+            result_tx
+                .send(pending.construct(windows_ref, shutdown_ref, true, |_, _| {
+                    panic!("constructing a window after shutdown won admission")
+                }))
+                .unwrap();
+        });
+        dispatch_rx.recv_timeout(timeout).unwrap();
+        assert!(matches!(
+            result_rx.recv_timeout(Duration::from_millis(30)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        resume_tx.send(()).unwrap();
+        let requests = quitting.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, admitted.label);
+        assert_eq!(
+            result_rx.recv_timeout(timeout).unwrap().unwrap_err(),
+            SHUTDOWN_IN_PROGRESS
+        );
+    });
+
+    assert!(!windows.contains_id(&id(2)));
+    assert_eq!(
+        windows
+            .schedule_new_window(&shutdown, vec![id(3)], |_| panic!("dispatch after shutdown"))
+            .unwrap_err(),
+        SHUTDOWN_IN_PROGRESS
+    );
+    assert!(!windows.contains_id(&id(3)));
+}
+
+fn queued_window(
+    windows: &LocalWindows,
+    shutdown: &ShutdownCoordinator,
+    saved: Vec<String>,
+) -> PendingNewWindow {
+    let mut queued = None;
+    windows
+        .schedule_new_window(shutdown, saved, |pending| {
+            queued = Some(pending);
+            Ok(())
+        })
+        .unwrap();
+    queued.unwrap()
+}
+
+#[test]
+fn shutdown_waits_for_admitted_new_window_to_enqueue_publication() {
+    use std::sync::mpsc::channel;
+    use std::time::{Duration, Instant};
+
+    let windows = LocalWindows::default();
+    let shutdown = ShutdownCoordinator::default();
+    let queue = client_state::IpcQueue::new();
+    let pending = queued_window(&windows, &shutdown, vec![]);
+    let label = local_window_label(&pending.id).unwrap();
+    let timeout = Duration::from_secs(1);
+    std::thread::scope(|scope| {
+        let (entered_tx, entered_rx) = channel();
+        let (resume_tx, resume_rx) = channel();
+        let (published_tx, published_rx) = channel();
+        let (windows_ref, shutdown_ref, queue_ref) = (&windows, &shutdown, &queue);
+        let construction = scope.spawn(move || {
+            pending.construct(windows_ref, shutdown_ref, true, |record, new_record| {
+                assert!(new_record);
+                entered_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+                queue_ref.enqueue(Box::new(move || published_tx.send(()).unwrap()))?;
+                Ok(record)
+            })
+        });
+        entered_rx.recv_timeout(timeout).unwrap();
+        let requests = shutdown.begin_shutdown(windows.user_window_labels()).unwrap();
+        assert_eq!(requests[0].0, label);
+        assert!(!shutdown.wait_for_local_window_builds(Duration::ZERO));
+
+        let cleanup = scope.spawn(move || {
+            assert!(shutdown_ref.wait_for_local_window_builds(timeout));
+            assert!(queue_ref.seal_and_drain_until(Instant::now() + timeout));
+        });
+        resume_tx.send(()).unwrap();
+        construction.join().unwrap().unwrap();
+        cleanup.join().unwrap();
+        published_rx.try_recv().unwrap();
+    });
+}
+
+#[test]
 fn registry_tracks_uuid_labels_mru_and_folder_ack_order() {
     let mut registry = Registry::default();
     let first = registry.add(id(1), true).unwrap();

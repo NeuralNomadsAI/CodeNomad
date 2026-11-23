@@ -52,6 +52,7 @@ struct ShutdownState {
     approved_local_closes: HashSet<String>,
     global_pending: HashMap<String, u64>,
     global_requests: HashMap<String, u64>,
+    building_local_windows: usize,
     shutdown_started: bool,
     cleanup_started: bool,
     exit_allowed: bool,
@@ -83,7 +84,39 @@ pub(crate) struct ShutdownCoordinator {
     release_acknowledged: Condvar,
 }
 
+pub(crate) struct LocalWindowBuild<'a>(&'a ShutdownCoordinator);
+
+impl Drop for LocalWindowBuild<'_> {
+    fn drop(&mut self) {
+        let mut state = self.0.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.building_local_windows -= 1;
+        self.0.release_acknowledged.notify_all();
+    }
+}
+
 impl ShutdownCoordinator {
+    pub(crate) fn admit_local_window_build<T>(
+        &self,
+        register: impl FnOnce() -> Result<T, String>,
+    ) -> Option<Result<(T, LocalWindowBuild<'_>), String>> {
+        let mut state = self.state.lock().ok()?;
+        if state.shutdown_started {
+            return None;
+        }
+        Some(register().map(|record| {
+            state.building_local_windows += 1;
+            (record, LocalWindowBuild(self))
+        }))
+    }
+
+    pub(crate) fn wait_for_local_window_builds(&self, timeout: Duration) -> bool {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let (state, _) = self.release_acknowledged
+            .wait_timeout_while(state, timeout, |state| state.building_local_windows != 0)
+            .unwrap_or_else(|error| error.into_inner());
+        state.building_local_windows == 0
+    }
+
     fn begin_local_close(
         &self,
         label: String,
@@ -143,7 +176,7 @@ impl ShutdownCoordinator {
         true
     }
 
-    fn begin_shutdown(
+    pub(crate) fn begin_shutdown(
         &self,
         labels: impl IntoIterator<Item = String>,
     ) -> Option<Vec<(String, u64)>> {
@@ -158,6 +191,8 @@ impl ShutdownCoordinator {
         if state.shutdown_started {
             return None;
         }
+        // Consume the local label snapshot under the same fence as window admission.
+        let labels: Vec<_> = labels.into_iter().collect();
         state.shutdown_started = true;
         state.local_closes.clear();
         state.capturing_local_closes.clear();
@@ -474,7 +509,7 @@ impl ShutdownCoordinator {
         state.restart_requested
     }
 
-    fn with_navigation_authority<T>(&self, operation: impl FnOnce() -> T) -> Option<T> {
+    pub(crate) fn with_navigation_authority<T>(&self, operation: impl FnOnce() -> T) -> Option<T> {
         let state = self.state.lock().ok()?;
         if state.shutdown_started {
             return None;
@@ -707,16 +742,16 @@ fn finish_local_close(app: AppHandle, label: String, window_id: String, generati
     });
 }
 
-fn renderer_labels(app: &AppHandle) -> Vec<String> {
-    let mut labels = app.state::<LocalWindows>().user_window_labels();
-    labels.extend(
-        app.webview_windows()
-            .into_keys()
-            .filter(|label| label.starts_with("remote-")),
-    );
+fn renderer_labels(app: &AppHandle) -> impl Iterator<Item = String> + '_ {
+    // Inspect native windows before locking the coordinator.
+    let remote: Vec<_> = app.webview_windows()
+        .into_keys()
+        .filter(|label| label.starts_with("remote-"))
+        .collect();
     // Include loading Preferences: it may already be persisting an individual close.
-    labels.push(crate::preferences_window::LABEL.to_string());
-    labels
+    remote.into_iter()
+        .chain(std::iter::once(crate::preferences_window::LABEL.to_string()))
+        .chain(std::iter::once_with(|| app.state::<LocalWindows>().user_window_labels()).flatten())
 }
 
 pub(crate) fn request(app: AppHandle) {
@@ -811,8 +846,20 @@ fn start_cleanup(app: AppHandle) {
         if let Some(speech) = app.try_state::<crate::device_speech::DeviceSpeech>() {
             speech.stop_hex();
         }
-        client_state::capture_all_windows(&app);
         let coordinator = app.state::<ShutdownCoordinator>();
+        // An admitted renderer can be in the shutdown snapshot before its native
+        // window exists. Let it enqueue publication before capture and sealing.
+        if !coordinator.wait_for_local_window_builds(IPC_DRAIN_TIMEOUT) {
+            eprintln!("[tauri] shutdown canceled: local window construction did not settle");
+            let cancellations = coordinator.cleanup_failed(|| {});
+            emit_flush_cancellations(&app, cancellations);
+            return;
+        }
+        #[cfg(windows)]
+        if coordinator.windows_session_end_confirmed() {
+            return;
+        }
+        client_state::capture_all_windows(&app);
         #[cfg(windows)]
         if coordinator.windows_session_end_confirmed() {
             return;
@@ -1071,8 +1118,8 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
             let saved = windows_session_end_cleanup(
                 deadline,
                 move |persist_deadline| {
-                    // Native dispatch is blocked; use only admitted writes and
-                    // geometry already captured by window events.
+                    // WM_ENDSESSION blocks native dispatch, so we can only
+                    // drain writes already queued and save captured geometry.
                     persist_app.state::<client_state::IpcQueue>()
                         .seal_and_drain_until(persist_deadline)
                         && client_state::flush_without_window_capture(&persist_app)
