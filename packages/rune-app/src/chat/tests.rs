@@ -151,6 +151,79 @@ fn multiline_input_submits_once_and_stream_preserves_unicode() {
     assert_eq!(rt.state.messages.last().unwrap().body, "été 🦀");
     assert!(rt.state.phase == Phase::Ready);
 }
+
+#[test]
+fn send_click_shares_a_frame_with_connection_loss() {
+    for revoke in [false, true] {
+        let mut state = init();
+        let (sender, commands) = bounded(1);
+        let (out, incoming) = bounded(8);
+        state.commands = Some(sender);
+        state.incoming = Some(incoming);
+        state.phase = Phase::Ready;
+        state.draft = TextEdit::new("Keep this draft");
+        let attachment = composer::draft::Attachment::Skill {
+            id: "review".into(),
+            name: "Review".into(),
+        };
+        state.composer.draft.attach(attachment.clone());
+        state.composer.picker.set_attachments_supported(true);
+        let mut rt = Runtime::new(state, view, (960.0, 760.0), Env::new(true, 1.0));
+        rt.poll = Some(poll);
+        for _ in 0..12 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert!(composer::can_send(&rt.state));
+
+        let (x, y) = rt.find("send").expect("visible Send button");
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        out.try_send(Event::ConnectionLost).unwrap();
+        if revoke {
+            out.try_send(Event::Failed).unwrap();
+        }
+        rt.frame(1.0 / 60.0);
+
+        if revoke {
+            assert!(matches!(rt.state.phase, Phase::Failed));
+            assert!(commands.is_empty());
+            let error = strings::t("promptInput.send.errorTitle");
+            assert!(
+                rt.elements()
+                    .iter()
+                    .any(|e| e.text.as_deref() == Some(error))
+            );
+        } else {
+            assert!(rt.state.phase.reconnecting());
+            let Command::Prompt(prompt) = commands.try_recv().expect("one HTTP prompt") else {
+                panic!("expected a prompt");
+            };
+            assert_eq!(prompt.text, "Keep this draft");
+            assert_eq!(prompt.skills.len(), 1);
+            out.try_send(Event::PromptAcknowledged {
+                attempted: prompt.id.unwrap(),
+                outcome: transport::PromptOutcome::Unconfirmed,
+            })
+            .unwrap();
+            rt.frame(1.0 / 60.0);
+            assert!(rt.state.composer.unconfirmed_id().is_some());
+        }
+
+        out.try_send(Event::Sync(history::Page {
+            rows: vec![],
+            older: None,
+            newer: None,
+            running: false,
+            user_file_references: true,
+        }))
+        .unwrap();
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.draft.text, "Keep this draft");
+        assert_eq!(rt.state.composer.draft.attachments, [attachment]);
+        assert!(commands.is_empty(), "recovery must not replay the click");
+    }
+}
+
 #[test]
 fn consecutive_sends_keep_distinct_responses_and_reenable_send() {
     let mut rt = runtime();

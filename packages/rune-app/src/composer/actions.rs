@@ -59,7 +59,8 @@ pub(crate) fn command_held(s: &State) -> bool {
 }
 
 pub fn can_send(s: &State) -> bool {
-    matches!(s.phase, Phase::Ready | Phase::Streaming)
+    let stream_disconnected = matches!(s.phase, Phase::StreamDisconnected { .. });
+    (stream_disconnected || matches!(s.phase, Phase::Ready | Phase::Streaming))
         && !s
             .screen
             .launcher()
@@ -78,7 +79,18 @@ pub fn can_send(s: &State) -> bool {
         && !command_held(s)
         && s.composer.draft.can_send(&s.draft)
         && s.commands.as_ref().is_some_and(|tx| !tx.is_closed())
-        && s.agent.as_ref().is_none_or(|a| !a.blocked())
+        && s.agent
+            .as_ref()
+            .is_none_or(|a| !a.blocks_prompt(stream_disconnected))
+}
+
+pub(crate) fn send_button(s: &mut State, tx: &mut Tx) {
+    if can_send(s) {
+        send(s, tx, false);
+    } else {
+        // An enabled control can deliver its click after the frame's poll revoked admission.
+        s.composer.send_error = true;
+    }
 }
 
 pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
@@ -139,7 +151,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         }
         return;
     }
-    let was_running = s.phase == Phase::Streaming;
+    let was_running = s.phase.running();
     let delivery = follow_up_delivery(
         was_running,
         crate::settings::queues_follow_ups(s),
@@ -186,7 +198,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             .into(),
         );
         s.revision += 1;
-        s.phase = Phase::Streaming;
+        s.phase = optimistic_phase(&s.phase, true);
     }
     workspace::capture(s);
 }
@@ -196,6 +208,16 @@ fn follow_up_delivery(running: bool, prefer_queue: bool, alternate: bool) -> Del
         Delivery::Queue
     } else {
         Delivery::Steer
+    }
+}
+
+fn optimistic_phase(phase: &Phase, running: bool) -> Phase {
+    if matches!(phase, Phase::StreamDisconnected { .. }) {
+        Phase::StreamDisconnected { running }
+    } else if running {
+        Phase::Streaming
+    } else {
+        Phase::Ready
     }
 }
 
@@ -295,8 +317,8 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         s.composer.draft = send.draft;
         s.composer.restored = true;
     }
-    if s.phase == Phase::Streaming && !send.was_running {
-        s.phase = Phase::Ready;
+    if s.phase.running() && !send.was_running {
+        s.phase = optimistic_phase(&s.phase, false);
     }
 }
 

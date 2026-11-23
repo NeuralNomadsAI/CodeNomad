@@ -242,7 +242,10 @@ impl Ui {
         }
     }
     pub fn blocked(&self) -> bool {
-        self.busy || !self.known || !self.online || self.stopping
+        self.blocks_prompt(false)
+    }
+    pub(crate) fn blocks_prompt(&self, stream_disconnected: bool) -> bool {
+        self.busy || !self.known || self.stopping || (!self.online && !stream_disconnected)
     }
     pub fn locked(&self) -> bool {
         self.busy || self.reading || !self.pending_known || !self.online

@@ -35,9 +35,7 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
                     } else {
                         "rune.older"
                     }),
-                    s.paging
-                        || s.phase == Phase::Failed
-                        || !retry && s.phase == Phase::Reconnecting,
+                    s.paging || s.phase == Phase::Failed || !retry && s.phase.reconnecting(),
                     screen::action_tx(
                         &scope,
                         if retry {
@@ -60,7 +58,7 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>, more: El) -> El {
             layout::button_tx(
                 t("promptInput.overlay.send"),
                 !can_send(s),
-                screen::action_tx(&scope, |s, tx| send(s, tx, false)),
+                screen::action_tx(&scope, super::actions::send_button),
             )
             .key("send"),
         );

@@ -347,8 +347,8 @@ fn connection_warning(s: &State) -> Option<El> {
     let failed = s.phase == crate::Phase::Failed;
     #[cfg(target_arch = "wasm32")]
     let failed = failed || s.phase == crate::Phase::RestoreFailed;
-    match s.phase {
-        crate::Phase::Reconnecting => Some(text(connection(s)).role("status")),
+    match &s.phase {
+        phase if phase.reconnecting() => Some(text(connection(s)).role("status")),
         _ if failed => Some(crate::components::button_tx(
             "connection-retry",
             strings::t("sessionList.loadError.retry"),

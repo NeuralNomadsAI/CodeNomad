@@ -41,7 +41,7 @@ impl Cache {
         )
     }
     pub(super) fn history_protected(&self) -> bool {
-        self.phase == Phase::Streaming
+        self.phase.running()
             || self.agent.as_ref().is_some_and(|agent| agent.running)
             || self
                 .reader
@@ -127,7 +127,7 @@ pub(super) fn status(
         Some(Status::Permission)
     } else if *phase == Phase::Streaming || agent.is_some_and(|a| a.online && a.running) {
         Some(Status::Working)
-    } else if matches!(phase, Phase::Failed | Phase::Reconnecting) {
+    } else if *phase == Phase::Failed || phase.reconnecting() {
         Some(Status::Unavailable)
     } else {
         None

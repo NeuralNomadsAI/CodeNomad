@@ -279,13 +279,22 @@ fn dropping_the_sse_receiver_releases_an_idle_connection() {
 
 #[test]
 fn a_queued_prompt_has_one_http_attempt_with_the_reader_and_upstream_events_down() {
+    prompt_during_stream_gap(true);
+}
+
+#[test]
+fn a_prompt_has_one_http_attempt_after_an_established_stream_closes() {
+    prompt_during_stream_gap(false);
+}
+
+fn prompt_during_stream_gap(with_reading: bool) {
     use crate::{
         recovery::{ReadingLane, demand},
         transport::{Command, Event},
     };
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-    run(async {
+    run(async move {
         tokio::time::timeout(Duration::from_secs(5), async {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let mut backend =
@@ -299,11 +308,14 @@ fn a_queued_prompt_has_one_http_attempt_with_the_reader_and_upstream_events_down
             let (demand, observer) = demand::open();
             let (content, _snapshots) = bounded(1);
             demand.publish(None);
-            let task = tokio::spawn(crate::transport::run_backend_reading(
-                backend, out, input, Arc::new(|| {}), ReadingLane {
+            let task = if with_reading {
+                tokio::spawn(crate::transport::run_backend_reading(
+                    backend, out, input, Arc::new(|| {}), ReadingLane {
                     demand: observer, events: content, connection: Default::default()
-                },
-            ));
+                }))
+            } else {
+                tokio::spawn(crate::transport::run_backend(backend, out, input, Arc::new(|| {})))
+            };
             let (socket, _) = listener.accept().await.unwrap();
             let mut stream = BufReader::new(socket);
             let mut headers = Vec::new();
@@ -314,10 +326,17 @@ fn a_queued_prompt_has_one_http_attempt_with_the_reader_and_upstream_events_down
                 headers.push(line);
             }
             assert!(headers[0].starts_with("GET /api/events?"));
-            stream.get_mut().write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n\
-                data: {\"instanceId\":\"workspace\",\"type\":\"instance.eventStatus\",\"status\":\"disconnected\"}\n\n")
+            stream.get_mut().write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
                 .await.unwrap();
-            while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
+            if with_reading {
+                stream.get_mut().write_all(b"data: {\"instanceId\":\"workspace\",\"type\":\"instance.eventStatus\",\"status\":\"disconnected\"}\n\n")
+                    .await.unwrap();
+                while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
+            } else {
+                while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
+                drop(stream);
+                while !matches!(events.recv().await.unwrap(), Event::ConnectionLost) {}
+            }
 
             let id = "msg_00000000000000000000000000000001";
             commands.send(Command::Prompt(crate::prompt::Prompt {

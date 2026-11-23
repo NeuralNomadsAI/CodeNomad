@@ -88,10 +88,25 @@ enum Phase {
     Streaming,
     Failed,
     Reconnecting,
+    StreamDisconnected {
+        running: bool,
+    },
     #[cfg(target_arch = "wasm32")]
     WorkspaceMissing,
     #[cfg(target_arch = "wasm32")]
     RestoreFailed,
+}
+impl Phase {
+    fn reconnecting(&self) -> bool {
+        matches!(self, Self::Reconnecting | Self::StreamDisconnected { .. })
+    }
+
+    fn running(&self) -> bool {
+        matches!(
+            self,
+            Self::Streaming | Self::StreamDisconnected { running: true }
+        )
+    }
 }
 fn init() -> State {
     State {

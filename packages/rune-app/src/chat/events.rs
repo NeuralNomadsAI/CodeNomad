@@ -78,7 +78,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if let Some(reader) = &mut s.reader {
                     reader.observed_running(running, version, s.phase == Phase::Streaming);
                 }
-                if s.phase != Phase::Reconnecting
+                if !s.phase.reconnecting()
                     && s.phase != Phase::Failed
                     && (running
                         || s.reader
@@ -106,6 +106,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     s.messages.clear();
                     s.history_detached = false;
                     s.can_older = false;
+                    s.phase = Phase::Reconnecting;
                 }
                 workspace::mission_event(s, Some(&event));
                 git::event(s, &event);
@@ -169,18 +170,28 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
             }
             Event::Reconnecting | Event::ConnectionLost => {
-                s.composer.picker.set_attachments_supported(false);
+                let stream_lost = matches!(event, Event::ConnectionLost);
+                if !stream_lost {
+                    s.composer.picker.set_attachments_supported(false);
+                }
                 chat::reader::reconnecting(s);
                 #[cfg(target_arch = "wasm32")]
-                if matches!(event, Event::ConnectionLost) && !platform::pairing::required(s) {
+                if stream_lost && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
                 }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
                 }
-                if !s.history_detached {
-                    s.phase = Phase::Reconnecting;
+                if !s.history_detached && s.phase != Phase::Failed {
+                    s.phase = match (&s.phase, stream_lost) {
+                        (Phase::Ready, true) => Phase::StreamDisconnected { running: false },
+                        (Phase::Streaming, true) => Phase::StreamDisconnected { running: true },
+                        (Phase::StreamDisconnected { running }, true) => {
+                            Phase::StreamDisconnected { running: *running }
+                        }
+                        _ => Phase::Reconnecting,
+                    };
                 }
                 s.attachments.cancel();
                 if let Some(a) = s.agent.as_mut() {
@@ -282,7 +293,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         s.revision += 1;
         changed = true;
     }
-    if (s.composer.pending() || s.phase == Phase::Reconnecting)
+    if (s.composer.pending() || s.phase.reconnecting())
         && s.incoming
             .as_ref()
             .is_some_and(|receiver| receiver.is_closed() && receiver.is_empty())

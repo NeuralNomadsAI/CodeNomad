@@ -46,6 +46,7 @@ pub(crate) async fn run_with_reading(
     let mut wire = make_wire();
     stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
     let mut opened = false;
+    let mut stream_gap = false;
     let mut connection_lost = false;
     let mut connection_closed = false;
     let mut retry = None;
@@ -77,6 +78,7 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Opened(e)) if e == epoch => {
                 opened = true;
+                stream_gap = false;
                 attempts = 0;
                 publish(&out, &wake, Event::AgentHint(true)).await;
                 reader.dirty = true;
@@ -85,6 +87,9 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Closed(e)) if e == epoch => {
                 ReadingLane::invalidate_connection(reading);
+                if opened {
+                    stream_gap = wire.upstream.load(SeqCst);
+                }
                 opened = false;
                 connection_closed = true;
                 connection_lost = true;
@@ -93,9 +98,7 @@ pub(crate) async fn run_with_reading(
                 attempts = attempts.saturating_add(1);
                 retry =
                     Some(Instant::now() + Duration::from_millis(250 * (1u64 << attempts.min(4))));
-                if attempts <= 6 {
-                    publish(&out, &wake, Event::Reconnecting).await;
-                } else if attempts == 7 && reading.is_none() {
+                if attempts == 7 && reading.is_none() {
                     // Keep the same subscription owner after showing the outage.
                     publish(&out, &wake, Event::Failed).await;
                 }
@@ -105,6 +108,7 @@ pub(crate) async fn run_with_reading(
                 return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {
+                stream_gap = false;
                 ReadingLane::invalidate_connection(reading);
                 reader.dirty = true;
                 if reading.is_some() || !reader.historical {
@@ -170,7 +174,9 @@ pub(crate) async fn run_with_reading(
                 text,
             })) => {
                 let admitted = reading.is_some()
-                    || opened && !reader.parked && !reader.historical && wire.upstream.load(SeqCst);
+                    || !reader.parked
+                        && !reader.historical
+                        && (stream_gap || opened && wire.upstream.load(SeqCst));
                 if !receipts::slash(&backend, &out, &wake, &wire, admitted, attempt, name, text)
                     .await
                 {
@@ -181,7 +187,9 @@ pub(crate) async fn run_with_reading(
                 let Some(id) = &prompt.id else { continue };
                 // The compose gesture owns one attempt even if its tab suspends before dispatch.
                 let admitted = reading.is_some()
-                    || opened && !reader.parked && !reader.historical && wire.upstream.load(SeqCst);
+                    || !reader.parked
+                        && !reader.historical
+                        && (stream_gap || opened && wire.upstream.load(SeqCst));
                 let Some(outcome) =
                     receipts::prompt(&backend, &out, &wake, &wire, admitted, id, &prompt).await
                 else {
