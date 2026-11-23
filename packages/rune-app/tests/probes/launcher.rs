@@ -118,6 +118,8 @@ pub fn run() {
     let with_tools = std::env::var_os("RUNE_TEST_TOOLS").is_some();
     for turn in 1..=2 {
         let mut visible = false;
+        let mut saw_live_input = false;
+        let mut saw_live_progress = false;
         rt.update(move |s, _| {
             s.draft = TextEdit::new(format!("Functional turn {turn} · été 日本語 🦀"));
         });
@@ -130,6 +132,18 @@ pub fn run() {
             let id = format!("reply-ses_created_1-{turn}");
             let path = super::fragment_path(&id, usize::from(with_tools));
             let row = rt.state.messages.iter().find(|m| m.id == id);
+            if with_tools && let Some(row) = row {
+                saw_live_input |= row.parts.iter().any(|p| {
+                    matches!(p, crate::content::Part::Tool(t) if t.status == "streaming" && t.input == r#"{"command":"fixture"}"#)
+                });
+                let marker = format!("Live output {turn}");
+                saw_live_progress |= row.parts.iter().any(|p| {
+                    matches!(p, crate::content::Part::Tool(t) if t.status == "running" && t.metadata["output"].as_str().is_some_and(|value| value.ends_with(&marker)))
+                }) && rt.elements().iter().any(|e| {
+                    e.text.as_deref().is_some_and(|text| text.contains(&marker))
+                        && e.visible[2] > 0.0 && e.visible[3] > 0.0
+                });
+            }
             let after_tool = row.is_some_and(|m| {
                 m.parts
                     .iter()
@@ -189,6 +203,16 @@ pub fn run() {
             visible,
             "new assistant code must reach its clipped ElementInfo before completion"
         );
+        if with_tools {
+            assert!(
+                saw_live_input,
+                "tool input deltas must arrive before the call"
+            );
+            assert!(
+                saw_live_progress,
+                "SSE-only tool output must be visible before completion"
+            );
+        }
         assert!(rt.state.messages.last().unwrap().parts.iter().all(|p|!matches!(p,crate::content::Part::Text(t) if t.provenance!=crate::content::TextProvenance::Closed)),"native text endings must close every fragment");
         assert!(
             rt.state

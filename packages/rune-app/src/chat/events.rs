@@ -227,6 +227,15 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
             }
+            Event::Tool(id, tool) => {
+                if let Some(row) = s
+                    .messages
+                    .iter_mut()
+                    .find(|row| row.id == id && !row.completed)
+                {
+                    content::install_tool(std::sync::Arc::make_mut(row), tool);
+                }
+            }
             Event::Done => s.phase = Phase::Ready,
             Event::Failed if content => {
                 if let Some(reader) = &mut s.reader {

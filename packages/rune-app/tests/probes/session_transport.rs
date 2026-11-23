@@ -144,6 +144,7 @@ pub fn contract() {
             | Event::Workspace(_)
             | Event::Preferences(_)
             | Event::PromptAcknowledged { .. }
+            | Event::Tool(..)
             | Event::PagingFailed => {}
             Event::Message(message) => {
                 assert!(

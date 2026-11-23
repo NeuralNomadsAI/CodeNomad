@@ -609,8 +609,30 @@ pub(crate) async fn run_with_reading(
                         }
                     }
                     kind if kind.starts_with("session.tool.") => {
-                        dirty = true;
-                        quiet = Instant::now() + Duration::from_millis(100);
+                        let fit = resident
+                            .iter_mut()
+                            .find(|row| row.id == id)
+                            .map_or(content::ToolFit::Repair, |row| {
+                                content::apply_tool(Arc::make_mut(row), kind, &native["data"])
+                            });
+                        match fit {
+                            content::ToolFit::Applied(tool) => {
+                                history::check(&resident)?;
+                                reader_event(
+                                    reading,
+                                    generation,
+                                    &out,
+                                    &wake,
+                                    Event::Tool(id.into(), tool),
+                                )
+                                .await;
+                            }
+                            content::ToolFit::Drop => {}
+                            content::ToolFit::Repair => {
+                                dirty = true;
+                                quiet = Instant::now() + Duration::from_millis(100);
+                            }
+                        }
                     }
                     "session.execution.succeeded"
                     | "session.execution.failed"

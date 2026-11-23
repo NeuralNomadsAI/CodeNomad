@@ -3,16 +3,15 @@ use rune::{Color, El, Span};
 use std::ops::Range;
 use vte::{Params, Perform};
 
-const ESCAPED: [&str; 5] = ["\\u001b", "\\u001B", "\\x1b", "\\x1B", "\\033"];
+mod stream;
+use stream::parse;
+pub use stream::{Stream, present};
+
 // Rune's selection-to-HTML path scans every range at each style boundary.
 // Keep both color and decoration ranges for the initial 10,000-unit window.
 const COPY_RUN_LIMIT: usize = 4096;
 const LINE_WORK_LIMIT: usize = 2_000_000;
 const WINDOW_WORK_LIMIT: usize = 16_000_000;
-
-pub fn present(source: &str) -> bool {
-    source.contains('\u{1b}') || ESCAPED.iter().any(|escape| source.contains(escape))
-}
 
 // The same 16 named colors as Solid's ansi-sequence-parser.
 const COLORS: [u32; 16] = [
@@ -61,7 +60,7 @@ struct Style {
     strike: bool,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Log {
     text: String,
     runs: Vec<(Range<usize>, Style)>,
@@ -228,48 +227,12 @@ fn color(mode: u16, mut values: impl Iterator<Item = u16>) -> Option<Color> {
     }
 }
 
-fn parse(mut source: &str) -> Log {
-    let mut out = Log::default();
-    let mut parser = vte::Parser::new();
-    // A transcript is a log, not a terminal. Feed only complete SGR to VTE;
-    // unsupported or truncated escapes retain their printable text.
-    while let Some(index) = source.find(['\u{1b}', '\\']) {
-        out.literal(&source[..index]);
-        let rest = &source[index..];
-        let escape_len = if rest.starts_with('\u{1b}') {
-            1
-        } else {
-            ESCAPED
-                .iter()
-                .find(|escape| rest.starts_with(**escape))
-                .map_or(1, |escape| escape.len())
-        };
-        let tail = &rest[escape_len..];
-        if (escape_len > 1 || rest.starts_with('\u{1b}')) && tail.starts_with('[') {
-            let end = tail.as_bytes()[1..]
-                .iter()
-                .position(|&byte| !byte.is_ascii_digit() && !matches!(byte, b';' | b':'))
-                .map(|index| index + 1);
-            if let Some(end) = end.filter(|&index| tail.as_bytes()[index] == b'm') {
-                parser.advance(&mut out, b"\x1b");
-                parser.advance(&mut out, &tail.as_bytes()[..=end]);
-                source = &tail[end + 1..];
-                continue;
-            }
-        }
-        out.literal(&rest[..escape_len]);
-        source = tail;
-    }
-    out.literal(source);
-    if out.pending_cr {
-        out.push('\n');
-    }
-    out.finish_run();
-    out
+pub fn code(source: &str, wrap: bool) -> El {
+    render(parse(source), wrap)
 }
 
-pub fn code(source: &str, wrap: bool) -> El {
-    let (text, spans, strikes) = styled(parse(source));
+fn render(log: Log, wrap: bool) -> El {
+    let (text, spans, strikes) = styled(log);
     super::markdown::code_body(rune::rich(text, spans).strikes(strikes), wrap)
 }
 
