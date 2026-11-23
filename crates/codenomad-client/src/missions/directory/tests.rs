@@ -37,7 +37,7 @@ fn envelope(first: bool) -> Value {
 fn publishes_a_verified_complete_row_with_utf16_offsets() {
     let mut read = reader();
     assert_eq!(
-        read.url.path(),
+        read.read.url.path(),
         "/api/workspaces/workspace/missions/panel-page"
     );
     assert!(read.accept(envelope(true)).unwrap().is_none());
@@ -56,6 +56,7 @@ fn reads_the_servers_nonempty_cleanup_projection() {
     // Output of projectMissionCleanups(events("pending", 1)) from cleanup-projection.test.ts.
     const ROW: &str = r#"{"missionID":"pending","deletionID":"pending-delete","requestID":"request-pending","expectedRevision":4,"deleteManagedSessions":true,"objective":"Latest objective","removed":0,"retained":0,"pending":1,"reasons":[],"createdAt":1.2}"#;
     let mut read = reader()
+        .read
         .backend
         .mission_cleanups(Some("project"), 0, None)
         .unwrap();
@@ -97,6 +98,7 @@ fn verifies_cleanup_at_the_utf16_emoji_boundary_without_repairing_the_page() {
         r#"{{"missionID":"pending","deletionID":"pending-delete","requestID":"request-pending","expectedRevision":4,"deleteManagedSessions":true,"objective":"{objective}","removed":0,"retained":0,"pending":0,"reasons":[],"createdAt":1.2,"documentPending":true}}"#
     );
     let mut read = reader()
+        .read
         .backend
         .mission_cleanups(Some("project"), 0, None)
         .unwrap();
@@ -116,6 +118,7 @@ fn verifies_cleanup_at_the_utf16_emoji_boundary_without_repairing_the_page() {
     page["page"]["pieces"][0]["characters"] = json!(text.encode_utf16().count() + 1);
     assert!(
         reader()
+            .read
             .backend
             .mission_cleanups(Some("project"), 0, None)
             .unwrap()

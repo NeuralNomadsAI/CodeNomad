@@ -1,15 +1,11 @@
-use crate::platform::{
-    self,
-    reads::{self, Reads},
-};
+use super::detail::{Detail, read_window};
+use crate::platform::{self, reads::Reads};
 use codenomad_client::{
     Receiver, Sender, Wake,
     backend::Backend,
     bounded,
     history::Result,
-    missions::{
-        Cleanup, DirectoryChanged, DirectoryPage, DirectoryRead, DirectoryRows, Summary, Window,
-    },
+    missions::{Cleanup, DirectoryChanged, DirectoryPage, DirectoryRows, Summary, Window},
 };
 use rune::edit::TextEdit;
 use std::collections::HashSet;
@@ -60,6 +56,7 @@ pub(crate) struct Panel {
     pub(super) cleanups: Vec<Cleanup>,
     pub(super) filter: TextEdit,
     pub(crate) selected: Option<String>,
+    pub(super) detail: Detail,
 }
 
 const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
@@ -85,6 +82,7 @@ impl Panel {
             cleanups: vec![],
             filter: TextEdit::new(""),
             selected: None,
+            detail: Detail::default(),
         }
     }
 
@@ -96,6 +94,7 @@ impl Panel {
         if show {
             self.refresh();
         } else {
+            self.detail.cancel();
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
                     cancel.close();
@@ -107,6 +106,7 @@ impl Panel {
 
     pub(super) fn refresh(&mut self) {
         if self.visible {
+            self.detail.refresh();
             for kind in KINDS {
                 if self.busy(kind) {
                     self.lanes[kind as usize].owed = true;
@@ -307,6 +307,25 @@ impl Panel {
                 _ => self.lanes[done.kind as usize].failed = Some(done.read),
             }
         }
+        if self.visible
+            && let (Some(project), Some(id)) = (&self.project, &self.selected)
+        {
+            let revision = self
+                .summaries
+                .iter()
+                .find(|row| row.id == *id)
+                .map(|row| row.revision);
+            changed |= self.detail.poll(
+                &self.backend,
+                project,
+                id,
+                revision,
+                &self.reads,
+                &self.wake,
+            );
+        } else if self.selected.is_none() {
+            self.detail.clear();
+        }
         changed
     }
 
@@ -377,7 +396,8 @@ impl Panel {
     }
 
     pub(super) fn select(&mut self, id: &str) {
-        if self.summaries.iter().any(|row| row.id == id) {
+        if self.selected.as_deref() != Some(id) && self.summaries.iter().any(|row| row.id == id) {
+            self.detail.clear();
             self.selected = Some(id.into());
         }
     }
@@ -429,23 +449,6 @@ fn merge<T>(
         display.extend(previous.filter(|row| !lane.seen.contains(&key(row))));
     }
     true
-}
-
-async fn read_window(
-    mut read: DirectoryRead,
-    reads: &Reads,
-    cancelled: &Receiver<()>,
-) -> Option<Result<DirectoryPage>> {
-    loop {
-        let permit = reads.background(cancelled).await?;
-        let result = reads::cancellable(cancelled, read.read_next()).await?;
-        drop(permit);
-        match result {
-            Ok(None) => {}
-            Ok(Some(page)) => return Some(Ok(page)),
-            Err(error) => return Some(Err(error)),
-        }
-    }
 }
 
 #[cfg(test)]

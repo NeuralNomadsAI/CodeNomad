@@ -1,4 +1,5 @@
-//! Read-only Mission directory. Shell mounting is separate from the project-owned state.
+//! Read-only Mission views owned by a project occurrence.
+mod detail;
 mod directory;
 mod view;
 

@@ -1,6 +1,6 @@
 use super::directory::{Kind, Panel, title};
 use crate::strings::{locale, t};
-use codenomad_client::missions::{RunState, Status, Summary};
+use codenomad_client::missions::{RunState, Status, TaskStatus};
 use rune::{El, col, edit::TextEdit, text};
 use rune_theme_codenomad::{
     Space, TextRole, catalogue, field_kit, git_panel as theme,
@@ -51,13 +51,14 @@ pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
         let selected = ui.selected.as_deref() == Some(&id);
         let scoped = scoped.clone();
         list = list.child(
-            shell::session_row(title(row), selected, false, move |state, _| {
+            shell::session_row(title(row), selected, false, move |state, tx| {
                 if let Some(panel) = scoped.get(state).0 {
                     panel.select(&id);
+                    tx.instant();
                 }
             })
             .key(format!("mission-row-{}", row.id))
-            .description(status(row)),
+            .description(status(row.status, row.run_state)),
         );
     }
     let mut body = theme::scroll().child(list);
@@ -70,6 +71,9 @@ pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
         body = body.child(theme::note(t(key), "status"));
     }
     body = body.child(page_footer(ui, scoped.clone(), Kind::Summaries));
+    if ui.selected.is_some() {
+        body = body.child(detail(ui, scoped.clone()));
+    }
     if !ui.cleanups.is_empty() {
         body = body.child(
             text(t("missions.progress.cleanupHistory"))
@@ -177,8 +181,123 @@ fn page_footer<S: 'static>(ui: &Panel, owner: Scoped<S>, kind: Kind) -> El {
     footer
 }
 
-fn status(row: &Summary) -> &'static str {
-    t(match (row.status, row.run_state) {
+fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>) -> El {
+    let detail = &ui.detail;
+    let mut result = col()
+        .full_width()
+        .pad(Space::Sm)
+        .key("mission-detail")
+        .role("region")
+        .label(t("missions.control.overview"));
+    if let Some(snapshot) = &detail.snapshot {
+        let header = &snapshot.header.root;
+        let name = header
+            .title
+            .as_deref()
+            .filter(|title| !title.is_empty())
+            .or_else(|| {
+                ui.summaries
+                    .iter()
+                    .find(|row| row.id == header.id)
+                    .map(title)
+            })
+            .unwrap_or(t("missions.control.overview"));
+        result = result
+            .child(text(name).role("heading").wrap_anywhere())
+            .child(text(status(header.status, header.run_state)).text_role(TextRole::Small))
+            .child(text(&header.excerpt).wrap_anywhere());
+        if !snapshot.tasks.is_empty() {
+            let list = col()
+                .full_width()
+                .role("list")
+                .label(t("missions.control.profiles.role.specialist"));
+            result = result.child(list.children(snapshot.tasks.iter().map(|task| {
+                let state = task_status(task.status);
+                let title = if task.title.is_empty() {
+                    &task.key
+                } else {
+                    &task.title
+                };
+                let mut row = col()
+                    .full_width()
+                    .pad(Space::Sm)
+                    .role("listitem")
+                    .label(title)
+                    .key(format!("mission-task-{}", task.id))
+                    .child(text(title).wrap_anywhere())
+                    .child(text(state).text_role(TextRole::Small));
+                if !task.blocked_by.is_empty() {
+                    let dependencies = task
+                        .blocked_by
+                        .iter()
+                        .map(|key| {
+                            snapshot
+                                .tasks
+                                .iter()
+                                .find(|task| task.key == *key)
+                                .map_or(key.as_str(), |task| task.title.as_str())
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    row = row.child(
+                        text(catalogue::format(
+                            locale(),
+                            "missions.control.task.blockedBy",
+                            &[("tasks", &dependencies)],
+                        ))
+                        .text_role(TextRole::Small)
+                        .wrap_anywhere(),
+                    );
+                }
+                row
+            })));
+        }
+    }
+    if detail.busy() || detail.snapshot.is_none() && !detail.failed {
+        result = result.child(theme::note(t("missions.control.loading"), "status"));
+    } else if detail.failed {
+        result = result
+            .child(theme::note(t("missionsPanel.pages.failed"), "alert"))
+            .child(
+                layout::button(t("missionsPanel.reader.retry"), false, move |s| {
+                    if let Some(panel) = owner.get(s).0 {
+                        panel.detail.retry();
+                    }
+                })
+                .key("mission-detail-retry"),
+            );
+    } else if detail
+        .snapshot
+        .as_ref()
+        .is_some_and(|s| s.end < s.header.tasks.page.total)
+    {
+        result = result.child(
+            layout::button(t("missionsPanel.pages.more"), false, move |s| {
+                if let Some(panel) = owner.get(s).0 {
+                    panel.detail.more();
+                }
+            })
+            .key("mission-tasks-more"),
+        );
+    }
+    result
+}
+
+fn task_status(status: TaskStatus) -> &'static str {
+    t(match status {
+        TaskStatus::Blocked => "missions.control.task.status.blocked",
+        TaskStatus::Ready => "missions.control.task.status.ready",
+        TaskStatus::Dispatching => "missions.control.task.status.dispatching",
+        TaskStatus::Queued => "missions.control.task.status.queued",
+        TaskStatus::Completed => "missions.control.task.status.completed",
+        TaskStatus::NeedsInput => "missions.control.task.status.needs-input",
+        TaskStatus::Failed => "missions.control.task.status.failed",
+        TaskStatus::Withdrawn => "missions.control.task.status.superseded",
+    })
+}
+
+fn status(status: Status, run_state: Option<RunState>) -> &'static str {
+    t(match (status, run_state) {
         (Status::Completed, _) => "missions.control.status.completed",
         (Status::Failed, _) => "missions.control.status.failed",
         (Status::Stopped, _) => "missions.control.status.stopped",
