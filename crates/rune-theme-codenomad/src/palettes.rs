@@ -82,6 +82,25 @@ fn variants(high_contrast: bool) -> &'static [Palette] {
 
 #[cfg(test)]
 #[test]
+fn both_palette_variants_cover_the_source_colours() {
+    for palette in variants(false).iter().chain(variants(true)) {
+        let mode = if palette.dark { "dark" } else { "light" };
+        for key in crate::document()["product"][mode]["colors"]
+            .as_object()
+            .unwrap()
+            .keys()
+        {
+            assert!(
+                palette.source()["colors"][key].is_string(),
+                "{} is missing {key}",
+                palette.id
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
 fn high_contrast_changes_default_surfaces_without_flipping_filled_ink() {
     for palette in built_in() {
         let contrast = increased_contrast(Some(palette), palette.dark).unwrap();

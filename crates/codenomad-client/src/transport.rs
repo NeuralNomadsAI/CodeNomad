@@ -14,6 +14,7 @@ pub enum WorkspaceEvent {
     CommandsChanged,
     MentionsChanged,
     ComposerCataloguesChanged,
+    MemoryChanged,
     ProvidersChanged {
         workspace_id: String,
     },

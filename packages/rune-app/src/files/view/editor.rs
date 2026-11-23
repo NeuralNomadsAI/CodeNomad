@@ -13,7 +13,7 @@ pub(super) fn source(
         return None;
     }
     let dark = layout::dark();
-    let wrap = ui.presentation.wrap;
+    let wrap = crate::workspace::file_wrap(s);
     let scope = ui.document.scope();
     let disabled = !ui.document.writable();
     let save = |ui: &mut Ui, _: &mut rune::Tx| ui.save_document(ui.document.scope());

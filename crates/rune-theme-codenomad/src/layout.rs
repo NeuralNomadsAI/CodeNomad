@@ -11,7 +11,7 @@ thread_local! { static SOURCE_PALETTE: Cell<bool> = const { Cell::new(false) }; 
 pub(crate) fn source_palette() -> bool {
     SOURCE_PALETTE.get()
 }
-/// Render a qualified subtree in Solid's product-default palette.
+/// Use Solid's product defaults where the app hasn't selected a palette.
 pub fn with_source_palette<T>(render: impl FnOnce() -> T) -> T {
     struct Restore(bool);
     impl Drop for Restore {
@@ -20,7 +20,7 @@ pub fn with_source_palette<T>(render: impl FnOnce() -> T) -> T {
         }
     }
     let _restore = Restore(SOURCE_PALETTE.replace(true));
-    crate::palettes::with_palette(None, render)
+    render()
 }
 pub fn dark() -> bool {
     APPEARANCE.get()
@@ -252,6 +252,26 @@ pub trait Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn source_subtrees_inherit_active_contrast_and_keep_the_standalone_fallback() {
+        for dark in [false, true] {
+            let fallback = with_source_palette(|| tokens(dark).color("surface-secondary"));
+            let palette = crate::palettes::increased_contrast(None, dark).unwrap();
+            crate::palettes::with_palette(Some(palette), || {
+                let contrast = tokens(dark).color("surface-secondary");
+                assert_ne!(contrast, fallback);
+                with_source_palette(|| {
+                    assert_eq!(tokens(dark).color("surface-secondary"), contrast);
+                    assert_eq!(kit(dark).c.layer_01, contrast);
+                });
+                assert!(!source_palette());
+            });
+            assert_eq!(
+                with_source_palette(|| tokens(dark).color("surface-secondary")),
+                fallback
+            );
+        }
+    }
     #[test]
     fn shared_button_preserves_kit_geometry_and_disabled_semantics() {
         fn view(&(direct, disabled): &(bool, bool), cx: &mut rune::Cx<(bool, bool)>) -> El {

@@ -116,4 +116,6 @@ mod tests {
 }
 
 pub mod editor;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod recovery;
 pub mod store;
