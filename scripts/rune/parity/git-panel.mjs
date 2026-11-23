@@ -68,7 +68,7 @@ try {
   browser = await chromium.launch({ headless: true, executablePath: process.env.CODENOMAD_BROWSER_PATH })
   const settle = path.join(out, "settle.json")
   await writeFile(settle, JSON.stringify({ events: [{ t: 0.6, type: "mark", name: "end" }] }))
-  for (const [theme, locale] of [["light", "fr"], ["dark", "fr"], ["dark", "tr"]]) {
+  for (const [theme, locale] of [["light", "fr"], ["dark", "fr"], ["dark", "tr"], ["dark", "es"], ["dark", "de"], ["dark", "he"]]) {
     const page = await browser.newPage({ viewport })
     page.on("pageerror", error => console.error(error))
     page.on("requestfailed", request => console.error(request.url(), request.failure()))
@@ -89,7 +89,8 @@ try {
       for (const name of [...style]) if (name.startsWith("--")) style.removeProperty(name)
     })
     const solidModes = page.locator(".git-panel-switch button")
-    for (const mode of locale === "fr" ? ["changes", "commits"] : ["changes"]) {
+    const dateOnly = !["fr", "tr"].includes(locale)
+    for (const mode of dateOnly ? ["commits"] : locale === "fr" ? ["changes", "commits"] : ["changes"]) {
       if (mode === "commits") {
         await solidModes.nth(2).click()
         await page.getByText("Make Git history the starting point").waitFor()
@@ -112,7 +113,11 @@ try {
       if (mode === "commits") {
         assert(firstCommit?.key)
         const author = await page.locator(".git-history-meta > span").first().textContent()
-        assert(author && firstCommit.name.includes(author), `${name}: use the same localized month and day as Solid`)
+        assert(author && firstCommit.name.includes(author), `${name}: Solid ${author}; Rune ${firstCommit.name}`)
+        if (dateOnly) {
+          report.push({ theme, locale, mode, author })
+          continue
+        }
       }
       else {
         assert(nodes.some(node => node.key === "git-section-staged" && node.states.includes("expanded")))

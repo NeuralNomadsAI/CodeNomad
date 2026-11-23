@@ -1,48 +1,67 @@
 //! Safe interface to Windows locale and local civil time.
-use windows::{
-    Win32::{
-        Foundation::{FILETIME, SYSTEMTIME},
-        Globalization::{
-            ENUM_DATE_FORMATS_FLAGS, GetDateFormatEx, GetLocaleInfoEx, LOCALE_SMONTHDAY,
-        },
-        System::Time::{
-            FileTimeToSystemTime, SystemTimeToFileTime, SystemTimeToTzSpecificLocalTimeEx,
-        },
-    },
-    core::{HSTRING, PCWSTR},
+mod icu;
+
+use std::ptr::null;
+use windows_sys::Win32::{
+    Foundation::{FILETIME, SYSTEMTIME},
+    Globalization::{GetDateFormatEx, GetLocaleInfoEx, LOCALE_SMONTHDAY},
+    System::Time::{FileTimeToSystemTime, SystemTimeToFileTime, SystemTimeToTzSpecificLocalTimeEx},
 };
 
 /// Localize Git's ISO-8601 strict author time using the application's locale.
 pub fn local_month_day(stamp: &str, locale: &str) -> Option<String> {
     let (time, offset_minutes) = parse(stamp)?;
     let mut file = FILETIME::default();
+    // A valid calendar time is required before converting the UTC offset.
+    if unsafe { SystemTimeToFileTime(&time, &mut file) } == 0 {
+        return None;
+    }
+    let ticks = u64::from(file.dwHighDateTime) << 32 | u64::from(file.dwLowDateTime);
+    let ticks = ticks.checked_add_signed(-i64::from(offset_minutes) * 60 * 10_000_000)?;
+    // FILETIME is in 100 ns ticks from 1601; ICU takes milliseconds from 1970.
+    let millis = ((i128::from(ticks) - 116_444_736_000_000_000) / 10_000) as f64;
+    icu::month_day(millis, locale).or_else(|| win32_month_day(ticks, locale))
+}
+
+fn win32_month_day(ticks: u64, locale: &str) -> Option<String> {
+    let file = FILETIME {
+        dwHighDateTime: (ticks >> 32) as u32,
+        dwLowDateTime: ticks as u32,
+    };
     let mut utc = SYSTEMTIME::default();
     let mut local = SYSTEMTIME::default();
-    let locale = HSTRING::from(locale);
+    let locale: Vec<_> = locale.encode_utf16().chain([0]).collect();
     let mut pattern = [0; 128];
     let mut output = [0; 128];
-    // The API writes only to the supplied buffers; None chooses the user's current time zone.
+    // The buffers have the advertised sizes; a null zone selects the user's current one.
     unsafe {
-        SystemTimeToFileTime(&time, &mut file).ok()?;
-        let ticks = u64::from(file.dwHighDateTime) << 32 | u64::from(file.dwLowDateTime);
-        let ticks = ticks.checked_add_signed(-i64::from(offset_minutes) * 60 * 10_000_000)?;
-        let file = FILETIME {
-            dwHighDateTime: (ticks >> 32) as u32,
-            dwLowDateTime: ticks as u32,
-        };
-        FileTimeToSystemTime(&file, &mut utc).ok()?;
-        SystemTimeToTzSpecificLocalTimeEx(None, &utc, &mut local).ok()?;
-        let len = GetLocaleInfoEx(&locale, LOCALE_SMONTHDAY, Some(&mut pattern));
+        if FileTimeToSystemTime(&file, &mut utc) == 0
+            || SystemTimeToTzSpecificLocalTimeEx(null(), &utc, &mut local) == 0
+        {
+            return None;
+        }
+        let len = GetLocaleInfoEx(
+            locale.as_ptr(),
+            LOCALE_SMONTHDAY,
+            pattern.as_mut_ptr(),
+            pattern.len() as i32,
+        );
         let pattern = without_nul(&pattern, len)?;
         // Keep the locale's order, separators and numeric month patterns (e.g. Japanese).
-        let pattern = HSTRING::from(pattern.replace("MMMM", "MMM").replace("dd", "d"));
+        let pattern: Vec<_> = pattern
+            .replace("MMMM", "MMM")
+            .replace("dd", "d")
+            .encode_utf16()
+            .chain([0])
+            .collect();
         let len = GetDateFormatEx(
-            &locale,
-            ENUM_DATE_FORMATS_FLAGS(0),
-            Some(&local),
-            &pattern,
-            Some(&mut output),
-            PCWSTR::null(),
+            locale.as_ptr(),
+            0,
+            &local,
+            pattern.as_ptr(),
+            output.as_mut_ptr(),
+            output.len() as i32,
+            null(),
         );
         without_nul(&output, len)
     }
