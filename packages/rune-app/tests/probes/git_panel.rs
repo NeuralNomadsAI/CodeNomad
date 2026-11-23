@@ -120,10 +120,28 @@ pub(super) fn run() {
     wait(&mut rt, "unstaged again", |rt| {
         rt.find(UNSTAGED).is_some() && rt.find(STAGED).is_none()
     });
-    tap(&mut rt, &format!("git-row-unstaged:stage:{FILE}"));
-    wait(&mut rt, "restaged", |rt| {
-        rt.find(STAGED).is_some() && rt.find(UNSTAGED).is_none()
-    });
+    tap(&mut rt, "git-section-staged");
+    drag(&mut rt, UNSTAGED, "git-section-staged");
+    tap(&mut rt, "git-section-staged");
+    wait(
+        &mut rt,
+        "staged by dropping on the collapsed section",
+        |rt| rt.find(STAGED).is_some() && rt.find(UNSTAGED).is_none(),
+    );
+    tap(&mut rt, STAGED);
+    tap(&mut rt, "git-bulk-staged");
+    wait(
+        &mut rt,
+        "unstaged through the actions above the commit field",
+        |rt| rt.find(UNSTAGED).is_some() && rt.find(STAGED).is_none(),
+    );
+    tap(&mut rt, UNSTAGED);
+    tap(&mut rt, "git-bulk-unstaged");
+    wait(
+        &mut rt,
+        "restaged through the actions above the commit field",
+        |rt| rt.find(STAGED).is_some() && rt.find(UNSTAGED).is_none(),
+    );
 
     type_text(&mut rt, "git-commit-message", "Commit from Rune");
     wait(
@@ -249,6 +267,20 @@ pub(super) fn run() {
 
 fn tap_mode(rt: &mut Runtime<State>, index: usize) {
     tap(rt, &format!("git-mode/segment{index}"));
+}
+
+fn drag(rt: &mut Runtime<State>, source: &str, target: &str) {
+    let (x, y) = rt.find(source).expect("Git drag source");
+    let (end_x, end_y) = rt.find(target).expect("Git drop target");
+    rt.pointer_down(x, y);
+    rt.frame(1.0 / 60.0);
+    for i in 1..=8 {
+        let t = i as f32 / 8.0;
+        rt.pointer_move(x + (end_x - x) * t, y + (end_y - y) * t);
+        rt.frame(1.0 / 60.0);
+    }
+    rt.pointer_up(end_x, end_y);
+    rt.frame(1.0 / 60.0);
 }
 
 fn press(rt: &mut Runtime<State>, key: &str) -> bool {
