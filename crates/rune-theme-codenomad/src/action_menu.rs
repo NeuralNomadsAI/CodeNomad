@@ -239,29 +239,17 @@ pub fn view<S: 'static>(
     let t = tokens(layout::dark());
     let k = kit(layout::dark());
     let trigger_key = format!("{}:trigger", menu.key);
-    let disabled = menu.items.iter().all(|item| item.disabled);
     let items = unique_items(&menu);
     let key_action = menu.clone();
-    let first = items
-        .iter()
-        .find(|item| !item.disabled)
-        .map(|item| item.key.clone());
-    let last = items
-        .iter()
-        .rev()
-        .find(|item| !item.disabled)
-        .map(|item| item.key.clone());
+    let first = items.first().map(|item| item.key.clone());
+    let last = items.last().map(|item| item.key.clone());
     let action = menu.clone();
     let control = trigger
         .key(trigger_key.clone())
         .label(&menu.label)
         .help(&menu.label)
         .expanded(state.is_open(&menu.key))
-        .disabled(disabled)
         .on_press_tx(move |s, tx| {
-            if disabled {
-                return;
-            }
             let Some(state) = at(s) else { return };
             if state.is_open(&action.key) {
                 close(s, at, &action, None, None, tx);
@@ -275,7 +263,7 @@ pub fn view<S: 'static>(
                 rune::Key::Up => &last,
                 _ => return false,
             };
-            if disabled || event.mods != rune::Mods::default() {
+            if event.mods != rune::Mods::default() {
                 return false;
             }
             open(s, at, &key_action, tx);
@@ -318,8 +306,8 @@ pub fn view<S: 'static>(
             .radius(metric("borderRadius"))
             .role("menuitem")
             .label(&item.label)
-            .focusable(!item.disabled)
             .disabled(item.disabled)
+            .focusable(true)
             .no_focus_ring()
             .focus_highlight(t.color("menu-item-hover-bg"))
             .child(slot)
@@ -331,7 +319,10 @@ pub fn view<S: 'static>(
             row = row.description(description).help(description);
         }
         if item.disabled {
-            return row.opacity(t.metric("actionMenuDisabled", "opacity").px());
+            // The web mirror only projects press-shaped menu items; keep this row inert.
+            return row
+                .on_press(|_: &mut S| {})
+                .opacity(t.metric("actionMenuDisabled", "opacity").px());
         }
         let hovered = item.clone();
         let owner = menu.key.clone();

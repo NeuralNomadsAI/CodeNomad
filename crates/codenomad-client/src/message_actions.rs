@@ -10,10 +10,22 @@ const DEADLINE: Duration = Duration::from_secs(15);
 const RECORD_LIMIT: usize = 256 * 1024;
 const LIST_LIMIT: usize = 24 * 1024 * 1024;
 
-#[derive(Clone, Copy, Default)]
-pub struct Capabilities {
-    pub revert: bool,
-    pub prune: bool,
+#[derive(Debug)]
+pub struct PruneUnavailable;
+
+impl std::fmt::Display for PruneUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("session pruning is unavailable")
+    }
+}
+
+impl std::error::Error for PruneUnavailable {}
+
+fn prune_response(response: reqwest::Response) -> Result<reqwest::Response> {
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(PruneUnavailable.into());
+    }
+    Ok(response.error_for_status()?)
 }
 
 pub struct PrunePreview {
@@ -44,28 +56,6 @@ impl Backend {
         ))
     }
 
-    pub async fn message_action_capabilities(&self) -> Result<Capabilities> {
-        let meta = read_json_limited(
-            self.client
-                .get(format!("{}api/meta", self.base))
-                .timeout(DEADLINE)
-                .send()
-                .await?
-                .error_for_status()?,
-            RECORD_LIMIT,
-        )
-        .await?;
-        let has = |value: &str| {
-            meta["capabilities"]
-                .as_array()
-                .is_some_and(|caps| caps.iter().any(|cap| cap == value))
-        };
-        Ok(Capabilities {
-            revert: has("session-revert"),
-            prune: has("session-pruning"),
-        })
-    }
-
     pub async fn staged_revert(&self) -> Result<Option<String>> {
         let response = self
             .client
@@ -74,10 +64,11 @@ impl Backend {
             .send()
             .await?;
         let record = read_json_limited(response.error_for_status()?, RECORD_LIMIT).await?;
-        if record["data"]["id"] != self.session {
+        let record = record.get("data").unwrap_or(&record);
+        if record["id"] != self.session {
             return Err("unexpected session in revert read".into());
         }
-        match &record["data"]["revert"] {
+        match &record["revert"] {
             Value::Null => Ok(None),
             value => value["messageID"]
                 .as_str()
@@ -181,10 +172,21 @@ impl Backend {
                     let (boundary_kind, boundary_id) = successor
                         .as_deref()
                         .map_or(("through", message), |id| ("before", id));
-                    if fork["fork"]["sessionID"] != self.session
-                        || fork["fork"]["boundary"]["type"] != boundary_kind
+                    if fork["fork"]["sessionID"] != self.session {
+                        return Err("unexpected fork receipt".into());
+                    }
+                    if fork["fork"]["boundary"]["type"] != boundary_kind
                         || fork["fork"]["boundary"]["messageID"] != boundary_id
                     {
+                        self.client
+                            .delete(format!(
+                                "{}workspaces/{}/instance/api/session/{id}",
+                                self.base, self.workspace
+                            ))
+                            .timeout(DEADLINE)
+                            .send()
+                            .await?
+                            .error_for_status()?;
                         return Err("fork boundary changed".into());
                     }
                     return Ok(id.into());
@@ -221,7 +223,7 @@ impl Backend {
             .json(&json!({"sessionID":self.session,"messageID":message}))
             .send()
             .await?;
-        let reply = read_json_limited(response.error_for_status()?, LIST_LIMIT).await?;
+        let reply = read_json_limited(prune_response(response)?, LIST_LIMIT).await?;
         if reply["status"] != "preview" || reply["liveMutation"] != true {
             return Err("pruning unavailable".into());
         }
@@ -274,7 +276,7 @@ impl Backend {
         let response = self.client.post(url).timeout(DEADLINE)
             .json(&json!({"sessionID":self.session,"messageID":preview.message,"revision":preview.revision,"indexes":preview.indexes}))
             .send().await?;
-        let reply = read_json_limited(response.error_for_status()?, RECORD_LIMIT).await?;
+        let reply = read_json_limited(prune_response(response)?, RECORD_LIMIT).await?;
         if reply["status"] != "pruned"
             || reply["messageID"] != preview.message
             || reply["removedCount"].as_u64() != Some(preview.indexes.len() as u64)

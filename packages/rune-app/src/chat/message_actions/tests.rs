@@ -62,7 +62,7 @@ async fn received(rt: &mut Runtime<State>, name: &str, stop: impl Fn(&State) -> 
 }
 
 #[test]
-fn copy_omits_technical_parts_and_unavailable_prune_stays_visible_with_help() {
+fn copy_omits_technical_parts_and_prune_reports_missing_route() {
     platform::block_on(async {
         let http = Http::new().await;
         let mut rt = runtime(state(&http.backend));
@@ -73,115 +73,134 @@ fn copy_omits_technical_parts_and_unavailable_prune_stays_visible_with_help() {
             clipboard.text().unwrap().as_str(),
             "First **paragraph**.\n\nSecond paragraph."
         );
-        click(&mut rt, "message-actions-answer:trigger");
-        let prune = rt
-            .elements()
-            .into_iter()
-            .find(|e| e.label.as_deref() == Some("Remove tools and reasoning from this response"))
-            .unwrap();
-        assert_eq!(
-            prune.help.as_deref(),
-            Some("This server doesn’t support this action.")
+        select_last(&mut rt, "answer", "delete-technical-parts");
+        received(&mut rt, "prune dispatch", |s| {
+            s.transcript_display.messages.pending()
+        })
+        .await;
+        let preview = http.accept().await;
+        assert!(
+            preview
+                .header
+                .starts_with("POST /api/workspaces/owned/session-pruning/preview ")
         );
-        let [x, y, w, h] = prune.rect;
-        rt.pointer_down(x + w / 2.0, y + h / 2.0);
-        rt.pointer_up(x + w / 2.0, y + h / 2.0);
-        settle(&mut rt);
+        preview.reply(404, json!({"error":"not found"})).await;
+        received(&mut rt, "localized 404", |s| {
+            s.transcript_display.messages.error.is_some()
+        })
+        .await;
+        assert!(rt.elements().iter().any(|e| e.role == "alert"
+            && e.text.as_deref() == Some("This server doesn’t support this action.")));
         assert!(!rt.state.transcript_display.messages.pending());
         http.quiet().await;
     });
 }
 
 #[test]
-fn edit_waits_for_the_native_revert_and_restore_reads_back_the_boundary() {
+fn edit_and_restore_use_native_revert_with_both_bench_meta_responses() {
     platform::block_on(async {
-        let http = Http::new().await;
-        let mut s = state(&http.backend);
-        s.transcript_display.messages.caps.revert = true;
-        let mut rt = runtime(s);
-        rt.update(|_, tx| tx.focus("message-actions-prompt:trigger", true));
-        settle(&mut rt);
-        rt.key(KeyEvent {
-            key: Key::Up,
-            mods: Mods::default(),
-        });
-        settle(&mut rt);
-        assert!(
-            rt.elements().iter().any(
-                |e| e.focused && e.key.as_deref() == Some("message-actions-prompt:item:revert")
-            )
-        );
-        rt.key(KeyEvent {
-            key: Key::Enter,
-            mods: Mods::default(),
-        });
-        settle(&mut rt);
-        assert!(
-            rt.find("message-actions-prompt:item:revert").is_none(),
-            "edit closes menu"
-        );
-        received(&mut rt, "edit dispatch", |s| {
-            s.transcript_display.messages.job.is_some()
-        })
-        .await;
-        let stage = http.accept().await;
-        assert!(
-            stage
-                .header
-                .starts_with("POST /workspaces/owned/instance/api/session/session/revert/stage ")
-        );
-        assert_eq!(stage.body, json!({"messageID":"prompt"}));
-        assert!(rt.state.draft.text.is_empty());
-        stage
-            .reply(200, json!({"data":{"messageID":"prompt"}}))
-            .await;
-        received(&mut rt, "prefilled draft", |s| {
-            s.draft.text == "Original **prompt**"
-        })
-        .await;
-        let info = http.accept().await;
-        assert!(
-            info.header
-                .starts_with("GET /workspaces/owned/instance/api/session/session ")
-        );
-        info.reply(
-            200,
-            json!({"data":{"id":"session","revert":{"messageID":"prompt"}}}),
-        )
-        .await;
-        received(&mut rt, "confirmed revert", |s| {
-            s.transcript_display.messages.can_restore()
-        })
-        .await;
-        settle(&mut rt);
-        assert!(rt.find("copy-message-answer").is_none());
-        click(&mut rt, "restore-message-history");
-        assert!(
-            rt.state.transcript_display.messages.job.is_some(),
-            "restore button dispatches its action"
-        );
-        let clear = http.accept().await;
-        assert!(
-            clear
-                .header
-                .starts_with("DELETE /workspaces/owned/instance/api/session/session/revert ")
-        );
-        clear.reply(204, json!(null)).await;
-        received(&mut rt, "restore reconciliation", |s| {
-            s.transcript_display.messages.read.is_some()
-        })
-        .await;
-        http.accept()
-            .await
-            .reply(200, json!({"data":{"id":"session"}}))
-            .await;
-        received(&mut rt, "cleared revert", |s| {
-            s.transcript_display.messages.read.is_none()
-        })
-        .await;
-        assert!(rt.find("restore-message-history").is_none());
-        assert_eq!(rt.state.draft.text.as_str(), "Original **prompt**");
+        for fixture in [
+            include_str!("../../../fixtures/launch-meta-ts.json"),
+            include_str!("../../../fixtures/launch-meta-rs.json"),
+        ] {
+            exercise_revert(serde_json::from_str(fixture).unwrap()).await;
+        }
     });
+}
+
+fn select_last(rt: &mut Runtime<State>, row: &str, item: &str) {
+    rt.update(|_, tx| tx.focus(format!("message-actions-{row}:trigger"), true));
+    settle(rt);
+    rt.key(KeyEvent {
+        key: Key::Up,
+        mods: Mods::default(),
+    });
+    settle(rt);
+    let key = format!("message-actions-{row}:item:{item}");
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.focused && e.key.as_deref() == Some(key.as_str()))
+    );
+    rt.key(KeyEvent {
+        key: Key::Enter,
+        mods: Mods::default(),
+    });
+    settle(rt);
+    assert!(rt.find(&key).is_none(), "selection closes menu");
+}
+
+async fn exercise_revert(meta: serde_json::Value) {
+    let http = Http::new().await;
+    let backend = http.backend.clone();
+    let identity = tokio::spawn(async move { backend.server_id().await.unwrap() });
+    let request = http.accept().await;
+    assert!(request.header.starts_with("GET /api/meta "));
+    request.reply(200, meta).await;
+    assert_eq!(identity.await.unwrap(), "<fixture>");
+    let mut rt = runtime(state(&http.backend));
+    select_last(&mut rt, "prompt", "revert");
+    received(&mut rt, "edit dispatch", |s| {
+        s.transcript_display.messages.job.is_some()
+    })
+    .await;
+    let stage = http.accept().await;
+    assert!(
+        stage
+            .header
+            .starts_with("POST /workspaces/owned/instance/api/session/session/revert/stage ")
+    );
+    assert_eq!(stage.body, json!({"messageID":"prompt"}));
+    assert!(rt.state.draft.text.is_empty());
+    stage
+        .reply(200, json!({"data":{"messageID":"prompt"}}))
+        .await;
+    received(&mut rt, "prefilled draft", |s| {
+        s.draft.text == "Original **prompt**"
+    })
+    .await;
+    let info = http.accept().await;
+    assert!(
+        info.header
+            .starts_with("GET /workspaces/owned/instance/api/session/session ")
+    );
+    info.reply(
+        200,
+        json!({"data":{"id":"session","revert":{"messageID":"prompt"}}}),
+    )
+    .await;
+    received(&mut rt, "confirmed revert", |s| {
+        s.transcript_display.messages.can_restore()
+    })
+    .await;
+    settle(&mut rt);
+    assert!(rt.find("copy-message-answer").is_none());
+    click(&mut rt, "restore-message-history");
+    assert!(
+        rt.state.transcript_display.messages.job.is_some(),
+        "restore button dispatches its action"
+    );
+    let clear = http.accept().await;
+    assert!(
+        clear
+            .header
+            .starts_with("DELETE /workspaces/owned/instance/api/session/session/revert ")
+    );
+    clear.reply(204, json!(null)).await;
+    received(&mut rt, "restore reconciliation", |s| {
+        s.transcript_display.messages.read.is_some()
+    })
+    .await;
+    http.accept()
+        .await
+        .reply(200, json!({"data":{"id":"session"}}))
+        .await;
+    received(&mut rt, "cleared revert", |s| {
+        s.transcript_display.messages.read.is_none()
+    })
+    .await;
+    assert!(rt.find("restore-message-history").is_none());
+    assert_eq!(rt.state.draft.text.as_str(), "Original **prompt**");
 }
 
 #[test]
@@ -189,9 +208,7 @@ fn late_edit_receipt_preserves_new_draft_and_ignores_a_rotated_input_scope() {
     platform::block_on(async {
         let http = Http::new().await;
         for switch in [false, true] {
-            let mut s = state(&http.backend);
-            s.transcript_display.messages.caps.revert = true;
-            let mut rt = runtime(s);
+            let mut rt = runtime(state(&http.backend));
             rt.update(|s, _| {
                 start(
                     s,
@@ -297,18 +314,41 @@ fn fork_uses_the_native_successor_and_prune_sends_only_confirmed_indexes() {
 }
 
 #[test]
-fn capability_probe_ignores_other_features_and_does_not_attempt_a_mutation() {
+fn an_append_racing_the_tail_fork_deletes_only_the_created_copy() {
     platform::block_on(async {
         let http = Http::new().await;
         let backend = http.backend.clone();
-        let read =
-            tokio::spawn(async move { backend.message_action_capabilities().await.unwrap() });
-        let meta = http.accept().await;
-        assert!(meta.header.starts_with("GET /api/meta "));
-        meta.reply(200, json!({"capabilities":["session-pruning","other"]}))
+        let attempt = tokio::spawn(async move {
+            let (_keep, cancel) = bounded(1);
+            backend.fork_after_message("prompt", &cancel).await
+        });
+        let latest = http.accept().await;
+        assert!(
+            latest
+                .header
+                .starts_with("GET /workspaces/owned/instance/api/session/session/message?")
+        );
+        latest
+            .reply(200, json!({"data":[{"id":"prompt","type":"user"}]}))
             .await;
-        let capabilities = read.await.unwrap();
-        assert!(capabilities.prune && !capabilities.revert);
+        let fork = http.accept().await;
+        assert!(
+            fork.header
+                .starts_with("POST /workspaces/owned/instance/api/session/session/fork ")
+        );
+        assert_eq!(fork.body, json!({}));
+        fork.reply(200, json!({"data":{"id":"copy","fork":{"sessionID":"session","boundary":{"type":"through","messageID":"appended"}}}})).await;
+        let remove = http.accept().await;
+        assert!(
+            remove
+                .header
+                .starts_with("DELETE /workspaces/owned/instance/api/session/copy ")
+        );
+        remove.reply(204, json!(null)).await;
+        assert_eq!(
+            attempt.await.unwrap().unwrap_err().to_string(),
+            "fork boundary changed"
+        );
         http.quiet().await;
     });
 }

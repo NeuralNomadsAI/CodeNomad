@@ -158,7 +158,6 @@ pub fn view<S: 'static>(
     trigger_item.icon = Some(Rc::new(move || {
         rune::icon(&MORE, t.metric("fileRowActionGlyph", "width").px())
     }));
-    trigger_item.disabled = actions.menu.items.iter().all(|item| item.disabled);
     let trigger = button(
         state,
         at,

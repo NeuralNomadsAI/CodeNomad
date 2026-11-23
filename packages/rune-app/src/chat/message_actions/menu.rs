@@ -100,10 +100,7 @@ fn controls(s: &State, message: &Message) -> Option<Rc<Menu<State>>> {
                 }
             }),
         );
-        edit.disabled = !available(s) || !owner.caps.revert || !empty_draft(s);
-        if !owner.caps.revert {
-            edit.description = Some(t("session.messageActions.serverUnavailable").into());
-        }
+        edit.disabled = !available(s) || !empty_draft(s);
         items.push(Rc::new(edit));
     }
     if eligible
@@ -125,9 +122,9 @@ fn controls(s: &State, message: &Message) -> Option<Rc<Menu<State>>> {
                 }
             }),
         );
-        prune.disabled = !available(s) || !owner.caps.prune;
-        if !owner.caps.prune {
-            prune.description = Some(t("session.messageActions.serverUnavailable").into());
+        prune.disabled = !available(s) || owner.backend.is_none();
+        if owner.backend.is_none() {
+            prune.description = Some(t("history.sessionUnavailable").into());
         }
         items.push(Rc::new(prune));
     }
@@ -215,7 +212,7 @@ pub(in crate::chat) fn overlays(s: &State, layers: &mut Vec<El>) {
 
 pub(in crate::chat) fn restore(s: &State) -> impl Iterator<Item = El> {
     let owner = &s.transcript_display.messages;
-    let restore = (owner.caps.revert && owner.boundary.is_some()).then(|| {
+    let restore = owner.boundary.is_some().then(|| {
         layout::button(
             t("commands.redoLastMessage.label"),
             !available(s) || !owner.can_restore(),

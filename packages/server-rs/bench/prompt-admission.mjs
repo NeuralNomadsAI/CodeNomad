@@ -77,7 +77,8 @@ async function upstream(profile) {
       const raw=Buffer.concat(chunks).toString(),body=raw?JSON.parse(raw):undefined
       calls.push({method:req.method,path:url.pathname,body})
       const send=(value,status=200)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value))}
-      if(url.pathname==='/api/info')return send({version:'2.3.2',pid:process.pid})
+       if(url.pathname==='/api/info')return send({version:'2.3.2',pid:process.pid})
+       if(url.pathname==='/api/config')return send([{type:'directory',path:path.join(profile,'config')}])
       if(url.pathname==='/api/event'){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': isolated\n\n');return}
       if(url.pathname==='/api/location'){
         const local=url.searchParams.get('location[directory]')??directory
@@ -95,9 +96,26 @@ async function upstream(profile) {
         if(state.carrier==='move')sessions.get('ses_owned').location.directory=foreign
       }
       if(url.pathname.startsWith('/api/rpc/'))return send({_tag:'RpcError',type:'rpc.method_not_found',message:'Fixture plugin absent'},400)
-      const match=url.pathname.match(/^\/api\/session\/([^/]+)(?:\/(.*))?$/)
-      if(match){const session=sessions.get(match[1]);if(!session)return send({type:'session.not_found'},404)
-        if(!match[2])return send({data:session})
+       const match=url.pathname.match(/^\/api\/session\/([^/]+)(?:\/(.*))?$/)
+       if(match){const session=sessions.get(match[1]);if(!session)return send({type:'session.not_found'},404)
+         if(match[2]==='revert/stage' && req.method==='POST'){
+           if(body.messageID==='busy')return send({_tag:'SessionBusyError',sessionID:session.id,message:'Busy'},409)
+           session.revert={messageID:body.messageID}
+           return send({data:session.revert})
+         }
+         if(match[2]==='revert' && req.method==='DELETE'){
+           delete session.revert
+           res.writeHead(204);return res.end()
+         }
+         if(match[2]==='fork' && req.method==='POST'){
+           const copy={...session,id:'ses_copy',fork:{sessionID:session.id,boundary:{type:'through',messageID:'appended'}}}
+           sessions.set(copy.id,copy)
+           return send({data:copy})
+         }
+         if(!match[2] && req.method==='DELETE' && session.fork){
+           sessions.delete(session.id);res.writeHead(204);return res.end()
+         }
+         if(!match[2])return send({data:session})
         if(match[2]==='environment'){res.writeHead(204);return res.end()}
         if(match[2]==='prompt')return send({data:{id:body.id??`inbox_${calls.length}`,sessionID:session.id,type:'user',payload:body}})
         if(match[2]==='command'){
@@ -188,8 +206,32 @@ export async function run(commandOnly=false){
       const profile=path.join(root,label);await mkdir(profile)
       const native=await upstream(profile);active.push(()=>native.close())
       const host=await start(label,profile,native);active.push(()=>host.stop())
-      const rows=result.sides[label]=[],errors=result.errorBodies[label]={}
-      if(commandOnly){
+       const rows=result.sides[label]=[],errors=result.errorBodies[label]={}
+       if(process.argv.includes('--message-actions-only')){
+         const owned='/session/ses_owned'
+         for(const [name, suffix, init, expected, forwards] of [
+           ['stage',`${owned}/revert/stage`,post({messageID:'msg_original'}),200,1],
+           ['busy',`${owned}/revert/stage`,post({messageID:'busy'}),409,1],
+           ['clear',`${owned}/revert`,{method:'DELETE'},204,1],
+           ['foreign','/session/ses_foreign/revert/stage',post({messageID:'msg_original'}),403,0],
+           ['fork',`${owned}/fork`,post({}),200,1],
+           ['remove-copy','/session/ses_copy',{method:'DELETE'},204,1],
+         ]){
+           const before=native.calls.length
+           const response=await host.call(host.base+suffix,init)
+           const text=await response.text()
+           assert.equal(response.status,expected,`${label}/${name}: ${text}`)
+           const sent=native.calls.slice(before).filter(call=>call.path===`/api${suffix}` && call.method===init.method)
+           assert.equal(sent.length,forwards,`${label}/${name} native calls`)
+           if(name==='stage')assert.equal(JSON.parse(text).data.messageID,'msg_original')
+           rows.push({name,status:response.status,forwarded:sent.length})
+         }
+         assert(native.sessions.has('ses_owned') && !native.sessions.has('ses_copy'))
+         assert(!native.sessions.get('ses_owned').revert)
+         await host.stop();active.pop();await native.close();active.pop()
+         continue
+       }
+       if(commandOnly){
         await commandCases(label,host,native,rows,errors)
         await host.stop();active.pop();await native.close();active.pop()
         continue
@@ -387,3 +429,6 @@ async function commandCases(label, host, native, rows, errors) {
     rows.push({name,status:response.status,forwarded:0,environment:0})
   }
 }
+
+if (process.argv.includes('--message-actions-only') && pathToFileURL(process.argv[1] ?? '').href === import.meta.url)
+  await run()

@@ -1,7 +1,7 @@
 use crate::{Phase, State, backend::Backend, platform};
 use codenomad_client::{
     Receiver, Sender, bounded,
-    message_actions::{Capabilities, PrunePreview},
+    message_actions::{PrunePreview, PruneUnavailable},
 };
 use rune::Tx;
 use std::rc::{Rc, Weak};
@@ -14,21 +14,14 @@ pub(super) use menu::{header, overlays, restore};
 #[derive(Default)]
 pub(crate) struct Actions {
     backend: Option<Backend>,
-    caps: Capabilities,
     boundary: Option<String>,
-    refresh_metadata: bool,
     refresh_boundary: bool,
-    read: Option<Receiver<Snapshot>>,
+    read: Option<Receiver<codenomad_client::history::Result<Option<String>>>>,
     job: Option<Job>,
     confirmation: Option<(Weak<()>, PrunePreview)>,
     error: Option<&'static str>,
     menu: rune_theme_codenomad::action_menu::State<State>,
     open_menu: Option<String>,
-}
-
-struct Snapshot {
-    capabilities: Option<Capabilities>,
-    boundary: Option<Option<String>>,
 }
 
 struct Job {
@@ -79,16 +72,12 @@ impl Actions {
     }
 
     pub(super) fn refresh(&mut self) {
-        self.refresh_metadata = true;
         self.invalidate_boundary();
     }
 
     pub(super) fn offline(&mut self) {
         self.suspend();
-        self.caps = Capabilities::default();
-        self.boundary = None;
         self.read = None;
-        self.refresh_metadata = false;
         self.refresh_boundary = false;
     }
 
@@ -97,7 +86,7 @@ impl Actions {
     }
 
     fn can_restore(&self) -> bool {
-        self.caps.revert && self.boundary.is_some() && !self.refresh_boundary && self.read.is_none()
+        self.boundary.is_some() && !self.refresh_boundary && self.read.is_none()
     }
 
     pub(super) fn visible<'a>(&self, rows: &'a [crate::history::Row]) -> &'a [crate::history::Row] {
@@ -145,16 +134,14 @@ fn start(s: &mut State, intent: Intent) {
         return;
     };
     let (error, reread) = match &intent {
-        Intent::Edit { .. } if owner.caps.revert => {
-            ("sessionView.alerts.revertFailed.message", true)
-        }
+        Intent::Edit { .. } => ("sessionView.alerts.revertFailed.message", true),
         Intent::Restore if owner.can_restore() => ("commands.redoLastMessage.failed.message", true),
         Intent::Fork(_) => ("sessionView.alerts.forkFailed.message", false),
-        Intent::PreviewPrune(_) if owner.caps.prune => (
+        Intent::PreviewPrune(_) => (
             "messageItem.actions.deleteTechnicalParts.failedMessage",
             false,
         ),
-        Intent::Prune(_) if owner.caps.prune => (
+        Intent::Prune(_) => (
             "messageItem.actions.deleteTechnicalParts.failedMessage",
             true,
         ),
@@ -241,7 +228,14 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         s.transcript_display.messages.confirmation =
                             Some((Rc::downgrade(&s.input_scope), preview));
                     }
-                    Err(_) => s.transcript_display.messages.error = Some(error),
+                    Err(err) => {
+                        s.transcript_display.messages.error =
+                            Some(if err.is::<PruneUnavailable>() {
+                                "session.messageActions.serverUnavailable"
+                            } else {
+                                error
+                            });
+                    }
                     _ => (),
                 }
             }
@@ -253,15 +247,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }
     let owner = &mut s.transcript_display.messages;
     if let Some(read) = &owner.read {
-        if let Ok(snapshot) = read.try_recv() {
+        if let Ok(result) = read.try_recv() {
             owner.read = None;
-            if let Some(caps) = snapshot.capabilities
-                && !owner.refresh_metadata
-            {
-                owner.caps = caps;
-                s.revision += 1;
-            }
-            if let Some(boundary) = snapshot.boundary
+            if let Ok(boundary) = result
                 && !owner.refresh_boundary
             {
                 owner.boundary = boundary;
@@ -275,37 +263,15 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if !s.screen.is_launcher()
         && owner.job.is_none()
         && owner.read.is_none()
-        && (owner.refresh_boundary || owner.refresh_metadata)
+        && owner.refresh_boundary
         && let Some(backend) = owner.backend.clone()
     {
-        let metadata = std::mem::take(&mut owner.refresh_metadata);
-        let boundary = std::mem::take(&mut owner.refresh_boundary);
-        let previous = owner.caps;
+        owner.refresh_boundary = false;
         let (done, read) = bounded(1);
         owner.read = Some(read);
         let wake = s.wake.clone();
         platform::spawn(async move {
-            let capabilities = if metadata {
-                Some(
-                    backend
-                        .message_action_capabilities()
-                        .await
-                        .unwrap_or_default(),
-                )
-            } else {
-                None
-            };
-            let boundary = if boundary && capabilities.unwrap_or(previous).revert {
-                backend.staged_revert().await.ok()
-            } else {
-                None
-            };
-            let _ = done
-                .send(Snapshot {
-                    capabilities,
-                    boundary,
-                })
-                .await;
+            let _ = done.send(backend.staged_revert().await).await;
             wake();
         });
     }
