@@ -33,6 +33,8 @@ const http = (url,init={}) => new Promise((resolve,reject)=>{
 
 async function upstream(profile) {
   const directory = path.join(profile,'workspace'), foreign = path.join(profile,'foreign'),tree=path.join(profile,'tree')
+  const plain=path.join(profile,'plain'), plainNested=path.join(plain,'sub')
+  await mkdir(plainNested,{recursive:true})
   await mkdir(directory);await mkdir(foreign)
   await writeFile(path.join(foreign,'private.txt'),'Synthetic foreign file.\n')
   await writeFile(path.join(directory,'a b#%.txt'),'synthetic\n')
@@ -45,8 +47,9 @@ async function upstream(profile) {
   await git('-C',directory,'worktree','add','--quiet','--detach',tree,'HEAD')
   await writeFile(path.join(tree,'tree.txt'),'synthetic tree\n')
   const calls = [], sessions = new Map(), password = randomUUID(),state={carrier:'absent'}
-  for (const [id,dir,metadata] of [['ses_owned',directory,{}],['ses_tree',tree,{}],['ses_foreign',foreign,{}],['ses_cn_schedule_reserved',directory,{}],['ses_carrier',directory,{'codenomad.schedule-carrier':true}]])
+  for (const [id,dir,metadata] of [['ses_owned',directory,{}],['ses_nested',path.join(directory,'sub'),{}],['ses_tree',tree,{}],['ses_foreign',foreign,{}],['ses_cn_schedule_reserved',directory,{}],['ses_carrier',directory,{'codenomad.schedule-carrier':true}]])
     sessions.set(id,{id,title:'Synthetic',projectID:'project_fixture',location:{directory:dir},metadata,time:{created:1,updated:1}})
+  sessions.set('ses_plain',{id:'ses_plain',title:'Synthetic without Git',projectID:'global',location:{directory:plainNested},time:{created:1,updated:1}})
   const server = createServer(async(req,res)=>{
     try {
       assert.equal(req.headers.authorization,`Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`)
@@ -57,7 +60,11 @@ async function upstream(profile) {
       const send=(value,status=200)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(value))}
       if(url.pathname==='/api/info')return send({version:'2.3.2',pid:process.pid})
       if(url.pathname==='/api/event'){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': isolated\n\n');return}
-      if(url.pathname==='/api/location'){const local=url.searchParams.get('location[directory]')??directory;return send({directory:local,project:{id:'project_fixture',canonical:directory,directory:local}})}
+      if(url.pathname==='/api/location'){
+        const local=url.searchParams.get('location[directory]')??directory
+        const noGit=local===plain||local===plainNested
+        return send({directory:local,project:{id:noGit?'global':'project_fixture',canonical:noGit?plain:directory,directory:local}})
+      }
       if(url.pathname==='/api/worktree')return send([{directory},{directory:tree}])
       if(url.pathname==='/api/worktree/refresh'){res.writeHead(204);return res.end()}
       if(url.pathname==='/api/project')return send([{id:'project_fixture',canonical:directory,sandboxes:[],time:{created:1,updated:1}}])
@@ -74,17 +81,21 @@ async function upstream(profile) {
         if(!match[2])return send({data:session})
         if(match[2]==='environment'){res.writeHead(204);return res.end()}
         if(match[2]==='prompt')return send({data:{id:body.id??`inbox_${calls.length}`,sessionID:session.id,type:'user',payload:body}})
+        if(match[2]==='command'){
+          if(typeof body.name!=='string'||typeof body.text!=='string')return send({error:'Invalid native command input'},400)
+          res.writeHead(204);return res.end()
+        }
         if(match[2]==='interrupt')return send({data:true})
       }
       return send({data:[]})
     }catch(error){res.writeHead(500);res.end(JSON.stringify({error:String(error)}))}
   })
-  return {directory,foreign,tree,calls,password,state,sessions,origin:await listen(server),close:()=>close(server)}
+  return {directory,foreign,tree,plain,calls,password,state,sessions,origin:await listen(server),close:()=>close(server)}
 }
 
 async function start(label,profile,native) {
   const env=await privateEnvironment(profile),password=randomUUID(),config=path.join(profile,'config/config.yaml')
-  await writeFile(config,`server:\n  opencodeBinary: ${JSON.stringify(path.join(profile,'disabled-opencode.exe'))}\n  environmentVariables: {}\n`)
+  await writeFile(config,`server:\n  opencodeBinary: ${JSON.stringify(path.join(profile,'disabled-opencode.exe'))}\n  environmentVariables:\n    FIXTURE_SETTING: "profile"\n`)
   Object.assign(env,{CLI_CONFIG:config,CNRS_FIXTURE_URL:native.origin+'/',CNRS_FIXTURE_PASSWORD:native.password,
     CNRS_FIXTURE_PID:String(process.pid),CNRS_SERVER_PASSWORD:password,CODENOMAD_SERVER_PASSWORD:password,
     CNRS_FIXTURE_STDIN_STOP:'1',CODENOMAD_NATIVE_BROWSER_AUTOMATION:'0'})
@@ -108,7 +119,7 @@ async function start(label,profile,native) {
     const call=(route,init={})=>request(route,{...init,headers:{...init.headers,cookie}})
     const opened=await call('/api/workspaces',post({path:native.directory}));const text=await opened.text()
     assert.equal(opened.status,201,`${label} workspace: ${text}`)
-    return {call,base:`/workspaces/${JSON.parse(text).id}/instance/api`,stop}
+    return {call,base:`/workspaces/${JSON.parse(text).id}/instance/api`,config,stop}
   }catch(error){await stop();throw error}
 }
 
@@ -148,7 +159,7 @@ function cases(native){
   ]
 }
 
-export async function run(){
+export async function run(commandOnly=false){
   const root=await mkdtemp(path.join(out,'trial-prompt-admission-')),result={root,binary:rustBinary(),environments:'real TS/Rust; separate simulated OpenCode; no model',sides:{},errorBodies:{},outsideJson:{}}
   result.binarySha256=createHash('sha256').update(await readFile(result.binary)).digest('hex')
   result.benchSha256=createHash('sha256').update(await readFile(new URL(import.meta.url))).digest('hex')
@@ -159,6 +170,11 @@ export async function run(){
       const native=await upstream(profile);active.push(()=>native.close())
       const host=await start(label,profile,native);active.push(()=>host.stop())
       const rows=result.sides[label]=[],errors=result.errorBodies[label]={}
+      if(commandOnly){
+        await commandCases(label,host,native,rows,errors)
+        await host.stop();active.pop();await native.close();active.pop()
+        continue
+      }
       const inputs=process.argv.includes('--transport-only')?[]:cases(native)
       for(const [name,body,expectedStatus] of process.argv.includes('--admission-order-only')?inputs.filter(([name])=>name.startsWith('combined-')):inputs){
         const before=native.calls.length,response=await host.call(`${host.base}/session/ses_owned/prompt`,post(body)).catch(error=>({status:error.code??String(error),arrayBuffer:async()=>{}}))
@@ -178,7 +194,8 @@ export async function run(){
           assert.equal(response.status,expected,`Reference control ${name}`)
         }
         rows.push({name,status:response.status,bytes:Buffer.byteLength(JSON.stringify(body)),forwarded:forwarded.length,
-          environment:calls.filter(r=>r.path.endsWith('/environment')).length,bodyHashVerified:forwarded.length?digest(forwarded[0].body)===digest(body):null})
+           environment:calls.filter(r=>r.path.endsWith('/environment')).length,bodyHashVerified:forwarded.length?digest(forwarded[0].body)===digest(body):null,
+           ...(response.status===502?{nativeRoutes:calls.map(call=>call.path)}:{})})
       }
       for(const session of ['ses_foreign','ses_cn_schedule_reserved','ses_carrier']){
         const before=native.calls.length,response=await host.call(`${host.base}/session/${session}/prompt`,post({text:'refuse'}));errors[session]=JSON.parse(Buffer.from(await response.arrayBuffer()).toString())
@@ -253,9 +270,68 @@ export async function run(){
     }
     result.differences=result.sides.ts.flatMap((row,index)=>JSON.stringify(row)===JSON.stringify(result.sides.rs[index])?[]:[{name:row.name,ts:row,rs:result.sides.rs[index]}])
     result.errorBodyDifferences=Object.keys(result.errorBodies.ts).filter(name=>digest(result.errorBodies.ts[name])!==digest(result.errorBodies.rs[name]??null))
-    assert.equal(result.differences.length,0,`Prompt parity: ${result.differences.map(row=>`${row.name} TS=${row.ts.status} Rust=${row.rs.status}`).join(', ')}`)
+    assert.equal(result.differences.length,0,`Session input parity: ${result.differences.map(row=>`${row.name} TS=${row.ts.status} Rust=${row.rs.status}`).join(', ')}`)
     assert.deepEqual(result.errorBodyDifferences,[], 'HTTP error envelopes must also match')
   }catch(error){result.error=String(error.stack);process.exitCode=1}
   finally{for(const stop of active.reverse())await stop();await writeFile(path.join(root,'proof.json'),JSON.stringify(result,null,2)+'\n')}
   console.log(JSON.stringify({root,differences:result.differences?.map(row=>({name:row.name,ts:row.ts.status,rs:row.rs.status})),error:result.error}))
+}
+
+async function commandCases(label, host, native, rows, errors) {
+  const command = {name:'fixture',text:'arguments',delivery:'steer'}
+  const opened=await host.call('/api/workspaces',post({path:native.plain}))
+  assert.equal(opened.status,201,`${label}: ${await opened.text()}`)
+  const plainBase=`/workspaces/${JSON.parse(await opened.text()).id}/instance/api`
+  for(const [name,session,body,expected,dispatch] of [
+    ['ordinary','ses_owned',command,204,true],
+    ['nested-session','ses_nested',command,204,true],
+    ['nested-no-repo','ses_plain',command,204,true],
+    ['files','ses_owned',{...command,files:[{uri:pathToFileURL(path.join(native.directory,'a b#%.txt')).href}]},204,true],
+    ['foreign-file','ses_owned',{...command,files:[{uri:path.join(native.foreign,'private.txt')}]},403,false],
+    ['invalid-attachment','ses_owned',{...command,files:[{uri:'data:;base64,abc'}]},400,false],
+    ['foreign-session','ses_foreign',command,403,false],
+    ['carrier','ses_cn_schedule_reserved',command,403,false],
+    ['reserved-metadata','ses_owned',{...command,metadata:{schedule:null}},403,false],
+    ['body-limit','ses_owned',{...command,text:'x'.repeat(1024*1024)},413,false],
+    ['native-validation','ses_owned',{...command,name:42},400,true],
+  ]){
+    const route=`/session/${session}/command`,before=native.calls.length
+    const response=await host.call((name==='nested-no-repo'?plainBase:host.base)+route,post(body))
+    const responseBody=Buffer.from(await response.arrayBuffer()).toString()
+    assert.equal(response.status,expected,`${label}/${name}: ${responseBody}`)
+    const calls=native.calls.slice(before)
+    const forwarded=calls.filter(r=>r.path===`/api${route}`)
+    const environment=calls.filter(r=>r.path.endsWith('/environment'))
+    assert.equal(forwarded.length,Number(dispatch))
+    assert.equal(environment.length,Number(dispatch))
+    if(dispatch){
+      assert.deepEqual(forwarded[0].body,body)
+      assert(calls.indexOf(environment[0])<calls.indexOf(forwarded[0]))
+      assert.equal(environment[0].body.variables.FIXTURE_SETTING,'profile')
+    }
+    if(response.status>=400)errors[name]=JSON.parse(responseBody)
+    rows.push({name,status:response.status,forwarded:forwarded.length,environment:environment.length})
+  }
+  const beforePrompt=native.calls.length
+  const prompt=await host.call(`${host.base}/session/ses_owned/prompt`,post({text:'after command'}))
+  assert.equal(prompt.status,200,`${label}/prompt-after-command`)
+  await prompt.arrayBuffer()
+  const environment=native.calls.slice(beforePrompt).filter(call=>call.path.endsWith('/environment'))
+  assert.equal(environment.length,1)
+  assert.equal(environment[0].body.variables.FIXTURE_SETTING,'profile')
+  rows.push({name:'prompt-after-command',status:prompt.status,environment:environment.length})
+  for (const [name,profile] of [
+    ['profile-invalid','server: {environmentVariables: []}\n'],
+    ['profile-legacy-at-runtime','preferences: {environmentVariables: {FIXTURE_SETTING: legacy}}\n'],
+    ['profile-non-string','server: {environmentVariables: {FIXTURE_SETTING: 0012}}\n'],
+    ['profile-binary','server: {environmentVariables: {FIXTURE_SETTING: !!binary YQ==}}\n'],
+  ]) {
+    await writeFile(host.config,profile)
+    const before=native.calls.length
+    const response=await host.call(`${host.base}/session/ses_owned/command`,post(command))
+    assert.equal(response.status,502,`${label}/${name}`)
+    errors[name]=JSON.parse(await response.text())
+    assert.equal(native.calls.slice(before).filter(call=>/\/(?:environment|command)$/.test(call.path)).length,0)
+    rows.push({name,status:response.status,forwarded:0,environment:0})
+  }
 }

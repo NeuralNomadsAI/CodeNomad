@@ -270,28 +270,45 @@ pub async fn prepare(app: &Shared, session: &str) -> Value {
     attempt.await.unwrap_or_else(|_: MemoryError| json!({"supported": true, "value": null}))
 }
 
-async fn instruction(app: &Shared, session: &str, value: Option<&str>) -> bool {
+async fn instruction(
+    app: &Shared,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    session: &str,
+    value: Option<&str>,
+) -> bool {
+    if !app.native.current(endpoint) {
+        return false;
+    }
     let path =
         format!("/api/experimental/session/{}/instructions/entries/{KEY}", super::identity::encode_component(session));
-    let Ok(url) = app.native.url().join(&path) else { return false };
-    let request = match value {
-        Some(v) => app.native.request(Method::PUT, url).json(&json!({"value": v})),
-        None => app.native.request(Method::DELETE, url),
-    };
+    let Ok(url) = endpoint.url.join(&path) else { return false };
+    let request = app
+        .native
+        .client
+        .request(if value.is_some() { Method::PUT } else { Method::DELETE }, url)
+        .basic_auth("opencode", Some(&endpoint.password));
+    let request = if let Some(value) = value { request.json(&json!({"value": value})) } else { request };
     request.timeout(Duration::from_secs(2)).send().await.is_ok_and(|r| r.status().is_success())
 }
 
 /// `syncSessionMemoryContext` before a prompt send: advisory, within one 2 s budget.
-pub async fn sync(app: &Shared, session: &str) {
+pub async fn sync<F, Check>(app: &Shared, endpoint: &std::sync::Arc<crate::opencode::Endpoint>, session: &str, owns: F)
+where
+    F: Fn() -> Check,
+    Check: std::future::Future<Output = bool>,
+{
     let work = async {
         let context = prepare(app, session).await;
         if context["supported"] != true {
             return;
         }
+        if !owns().await {
+            return;
+        }
         let value = context["value"].as_str().map(str::to_owned);
-        if !instruction(app, session, value.as_deref()).await && value.is_some() {
+        if !instruction(app, endpoint, session, value.as_deref()).await && value.is_some() && owns().await {
             // An uncertain put can leave the preceding entry installed: never replay it.
-            instruction(app, session, None).await;
+            instruction(app, endpoint, session, None).await;
         }
     };
     let _ = tokio::time::timeout(Duration::from_secs(2), work).await;
