@@ -30,8 +30,9 @@ test("a session event among 6,000 rows only rebuilds the affected family", t => 
   const family = getSessionFamily(instanceId, "ses_100")
   getListedSessionMap(instanceId)
   const captureBefore = getSessionCheckpoint(instanceId)
-  const samples: number[] = []
-  for (let i = 0; i < 31; i++) {
+  const elapsed: number[] = [], cpu: number[] = []
+  let cpuStart = process.threadCpuUsage()
+  for (let i = 0; i < 32; i++) {
     const start = performance.now()
     handleNativeSessionEvent(instanceId, {
       id: `rename-${i}`, type: "session.renamed", created: i,
@@ -40,13 +41,21 @@ test("a session event among 6,000 rows only rebuilds the affected family", t => 
     } as Parameters<typeof handleNativeSessionEvent>[1])
     const projected = project()
     const updated = projected.at(-1)
-    samples.push(performance.now() - start)
+    elapsed.push(performance.now() - start)
+    if ((i + 1) % 8 === 0) {
+      // Amortize the Windows thread CPU clock's coarse accounting units.
+      const usage = process.threadCpuUsage(cpuStart)
+      cpu.push((usage.user + usage.system) / 8000)
+      cpuStart = process.threadCpuUsage()
+    }
     assert.equal(updated?.children[0]?.session.title, `New title ${i}`)
     assert.ok(projected.slice(0, -1).every((thread, index) => thread === initial[index]))
     assert.equal(getSessionFamily(instanceId, "ses_100")[1], family[1])
   }
   assert.notEqual(getSessionCheckpoint(instanceId), captureBefore)
-  samples.sort((a, b) => a - b)
-  t.diagnostic(`6,000 rows, 31 events, p95 ${samples[29]!.toFixed(2)} ms`)
-  assert.ok(samples[29]! < 16, `p95 event + projections: ${samples[29]!.toFixed(2)} ms`)
+  const elapsedP95 = elapsed.sort((a, b) => a - b)[30]!
+  const maxMeanCpu = Math.max(...cpu)
+  t.diagnostic(`6,000 rows, 32 events, p95 ${elapsedP95.toFixed(2)} ms elapsed, max batch mean ${maxMeanCpu.toFixed(2)} ms thread CPU/event`)
+  // Other Node workers can deschedule this worker during a full-suite run.
+  assert.ok(maxMeanCpu < 16, `reducer + projections max batch mean CPU: ${maxMeanCpu.toFixed(2)} ms/event`)
 })
