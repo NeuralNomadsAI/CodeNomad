@@ -176,7 +176,6 @@ pub(super) fn tool_pictures(state: &Value, bytes: &mut usize) -> Vec<Picture> {
                 source,
             })
         })
-        .take(8)
         .collect()
 }
 
@@ -204,4 +203,22 @@ fn media_requires_a_passive_signature_and_matching_mime() {
             .all(|p| p.source == PictureSource::Unavailable)
     );
     assert!(matches!(pictures[2].source, PictureSource::Inline(_)));
+}
+
+#[cfg(test)]
+#[test]
+fn all_fitting_tool_images_are_retained() {
+    use serde_json::json;
+    let items = (0..16).map(|index| json!({
+        "type":"file","uri":format!("https://example.invalid/{index}.png"),"mime":"image/png"
+    })).collect::<Vec<_>>();
+    let pictures = tool_pictures(&json!({"status":"completed","content":items}), &mut {
+        ROW_IMAGE_BYTES
+    });
+    assert_eq!(pictures.len(), 16);
+    assert!(
+        pictures
+            .iter()
+            .all(|pic| matches!(pic.source, PictureSource::Http(_)))
+    );
 }

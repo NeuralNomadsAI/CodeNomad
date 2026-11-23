@@ -6,18 +6,21 @@ use crate::{
 };
 use rune::{El, Icon, TextStyle, icon, row, text};
 
-pub fn picture(image: Option<&rune::Image>, label: &str, mime: &str, error: Option<&str>) -> El {
+pub fn picture(
+    image: Option<&rune::Image>,
+    label: &str,
+    mime: &str,
+    error: Option<&str>,
+    thumbnail: bool,
+) -> El {
     let preview = image.and_then(|image| {
-        let [width, height] = image.size()?;
-        Some(
-            rune::el()
-                .pixels_fit(image.pixels(), rune::SurfaceFit::Fit)
-                .aspect_fit(width as f32 / height as f32)
-                .max_w(width as f32)
-                .max_h(512.0)
-                .role("img")
-                .label(label),
-        )
+        let view = picture_pixels(image, label)?;
+        if thumbnail {
+            let edge = tokens(layout::dark()).length(Length::Icon).px();
+            Some(view.max_w(edge).max_h(edge))
+        } else {
+            Some(view)
+        }
     });
     rune::col()
         .full_width()
@@ -29,6 +32,53 @@ pub fn picture(image: Option<&rune::Image>, label: &str, mime: &str, error: Opti
                 .text_role(crate::TextRole::Label)
                 .wrap(),
         )
+}
+
+fn picture_pixels(image: &rune::Image, label: &str) -> Option<El> {
+    let [width, height] = image.size()?;
+    Some(
+        rune::el()
+            .pixels_fit(image.pixels(), rune::SurfaceFit::Fit)
+            .aspect_fit(width as f32 / height as f32)
+            .max_w(width as f32)
+            .max_h(512.0)
+            .role("img")
+            .label(label),
+    )
+}
+
+pub fn picture_preview<S: 'static>(
+    image: &rune::Image,
+    label: &str,
+    close_label: &str,
+    return_focus: &str,
+    close: impl Fn(&mut S) + Clone + 'static,
+) -> Option<El> {
+    let preview = picture_pixels(image, label)?;
+    let theme = tokens(layout::dark());
+    Some(
+        rune::col()
+            .key("attachment-preview")
+            .absolute(0.0, 0.0)
+            .full_width()
+            .full_height()
+            .center()
+            .pad(Space::Md)
+            .fill(theme.color("surface-overlay"))
+            .role("dialog")
+            .label(label)
+            .child(
+                layout::action_row()
+                    .child(text(label).text_role(crate::TextRole::Title))
+                    .child(
+                        layout::button(close_label, false, close.clone())
+                            .key("close-attachment-preview"),
+                    ),
+            )
+            .child(preview)
+            .focus_return(return_focus)
+            .modal(true, close),
+    )
 }
 
 pub fn chip(name: &str, glyph: Option<&'static Icon>, action: Option<El>) -> El {

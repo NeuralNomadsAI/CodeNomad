@@ -51,6 +51,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::AgentHint(catalog) => {
                 if catalog {
                     s.transcript_display.receipts.reconnect();
+                    s.transcript_display.pictures.retry_interrupted();
                     s.transcript_display.usage_family.refresh();
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
@@ -328,7 +329,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         changed = true;
     }
     if s.transcript_display.children.poll()
-        | s.transcript_display.pictures.poll(&s.wake)
+        | s.transcript_display.pictures.poll(&s.reads, &s.wake)
         | super::receipts::Receipts::poll(s)
     {
         s.revision += 1;

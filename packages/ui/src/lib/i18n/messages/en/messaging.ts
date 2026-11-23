@@ -42,6 +42,8 @@ export const messagingMessages = {
   "promptInput.skills.empty": "No skills available in this directory.",
   "toolCall.image.label": "Image {number}",
   "toolCall.image.unavailable": "Unable to display this image.",
+  "toolCall.image.openExternal": "Open image in browser",
+  "messageItem.attachment.enlarge": "Enlarge image",
   "promptInput.btw.title": "/btw — Side question",
   "promptInput.btw.commandDescription": "Ask a side question without adding to the conversation",
   "promptInput.btw.question": "Your question",

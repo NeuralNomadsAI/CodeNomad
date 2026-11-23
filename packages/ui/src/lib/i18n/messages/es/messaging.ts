@@ -42,6 +42,8 @@ export const messagingMessages = {
   "promptInput.skills.empty": "No hay skills disponibles en este directorio.",
   "toolCall.image.label": "Imagen {number}",
   "toolCall.image.unavailable": "No se puede mostrar esta imagen.",
+  "toolCall.image.openExternal": "Abrir imagen en el navegador",
+  "messageItem.attachment.enlarge": "Ampliar imagen",
   "promptInput.btw.title": "/btw — Pregunta aparte",
   "promptInput.btw.commandDescription": "Hacer una pregunta aparte sin añadirla a la conversación",
   "promptInput.btw.question": "Tu pregunta",

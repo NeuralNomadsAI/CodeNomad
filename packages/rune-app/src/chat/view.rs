@@ -5,6 +5,7 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let expanded = interruption_expanded(s);
     let mut overlays = Vec::new();
     let worktree = git::session_worktree(s, &mut overlays);
+    overlays.extend(super::media::preview(s));
     let body = rune_theme_codenomad::interruption::session_surface(expanded)
         .child(shell::reader(s, || {
             let history = rune_theme_codenomad::interruption::history(expanded)
