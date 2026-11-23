@@ -45,8 +45,12 @@ pub fn run() {
     };
     rt.key(enter.clone());
     rt.key_up(enter);
+    rt.frame(0.0);
     wait(&mut rt, "Rust relay command acknowledgement", |s| {
-        s.draft.text.is_empty() || s.composer.send_error || s.composer.command_unconfirmed.is_some()
+        !s.composer.pending()
+            && (s.draft.text.is_empty()
+                || s.composer.send_error
+                || crate::composer::command_held(s))
     });
     assert!(
         rt.state.draft.text.is_empty(),

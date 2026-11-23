@@ -1,4 +1,4 @@
-use super::draft::Draft;
+use super::{command_receipts, command_receipts::CommandAttempt, draft::Draft};
 use crate::{
     Message, Phase, State,
     transport::{Command, PromptOutcome},
@@ -15,7 +15,6 @@ pub struct Owner {
     sending: Option<Send>,
     pub send_error: bool,
     unconfirmed: Option<Send>,
-    pub command_unconfirmed: Option<(String, String)>,
     pub restored: bool,
     pub attachments_missing: bool,
     pub(crate) recall: Option<super::recall::Recall>,
@@ -48,21 +47,14 @@ struct Send {
     edit: TextEdit,
     draft: Draft,
     was_running: bool,
-    slash: Option<(String, String)>,
+    slash: Option<CommandAttempt>,
     edited: bool,
     recallable: bool,
 }
 
-fn repeats_uncertain_command(s: &State) -> bool {
-    s.composer
-        .command_unconfirmed
-        .as_ref()
-        .is_some_and(|(name, text)| {
-            super::picker::command_parts(&s.draft.text).is_some_and(|(candidate, args)| {
-                candidate == name
-                    && s.composer.draft.resolve_args(&s.draft, args).as_deref() == Some(text)
-            })
-        })
+pub(crate) fn command_held(s: &State) -> bool {
+    command_receipts::repeats(s)
+        || s.command_receipts.full() && s.composer.picker.selected_command(&s.draft.text).is_some()
 }
 
 pub fn can_send(s: &State) -> bool {
@@ -82,7 +74,7 @@ pub fn can_send(s: &State) -> bool {
         && (s.composer.picker.attachments_supported()
             || !s.composer.draft.requires_attachment_support())
         && s.composer.unconfirmed.is_none()
-        && !repeats_uncertain_command(s)
+        && !command_held(s)
         && s.composer.draft.can_send(&s.draft)
         && s.commands.as_ref().is_some_and(|tx| !tx.is_closed())
         && s.agent.as_ref().is_none_or(|a| !a.blocked())
@@ -101,18 +93,27 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             s.composer.send_error = true;
             return;
         };
-        let slash = (name.to_owned(), text);
+        let Some(target) = super::recall::command_target(s) else {
+            s.composer.send_error = true;
+            return;
+        };
+        let slash = CommandAttempt {
+            target,
+            name: name.to_owned(),
+            args: text,
+        };
         let command = Command::Slash {
             attempt: id.clone(),
-            name: slash.0.clone(),
-            text: slash.1.clone(),
+            name: slash.name.clone(),
+            text: slash.args.clone(),
         };
         if s.commands
             .as_ref()
             .is_some_and(|pipe| pipe.try_send(command).is_ok())
         {
-            let recallable = super::recall::record(s, format!("/{} {}", slash.0, slash.1), true);
-            s.composer.picker.remember_command(&slash.0);
+            let recallable =
+                super::recall::record(s, format!("/{} {}", slash.name, slash.args), true);
+            s.composer.picker.remember_command(&slash.name);
             s.composer.sending = Some(Send {
                 id,
                 edit: s.draft.clone(),
@@ -132,7 +133,6 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             renew_editor(s, tx);
             workspace::capture(s);
             s.composer.send_error = false;
-            s.composer.command_unconfirmed = None;
         } else {
             s.composer.send_error = true;
         }
@@ -191,6 +191,8 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
 }
 
 pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
+    // A late exact receipt can settle its own hold even after the composer moved on.
+    s.command_receipts.settle(attempted, &outcome);
     if !s
         .composer
         .sending
@@ -217,7 +219,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
             s.composer.restored = true;
         }
         if matches!(outcome, PromptOutcome::Unconfirmed) {
-            s.composer.command_unconfirmed = Some(slash);
+            s.command_receipts.hold(send.id, slash);
         }
         s.composer.send_error = matches!(outcome, PromptOutcome::Rejected);
         return;
