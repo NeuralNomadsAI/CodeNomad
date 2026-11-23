@@ -1,4 +1,7 @@
-use super::detail::{Detail, read_window};
+use super::{
+    detail::{Detail, read_window},
+    observation::Observation,
+};
 use crate::platform::{self, reads::Reads};
 use codenomad_client::{
     Receiver, Sender, Wake,
@@ -49,6 +52,7 @@ pub(crate) struct Panel {
     visible: bool,
     refresh_due: Option<f64>,
     last_passive: Option<f64>,
+    now: f64,
     pub(super) scope: std::rc::Rc<()>,
     supported: Option<bool>,
     capability: Option<Receiver<Option<bool>>>,
@@ -59,6 +63,7 @@ pub(crate) struct Panel {
     pub(super) filter: TextEdit,
     pub(crate) selected: Option<String>,
     pub(super) detail: Detail,
+    pub(super) observation: Observation,
 }
 
 const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
@@ -77,6 +82,7 @@ impl Panel {
             visible: false,
             refresh_due: None,
             last_passive: None,
+            now: 0.0,
             scope: std::rc::Rc::new(()),
             supported: None,
             capability: None,
@@ -87,6 +93,7 @@ impl Panel {
             filter: TextEdit::new(""),
             selected: None,
             detail: Detail::default(),
+            observation: Observation::default(),
         }
     }
 
@@ -100,6 +107,7 @@ impl Panel {
         } else {
             self.refresh_due = None;
             self.detail.cancel();
+            self.observation.cancel();
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
                     cancel.close();
@@ -112,6 +120,7 @@ impl Panel {
     pub(super) fn refresh(&mut self) {
         if self.visible {
             self.detail.refresh();
+            self.observation.refresh();
             for kind in KINDS {
                 if self.busy(kind) {
                     self.lanes[kind as usize].owed = true;
@@ -126,10 +135,12 @@ impl Panel {
         if let Some((id, revision)) = change {
             if self.selected.as_deref() == Some(id) {
                 self.detail.observe(id, revision);
+                self.observation.observe(revision);
             }
         } else {
             // A reconnect retires publication authority while keeping the display.
             self.detail.cancel();
+            self.observation.cancel();
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
                     cancel.close();
@@ -143,6 +154,8 @@ impl Panel {
     }
 
     pub(crate) fn refresh_when_due(&mut self, now: f64, tx: &mut rune::Tx) {
+        self.now = now;
+        self.observation.schedule(now, tx);
         if let Some(due) = self.refresh_due {
             if due > now {
                 tx.wake_at(due);
@@ -151,6 +164,13 @@ impl Panel {
                 self.last_passive = Some(now);
                 self.refresh();
             }
+        }
+    }
+
+    pub(crate) fn activity_changed(&mut self, now: f64) {
+        if self.visible && self.selected.is_some() {
+            self.observation.invalidate(now);
+            (self.wake)();
         }
     }
 
@@ -352,16 +372,28 @@ impl Panel {
                 .iter()
                 .find(|row| row.id == *id)
                 .map(|row| row.revision);
+            changed |= self.observation.settle(revision, self.now, &self.wake);
             changed |= self.detail.poll(
                 &self.backend,
                 project,
                 id,
-                revision,
+                revision.max(self.observation.revision()),
                 &self.reads,
                 &self.wake,
             );
+            if let Some(snapshot) = &self.detail.snapshot {
+                changed |= self.observation.poll(
+                    &self.backend,
+                    project,
+                    id,
+                    snapshot.header.root.revision,
+                    &self.reads,
+                    &self.wake,
+                );
+            }
         } else if self.selected.is_none() {
             self.detail.clear();
+            self.observation = Observation::default();
         }
         changed
     }
@@ -435,6 +467,7 @@ impl Panel {
     pub(super) fn select(&mut self, id: &str) {
         if self.selected.as_deref() != Some(id) && self.summaries.iter().any(|row| row.id == id) {
             self.detail.clear();
+            self.observation = Observation::default();
             self.selected = Some(id.into());
         }
     }

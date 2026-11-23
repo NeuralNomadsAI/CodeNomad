@@ -82,7 +82,10 @@ fn detail_is_project_mission_and_revision_fenced_before_task_publication() {
     let good = verified(open(), source(window.to_string(), "tasks", 3)).unwrap();
     assert_eq!(good.tasks[0].title, "Task 🦀");
     let skew = verified(open(), source(window.to_string(), "tasks", 4)).unwrap_err();
-    assert!(skew.is::<DirectoryChanged>());
+    assert_eq!(
+        skew.downcast_ref::<RevisionChanged>().map(|error| error.0),
+        Some(4)
+    );
     let mut foreign = window;
     foreign["tasks"][0]["order"] = json!(1);
     assert!(verified(open(), source(foreign.to_string(), "tasks", 3)).is_err());

@@ -205,7 +205,8 @@ impl PreferencesWatch {
                                         Input::Preferences(Owner::Config) => 1,
                                         Input::Preferences(Owner::State) => 2,
                                         Input::Workspace(_, event @ (crate::transport::WorkspaceEvent::MissionChanged { .. }
-                                            | crate::transport::WorkspaceEvent::MissionsReconnected { .. })) => {
+                                            | crate::transport::WorkspaceEvent::MissionsReconnected { .. }
+                                            | crate::transport::WorkspaceEvent::MissionActivityChanged { .. })) => {
                                             let mut batch = mission_notices.lock().unwrap();
                                             let overflow = if batch.len() == 128 { batch.clear(); true } else { false };
                                             batch.push(event);

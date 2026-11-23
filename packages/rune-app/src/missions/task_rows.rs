@@ -54,6 +54,7 @@ impl TaskRows {
             .retain(|task| !(offset..end).contains(&task.order));
         self.rows.extend(tasks.into_iter().map(Rc::new));
         self.rows.sort_unstable_by_key(|task| task.order);
+        self.rows.dedup_by_key(|task| task.order);
         self.index();
         true
     }

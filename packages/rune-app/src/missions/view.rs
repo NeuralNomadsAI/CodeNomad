@@ -72,6 +72,14 @@ pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
     }
     body = body.child(page_footer(ui, scoped.clone(), Kind::Summaries));
     if ui.selected.is_some() {
+        if ui.detail.snapshot.is_some() {
+            let owner = scoped.clone();
+            body = body.child(ui.observation.view(move |state| {
+                if let Some(panel) = owner.get(state).0 {
+                    panel.observation.more();
+                }
+            }));
+        }
         body = body.child(detail(ui, scoped.clone()));
     }
     if !ui.cleanups.is_empty() {
@@ -205,8 +213,45 @@ fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>) -> El {
         result = result
             .child(text(name).role("heading").wrap_anywhere())
             .child(text(status(header.status, header.run_state)).text_role(TextRole::Small))
-            .child(text(&header.excerpt).wrap_anywhere())
-            .child(snapshot.tasks.view::<S>());
+            .child(text(&header.excerpt).wrap_anywhere());
+        if let Some(attention) = &snapshot.header.tasks.page.attention {
+            let remaining = snapshot.attention_remaining();
+            let counts = &attention.counts;
+            if remaining > 0 {
+                let count = remaining.to_string();
+                let label = catalogue::format(
+                    locale(),
+                    if remaining == 1 {
+                        "missionsPanel.tasks.attention.one"
+                    } else {
+                        "missionsPanel.tasks.attention.other"
+                    },
+                    &[("count", &count)],
+                );
+                let help = catalogue::format(
+                    locale(),
+                    "missionsPanel.tasks.attention.counts",
+                    &[
+                        ("blocked", &counts.blocked.to_string()),
+                        ("failed", &counts.failed.to_string()),
+                        ("recovery", &counts.recovery.to_string()),
+                        ("notifications", &counts.notifications.to_string()),
+                    ],
+                );
+                let attention_owner = owner.clone();
+                result = result.child(
+                    layout::button(&label, detail.busy() || detail.failed, move |s| {
+                        if let Some(panel) = attention_owner.get(s).0 {
+                            panel.detail.attention();
+                        }
+                    })
+                    .key("mission-attention-more")
+                    .help(&help)
+                    .description(help),
+                );
+            }
+        }
+        result = result.child(snapshot.tasks.view::<S>());
     }
     if detail.busy() || detail.snapshot.is_none() && !detail.failed {
         result = result.child(theme::note(t("missions.control.loading"), "status"));

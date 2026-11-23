@@ -161,6 +161,19 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         tick(&mut rt);
         let tree = rt.accessibility_json().to_string();
         assert!(tree.contains("Owned mission objective 🦀") && tree.contains("Owned task"));
+        let activity = http.accept().await;
+        assert_eq!(
+            activity.body,
+            json!({"source":"activity","missionID":"alpha","actorOffset":0})
+        );
+        activity
+            .reply(
+                503,
+                json!({"available":false,"reason":"plugin-unavailable","missions":[]}),
+            )
+            .await;
+        test_http::wait(signal.recv()).await.unwrap();
+        tick(&mut rt);
         let ui = rt.state.workspace.as_ref().unwrap();
         assert!(
             matches!(&ui.entries[ui.active].saved,Tab::Workspace(w) if w.view.selected_mission.as_deref()==Some("alpha"))
@@ -174,7 +187,7 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         rt.update(|s, _| mission_event(s, Some(&changed)));
         tick(&mut rt);
         let mut detail = false;
-        for _ in 0..3 {
+        for _ in 0..4 {
             let req = http.accept().await;
             detail |= req.body == json!({"source":"mission","missionID":"alpha","header":true});
             req.reply(
@@ -191,7 +204,7 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         });
         tick(&mut rt);
         let mut detail = false;
-        for _ in 0..3 {
+        for _ in 0..4 {
             let req = http.accept().await;
             detail |= req.body["source"] == "mission";
             req.reply(

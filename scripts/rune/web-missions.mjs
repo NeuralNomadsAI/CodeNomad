@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {createHash} from 'node:crypto'
 import {writeFile} from 'node:fs/promises'
+import {actorWindow,assertActorActivity} from './web-mission-activity.mjs'
 
 const digest=rows=>createHash('sha256').update(`[${rows.join(',')}]`,'utf16le').digest('base64url')
 const summary=(id,title,revision)=>JSON.stringify({
@@ -15,11 +16,12 @@ const cleanup=JSON.stringify({
 })
 const tasks=Array.from({length:52},(_,order)=>({
   id:`tsk-${order}`,key:`task-${order}`,title:order===0?'Vérifier la fiche 🦀':order===50?'Tâche suivante':'Étape '+order,
-  status:order===50?'blocked':'ready',blockedBy:order===50?['task-0']:[],role:'specialist',
+  status:order===50?'needs-input':'ready',blockedBy:order===50?['task-0']:[],role:'specialist',
   order,createdAt:1,updatedAt:1,dependents:order===0?1:0,reportCount:0,outstandingExecution:false,
 }))
 const taskOrder=digest(tasks.map(task=>JSON.stringify(task.key)))
-const taskPage=(offset,end)=>({order:taskOrder,offset,end,total:tasks.length,counts:{ready:51,blocked:1},reports:0})
+const attention={counts:{notifications:0,blocked:1,failed:0,recovery:0},omitted:1,sequence:digest(['"task-50"'])}
+const taskPage=(offset,end)=>({order:taskOrder,offset,end,total:tasks.length,counts:{ready:51,'needs-input':1},reports:0,attention})
 const descriptor={digest:digest([]),characters:2,total:0,array:true}
 
 export function missionsFixture({page,messages,artifact,project}){
@@ -35,7 +37,7 @@ export function missionsFixture({page,messages,artifact,project}){
     }
     if(!path.endsWith('/missions/panel-page'))return false
     const request=route.request().postDataJSON()
-    if(request.source==='mission'||request.source==='tasks'){
+    if(['mission','tasks','activity'].includes(request.source)){
       const task=request.task
       const missionID=request.missionID??task.missionID
       const offset=task?.offset??0
@@ -45,18 +47,22 @@ export function missionsFixture({page,messages,artifact,project}){
         excerpt:'Objectif de la fiche 🦀',template:'custom',status:'active',revision:gammaRevision,createdAt:1,updatedAt:1,
         coordinatorSessionId:'ses_existing',historyTruncated:false,bodies:{},
       },collections:{actors:descriptor,history:descriptor,reports:descriptor},
-      tasks:{page:taskPage(0,50),pins:['tsk-51'],reportPins:[],version:taskOrder}}
+       tasks:{page:{...taskPage(0,50),attention:{...attention,keys:['task-50']}},pins:['tsk-51'],reportPins:[],version:taskOrder}}
       if(missionID!=='gamma'){
-        header.tasks={page:{...taskPage(0,0),total:0,counts:{}},pins:[],reportPins:[],version:digest([])}
+        header.tasks={page:{order:digest([]),offset:0,end:0,total:0,reports:0,counts:{}},pins:[],reportPins:[],version:digest([])}
       }
-      const row=request.header?header:task.ids?{taskPage:taskPage(0,0),tasks:[tasks[51]],reports:[]}:
+      const live=request.source==='activity'
+      const row=request.header?header:live?actorWindow(missionID,gammaRevision,taskOrder):
+        task.attention===0?{taskPage:{...taskPage(0,0),attention:{...attention,offset:0,end:1}},tasks:[tasks[50]],reports:[]}:
+        task.ids?{taskPage:taskPage(0,0),tasks:[tasks[51]],reports:[]}:
         {taskPage:taskPage(offset,Math.min(offset+50,tasks.length)),tasks:tasks.slice(offset,offset+50),reports:[]}
       if(task)assert.equal(task.order,taskOrder)
       // The first task response races a revision advance; the next header must join that revision.
       if(task?.offset===0&&gammaRevision===6)gammaRevision++
       const text=JSON.stringify(row)
       await route.fulfill({json:{available:true,version:1,projectID:'fixture-project',source:request.source,missionID,revision:gammaRevision,
-        ...(request.header?{header:true}:{}),discardedEvents:0,controlUnavailable:false,notificationUnavailable:false,cleanupUnavailable:false,
+        ...(request.header?{header:true}:live?{phase:'observed',observedAt:Date.now()}:{}),
+        discardedEvents:0,controlUnavailable:false,notificationUnavailable:false,cleanupUnavailable:false,
         page:{digest:digest([text]),total:1,pieces:[{index:0,offset:0,characters:text.length,text}]},
       }})
       return true
@@ -150,6 +156,7 @@ export function missionsFixture({page,messages,artifact,project}){
     await row('Gamma').waitFor()
     await press('Gamma','listitem')
     await page.getByRole('heading',{name:'Fiche gamma',exact:true}).waitFor()
+    await assertActorActivity(page,messages)
     assert.equal(await page.getByRole('heading',{name:'Fiche beta',exact:true}).count(),0)
     await row('Vérifier la fiche 🦀').waitFor()
     assert.equal(reads.filter(read=>read.source==='mission'&&read.missionID==='gamma').length,2)
@@ -166,8 +173,15 @@ export function missionsFixture({page,messages,artifact,project}){
     await scrollTail()
     assert.equal(await row('Tâche suivante').count(),0)
     const detail=page.getByRole('region',{name:messages['missions.control.overview'],exact:true})
+    const attentionLabel=messages['missionsPanel.tasks.attention.one'].replace('{count}','1')
+    await detail.getByRole('button',{name:attentionLabel,exact:true}).dispatchEvent('click')
+    await scrollTail()
+    await row('Tâche suivante').waitFor()
+    await detail.getByRole('button',{name:attentionLabel,exact:true}).waitFor({state:'detached'})
     const moreTasks=detail.getByRole('button',{name:more,exact:true})
-    await moreTasks.dispatchEvent('click') // Activate the offscreen action through Rune's accessibility bridge.
+    const numbered=page.waitForResponse(response=>response.url().endsWith('/missions/panel-page')&&response.request().postDataJSON()?.task?.offset===50)
+    await moreTasks.dispatchEvent('click')
+    await numbered
     await scrollTail()
     await row('Tâche suivante').waitFor()
     assert.equal(await row('Étape 51').count(),1,'A pinned task is reconciled into its numbered window')

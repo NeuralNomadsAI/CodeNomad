@@ -322,7 +322,10 @@ pub(super) async fn dispatch(
     }
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
-    if let Some(event) = mission_events::decode(&b.workspace, &value) {
+    // A conversation move revokes its reader before any send and relays SessionMoved itself.
+    if !(own && native["type"] == "session.moved" && native["data"]["sessionID"] == b.session)
+        && let Some(event) = mission_events::decode(&b.workspace, &value)
+    {
         out.send(Input::Workspace(epoch, event)).await?;
     }
     let catalogues = (own && value["type"] == "instance.event")

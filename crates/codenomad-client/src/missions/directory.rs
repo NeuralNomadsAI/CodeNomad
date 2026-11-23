@@ -1,15 +1,13 @@
-use super::detail::DetailRead;
+use super::{codec::digest, detail::DetailRead};
 use crate::{
     backend::Backend,
     history::{Result, valid_id},
     runtime::{Instant, sleep},
 };
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_lite::StreamExt;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::{collections::HashSet, time::Duration};
 
 const ROWS: usize = 50;
@@ -26,6 +24,7 @@ pub(super) enum Source {
     Cleanups,
     Mission,
     Tasks,
+    Activity,
 }
 
 #[derive(Debug)]
@@ -57,7 +56,15 @@ struct Envelope {
     mission_id: Option<String>,
     revision: Option<u64>,
     header: Option<bool>,
+    phase: Option<Phase>,
+    observed_at: Option<f64>,
     page: Page,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum Phase {
+    Observed,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,6 +97,7 @@ struct Identity {
     project: String,
     window: Option<Window>,
     revision: Option<u64>,
+    observed_at: Option<f64>,
     digest: String,
     finish_high_water: Option<u64>,
 }
@@ -125,6 +133,7 @@ pub(super) struct PageRead {
 pub(super) struct Verified {
     pub project: String,
     pub revision: Option<u64>,
+    pub observed_at: Option<f64>,
     pub window: Option<Window>,
     pub finish_high_water: Option<u64>,
     pub rows: Vec<String>,
@@ -363,6 +372,11 @@ impl PageRead {
             || page.pieces.len() > ROWS
             || envelope.mission_id != self.mission
             || envelope.header != (self.source == Source::Mission).then_some(true)
+            || envelope.phase != (self.source == Source::Activity).then_some(Phase::Observed)
+            || (self.source == Source::Activity) != envelope.observed_at.is_some()
+            || envelope
+                .observed_at
+                .is_some_and(|time| !time.is_finite() || time < 0.0)
             || !match (window, &self.mission, envelope.revision) {
                 (Some(window), None, None) => {
                     digest_id(&window.order)
@@ -407,6 +421,7 @@ impl PageRead {
                 project: envelope.project_id.clone(),
                 window: window.clone(),
                 revision: envelope.revision,
+                observed_at: envelope.observed_at,
                 digest: page.digest.clone(),
                 finish_high_water: envelope.finish_high_water,
             });
@@ -414,6 +429,7 @@ impl PageRead {
         let units_limit: usize = match self.source {
             Source::Summaries => 256 * 1024,
             Source::Mission => 1024 * 1024,
+            Source::Activity => 24 * 1024 * 1024,
             Source::Cleanups | Source::Tasks => 8 * 1024 * 1024,
         };
         for piece in &page.pieces {
@@ -426,7 +442,7 @@ impl PageRead {
                 || units > piece.characters.saturating_sub(piece.offset)
                 || piece.characters
                     > units_limit.saturating_sub(self.characters - self.partial_units)
-                || piece.text.len() > (24 * 1024 * 1024 - self.text_bytes)
+                || piece.text.len() > (units_limit * 3 - self.text_bytes)
             {
                 return invalid();
             }
@@ -470,6 +486,7 @@ impl PageRead {
         Ok(Some(Verified {
             project: first.project,
             revision: first.revision,
+            observed_at: first.observed_at,
             finish_high_water: first.finish_high_water,
             window: first.window,
             rows: std::mem::take(&mut self.rows),
@@ -490,29 +507,6 @@ pub(super) fn digest_id(digest: &str) -> bool {
 
 pub(super) fn panel_id(id: &str) -> bool {
     !id.is_empty() && id.encode_utf16().count() <= 240
-}
-
-fn digest(rows: &[String]) -> String {
-    let mut hash = Sha256::new();
-    let mut buffer = [0; 2048];
-    hash.update([b'[', 0]);
-    for (index, row) in rows.iter().enumerate() {
-        if index != 0 {
-            hash.update([b',', 0]);
-        }
-        let mut written = 0;
-        for unit in row.encode_utf16() {
-            buffer[written..written + 2].copy_from_slice(&unit.to_le_bytes());
-            written += 2;
-            if written == buffer.len() {
-                hash.update(buffer);
-                written = 0;
-            }
-        }
-        hash.update(&buffer[..written]);
-    }
-    hash.update([b']', 0]);
-    URL_SAFE_NO_PAD.encode(hash.finalize())
 }
 
 fn summaries(rows: &[String]) -> Result<Vec<Summary>> {

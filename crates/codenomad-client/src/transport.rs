@@ -23,6 +23,9 @@ pub enum WorkspaceEvent {
     MissionsReconnected {
         workspace_id: String,
     },
+    MissionActivityChanged {
+        workspace_id: String,
+    },
     NativeFilesystemChanged {
         workspace_id: String,
     },

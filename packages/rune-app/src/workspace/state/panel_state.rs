@@ -184,6 +184,12 @@ pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
         {
             panel.invalidate(None, ui.clock);
         }
+        Some(
+            WorkspaceEvent::MissionActivityChanged { workspace_id }
+            | WorkspaceEvent::SessionMoved { workspace_id, .. },
+        ) if workspace_id == &project.id => {
+            panel.activity_changed(ui.clock);
+        }
         None => panel.invalidate(None, ui.clock),
         _ => {}
     }

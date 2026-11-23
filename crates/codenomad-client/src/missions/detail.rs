@@ -1,5 +1,6 @@
 use super::{
-    RunState, Status,
+    Attention, RunState, Status,
+    codec::{RevisionChanged, decode_row},
     directory::{DirectoryChanged, PageRead, Source, Verified, digest_id, panel_id},
 };
 use crate::{backend::Backend, history::Result};
@@ -36,8 +37,7 @@ pub struct Task {
     created_at: u64,
     updated_at: u64,
     dependents: u64,
-    #[serde(rename = "outstandingExecution")]
-    _outstanding_execution: bool,
+    outstanding_execution: bool,
     #[serde(default)]
     late_reports: Vec<Report>,
     late_report_count: Option<u64>,
@@ -113,6 +113,7 @@ pub struct TaskPage {
     pub total: u64,
     counts: HashMap<TaskStatus, u64>,
     reports: u64,
+    pub attention: Option<Attention>,
 }
 
 impl TaskPage {
@@ -258,7 +259,7 @@ impl Backend {
         if offset > SAFE {
             return invalid();
         }
-        task_read(self, project, header, offset, None)
+        task_read(self, project, header, offset, None, false)
     }
 
     pub fn mission_task_pins(
@@ -272,7 +273,27 @@ impl Backend {
             header,
             0,
             Some((&header.tasks.pins, &header.tasks.report_pins)),
+            false,
         )
+    }
+
+    pub fn mission_task_attention(
+        &self,
+        project: &str,
+        header: &MapHeader,
+        offset: u64,
+    ) -> Result<DetailRead<TaskWindow>> {
+        if offset > SAFE
+            || header
+                .tasks
+                .page
+                .attention
+                .as_ref()
+                .is_none_or(|a| offset >= a.omitted)
+        {
+            return invalid();
+        }
+        task_read(self, project, header, offset, None, true)
     }
 }
 
@@ -282,6 +303,7 @@ fn task_read(
     header: &MapHeader,
     offset: u64,
     pins: Option<(&[String], &[String])>,
+    attention: bool,
 ) -> Result<DetailRead<TaskWindow>> {
     let mission = &header.root.id;
     let order = header.tasks.page.order.clone();
@@ -293,6 +315,7 @@ fn task_read(
         Some((ids, reports)) => {
             json!({"missionID":mission,"order":order,"ids":ids,"reportIds":reports})
         }
+        None if attention => json!({"missionID":mission,"order":order,"attention":offset}),
         None => json!({"missionID":mission,"order":order,"offset":offset}),
     };
     let read = PageRead::selected(
@@ -303,11 +326,13 @@ fn task_read(
         json!({"source":"tasks","task":task}),
     )?;
     let pins = pins.map(|(ids, reports)| (ids.to_vec(), reports.to_vec()));
+    let base = header.tasks.page.attention.clone();
+    let excluded = header.tasks.pins.clone();
     Ok(DetailRead {
         read,
         decode: Box::new(move |page| {
             if page.revision != Some(revision) {
-                return Err(DirectoryChanged.into());
+                return Err(RevisionChanged(page.revision.ok_or("missing task revision")?).into());
             }
             let row: TaskWindow = decode_row(&page)?;
             if row.task_page.order != order {
@@ -316,7 +341,8 @@ fn task_read(
             if row.task_page.total != total
                 || row.task_page.reports != reports
                 || row.task_page.counts != counts
-                || !valid_tasks(&row, offset, pins.as_ref())
+                || !valid_tasks(&row, offset, pins.as_ref(), attention.then_some(offset))
+                || attention && !super::attention::matches_page(base.as_ref(), &row, &excluded)
             {
                 return invalid();
             }
@@ -373,6 +399,7 @@ fn header(page: Verified, mission: &str) -> Result<MapHeader> {
             .get("reports")
             .is_none_or(|d| d.total != tasks.page.reports)
         || !tasks.page.valid(0, false)
+        || !valid_attention(&tasks.page, None)
         || !digest_id(&tasks.version)
         || !pins_valid(&tasks.pins, 20)
         || !pins_valid(&tasks.report_pins, 8)
@@ -389,16 +416,38 @@ fn pins_valid(pins: &[String], maximum: usize) -> bool {
         && pins.iter().collect::<HashSet<_>>().len() == pins.len()
 }
 
-fn valid_tasks(row: &TaskWindow, offset: u64, pins: Option<&(Vec<String>, Vec<String>)>) -> bool {
+fn valid_attention(page: &TaskPage, offset: Option<u64>) -> bool {
+    page.attention.as_ref().map_or(offset.is_none(), |a| {
+        a.valid(
+            page.total,
+            page.counts
+                .get(&TaskStatus::NeedsInput)
+                .copied()
+                .unwrap_or(0),
+            page.counts.get(&TaskStatus::Failed).copied().unwrap_or(0),
+            offset,
+        )
+    })
+}
+
+fn valid_tasks(
+    row: &TaskWindow,
+    offset: u64,
+    pins: Option<&(Vec<String>, Vec<String>)>,
+    attention: Option<u64>,
+) -> bool {
     let page = &row.task_page;
-    if !page.valid(offset, pins.is_some())
+    if !page.valid(
+        if attention.is_some() { 0 } else { offset },
+        pins.is_some() || attention.is_some(),
+    ) || !valid_attention(page, attention)
         || row.tasks.len() > 50
         || row.reports.len() > 200
         || row.reports.len() as u64 > page.reports
     {
         return false;
     }
-    if pins.is_none() && row.tasks.len() as u64 != page.end - page.offset {
+    if pins.is_none() && attention.is_none() && row.tasks.len() as u64 != page.end - page.offset {
         return false;
     }
     let mut ids = HashSet::new();
@@ -459,6 +508,17 @@ fn valid_tasks(row: &TaskWindow, offset: u64, pins: Option<&(Vec<String>, Vec<St
                 Some((ids, _)) => {
                     !ids.contains(&task.id) && !own.clone().any(|report| named_reports(&report.id))
                 }
+                None if attention.is_some() => {
+                    task.order < 50
+                        || !(matches!(task.status, TaskStatus::NeedsInput | TaskStatus::Failed)
+                            || own.clone().any(|report| {
+                                report
+                                    .extra
+                                    .get("notificationStatus")
+                                    .is_some_and(|value| value == "pending")
+                            })
+                            || task.missing_report())
+                }
                 None => !(page.offset..page.end).contains(&task.order),
             }
         {
@@ -470,6 +530,30 @@ fn valid_tasks(row: &TaskWindow, offset: u64, pins: Option<&(Vec<String>, Vec<St
         .all(|report| keys.contains(&report.task_key) || named_reports(&report.id))
 }
 
+impl Task {
+    fn missing_report(&self) -> bool {
+        let identity = |value: Option<&Value>| {
+            value
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty())
+        };
+        let binding = self.extra.get("nativeBinding").is_some_and(|value| {
+            value["generation"]
+                .as_u64()
+                .is_some_and(|n| n > 0 && n <= SAFE)
+                && ["parentSessionID", "parentMessageID", "toolCallID"]
+                    .iter()
+                    .all(|key| identity(value.get(*key)))
+        });
+        identity(self.extra.get("actorSessionId"))
+            && (self.outstanding_execution || identity(self.extra.get("admissionId")) || binding)
+            && self.report.is_none()
+            && self.late_reports.is_empty()
+            && (self.outstanding_execution
+                || matches!(self.status, TaskStatus::Queued | TaskStatus::Dispatching))
+    }
+}
+
 fn units(text: &str) -> usize {
     text.encode_utf16().count()
 }
@@ -479,43 +563,6 @@ fn valid_bodies(bodies: &HashMap<String, Body>) -> bool {
         && bodies.iter().all(|(key, body)| {
             (1..=64).contains(&units(key)) && body.characters <= SAFE && digest_id(&body.digest)
         })
-}
-
-fn decode_row<T: serde::de::DeserializeOwned>(page: &Verified) -> Result<T> {
-    let [text] = page.rows.as_slice() else {
-        return invalid();
-    };
-    // Lexical structure budget before decoding unknown compact metadata.
-    let mut depth = 0usize;
-    let mut tokens = 0;
-    let mut quoted = false;
-    let mut escaped = false;
-    for byte in text.bytes() {
-        if quoted {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'"' {
-                quoted = false;
-            }
-            continue;
-        }
-        match byte {
-            b'"' => quoted = true,
-            b'{' | b'[' => {
-                tokens += 1;
-                depth += 1;
-            }
-            b'}' | b']' => depth = depth.checked_sub(1).ok_or("invalid Mission detail JSON")?,
-            b':' | b',' => tokens += 1,
-            _ => {}
-        }
-        if depth > 24 || tokens > 262_144 {
-            return invalid();
-        }
-    }
-    Ok(serde_json::from_str(text)?)
 }
 
 fn invalid<T>() -> Result<T> {

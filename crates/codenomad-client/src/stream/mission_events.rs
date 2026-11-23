@@ -27,8 +27,32 @@ pub(super) fn decode(workspace: &str, frame: &Value) -> Option<WorkspaceEvent> {
                 workspace_id: id.into(),
             })
         }
+        "instance.event" if event["type"].as_str().is_some_and(activity) => {
+            Some(WorkspaceEvent::MissionActivityChanged {
+                workspace_id: id.into(),
+            })
+        }
         _ => None,
     }
+}
+
+fn activity(kind: &str) -> bool {
+    matches!(
+        kind,
+        "session.created"
+            | "session.forked"
+            | "session.moved"
+            | "session.deleted"
+            | "session.compaction.started"
+            | "session.compaction.ended"
+            | "session.compaction.failed"
+            | "session.execution.started"
+            | "session.execution.succeeded"
+            | "session.execution.failed"
+            | "session.execution.interrupted"
+    ) || ["session.inbox.", "shell.", "form.", "permission."]
+        .iter()
+        .any(|prefix| kind.starts_with(prefix))
 }
 
 #[cfg(test)]
