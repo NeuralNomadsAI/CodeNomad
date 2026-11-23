@@ -3,6 +3,23 @@ pub fn exact(locale: &str, count: u64) -> String {
     localized(locale, &count.to_string())
 }
 
+pub fn plain(locale: &str, count: u64, min_digits: usize) -> String {
+    let ascii = format!("{count:0min_digits$}");
+    if locale != "ne" {
+        return ascii;
+    }
+    ascii
+        .chars()
+        .map(|c| {
+            if c.is_ascii_digit() {
+                char::from_u32('०' as u32 + (c as u32 - '0' as u32)).unwrap_or(c)
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 pub fn compact(locale: &str, count: u64) -> String {
     let (value, suffix) = match count {
         1_000_000_000.. => (format!("{:.1}", count as f64 / 1e9), "B"),

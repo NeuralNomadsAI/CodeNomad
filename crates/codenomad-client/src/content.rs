@@ -12,7 +12,7 @@ mod user;
 pub use reasoning::{Reasoning, ReasoningEvent, apply_window as apply_reasoning};
 pub use subagent::SubagentReport;
 pub use tool_live::install as install_tool;
-pub(crate) use tool_live::{Fit as ToolFit, apply as apply_tool};
+pub(crate) use tool_live::{Fit as ToolFit, apply_at as apply_tool};
 pub use usage::{FAMILY_LIMIT, Family, FamilyChange, FamilyMember, FamilySnapshot, Usage};
 pub(crate) use user::digest as attachment_digest;
 pub use user::{File, Reference, Skill};
@@ -274,6 +274,7 @@ pub struct Tool {
     pub output: String,
     pub error: String,
     pub started: Option<u64>,
+    pub ended: Option<u64>,
     pub pictures: Vec<Picture>,
     bytes: usize,
     output_bytes: usize,
@@ -401,8 +402,15 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 ),
                 started: part["time"]["ran"]
                     .as_u64()
+                    .filter(|at| *at > 0)
                     .or_else(|| part["time"]["created"].as_u64())
-                    .or_else(|| v["time"]["created"].as_u64()),
+                    .filter(|at| *at > 0)
+                    .or_else(|| {
+                        matches!(name, "task" | "subagent")
+                            .then(|| v["time"]["created"].as_u64().filter(|at| *at > 0))
+                            .flatten()
+                    }),
+                ended: part["time"]["completed"].as_u64().filter(|at| *at > 0),
                 bytes,
                 output_bytes,
             })));

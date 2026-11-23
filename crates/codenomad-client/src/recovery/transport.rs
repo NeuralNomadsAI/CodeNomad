@@ -453,13 +453,17 @@ pub(crate) async fn run_with_reading(
                         }
                     }
                     kind if kind.starts_with("session.tool.") => {
-                        let fit = reader
-                            .resident
-                            .iter_mut()
-                            .find(|row| row.id == id)
-                            .map_or(content::ToolFit::Repair, |row| {
-                                content::apply_tool(Arc::make_mut(row), kind, &native["data"])
-                            });
+                        let fit = reader.resident.iter_mut().find(|row| row.id == id).map_or(
+                            content::ToolFit::Repair,
+                            |row| {
+                                content::apply_tool(
+                                    Arc::make_mut(row),
+                                    kind,
+                                    &native["data"],
+                                    native["created"].as_u64(),
+                                )
+                            },
+                        );
                         match fit {
                             content::ToolFit::Applied(tool) => {
                                 history::check(&reader.resident)?;

@@ -57,18 +57,12 @@ pub(super) fn input_json(value: &Value, limit: usize, partial: bool) -> Option<S
 
 pub(super) fn title(tool: &Tool) -> String {
     let name = tool.name.strip_prefix("opencode_").unwrap_or(&tool.name);
-    let mut chars = name.chars();
     let mut title = if name == "websearch" {
         name.into()
-    } else if matches!(name, "bash" | "shell") {
-        t("toolCall.renderer.toolName.shell").to_owned()
+    } else if name == "invalid" && !string(&tool.input, &["tool"]).is_empty() {
+        label(string(&tool.input, &["tool"]))
     } else {
-        chars
-            .next()
-            .into_iter()
-            .flat_map(char::to_uppercase)
-            .chain(chars)
-            .collect()
+        label(name)
     };
     let summary = match name {
         "read" | "edit" | "write" => {
@@ -80,6 +74,7 @@ pub(super) fn title(tool: &Tool) -> String {
         }
         "bash" | "shell" => shell::summary(tool),
         "glob" | "grep" => search::pattern(tool),
+        "webfetch" => string(&tool.input, &["url"]),
         _ => "",
     };
     if !summary.is_empty() {
@@ -104,6 +99,26 @@ pub(super) fn title(tool: &Tool) -> String {
         _ => (),
     }
     title
+}
+
+fn label(name: &str) -> String {
+    let key = match name {
+        "bash" | "shell" => "toolCall.renderer.toolName.shell",
+        "webfetch" => "toolCall.renderer.toolName.fetch",
+        "invalid" => "toolCall.renderer.toolName.invalid",
+        "todowrite" => "toolCall.renderer.toolName.plan",
+        "apply_patch" => "toolCall.renderer.toolName.applyPatch",
+        _ => {
+            let mut chars = name.strip_prefix("opencode_").unwrap_or(name).chars();
+            return chars
+                .next()
+                .into_iter()
+                .flat_map(char::to_uppercase)
+                .chain(chars.take(249))
+                .collect();
+        }
+    };
+    t(key).into()
 }
 
 pub(super) fn error(tool: &Tool) -> &str {

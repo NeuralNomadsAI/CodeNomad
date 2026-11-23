@@ -19,6 +19,7 @@ pub struct Display {
     pub(crate) timeline: crate::timeline::Timeline,
     pub(crate) search_highlight: Option<super::search_hit::SearchHit>,
     pub(super) children: super::tools::children::Children,
+    pub(super) tool_clock: super::tools::duration::Clock,
     pub(crate) usage_family: super::usage::family::Totals,
     pub(super) pictures: super::media::Pictures,
     pub(crate) receipts: super::receipts::Receipts,
@@ -51,6 +52,7 @@ impl Display {
         self.stream = StreamRender::default();
         self.live_ansi.get_mut().clear();
         self.children.clear();
+        self.tool_clock = Default::default();
         self.usage_family.close();
         self.pictures.clear();
         self.receipts.suspend();
@@ -81,6 +83,7 @@ impl Display {
             self.stream = StreamRender::default();
             self.live_ansi.get_mut().clear();
             self.children.clear();
+            self.tool_clock = Default::default();
             self.usage_family.close();
             self.pictures.clear();
             self.receipts.clear();
@@ -164,7 +167,9 @@ impl Display {
     }
 
     pub fn poll(s: &mut State, changed: bool, now: f64, tx: &mut rune::Tx) -> bool {
-        let timeline = crate::timeline::poll(s, tx) | crate::timeline::search::poll(s, now, tx);
+        let timeline = crate::timeline::poll(s, tx)
+            | crate::timeline::search::poll(s, now, tx)
+            | s.transcript_display.tool_clock.poll(now, tx);
         let stream = &mut s.transcript_display.stream;
         if changed {
             stream.pending = s.messages.last().is_some_and(|row| {

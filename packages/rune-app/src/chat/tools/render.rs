@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 pub(in crate::chat) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
     let key = tool_key(message, &tool.id);
-    if matches!(tool.name.as_str(), "execute" | "question")
+    if matches!(tool.name.as_str(), "execute" | "question" | "skill")
         || task::is_task(tool)
         || !tool.pictures.is_empty()
     {
@@ -45,10 +45,13 @@ pub(in crate::chat) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
             display.steps(&format!("{key}-patch-{index}"))
         })
     });
+    let live_tick =
+        (tool.status == "running" && tool.started.is_some()).then(|| display.tool_clock.epoch());
     let stamp = (
         Arc::as_ptr(tool) as usize,
         std::rc::Rc::as_ptr(&s.input_scope) as usize,
         locale(),
+        live_tick,
         display
             .search_highlight
             .as_ref()
@@ -183,8 +186,25 @@ fn render_body(
     let lang = output(tool, &mut parts);
     if is_task {
         parts[0] = task::output(tool, report);
+    } else if tool.name == "skill" && tool.status != "completed" {
+        parts = [""; 4];
     }
     let has_output = !pending && parts.iter().any(|part| !part.trim().is_empty());
+    let skill = tool.name == "skill" && tool.status == "completed" && has_output && !active;
+    let result_list =
+        (expanded && !active && tool.name == "websearch" && tool.status == "completed")
+            .then(|| search::view(s, parts[0]))
+            .flatten();
+    let rich_diff = !active && !nested && tool_diff::candidate(tool, parts[0]);
+    let wrap_key = format!("{key}-wrap");
+    let wrap = !s.transcript_display.toggled(&wrap_key);
+    let shared_wrap = expanded
+        && has_output
+        && !is_task
+        && !skill
+        && result_list.is_none()
+        && !rich_diff
+        && !matches!(tool.name.as_str(), "question" | "todowrite");
     let mut header = layout::action_row()
         .child(
             layout::button(
@@ -201,6 +221,12 @@ fn render_body(
             .expanded(expanded),
         )
         .child(text(t(status)).text_role(TextRole::Label));
+    if !is_task || tool.metadata["status"] != "running" {
+        header = super::duration::tool(s, key, tool, header);
+    }
+    if shared_wrap {
+        header = header.child(wrap_control(s, &wrap_key, wrap));
+    }
     if has_output
         || tool.name == "todowrite"
             && tool.metadata["todos"]
@@ -331,7 +357,15 @@ fn render_body(
     {
         block = block.child(patch);
     }
-    if has_output && !specialized_task {
+    if skill {
+        block = block.child(document::prose(
+            s,
+            message,
+            format!("{key}-tool_output"),
+            parts[0],
+            false,
+        ));
+    } else if has_output && !specialized_task {
         let formatted = (tool.name == "execute" && tool.status == "completed")
             .then(|| execute::formatted_output(parts[0]))
             .flatten();
@@ -349,30 +383,15 @@ fn render_body(
                     .nth(TOOL_LIMIT)
                     .is_none());
         let output_key = format!("{key}-tool_output");
-        let wrap_key = format!("{key}-wrap");
-        let wrap = !s.transcript_display.toggled(&wrap_key);
         let fallback = || {
             col()
                 .full_width()
                 .separate(Space::Sm)
-                .child(
+                .children((!shared_wrap).then(|| {
                     layout::action_row()
-                        .child(
-                            layout::button(
-                                t(if wrap {
-                                    "toolCall.diff.disableWordWrap"
-                                } else {
-                                    "toolCall.diff.enableWordWrap"
-                                }),
-                                false,
-                                screen::action(&s.input_scope, move |s| {
-                                    Display::toggle(s, &wrap_key)
-                                }),
-                            )
-                            .checked(wrap),
-                        )
-                        .child(text(lang).text_role(TextRole::Label)),
-                )
+                        .child(wrap_control(s, &wrap_key, wrap))
+                        .child(text(lang).text_role(TextRole::Label))
+                }))
                 .child(markdown::tool_pane(
                     window(
                         s,
@@ -398,19 +417,13 @@ fn render_body(
                     matches!(tool.name.as_str(), "edit" | "write"),
                 ))
         };
-        block = block.child(
-            if !active
-                && tool.name == "websearch"
-                && tool.status == "completed"
-                && let Some(results) = search::view(s, parts[0])
-            {
-                results
-            } else if !active && !nested && tool_diff::candidate(tool, parts[0]) {
-                tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
-            } else {
-                fallback()
-            },
-        );
+        block = block.child(if let Some(results) = result_list {
+            results
+        } else if rich_diff {
+            tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
+        } else {
+            fallback()
+        });
     }
     block = block.children(failure);
     if tool.name == "execute" {
@@ -419,6 +432,24 @@ fn render_body(
     block
         .children(media::tool(s, key, &tool.pictures))
         .children(diagnostics())
+}
+
+fn wrap_control(s: &State, key: &str, wrap: bool) -> El {
+    let key = key.to_owned();
+    layout::button(
+        t(if wrap {
+            "toolCall.diff.disableWordWrap"
+        } else {
+            "toolCall.diff.enableWordWrap"
+        }),
+        false,
+        screen::action(&s.input_scope, {
+            let key = key.clone();
+            move |s| Display::toggle(s, &key)
+        }),
+    )
+    .key(key)
+    .checked(wrap)
 }
 
 fn render_error(
@@ -456,3 +487,6 @@ fn render_error(
             ))
     })
 }
+
+#[cfg(test)]
+mod tests;

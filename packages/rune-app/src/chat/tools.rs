@@ -12,6 +12,7 @@ use crate::{
 pub(super) mod children;
 mod clipboard;
 mod diagnostics;
+pub(super) mod duration;
 mod edit;
 mod execute;
 mod format;

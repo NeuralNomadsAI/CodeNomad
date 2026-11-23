@@ -76,7 +76,13 @@ pub(crate) enum Fit {
     Repair,
 }
 
-pub(crate) fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
+#[cfg(test)]
+fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
+    apply_at(row, kind, data, None)
+}
+
+pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u64>) -> Fit {
+    let at = at.filter(|at| *at > 0);
     let Some(id) = data["id"]
         .as_str()
         .filter(|id| !id.is_empty() && id.len() <= 256)
@@ -109,7 +115,8 @@ pub(crate) fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
             metadata: Value::Null,
             output: String::new(),
             error: String::new(),
-            started: None,
+            started: at,
+            ended: None,
             pictures: Vec::new(),
             bytes: 0,
             output_bytes: 0,
@@ -146,6 +153,7 @@ pub(crate) fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
                 return Fit::Drop;
             }
             tool.status = "running".into();
+            tool.started = at.or(tool.started);
             tool.input = data["input"].clone();
             tool.metadata = Value::Null;
         }
