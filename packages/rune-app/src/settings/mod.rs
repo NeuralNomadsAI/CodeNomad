@@ -6,6 +6,8 @@ mod providers;
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
 #[cfg(target_arch = "wasm32")]
+mod web_contrast;
+#[cfg(target_arch = "wasm32")]
 mod web_providers;
 
 use crate::{State, strings};
@@ -22,13 +24,21 @@ pub(crate) struct Host {
     window: Option<(rune::WindowHandle, Rc<Cell<bool>>)>,
     #[cfg(target_arch = "wasm32")]
     web_providers: web_providers::Panel,
-    last_display: Option<[&'static str; 4]>,
+    #[cfg(target_arch = "wasm32")]
+    contrast: Option<web_contrast::Watch>,
+    #[cfg(target_arch = "wasm32")]
+    last_contrast: bool,
+    last_display: Option<[&'static str; 5]>,
 }
 
 pub(crate) fn poll(s: &mut State) -> bool {
     let mut shared = s.settings.shared.borrow_mut();
     if shared.main_wake.is_none() {
         shared.main_wake = Some(s.wake.clone());
+        #[cfg(target_arch = "wasm32")]
+        {
+            s.settings.contrast = web_contrast::Watch::new(s.wake.clone());
+        }
     }
     let bound = s
         .screen
@@ -94,9 +104,18 @@ pub(crate) fn poll(s: &mut State) -> bool {
         shared.mode(),
         shared.palette(false).map_or("", |p| p.id),
         shared.palette(true).map_or("", |p| p.id),
+        shared.contrast(),
     ]);
     #[cfg(target_arch = "wasm32")]
-    let changed = s.settings.web_providers.poll(&shared, &s.wake);
+    let changed = {
+        let more = s
+            .settings
+            .contrast
+            .as_ref()
+            .is_some_and(web_contrast::Watch::more);
+        let contrast_changed = std::mem::replace(&mut s.settings.last_contrast, more) != more;
+        contrast_changed | s.settings.web_providers.poll(&shared, &s.wake)
+    };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
     changed | expired | (display != std::mem::replace(&mut s.settings.last_display, display))
@@ -218,7 +237,15 @@ fn provider_transport(s: &State, online: bool) {
 
 pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<State>) -> El) -> El {
     let prefs = s.settings.shared.borrow();
-    render_with(cx, &prefs, |cx| {
+    #[cfg(target_arch = "wasm32")]
+    let more = s
+        .settings
+        .contrast
+        .as_ref()
+        .is_some_and(web_contrast::Watch::more);
+    #[cfg(not(target_arch = "wasm32"))]
+    let more = cx.system_increased_contrast();
+    render_with(cx, &prefs, more, |cx| {
         let body = view(cx);
         #[cfg(target_arch = "wasm32")]
         if let Some(panel) = web_providers::view(s, &prefs) {
@@ -233,13 +260,29 @@ pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<St
     })
 }
 
-fn render_with<S>(cx: &mut Cx<S>, prefs: &Preferences, view: impl FnOnce(&mut Cx<S>) -> El) -> El {
+fn render_with<S>(
+    cx: &mut Cx<S>,
+    prefs: &Preferences,
+    system_more: bool,
+    view: impl FnOnce(&mut Cx<S>) -> El,
+) -> El {
     let dark = prefs.dark(cx.system_dark());
     let locale = prefs.locale().unwrap_or_else(strings::locale);
     use rune_theme_codenomad::layout::Layout;
-    rune_theme_codenomad::settings::render(cx, dark, prefs.palette(dark), |cx| {
+    let more = effective_contrast(prefs.contrast(), system_more);
+    let palette = prefs.palette(dark);
+    let palette = if more {
+        rune_theme_codenomad::palettes::increased_contrast(palette, dark)
+    } else {
+        palette
+    };
+    rune_theme_codenomad::settings::render(cx, dark, palette, |cx| {
         strings::with_locale(locale, || view(cx).locale_direction(locale))
     })
+}
+
+fn effective_contrast(preference: &str, system: bool) -> bool {
+    preference == "on" || preference == "auto" && system
 }
 
 pub(crate) fn entry() -> El {

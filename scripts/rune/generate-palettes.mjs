@@ -32,14 +32,16 @@ try{
   })
   for(const palette of palettes){
     await page.emulateMedia({colorScheme:palette.appearance,reducedMotion:'no-preference'})
-    await page.evaluate(async id=>{
-      const {applyColorScheme,normalizeColorScheme}=await import('/src/lib/theme-scheme.ts')
-      applyColorScheme(normalizeColorScheme(id))
-    },palette.id)
-    const snapshot=await page.evaluate(collectTheme,names)
-    assert.deepEqual(snapshot.unresolved,[],palette.id)
-    palette.colors=snapshot.colors
-    palette.shadows=snapshot.shadows
+    for(const highContrast of [false,true]){
+      await page.evaluate(async ({id,highContrast})=>{
+        const {applyColorScheme,normalizeColorScheme}=await import('/src/lib/theme-scheme.ts')
+        applyColorScheme(normalizeColorScheme(id),{highContrast})
+      },{id:palette.id,highContrast})
+      const {colors,shadows,unresolved}=await page.evaluate(collectTheme,names)
+      assert.deepEqual(unresolved,[],palette.id)
+      if(highContrast)palette.contrast={colors,shadows}
+      else Object.assign(palette,{colors,shadows})
+    }
   }
   await generated('assets/palettes.json',palettes)
 }finally{

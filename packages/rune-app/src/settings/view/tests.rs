@@ -2,6 +2,30 @@ use super::*;
 use rune::{Env, Runtime};
 use serde_json::Value;
 
+#[test]
+fn contrast_control_changes_only_the_contrast_choice() {
+    let state = Window::default();
+    state.shared.borrow_mut().fixture();
+    state.shared.borrow_mut().backend =
+        Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.set_system_increased_contrast(true);
+    rt.frame(0.02);
+    let tree = rt.accessibility_json();
+    let group = node(&tree, "contrast-mode").unwrap();
+    let off = node(group, "segment2").unwrap();
+    let bounds = off["bounds"].as_array().unwrap();
+    let center =
+        |i: usize| (bounds[i].as_f64().unwrap() + bounds[i + 2].as_f64().unwrap() / 2.0) as f32;
+    rt.pointer_down(center(0), center(1));
+    rt.pointer_up(center(0), center(1));
+    rt.frame(0.02);
+    let prefs = rt.state.shared.borrow();
+    assert_eq!(prefs.contrast(), "off");
+    assert_eq!(prefs.mode_display(), "system");
+    assert!(!super::super::effective_contrast(prefs.contrast(), true));
+}
+
 fn node<'a>(tree: &'a Value, key: &str) -> Option<&'a Value> {
     if tree["key"] == key {
         return Some(tree);

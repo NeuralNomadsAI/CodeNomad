@@ -1,5 +1,41 @@
 use super::*;
 mod providers;
+
+#[test]
+fn contrast_applies_immediately_and_reconciles_an_unconfirmed_write() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        assert_eq!(prefs.contrast(), "auto");
+        prefs.set_contrast("on");
+        assert_eq!(prefs.contrast(), "on");
+        prefs.poll();
+        let write = request(&listener).await;
+        assert_eq!(write.first, "PATCH /api/storage/config/ui HTTP/1.1");
+        assert_eq!(write.body, json!({"settings":{"highContrast":"on"}}));
+        write.reply(503, json!({})).await;
+        let read = request(&listener).await;
+        assert!(
+            read.first
+                .starts_with("GET /api/storage/config/ui?authoritative=1 ")
+        );
+        read.reply(
+            200,
+            json!({"settings":{"locale":"en","highContrast":"off"}}),
+        )
+        .await;
+        wait_until(|| prefs.poll()).await;
+        assert_eq!(prefs.contrast(), "off");
+        assert_eq!(
+            prefs.error(),
+            Some("settings.appearance.contrast.saveError")
+        );
+        assert!(
+            timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+}
 use codenomad_client::bounded;
 use std::time::Duration;
 use tokio::{

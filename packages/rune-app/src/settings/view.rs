@@ -25,6 +25,7 @@ pub(super) struct Window {
     token: Option<Rc<Cell<bool>>>,
     picker: Cell<Option<Picker>>,
     palette_choice: Cell<Option<&'static palettes::Palette>>,
+    contrast_help: bool,
     seen_revision: u64,
     section: Section,
     pub(super) opencode: opencode::Status,
@@ -176,8 +177,9 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     }
     let prefs = s.shared.borrow();
     let system_dark = cx.system_dark();
+    let system_more = cx.system_increased_contrast();
     s.close_palette_on_slot_change(prefs.dark(system_dark));
-    render_with(cx, &prefs, |_| {
+    render_with(cx, &prefs, system_more, |_| {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
         let providers_label = t("settings.nav.providers");
@@ -208,6 +210,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             ],
             |s: &mut Window, key| {
                 s.picker.set(None);
+                s.contrast_help = false;
                 s.section = match key {
                     "settings-opencode" => Section::OpenCode,
                     "settings-providers" => Section::Providers,
@@ -244,7 +247,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             Section::OpenCode => ("opencode", opencode::view(s)),
             Section::General => (
                 "general",
-                general::view(s, &prefs, system_dark, &mut layers),
+                general::view(s, &prefs, system_dark, system_more, &mut layers),
             ),
             Section::Providers => (
                 "providers",

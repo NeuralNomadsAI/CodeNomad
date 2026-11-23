@@ -8,34 +8,56 @@ pub struct Palette {
     pub id: &'static str,
     pub label: &'static str,
     pub dark: bool,
+    high_contrast: bool,
     source: &'static Value,
     theme: OnceLock<Theme>,
     pub(crate) kit: OnceLock<Kit>,
     pub(crate) field: OnceLock<Kit>,
 }
 impl Palette {
+    fn source(&self) -> &'static Value {
+        if self.high_contrast {
+            &self.source["contrast"]
+        } else {
+            self.source
+        }
+    }
+
     pub(crate) fn theme(&self) -> &Theme {
         self.theme.get_or_init(|| {
             let mode = if self.dark { "dark" } else { "light" };
             let document = serde_json::json!({
                 "name": self.id, "blend": crate::document()["blend"],
-                (mode): self.source["colors"],
+                (mode): self.source()["colors"],
             });
             Theme::from_value(&document, self.dark).expect("generated palette tokens")
         })
     }
 
     pub(crate) fn shadow(&self, name: &str) -> &'static str {
-        self.source["shadows"][name]
+        self.source()["shadows"][name]
             .as_str()
             .expect("generated palette shadow")
     }
 }
 
 pub fn built_in() -> &'static [Palette] {
+    variants(false)
+}
+
+pub fn increased_contrast(palette: Option<&Palette>, dark: bool) -> Option<&'static Palette> {
+    let id = palette.map_or(if dark { "classic" } else { "light" }, |palette| palette.id);
+    variants(true)
+        .iter()
+        .find(|variant| variant.id == id && variant.dark == dark)
+}
+
+fn variants(high_contrast: bool) -> &'static [Palette] {
     static SOURCE: OnceLock<Vec<Value>> = OnceLock::new();
     static PALETTES: OnceLock<Vec<Palette>> = OnceLock::new();
-    PALETTES.get_or_init(|| {
+    static CONTRAST: OnceLock<Vec<Palette>> = OnceLock::new();
+    let cache = if high_contrast { &CONTRAST } else { &PALETTES };
+    cache.get_or_init(|| {
         SOURCE
             .get_or_init(|| {
                 serde_json::from_str(include_str!("../assets/palettes.json"))
@@ -48,6 +70,7 @@ pub fn built_in() -> &'static [Palette] {
                     .as_str()
                     .expect("generated palette label"),
                 dark: source["appearance"] == "dark",
+                high_contrast,
                 source,
                 theme: OnceLock::new(),
                 kit: OnceLock::new(),
@@ -55,6 +78,19 @@ pub fn built_in() -> &'static [Palette] {
             })
             .collect()
     })
+}
+
+#[cfg(test)]
+#[test]
+fn high_contrast_changes_default_surfaces_without_flipping_filled_ink() {
+    for palette in built_in() {
+        let contrast = increased_contrast(Some(palette), palette.dark).unwrap();
+        assert_ne!(palette.source()["colors"], contrast.source()["colors"]);
+        assert_eq!(
+            palette.source()["colors"]["text-on-accent"],
+            contrast.source()["colors"]["text-on-accent"]
+        );
+    }
 }
 
 thread_local! { static ACTIVE: Cell<Option<&'static Palette>> = const { Cell::new(None) }; }

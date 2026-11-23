@@ -275,13 +275,40 @@ pub fn setting_row(label: &str, control: El) -> El {
         .child(control)
 }
 
-pub fn color_scheme(title: &str, mode: &str, segments: El, picker: El) -> El {
+pub fn color_scheme(title: &str, mode: &str, segments: El, contrast: El, picker: El) -> El {
     col()
         .full_width()
         .separate(Space::Sm)
         .child(text(title).role("heading").text_role(TextRole::Button))
-        .child(layout::action_row().child(text(mode)).child(segments))
+        .child(
+            layout::action_row()
+                .child(text(mode))
+                .child(segments)
+                .child(contrast),
+        )
         .child(picker)
+}
+
+pub fn contrast_controls<S: 'static>(
+    label: &str,
+    help: &str,
+    help_open: bool,
+    controls: El,
+    toggle: impl Fn(&mut S) + 'static,
+) -> El {
+    row()
+        .flex_wrap()
+        .center_y()
+        .separate(Space::Xs)
+        .child(text(label))
+        .child(
+            layout::button("ⓘ", false, toggle)
+                .key("contrast-info")
+                .label(label)
+                .help(help)
+                .help_open(help_open),
+        )
+        .child(controls)
 }
 
 pub fn disclosure<S: 'static>(

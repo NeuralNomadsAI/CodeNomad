@@ -184,6 +184,8 @@ impl Preferences {
     pub fn error(&self) -> Option<&'static str> {
         if self.authentication_required {
             Some("rune.connect_error")
+        } else if self.contrast_failed() {
+            Some("settings.appearance.contrast.saveError")
         } else if self.config.write_failed() || self.state.write_failed() {
             Some("settings.preferenceSaveFailed")
         } else if self.config.read_failed() || self.state.read_failed() {
@@ -229,6 +231,37 @@ impl Preferences {
     pub fn locale(&self) -> Option<&'static str> {
         let id = self.saved(Owner::Config)?["settings"]["locale"].as_str()?;
         Some(rune_theme_codenomad::catalogue::canonical_locale(id))
+    }
+
+    pub fn contrast(&self) -> &'static str {
+        let confirmed = self
+            .saved(Owner::Config)
+            .and_then(|doc| doc["settings"]["highContrast"].as_str());
+        let proposed = (!self.contrast_failed())
+            .then(|| self.config.requested(Choice::Contrast))
+            .flatten();
+        match proposed.or(confirmed) {
+            Some("on") => "on",
+            Some("off") => "off",
+            _ => "auto",
+        }
+    }
+
+    pub(super) fn contrast_failed(&self) -> bool {
+        self.config.choice_failed(Choice::Contrast)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn set_contrast(&mut self, contrast: &'static str) {
+        if self.locale_ready()
+            && self.can_retry()
+            && (contrast != self.contrast() || self.contrast_failed())
+        {
+            self.config.stage(Choice::Contrast, contrast);
+            if let Some(wake) = &self.main_wake {
+                wake();
+            }
+        }
     }
 
     pub fn locale_display(&self) -> Option<&'static str> {
