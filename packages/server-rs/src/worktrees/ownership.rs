@@ -19,6 +19,54 @@ pub struct Owned {
     pub checkout: PathBuf,
 }
 
+pub(crate) struct DirectoryProof {
+    tree: Option<super::inventory::Tree>,
+    source: Option<super::inventory::Tree>,
+}
+
+impl DirectoryProof {
+    pub(crate) fn live(&self, physical: &Path) -> bool {
+        let no_nested_git = |path: &Path, root: &Path| {
+            path.starts_with(root)
+                && path.ancestors().take_while(|ancestor| *ancestor != root).all(|ancestor| {
+                    std::fs::symlink_metadata(ancestor.join(".git"))
+                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+                })
+        };
+        self.source
+            .as_ref()
+            .is_none_or(|source| source.contains_live(&source.path) && no_nested_git(&source.path, source.registered()))
+            && self.tree.as_ref().is_none_or(|tree| {
+                tree.contains_live(physical) && (self.source.is_none() || no_nested_git(physical, tree.registered()))
+            })
+    }
+}
+
+/// Capture the checkout that authorizes an existing folder, for a final
+/// synchronous check alongside the folder's own identity.
+pub(crate) async fn capture_directory(app: &App, workspace: &Workspace, physical: &Path) -> Option<DirectoryProof> {
+    if !physical.starts_with(&app.scope) {
+        return None;
+    }
+    let external = !physical.starts_with(&workspace.path);
+    if physical == workspace.path || !external && matches!(super::root_only(workspace).await, Ok(Some(true))) {
+        return Some(DirectoryProof { tree: None, source: None });
+    }
+    if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
+        return None;
+    }
+    let catalogue = super::linked::catalogue(app, workspace, false).await.ok()?;
+    let root = catalogue.get("root").ok()?.clone();
+    let tree = catalogue
+        .trees
+        .into_iter()
+        .filter(|tree| tree.contains_live(physical))
+        .max_by_key(|tree| tree.path.as_os_str().len())?;
+    let source = (external || tree.registered() != root.registered()).then_some(root);
+    let proof = DirectoryProof { tree: Some(tree), source };
+    proof.live(physical).then_some(proof)
+}
+
 /// `resolveDirectoryPath`: the real path, or the real nearest ancestor joined with the
 /// missing components; `None` when an existing entry cannot be resolved.
 pub fn resolve_directory(directory: &str) -> Option<PathBuf> {
