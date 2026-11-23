@@ -46,6 +46,10 @@ export interface RecordTextRevealTarget {
 // so a block remounted by virtualization, a re-render or a session switch keeps its reveal.
 const [revealedText, setRevealedText] = createStore<Record<string, number>>({})
 
+// Search navigation reveals a part's bounded text wholesale: a match can land
+// anywhere in the native text, beyond every section window. One step per part.
+const [searchRevealedParts, setSearchRevealedParts] = createStore<Record<string, number>>({})
+
 function makeCacheKey(instanceId: string, messageId: string) {
   return `${instanceId}:${messageId}`
 }
@@ -66,6 +70,21 @@ export function getRevealedRecordText(target: RecordTextRevealTarget): number {
 
 export function revealHiddenRecordText(target: RecordTextRevealTarget) {
   setRevealedText(makeTextRevealKey(target), (current) => (current ?? 0) + 1)
+}
+
+function makePartRevealKey(instanceId: string, messageId: string, partId: string) {
+  return `${makeCacheKey(instanceId, messageId)}:${partId}`
+}
+
+/** Reveals every text window of one part for search navigation; idempotent. */
+export function markRecordPartSearchRevealed(instanceId: string, messageId: string, partId: string) {
+  const key = makePartRevealKey(instanceId, messageId, partId)
+  setSearchRevealedParts(key, (current) => Math.max(current ?? 0, 1))
+}
+
+/** Tracked read of the search-reveal steps applying to every section of a part. */
+export function getRecordPartSearchReveal(instanceId: string, messageId: string, partId: string): number {
+  return searchRevealedParts[makePartRevealKey(instanceId, messageId, partId)] ?? 0
 }
 
 /** Tracked read; caches derived from the display window must key on it. */
@@ -159,6 +178,7 @@ export function clearRecordDisplayCacheForInstance(instanceId: string) {
   })
   setRevealedParts(forget)
   setRevealedText(forget)
+  setSearchRevealedParts(forget)
 }
 
 export function clearRecordDisplayCacheForMessages(instanceId: string, messageIds: Iterable<string>) {
