@@ -17,6 +17,7 @@ use rune_theme_codenomad::{
 };
 use serde_json::Value;
 use std::{io, sync::Arc};
+mod execute;
 
 fn string<'a>(value: &'a Value, keys: &[&str]) -> &'a str {
     keys.iter()
@@ -53,11 +54,14 @@ fn single_diff(tool: &Tool) -> Option<&Value> {
 }
 
 fn input_json(value: &Value) -> Option<String> {
-    #[derive(Default)]
-    struct Limited(Vec<u8>);
+    bounded_json(value, TOOL_LIMIT)
+}
+
+fn bounded_json(value: &Value, limit: usize) -> Option<String> {
+    struct Limited(Vec<u8>, usize);
     impl io::Write for Limited {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            if bytes.len() > TOOL_LIMIT.saturating_sub(self.0.len()) {
+            if bytes.len() > self.1.saturating_sub(self.0.len()) {
                 return Err(io::ErrorKind::FileTooLarge.into());
             }
             self.0.extend_from_slice(bytes);
@@ -67,7 +71,7 @@ fn input_json(value: &Value) -> Option<String> {
             Ok(())
         }
     }
-    let mut out = Limited::default();
+    let mut out = Limited(Vec::new(), limit);
     serde_json::to_writer_pretty(&mut out, value).ok()?;
     String::from_utf8(out.0).ok()
 }
@@ -198,6 +202,9 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'static str {
 
 pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
     let key = tool_key(message, &tool.id);
+    if tool.name == "execute" {
+        return render(s, message, tool, &key).key(key);
+    }
     if tool.name == "edit" {
         let mut parts = [""; 4];
         output(tool, &mut parts);
@@ -229,7 +236,11 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         "pending" | "streaming" => "toolCall.status.pending",
         _ => "toolCall.status.unknown",
     };
-    let title = title(tool);
+    let title = if tool.name == "execute" {
+        execute::title(tool)
+    } else {
+        title(tool)
+    };
     let toggle = message.to_owned();
     let owner = tool.clone();
     let mut parts = [""; 4];
@@ -264,7 +275,12 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     if pending && tool.input.as_str().is_none_or(str::is_empty) {
         return block.child(text(t("toolCall.pending.waitingToRun")));
     }
-    if !tool.input.is_null() {
+    let execute_details = (tool.name == "execute")
+        .then(|| execute::view(s, key, tool))
+        .flatten();
+    if let Some(details) = execute_details {
+        block = block.child(details);
+    } else if !tool.input.is_null() {
         let input_key = format!("{key}-tool_input");
         let show = s.transcript_display.toggled(&input_key);
         let toggle = input_key.clone();
@@ -306,6 +322,14 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         lang
     };
     if has_output {
+        let formatted = (tool.name == "execute" && tool.status == "completed")
+            .then(|| execute::formatted_output(parts[0]))
+            .flatten();
+        let (parts, lang) = if let Some(formatted) = formatted.as_deref() {
+            ([formatted, "", "", ""], "json")
+        } else {
+            (parts, lang)
+        };
         let terminal = shell(tool) && parts.iter().any(|text| ansi::present(text));
         let highlight = tool.status != "running"
             && (lang != "diff"
@@ -382,6 +406,9 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                 ),
                 false,
             ));
+    }
+    if tool.name == "execute" {
+        block = block.children(execute::notice(tool));
     }
     block
 }
