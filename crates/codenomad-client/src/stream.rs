@@ -437,9 +437,11 @@ fn session_attention(event: &Value, session: &str) -> Option<WorkspaceEvent> {
         "session.execution.interrupted" if event["data"]["reason"] == "inactivity" => {
             Some(event["id"].as_str()?)
         }
-        "session.execution.started" | "session.step.started" | "session.execution.interrupted" => {
-            None
-        }
+        "session.execution.started"
+        | "session.step.started"
+        | "session.execution.interrupted"
+        | "session.retry.scheduled"
+        | "session.compaction.started" => None,
         _ => return None,
     };
     if notice.is_some_and(|id| !crate::history::valid_id(id)) {
@@ -471,6 +473,8 @@ fn terminal_notifications_include_failures_but_exclude_manual_stops_and_shutdown
         ),
         ("session.execution.interrupted", "manual", None),
         ("session.execution.interrupted", "shutdown", None),
+        ("session.retry.scheduled", "", None),
+        ("session.compaction.started", "", None),
         ("session.execution.failed", "", Some("terminal")),
         ("session.execution.started", "", None),
     ] {

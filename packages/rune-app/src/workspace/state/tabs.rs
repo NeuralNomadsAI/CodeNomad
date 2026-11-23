@@ -107,6 +107,11 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
     tx.instant();
 }
 pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
+    s.notifications.supersede_navigation();
+    select_destination(s, id, tx);
+}
+
+pub(super) fn select_destination(s: &mut State, id: &str, tx: &mut Tx) {
     let Some(index) = s
         .workspace
         .as_ref()
@@ -140,6 +145,7 @@ pub fn new_tab(s: &mut State, tx: &mut Tx) {
     if !can_new(s) {
         return;
     }
+    s.notifications.supersede_navigation();
     stash(s);
     if let Some(ui) = &mut s.workspace {
         ui.entries

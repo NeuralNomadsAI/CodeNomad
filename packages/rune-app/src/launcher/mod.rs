@@ -29,6 +29,7 @@ use rune::{Tx, edit::TextEdit};
 use sessions::attach;
 #[cfg(feature = "test-support")]
 pub use sessions::back;
+pub(crate) use sessions::choose_destination;
 use sessions::{bind, dismiss_origin_panel, retire_session};
 pub use sessions::{can_change_session, can_visit, choose, create, list, visit};
 use std::{collections::HashSet, future::Future};
@@ -219,7 +220,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 crate::workspace::renew_connection(s);
                 if let Some(id) = selected {
                     s.show_chat();
-                    choose(s, id, tx);
+                    choose_destination(s, id, tx);
                 } else {
                     crate::git::project_opened(s);
                     crate::workspace::restore_files_mode(s);

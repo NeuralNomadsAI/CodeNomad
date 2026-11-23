@@ -12,8 +12,8 @@ pub(crate) use state::evict_for_probe;
 #[cfg(target_os = "windows")]
 pub(crate) use state::native_window_store;
 pub(crate) use state::{
-    Activation, check_notification, notification_target, observes_notification, open_notification,
-    owns_notification, workspace_notification,
+    Activation, can_switch_for_notification, check_notification, notification_target,
+    observes_notification, open_notification, owns_notification, workspace_notification,
 };
 pub(crate) use state::{
     Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,

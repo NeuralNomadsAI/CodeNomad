@@ -9,8 +9,8 @@ mod strip;
 
 pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
 pub(crate) use notification::{
-    Activation, check_notification, notification_target, observes_notification, open_notification,
-    owns_notification, workspace_notification,
+    Activation, can_switch_for_notification, check_notification, notification_target,
+    observes_notification, open_notification, owns_notification, workspace_notification,
 };
 pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, set_files_tab,

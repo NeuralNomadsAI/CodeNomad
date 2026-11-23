@@ -66,11 +66,31 @@ fn a_recorded_notification_click_returns_to_its_own_project_and_conversation_onc
             "GET /workspaces/workspace-first/instance/api/session/session-first HTTP/"
         ));
         rt.update(|s, tx| {
-            s.screen.launcher_mut().unwrap().pending = false;
             assert!(!crate::shell::notifications::poll(s, tx));
             assert_eq!(active_session(s), Some("session-second"));
         });
         session
+            .reply(
+                200,
+                json!({"data":{"id":"session-first","location":{"directory":"/fixture"}}}),
+            )
+            .await;
+        wait(events.recv()).await.unwrap();
+        rt.update(|s, tx| {
+            assert!(!crate::shell::notifications::poll(s, tx));
+            s.screen.launcher_mut().unwrap().pending = false;
+            assert!(!crate::shell::notifications::poll(s, tx));
+            assert_eq!(active_session(s), Some("session-second"));
+        });
+        http.accept()
+            .await
+            .reply(
+                200,
+                json!([{"id":"workspace-first","location":{"directory":"/fixture"}}]),
+            )
+            .await;
+        http.accept()
+            .await
             .reply(
                 200,
                 json!({"data":{"id":"session-first","location":{"directory":"/fixture"}}}),

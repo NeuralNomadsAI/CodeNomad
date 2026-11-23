@@ -220,6 +220,15 @@ pub(crate) enum Activation {
     Gone,
 }
 
+pub(crate) fn can_switch_for_notification(s: &State, target: &Target) -> bool {
+    target.tab.as_deref().is_none_or(|tab| {
+        s.workspace
+            .as_ref()
+            .is_some_and(|ui| ui.active_key() == tab)
+            || !super::busy(s)
+    })
+}
+
 pub(crate) fn open_notification(
     s: &mut State,
     target: &Target,
@@ -230,7 +239,7 @@ pub(crate) fn open_notification(
         return Activation::Gone;
     }
     if let Some(tab) = &target.tab {
-        super::select(s, tab, tx);
+        super::tabs::select_destination(s, tab, tx);
         if !s
             .workspace
             .as_ref()
@@ -239,7 +248,9 @@ pub(crate) fn open_notification(
             return Activation::Wait;
         }
     }
-    if target.tab.is_some() && super::active_session(s) != Some(&target.session) {
+    if target.tab.is_some()
+        && (s.screen.is_launcher() || super::active_session(s) != Some(&target.session))
+    {
         let Some(launcher) = s.screen.launcher() else {
             return Activation::Gone;
         };
@@ -249,10 +260,10 @@ pub(crate) fn open_notification(
         if launcher.connection.is_none() || launcher.project.is_none() {
             return Activation::Wait;
         }
-        if *started && launcher.error.is_some() {
+        if launcher.error.is_some() && (*started || s.screen.is_launcher()) {
             return Activation::Gone;
         }
-        crate::launcher::choose(s, target.session.clone(), tx);
+        crate::launcher::choose_destination(s, target.session.clone(), tx);
         *started = true;
         return Activation::Wait;
     }
@@ -268,7 +279,7 @@ pub(crate) fn open_notification(
     }
     crate::chat::reading::restore_position(s, tx);
     if target.tab.is_some() {
-        crate::launcher::choose(s, target.session.clone(), tx);
+        crate::launcher::choose_destination(s, target.session.clone(), tx);
     }
     tx.instant();
     Activation::Opened

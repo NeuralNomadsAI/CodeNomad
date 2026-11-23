@@ -55,9 +55,7 @@ impl Cue {
     }
 
     fn same_event(&self, other: &Self) -> bool {
-        self.target.same_event_scope(&other.target)
-            && self.category == other.category
-            && self.id == other.id
+        self.target == other.target && self.category == other.category && self.id == other.id
     }
 }
 
@@ -148,7 +146,10 @@ pub(super) fn poll(s: &mut State) {
         )
     };
     for (cue, reply) in std::mem::take(&mut pending.reading) {
-        if !cue.current(s) {
+        if !cue.current(s)
+            || s.notifications
+                .already_delivered(&cue.target, cue.category, &cue.id)
+        {
             continue;
         }
         match reply.try_recv() {
@@ -179,7 +180,10 @@ pub(super) fn poll(s: &mut State) {
         let Some(cue) = pending.waiting.pop_front() else {
             break;
         };
-        if !cue.current(s) {
+        if !cue.current(s)
+            || s.notifications
+                .already_delivered(&cue.target, cue.category, &cue.id)
+        {
             continue;
         }
         match policy(s, &cue) {

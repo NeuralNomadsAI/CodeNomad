@@ -173,6 +173,11 @@ pub fn create(s: &mut State, _: &mut Tx) {
     });
 }
 pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
+    s.notifications.supersede_navigation();
+    choose_destination(s, id, tx);
+}
+
+pub(crate) fn choose_destination(s: &mut State, id: String, tx: &mut Tx) {
     if !s.screen.is_launcher()
         && crate::workspace::active_session(s) == Some(id.as_str())
         && s.phase != Phase::Failed
@@ -248,6 +253,7 @@ pub fn visit(s: &mut State, back: bool) {
         .steps(back, shown(s))
         .map(|(step, id)| (id.into(), Some(step)))
         .collect();
+    s.notifications.supersede_navigation();
     choose_from(s, candidates, None);
 }
 fn shown(s: &State) -> Option<&str> {

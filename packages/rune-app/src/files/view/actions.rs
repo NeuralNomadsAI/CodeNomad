@@ -138,12 +138,15 @@ pub(super) fn row(s: &State, ui: &Ui, row: &Row, width: f32, touch: bool) -> (El
                 if !has_session(s) {
                     return;
                 }
-                match s
+                let opened = s
                     .files
                     .as_mut()
                     .filter(|ui| owns(ui, &directory, &path))
-                    .and_then(|ui| ui.toggle_preview(&directory, &path))
-                {
+                    .and_then(|ui| ui.toggle_preview(&directory, &path));
+                if opened.is_some() {
+                    s.notifications.supersede_navigation();
+                }
+                match opened {
                     Some(true) => {
                         #[cfg(target_arch = "wasm32")]
                         super::refresh_browser_file_wrap(s);

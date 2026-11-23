@@ -151,8 +151,9 @@ pub(crate) struct Host {
     delivered: VecDeque<(Target, Category, String)>,
     deferred: VecDeque<Notice>,
     background_attention: background::Background,
-    activation: Option<(Target, std::rc::Rc<()>, bool)>,
-    click_check: Option<(Target, std::rc::Rc<()>, codenomad_client::Receiver<bool>)>,
+    activation: Option<(Target, bool)>,
+    click_check: Option<(Target, codenomad_client::Receiver<bool>)>,
+    click_wait: Option<Target>,
     next_id: u64,
     clicks: codenomad_client::Receiver<u64>,
     send_click: codenomad_client::Sender<u64>,
@@ -194,6 +195,7 @@ impl Default for Host {
             background_attention: Default::default(),
             activation: None,
             click_check: None,
+            click_wait: None,
             next_id: 0,
             clicks,
             send_click,
@@ -224,6 +226,20 @@ pub(crate) fn native_delivery() -> Option<crate::platform::notifications::Delive
 }
 
 impl Host {
+    pub(crate) fn supersede_navigation(&mut self) {
+        self.activation = None;
+        self.click_check = None;
+        self.click_wait = None;
+        while let Ok(id) = self.clicks.try_recv() {
+            self.routes.retain(|(entry, _, _)| *entry != id);
+        }
+    }
+
+    fn already_delivered(&self, target: &Target, category: Category, id: &str) -> bool {
+        self.delivered.iter().any(|(owner, event, seen)| {
+            owner.same_event_scope(target) && *event == category && seen == id
+        })
+    }
     pub(crate) fn forget_tab(&mut self, tab: &str) {
         let keeps = |target: &Target| target.tab.as_deref() != Some(tab);
         self.routes.retain(|(_, target, _)| keeps(target));
@@ -374,9 +390,7 @@ fn deliver(s: &mut State, notice: Notice) {
         label,
     } = &notice;
     let shelf = &s.notifications;
-    if shelf.delivered.iter().any(|(owner, event, seen)| {
-        owner.same_event_scope(target) && event == category && seen == id
-    }) {
+    if shelf.already_delivered(target, *category, id) {
         return;
     }
     let body =
@@ -421,18 +435,14 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if s.notifications.routes.is_empty()
         && s.notifications.activation.is_none()
         && s.notifications.click_check.is_none()
+        && s.notifications.click_wait.is_none()
     {
         return false;
     }
     let mut routes = std::mem::take(&mut s.notifications.routes);
     routes.retain(|(_, target, _)| crate::workspace::owns_notification(s, target));
     s.notifications.routes = routes;
-    let mut target = s
-        .notifications
-        .activation
-        .take()
-        .filter(|(_, scope, _)| s.current_scope(scope))
-        .map(|(target, _, started)| (target, started));
+    let mut target = s.notifications.activation.take();
     while let Ok(id) = s.notifications.clicks.try_recv() {
         let Some(index) = s
             .notifications
@@ -445,20 +455,31 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         let (_, clicked, presented) = s.notifications.routes.remove(index).unwrap();
         drop(presented);
         target = None;
-        s.notifications.click_check = crate::workspace::check_notification(s, &clicked)
-            .map(|check| (clicked, s.input_scope.clone(), check));
+        s.notifications.click_wait = None;
+        s.notifications.click_check =
+            crate::workspace::check_notification(s, &clicked).map(|check| (clicked, check));
     }
-    if let Some((clicked, scope, check)) = s.notifications.click_check.take()
-        && s.current_scope(&scope)
+    if let Some(waiting) = s.notifications.click_wait.take()
+        && crate::workspace::owns_notification(s, &waiting)
+    {
+        if crate::workspace::can_switch_for_notification(s, &waiting) {
+            s.notifications.click_check =
+                crate::workspace::check_notification(s, &waiting).map(|check| (waiting, check));
+        } else {
+            s.notifications.click_wait = Some(waiting);
+        }
+    }
+    if let Some((clicked, check)) = s.notifications.click_check.take()
         && crate::workspace::owns_notification(s, &clicked)
     {
         match check.try_recv() {
-            Ok(true) => {
+            Ok(true) if crate::workspace::can_switch_for_notification(s, &clicked) => {
                 s.notifications.focus();
                 target = Some((clicked, false));
             }
+            Ok(true) => s.notifications.click_wait = Some(clicked),
             Err(codenomad_client::TryRecvError::Empty) => {
-                s.notifications.click_check = Some((clicked, scope, check))
+                s.notifications.click_check = Some((clicked, check))
             }
             _ => {}
         }
@@ -469,7 +490,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let before = s.workspace.as_ref().map(|ui| ui.active_key().to_owned());
     match crate::workspace::open_notification(s, &target, &mut started, tx) {
         Activation::Wait => {
-            s.notifications.activation = Some((target, s.input_scope.clone(), started));
+            s.notifications.activation = Some((target, started));
             before.as_deref() != s.workspace.as_ref().map(|ui| ui.active_key())
         }
         Activation::Opened => true,
