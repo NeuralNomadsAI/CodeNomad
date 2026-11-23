@@ -1,0 +1,497 @@
+use super::*;
+
+fn closed(session: &str, text: &str) -> Workspace {
+    let mut w = workspace(session, text);
+    w.backend_id = Some("external".into());
+    w.server_id = Some("trial-server".into());
+    w
+}
+
+fn reopen(s: &mut State) {
+    s.workspace.as_mut().unwrap().entries[0] = entry("tab-0".into(), Tab::Blank);
+    opened(
+        s,
+        &Project {
+            id: "reopened".into(),
+            path: "/fixture".into(),
+        },
+    );
+}
+
+#[test]
+fn closed_occurrences_merge_each_session_with_latest_clear_authority() {
+    let mut s = draft_state();
+    s.workspace.as_mut().unwrap().closed = vec![
+        closed("alpha", "Alpha"),
+        closed("beta", "Beta"),
+        closed("alpha", ""),
+    ];
+    reopen(&mut s);
+    assert_eq!(bound(&mut s, &backend("alpha")), "");
+    s.draft = TextEdit::new(bound(&mut s, &backend("beta")));
+    assert_eq!(s.draft.text, "Beta");
+    assert!(
+        s.workspace.as_ref().unwrap().entries[0]
+            .cleared
+            .contains("alpha")
+    );
+    let mut rt = runtime(s);
+    rt.update(|s, tx| close(s, "tab-0", tx));
+    opened(
+        &mut rt.state,
+        &Project {
+            id: "successor".into(),
+            path: "/fixture".into(),
+        },
+    );
+    assert_eq!(bound(&mut rt.state, &backend("alpha")), "");
+    assert_eq!(bound(&mut rt.state, &backend("beta")), "Beta");
+}
+
+#[test]
+fn clearing_or_sending_an_inherited_draft_retires_older_closed_text() {
+    for clear in [true, false] {
+        let mut s = draft_state();
+        s.workspace.as_mut().unwrap().closed =
+            vec![closed("alpha", "Old Alpha"), closed("beta", "Beta")];
+        reopen(&mut s);
+        s.draft = TextEdit::new(bound(&mut s, &backend("alpha")));
+        assert_eq!(s.draft.text, "Old Alpha");
+        if clear {
+            s.draft = TextEdit::new("");
+            capture(&mut s);
+        } else {
+            let (commands, input) = bounded(1);
+            s.commands = Some(commands);
+            s.phase = Phase::Ready;
+            let mut rt = runtime(s);
+            rt.update(crate::send);
+            assert!(
+                matches!(input.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "Old Alpha")
+            );
+            s = rt.state;
+        }
+        s.phase = Phase::Ready;
+        let mut rt = runtime(s);
+        rt.update(|s, tx| close(s, "tab-0", tx));
+        opened(
+            &mut rt.state,
+            &Project {
+                id: "successor".into(),
+                path: "/fixture".into(),
+            },
+        );
+        assert_eq!(bound(&mut rt.state, &backend("alpha")), "");
+        assert_eq!(bound(&mut rt.state, &backend("beta")), "Beta");
+    }
+}
+
+#[test]
+fn closed_drafts_cannot_cross_backend_installation_or_folder() {
+    let mut s = draft_state();
+    let mut wrong_server = closed("server", "foreign");
+    wrong_server.server_id = Some("another-server".into());
+    let mut wrong_backend = closed("backend", "foreign");
+    wrong_backend.backend_id = None;
+    wrong_backend.server_id = None;
+    let mut wrong_folder = closed("folder", "foreign");
+    wrong_folder.folder = "/other".into();
+    s.workspace.as_mut().unwrap().closed = vec![
+        wrong_server,
+        wrong_backend,
+        wrong_folder,
+        closed("owned", "Own"),
+    ];
+    reopen(&mut s);
+    for id in ["server", "backend", "folder"] {
+        assert_eq!(bound(&mut s, &backend(id)), "");
+    }
+    assert_eq!(bound(&mut s, &backend("owned")), "Own");
+}
+
+#[test]
+fn snapshot_preserves_needed_clear_authority_and_untouched_sibling_absence() {
+    for mode in ["untouched", "cleared", "sent"] {
+        let cleared = mode != "untouched";
+        let mut s = draft_state();
+        let ui = s.workspace.as_mut().unwrap();
+        ui.entries = vec![
+            entry("tab-0".into(), Tab::Workspace(closed("alpha", "Old Alpha"))),
+            entry(
+                "tab-1".into(),
+                Tab::Workspace(closed("alpha", if cleared { "Old Alpha" } else { "" })),
+            ),
+        ];
+        // A never-edited empty occurrence has no clear authority.
+        if !cleared {
+            ui.entries[1].cleared.clear();
+        }
+        ui.active = 1;
+        ui.entries[1].binding = Some(backend("alpha"));
+        if mode == "sent" {
+            s.draft = TextEdit::new("Old Alpha");
+            let (commands, input) = bounded(1);
+            s.commands = Some(commands);
+            s.phase = Phase::Ready;
+            let mut rt = runtime(s);
+            rt.update(crate::send);
+            assert!(
+                matches!(input.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "Old Alpha")
+            );
+            s = rt.state;
+        } else {
+            s.draft = TextEdit::new("");
+            capture(&mut s);
+        }
+        let before = s.workspace.as_ref().unwrap().snapshot();
+        let Tab::Workspace(b) = &before.tabs[1] else {
+            panic!()
+        };
+        assert_eq!(b.drafts.get("alpha"), cleared.then_some(&String::new()));
+        let bytes = crate::workspace::encode(&before).unwrap();
+        let mut restored = Ui::new();
+        restored.hydrate(crate::workspace::decode(&bytes).unwrap());
+        restored.ready = true;
+        s.workspace = Some(restored);
+        let mut rt = runtime(s);
+        rt.update(|s, tx| close(s, "tab-0", tx));
+        rt.update(|s, tx| close(s, "tab-1", tx));
+        opened(
+            &mut rt.state,
+            &Project {
+                id: "successor".into(),
+                path: "/fixture".into(),
+            },
+        );
+        assert_eq!(
+            bound(&mut rt.state, &backend("alpha")),
+            if cleared { "" } else { "Old Alpha" }
+        );
+    }
+}
+
+#[test]
+fn delivered_bundles_follow_live_edits_and_sends_without_retiring_other_sessions() {
+    for mode in ["cleared", "sent", "edited"] {
+        for restart in [false, true] {
+            let mut s = draft_state();
+            s.workspace.as_mut().unwrap().closed =
+                vec![closed("alpha", "Old Alpha"), closed("beta", "Beta")];
+            reopen(&mut s);
+            s.draft = TextEdit::new(bound(&mut s, &backend("alpha")));
+            assert_eq!(s.draft.text, "Old Alpha");
+            let mut rt = runtime(s);
+            if mode == "sent" {
+                let (commands, input) = bounded(1);
+                rt.state.commands = Some(commands);
+                rt.state.phase = Phase::Ready;
+                rt.update(crate::send);
+                assert!(
+                    matches!(input.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "Old Alpha")
+                );
+            } else {
+                rt.state.draft = TextEdit::new(if mode == "edited" { "New Alpha" } else { "" });
+                capture(&mut rt.state);
+            }
+            if restart {
+                let snapshot = rt.state.workspace.as_ref().unwrap().snapshot();
+                let bytes = crate::workspace::encode(&snapshot).unwrap();
+                let mut ui = Ui::new();
+                ui.hydrate(crate::workspace::decode(&bytes).unwrap());
+                ui.ready = true;
+                rt.state.workspace = Some(ui);
+            }
+            rt.update(new_tab);
+            opened(
+                &mut rt.state,
+                &Project {
+                    id: "third".into(),
+                    path: "/fixture".into(),
+                },
+            );
+            rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
+            assert!(
+                rt.state.draft.text.is_empty(),
+                "a live owner reserves its delivered bundle"
+            );
+            rt.update(|s, tx| close(s, "tab-0", tx));
+            rt.update(|s, tx| close(s, "tab-1", tx));
+            opened(
+                &mut rt.state,
+                &Project {
+                    id: "fourth".into(),
+                    path: "/fixture".into(),
+                },
+            );
+            rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
+            assert_eq!(
+                rt.state.draft.text,
+                if mode == "edited" { "New Alpha" } else { "" }
+            );
+            assert_eq!(
+                bound(&mut rt.state, &backend("beta")),
+                "Beta",
+                "undelivered sessions survive"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_unbound_or_failed_open_keeps_its_source_and_binding_revalidates_pending_text() {
+    for bind in [false, true] {
+        let mut s = draft_state();
+        s.workspace.as_mut().unwrap().closed =
+            vec![closed("alpha", "Old Alpha"), closed("beta", "Beta")];
+        reopen(&mut s);
+        s.workspace
+            .as_mut()
+            .unwrap()
+            .closed
+            .push(closed("alpha", "New Alpha"));
+        if bind {
+            s.draft = TextEdit::new(bound(&mut s, &backend("alpha")));
+            assert_eq!(
+                s.draft.text, "New Alpha",
+                "successful binding admits the current source"
+            );
+        }
+        // Failed native admission never calls bound; closing returns no obsolete pending copy.
+        let mut rt = runtime(s);
+        rt.update(|s, tx| close(s, "tab-0", tx));
+        opened(
+            &mut rt.state,
+            &Project {
+                id: "retry".into(),
+                path: "/fixture".into(),
+            },
+        );
+        rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
+        assert_eq!(rt.state.draft.text, "New Alpha");
+        assert_eq!(bound(&mut rt.state, &backend("beta")), "Beta");
+    }
+}
+
+#[test]
+fn delivery_retires_pending_copies_but_preserves_independent_occurrence_authority() {
+    let mut s = draft_state();
+    s.workspace.as_mut().unwrap().closed = vec![closed("alpha", "Source Alpha")];
+    reopen(&mut s);
+    let mut rt = runtime(s);
+    rt.update(new_tab);
+    opened(
+        &mut rt.state,
+        &Project {
+            id: "pending".into(),
+            path: "/fixture".into(),
+        },
+    );
+    let ui = rt.state.workspace.as_mut().unwrap();
+    ui.entries.push(entry(
+        "independent".into(),
+        Tab::Workspace(closed("alpha", "Own Alpha")),
+    ));
+    rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
+    assert_eq!(rt.state.draft.text, "Source Alpha");
+    let ui = rt.state.workspace.as_ref().unwrap();
+    assert!(matches!(&ui.entries[0].saved, Tab::Workspace(w) if !w.drafts.contains_key("alpha")));
+    assert!(matches!(&ui.entries[2].saved, Tab::Workspace(w) if w.drafts["alpha"] == "Own Alpha"));
+    assert!(ui.closed.iter().all(|w| !w.drafts.contains_key("alpha")));
+    rt.update(|s, tx| select(s, "tab-0", tx));
+    assert_eq!(bound(&mut rt.state, &backend("alpha")), "");
+}
+
+#[test]
+fn delivery_hidden_interruptions_keep_the_active_close_guard_and_button() {
+    for kind in ["form", "reason", "busy", "stopping"] {
+        let mut s = draft_state();
+        let mut a = crate::agent::Ui::new(crate::agent::start(backend("alpha"), s.wake.clone()));
+        match kind {
+            "form" => {
+                a.forms.push(crate::agent_api::Form {
+                    id: "request".into(),
+                    title: "Question".into(),
+                    fields: vec![serde_json::json!({"key":"answer","type":"string"})],
+                });
+                a.selected = "request".into();
+                let mut d = crate::agent::forms::Draft::default();
+                d.choose("UNSENT FORM RESPONSE");
+                a.drafts.insert(("request".into(), "answer".into()), d);
+            }
+            "reason" => {
+                a.permissions.push(crate::agent_api::Permission {
+                    id: "request".into(),
+                    action: "read".into(),
+                    resources: vec!["/fixture".into()],
+                    message: String::new(),
+                    supported: true,
+                });
+                a.selected = "request".into();
+                a.reasons
+                    .insert("request".into(), TextEdit::new("UNSENT REASON"));
+            }
+            "busy" => a.busy = true,
+            _ => a.stopping = true,
+        }
+        s.agent = Some(a);
+        let mut rt = runtime(s);
+        rt.frame(0.0);
+        assert!(rt.find("c-tab-0").is_none());
+        rt.update(|s, tx| close(s, "tab-0", tx));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().entries.len(), 1);
+        rt.update(new_tab);
+        rt.frame(0.0);
+        assert!(
+            rt.find("c-tab-0").is_none(),
+            "hidden {kind} must retain the same rendered guard"
+        );
+        rt.update(|s, tx| close(s, "tab-0", tx));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().entries.len(), 2);
+        rt.update(|s, tx| select(s, "tab-0", tx));
+        let a = rt.state.agent.as_mut().unwrap();
+        a.busy = false;
+        a.stopping = false;
+        a.drafts.clear();
+        a.reasons.clear();
+        rt.update(new_tab);
+        rt.frame(0.0);
+        assert!(rt.find("c-tab-0").is_some());
+        rt.update(|s, tx| close(s, "tab-0", tx));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().entries.len(), 2);
+    }
+}
+
+#[test]
+fn delivery_folder_spelling_preserves_only_the_same_server_project_scope() {
+    for (saved, path, server, backend_id, preserve) in [
+        (
+            "D:/Fixture",
+            r"d:\FIXTURE",
+            "trial-server",
+            "external",
+            true,
+        ),
+        (
+            r"\\Host\Share\Fixture",
+            r"\\host/SHARE/fixture",
+            "trial-server",
+            "external",
+            true,
+        ),
+        ("/Fixture", "/fixture", "trial-server", "external", false),
+        (
+            "D:/Fixture",
+            "E:/Fixture",
+            "trial-server",
+            "external",
+            false,
+        ),
+        (
+            "D:/Fixture",
+            "d:/fixture",
+            "another-server",
+            "external",
+            false,
+        ),
+        (
+            "D:/Fixture",
+            "d:/fixture",
+            "trial-server",
+            "another-backend",
+            false,
+        ),
+    ] {
+        let mut s = draft_state();
+        let mut saved_project = closed("alpha", "RESTORED UNSENT TEXT");
+        saved_project.folder = saved.into();
+        saved_project.server_id = Some(server.into());
+        saved_project.backend_id = Some(backend_id.into());
+        s.workspace.as_mut().unwrap().entries[0] =
+            entry("tab-0".into(), Tab::Workspace(saved_project));
+        opened(
+            &mut s,
+            &Project {
+                id: "fresh-record".into(),
+                path: path.into(),
+            },
+        );
+        assert_eq!(
+            bound(&mut s, &backend("alpha")),
+            if preserve { "RESTORED UNSENT TEXT" } else { "" },
+            "scope {saved} -> {path}, {server}, {backend_id}"
+        );
+    }
+}
+
+#[test]
+fn delivery_inactive_close_preserves_the_active_reader_and_focus() {
+    for before in [false, true] {
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = crate::transport::synthetic();
+        let mut ui = Ui::new();
+        ui.ready = true;
+        ui.entries.push(entry("tab-1".into(), Tab::Blank));
+        ui.active = usize::from(before);
+        s.workspace = Some(ui);
+        let mut rt = runtime(s);
+        for _ in 0..12 {
+            rt.frame(1.0 / 60.0);
+        }
+        let (x, y) = rt.find("composer").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.paste("KEEP FOCUS 🦀");
+        rt.wheel(400.0, 300.0, 1200.0);
+        for _ in 0..90 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert_eq!(rt.scroll_at_bottom("history"), Some(false));
+        let focus = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.focused)
+            .map(|e| (e.key, e.edit_range));
+        assert_eq!(
+            focus.as_ref().and_then(|(key, _)| key.as_deref()),
+            Some("composer")
+        );
+        let anchor = rt
+            .elements()
+            .into_iter()
+            .find(|e| {
+                e.visible[3] > 0.0 && e.key.as_deref().is_some_and(|key| key.starts_with("body-"))
+            })
+            .map(|e| (e.key, e.rect));
+        assert!(anchor.is_some());
+        let active = rt
+            .state
+            .workspace
+            .as_ref()
+            .unwrap()
+            .active_key()
+            .to_string();
+        rt.update(|s, tx| close(s, if before { "tab-0" } else { "tab-1" }, tx));
+        for _ in 0..12 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_key(), active);
+        assert_eq!(rt.scroll_at_bottom("history"), Some(false));
+        assert_eq!(rt.state.draft.text, "KEEP FOCUS 🦀");
+        assert_eq!(
+            rt.elements()
+                .into_iter()
+                .find(|e| e.focused)
+                .map(|e| (e.key, e.edit_range)),
+            focus
+        );
+        assert_eq!(
+            rt.elements()
+                .into_iter()
+                .find(|e| e.visible[3] > 0.0
+                    && e.key.as_deref().is_some_and(|key| key.starts_with("body-")))
+                .map(|e| (e.key, e.rect)),
+            anchor
+        );
+    }
+}
