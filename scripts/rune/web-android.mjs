@@ -11,7 +11,7 @@ import {command,navigatePair} from './web-live.mjs'
 import {androidLive,androidPrompt} from './web-android-contract.mjs'
 import {chromeMemory,scrollMeasure} from './web-android-metrics.mjs'
 import {observeRenderer,traceSwipe} from './web-android-trace.mjs'
-import {observeGpu,gpuState,chromeGraphicsReport} from './web-android-gpu.mjs'
+import {observeGpu,gpuState,chromeGraphicsReport,observeBoot,bootActivity} from './web-android-gpu.mjs'
 
 const [origin,profile,project,bundle]=process.argv.slice(2)
 const {RUNE_ANDROID_ADB:adb,RUNE_ANDROID_SERIAL:serial,RUNE_ANDROID_ADB_PORT:port}=process.env
@@ -26,6 +26,8 @@ const solid=process.env.RUNE_ANDROID_SOLID_DIR
 const comparison=Boolean(process.env.RUNE_ANDROID_COMPARE)
 const trace=process.env.RUNE_ANDROID_TRACE
 const gpuProbe=process.env.RUNE_ANDROID_GPU_PROBE
+const bootControl=process.env.RUNE_ANDROID_BOOT_CONTROL
+assert(!bootControl||gpuProbe==='only'&&['cpu-only','no-webgl'].includes(bootControl))
 const scrollOnly=process.env.RUNE_ANDROID_SAMPLE==='scroll'
 const locale=comparison?'en':'fr'
 const messages=JSON.parse(await readFile(new URL(`../../crates/rune-theme-codenomad/assets/catalogues/${locale}.json`,import.meta.url),'utf8'))
@@ -64,6 +66,7 @@ async function runAndroid() {
   const recordCpu=trace==='1',shaderMarks=trace==='stutter'
   if(recordCpu||shaderMarks||gpuProbe)await page.addInitScript(observeRenderer,{recordCpu,shaderMarks})
   if(gpuProbe)await page.addInitScript(observeGpu)
+  if(gpuProbe==='only')await page.addInitScript(observeBoot,bootControl)
   const gpuLog=[]
   if(gpuProbe){
     evidence.gpuLog=gpuLog
@@ -94,14 +97,18 @@ async function runAndroid() {
   evidence.timings.moduleReadyMs=await page.evaluate(()=>globalThis.__codenomadRuneBoot?.moduleReadyMs)
   if(gpuProbe==='only'){
     const first=await gpuState(page)
+    const startup=await bootActivity(page)
+    assert(startup.wasm.responseEnd>0,'The launcher boot probe must capture the WASM response')
     await page.screenshot({path:path.join(profile,'android-launcher.png')})
-    try {
-      await page.waitForFunction(()=>performance.getEntriesByType('mark').some(e=>/web\.(gpu\.failed|handover\.(done|failed))$/.test(e.name)),
-        undefined,{timeout:15000})
-    }catch(error){if(error.name!=='TimeoutError')throw error}
-    const state=await gpuState(page,true)
-    const chrome=await chromeGraphicsReport(context,page)
-    await writeFile(path.join(profile,'android-gpu.json'),JSON.stringify({...state,first,timings:evidence.timings,chrome,gpuLog},null,2))
+    if(bootControl!=='cpu-only'){
+      try {
+        await page.waitForFunction(()=>performance.getEntriesByType('mark').some(e=>/web\.(gpu\.failed|handover\.(done|failed))$/.test(e.name)),
+          undefined,{timeout:15000})
+      }catch(error){if(error.name!=='TimeoutError')throw error}
+    }
+    const state=await gpuState(page,!bootControl)
+    const chrome=bootControl?undefined:await chromeGraphicsReport(context,page)
+    await writeFile(path.join(profile,'android-gpu.json'),JSON.stringify({...state,first,startup,bootControl,timings:evidence.timings,chrome,gpuLog},null,2))
     return
   }
   if(gpuProbe==='webgl'){

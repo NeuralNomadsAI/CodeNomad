@@ -42,6 +42,49 @@ export async function gpuState(page, includeControls=false) {
   },includeControls)
 }
 
+export function observeBoot(control) {
+  const tasks=globalThis.__runeBootTasks=[]
+  new PerformanceObserver(list=>{
+    for(const {startTime,duration} of list.getEntries())tasks.push({startTime,duration})
+  }).observe({type:'longtask',buffered:true})
+  if(control==='cpu-only')globalThis.RUNE_CPU_FIRST='only'
+  if(control==='no-webgl'){
+    const getContext=HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext=function(kind,...args){
+      return kind==='webgl2'?null:Reflect.apply(getContext,this,[kind,...args])
+    }
+  }
+  const calls=globalThis.__runeBootGlCalls=[]
+  const observe=(owner,name)=>{
+    const call=owner[name]
+    owner[name]=function(...args){
+      const startTime=performance.now()
+      try{return Reflect.apply(call,this,args)}
+      finally{
+        const duration=performance.now()-startTime
+        if(duration>=4&&calls.length<80)calls.push({name,startTime,duration})
+      }
+    }
+  }
+  if(globalThis.WebGL2RenderingContext){
+    const gl=WebGL2RenderingContext.prototype
+    for(const name of ['compileShader','linkProgram','getShaderParameter','getProgramParameter','getParameter','getExtension',
+      'getUniformLocation','checkFramebufferStatus','drawArraysInstanced','drawElementsInstanced','clientWaitSync','flush']){
+      if(typeof gl[name]==='function')observe(gl,name)
+    }
+    observe(HTMLCanvasElement.prototype,'getContext')
+  }
+}
+
+export function bootActivity(page) {
+  return page.evaluate(()=>{
+    const {startTime,responseEnd,encodedBodySize,transferSize}=performance.getEntriesByType('resource')
+      .find(entry=>new URL(entry.name).pathname==='/app_bg.wasm')??{}
+    return {wasm:{startTime,responseEnd,encodedBodySize,transferSize},
+      longTasks:globalThis.__runeBootTasks,glCalls:globalThis.__runeBootGlCalls}
+  })
+}
+
 export async function chromeGraphicsReport(context,page) {
   const diagnostic=await context.newPage()
   try {

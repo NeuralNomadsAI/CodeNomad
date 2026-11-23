@@ -43,9 +43,11 @@ Pour une comparaison, régler `RUNE_ANDROID_COMPARE=1` dans les deux modes, et `
 
 `RUNE_ANDROID_GPU_PROBE=only` s'arrête au lanceur et consigne la demande d'adaptateur de Rune, les appels témoins et la configuration Chrome. `RUNE_ANDROID_TS_SERVER=1`, en mode Solid, utilise le serveur TS compilé du checkout et un nom HTTPS de fixture résolu par Chrome pour comparer la reprise après redémarrage.
 
-Le build WASM avec `--features webgl` ajoute le repli WebGL2 de Rune. Pour le qualifier, `RUNE_ANDROID_GPU_PROBE=webgl` exige la fin de la bascule vers WebGL2 et vérifie qu'il reste actif pendant la conversation et après la reprise. WebGPU conserve la priorité.
+Le build WASM inclut le repli WebGL2 de Rune ; WebGPU conserve la priorité. Pour le qualifier, `RUNE_ANDROID_GPU_PROBE=webgl` exige la fin de la bascule vers WebGL2 et vérifie qu'il reste actif pendant la conversation et après la reprise.
 
 `RUNE_ANDROID_SAMPLE=scroll` limite une répétition au premier historique et au geste. `RUNE_ANDROID_TRACE=stutter` ajoute les événements GPU/GC et marque les demandes WebGL2 de compilation et de liaison de shaders. Les sondes du lanceur enregistrent l'affichage initial séparément du résultat de la bascule.
+
+Pour isoler le coût de la bascule avec le même WASM, la sonde du lanceur accepte `RUNE_ANDROID_BOOT_CONTROL=no-webgl` (refus du contexte WebGL2) ou `cpu-only` (aucune demande GPU). Elle relève la fin de la réponse WASM et les tâches longues avant le lanceur.
 
 Les libellés de démarrage et d'erreur proviennent des dix catalogues générés. `?locale=he` sélectionne par exemple l'hébreu et la direction RTL ; la valeur par défaut est `fr`. Les couleurs, dimensions et polices du démarrage consomment le thème généré et `crates/rune-theme-codenomad/assets/web-shell.css`. Le zoom du navigateur reste disponible.
 
