@@ -148,6 +148,7 @@ export const messagingMessages = {
   "messageSection.search.noVisibleMatches": "没有可见匹配项",
 
   "messageTimeline.ariaLabel": "消息时间线",
+  "messageTimeline.current": "当前位置",
   "messageTimeline.segment.user.label": "你",
   "messageTimeline.segment.assistant.label": "助手",
   "messageTimeline.segment.compaction.label": "压缩",

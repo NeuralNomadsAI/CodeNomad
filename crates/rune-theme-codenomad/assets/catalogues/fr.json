@@ -1070,6 +1070,7 @@
   "messageSection.search.retry": "Réessayer",
   "messageSection.search.searching": "Recherche...",
   "messageTimeline.ariaLabel": "Chronologie des messages",
+  "messageTimeline.current": "Position actuelle",
   "messageTimeline.segment.assistant.label": "Assistant",
   "messageTimeline.segment.compaction.label": "Compactage",
   "messageTimeline.segment.user.label": "Vous",

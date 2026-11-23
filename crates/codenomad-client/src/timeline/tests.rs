@@ -107,12 +107,12 @@ fn outline_requires_an_explicit_end_and_limits_resident_structure() {
 #[cfg(not(target_arch = "wasm32"))]
 fn http_scan(steps: Vec<(&'static str, Option<Value>, Value, bool)>) -> Result<Outline> {
     http_probe(steps, async |backend, revision| {
-        backend.outline(&revision).await
+        backend.read_outline(&revision).await
     })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn http_probe<T>(
+pub(crate) fn http_probe<T>(
     steps: Vec<(&'static str, Option<Value>, Value, bool)>,
     run: impl AsyncFnOnce(Backend, std::sync::Arc<OutlineRevision>) -> T,
 ) -> T {
@@ -208,6 +208,54 @@ fn native_anchor_navigation_fetches_one_around_window_and_never_searches_neighbo
 const RECORD: &str = "GET /workspaces/workspace/instance/api/session/session HTTP/1.1";
 #[cfg(not(target_arch = "wasm32"))]
 const OUTLINE: &str = "POST /api/workspaces/workspace/session-history/outline HTTP/1.1";
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_proposed_anchor_commits_only_with_a_current_admission() {
+    use crate::{bounded, stream, transport::Event};
+    use std::sync::{Arc, atomic::Ordering::SeqCst};
+    for invalidate in [false, true] {
+        let target = json!({"kind":"around","messageID":"target"});
+        http_probe(
+            vec![(
+                "POST /api/workspaces/workspace/session-history/window HTTP/1.1",
+                Some(json!({"sessionID":"session","target":target})),
+                json!({"status":"window","messages":[{"id":"target","type":"user","text":"Here","time":{"created":1}}],
+                "older":null,"newer":null,"latest":true,"resume":target}),
+                false,
+            )],
+            async |backend, _| {
+                let wire = Arc::new(stream::State::default());
+                wire.alive.store(true, SeqCst);
+                wire.upstream.store(true, SeqCst);
+                let (out, events) = bounded(1);
+                let (_cancel, cancelled) = bounded(1);
+                let wake: crate::Wake = Arc::new(|| {});
+                let offer = Jump {
+                    ticket: 1,
+                    message: "target".into(),
+                    cancelled,
+                };
+                let (read, ()) = futures_lite::future::zip(
+                    offer.offer(&backend, &[], &wire, &out, &wake),
+                    async {
+                        let Event::Anchor { ticket, admit, .. } = events.recv().await.unwrap()
+                        else {
+                            panic!("expected an anchor proposal");
+                        };
+                        assert_eq!(ticket, 1);
+                        if invalidate {
+                            wire.history_revision.fetch_add(1, SeqCst);
+                        }
+                        assert_eq!(admit.accept(), !invalidate);
+                    },
+                )
+                .await;
+                assert_eq!(read.is_some(), !invalidate);
+            },
+        );
+    }
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]

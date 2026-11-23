@@ -9,10 +9,11 @@ import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {mobileClientHints, mobileContext, mobileInteraction} from './web-mobile.mjs'
 import {mobileLive, revokedLauncher} from './web-live.mjs'
+import {historySearch} from './web-history-search.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'same-origin-pairing':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},timeline:{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
@@ -46,7 +47,7 @@ const connectedPalettes = values.connected
 try {
   const android=mobileContext(browser)
   const sizes=values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
-    [['desktop',960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
+    [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
   for (const [name, width, height, touch] of sizes) {
     const control=name==='phone-dpr1-control'
     for (const colorScheme of control?['light']:['light','dark']) {
@@ -56,6 +57,7 @@ try {
       const page = await context.newPage()
       page.setDefaultTimeout(15000)
       const errors = [], forbiddenRequests = [], routes=[], history=[]
+      let holdOlder
       let measured
       const policy=workspacePolicy({origin:url.origin,project:values.project,assets})
       let eventSource=0
@@ -74,6 +76,9 @@ try {
         if(pathname.endsWith('/session-history/window')&&response.ok())history.push({input:request.postDataJSON(),body:await response.json().catch(()=>null)})
       })
       page.on('pageerror', error => errors.push({name: error.name, message: error.message}))
+      if(values['history-search'])page.on('console', message=>{
+        if(message.type()==='error'&&/panic|token|panicked/i.test(message.text()))errors.push({name:'Rune',message:message.text()})
+      })
       // Connected scenes admit only their private creations; synthetic scenes refuse all API access.
       await context.route('**/*', async route => {
         const requested = new URL(route.request().url())
@@ -94,6 +99,11 @@ try {
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/worktrees')){
           markLinked()
           await beforeLinked
+        }
+        if(holdOlder&&p.endsWith('/session-history/window')&&req.postDataJSON()?.target?.kind==='before'){
+          const release=holdOlder;holdOlder=undefined
+          await release
+          return route.continue().catch(()=>{})
         }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/instance/api/session')&&
           requested.searchParams.get('directory')===path.join(path.dirname(values.project),'linked')){
@@ -203,6 +213,63 @@ try {
           await select('Another session','ses_another')
           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
           await select('Existing history','ses_existing');await reading()
+          if(values.timeline&&name==='desktop'){
+            const rail=page.getByRole('navigation',{name:messages['messageTimeline.ariaLabel']})
+            const box=await rail.boundingBox()
+            assert(box,'The conversation must mount the timeline')
+            const outline=page.waitForResponse(res=>res.url().endsWith('/session-history/outline')&&res.ok())
+            const tool=rail.getByRole('button',{name:'read',exact:true})
+            await page.mouse.move(box.x+10,box.y+10)
+            await page.mouse.wheel(0,-100000)
+            // The index can arrive before or after the normal latest-window response.
+            await Promise.race([outline,tool.waitFor({state:'attached'})])
+            await page.mouse.wheel(0,-100000)
+            await tool.waitFor()
+            const run=tool.locator('xpath=following-sibling::button[1]')
+            await run.waitFor()
+            const before=history.filter(r=>r.input.target.kind==='around').length
+            const result=page.waitForResponse(res=>res.url().endsWith('/session-history/window')&&res.ok()
+              &&res.request().postDataJSON()?.target?.kind==='around')
+            await run.click({force:true})
+            assert.equal((await result).request().postDataJSON().target.messageID,'message-00000')
+            const exact=page.getByRole('paragraph').filter({hasText:'Exact position in the old message'})
+            await exact.waitFor()
+            assert(Math.abs((await exact.boundingBox()).y-box.y)<8,'The text block, not its message header, must land at the reading line')
+            assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1)
+            const reasoning=run.locator('xpath=following-sibling::button[1]')
+            await reasoning.and(rail.getByRole('button',{name:'**Second fixture reasoning**',exact:true})).waitFor()
+            await reasoning.click({force:true})
+            const group=page.getByText('Second fixture reasoning',{exact:true})
+            await group.waitFor()
+            assert(Math.abs((await group.boundingBox()).y-box.y)<16,'The second reasoning run must land on its own group')
+            await reasoning.and(rail.locator(`[aria-description="${messages['messageTimeline.current']}"]`)).waitFor()
+            assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1,'A resident jump uses no window')
+            for(const passage of ['Native compacted passage','Native conversation context']){
+              await rail.getByRole('button',{name:passage,exact:true}).click({force:true})
+              const content=page.getByRole('paragraph').filter({hasText:passage})
+              await content.waitFor()
+              assert(Math.abs((await content.boundingBox()).y-box.y)<65,'Native context must land at its dedicated block')
+            }
+            await press(messages['rune.latest'])
+            await reading()
+            const older=page.getByRole('button',{name:messages['rune.older'],exact:true})
+            const resident=rail.getByRole('button',{name:'Existing answer',exact:true})
+            await page.mouse.move(box.x+10,box.y+10)
+            await page.mouse.wheel(0,100000)
+            await resident.waitFor()
+            const release=Promise.withResolvers()
+            holdOlder=release.promise
+            try{
+              const started=page.waitForRequest(req=>req.url().endsWith('/session-history/window')&&req.postDataJSON()?.target?.kind==='before')
+              await older.click({force:true})
+              await started
+              await resident.click({force:true})
+              await resident.and(rail.locator(`[aria-description="${messages['messageTimeline.current']}"]`)).waitFor()
+            }finally{release.resolve()}
+            await reading()
+            // The text mirror updates before the newly mounted glyphs finish fading in.
+            await page.waitForTimeout(250)
+          }
         }else{
         // Keyboard input is scoped to this headless page and goes through Rune's DOM bridge.
         let focused = false
@@ -277,13 +344,14 @@ try {
           const existing=history.filter(row=>row.input.sessionID==='ses_existing')
           assert(existing.length>=1)
           for(const row of existing){
-            if(values.mobile&&(row.body.status!=='window'||!row.body.latest))continue
+            if((values.mobile||values.timeline)&&(row.body.status!=='window'||!row.body.latest))continue
             const bodies=row.body.messages.map(message=>message.text??message.content?.[0]?.text)
-            if(values.mobile)assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
+            if(values.mobile||values.timeline||values['history-search'])assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
             else assert.deepEqual(bodies,['Existing project history','Existing answer'])
           }
-          assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===0))
+          assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===(values['history-search']?1:0)))
           assert(routes.some(row=>row.query.includes('cursor=')))
+          if(values['history-search']&&name==='desktop')await historySearch(page,messages)
           const inventory=async()=>{const response=await context.request.get(new URL('/api/workspaces',url).href);assert(response.ok());const rows=await response.json();assert(Array.isArray(rows)&&rows.length<=128);return rows.map(row=>row.id)}
           const before=await inventory(),owned=[...policy.workspaces],retained=before.filter(id=>!policy.workspaces.has(id))
           assert(owned.length>0&&owned.every(id=>before.includes(id)),'Browser must own its admitted occurrences')

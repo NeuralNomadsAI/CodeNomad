@@ -147,6 +147,7 @@ export const messagingMessages = {
   "messageSection.search.retry": "Retry",
   "messageSection.search.noVisibleMatches": "No visible matches",
   "messageTimeline.ariaLabel": "Message timeline",
+  "messageTimeline.current": "Current position",
   "messageTimeline.segment.user.label": "You",
   "messageTimeline.segment.assistant.label": "Asst",
   "messageTimeline.segment.compaction.label": "Compaction",

@@ -1070,6 +1070,7 @@
   "messageSection.search.retry": "Повторить",
   "messageSection.search.searching": "Поиск...",
   "messageTimeline.ariaLabel": "Таймлайн сообщений",
+  "messageTimeline.current": "Текущая позиция",
   "messageTimeline.segment.assistant.label": "Асс.",
   "messageTimeline.segment.compaction.label": "Компактация",
   "messageTimeline.segment.user.label": "Вы",

@@ -12,7 +12,18 @@ use rune_theme_codenomad::{
     markdown,
 };
 
-const PART_LIMIT: usize = 1000;
+pub(super) const PART_LIMIT: usize = 1000;
+pub(super) fn part_window(len: usize, steps: usize) -> (usize, usize) {
+    let initial = if len > PART_LIMIT {
+        PART_LIMIT / 2
+    } else {
+        len
+    };
+    (
+        initial.saturating_add(steps.saturating_mul(PART_LIMIT)),
+        len.saturating_sub(PART_LIMIT / 2),
+    )
+}
 
 pub fn rows(s: &State) -> El {
     let locale = locale();
@@ -31,6 +42,35 @@ pub fn rows(s: &State) -> El {
 
 pub fn message(s: &State, i: usize) -> El {
     let m = &s.messages[i];
+    let tracks = crate::timeline::demanded(s);
+    let blocks = tracks
+        .then(|| super::anchors::blocks(m, super::anchors::steps(s, &m.id), false))
+        .unwrap_or_default();
+    let mut blocks = blocks.into_iter().peekable();
+    let mut track = |index, element| {
+        if blocks.peek().is_some_and(|block| block.part == index) {
+            return crate::timeline::watch_block(s, blocks.next().unwrap().marker, element);
+        }
+        element
+    };
+    if let Some((key, label)) = super::anchors::context(m) {
+        return col()
+            .key(m.id.clone())
+            .full_width()
+            .pad(Space::Lg)
+            .child(track(
+                None,
+                col()
+                    .key(key.clone())
+                    .full_width()
+                    .pad(Space::Sm)
+                    .inset_surface()
+                    .child(text(t(label)).text_role(TextRole::Label))
+                    .children((!m.body.is_empty()).then(|| {
+                        document::prose(s, &m.id, format!("{key}-content"), &m.body, false)
+                    })),
+            ));
+    }
     let mut header = layout::action_row().child(
         text(t(if m.role == "user" {
             "messageItem.speaker.you"
@@ -76,7 +116,10 @@ pub fn message(s: &State, i: usize) -> El {
         .child(header);
     let mut ordinal = 0;
     if (m.role == "user" || m.parts.is_empty()) && !m.body.is_empty() {
-        view = view.child(document::prose(s, format!("body-{}", m.id), &m.body, false));
+        view = view.child(track(
+            None,
+            document::prose(s, &m.id, format!("body-{}", m.id), &m.body, false),
+        ));
     }
     let gap_key = format!("parts-gap-{}", m.id);
     let initial = if m.parts.len() > PART_LIMIT {
@@ -84,12 +127,7 @@ pub fn message(s: &State, i: usize) -> El {
     } else {
         m.parts.len()
     };
-    let tail = m.parts.len().saturating_sub(PART_LIMIT / 2);
-    let head = initial.saturating_add(
-        s.transcript_display
-            .steps(&gap_key)
-            .saturating_mul(PART_LIMIT),
-    );
+    let (head, tail) = part_window(m.parts.len(), s.transcript_display.steps(&gap_key));
     let mut reveal_start = (head > initial).then(|| head.saturating_sub(PART_LIMIT));
     let mut reasoning_end = 0;
     for (index, part) in m.parts.iter().enumerate() {
@@ -139,6 +177,7 @@ pub fn message(s: &State, i: usize) -> El {
                     if visible && !body.text.trim().is_empty() {
                         Some(document::prose(
                             s,
+                            &m.id,
                             key,
                             &body.text,
                             !m.completed && body.provenance != TextProvenance::Closed,
@@ -169,6 +208,16 @@ pub fn message(s: &State, i: usize) -> El {
                 Part::Skill(_) | Part::File(_) => None,
             };
         if let Some(body) = body {
+            // The first fragment of a reasoning run can be blank: its rendered group starts
+            // at the first non-blank fragment, though the renderer consumes the full run.
+            let selected = if matches!(part, Part::Reasoning(_)) {
+                (index..reasoning_end)
+                    .find(|&at| matches!(&m.parts[at], Part::Reasoning(p) if p.visible()))
+                    .unwrap_or(index)
+            } else {
+                index
+            };
+            let body = track(Some(selected), body);
             if reveal_start.is_some_and(|first| index >= first) {
                 view = view.child(
                     col()

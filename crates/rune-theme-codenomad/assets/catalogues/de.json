@@ -1070,6 +1070,7 @@
   "messageSection.search.retry": "Erneut versuchen",
   "messageSection.search.searching": "Suche...",
   "messageTimeline.ariaLabel": "Nachrichten-Timeline",
+  "messageTimeline.current": "Aktuelle Position",
   "messageTimeline.segment.assistant.label": "KI",
   "messageTimeline.segment.compaction.label": "Komprimierung",
   "messageTimeline.segment.user.label": "Du",

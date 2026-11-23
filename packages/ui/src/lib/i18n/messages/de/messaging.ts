@@ -147,6 +147,7 @@ export const messagingMessages = {
   "messageSection.search.retry": "Erneut versuchen",
   "messageSection.search.noVisibleMatches": "Keine sichtbaren Treffer",
   "messageTimeline.ariaLabel": "Nachrichten-Timeline",
+  "messageTimeline.current": "Aktuelle Position",
   "messageTimeline.segment.user.label": "Du",
   "messageTimeline.segment.assistant.label": "KI",
   "messageTimeline.segment.compaction.label": "Komprimierung",

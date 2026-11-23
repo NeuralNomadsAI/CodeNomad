@@ -1,4 +1,5 @@
 pub(crate) mod actions;
+pub(crate) mod anchors;
 pub(crate) mod attachments;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod authentication;
@@ -10,6 +11,7 @@ pub(crate) mod events;
 mod links;
 pub(crate) mod reader;
 pub(crate) mod reading;
+pub(crate) mod search_hit;
 pub(crate) use reader::{resume, suspend};
 pub(crate) mod reasoning;
 #[cfg(test)]

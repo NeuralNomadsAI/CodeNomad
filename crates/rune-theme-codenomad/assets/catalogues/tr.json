@@ -1070,6 +1070,7 @@
   "messageSection.search.retry": "Yeniden dene",
   "messageSection.search.searching": "Aranıyor...",
   "messageTimeline.ariaLabel": "Mesaj zaman çizelgesi",
+  "messageTimeline.current": "Geçerli konum",
   "messageTimeline.segment.assistant.label": "Asistan",
   "messageTimeline.segment.compaction.label": "Sıkıştırma",
   "messageTimeline.segment.user.label": "Sen",

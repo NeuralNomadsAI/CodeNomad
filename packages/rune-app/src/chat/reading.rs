@@ -22,6 +22,10 @@ impl Default for Reading {
 }
 
 impl Reading {
+    pub(super) fn hold(&mut self, message: String) {
+        self.following = false;
+        self.top = Some((message, 0.0));
+    }
     pub(super) fn settle(&mut self, attempted: &str, confirmed: Option<&str>) {
         if let Some((id, offset)) = &self.top
             && id == attempted

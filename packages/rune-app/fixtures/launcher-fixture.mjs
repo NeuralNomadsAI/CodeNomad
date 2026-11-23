@@ -25,8 +25,10 @@ const sampleScroll=webAndroid&&process.env.RUNE_ANDROID_SAMPLE==='scroll'
 const useTs=webAndroid&&process.env.RUNE_ANDROID_TS_SERVER==='1'
 assert(!useTs||solid&&compare,'The TS restart control runs the same Solid build and conversation')
 const sameOriginPairing=process.argv.includes('--same-origin-pairing')
+const webTimeline=process.argv.includes('--web-timeline')
+const webSearch=process.argv.includes('--web-history-search')
 assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
-const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile,root=path.resolve(import.meta.dirname,'../../..')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile||webTimeline||webSearch,root=path.resolve(import.meta.dirname,'../../..')
 if(!web)requireTestSupport()
 const gitPanel=process.argv.includes('--git-panel'),gitOutput=gitPanel?process.env.RUNE_TEST_GIT_OUTPUT:undefined
 const placeWorktree=process.argv.includes('--place-worktree'),moves=[]
@@ -159,9 +161,33 @@ function add(id,title,directory=project) {
   return row
 }
 add('ses_existing','Existing history')
+if(webTimeline){
+  const store=stores.get('ses_existing')
+  const anchor=store.append('assistant','Lead before the anchor')
+  anchor.content.push(
+    {type:'reasoning',text:'First fixture reasoning'},
+    {type:'tool',id:'timeline-anchor',name:'read',state:{status:'completed',input:{file:'timeline.txt'},content:[{type:'text',text:'Tool output'}]}},
+    {type:'text',text:'Exact position in the old message'},
+    {type:'reasoning',text:'**Second fixture reasoning**'},
+  )
+  store.rows.push(
+    {id:'timeline-compaction',type:'compaction',reason:'auto',status:'completed',summary:'Native compacted passage',time:{created:2,completed:3}},
+    {id:'timeline-system',type:'system',text:'Native conversation context',time:{created:4}},
+  )
+  for(let i=0;i<220;i++)store.append('assistant',`Fixture passage ${i}`)
+}
 if(webMobile)for(let i=0;i<(webAndroid?70:210);i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
 stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
+if(webSearch){
+  stores.get('ses_existing').append('assistant','Technical search fixture').content.push(
+    {type:'tool',id:'search-tool',name:'grep',state:{status:'completed',content:[{type:'text',text:'Found Existing technical tool match'}]}},
+  )
+  stores.get('ses_existing').append('assistant','Reasoning search fixture').content.push(
+    {type:'reasoning',text:'Existing reasoning match in the opened card'},
+  )
+}
 add('ses_another','Another session',gitPanel&&!placeWorktree?review:project)
+if(webSearch)stores.get('ses_another').append('user','Existing ranked destination')
 if(gitPanel)for(let i=0;i<50;i++)stores.get('ses_another').append('assistant',`Reading position ${i}\n\nA second paragraph in the fixture.`)
 if(placeWorktree){
   add('ses_child','Child session').parentID='ses_existing'
@@ -189,6 +215,7 @@ const upstream=createServer(async(req,res)=>{
         !(url.pathname==='/api/session'&&req.method==='POST'),'Web fixture admits one Android prompt only')
       if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
       if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:compare?[fixtureModel]:[]})
+      if(url.pathname==='/api/command'&&webSearch)return json({location:{directory:project},data:[]})
       if(/^\/api\/session\/[^/]+\/(permission|form)$/.test(url.pathname))return json({data:[]})
     }
     if(control&&await control.route(req,url,raw,json,res))return
@@ -220,11 +247,13 @@ const upstream=createServer(async(req,res)=>{
         return json({directory,project:{id:'fixture_project',canonical:project,directory}})
       }
       const directory=url.searchParams.get('location[directory]')??project
-      return json(gitCount||linked?{directory,project:{id:'fixture_project',canonical:project,directory}}:
+      return json(gitCount||linked||webSearch?{directory,project:{id:'fixture_project',canonical:project,directory}}:
         compare?{directory:project,project:{id:'global',canonical:project,directory:project}}:{data:{directory:project}})
     }
     if(linked&&url.pathname==='/api/worktree')return json([{directory:project},{directory:linked}])
     if(linked&&url.pathname==='/api/worktree/refresh'){res.writeHead(204);res.end();return}
+    if(webSearch&&url.pathname==='/api/worktree')return json([{directory:project}])
+    if(webSearch&&url.pathname==='/api/worktree/refresh')return json({})
     if(gitPanel&&url.pathname==='/api/worktree'&&req.method==='DELETE'){
       const body=JSON.parse(raw);assert.deepEqual(body,{projectID:'fixture_project',directory:review,force:false})
       // Hold physical removal (and its inventory announcement) until Rune acknowledges the move.
@@ -278,6 +307,46 @@ const upstream=createServer(async(req,res)=>{
       return json({data:created})
     }
     if(url.pathname==='/api/plugin')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
+    if(webSearch&&url.pathname==='/api/rpc/codenomad.session-pruning/history'){
+      const {input}=JSON.parse(raw)
+      assert.deepEqual(input,{sessionID:'ses_existing',query:'Existing',purpose:'search',includeTechnical:input.includeTechnical})
+      const hits=[{messageID:'message-00001',partIndex:0,kind:'text',excerpt:'Existing answer'}]
+      if(input.includeTechnical)hits.push(
+        {messageID:'message-00002',partIndex:1,kind:'tool',excerpt:'Existing technical tool match'},
+        {messageID:'message-00003',partIndex:1,kind:'reasoning',excerpt:'Existing reasoning match'},
+      )
+      return json({output:{status:'page',scanned:4,tools:0,reasoning:0,skipped:0,
+        hits:hits.map(hit=>({sessionID:input.sessionID,role:'assistant',...hit})),candidates:[],cursor:null,
+        sessions:[{sessionID:input.sessionID,directory:project,scanned:4,tools:0,reasoning:0,skipped:0}]}})
+    }
+    if(webSearch&&url.pathname==='/api/rpc/codenomad.session-pruning/historyRanked'){
+      const {input}=JSON.parse(raw)
+      assert.equal(input.query,'Existing')
+      const shape=(sessionID,excerpt)=>({sessionID,messageID:stores.get(sessionID).rows[sessionID==='ses_another'?0:1].id,
+        role:'assistant',partIndex:0,kind:'text',excerpt,createdAt:100})
+      const hits=[shape('ses_another','Existing ranked destination'),shape('ses_existing','Existing answer')]
+      const sessions=hits.map(({sessionID})=>({sessionID,directory:project,title:records.get(sessionID).title,
+        scanned:1,candidates:1,judged:1,matchedMessages:1,tools:0,reasoning:0,skipped:0,prefilterBypassed:0}))
+      return json({output:{version:1,status:'ranked',scanned:2,candidates:2,judged:2,skipped:0,prefilterBypassed:0,
+        matchedSessions:2,capped:false,examinedBefore:0,cursor:null,exclusions:[],caps:[],hits,sessions}})
+    }
+    if(url.pathname==='/api/rpc/codenomad.session-pruning/outlineLayout'){
+      const {input}=JSON.parse(raw),rows=stores.get(input.sessionID).rows
+      assert(!input.cursor)
+      const entries=rows.map((row,seq)=>({
+        id:row.id,seq,type:row.type,
+        tools:row.content?.filter(part=>part.type==='tool').length??0,
+        reasoning:row.content?.filter(part=>part.type==='reasoning').length??0,
+        ...(row.type==='assistant'?{
+          text:row.content.filter(part=>part.type==='text').length,
+          layout:row.content.map(part=>part.type==='tool'?'X':part.type==='reasoning'?'R':'T').join(''),
+          ...(row.content.some(part=>part.type==='tool')?{toolName:'read'}:{}),
+        }:{}),
+      }))
+      const through=Math.max(0,rows.length-1)
+      return json({output:{status:'outline',entries,total:rows.length,cursor:null,
+        checkpoints:rows.length?[{after:-1,through,digest:'a'.repeat(64),changed:true}]:[]}})
+    }
     if(['/api/rpc/codenomad.session-pruning/window','/api/rpc/codenomad.session-pruning/windowUserFilesV1'].includes(url.pathname)){
       const {input}=JSON.parse(raw),output=stores.get(input.sessionID).window(input.target)
       if(url.pathname.endsWith('windowUserFilesV1')&&output.status==='window')output.userFiles='reference-v1'
@@ -294,6 +363,11 @@ const upstream=createServer(async(req,res)=>{
     if(match){
       const [,id,action]=match,record=records.get(id),store=stores.get(id);assert(record,'known fixture session')
       if(!action)return json({data:record})
+      if(webSearch&&action.startsWith('message/')){
+        const row=store.rows.find(row=>row.id===action.split('/')[1])
+        assert(row,'preview requests exactly one known history row')
+        return json({data:row})
+      }
       if(action==='message'){
         const ascending=url.searchParams.get('order')==='asc'
         const limit=Number(url.searchParams.get('limit'))
@@ -380,6 +454,10 @@ await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
 if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
+if(webSearch){
+  delete env.GIT_CEILING_DIRECTORIES
+  await promisify(execFile)('git',['init','-q',project],{windowsHide:true,env})
+}
 if(web)env.CNRS_FIXTURE_UI_DIR=solid||ui
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 const ts=useTs?await androidTsServer({root,profile,project,ui:solid,env}):null
@@ -433,6 +511,8 @@ try{
     staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,backend:ts?'ts':'rust',serverBinary:ts?.args[0]??serverBinary,ui:solid||ui,paired}
     const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
     const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()]
+    if(webTimeline)args.push('--timeline')
+    if(webSearch)args.push('--history-search')
     const androidEnv=webAndroid?Object.fromEntries(Object.entries(process.env).filter(([key])=>key.startsWith('RUNE_ANDROID_'))):{}
     if(webAndroid){
       androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')

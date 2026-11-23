@@ -10,12 +10,19 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
             let history = rune_theme_codenomad::interruption::history(expanded)
                 .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
                 .child(transcript::rows(s));
-            chat::reading::viewport(s, history)
+            crate::timeline::view(
+                s,
+                chat::reading::viewport(s, crate::timeline::watch(s, history)),
+                expanded,
+            )
         }))
         .child(agent_view::view(s, cx))
         .children(chat::attachments::error(s))
         .child(composer::view::view(s, expanded, Some(worktree)));
-    rune_theme_codenomad::git_panel::with_overlays(body, overlays)
+    overlays.extend(
+        crate::timeline::search::panel(s).map(rune_theme_codenomad::timeline::search::floating),
+    );
+    rune_theme_codenomad::layout::with_overlays(body, overlays)
 }
 
 fn interruption_expanded(s: &State) -> bool {

@@ -1070,6 +1070,7 @@
   "messageSection.search.retry": "重试",
   "messageSection.search.searching": "正在搜索...",
   "messageTimeline.ariaLabel": "消息时间线",
+  "messageTimeline.current": "当前位置",
   "messageTimeline.segment.assistant.label": "助手",
   "messageTimeline.segment.compaction.label": "压缩",
   "messageTimeline.segment.user.label": "你",

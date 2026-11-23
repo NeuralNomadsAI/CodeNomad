@@ -11,8 +11,11 @@ use std::{
 };
 
 mod anchor;
+mod jump;
 mod rail;
 pub use anchor::AnchorWindow;
+pub use jump::{Admission, Jump};
+pub(crate) use jump::{older_offer, until_cancelled};
 pub use rail::{Marker, MarkerKind, Resident, UnplacedWindow, WindowPosition, project};
 
 const PAGE_ENTRIES: usize = 16_384;
@@ -130,7 +133,7 @@ impl std::error::Error for Blocked {}
 
 impl Backend {
     /// A cold scan publishes only after the last page. Drop the future to cancel the read.
-    pub async fn outline(&self, revision: &OutlineRevision) -> Result<Outline> {
+    pub async fn read_outline(&self, revision: &OutlineRevision) -> Result<Outline> {
         if !valid_id(&self.workspace) || !valid_id(&self.session) {
             return Err("invalid outline scope".into());
         }
@@ -320,4 +323,4 @@ impl Entry {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

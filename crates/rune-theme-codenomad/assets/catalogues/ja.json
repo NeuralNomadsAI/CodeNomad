@@ -1070,6 +1070,7 @@
   "messageSection.search.retry": "再試行",
   "messageSection.search.searching": "検索中...",
   "messageTimeline.ariaLabel": "メッセージタイムライン",
+  "messageTimeline.current": "現在の位置",
   "messageTimeline.segment.assistant.label": "AI",
   "messageTimeline.segment.compaction.label": "圧縮",
   "messageTimeline.segment.user.label": "あなた",

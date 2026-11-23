@@ -1070,6 +1070,7 @@
   "messageSection.search.retry": "נסה שוב",
   "messageSection.search.searching": "מחפש...",
   "messageTimeline.ariaLabel": "ציר זמן הודעות",
+  "messageTimeline.current": "מיקום נוכחי",
   "messageTimeline.segment.assistant.label": "סוכן",
   "messageTimeline.segment.compaction.label": "סיכום",
   "messageTimeline.segment.user.label": "אתה",

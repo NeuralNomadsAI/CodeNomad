@@ -30,7 +30,9 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
         _ => false,
     };
     if replace {
+        let index = fetched.part_index;
         *fetched = live.clone();
+        Arc::make_mut(fetched).part_index = index;
     }
 }
 
@@ -65,6 +67,7 @@ pub(crate) fn apply(row: &mut Message, kind: &str, data: &Value) -> Fit {
             return Fit::Repair;
         }
         let mut tool = Tool {
+            part_index: None,
             id: id.into(),
             name: name.into(),
             status: "streaming".into(),

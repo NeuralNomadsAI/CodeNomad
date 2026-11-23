@@ -16,7 +16,18 @@ pub(super) const TOOL_LIMIT: usize = 10_000;
 pub(super) const HIGHLIGHT_LIMIT: usize = 100_000;
 const STEP: usize = 250_000;
 
-pub(super) fn prose(s: &State, key: String, source: &str, streaming: bool) -> El {
+pub(super) fn search_limit(
+    query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
+) -> usize {
+    TOOL_LIMIT
+        + if query.is_some_and(|query| query.active) {
+            STEP
+        } else {
+            0
+        }
+}
+
+pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streaming: bool) -> El {
     let group = key.clone();
     let scope = s.input_scope.clone();
     let link_scope = scope.clone();
@@ -24,6 +35,15 @@ pub(super) fn prose(s: &State, key: String, source: &str, streaming: bool) -> El
     let steps = s.transcript_display.steps(&key);
     let version = s.transcript_display.stream_version();
     let memo_key = format!("{group}-markdown");
+    let terms = s
+        .transcript_display
+        .search_highlight
+        .as_ref()
+        .filter(|hit| hit.message == message)
+        .map(|hit| {
+            let q = hit.query(None);
+            (q.terms, q.ranked)
+        });
     window(s, key, &[source], PROSE_LIMIT, |shown, units| {
         let stamp = (
             version,
@@ -31,6 +51,7 @@ pub(super) fn prose(s: &State, key: String, source: &str, streaming: bool) -> El
             std::rc::Rc::as_ptr(&scope) as usize,
             locale(),
             &unwrapped,
+            terms,
         );
         let build = || {
             markdown::prose(
@@ -42,6 +63,7 @@ pub(super) fn prose(s: &State, key: String, source: &str, streaming: bool) -> El
                     } else {
                         HIGHLIGHT_LIMIT
                     },
+                terms,
                 move |s: &mut State, url, tx| {
                     if s.current_scope(&link_scope) {
                         let _ = tx.open_url(&links::external(url));

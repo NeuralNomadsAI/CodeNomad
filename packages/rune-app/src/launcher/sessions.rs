@@ -292,6 +292,29 @@ pub(super) fn bind(
     slug: &str,
     tx: &mut Tx,
 ) {
+    bind_at(s, b, title, visit, slug, None, tx);
+}
+
+pub(crate) fn bind_search(
+    s: &mut State,
+    b: Backend,
+    title: String,
+    slug: &str,
+    message: String,
+    tx: &mut Tx,
+) {
+    bind_at(s, b, title, None, slug, Some(message), tx);
+}
+
+fn bind_at(
+    s: &mut State,
+    b: Backend,
+    title: String,
+    visit: Option<usize>,
+    slug: &str,
+    anchor: Option<String>,
+    tx: &mut Tx,
+) {
     let same_session =
         !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
     if let Some(l) = s.screen.launcher_mut() {
@@ -339,7 +362,7 @@ pub(super) fn bind(
     s.history_error = false;
     s.history_detached = false;
     s.revision += 1;
-    attach(s, b);
+    crate::transport::start_bound_at(s, b, anchor);
     s.show_chat();
     crate::workspace::capture(s);
     if !same_session {

@@ -1070,6 +1070,7 @@
   "messageSection.search.retry": "Reintentar",
   "messageSection.search.searching": "Buscando...",
   "messageTimeline.ariaLabel": "Línea de tiempo de mensajes",
+  "messageTimeline.current": "Posición actual",
   "messageTimeline.segment.assistant.label": "Asist.",
   "messageTimeline.segment.compaction.label": "Compactación",
   "messageTimeline.segment.user.label": "Tú",

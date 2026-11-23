@@ -1,4 +1,7 @@
 //! Preferences owns its native window; its confirmed host settings also feed the shell.
+pub(crate) fn show_timeline(s: &crate::State) -> bool {
+    s.settings.shared.borrow().show_timeline()
+}
 #[cfg(not(target_arch = "wasm32"))]
 mod opencode;
 mod preferences;

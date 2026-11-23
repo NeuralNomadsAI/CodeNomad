@@ -29,6 +29,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         let content = observation.is_none();
         let event = observation.or_else(|| s.reader.as_ref().and_then(chat::reader::Reader::next));
         let Some(event) = event else { break };
+        crate::timeline::observe(s, &event);
         let stale_activity = matches!(&event, Event::ReaderSync { version, .. }
             if s.reader.as_ref().is_some_and(|reader| reader.activity_after(*version)));
         settings::provider_connection_event(s, &event);
@@ -132,6 +133,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
                 s.messages = page.rows;
+                crate::timeline::restore_search(s);
                 s.history_detached = s.reader.is_some() && page.newer.is_some();
                 composer::reconcile(s);
                 s.can_older = page.older.is_some();
@@ -151,19 +153,15 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     Phase::Ready
                 };
             }
-            Event::Older(page) => {
-                if !page.rows.is_empty() {
-                    s.attachments.cancel();
-                    s.history_detached = page.newer.is_some();
-                    if let Some(reader) = &mut s.reader {
-                        reader.install(s.history_detached);
-                    }
-                    s.messages = page.rows;
-                    composer::reconcile(s);
+            Event::Older(page) => chat::reader::install_older(s, page),
+            Event::OlderOffered {
+                page,
+                admit,
+                cancelled,
+            } => {
+                if chat::reader::admit_older(s, &cancelled, || admit.accept()) {
+                    chat::reader::install_older(s, page);
                 }
-                s.can_older = page.older.is_some();
-                s.history_error = false;
-                s.paging = false;
             }
             Event::Reconnecting | Event::ConnectionLost => {
                 s.composer.picker.set_attachments_supported(false);
@@ -185,10 +183,23 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::PagingFailed => {
+                chat::reader::cancel_older(s);
                 s.paging = false;
                 s.history_error = true;
             }
+            Event::OlderFailed(cancelled) => {
+                chat::reader::admit_older(s, &cancelled, || false);
+            }
+            Event::Anchor {
+                ticket,
+                page,
+                admit,
+            } => {
+                crate::timeline::admit(s, ticket, page, admit);
+            }
+            Event::AnchorFailed(ticket) => crate::timeline::failed(s, ticket),
             Event::HistoryInvalidated => {
+                chat::reader::cancel_older(s);
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();
@@ -225,14 +236,30 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Text(id, event) => {
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
+                    let new_text = matches!(&event, content::TextEvent::Delta { text, .. } if !text.trim().is_empty())
+                        && m.parts
+                            .iter()
+                            .rev()
+                            .find_map(|part| match part {
+                                content::Part::Text(t) => Some(t.text.trim().is_empty()),
+                                _ => None,
+                            })
+                            .unwrap_or(true);
                     match content::apply_text(std::sync::Arc::make_mut(m), &event) {
                         Ok(content::TextFit::Repair) | Err(_) => s.history_error = true,
                         _ => {}
                     }
+                    if new_text {
+                        crate::timeline::structure_changed(s);
+                    }
                 }
             }
             Event::Reasoning(id, event) => {
+                let changed = chat::anchors::reasoning_changed(&s.messages, &id, &event);
                 content::apply_reasoning(&mut s.messages, &id, &event);
+                if changed {
+                    crate::timeline::structure_changed(s);
+                }
             }
             Event::Tool(id, tool) => {
                 if let Some(row) = s
@@ -240,7 +267,11 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     .iter_mut()
                     .find(|row| row.id == id && !row.completed)
                 {
+                    let inserted = !row.parts.iter().any(|part| matches!(part, content::Part::Tool(existing) if existing.id == tool.id));
                     content::install_tool(std::sync::Arc::make_mut(row), tool);
+                    if inserted {
+                        crate::timeline::structure_changed(s);
+                    }
                 }
             }
             Event::Done => s.phase = Phase::Ready,

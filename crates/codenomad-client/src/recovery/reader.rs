@@ -117,7 +117,12 @@ impl Reader {
         self.owed.clear();
     }
 
-    pub(super) async fn older(&mut self, lane: &Lane<'_>, opened: bool) -> history::Result<Turn> {
+    pub(super) async fn older(
+        &mut self,
+        lane: &Lane<'_>,
+        opened: bool,
+        cancel: Option<&Receiver<()>>,
+    ) -> history::Result<Turn> {
         let Lane {
             backend,
             reading,
@@ -126,6 +131,11 @@ impl Reader {
             out,
             wake,
         } = *lane;
+        let failed = || {
+            cancel
+                .cloned()
+                .map_or(Event::PagingFailed, Event::OlderFailed)
+        };
         if let Some(target) = self.older.clone().filter(|_| {
             self.active_reader
                 && opened
@@ -133,12 +143,15 @@ impl Reader {
                 && wire.upstream.load(SeqCst)
         }) {
             let stamp = wire.version.load(SeqCst);
-            let Some(page) = read_page(
-                backend,
-                reading,
-                self.generation,
-                wire,
-                backend.page(target),
+            let Some(page) = crate::timeline::until_cancelled(
+                cancel,
+                read_page(
+                    backend,
+                    reading,
+                    self.generation,
+                    wire,
+                    backend.page(target),
+                ),
             )
             .await
             else {
@@ -147,6 +160,19 @@ impl Reader {
             match page {
                 Ok(page) if wire.valid(stamp) && rx.is_empty() => {
                     if history::previous_page(&page, &self.resident).is_ok() {
+                        if !crate::timeline::older_offer(
+                            cancel,
+                            &page,
+                            wire,
+                            stamp,
+                            async |event| {
+                                reader_event(reading, self.generation, out, wake, event).await
+                            },
+                        )
+                        .await
+                        {
+                            return Ok(Turn::Next);
+                        }
                         if !page.rows.is_empty() {
                             self.historical = page.newer.is_some();
                             self.resident = page.rows.clone();
@@ -155,29 +181,65 @@ impl Reader {
                             self.owed.retain(|(id, _)| self.known.contains(id));
                         }
                         self.older = page.older.clone();
-                        reader_event(reading, self.generation, out, wake, Event::Older(page)).await;
+                        if cancel.is_none() {
+                            reader_event(reading, self.generation, out, wake, Event::Older(page))
+                                .await;
+                        }
                     } else {
-                        reader_event(reading, self.generation, out, wake, Event::PagingFailed)
-                            .await;
+                        reader_event(reading, self.generation, out, wake, failed()).await;
                     }
                 }
                 Ok(_) => {
                     self.dirty = true;
                     self.quiet = Instant::now() + Duration::from_millis(100);
-                    reader_event(reading, self.generation, out, wake, Event::PagingFailed).await;
+                    reader_event(reading, self.generation, out, wake, failed()).await;
                 }
                 Err(PageFailure::AuthenticationExpired) => {
                     expire_reading(backend, reading, wire, out, wake).await;
                     return Ok(Turn::Stop);
                 }
                 Err(PageFailure::Read(_)) => {
-                    reader_event(reading, self.generation, out, wake, Event::PagingFailed).await;
+                    reader_event(reading, self.generation, out, wake, failed()).await;
                 }
             }
         } else if self.active_reader {
-            reader_event(reading, self.generation, out, wake, Event::PagingFailed).await;
+            reader_event(reading, self.generation, out, wake, failed()).await;
         }
         Ok(Turn::Process)
+    }
+
+    pub(super) async fn anchor(
+        &mut self,
+        lane: &Lane<'_>,
+        opened: bool,
+        jump: crate::timeline::Jump,
+    ) {
+        if jump.cancelled.is_closed() {
+            return;
+        }
+        let Lane {
+            backend,
+            wire,
+            out,
+            wake,
+            ..
+        } = *lane;
+        if !self.active_reader || !opened || !wire.upstream.load(SeqCst) {
+            publish(out, wake, Event::AnchorFailed(jump.ticket)).await;
+            return;
+        }
+        if let Some((page, stamp)) = jump.offer(backend, &self.resident, wire, out, wake).await {
+            self.historical = page.newer.is_some();
+            self.fence = stamp;
+            self.first = page.rows.first().map(|row| row.id.clone());
+            self.older = page.older.clone();
+            self.known = page.rows.iter().map(|row| row.id.clone()).collect();
+            self.resident = page.rows;
+            self.owed.retain(|(id, _)| self.known.contains(id));
+            self.anchored = None;
+            self.parked = false;
+            self.dirty = false;
+        }
     }
 
     pub(super) async fn sync(
@@ -319,7 +381,7 @@ pub(super) struct Lane<'a> {
     pub(super) backend: &'a Backend,
     pub(super) reading: Option<&'a ReadingLane>,
     pub(super) rx: &'a Receiver<Input>,
-    pub(super) wire: &'a stream::State,
+    pub(super) wire: &'a Arc<stream::State>,
     pub(super) out: &'a Sender<Event>,
     pub(super) wake: &'a Wake,
 }

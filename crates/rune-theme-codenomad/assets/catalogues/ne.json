@@ -1070,6 +1070,7 @@
   "messageSection.search.retry": "पुन: प्रयास गर्नुहोस्",
   "messageSection.search.searching": "खोज्दै...",
   "messageTimeline.ariaLabel": "सन्देश टाइमलाइन",
+  "messageTimeline.current": "हालको स्थान",
   "messageTimeline.segment.assistant.label": "सहायक",
   "messageTimeline.segment.compaction.label": "संक्षिप्तीकरण",
   "messageTimeline.segment.user.label": "तपाईं",

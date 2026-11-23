@@ -148,6 +148,7 @@ export const messagingMessages = {
   "messageSection.search.noVisibleMatches": "Aucun résultat visible",
 
   "messageTimeline.ariaLabel": "Chronologie des messages",
+  "messageTimeline.current": "Position actuelle",
   "messageTimeline.segment.user.label": "Vous",
   "messageTimeline.segment.assistant.label": "Assistant",
   "messageTimeline.segment.compaction.label": "Compactage",

@@ -56,6 +56,12 @@ test('owned reads retain fixed sessions, history bounds and the prohibition on n
   assert(p.allows('POST','/api/workspaces/one/session-history/window',{sessionID:'ses_existing'}))
   assert(!p.allows('POST','/api/workspaces/one/session-history/window',{sessionID:'ses_foreign'}))
   assert(!p.allows('POST','/api/workspaces/one/session-history/window',{sessionID:'ses_existing',extra:'x'.repeat(32768)}))
+  assert(p.allows('POST','/api/workspaces/one/session-history/outline',{sessionID:'ses_existing'}))
+  assert(!p.allows('POST','/api/workspaces/one/session-history/outline',{sessionID:'ses_foreign'}))
+  assert(p.allows('POST','/api/workspaces/one/session-history/query',{sessionID:'ses_existing',purpose:'search'}))
+  assert(!p.allows('POST','/api/workspaces/one/session-history/query',{sessionID:'ses_existing',purpose:'prune'}))
+  assert(!p.allows('POST','/api/workspaces/one/session-history/query',{sessionID:'ses_foreign',purpose:'search'}))
+  assert(p.allows('POST','/api/workspaces/one/session-history/ranked',{version:1,limit:40}))
   for(const path of ['/api/session','/workspaces/one/instance/api/session','/workspaces/one/instance/api/session/ses_existing/prompt','/workspaces/one/instance/api/session/ses_existing/interrupt','/workspaces/one/instance/api/session/ses_existing/permission'])assert(!p.allows('POST',path),path)
 })
 test('command catalogue reads require an authenticated owned workspace',async()=>{

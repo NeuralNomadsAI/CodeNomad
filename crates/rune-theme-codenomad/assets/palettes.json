@@ -134,7 +134,10 @@
       "text-secondary": "#334155ff",
       "text-tertiary": "#475569ff",
       "timeline-segment-active-bg": "#b7e6d6ff",
-      "timeline-segment-active-text": "#032f23ff"
+      "timeline-segment-active-text": "#032f23ff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -425,7 +428,10 @@
       "text-secondary": "#999999ff",
       "text-tertiary": "#999999ff",
       "timeline-segment-active-bg": "#0f5b44ff",
-      "timeline-segment-active-text": "#ffffffff"
+      "timeline-segment-active-text": "#ffffffff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -716,7 +722,10 @@
       "text-secondary": "#484e58ff",
       "text-tertiary": "#484e58ff",
       "timeline-segment-active-bg": "#b7e6d6ff",
-      "timeline-segment-active-text": "#032f23ff"
+      "timeline-segment-active-text": "#032f23ff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -1007,7 +1016,10 @@
       "text-secondary": "#adb5c3ff",
       "text-tertiary": "#adb5c3ff",
       "timeline-segment-active-bg": "#0f5b44ff",
-      "timeline-segment-active-text": "#ffffffff"
+      "timeline-segment-active-text": "#ffffffff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -1298,7 +1310,10 @@
       "text-secondary": "#3f4d59ff",
       "text-tertiary": "#3f4d59ff",
       "timeline-segment-active-bg": "#b7e6d6ff",
-      "timeline-segment-active-text": "#032f23ff"
+      "timeline-segment-active-text": "#032f23ff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -1589,7 +1604,10 @@
       "text-secondary": "#9db5d2ff",
       "text-tertiary": "#9db5d2ff",
       "timeline-segment-active-bg": "#0f5b44ff",
-      "timeline-segment-active-text": "#ffffffff"
+      "timeline-segment-active-text": "#ffffffff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -1880,7 +1898,10 @@
       "text-secondary": "#4d4235ff",
       "text-tertiary": "#4d4235ff",
       "timeline-segment-active-bg": "#b7e6d6ff",
-      "timeline-segment-active-text": "#032f23ff"
+      "timeline-segment-active-text": "#032f23ff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -2171,7 +2192,10 @@
       "text-secondary": "#c6b9a5ff",
       "text-tertiary": "#c6b9a5ff",
       "timeline-segment-active-bg": "#0f5b44ff",
-      "timeline-segment-active-text": "#ffffffff"
+      "timeline-segment-active-text": "#ffffffff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -2462,7 +2486,10 @@
       "text-secondary": "#4d5a5cff",
       "text-tertiary": "#4d5a5cff",
       "timeline-segment-active-bg": "#b7e6d6ff",
-      "timeline-segment-active-text": "#032f23ff"
+      "timeline-segment-active-text": "#032f23ff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -2753,7 +2780,10 @@
       "text-secondary": "#534961ff",
       "text-tertiary": "#534961ff",
       "timeline-segment-active-bg": "#b7e6d6ff",
-      "timeline-segment-active-text": "#032f23ff"
+      "timeline-segment-active-text": "#032f23ff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -3044,7 +3074,10 @@
       "text-secondary": "#44543bff",
       "text-tertiary": "#44543bff",
       "timeline-segment-active-bg": "#b7e6d6ff",
-      "timeline-segment-active-text": "#032f23ff"
+      "timeline-segment-active-text": "#032f23ff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -3335,7 +3368,10 @@
       "text-secondary": "#c0cab5ff",
       "text-tertiary": "#c0cab5ff",
       "timeline-segment-active-bg": "#0f5b44ff",
-      "timeline-segment-active-text": "#ffffffff"
+      "timeline-segment-active-text": "#ffffffff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -3626,7 +3662,10 @@
       "text-secondary": "#b2b6beff",
       "text-tertiary": "#b2b6beff",
       "timeline-segment-active-bg": "#0f5b44ff",
-      "timeline-segment-active-text": "#ffffffff"
+      "timeline-segment-active-text": "#ffffffff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -3917,7 +3956,10 @@
       "text-secondary": "#a8b8bfff",
       "text-tertiary": "#a8b8bfff",
       "timeline-segment-active-bg": "#0f5b44ff",
-      "timeline-segment-active-text": "#ffffffff"
+      "timeline-segment-active-text": "#ffffffff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -4208,7 +4250,10 @@
       "text-secondary": "#b2b8a7ff",
       "text-tertiary": "#b2b8a7ff",
       "timeline-segment-active-bg": "#0f5b44ff",
-      "timeline-segment-active-text": "#ffffffff"
+      "timeline-segment-active-text": "#ffffffff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -4499,7 +4544,10 @@
       "text-secondary": "#baaab7ff",
       "text-tertiary": "#baaab7ff",
       "timeline-segment-active-bg": "#0f5b44ff",
-      "timeline-segment-active-text": "#ffffffff"
+      "timeline-segment-active-text": "#ffffffff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {
@@ -4790,7 +4838,10 @@
       "text-secondary": "#bdb1a6ff",
       "text-tertiary": "#bdb1a6ff",
       "timeline-segment-active-bg": "#0f5b44ff",
-      "timeline-segment-active-text": "#ffffffff"
+      "timeline-segment-active-text": "#ffffffff",
+      "transcript-search-active": "#facc15ff",
+      "transcript-search-active-ink": "#111827ff",
+      "transcript-search-mark": "#fde04794"
     },
     "contrast": {
       "colors": {

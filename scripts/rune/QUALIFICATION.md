@@ -37,6 +37,19 @@ wasm-bindgen --target web --out-name probe --out-dir "$CARGO_TARGET_DIR/browser-
 node packages/rune-app/fixtures/browser-outline.mjs "$CARGO_TARGET_DIR/browser-outline"
 ```
 
+La galerie `history-rail` monte le composant Rune sur 200 000 repères sans serveur. Le test Windows vérifie l'étendue en haut et en bas, le nombre de repères montés, le clavier et le seuil de largeur. Chromium vérifie le miroir accessible, le clic, le clavier, le saut à un repère hors écran et la disparition sous 420 px, en clair et en sombre.
+
+```sh
+cargo test --locked -p rune-theme-codenomad --example history-rail
+cargo build --locked -p rune-theme-codenomad --example history-rail --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-name rail --out-dir "$CARGO_TARGET_DIR/browser-rail" "$CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/examples/history-rail.wasm"
+node packages/rune-app/fixtures/history-rail-web.mjs "$CARGO_TARGET_DIR/browser-rail"
+```
+
+Le raccord conversation est testé par `cargo test --locked -p codenomad-rune-app timeline::tests` et, avec le bundle produit WASM et le serveur Rust de qualification, par `node packages/rune-app/fixtures/launcher-fixture.mjs --web-timeline`. Ce scénario demande une fenêtre `around` pour un bloc hors fenêtre, puis clique un repère de la fenêtre chargée sans requête.
+
+La recherche utilise le même banc Rust, via `node packages/rune-app/fixtures/launcher-fixture.mjs --web-history-search` avec les routes `query` et `ranked`. Le scénario vérifie un résultat résident sans fenêtre, le rang d'un résultat d'une autre session, sa lecture unitaire et son ouverture au moyen d'une fenêtre `around`. Les tests `codenomad-client search::tests` couvrent les continuations et le redémarrage classé.
+
 ## Parité par composant
 
 Les composants Solid et Rune demandent des paires de captures exécutées à géométrie identique, dans chaque palette, avec références d'accessibilité et interactions dédiées. Le statut de parité reste à qualifier pour les composants de l'inventaire.
