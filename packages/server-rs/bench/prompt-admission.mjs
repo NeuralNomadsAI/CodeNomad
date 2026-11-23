@@ -47,10 +47,13 @@ async function upstream(profile) {
   await git('-C',directory,'worktree','add','--quiet','--detach',tree,'HEAD')
   await writeFile(path.join(tree,'tree.txt'),'synthetic tree\n')
   const treeNested=path.join(tree,'sub'), independent=path.join(tree,'independent')
-  const localIndependent=path.join(directory,'independent')
+  const localTree=path.join(directory,'.codenomad','worktrees','nested')
+  const localIndependent=path.join(localTree,'independent')
+  await mkdir(path.dirname(localTree),{recursive:true})
+  await git('-C',directory,'worktree','add','--quiet','--detach',localTree,'HEAD')
   await mkdir(treeNested)
-  await mkdir(path.join(treeNested,'.git'))
-  await writeFile(path.join(treeNested,'.git','README'),'Not a Git directory.\n')
+  await mkdir(path.join(treeNested,'.git','objects'),{recursive:true})
+  await writeFile(path.join(treeNested,'.git','HEAD'),'ref: refs/heads/main\n')
   await git('init','--quiet',independent)
   await git('init','--quiet',localIndependent)
   const calls = [], sessions = new Map(), password = randomUUID(),state={carrier:'absent'}
@@ -74,7 +77,7 @@ async function upstream(profile) {
         const noGit=local===plain||local===plainNested
         return send({directory:local,project:{id:noGit?'global':'project_fixture',canonical:noGit?plain:directory,directory:local}})
       }
-      if(url.pathname==='/api/worktree')return send([{directory},{directory:tree}])
+      if(url.pathname==='/api/worktree')return send([{directory},{directory:tree},{directory:localTree}])
       if(url.pathname==='/api/worktree/refresh'){res.writeHead(204);return res.end()}
       if(url.pathname==='/api/project')return send([{id:'project_fixture',canonical:directory,sandboxes:[],time:{created:1,updated:1}}])
       if(url.pathname==='/api/session/active')return send({data:{}})
@@ -311,6 +314,8 @@ async function commandCases(label, host, native, rows, errors) {
   for(const [name,session,body,expected,dispatch] of [
     ['ordinary','ses_owned',command,204,true],
     ['nested-session','ses_nested',command,204,true],
+    ['linked-subfolder-incomplete-git','ses_tree_nested',command,204,true],
+    ['nested-repo-inside-opened-folder','ses_local_independent',command,204,true],
     ['nested-no-repo','ses_plain',command,204,true],
     ['files','ses_owned',{...command,files:[{uri:pathToFileURL(path.join(native.directory,'a b#%.txt')).href}]},204,true],
     ['foreign-file','ses_owned',{...command,files:[{uri:path.join(native.foreign,'private.txt')}]},403,false],

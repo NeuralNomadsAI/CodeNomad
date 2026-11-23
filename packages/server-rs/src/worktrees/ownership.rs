@@ -22,6 +22,7 @@ pub struct Owned {
 pub(crate) struct DirectoryProof {
     tree: Option<super::inventory::Tree>,
     source: Option<super::inventory::Tree>,
+    external: bool,
 }
 
 impl DirectoryProof {
@@ -30,26 +31,28 @@ impl DirectoryProof {
             let absent = |path: &Path| {
                 std::fs::symlink_metadata(path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
             };
+            let no_repository = |path: &Path| {
+                absent(&path.join("HEAD"))
+                    || absent(&path.join("commondir")) && (absent(&path.join("objects")) || absent(&path.join("refs")))
+            };
             path.starts_with(root)
                 && path.ancestors().take_while(|ancestor| *ancestor != root).all(|ancestor| {
                     let marker = ancestor.join(".git");
                     let marker_clear = match std::fs::symlink_metadata(&marker) {
                         Err(error) => error.kind() == std::io::ErrorKind::NotFound,
-                        // Git skips an incomplete .git directory without a HEAD.
-                        Ok(meta) if meta.is_dir() => absent(&marker.join("HEAD")),
+                        // Git skips incomplete layouts. The external target's
+                        // Git common directory is also checked at admission.
+                        Ok(meta) if meta.is_dir() => no_repository(&marker),
                         _ => false,
                     };
-                    marker_clear
-                        && !(!absent(&ancestor.join("HEAD"))
-                            && (ancestor.join("commondir").exists()
-                                || ancestor.join("objects").is_dir() && ancestor.join("refs").is_dir()))
+                    marker_clear && no_repository(ancestor)
                 })
         };
         self.source
             .as_ref()
             .is_none_or(|source| source.contains_live(&source.path) && no_nested_git(&source.path, source.registered()))
             && self.tree.as_ref().is_none_or(|tree| {
-                tree.contains_live(physical) && (self.source.is_none() || no_nested_git(physical, tree.registered()))
+                tree.contains_live(physical) && (!self.external || no_nested_git(physical, tree.registered()))
             })
     }
 }
@@ -71,7 +74,7 @@ pub(crate) async fn capture_directory_with_refresh(
     }
     let external = !physical.starts_with(&workspace.path);
     if physical == workspace.path || !external && matches!(super::root_only(workspace).await, Ok(Some(true))) {
-        return Some(DirectoryProof { tree: None, source: None });
+        return Some(DirectoryProof { tree: None, source: None, external });
     }
     if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
         return None;
@@ -86,7 +89,7 @@ pub(crate) async fn capture_directory_with_refresh(
             .max_by_key(|tree| tree.path.as_os_str().len())
         {
             let source = (external || tree.registered() != root.registered()).then_some(root);
-            let proof = DirectoryProof { tree: Some(tree), source };
+            let proof = DirectoryProof { tree: Some(tree), source, external };
             return proof.live(physical).then_some(proof);
         }
     }
