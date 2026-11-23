@@ -31,28 +31,23 @@ pub(crate) async fn older_offer(
     page: &crate::history::Page,
     wire: &Arc<stream::State>,
     stamp: u64,
-    out: &Sender<Event>,
-    wake: &Wake,
+    send: impl AsyncFnOnce(Event) -> bool,
 ) -> bool {
     let Some(cancelled) = cancelled else {
         return true;
     };
     let (admit, verdict) = bounded(1);
     if cancelled.is_closed()
-        || !publish(
-            out,
-            wake,
-            Event::OlderOffered {
-                page: page.clone(),
-                admit: Admission {
-                    wire: wire.clone(),
-                    revision: wire.history_revision.load(SeqCst),
-                    live_version: Some(stamp),
-                    admit,
-                },
-                cancelled: cancelled.clone(),
+        || !send(Event::OlderOffered {
+            page: page.clone(),
+            admit: Admission {
+                wire: wire.clone(),
+                revision: wire.history_revision.load(SeqCst),
+                live_version: Some(stamp),
+                admit,
             },
-        )
+            cancelled: cancelled.clone(),
+        })
         .await
     {
         return false;
@@ -162,4 +157,46 @@ impl Jump {
         .await;
         accepted.map(|()| (page, stamp))
     }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn an_accepted_older_window_follows_a_queued_reader_sync() {
+    use crate::history::Page;
+    futures_lite::future::block_on(async {
+        let wire = Arc::new(stream::State::default());
+        wire.alive.store(true, SeqCst);
+        wire.upstream.store(true, SeqCst);
+        let (_demand, cancel) = bounded(1);
+        let (out, events) = bounded(2);
+        let page = Page {
+            rows: vec![],
+            older: None,
+            newer: None,
+            running: false,
+            user_file_references: false,
+        };
+        out.try_send(Event::ReaderSync {
+            page: page.clone(),
+            version: 0,
+        })
+        .unwrap();
+        let (accepted, ()) = futures_lite::future::zip(
+            older_offer(Some(&cancel), &page, &wire, 0, async |event| {
+                out.send(event).await.is_ok()
+            }),
+            async {
+                assert!(matches!(
+                    events.recv().await.unwrap(),
+                    Event::ReaderSync { .. }
+                ));
+                let Event::OlderOffered { admit, .. } = events.recv().await.unwrap() else {
+                    panic!("expected older offer")
+                };
+                assert!(admit.accept());
+            },
+        )
+        .await;
+        assert!(accepted && events.is_empty());
+    });
 }

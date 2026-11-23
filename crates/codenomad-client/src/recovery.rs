@@ -321,7 +321,13 @@ pub(crate) async fn run_with_reading(
                         Ok(page) if wire.valid(stamp) && rx.is_empty() => {
                             if history::previous_page(&page, &resident).is_ok() {
                                 if !crate::timeline::older_offer(
-                                    cancel, &page, &wire, stamp, &out, &wake,
+                                    cancel,
+                                    &page,
+                                    &wire,
+                                    stamp,
+                                    async |event| {
+                                        reader_event(reading, generation, &out, &wake, event).await
+                                    },
                                 )
                                 .await
                                 {
