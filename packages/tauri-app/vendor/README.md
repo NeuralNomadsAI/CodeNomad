@@ -13,8 +13,11 @@ MIT/Apache-2.0 crates, including licenses, selected through `[patch.crates-io]`.
   `patches/wry-gtk.patch`, then `patches/wry-webkit-capabilities.patch`,
    `patches/wry-browser-isolation.patch`, `patches/runtime-browser-isolation.patch`
     `patches/wry-browser-print.patch`, `patches/wry-browser-download.patch`,
-    `patches/wry-browser-private-preview.patch` and `patches/runtime-browser-private-preview.patch`;
+     `patches/wry-browser-private-preview.patch`, `patches/runtime-browser-private-preview.patch`
+     and `patches/runtime-cookie-dispatch.patch`;
   native trials ship beside the runtime examples.
+- Cookie installation releases the runtime's webview window-ID lock before
+  dispatch: WebKitGTK may handle a new window IPC while its cookie write completes.
 - GTK: the runtime lazily installs a window-owned `GtkOverlay` inside Tao's
   content box, below its menu bar. Primary content stays boxed, including a
   window's own webview in Tauri's multi-webview mode (it requests no bounds), so a

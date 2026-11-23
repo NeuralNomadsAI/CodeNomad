@@ -1,4 +1,5 @@
 use super::{Backend, Owner, platform};
+use crate::settings::notification_routing::{self, Category, Destination};
 use codenomad_client::{Receiver, bounded};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -8,6 +9,10 @@ pub(super) enum Choice {
     Locale,
     Contrast,
     FileSave,
+    NewConversationPermissions,
+    LogLevel,
+    NotificationRoute(Category, Destination),
+    NotificationsFocused,
     Mode,
     Palette(bool),
 }
@@ -27,6 +32,17 @@ impl Choice {
         match self {
             Self::Locale => patch["settings"]["locale"] = json!(value),
             Self::Contrast => patch["settings"]["highContrast"] = json!(value),
+            Self::LogLevel => patch["logLevel"] = json!(value),
+            Self::NotificationRoute(category, destination) => {
+                patch["settings"]["notificationRouting"][category.key()][destination.key()] =
+                    json!(value == "true");
+            }
+            Self::NotificationsFocused => {
+                patch["settings"]["osNotificationsAllowWhenVisible"] = json!(value == "true");
+            }
+            Self::NewConversationPermissions => {
+                patch["settings"]["newConversationPermissions"] = json!(value)
+            }
             Self::Mode => patch["appearancePreferences"]["mode"] = json!(value),
             Self::FileSave => (),
             Self::Palette(dark) => {
@@ -50,6 +66,17 @@ impl Choice {
         match self {
             Self::Locale => snapshot["settings"]["locale"] == value,
             Self::Contrast => snapshot["settings"]["highContrast"] == value,
+            Self::LogLevel => snapshot["logLevel"] == value,
+            Self::NotificationRoute(category, destination) => {
+                snapshot["settings"]["notificationRouting"][category.key()][destination.key()]
+                    == (value == "true")
+            }
+            Self::NotificationsFocused => {
+                snapshot["settings"]["osNotificationsAllowWhenVisible"] == (value == "true")
+            }
+            Self::NewConversationPermissions => {
+                snapshot["settings"]["newConversationPermissions"] == value
+            }
             Self::Mode => appearance["mode"] == value,
             Self::FileSave => false,
             Self::Palette(dark) => {
@@ -108,6 +135,22 @@ pub(super) struct Document {
 }
 
 impl Document {
+    pub(super) fn refreshing(&self) -> bool {
+        self.read.queued || self.read.reattach || self.flight.is_some() || self.barrier.is_some()
+    }
+
+    pub(super) fn confirmed(&self) -> Option<&Value> {
+        if self.read.queued
+            || self.read.reattach
+            || self.read.failed
+            || self.flight.is_some()
+            || self.barrier.is_some()
+        {
+            return None;
+        }
+        self.snapshot.as_ref()
+    }
+
     pub(super) fn rebind(&mut self, same_address: bool) {
         if !same_address {
             *self = Self::default();
@@ -126,7 +169,6 @@ impl Document {
         self.read.queued = true;
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn retry(&mut self) {
         let operation = self.flight.as_ref().map(|flight| &flight.operation);
         if matches!(operation, Some(Operation::Read { retry: true })) {
@@ -145,8 +187,16 @@ impl Document {
         self.read.failed
     }
 
+    pub(super) fn awaiting_initial_read(&self) -> bool {
+        self.snapshot.is_none() && !self.read.failed
+    }
+
     pub(super) fn write_failed(&self) -> bool {
         !self.write.failed.is_empty()
+    }
+
+    pub(super) fn write_failed_other_than(&self, choice: Choice) -> bool {
+        self.write.failed.iter().any(|failed| *failed != choice)
     }
 
     pub(super) fn stage(&mut self, choice: Choice, value: &'static str) {
@@ -159,7 +209,14 @@ impl Document {
     }
 
     fn stage_value(&mut self, choice: Choice, value: ChoiceValue) {
-        if choice == Choice::Contrast {
+        if matches!(
+            choice,
+            Choice::Contrast
+                | Choice::NewConversationPermissions
+                | Choice::LogLevel
+                | Choice::NotificationRoute(..)
+                | Choice::NotificationsFocused
+        ) {
             self.write.failed.remove(&choice);
         }
         self.write.requested.insert(choice, value);
@@ -181,6 +238,13 @@ impl Document {
 
     pub(super) fn choice_failed(&self, choice: Choice) -> bool {
         self.write.failed.contains(&choice)
+    }
+
+    pub(super) fn unsettled(&self) -> bool {
+        self.flight.is_some()
+            || self.barrier.is_some()
+            || !self.write.pending.is_empty()
+            || self.write.retry
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -207,9 +271,10 @@ impl Document {
     fn settle(&mut self, operation: Operation, snapshot: Option<Value>, current: bool) {
         if let Operation::Write(sent) = &operation {
             for (&choice, value) in sent {
-                if !snapshot
-                    .as_ref()
-                    .is_some_and(|data| choice.confirmed(value, data))
+                if !self.write.pending.contains(&choice)
+                    && !snapshot
+                        .as_ref()
+                        .is_some_and(|data| choice.confirmed(value, data))
                 {
                     self.write.failed.insert(choice);
                 }
@@ -297,6 +362,14 @@ impl Document {
         };
         let patch = if let Operation::Write(sent) = &operation {
             let mut patch = json!({});
+            if sent
+                .keys()
+                .any(|choice| matches!(choice, Choice::NotificationRoute(..)))
+                && let Some(before) = self.snapshot.as_ref()
+                && !before["settings"]["notificationRouting"].is_object()
+            {
+                patch["settings"]["notificationRouting"] = notification_routing::seed(before);
+            }
             for (&choice, value) in sent {
                 choice.put(&mut patch, value);
             }
@@ -323,6 +396,18 @@ impl Document {
         });
         true
     }
+}
+
+#[cfg(test)]
+#[test]
+fn notification_routes_do_not_read_an_invalidated_document() {
+    let mut document = Document {
+        snapshot: Some(json!({"settings":{"osNotificationsAllowWhenVisible":true}})),
+        ..Document::default()
+    };
+    assert!(document.confirmed().is_some());
+    document.invalidate();
+    assert!(document.confirmed().is_none());
 }
 
 impl Flight {

@@ -11,8 +11,8 @@
 .folder-home-main {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-rows: minmax(32rem, 1fr);
-  min-height: 32rem;
+  grid-auto-rows: minmax(16rem, 1fr);
+  min-height: 16rem;
 }
 .folder-home-main > section { min-height: 0; }
 .folder-home-main .panel-header { flex-shrink: 0; background-color: var(--surface-secondary); }
@@ -70,6 +70,10 @@
 }
 
 @media (max-width: 639px) {
-  .folder-home-shell { height: auto; padding-block-start: 1rem; }
-  .folder-home-main { grid-template-columns: minmax(0, 1fr); }
+  .folder-home-shell { padding-block-start: 1rem; }
+  .folder-home-main {
+    grid-template-columns: minmax(0, 1fr);
+    /* Two 16rem panels and the 1rem gap. */
+    min-height: 33rem;
+  }
 }

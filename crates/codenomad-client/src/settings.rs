@@ -1,5 +1,8 @@
 //! Host-owned configuration and appearance, independent of any project location.
+pub mod memory;
+mod opencode_actions;
 mod providers;
+pub mod remote;
 use crate::{
     Wake,
     backend::{Backend, read_json},
@@ -7,6 +10,7 @@ use crate::{
     recovery::Input,
     runtime, stream,
 };
+pub use opencode_actions::{install_opencode, local_opencode_offer, opencode_local};
 pub(crate) use providers::provider_change;
 pub use providers::{Provider, providers};
 use serde_json::Value;
@@ -18,16 +22,39 @@ use std::{
     time::Duration,
 };
 
+async fn session_directory(backend: &Backend, workspace: &str, session: &str) -> Result<String> {
+    if !crate::history::valid_id(workspace) || !crate::history::valid_id(session) {
+        return Err("Invalid session Location".into());
+    }
+    let url = format!(
+        "{}workspaces/{workspace}/instance/api/session/{session}",
+        backend.base
+    );
+    let value = read_json(backend.client.get(url).send().await?.error_for_status()?).await?;
+    let record = &value["data"];
+    let location = &record["location"];
+    if record["id"] != session || location.get("workspaceID").is_some() {
+        return Err("Invalid session Location".into());
+    }
+    location["directory"]
+        .as_str()
+        .filter(|path| crate::absolute_server_path(path))
+        .map(str::to_owned)
+        .ok_or_else(|| "Invalid session directory".into())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Owner {
     Config,
     State,
+    Server,
 }
 impl Owner {
     fn url(self, backend: &Backend) -> String {
         let path = match self {
             Self::Config => "api/storage/config/ui",
             Self::State => "api/storage/state/ui",
+            Self::Server => "api/storage/config/server",
         };
         format!("{}{path}", backend.base)
     }
@@ -73,6 +100,10 @@ pub struct OpenCodeStatus {
     pub check_failed: bool,
     pub state: &'static str,
     pub restart: Option<&'static str>,
+    pub can_upgrade: bool,
+    pub needs_shared_installation: bool,
+    pub foreign_installation: bool,
+    pub binary_path: Option<String>,
 }
 
 pub async fn opencode_status(backend: &Backend, recheck: bool) -> Result<OpenCodeStatus> {
@@ -124,6 +155,14 @@ fn open_code_status(data: Value) -> Result<OpenCodeStatus> {
         latest: text("latestVersion"),
         update_available: data["updateAvailable"] == true,
         check_failed: data["checkError"] == "update_check_failed",
+        can_upgrade: data["canUpgrade"] == true && data["legacyReplacement"].is_null(),
+        needs_shared_installation: data["needsSharedInstallation"] == true,
+        foreign_installation: data["foreignInstallation"].is_object()
+            && data["installationSource"] != "managed",
+        binary_path: data["binaryPath"]
+            .as_str()
+            .filter(|p| !p.is_empty() && p.len() <= 32768 && !p.contains(char::is_control))
+            .map(str::to_owned),
     })
 }
 
@@ -198,9 +237,14 @@ impl PreferencesWatch {
                             async {
                                 while let Ok(event) = events.recv().await {
                                     let flag = match event {
-                                        Input::Opened(_) => 3,
+                                        Input::Opened(_) => 11,
                                         Input::Preferences(Owner::Config) => 1,
                                         Input::Preferences(Owner::State) => 2,
+                                        Input::Preferences(Owner::Server) => 16,
+                                        Input::Workspace(
+                                            _,
+                                            crate::transport::WorkspaceEvent::MemoryChanged,
+                                        ) => 8,
                                         _ => 0,
                                     };
                                     if flag != 0 && notices.fetch_or(flag, SeqCst) & flag != flag {
@@ -246,6 +290,14 @@ impl PreferencesWatch {
 
     pub fn take_authentication_required(&self) -> bool {
         self.dirty.fetch_and(!4, SeqCst) & 4 != 0
+    }
+
+    pub fn take_memory_changed(&self) -> bool {
+        self.dirty.fetch_and(!8, SeqCst) & 8 != 0
+    }
+
+    pub fn take_server_changed(&self) -> bool {
+        self.dirty.fetch_and(!16, SeqCst) & 16 != 0
     }
 
     pub fn stop(self) -> crate::Receiver<()> {

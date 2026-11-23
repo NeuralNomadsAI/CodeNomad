@@ -82,6 +82,13 @@ pub fn action_tx(
 impl State {
     pub fn renew_scope(&mut self) {
         self.input_scope = Rc::new(());
+        #[cfg(target_arch = "wasm32")]
+        self.rotate_composer_input();
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn rotate_composer_input(&mut self) {
+        // The web clipboard binds deferred images to the focused field's Rune path.
+        self.web_composer_input_epoch = self.web_composer_input_epoch.wrapping_add(1);
     }
     pub fn current_scope(&self, scope: &Rc<()>) -> bool {
         Rc::ptr_eq(&self.input_scope, scope)

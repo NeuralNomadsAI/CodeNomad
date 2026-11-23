@@ -31,7 +31,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         let Some(event) = event else { break };
         let stale_activity = matches!(&event, Event::ReaderSync { version, .. }
             if s.reader.as_ref().is_some_and(|reader| reader.activity_after(*version)));
-        settings::provider_connection_event(s, &event);
+        settings::connection_event(s, &event);
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
@@ -93,6 +93,25 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     agent.observe_running(running);
                 }
             }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionRequest {
+                form,
+                id,
+            }) => {
+                if let Some(agent) = &mut s.agent {
+                    agent.notice_request(form, id);
+                }
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::SessionExecution {
+                notice,
+            }) => {
+                if let Some(agent) = &mut s.agent {
+                    let verify = notice.is_some();
+                    agent.attention.execution(notice);
+                    if verify {
+                        agent.refresh(false);
+                    }
+                }
+            }
             Event::Workspace(event) => {
                 if matches!(
                     event,
@@ -104,6 +123,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     s.messages.clear();
                     s.history_detached = false;
                     s.can_older = false;
+                    if let Some(agent) = &mut s.agent {
+                        agent.attention.disconnected();
+                    }
                 }
                 git::event(s, &event);
                 if let Some(files) = &mut s.files {
@@ -182,6 +204,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.attachments.cancel();
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
+                    a.attention.disconnected();
                 }
             }
             Event::PagingFailed => {
@@ -270,6 +293,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.phase = Phase::Failed;
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
+                    a.attention.disconnected();
                 }
             }
         }

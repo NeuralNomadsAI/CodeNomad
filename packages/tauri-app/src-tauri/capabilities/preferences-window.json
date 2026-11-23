@@ -34,6 +34,7 @@
     "allow-install-desktop-update",
     "allow-take-desktop-update-failure",
     "allow-cli-get-status",
+    "allow-cli-renew-managed-session",
     "allow-device-speech-request",
     "allow-cli-restart",
     "allow-needs-local-certificate-install",

@@ -53,6 +53,13 @@ Non-ASCII config paths on Windows: each host folds the config identity's case di
 
 Every backend launch (the default profile included, as key `stable`) receives the resolved scope that the backend uses as its Mission profile scope: `CODENOMAD_UPDATE_CHANNEL=<profile key>`, `CODENOMAD_PROFILE_CONFIG_IDENTITY=<config identity>` and the selected `CLI_CONFIG`. Tauri applies these only to the backend `Command`, never through a process-wide `set_var`. They are backend-only: the backend strips them and `CODENOMAD_PROFILE` from the environment of the shared OpenCode daemon it starts (`workspaces/host-opencode-service.ts`), so agent shells never pin a desktop launched from them to this profile.
 
+The local desktop renderer confirms session loss with `/api/auth/status`. The
+host requests renewal on its current backend's stdin and matches the private
+stdout response by process generation and request ID. The backend issues a
+fresh session for the expired passwordless desktop bootstrap lineage. The host
+installs the HttpOnly cookie and the renderer verifies it before reconnecting.
+Sign-out or password revocation retires that lineage.
+
 ## Automatic choice
 
 On a packaged launch without `CODENOMAD_PROFILE`/alias and without a usable remembered choice, the host decides alone, without asking:

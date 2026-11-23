@@ -3,10 +3,14 @@ use tabs::{activate, close_blocked};
 pub use tabs::{can_new, close, new_tab, select};
 
 mod drafts;
+mod notification;
 mod panel_state;
 mod strip;
 
 pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
+pub(crate) use notification::{
+    Activation, notification_target, observes_notification, open_notification, owns_notification,
+};
 pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, set_files_tab,
     toggle_file_wrap,
@@ -246,7 +250,7 @@ pub fn input_ready(s: &State) -> bool {
     s.workspace.as_ref().is_none_or(|ui| ui.ready)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn native_window_store(s: &State) -> Option<platform::storage::Store> {
     s.workspace.as_ref()?.persistence.store.clone()
 }
@@ -474,6 +478,46 @@ pub fn has_conversation_stream(s: &State) -> bool {
         })
 }
 
+fn poll_cached(s: &mut State, ui: &mut Ui, now: Option<f64>, tx: &mut Tx) -> bool {
+    let active = Cache::take(s);
+    let mut changed = false;
+    let mut drafts_changed = false;
+    for item in &mut ui.entries {
+        if let Some(cache) = item.cache.take() {
+            cache.apply(s);
+            let awaiting_prompt = s.composer.pending();
+            let uncertain_prompt = s.composer.unconfirmed_id().is_some();
+            changed |= crate::poll_chat(s, 8);
+            crate::shell::notifications::collect(s, |s| notification::entry_target(item, s));
+            if awaiting_prompt && !s.composer.pending()
+                || uncertain_prompt && s.composer.unconfirmed_id().is_none()
+            {
+                drafts_changed |= drafts::capture_draft(item, s);
+            }
+            if let Some(now) = now {
+                changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
+                changed |= crate::git::poll(s, now, tx);
+            }
+            item.cache = Some(Cache::take(s));
+        }
+    }
+    active.apply(s);
+    if drafts_changed {
+        ui.changed();
+    }
+    changed
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn poll_cached_notifications(s: &mut State, tx: &mut Tx) -> bool {
+    let Some(mut ui) = s.workspace.take() else {
+        return false;
+    };
+    let changed = poll_cached(s, &mut ui, None, tx);
+    s.workspace = Some(ui);
+    changed
+}
+
 pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let Some(mut ui) = s.workspace.take() else {
         return false;
@@ -502,29 +546,8 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             s.shell.file_wrap = wrap;
         }
     }
-    let active = Cache::take(s);
     let mut changed = ui.persistence.poll_file_draft_retry(&s.documents);
-    let mut drafts_changed = false;
-    for item in &mut ui.entries {
-        if let Some(cache) = item.cache.take() {
-            cache.apply(s);
-            let awaiting_prompt = s.composer.pending();
-            let uncertain_prompt = s.composer.unconfirmed_id().is_some();
-            changed |= crate::poll_chat(s, 8);
-            if awaiting_prompt && !s.composer.pending()
-                || uncertain_prompt && s.composer.unconfirmed_id().is_none()
-            {
-                drafts_changed |= drafts::capture_draft(item, s);
-            }
-            changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
-            changed |= crate::git::poll(s, now, tx);
-            item.cache = Some(Cache::take(s));
-        }
-    }
-    active.apply(s);
-    if drafts_changed {
-        ui.changed();
-    }
+    changed |= poll_cached(s, &mut ui, Some(now), tx);
     ui.stage();
     let previous_error = (
         ui.persistence.read_error,

@@ -29,8 +29,23 @@ pub struct Snapshot {
     pub current: Option<Value>,
     pub session_known: bool,
     pub running: bool,
+    pub root_directory: Option<String>,
     pub permissions: Option<Vec<Permission>>,
     pub forms: Option<Vec<Form>>,
+}
+
+/// Metadata from the session read already made by the interruption dock.
+fn root_directory(session: &Value, id: &str) -> Option<String> {
+    let row = &session["data"];
+    if row["id"] != id || !row["parentID"].is_null() {
+        return None;
+    }
+    row["location"]["directory"]
+        .as_str()
+        .filter(|path| {
+            crate::absolute_server_path(path) && row["location"]["workspaceID"].is_null()
+        })
+        .map(str::to_owned)
 }
 pub enum Action {
     Model(Value),
@@ -55,6 +70,38 @@ impl Backend {
                 .error_for_status()?,
         )
         .await
+    }
+    pub async fn session_inactive_at(&self, directory: &str) -> bool {
+        if !crate::absolute_server_path(directory) {
+            return false;
+        }
+        let Ok(response) = self
+            .client
+            .get(self.control_url("session/active"))
+            .query(&[("directory", directory)])
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        else {
+            return false;
+        };
+        if !read_json(response).await.ok().is_some_and(|value| {
+            value["data"]
+                .as_object()
+                .is_some_and(|active| !active.contains_key(&self.session))
+        }) {
+            return false;
+        }
+        // The relay can omit a member it could not scope during the active-list read.
+        let Ok(record) = self.control_get(&format!("session/{}", self.session)).await else {
+            return false;
+        };
+        let time = &record["data"]["time"];
+        root_directory(&record, &self.session)
+            .as_deref()
+            .is_some_and(|current| crate::same_server_path(current, directory))
+            && matches!((time["busy"].as_u64(), time["idle"].as_u64()), (Some(busy), Some(idle)) if busy <= idle)
     }
     async fn control_post(&self, path: &str, input: Value) -> Result<()> {
         self.client
@@ -115,6 +162,10 @@ impl Backend {
             current,
             session_known: session.is_ok(),
             running,
+            root_directory: session
+                .as_ref()
+                .ok()
+                .and_then(|row| root_directory(row, &self.session)),
             permissions,
             forms,
         }

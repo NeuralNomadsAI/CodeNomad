@@ -16,11 +16,13 @@ use rune::edit::TextEdit;
 enum Job {
     Read(bool),
     Act(Action),
+    VerifyIdle(String, String),
 }
 enum Result {
     Read(Snapshot, bool),
     Act(bool, Snapshot),
     Stop(bool),
+    VerifiedIdle(String, bool),
 }
 pub fn navigation_blocked(s: &crate::State) -> bool {
     s.agent.as_ref().is_some_and(Ui::navigation_blocked)
@@ -54,8 +56,10 @@ pub struct Ui {
     pub running: bool,
     pub pending_known: bool,
     pub online: bool,
+    pub(crate) attention: crate::shell::notifications::Attention,
     reading: bool,
     activity_during_job: bool,
+    request_during_job: bool,
     trailing: Option<bool>,
 }
 pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
@@ -85,6 +89,9 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
                     let ok = backend.agent_action(&action).await.is_ok();
                     Result::Act(ok, backend.agent_snapshot(false).await)
                 }
+                Job::VerifyIdle(id, directory) => {
+                    Result::VerifiedIdle(id, backend.session_inactive_at(&directory).await)
+                }
             };
             if out.send(result).await.is_err() {
                 break;
@@ -104,6 +111,7 @@ impl Ui {
         self.handle = handle;
         self.reading = false;
         self.activity_during_job = false;
+        self.request_during_job = false;
         self.trailing = None;
         self.busy = false;
         self.stopping = false;
@@ -125,6 +133,7 @@ impl Ui {
         let mut replacement = Self::new(handle);
         replacement.drafts = std::mem::take(&mut self.drafts);
         replacement.reasons = std::mem::take(&mut self.reasons);
+        replacement.attention = std::mem::take(&mut self.attention);
         *self = replacement;
     }
 
@@ -201,8 +210,10 @@ impl Ui {
             running: false,
             pending_known: false,
             online: false,
+            attention: Default::default(),
             reading: false,
             activity_during_job: false,
+            request_during_job: false,
             trailing: None,
         };
         ui.refresh(true);
@@ -254,8 +265,18 @@ impl Ui {
             .chain(self.forms.iter().map(|p| p.id.clone()))
             .collect()
     }
+    pub(crate) fn notice_request(&mut self, form: bool, id: String) {
+        self.attention.request(form, id);
+        self.request_during_job |= self.reading || self.busy;
+        self.refresh(false);
+    }
+
     fn snapshot(&mut self, s: Snapshot) {
         let current_activity = !std::mem::take(&mut self.activity_during_job);
+        let current_requests = !std::mem::take(&mut self.request_during_job);
+        if self.online {
+            self.attention.observe(&s, current_requests);
+        }
         self.known = s.session_known;
         if s.session_known {
             self.current = s.current;
@@ -309,12 +330,18 @@ impl Ui {
                     self.error = !ok;
                     self.refresh(false)
                 }
+                Result::VerifiedIdle(idle, inactive) => {
+                    self.attention
+                        .confirm_idle(idle, inactive && self.online && !self.running);
+                }
             }
             changed = true;
         }
         if !self.reading && !self.busy {
             if let Some(catalog) = self.trailing.take() {
                 self.refresh(catalog)
+            } else if let Some((id, directory)) = self.attention.verify_idle() {
+                let _ = self.handle.jobs.try_send(Job::VerifyIdle(id, directory));
             }
         }
         changed

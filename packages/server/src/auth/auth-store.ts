@@ -28,6 +28,10 @@ export class AuthStore {
     return this.authFilePath
   }
 
+  canRenewBootstrapSession(): boolean {
+    return this.bootstrapUsername !== null && !fs.existsSync(this.authFilePath)
+  }
+
   load(): AuthFile | null {
     if (this.overrideAuth) {
       return this.overrideAuth

@@ -1,4 +1,7 @@
+pub(super) mod behavior;
 mod document;
+mod notifications;
+pub(super) mod server;
 
 use crate::{backend::Backend, platform};
 pub(super) use codenomad_client::settings::Owner;
@@ -13,8 +16,12 @@ use serde_json::json;
 pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
     pub(super) provider_target: Option<super::providers::Target>,
+    pub(super) memory: super::memory::Setting,
+    pub(super) opencode_install: super::opencode::install::Install,
     config: Document,
     state: Document,
+    server: Document,
+    show_server: bool,
     pub(super) window_wake: Option<rune::Waker>,
     pub(super) main_wake: Option<rune::Waker>,
     pub(super) revision: u64,
@@ -55,13 +62,14 @@ impl Preferences {
             self.take_invalidations();
             self.config.prepare_drain();
             self.state.prepare_drain();
+            self.server.prepare_drain();
             // Each lane can finish a PATCH/readback, a retry preflight, and one trailing PATCH/readback.
-            if self.config.draining() || self.state.draining() {
+            if self.documents_draining() {
                 platform::block_on(async {
                     let _ = tokio::time::timeout(
                         codenomad_client::http::REQUEST_TIMEOUT * 5 + Duration::from_millis(100),
                         async {
-                            while self.config.draining() || self.state.draining() {
+                            while self.documents_draining() {
                                 self.poll_documents();
                                 if self.config.draining() || self.state.draining() {
                                     platform::sleep(Duration::from_millis(10)).await;
@@ -73,7 +81,14 @@ impl Preferences {
                 });
             }
         }
-        !self.config.has_unconfirmed() && !self.state.has_unconfirmed()
+        !self.config.has_unconfirmed()
+            && !self.state.has_unconfirmed()
+            && !self.server.has_unconfirmed()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn documents_draining(&self) -> bool {
+        self.config.draining() || self.state.draining() || self.server.draining()
     }
     pub fn bind(&mut self, owner: Option<Backend>) -> bool {
         if self.backend.as_ref().map(|b| &b.client_id) == owner.as_ref().map(|b| &b.client_id) {
@@ -90,6 +105,9 @@ impl Preferences {
             });
         self.config.rebind(same_address);
         self.state.rebind(same_address);
+        self.server.rebind(same_address);
+        self.memory.bind(same_address);
+        self.opencode_install.cancel_check();
         self.backend = owner;
         self.authentication_required = false;
         self.unwatch();
@@ -103,7 +121,6 @@ impl Preferences {
         self.state.invalidate();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn retry(&mut self) {
         self.config.retry();
         self.state.retry();
@@ -111,6 +128,11 @@ impl Preferences {
 
     pub fn can_retry(&self) -> bool {
         self.backend.is_some() && !self.authentication_required
+    }
+
+    pub(super) fn awaiting_appearance(&self) -> bool {
+        self.can_retry()
+            && (self.config.awaiting_initial_read() || self.state.awaiting_initial_read())
     }
 
     pub fn watch(&mut self, wake: &rune::Waker) {
@@ -149,6 +171,7 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
+        self.opencode_install.cancel_check();
         if let Some(target) = &mut self.provider_target {
             target.transport(false);
         }
@@ -173,13 +196,19 @@ impl Preferences {
     }
 
     pub fn invalidate(&mut self, owner: Owner) {
-        self.doc_mut(owner).invalidate();
+        if owner != Owner::Server || self.show_server {
+            self.doc_mut(owner).invalidate();
+        }
+        if owner == Owner::Config && self.show_server {
+            self.server.invalidate();
+        }
     }
 
     fn doc_mut(&mut self, owner: Owner) -> &mut Document {
         match owner {
             Owner::Config => &mut self.config,
             Owner::State => &mut self.state,
+            Owner::Server => &mut self.server,
         }
     }
 
@@ -187,7 +216,22 @@ impl Preferences {
         match owner {
             Owner::Config => &self.config,
             Owner::State => &self.state,
+            Owner::Server => &self.server,
         }
+    }
+
+    pub(super) fn notification_config(&self) -> Option<&Value> {
+        self.config.confirmed()
+    }
+
+    pub(super) fn notification_config_refreshing(&self) -> bool {
+        self.config.refreshing()
+    }
+
+    #[cfg(test)]
+    pub(super) fn reset_notification_fixture(&mut self) {
+        self.config = Default::default();
+        self.fixture();
     }
 
     pub fn saved(&self, owner: Owner) -> Option<&Value> {
@@ -199,7 +243,11 @@ impl Preferences {
             Some("rune.connect_error")
         } else if self.contrast_failed() {
             Some("settings.appearance.contrast.saveError")
-        } else if self.config.write_failed() || self.state.write_failed() {
+        } else if self
+            .config
+            .write_failed_other_than(Choice::NewConversationPermissions)
+            || self.state.write_failed()
+        {
             Some("settings.preferenceSaveFailed")
         } else if self.config.read_failed() || self.state.read_failed() {
             Some("rune.connect_error")
@@ -219,22 +267,36 @@ impl Preferences {
             if config {
                 self.config.invalidate();
             }
+            if (config | stream.take_server_changed()) && self.show_server {
+                self.server.invalidate();
+            }
             if state {
                 self.state.invalidate();
+            }
+            if stream.take_memory_changed() {
+                self.memory.invalidate();
             }
         }
     }
 
     fn poll_documents(&mut self) -> bool {
+        let install = self.opencode_install.poll();
         if self.authentication_required {
-            return false;
+            return install;
         }
         let Some(backend) = &self.backend else {
-            return false;
+            return install;
         };
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         let changed = self.config.poll(backend, Owner::Config, &main, &window)
-            | self.state.poll(backend, Owner::State, &main, &window);
+            | self.state.poll(backend, Owner::State, &main, &window)
+            | ((self.show_server || self.server.unsettled())
+                && self.server.poll(backend, Owner::Server, &main, &window))
+            | self.memory.poll(backend, &main, &window)
+            | self
+                .memory
+                .poll_review(backend, self.provider_target.as_ref(), &main, &window)
+            | install;
         if changed {
             self.revision += 1;
         }
@@ -264,7 +326,6 @@ impl Preferences {
         self.config.choice_failed(Choice::Contrast)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn set_contrast(&mut self, contrast: &'static str) {
         if self.locale_ready()
             && self.can_retry()

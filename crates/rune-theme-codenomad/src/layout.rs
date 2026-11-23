@@ -11,7 +11,7 @@ thread_local! { static SOURCE_PALETTE: Cell<bool> = const { Cell::new(false) }; 
 pub(crate) fn source_palette() -> bool {
     SOURCE_PALETTE.get()
 }
-/// Render a qualified subtree in Solid's product-default palette.
+/// Use Solid's product defaults where the app hasn't selected a palette.
 pub fn with_source_palette<T>(render: impl FnOnce() -> T) -> T {
     struct Restore(bool);
     impl Drop for Restore {
@@ -20,7 +20,7 @@ pub fn with_source_palette<T>(render: impl FnOnce() -> T) -> T {
         }
     }
     let _restore = Restore(SOURCE_PALETTE.replace(true));
-    crate::palettes::with_palette(None, render)
+    render()
 }
 pub fn dark() -> bool {
     APPEARANCE.get()
@@ -56,11 +56,13 @@ pub fn button_tx<S: 'static>(
         .build(kit(dark()))
 }
 pub fn input(edit: &TextEdit) -> El {
+    base_editor(edit).fill(tokens(dark()).color("surface-field"))
+}
+fn base_editor(edit: &TextEdit) -> El {
     // Rune's low-level editor retains the application's edit accessor and submit contract.
     rune::text_input(edit, tokens(dark()).text(TextRole::Body))
         .w_full()
         .padding(tokens(dark()).space(Space::Sm).px())
-        .fill(tokens(dark()).color("surface-field"))
         .dir(rune::Direction::Auto)
 }
 pub fn field(edit: &TextEdit) -> rune_kit::TextInput {
@@ -75,19 +77,8 @@ pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
 pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
     rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
 }
-pub fn composer_field(edit: &TextEdit, placeholder: &str, compact: bool) -> rune_kit::TextArea {
-    let field = rune_kit::TextArea::new(edit)
-        .width(None)
-        .max_height(320.0)
-        .placeholder(placeholder);
-    if compact {
-        field.auto_grow(1, usize::MAX)
-    } else {
-        field.rows(5)
-    }
-}
-pub fn native_composer_input(edit: &TextEdit, placeholder: &str) -> El {
-    input(edit).hint(placeholder)
+pub fn composer_input(edit: &TextEdit, placeholder: &str) -> El {
+    base_editor(edit).hint(placeholder)
 }
 pub fn editor_menu<S: 'static>(
     tx: &mut rune::Tx,
@@ -105,7 +96,7 @@ pub fn editor_menu<S: 'static>(
     }
     tx.popup_menu(menu, point, pick);
 }
-pub fn native_composer_field(editor: El, compact: bool) -> El {
+pub fn composer_field(editor: El, compact: bool, focused: bool) -> El {
     let t = tokens(dark());
     let minimum = if compact {
         t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0
@@ -115,10 +106,15 @@ pub fn native_composer_field(editor: El, compact: bool) -> El {
     let field = rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
         .min_h(minimum)
         .max_h(320.0);
-    rune::col()
+    let field = rune::col()
         .w_full()
         .child(field)
-        .fill(t.color("surface-field"))
+        .fill(t.color("surface-field"));
+    if focused {
+        field.outline(1.0, -1.0, t.color("focus-ring-color"))
+    } else {
+        field
+    }
 }
 pub fn announce_selection(tx: &mut rune::Tx, name: &str) {
     tx.announce(name, rune::LiveRegion::Polite);
@@ -256,6 +252,26 @@ pub trait Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn source_subtrees_inherit_active_contrast_and_keep_the_standalone_fallback() {
+        for dark in [false, true] {
+            let fallback = with_source_palette(|| tokens(dark).color("surface-secondary"));
+            let palette = crate::palettes::increased_contrast(None, dark).unwrap();
+            crate::palettes::with_palette(Some(palette), || {
+                let contrast = tokens(dark).color("surface-secondary");
+                assert_ne!(contrast, fallback);
+                with_source_palette(|| {
+                    assert_eq!(tokens(dark).color("surface-secondary"), contrast);
+                    assert_eq!(kit(dark).c.layer_01, contrast);
+                });
+                assert!(!source_palette());
+            });
+            assert_eq!(
+                with_source_palette(|| tokens(dark).color("surface-secondary")),
+                fallback
+            );
+        }
+    }
     #[test]
     fn shared_button_preserves_kit_geometry_and_disabled_semantics() {
         fn view(&(direct, disabled): &(bool, bool), cx: &mut rune::Cx<(bool, bool)>) -> El {
