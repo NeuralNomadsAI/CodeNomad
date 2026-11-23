@@ -2,6 +2,7 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::{CODE, Message};
 pub use codenomad_client::transport::{Command, Event, publish, run_backend};
+
 #[cfg(test)]
 pub use codenomad_client::wire::decode_event;
 use codenomad_client::{Receiver, Sender, bounded};
@@ -43,6 +44,17 @@ fn launch(s: &mut crate::State, startup: Startup) {
     let (commands, input) = bounded(1);
     s.incoming = Some(incoming);
     s.commands = Some(commands);
+    let reading = match &startup {
+        Startup::Bound(_) => {
+            let (reader, lane) = super::reader::Reader::open();
+            s.reader = Some(reader);
+            Some(lane)
+        }
+        Startup::Configured { .. } => {
+            s.reader = None;
+            None
+        }
+    };
     let wake = s.wake.clone();
     let previous = crate::settings::stop_before_conversation(s);
     crate::platform::spawn(async move {
@@ -54,7 +66,7 @@ fn launch(s: &mut crate::State, startup: Startup) {
         }
         match startup {
             Startup::Configured { bootstrap } => run_configured(out, input, wake, bootstrap).await,
-            Startup::Bound(backend) => run_bound(Ok(backend), out, input, wake).await,
+            Startup::Bound(backend) => run_bound(Ok(backend), out, input, wake, reading).await,
         }
     });
 }
@@ -79,7 +91,7 @@ async fn run_configured(
                     .flatten();
                 authenticate_and_run(target, password, token, out, input, wake).await;
             }
-            Err(error) => run_bound(Err(error), out, input, wake).await,
+            Err(error) => run_bound(Err(error), out, input, wake, None).await,
         }
         return;
     }
@@ -106,13 +118,13 @@ pub(crate) async fn authenticate_and_run(
         return;
     }
     match result {
-        Ok(()) => run_bound(Ok(target), out, input, wake).await,
+        Ok(()) => run_bound(Ok(target), out, input, wake, None).await,
         Err(error) if codenomad_client::http::authentication_expired(&error) => {
             publish(&out, &wake, Event::AuthenticationRequired(target)).await;
             drop(out);
             wake();
         }
-        Err(error) => run_bound(Err(error), out, input, wake).await,
+        Err(error) => run_bound(Err(error), out, input, wake, None).await,
     }
 }
 
@@ -121,10 +133,14 @@ async fn run_bound(
     out: Sender<Event>,
     input: Receiver<Command>,
     wake: rune::Waker,
+    reading: Option<codenomad_client::recovery::ReadingLane>,
 ) {
-    let result = match backend {
-        Ok(backend) => run_backend(backend, out.clone(), input, wake.clone()).await,
-        Err(error) => Err(error),
+    let result = match (backend, reading) {
+        (Ok(backend), Some(reading)) => {
+            codenomad_client::transport::run_backend_reading(backend, out.clone(), input, wake.clone(), reading).await
+        }
+        (Ok(backend), None) => run_backend(backend, out.clone(), input, wake.clone()).await,
+        (Err(error), _) => Err(error),
     };
     if result.is_err() {
         eprintln!("Rune backend unavailable");

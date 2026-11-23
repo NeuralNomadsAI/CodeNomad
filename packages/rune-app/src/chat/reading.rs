@@ -51,12 +51,22 @@ impl Reading {
 
 pub(crate) fn viewport(s: &State, history: El) -> El {
     let scope = s.input_scope.clone();
-    history.on_at_bottom_if(move |s: &mut State, following| {
-        if s.current_scope(&scope) {
-            s.transcript_display.reading_mut().following = following;
-        }
-        false
-    })
+    let layout_scope = scope.clone();
+    history
+        .on_layout_tx(move |s: &mut State, rect, tx| {
+            if s.current_scope(&layout_scope) {
+                crate::chat::ToolDiffPreferences::history_layout(s, rect, tx);
+                if let Some(reader) = &mut s.reader {
+                    reader.renderer_ready(tx);
+                }
+            }
+        })
+        .on_at_bottom_if(move |s: &mut State, following| {
+            if s.current_scope(&scope) {
+                s.transcript_display.reading_mut().following = following;
+            }
+            false
+        })
 }
 
 pub(crate) fn restore_position(s: &mut State, tx: &mut Tx) {

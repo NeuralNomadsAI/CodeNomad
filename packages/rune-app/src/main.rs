@@ -66,6 +66,7 @@ struct State {
     draft: TextEdit,
     pending_prompt: Option<String>,
     incoming: Option<Receiver<Event>>,
+    reader: Option<chat::reader::Reader>,
     commands: Option<Sender<Command>>,
     phase: Phase,
     revision: u64,
@@ -114,6 +115,7 @@ fn init() -> State {
         draft: TextEdit::new(""),
         pending_prompt: None,
         incoming: None,
+        reader: None,
         commands: None,
         phase: Phase::Loading,
         revision: 0,
@@ -162,6 +164,9 @@ fn send(s: &mut State, tx: &mut Tx) {
             .launcher()
             .is_some_and(launcher::Launcher::blocks_prompt)
         || s.draft.text.trim().is_empty()
+        || s.reader
+            .as_ref()
+            .is_some_and(chat::reader::Reader::blocks_send)
         || s.agent.as_ref().is_some_and(|a| a.blocked())
     {
         return;
@@ -261,13 +266,19 @@ fn retry_connection(s: &mut State, tx: &mut Tx) {
         .is_some_and(|c| c.try_send(Command::Retry).is_ok())
     {
         s.phase = Phase::Reconnecting;
+        chat::resume(s, tx);
     }
 }
-fn latest(_: &mut State, tx: &mut Tx) {
-    tx.scroll_to_bottom_instant("history");
+fn latest(s: &mut State, tx: &mut Tx) {
+    chat::reader::latest(s, tx);
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = poll_chat(s, 64);
+    if !git::has_preview(s)
+        && let Some(reader) = &mut s.reader
+    {
+        reader.renderer_ready(tx);
+    }
     let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
     changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
@@ -296,10 +307,26 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 }
 fn poll_chat(s: &mut State, limit: usize) -> bool {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
-    for _ in 0..limit {
-        let Some(event) = s.incoming.as_ref().and_then(|r| r.try_recv().ok()) else {
-            break;
+    if changed
+        && s.reader
+            .as_ref()
+            .is_some_and(chat::reader::Reader::independent_status)
+        && let Some(agent) = &s.agent
+        && agent.online
+        && agent.known
+        && s.phase != Phase::Failed
+    {
+        s.phase = if agent.running {
+            Phase::Streaming
+        } else {
+            Phase::Ready
         };
+    }
+    for _ in 0..limit {
+        let observation = s.incoming.as_ref().and_then(|r| r.try_recv().ok());
+        let content = observation.is_none();
+        let event = observation.or_else(|| s.reader.as_ref().and_then(chat::reader::Reader::next));
+        let Some(event) = event else { break };
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
@@ -311,11 +338,27 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::AgentHint(catalog) => {
+                if catalog {
+                    git::online(s, true);
+                    if let Some(files) = &mut s.files {
+                        files.online(true);
+                    }
+                }
                 if let Some(a) = s.agent.as_mut() {
                     if catalog {
                         a.online = true;
                     }
                     a.refresh(catalog)
+                }
+            }
+            Event::ObservedRunning(running) => {
+                s.phase = if running {
+                    Phase::Streaming
+                } else {
+                    Phase::Ready
+                };
+                if let Some(agent) = &mut s.agent {
+                    agent.refresh(false);
                 }
             }
             Event::Workspace(event) => {
@@ -326,6 +369,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
             Event::Sync(page) => {
+                if let Some(reader) = &mut s.reader {
+                    reader.install(page.newer.is_some());
+                }
                 git::online(s, true);
                 if let Some(files) = &mut s.files {
                     files.online(true);
@@ -403,6 +449,10 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Done => s.phase = Phase::Ready,
+            Event::Failed if content => {
+                s.paging = false;
+                s.history_error = true;
+            }
             Event::PromptSettled { rejected } => settle_prompt(s, rejected),
             Event::AuthenticationRequired(..) | Event::Failed => {
                 #[cfg(target_arch = "wasm32")]
@@ -419,6 +469,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     settle_prompt(s, true);
                     #[cfg(not(target_arch = "wasm32"))]
                     chat::authentication::expired(s, expired);
+                }
+                if let Some(reader) = &mut s.reader {
+                    reader.stop_content();
                 }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
@@ -539,6 +592,9 @@ fn composer(s: &State, scroll_stack: Option<&Cx<State>>) -> El {
                     strings::t("promptInput.overlay.send"),
                     s.phase != Phase::Ready
                         || s.pending_prompt.is_some()
+                        || s.reader
+                            .as_ref()
+                            .is_some_and(chat::reader::Reader::blocks_send)
                         || s.screen
                             .launcher()
                             .is_some_and(launcher::Launcher::blocks_prompt)

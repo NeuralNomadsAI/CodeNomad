@@ -30,6 +30,10 @@ struct SessionDisplay {
     compact_diffs: (u64, HashSet<String>),
 }
 impl Display {
+    pub(crate) fn evict_rendered(&mut self) {
+        self.diffs = Default::default();
+        self.stream = StreamRender::default();
+    }
     pub(super) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
     }
