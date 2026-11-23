@@ -10,7 +10,9 @@ import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 
 const cli=process.argv[2];assert(cli&&path.isAbsolute(cli),'Supply an absolute private-daemon CLI executable')
-const root=path.resolve(import.meta.dirname,'../../../target/rune-real-pending',`trial-${randomUUID()}`),project=path.join(root,'projects','empty')
+const evidence=process.env.RUNE_PENDING_EVIDENCE??path.resolve(import.meta.dirname,'../../../target/rune-real-pending')
+assert(path.isAbsolute(evidence),'RUNE_PENDING_EVIDENCE must be absolute')
+const root=path.join(evidence,`trial-${randomUUID()}`),project=path.join(root,'projects','empty')
 await mkdir(project,{recursive:true})
 const rune=path.join(root,`rune-client${process.platform==='win32'?'.exe':''}`);await copyFile(clientBinary,rune);requireTestSupport(rune)
 const env=await privateEnvironment(root),password=randomUUID(),proof={root,project,native:true,ui:'Rune Runtime, offscreen',modelCalls:0,tools:0,requests:[],events:[],stages:[],visible:[],cases:[],cleaned:false,result:1}
@@ -30,7 +32,7 @@ async function relay(route,init={}){
 }
 async function stage(event){
   if(event.type==='pending-live-visible'){proof.visible.push(event);return}
-  if(event.type==='pending-live-complete'){assert.equal(position,5);assert.equal(event.cases,5);proof.complete=event;return}
+  if(event.type==='pending-live-complete'){assert.equal(position,5);assert.equal(event.cases,5);assert.equal(event.transcriptReceipts,3);proof.complete=event;return}
   if(event.type!=='pending-live-stage')return
   assert.equal(event.case,expected[position]);assert.equal(event.stage,awaiting);proof.stages.push(event)
   const index=position,prefix=`/workspaces/${proof.workspace}/instance/api/session/${session.id}`
@@ -59,6 +61,14 @@ try{
   origin=await until(()=>{assert.equal(rust.exitCode,null);return rustLog.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0]},'private Rust ready')
   const login=await fetch(`${origin}/api/auth/login`,post({username:'codenomad',password:'fixture-rune-native-pending'}));assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await relay('/api/workspaces',post({path:project,requestId:`rune-native-ui-${randomUUID()}`}));assert.equal(opened.status,201);assert.equal(path.resolve(opened.body.path),project);proof.workspace=opened.body.id
+  await until(async()=>{
+    const window=await relay(`/api/workspaces/${proof.workspace}/session-history/window`,{
+      ...post({sessionID:session.id,target:{kind:'latest'}}),
+      headers:{'content-type':'application/json','x-codenomad-user-files':'reference-v1'},
+    })
+    proof.historyStatus={status:window.status,kind:window.body?.status,reason:window.body?.reason}
+    return window.body?.status==='window'
+  },'native history window ready')
   ui=owned(rune,['--probe-real-pending'],{env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-rune-native-pending',RUNE_WORKSPACE:proof.workspace,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_PENDING_OUT:root,RUNE_PENDING_IDS:JSON.stringify(ids),RUNE_LOCALE:'fr'}},(b,stdout)=>{
     uiLog=(uiLog+b).slice(-262144);if(!stdout)return;uiLines+=b;assert(uiLines.length<65536)
     for(let at;(at=uiLines.indexOf('\n'))>=0;){const line=uiLines.slice(0,at);uiLines=uiLines.slice(at+1);let value;try{value=JSON.parse(line)}catch{continue}protocol=protocol.then(()=>stage(value)).catch(error=>{protocolError??=error;if(live(ui))ui.kill()})}

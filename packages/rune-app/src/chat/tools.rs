@@ -19,6 +19,7 @@ use serde_json::Value;
 use std::{io, sync::Arc};
 pub(super) mod children;
 mod execute;
+mod question;
 mod search;
 mod shell;
 mod task;
@@ -206,7 +207,10 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
 
 pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
     let key = tool_key(message, &tool.id);
-    if tool.name == "execute" || task::is_task(tool) || !tool.pictures.is_empty() {
+    if matches!(tool.name.as_str(), "execute" | "question")
+        || task::is_task(tool)
+        || !tool.pictures.is_empty()
+    {
         return render(s, message, tool, &key).key(key);
     }
     if tool.name == "edit" {
@@ -252,6 +256,8 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         execute::title(tool)
     } else if tool.name == "todowrite" {
         todo::title(tool)
+    } else if tool.name == "question" {
+        question::title(tool).into()
     } else {
         title(tool)
     };
@@ -302,6 +308,13 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         return block;
     }
     let failure = render_error(s, message, key, tool);
+    if tool.name == "question"
+        && let Some(questions) = question::view(s, key, tool)
+    {
+        return block
+            .child(questions)
+            .children(super::media::tool(s, key, &tool.pictures));
+    }
     if pending && tool.name != "todowrite" && tool.input.as_str().is_none_or(str::is_empty) {
         return block.child(text(t("toolCall.pending.waitingToRun")));
     }

@@ -15,6 +15,9 @@ pub enum WorkspaceEvent {
         workspace_id: String,
     },
     UiPreferencesChanged,
+    PermissionReceiptsChanged {
+        message: Option<String>,
+    },
     NativeFilesystemChanged {
         workspace_id: String,
     },

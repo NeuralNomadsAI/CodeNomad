@@ -38,6 +38,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.transcript_display.children.bind(backend.clone());
                 s.transcript_display.usage_family.bind(backend.clone());
                 s.transcript_display.pictures.bind(backend.clone());
+                s.transcript_display.receipts.bind(backend.clone());
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -49,6 +50,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    s.transcript_display.receipts.reconnect();
                     s.transcript_display.usage_family.refresh();
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
@@ -106,6 +108,12 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if let Some(agent) = &mut s.agent {
                     agent.observe_running(running);
                 }
+            }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::PermissionReceiptsChanged { message },
+            ) => {
+                s.transcript_display.receipts.invalidate(message);
+                continue;
             }
             Event::Workspace(event) => {
                 if matches!(
@@ -203,6 +211,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.history_error = true;
             }
             Event::HistoryInvalidated => {
+                s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
                 s.transcript_display.pictures.clear();
                 chat::reader::invalidate(s);
@@ -215,6 +224,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.phase = Phase::Reconnecting;
             }
             Event::WorkspaceMissing => {
+                s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
                 s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
@@ -280,6 +290,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.history_error = true;
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
+                s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
                 s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
@@ -316,7 +327,10 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         s.phase = Phase::Failed;
         changed = true;
     }
-    if s.transcript_display.children.poll() | s.transcript_display.pictures.poll(&s.wake) {
+    if s.transcript_display.children.poll()
+        | s.transcript_display.pictures.poll(&s.wake)
+        | super::receipts::Receipts::poll(s)
+    {
         s.revision += 1;
         changed = true;
     }

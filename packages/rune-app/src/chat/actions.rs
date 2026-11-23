@@ -19,6 +19,7 @@ pub struct Display {
     pub(super) children: super::tools::children::Children,
     pub(crate) usage_family: super::usage::family::Totals,
     pub(super) pictures: super::media::Pictures,
+    pub(crate) receipts: super::receipts::Receipts,
 }
 
 #[derive(Default)]
@@ -44,6 +45,7 @@ impl Display {
         self.children.clear();
         self.usage_family.close();
         self.pictures.clear();
+        self.receipts.clear();
     }
     pub(super) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
@@ -71,6 +73,7 @@ impl Display {
             self.children.clear();
             self.usage_family.close();
             self.pictures.clear();
+            self.receipts.clear();
             self.diffs = Default::default();
         }
     }

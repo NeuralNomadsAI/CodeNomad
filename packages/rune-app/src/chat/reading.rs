@@ -89,13 +89,23 @@ pub(crate) fn restore_position(s: &mut State, tx: &mut Tx) {
 
 pub(super) fn row(s: &State, id: String, view: El) -> El {
     let scope = s.input_scope.clone();
-    view.on_drawn_layout_tx(move |s: &mut State, rect, tx| {
-        if s.current_scope(&scope) {
-            let top = s.tool_diff_preferences.history_bounds.get()[1];
-            s.transcript_display.reading_mut().record(&id, top, rect);
-        }
-        tx.live_only();
-    })
+    let lease = super::receipts::Receipts::lease(s, &id);
+    let receipt = super::receipts::for_message(s, &id);
+    view.children(receipt)
+        .on_drawn_layout_tx(move |s: &mut State, rect, tx| {
+            if s.current_scope(&scope) {
+                let [_, top, _, height] = s.tool_diff_preferences.history_bounds.get();
+                s.transcript_display.reading_mut().record(&id, top, rect);
+                let visible = height > 0.0
+                    && rect[3] > 0.0
+                    && rect[1] < top + height
+                    && rect[1] + rect[3] > top;
+                if super::receipts::Receipts::demand(s, &id, visible, &lease) {
+                    tx.wake_after(std::time::Duration::ZERO);
+                }
+            }
+            tx.live_only();
+        })
 }
 
 #[cfg(test)]

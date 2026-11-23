@@ -11,6 +11,7 @@ mod links;
 mod media;
 pub(crate) mod reader;
 pub(crate) mod reading;
+mod receipts;
 pub(crate) use reader::{resume, suspend};
 pub(crate) mod reasoning;
 #[cfg(test)]

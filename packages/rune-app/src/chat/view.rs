@@ -9,6 +9,7 @@ pub(crate) fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         .child(shell::reader(s, || {
             let history = rune_theme_codenomad::interruption::history(expanded)
                 .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
+                .children(super::receipts::session(s))
                 .child(transcript::rows(s));
             chat::reading::viewport(s, history)
         }))
