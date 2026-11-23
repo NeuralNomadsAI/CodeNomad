@@ -27,7 +27,7 @@ export async function bundleAssetPaths(directory){
   }
   return paths
 }
-export function workspacePolicy({origin,project,assets=new Set(),androidPrompt}){
+export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,missions=false}){
   const workspaces=new Set(),claims=new Map(),owners=new Map()
   const claim=body=>typeof body?.requestId==='string'&&body.requestId.length>0&&body.requestId.length<=128&&body.requestId.trim()===body.requestId
   const creation=body=>body?.path===project&&claim(body)&&Object.keys(body).every(key=>['path','requestId'].includes(key))
@@ -55,6 +55,7 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt})
       if(!owned||!workspaces.has(owned[1]))return false
       if(method==='GET'&&owned[2]==='worktrees')return true
       if(method==='POST'&&owned[2]==='session-history/window')return ['ses_existing','ses_another','ses_linked','ses_linked_next'].includes(body?.sessionID)
+      if(missions&&method==='POST'&&owned[2]==='missions/panel-page')return ['summaries','cleanups'].includes(body?.source)&&Number.isSafeInteger(body?.window?.offset)
       if(method==='POST'&&owned[2]==='creation/release')return claim(body)&&owners.get(owned[1])===body.requestId
       return method==='DELETE'&&!owned[2]&&!forbidRelease
     },

@@ -91,13 +91,51 @@ fn keeps_selection_until_complete_coverage_and_pins_it_in_search() {
         Read::More,
         page("project", "first", 1, 2, vec![summary("c", "Other")])
     ));
-    assert_eq!(panel.summaries.len(), 1);
+    assert_eq!(
+        panel.summaries.len(),
+        2,
+        "partial refresh retains last-good rows"
+    );
+    assert!(!panel.covered(kind));
     assert!(panel.accept(
         kind,
         Read::More,
         page("project", "changed", 1, 2, vec![summary("c", "Gamma")])
     ));
     assert!(panel.selected.is_none());
+    assert_eq!(
+        panel
+            .summaries
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+        ["a", "c"]
+    );
+}
+
+#[test]
+fn a_changed_order_parks_retry_at_the_first_window() {
+    let mut panel = panel();
+    let kind = Kind::Summaries;
+    assert!(panel.accept(
+        kind,
+        Read::Refresh,
+        page("project", "first", 0, 2, vec![summary("a", "Alpha")])
+    ));
+    let (cancel, _) = bounded(1);
+    panel.lanes[kind as usize].active = Some((1, cancel));
+    panel
+        .out
+        .try_send(Completion {
+            kind,
+            read: Read::More,
+            serial: 1,
+            page: Err(DirectoryChanged.into()),
+        })
+        .unwrap();
+    assert!(panel.poll());
+    assert_eq!(panel.lanes[kind as usize].failed, Some(Read::Refresh));
+    assert_eq!(panel.summaries.len(), 1);
 }
 
 #[test]
@@ -139,11 +177,15 @@ fn the_read_only_panel_exposes_the_search_status_and_selection() {
     assert!(state.accept(
         Kind::Summaries,
         Read::Refresh,
-        page("project", "first", 0, 1, vec![summary("a", "Alpha")])
+        page("project", "first", 0, 2, vec![summary("a", "Alpha")])
     ));
     let mut rt = Runtime::new(
-        state,
-        |s, _| crate::strings::with_locale("en", || view(s, |s| s)),
+        (state, TextEdit::new("")),
+        |s, _| {
+            crate::strings::with_locale("en", || {
+                view(&s.0, |s: &mut (Panel, TextEdit)| (Some(&mut s.0), &mut s.1))
+            })
+        },
         (360.0, 600.0),
         Env::new(true, 1.0),
     );
@@ -153,7 +195,7 @@ fn the_read_only_panel_exposes_the_search_status_and_selection() {
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     rt.frame(0.02);
-    assert_eq!(rt.state.selected.as_deref(), Some("a"));
+    assert_eq!(rt.state.0.selected.as_deref(), Some("a"));
     fn row(tree: &serde_json::Value) -> Option<&serde_json::Value> {
         if tree["key"] == "mission-row-a" {
             Some(tree)
@@ -165,4 +207,8 @@ fn the_read_only_panel_exposes_the_search_status_and_selection() {
     let row = row(&tree).unwrap();
     assert_eq!(row["name"], "Alpha");
     assert_eq!(row["description"], "Active");
+    let tree = tree.to_string();
+    assert!(tree.contains("Search filters loaded missions only"));
+    assert!(!tree.contains("No missions yet"));
+    assert!(!tree.contains("No matching mission"));
 }

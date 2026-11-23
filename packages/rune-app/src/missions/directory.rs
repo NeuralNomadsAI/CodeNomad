@@ -7,9 +7,12 @@ use codenomad_client::{
     backend::Backend,
     bounded,
     history::Result,
-    missions::{Cleanup, DirectoryPage, DirectoryRead, DirectoryRows, Summary, Window},
+    missions::{
+        Cleanup, DirectoryChanged, DirectoryPage, DirectoryRead, DirectoryRows, Summary, Window,
+    },
 };
 use rune::edit::TextEdit;
+use std::collections::HashSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -29,6 +32,7 @@ struct Lane {
     window: Option<Window>,
     failed: Option<Read>,
     owed: bool,
+    seen: HashSet<(String, Option<String>)>,
 }
 
 struct Completion {
@@ -47,11 +51,14 @@ pub(crate) struct Panel {
     project: Option<String>,
     serial: u64,
     visible: bool,
+    pub(super) scope: std::rc::Rc<()>,
+    supported: bool,
+    capability: Option<Receiver<bool>>,
     lanes: [Lane; 2],
     pub(super) summaries: Vec<Summary>,
     pub(super) cleanups: Vec<Cleanup>,
     pub(super) filter: TextEdit,
-    pub(super) selected: Option<String>,
+    pub(crate) selected: Option<String>,
 }
 
 const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
@@ -68,6 +75,9 @@ impl Panel {
             incoming,
             serial: 0,
             visible: false,
+            scope: std::rc::Rc::new(()),
+            supported: false,
+            capability: None,
             lanes: Default::default(),
             summaries: vec![],
             cleanups: vec![],
@@ -118,6 +128,58 @@ impl Panel {
         self.lanes[kind as usize].active.is_some()
     }
 
+    pub(crate) fn matches(&self, backend: &Backend) -> bool {
+        self.backend.workspace == backend.workspace
+            && self.backend.base == backend.base
+            && self.backend.client.same_connection(&backend.client)
+    }
+
+    pub(crate) fn supported(&self) -> bool {
+        self.supported
+    }
+
+    pub(crate) fn probe(&mut self) {
+        if self.supported || self.capability.is_some() {
+            return;
+        }
+        let backend = self.backend.clone();
+        let (out, incoming) = bounded(1);
+        self.capability = Some(incoming);
+        let wake = self.wake.clone();
+        let reads = self.reads.clone();
+        platform::spawn(async move {
+            let query = async {
+                let (_cancel, cancelled) = bounded(1);
+                let _permit = reads.background(&cancelled).await?;
+                let response = backend
+                    .client
+                    .get(format!("{}api/meta", backend.base))
+                    .send()
+                    .await
+                    .ok()?
+                    .error_for_status()
+                    .ok()?;
+                let value = codenomad_client::backend::read_json(response).await.ok()?;
+                Some(
+                    value["capabilities"]
+                        .as_array()?
+                        .iter()
+                        .any(|value| value == "missions"),
+                )
+            };
+            if let Some(Some(supported)) =
+                codenomad_client::runtime::until_closed(&out, query).await
+                && out.send(supported).await.is_ok()
+            {
+                wake();
+            }
+        });
+    }
+
+    pub(crate) fn cancel_probe(&mut self) {
+        self.capability = None;
+    }
+
     pub(super) fn failed(&self, kind: Kind) -> bool {
         self.lanes[kind as usize].failed.is_some()
     }
@@ -131,6 +193,10 @@ impl Panel {
             .window
             .as_ref()
             .is_some_and(|w| w.end < w.total)
+    }
+
+    pub(super) fn covered(&self, kind: Kind) -> bool {
+        self.loaded(kind) && !self.has_more(kind) && !self.failed(kind) && !self.busy(kind)
     }
 
     fn start(&mut self, kind: Kind, read: Read) {
@@ -161,7 +227,6 @@ impl Panel {
         let serial = self.serial;
         let (cancel, cancelled) = bounded(1);
         lane.active = Some((serial, cancel));
-        lane.failed = None;
         let reads = self.reads.clone();
         let out = self.out.clone();
         let wake = self.wake.clone();
@@ -184,6 +249,11 @@ impl Panel {
 
     pub(crate) fn poll(&mut self) -> bool {
         let mut changed = false;
+        if self.capability.as_ref().and_then(|r| r.try_recv().ok()) == Some(true) {
+            self.capability = None;
+            self.supported = true;
+            changed = true;
+        }
         while let Ok(done) = self.incoming.try_recv() {
             let lane = &mut self.lanes[done.kind as usize];
             if lane
@@ -196,13 +266,35 @@ impl Panel {
             lane.active = None;
             changed = true;
             let owed = std::mem::take(&mut lane.owed);
-            if !done
+            let keep_failed_more = done.read == Read::Refresh && lane.failed == Some(Read::More);
+            let order = keep_failed_more
+                .then(|| lane.window.as_ref().map(|w| w.order.clone()))
+                .flatten();
+            let outcome = done
                 .page
-                .is_ok_and(|page| self.accept(done.kind, done.read, page))
-            {
-                self.lanes[done.kind as usize].failed = Some(done.read);
-            } else if owed {
-                self.start(done.kind, Read::Refresh);
+                .map(|page| self.accept(done.kind, done.read, page));
+            match outcome {
+                Ok(true) => {
+                    let lane = &mut self.lanes[done.kind as usize];
+                    lane.failed = order.map(|order| {
+                        if lane
+                            .window
+                            .as_ref()
+                            .is_some_and(|window| window.order == order)
+                        {
+                            Read::More
+                        } else {
+                            Read::Refresh
+                        }
+                    });
+                    if owed {
+                        self.start(done.kind, Read::Refresh);
+                    }
+                }
+                Err(error) if error.is::<DirectoryChanged>() => {
+                    self.lanes[done.kind as usize].failed = Some(Read::Refresh);
+                }
+                _ => self.lanes[done.kind as usize].failed = Some(done.read),
             }
         }
         changed
@@ -237,16 +329,10 @@ impl Panel {
         }
         match (kind, page.rows) {
             (Kind::Summaries, DirectoryRows::Summaries(rows)) => {
-                if read == Read::Refresh {
-                    self.summaries = rows;
-                } else {
-                    if rows
-                        .iter()
-                        .any(|row| self.summaries.iter().any(|old| old.id == row.id))
-                    {
-                        return false;
-                    }
-                    self.summaries.extend(rows);
+                if !merge(&mut self.summaries, lane, read, &page.window, rows, |row| {
+                    (row.id.clone(), None)
+                }) {
+                    return false;
                 }
                 // A page that does not cover the directory cannot prove a selection is gone.
                 if page.window.end == page.window.total
@@ -259,17 +345,18 @@ impl Panel {
                 }
             }
             (Kind::Cleanups, DirectoryRows::Cleanups(rows)) => {
-                if read == Read::Refresh {
-                    self.cleanups = rows;
-                } else {
-                    if rows.iter().any(|row| {
-                        self.cleanups.iter().any(|old| {
-                            old.mission_id == row.mission_id && old.deletion_id == row.deletion_id
-                        })
-                    }) {
-                        return false;
-                    }
-                    self.cleanups.extend(rows);
+                if rows.iter().any(|row| {
+                    self.cleanups.iter().any(|old| {
+                        old.mission_id == row.mission_id
+                            && old.deletion_id == row.deletion_id
+                            && (old.request_id != row.request_id
+                                || old.expected_revision != row.expected_revision
+                                || old.delete_managed_sessions != row.delete_managed_sessions)
+                    })
+                }) || !merge(&mut self.cleanups, lane, read, &page.window, rows, |row| {
+                    (row.mission_id.clone(), Some(row.deletion_id.clone()))
+                }) {
+                    return false;
                 }
             }
             _ => return false,
@@ -300,6 +387,38 @@ pub(super) fn title(row: &Summary) -> &str {
         .as_deref()
         .filter(|text| !text.is_empty())
         .unwrap_or(&row.objective)
+}
+
+impl Drop for Panel {
+    fn drop(&mut self) {
+        self.show(false);
+    }
+}
+
+fn merge<T>(
+    display: &mut Vec<T>,
+    lane: &mut Lane,
+    read: Read,
+    window: &Window,
+    rows: Vec<T>,
+    key: impl Fn(&T) -> (String, Option<String>),
+) -> bool {
+    if read == Read::Refresh {
+        lane.seen.clear();
+    } else if rows.iter().any(|row| lane.seen.contains(&key(row))) {
+        return false;
+    }
+    // Current-order rows are a prefix; keep the previous snapshot's unvisited rows after it.
+    let previous = std::mem::take(display);
+    let prefix = lane.seen.len();
+    lane.seen.extend(rows.iter().map(&key));
+    let mut previous = previous.into_iter();
+    display.extend(previous.by_ref().take(prefix));
+    display.extend(rows);
+    if window.end != window.total {
+        display.extend(previous.filter(|row| !lane.seen.contains(&key(row))));
+    }
+    true
 }
 
 async fn read_window(
