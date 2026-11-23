@@ -261,6 +261,9 @@ pub(super) fn run() {
                     rt.state.phase == Phase::Ready && visible_text(rt, trigger, "review · ")
                 }
         });
+        if !unconfirmed {
+            super::recovery::check_anchor(&rt, &anchor);
+        }
         if unconfirmed {
             assert!(visible_text(&rt, trigger, "synthetic · main"));
             rt.update(crate::send);

@@ -6,7 +6,13 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
 };
-type PlacementHolds = HashMap<(String, String), Rc<HashSet<String>>>;
+type PlacementHolds = HashMap<(String, String), Rc<PlacementHold>>;
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct PlacementHold {
+    pub members: HashSet<String>,
+    pub answered: bool,
+}
 
 pub(crate) struct Binding {
     pub owner: Option<Ui>,
@@ -279,13 +285,13 @@ pub(crate) fn can_place(s: &State) -> bool {
         })
 }
 
-pub(crate) fn hold_placement(s: &mut State, family: Vec<String>) {
+pub(crate) fn hold_placement(s: &mut State, hold: PlacementHold) {
     if let Some(owner) = &s.git.owner {
-        let family = Rc::new(family.into_iter().collect::<HashSet<_>>());
+        let hold = Rc::new(hold);
         s.git.placement_unconfirmed.borrow_mut().extend(
-            family
+            hold.members
                 .iter()
-                .map(|id| ((owner.backend.base.clone(), id.clone()), family.clone())),
+                .map(|id| ((owner.backend.base.clone(), id.clone()), hold.clone())),
         );
     }
 }
@@ -294,7 +300,7 @@ pub(crate) fn placement_unconfirmed(s: &State) -> bool {
     placement_hold(s).is_some()
 }
 
-pub(crate) fn placement_hold(s: &State) -> Option<HashSet<String>> {
+pub(crate) fn placement_hold(s: &State) -> Option<PlacementHold> {
     let owner = s.git.owner.as_ref()?;
     let holds = s.git.placement_unconfirmed.borrow();
     holds
@@ -302,12 +308,15 @@ pub(crate) fn placement_hold(s: &State) -> Option<HashSet<String>> {
         .map(|ids| (**ids).clone())
 }
 
-pub(crate) fn release_placement(s: &mut State, base: &str, family: &HashSet<String>) {
+pub(crate) fn release_placement(s: &mut State, base: &str, hold: &PlacementHold) {
+    if !hold.answered {
+        return;
+    }
     s.git
         .placement_unconfirmed
         .borrow_mut()
         .retain(|(held_base, id), ids| {
-            held_base != base || !family.contains(id) || ids.as_ref() != family
+            held_base != base || !hold.members.contains(id) || ids.as_ref() != hold
         });
 }
 

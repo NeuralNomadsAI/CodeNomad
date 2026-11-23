@@ -55,14 +55,18 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
     let retry = s.reader.as_ref().is_some_and(|reader| reader.can_retry());
     let mut actions = layout::action_row()
         .children(worktree)
-        .children(crate::git::placement_unconfirmed(s).then(|| {
-            crate::components::button_tx(
-                "placement-retry",
-                t("sessionList.loadError.retry"),
-                s.screen.launcher().is_some_and(|launcher| launcher.pending),
-                screen::action_tx(&scope, |s, _| crate::launcher::placement::retry(s)),
-            )
-        }))
+        .children(
+            crate::git::placement_hold(s)
+                .is_some_and(|hold| hold.answered)
+                .then(|| {
+                    crate::components::button_tx(
+                        "placement-retry",
+                        t("sessionList.loadError.retry"),
+                        s.screen.launcher().is_some_and(|launcher| launcher.pending),
+                        screen::action_tx(&scope, |s, _| crate::launcher::placement::retry(s)),
+                    )
+                }),
+        )
         .children(
             (s.can_older || retry || s.history_error && s.phase != Phase::Failed).then(|| {
                 rune_theme_codenomad::shell::older_button(

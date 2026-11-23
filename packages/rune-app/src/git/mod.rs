@@ -8,9 +8,9 @@ mod refresh;
 mod request;
 mod view;
 pub(crate) use binding::{
-    Binding, can_place, close_preview, connected, connected_placed, diff_preferences, event,
-    files_checkout, has_preview, hold_placement, mode, online, placeable, placement,
-    placement_hold, placement_unconfirmed, poll, project_opened, release_placement,
+    Binding, PlacementHold, can_place, close_preview, connected, connected_placed,
+    diff_preferences, event, files_checkout, has_preview, hold_placement, mode, online, placeable,
+    placement, placement_hold, placement_unconfirmed, poll, project_opened, release_placement,
     set_diff_preferences, set_mode, show,
 };
 pub(crate) use diff::DiffPreferences;

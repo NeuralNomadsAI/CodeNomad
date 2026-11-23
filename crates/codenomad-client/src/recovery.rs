@@ -453,7 +453,6 @@ pub(crate) async fn run_with_reading(
                         }),
                     )
                     .await;
-                    publish(&out, &wake, Event::HistoryInvalidated).await;
                     return Err("session scope changed".into());
                 }
                 if kind.starts_with("permission.")

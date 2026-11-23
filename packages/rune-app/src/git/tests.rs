@@ -222,6 +222,31 @@ fn browsing_another_checkout_does_not_change_the_session_placement() {
 }
 
 #[test]
+fn reads_cannot_release_a_placement_without_a_terminal_reply() {
+    let mut s = crate::init();
+    let owner = ui();
+    let base = owner.backend.base.clone();
+    let members = std::collections::HashSet::from([owner.backend.session.clone()]);
+    s.git.owner = Some(owner);
+    let lost = PlacementHold {
+        members: members.clone(),
+        answered: false,
+    };
+    hold_placement(&mut s, lost.clone());
+    release_placement(&mut s, &base, &lost);
+    assert!(placement_unconfirmed(&s));
+    let settled = PlacementHold {
+        members,
+        answered: true,
+    };
+    release_placement(&mut s, &base, &settled);
+    assert!(placement_unconfirmed(&s));
+    hold_placement(&mut s, settled.clone());
+    release_placement(&mut s, &base, &settled);
+    assert!(!placement_unconfirmed(&s));
+}
+
+#[test]
 fn the_index_is_read_only_until_a_conversation_can_observe_it() {
     let mut ui = ui();
     ui.online = true;
