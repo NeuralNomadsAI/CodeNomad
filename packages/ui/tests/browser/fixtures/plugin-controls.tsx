@@ -158,6 +158,14 @@ await updatePreferences({ locale: "en" })
   calls,
   reads: () => reads,
   clearSystemConfiguration: () => { snapshot.configured.sources = []; snapshot.configured.rules = [] },
+  disabledMissions: (scope: PluginConfigScope, selector: string) => {
+    const id = "codenomad.missions"
+    const rule = { selector, enabled: false, scope, order: 0, entryIndex: 0 }
+    snapshot.controls = [{ id, managedBy: "codenomad", builtin: false, effective: "disabled",
+      global: scope === "global" ? "disabled" : "default", project: scope === "project" ? "disabled" : "default", controllingRule: rule }]
+    snapshot.configured = { rules: [rule], sources: [] }
+    snapshot.runtime = []
+  },
   systemPlugins: (mode: "active" | "disabled" | "disabled-active" | "disabled-failed" | "failed" | "failed-no-id" | "unconfirmed" | "source-only", scope: PluginConfigScope = "project", ordinary = true) => {
     snapshot.controls = ordinary ? [snapshot.controls[0]] : []
     snapshot.runtime = ordinary ? [active] : []

@@ -25,6 +25,7 @@ interface RightPanelCustomizationPopoverProps {
   visibleStatusSectionCount: Accessor<number>
   customization: Accessor<RightPanelCustomization>
   onCustomizationChange: (updater: (current: RightPanelCustomization) => RightPanelCustomization) => void
+  onMissionsToggle: (enabled: boolean, setVisible: () => void, checkbox: HTMLInputElement) => void
 }
 
 /** Visibility and order of the right panel's tabs and Status sections. Up/Down reorders the focused Status section. */
@@ -94,20 +95,26 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                       type="checkbox"
                       checked={visible()}
                       disabled={tab.alwaysVisible || (Boolean(extension()) && (!props.extensions.verified() || props.extensions.activating() || !props.isActive()))}
-                      // Activating an extension is a trust decision, never swept along.
-                      data-toggle-sweep={extension() ? undefined : toggleSweepGroup("right-panel-customization")}
+                      // Plugin activation requires an explicit gesture.
+                      data-toggle-sweep={extension() || tab.id === "missions" ? undefined : toggleSweepGroup("right-panel-customization")}
                       onChange={(event) => {
+                        const enabled = event.currentTarget.checked
                         const entry = extension()
                         if (entry) {
-                          const enabled = event.currentTarget.checked
                           event.currentTarget.checked = entry.enabled
                           void props.extensions.activate(entry, enabled)
                           return
                         }
-                        props.onCustomizationChange((current) => ({
+                        const setVisible = () => props.onCustomizationChange((current) => ({
                           ...current,
-                          hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !event.currentTarget.checked),
+                          hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !enabled),
                         }))
+                        if (tab.id === "missions") {
+                          event.currentTarget.checked = visible()
+                          props.onMissionsToggle(enabled, setVisible, event.currentTarget)
+                          return
+                        }
+                        setVisible()
                       }}
                     />
                     <span>{label()}</span>

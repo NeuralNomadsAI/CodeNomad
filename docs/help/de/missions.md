@@ -4,6 +4,10 @@ Eine Mission verbindet ein Ziel, eine Koordinator-Unterhaltung, Aufgaben und Erg
 
 Ist Missions nicht verfügbar, öffnet **OpenCode-Einstellungen** die Dienstwiederherstellung für ein fehlendes oder fehlerhaftes Plugin. **Serverdiagnose** öffnet den Diagnosebericht unter Einstellungen → Info, wenn die lokale Missions-Verbindung des Servers nicht verfügbar ist.
 
+## Missionen ein- oder ausblenden {#activation}
+
+Aktivieren Sie unter **Rechtes Panel anpassen** das Kästchen **Missionen**, um den Tab einzublenden. Deaktivieren Sie es und bestätigen Sie, um ihn auszublenden. Das schreibt auch `codenomad.missions` oder `-codenomad.missions` in die globale Konfiguration des verbundenen OpenCode-Servers. Projektregeln können Vorrang haben. Beim Ausschalten wird nichts gelöscht oder pausiert, aber geplante Läufe können ausfallen. Schlägt das Schreiben fehl, bleibt die gewählte Sichtbarkeit erhalten. **Zurücksetzen** ändert nur das Layout. **Status → Plugins** lässt die Warnung bei genau dieser globalen Deaktivierung weg; bei anderen bleibt **Erneut aktivieren** verfügbar.
+
 ## Eine Mission erstellen {#create}
 
 Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Verwenden Sie vorzugsweise HTTPS, um den Netzwerkverkehr zu schützen.

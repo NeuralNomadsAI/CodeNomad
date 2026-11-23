@@ -4,6 +4,10 @@ Bir Görev; hedefi, koordinatör konuşmasını, işleri ve sonuçlarını birli
 
 Görevler kullanılamıyorsa **OpenCode ayarları**, eksik veya başarısız bir eklenti için hizmet kurtarmayı açar. Sunucunun yerel Görevler köprüsü kullanılamıyorsa **Sunucu tanılaması**, Ayarlar → Bilgi bölümündeki tanılama raporunu açar.
 
+## Görevleri gösterme veya gizleme {#activation}
+
+**Sağ paneli özelleştir** menüsünde **Görevler** kutusunu işaretleyerek sekmeyi gösterin veya işareti kaldırıp onaylayarak gizleyin. Bu işlem, bağlı OpenCode sunucusunun genel yapılandırmasına `codenomad.missions` ya da `-codenomad.missions` kuralını da yazar. Proje kuralları genel kuralın önüne geçebilir. Kapatma hiçbir şeyi silmez veya duraklatmaz, ancak zamanlanan çalıştırmalar atlanabilir. Yazma başarısız olursa sekme için seçtiğiniz görünürlük korunur. **Sıfırla** yalnızca düzeni değiştirir. **Durum → Eklentiler** bu tam eşleşen genel devre dışı bırakma kuralı için uyarı göstermez; diğer durumlarda **Yeniden etkinleştir** kullanılabilir.
+
 ## Görev oluşturma {#create}
 
 Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak için HTTPS tercih edin.

@@ -50,6 +50,13 @@ export function verifiedDirectServerOrigin(request: Pick<FastifyRequest, "raw" |
   return origin && origins.includes(origin) ? origin : undefined
 }
 
+/** HTML entry reads accept links from other sites, but an explicit Origin keeps precedence. */
+export function verifiedDirectEntryOrigin(request: Pick<FastifyRequest, "raw" | "method" | "headers">, origins: readonly string[]): string | null {
+  return request.headers.origin === undefined && (request.method === "GET" || request.method === "HEAD")
+    ? verifiedDirectServerOrigin(request, origins) ?? null
+    : verifiedDirectHttpsOrigin(request, origins)
+}
+
 function httpsHostOrigin(host: string | undefined): string | undefined {
   return host && !/[\s/\\@?#]/.test(host) ? originOf(`https://${host}`) : undefined
 }

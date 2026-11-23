@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.activation.disableConfirm": "OpenCode’un genel yapılandırmasında Görevler devre dışı bırakılsın mı? Hiçbir şey silinmez veya duraklatılmaz.",
   "missions.followed.title": "Takip edilen konuşmalar",
   "missions.followed.add": "Konuşma ekle",
   "missions.followed.source": "Takip edilen konuşma {number}",

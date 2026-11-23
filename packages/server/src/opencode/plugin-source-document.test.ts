@@ -91,7 +91,8 @@ describe("plugin source document edits", () => {
       { plugins: [] })
     const text = '{\n  "plugins": [\n    "-p.id", // why\n    "p@1",\n    "keep",\n    "p.id"\n  ]\n}\n'
     const updated = removePluginSourceEntry(documentFor(text, ["-p.id", "p@1", "keep", "p.id"]), 1, "p@1", rules([0, 3]))
-    assert.equal(updated, '{\n  "plugins": [\n    "keep"\n  ]\n}\n')
+    assert.deepEqual(parse(updated), { plugins: ["keep"] })
+    assert.match(updated, /\/\/ why/)
   })
 
   it("refuses a stale index or a changed entry as a conflict", () => {

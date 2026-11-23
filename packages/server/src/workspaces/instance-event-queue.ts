@@ -1,4 +1,4 @@
-type Job = { run: () => Promise<void>; bytes: number; deadline: number }
+type Job = { run: () => Promise<void>; bytes: number; deadline: number; payload?: object }
 type Lane = { jobs: Job[]; timer?: ReturnType<typeof setTimeout> }
 
 /** FIFO per native entity/recipient, without head-of-line blocking other lanes.
@@ -7,6 +7,7 @@ type Lane = { jobs: Job[]; timer?: ReturnType<typeof setTimeout> }
  */
 export class InstanceEventQueue {
   private readonly lanes = new Map<string, Lane>()
+  private readonly payloads = new Map<object, { jobs: number; bytes: number }>()
   private count = 0
   private bytes = 0
   private closed = false
@@ -15,16 +16,22 @@ export class InstanceEventQueue {
     jobs: 2048, bytes: 32 * 1024 * 1024, timeoutMs: 60_000,
   }) {}
 
-  enqueue(key: string, bytes: number, run: () => Promise<void>): void {
+  enqueue(key: string, bytes: number, run: () => Promise<void>, payload?: object): void {
     if (this.closed) return
-    if (this.count + 1 > this.limits.jobs || this.bytes + bytes > this.limits.bytes) {
+    const retained = payload ? this.payloads.get(payload) : undefined
+    if (this.count + 1 > this.limits.jobs || this.bytes + (retained ? 0 : bytes) > this.limits.bytes) {
       this.reject(new Error("Instance event relay backlog exceeded its budget"))
       return
     }
     this.count++
-    this.bytes += bytes
+    // Resolve and recipient lanes hold the same event object, not independent byte copies.
+    if (retained) retained.jobs++
+    else {
+      this.bytes += bytes
+      if (payload) this.payloads.set(payload, { jobs: 1, bytes })
+    }
     const existing = this.lanes.get(key)
-    const job = { run, bytes, deadline: Date.now() + this.limits.timeoutMs }
+    const job = { run, bytes, payload, deadline: Date.now() + this.limits.timeoutMs }
     if (existing) existing.jobs.push(job)
     else {
       const lane: Lane = { jobs: [job] }
@@ -42,6 +49,7 @@ export class InstanceEventQueue {
       lane.jobs.length = 0
     }
     this.lanes.clear()
+    this.payloads.clear()
     this.count = this.bytes = 0
   }
 
@@ -71,7 +79,14 @@ export class InstanceEventQueue {
       if (this.closed) return
       lane.jobs.shift()
       this.count--
-      this.bytes -= job.bytes
+      if (!job.payload) this.bytes -= job.bytes
+      else {
+        const retained = this.payloads.get(job.payload)!
+        if (--retained.jobs === 0) {
+          this.payloads.delete(job.payload)
+          this.bytes -= retained.bytes
+        }
+      }
     }
     this.lanes.delete(key)
   }

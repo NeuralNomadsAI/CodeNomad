@@ -5,7 +5,7 @@ import { parseCookies, wantsHtml } from "../auth/http-auth"
 import type { RemoteControlDevice } from "../api-types"
 import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { routedPath } from "../server/routed-path"
-import { verifiedDirectHttpsOrigin, verifiedDirectServerOrigin } from "./direct-https"
+import { verifiedDirectEntryOrigin, verifiedDirectHttpsOrigin, verifiedDirectServerOrigin } from "./direct-https"
 import { attachRemoteDevice, isRemoteSocket, markDirectDeviceRequest } from "./request-origin"
 import { hasBrowserRequestContext, SERVER_PAIR_PATH, validServerPairRequest } from "./server-pairing"
 
@@ -76,6 +76,7 @@ const SERVER_DEVICE_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["POST", /^\/api\/workspaces\/[^/]+\/sessions\/[^/]+\/worktree$/],
   ["GET", /^\/api\/workspaces\/[^/]+\/sessions\/[^/]+\/(?:permission-receipts|goal)$/],
   ["GET", /^\/api\/workspaces\/[^/]+\/session-media\/[^/]+\/[^/]+\/[^/]+\/[^/]+\/[^/]+$/],
+  ["GET", /^\/api\/workspaces\/[^/]+\/session-attachment\/[^/]+\/[^/]+\/[^/]+\/[^/]+$/],
   ["POST", /^\/api\/workspaces\/[^/]+\/session-history\/(?:window|outline|outlinePreview|query|ranked|prune)$/],
   ["POST", /^\/api\/workspaces\/[^/]+\/session-pruning\/(?:preview|prune)$/],
   ["GET POST", /^\/api\/workspaces\/[^/]+\/missions$/],
@@ -207,7 +208,7 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
   // manifest without cookies. HTML entry points, APIs and workspaces stay gated.
   if ((method === "GET" || method === "HEAD") && isStaticBundlePath(pathname)) return false
 
-  if (method === "GET" && wantsHtml(request)) reply.header("connection", "close").redirect(PAIR_PAGE_PATH)
+  if ((method === "GET" || (method === "HEAD" && pathname === "/")) && wantsHtml(request)) reply.header("connection", "close").redirect(PAIR_PAGE_PATH)
   else reject(reply, 401, "This device is not paired")
   return true
 }
@@ -219,11 +220,11 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
  */
 function gateDirectHttpsDevice(request: FastifyRequest, reply: FastifyReply, token: string | undefined, deps: RemoteGateDeps): boolean {
   if (!token || !deps?.authenticateDirect || !deps.directHttpsOrigins) return false
-  const origin = verifiedDirectHttpsOrigin(request, deps.directHttpsOrigins())
-  if (!origin) return false
   const pathname = routedPath(request.raw.url ?? "/")
   // Pairing replaces the credential; preview capabilities keep their scoped admission.
   if (pathname === null || pathname === PAIR_PAGE_PATH || pathname === PAIR_EXCHANGE_PATH || /^\/previews\/[^/]+(?:\/|$)/.test(pathname)) return false
+  const origin = (pathname === "/" ? verifiedDirectEntryOrigin : verifiedDirectHttpsOrigin)(request, deps.directHttpsOrigins())
+  if (!origin) return false
 
   const method = request.method.toUpperCase()
   const device = deps.authenticateDirect(token, origin)
@@ -231,7 +232,7 @@ function gateDirectHttpsDevice(request: FastifyRequest, reply: FastifyReply, tok
     // An invalid device credential never falls back to a password session.
     markDirectDeviceRequest(request, false)
     if (pathname === "/api/auth/status" || ((method === "GET" || method === "HEAD") && isStaticBundlePath(pathname))) return false
-    if (method === "GET" && wantsHtml(request)) reply.header("connection", "close").redirect(PAIR_PAGE_PATH)
+    if ((method === "GET" || (method === "HEAD" && pathname === "/")) && wantsHtml(request)) reply.header("connection", "close").redirect(PAIR_PAGE_PATH)
     else reject(reply, 401, "This device is not paired")
     return true
   }
