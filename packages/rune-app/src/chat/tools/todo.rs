@@ -143,3 +143,34 @@ fn todo_statuses_and_copy_follow_the_native_list() {
     let copied: Value = serde_json::from_str(clipboard.text().unwrap().as_str()).unwrap();
     assert_eq!(copied, todos);
 }
+
+#[cfg(test)]
+#[test]
+fn failed_todo_shows_the_native_reason_before_its_list() {
+    use crate::{Phase, history, init};
+    use rune::{Env, Runtime};
+    use serde_json::json;
+    let row = history::decode_message(
+        &json!({"id":"step","type":"assistant","time":{"completed":2},
+            "content":[{"type":"tool","id":"todo","name":"todowrite","state":{
+            "status":"error","error":{"message":"Native plan failure"},
+                "metadata":{"todos":[{"content":"Pending after failure","status":"pending"}]}}}]
+        }),
+    )
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    state.messages.push(row.into());
+    let mut rt = Runtime::new(state, crate::view, (960.0, 760.0), Env::new(false, 1.0));
+    rt.frame(0.0);
+    let (x, y) = rt.find("toggle-tool-step:4:todo").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(
+        tree.find("Native plan failure").unwrap() < tree.find("Pending after failure").unwrap()
+    );
+}

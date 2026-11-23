@@ -269,6 +269,11 @@ pub struct Tool {
     bytes: usize,
     output_bytes: usize,
 }
+impl Tool {
+    pub fn retained_bytes(&self) -> usize {
+        self.bytes + self.output_bytes
+    }
+}
 pub fn decode(v: &Value) -> Result<Vec<Part>> {
     if v["type"] == "user" {
         return user::decode(v);

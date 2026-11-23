@@ -9,7 +9,7 @@ use std::{
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
-pub struct Http(Client, Arc<OnceLock<String>>);
+pub struct Http(Client, Arc<OnceLock<String>>, Arc<crate::stream::Children>);
 impl Http {
     pub fn new() -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -21,10 +21,13 @@ impl Http {
             .build()?;
         #[cfg(target_arch = "wasm32")]
         let client = Client::new();
-        Ok(Self(client, Arc::new(OnceLock::new())))
+        Ok(Self(client, Arc::new(OnceLock::new()), Arc::default()))
     }
     pub fn same_connection(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.1, &other.1)
+    }
+    pub(crate) fn children(&self) -> &crate::stream::Children {
+        &self.2
     }
     pub fn server_identity(&self) -> Option<&str> {
         self.1.get().map(String::as_str)

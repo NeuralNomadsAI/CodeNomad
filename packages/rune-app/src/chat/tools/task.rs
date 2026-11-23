@@ -1,4 +1,8 @@
-use super::{Display, Tool, input_json, string, window};
+use super::{
+    Display, Tool,
+    children::{Children, STEP_LIMIT},
+    input_json, string, window,
+};
 use crate::{
     State, screen,
     strings::{locale, t},
@@ -11,7 +15,6 @@ use rune_theme_codenomad::{
 };
 
 const PANE_LIMIT: usize = 20_000;
-const STEP_LIMIT: usize = 200;
 const INITIAL_STEPS: usize = 30;
 const REVEAL: usize = 100;
 
@@ -132,12 +135,20 @@ pub(super) fn status(s: &State, tool: &Tool) -> Option<&'static str> {
     })
 }
 
-pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str) -> Option<El> {
+pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool) -> Option<El> {
     let prompt = string(&tool.input, &["prompt"]);
-    let steps = tool.metadata["summary"]
+    let child_id = watch.then(|| watched_child(tool)).flatten();
+    let child_steps = child_id.map_or(&[][..], |id| s.transcript_display.children.steps(id));
+    let legacy = tool.metadata["summary"]
         .as_array()
         .map_or(&[][..], Vec::as_slice);
-    if prompt.trim().is_empty() && steps.is_empty() && output.trim().is_empty() {
+    let step_count = if child_steps.is_empty() {
+        legacy.len()
+    } else {
+        child_steps.len()
+    };
+    if prompt.trim().is_empty() && step_count == 0 && output.trim().is_empty() && child_id.is_none()
+    {
         return None;
     }
     let mut result = col().full_width().separate(Space::Sm);
@@ -160,16 +171,16 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str) -> Option<El
                 ));
         }
     }
-    if !steps.is_empty() {
+    if step_count > 0 {
         let step_key = format!("{key}-task-steps");
         let count = (INITIAL_STEPS + REVEAL.saturating_mul(s.transcript_display.steps(&step_key)))
             .min(STEP_LIMIT);
-        let start = steps.len().saturating_sub(count);
+        let start = step_count.saturating_sub(count);
         let mut list = col()
             .role("list")
             .label(t("toolCall.task.sections.steps"))
             .separate(Space::Sm);
-        if start > steps.len().saturating_sub(STEP_LIMIT) {
+        if start > step_count.saturating_sub(STEP_LIMIT) {
             let toggle = step_key.clone();
             let label = catalogue::format(
                 locale(),
@@ -187,7 +198,24 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str) -> Option<El
                 .key(format!("reveal-{step_key}")),
             );
         }
-        for (index, step) in steps.iter().enumerate().skip(start) {
+        if let Some(child_id) = child_id.filter(|_| !child_steps.is_empty()) {
+            for (message, step) in &child_steps[start..] {
+                let owner = format!("child:{child_id}:{message}");
+                let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
+                list = list.child(
+                    col()
+                        .key(child_key.clone())
+                        .role("listitem")
+                        .child(super::render(s, &owner, step, &child_key)),
+                );
+            }
+        }
+        for (index, step) in legacy
+            .iter()
+            .enumerate()
+            .skip(start)
+            .filter(|_| child_steps.is_empty())
+        {
             let status = string(step, &["status"]);
             let status = if status.is_empty() {
                 string(&step["state"], &["status"])
@@ -236,7 +264,7 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str) -> Option<El
             }
             list = list.child(row);
         }
-        if steps.len() > STEP_LIMIT {
+        if step_count > STEP_LIMIT {
             list = list.child(
                 text(catalogue::format(
                     locale(),
@@ -249,6 +277,31 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str) -> Option<El
         result = result.child(markdown::tool_pane(list, true));
     }
     Some(result)
+}
+
+fn watched_child(tool: &Tool) -> Option<&str> {
+    let id = child(tool);
+    (matches!(tool.status.as_str(), "running" | "completed" | "error")
+        && crate::history::valid_id(id))
+    .then_some(id)
+}
+
+pub(super) fn observe(s: &State, key: &str, tool: &Tool, card: El) -> El {
+    let Some(id) = watched_child(tool) else {
+        return card;
+    };
+    let lease = s.transcript_display.children.lease(id, key);
+    let (id, key, scope) = (id.to_owned(), key.to_owned(), s.input_scope.clone());
+    col()
+        .full_width()
+        .key(format!("{key}-watch-{id}"))
+        .child(card)
+        .on_visible(move |s: &mut State, visible, tx| {
+            if s.current_scope(&scope) {
+                Children::demand(s, &id, &key, &lease, visible);
+            }
+            tx.live_only();
+        })
 }
 
 #[cfg(test)]
@@ -293,4 +346,51 @@ fn task_uses_its_own_background_report_and_keeps_the_synthetic_row_hidden() {
     let after = rt.accessibility_json().to_string();
     assert!(after.contains("First result") && after.contains("Bounded prompt"));
     assert!(!after.contains("Second result") && !after.contains("Launch acknowledgement"));
+}
+
+#[cfg(test)]
+#[test]
+fn loaded_child_cards_replace_the_legacy_summary() {
+    use crate::{Phase, history, init};
+    use rune::{Env, Runtime};
+    use serde_json::json;
+    let parent = history::decode_message(&json!({
+        "id":"parent","type":"assistant","time":{"completed":1},"content":[{
+            "type":"tool","id":"launch","name":"task","state":{"status":"completed",
+              "metadata":{"sessionID":"child","status":"running",
+                "summary":[{"tool":"bash","title":"Legacy summary only","status":"completed"}]}}
+        }]
+    }))
+    .unwrap();
+    let child = history::decode(json!({"status":"window","latest":true,"messages":[
+        {"id":"child-step","type":"assistant","time":{},"content":[{
+            "type":"tool","id":"read","name":"read","state":{"status":"running","input":{"filePath":"actual.txt"}}
+        }]}
+    ]})).unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    state.messages.push(parent.into());
+    let mut rt = Runtime::new(state, crate::view, (960.0, 900.0), Env::new(false, 1.0));
+    rt.frame(0.0);
+    let (x, y) = rt.find("toggle-tool-parent:6:launch").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("Legacy summary only")
+    );
+    let mut lease = None;
+    rt.update(|s, _| {
+        lease = Some(s.transcript_display.children.install("child", child));
+        assert!(crate::chat::events::poll_chat(s, 1));
+    });
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("actual.txt") && !tree.contains("Legacy summary only"));
 }
