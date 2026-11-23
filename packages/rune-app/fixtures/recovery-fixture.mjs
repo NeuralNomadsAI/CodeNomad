@@ -53,12 +53,13 @@ const native=createServer(async(req,res)=>{
   if(suspend&&url.pathname===`/api/session/${session}/form`)return json({data:hiddenQuestion?[form]:[]})
   if(suspend&&url.pathname==='/api/model')return json({data:[]})
   if(url.pathname==='/api/plugin')return json({location:{directory:project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
-  if(url.pathname==='/api/rpc/codenomad.session-pruning/window'){
+  if(['/api/rpc/codenomad.session-pruning/window','/api/rpc/codenomad.session-pruning/windowUserFilesV1'].includes(url.pathname)){
     const {input}=JSON.parse(raw);assert.equal(input.sessionID,session)
     stats.pages++;if(input.target.kind==='latest')stats.latestReads++
     if(suspend&&input.target.kind==='around'){stats.aroundReads++;stats.resumedAnchor=input.target.messageID}
     if(input.target.kind==='before'&&blockOlder){blockOlder=false;stats.blockedPages++;return json({output:{status:'blocked',reason:'anchor_missing'}})}
     const snapshot=store.window(input.target)
+    if(url.pathname.endsWith('windowUserFilesV1'))snapshot.userFiles='reference-v1'
     if(input.target.kind==='before'&&staleOlder){
       staleOlder=false;stats.stalePages++
       store.rows[250].content[0].text='edited during stale page\nété 🦀\nthird line'

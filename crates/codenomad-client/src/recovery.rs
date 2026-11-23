@@ -692,7 +692,7 @@ pub(crate) async fn run_with_reading(
                     known = page.rows.iter().map(|r| r.id.clone()).collect();
                     resident = page.rows.clone();
                     let done = (terminal || busy) && !page.running;
-                    if done && !owed.is_empty() {
+                    if done && !historical && !owed.is_empty() {
                         settlement_reads += 1;
                         if settlement_reads > 3 {
                             return Err("text settlement remains unconfirmed".into());

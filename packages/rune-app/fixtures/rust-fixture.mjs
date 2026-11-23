@@ -59,7 +59,7 @@ const upstream = createServer(async(req,res)=>{
   }
   if(url.pathname==='/api/plugin') return json({location:{directory:project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
   if(url.pathname==='/api/rpc/codenomad.session-pruning/window' ||
-      attachments&&url.pathname==='/api/rpc/codenomad.session-pruning/windowUserFilesV1') {
+      url.pathname==='/api/rpc/codenomad.session-pruning/windowUserFilesV1') {
     assert.equal(JSON.parse(raw).input.sessionID,session)
     const window=store.window(JSON.parse(raw).input.target)
     if(url.pathname.endsWith('windowUserFilesV1')) {

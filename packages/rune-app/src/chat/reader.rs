@@ -120,7 +120,9 @@ impl Reader {
     }
 
     pub(crate) fn observed_running(&mut self, running: bool, version: u64) {
-        self.settling = !running && !self.independent_status() && self.running() == Some(true);
+        self.settling = !running
+            && !self.independent_status()
+            && (self.settling || self.running() == Some(true));
         self.activity = Some((running, version));
     }
 
