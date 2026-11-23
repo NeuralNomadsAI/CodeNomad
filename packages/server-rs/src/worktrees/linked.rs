@@ -78,6 +78,20 @@ fn announce(app: &App, w: &Workspace) {
     invalidate(app);
     app.emit(json!({"type":"workspace.worktreesChanged","workspaceId":w.id}));
 }
+
+/// Coordinate topology changes across occurrences of the same repository.
+async fn topology(app: &App, id: &str) -> Result<(Workspace, tokio::sync::OwnedMutexGuard<()>), Error> {
+    let workspace = app.workspace(id)?;
+    let common = super::ownership::common_directory(&workspace.path).await.ok_or_else(native_error)?;
+    let guard = super::fence::try_serialize(format!("worktree\n{}", super::fence::identity(&common)))
+        .ok_or_else(|| conflict("A worktree operation is in progress"))?;
+    if !crate::sessions::permission_mode::workspace_current(app, &workspace)
+        || super::ownership::common_directory(&workspace.path).await.as_ref() != Some(&common)
+    {
+        return Err(conflict("Workspace changed"));
+    }
+    Ok((workspace, guard))
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Create {
@@ -100,11 +114,12 @@ pub async fn create(
     {
         return Err(invalid("Invalid worktree branch"));
     }
-    let _guard = app.project_mutation.lock().await;
-    let w = app.workspace(&id)?;
+    let (w, _guard) = topology(&app, &id).await?;
     let catalogue = catalogue(&app, &w, true).await?;
     git::guard_config(&catalogue.main).await?;
     let from = catalogue.get(input.from_slug.as_deref().unwrap_or("root"))?;
+    let _admitted =
+        super::fence::admit(&[super::fence::identity(from.registered()), super::fence::identity(&catalogue.parent)])?;
     if from.nested_missing {
         return Err(conflict("Source worktree does not contain the workspace folder"));
     }
@@ -287,6 +302,8 @@ async fn move_members(
     target: &Tree,
     principal: &crate::auth::Principal,
 ) -> Result<(), Error> {
+    let keys = members.iter().map(|row| row_id(row).map(super::fence::session)).collect::<Result<Vec<_>, _>>()?;
+    let _placing = super::fence::try_block(&keys).ok_or_else(|| conflict("A session request is in progress"))?;
     inactive(app, members).await?;
     for member in members {
         let from = directory(member)?;
@@ -305,6 +322,9 @@ async fn move_members(
             let id = row_id(member)?;
             inactive(app, std::slice::from_ref(member)).await?;
             principal.live()?;
+            if !crate::sessions::permission_mode::workspace_current(app, w) {
+                return Err(conflict("Workspace changed"));
+            }
             if directory(member)? == target.service {
                 continue;
             }
@@ -365,12 +385,17 @@ async fn place_owned(
     input: Move,
     principal: crate::auth::Principal,
 ) -> Result<Json<Value>, Error> {
-    let _guard = app.project_mutation.lock().await;
+    let (w, _guard) = topology(&app, &id).await?;
     principal.live()?;
-    let w = app.workspace(&id)?;
     let cat = catalogue(&app, &w, true).await?;
     let target = cat.get(input.worktree_slug.trim())?;
     let (root, members) = family(&sessions(&app, &cat.project).await?, &session)?;
+    let mut paths = vec![super::fence::identity(target.registered())];
+    for member in &members {
+        let path = physical(directory(member)?).ok_or_else(native_error)?;
+        paths.push(super::fence::identity(&path));
+    }
+    let _admitted = super::fence::admit(&paths)?;
     move_members(&app, &w, &cat, &members, target, &principal).await?;
     announce(&app, &w);
     let ids: Vec<_> = members.iter().map(|m| &m["id"]).collect();
@@ -455,9 +480,8 @@ async fn remove_owned(
     slug: String,
     principal: crate::auth::Principal,
 ) -> Result<Status, Error> {
-    let _guard = app.project_mutation.lock().await;
+    let (w, _guard) = topology(&app, &id).await?;
     principal.live()?;
-    let w = app.workspace(&id)?;
     let cat = catalogue(&app, &w, true).await?;
     git::guard_config(&cat.main).await?;
     let target = cat.get(&slug)?;
@@ -475,25 +499,34 @@ async fn remove_owned(
     if root.nested_missing {
         return Err(conflict("Evacuation destination is missing"));
     }
-    let mut families = Vec::new();
-    let mut found = HashSet::new();
-    for row in &rows {
-        if within(target, directory(row)?) {
-            let (id, members) = family(&rows, row_id(row)?)?;
-            if found.insert(id) {
-                families.push(members);
-            }
-        }
-    }
+    let families = evacuation_families(&rows, target)?;
+    let mut admitted = evacuation_paths(&cat, &families)?;
     // `worktreeDeletionFence.run`: the target and the evacuation destination stay blocked
     // through evacuation, removal and rollback (consulted by `subagent-depth` writes).
     // A drain timeout is not a `ProjectSessionError`: `asProjectError` answers 502.
-    let _fence = crate::worktrees::fence::block(&[
-        crate::worktrees::fence::identity(target.registered()),
-        crate::worktrees::fence::identity(root.registered()),
-    ])
-    .await
-    .map_err(|message| error(Status::BAD_GATEWAY, message))?;
+    admitted.extend([super::fence::identity(target.registered()), super::fence::identity(root.registered())]);
+    let paths: Vec<_> = admitted.iter().cloned().collect();
+    let _fence = crate::worktrees::fence::block(&paths).await.map_err(|message| error(Status::BAD_GATEWAY, message))?;
+    if !crate::sessions::permission_mode::workspace_current(&app, &w)
+        || app
+            .inner
+            .lock()
+            .unwrap()
+            .workspaces
+            .iter()
+            .any(|other| other.id != w.id && other.path.starts_with(target.registered()))
+    {
+        return Err(conflict("Worktree is open in another workspace"));
+    }
+    let fresh = catalogue(&app, &w, false).await?;
+    if fresh.get(&slug)? != target || fresh.get("root")? != root {
+        return Err(conflict("Worktree changed before deletion"));
+    }
+    let families = evacuation_families(&sessions(&app, &cat.project).await?, target)?;
+    if !evacuation_paths(&cat, &families)?.is_subset(&admitted) {
+        return Err(conflict("Session worktrees changed before deletion"));
+    }
+    no_blockers(&app, target, &cat, true).await?;
     let mut moved = Vec::new();
     let removal = async {
         for members in &families {
@@ -548,6 +581,31 @@ async fn remove_owned(
     app.file_watches.lock().unwrap().forget_under(target.registered());
     announce(&app, &w);
     Ok(Status::NO_CONTENT)
+}
+
+fn evacuation_families(rows: &[Value], target: &Tree) -> Result<Vec<Vec<Value>>, Error> {
+    let mut families = Vec::new();
+    let mut found = HashSet::new();
+    for row in rows {
+        if within(target, directory(row)?) {
+            let (id, members) = family(rows, row_id(row)?)?;
+            if found.insert(id) {
+                families.push(members);
+            }
+        }
+    }
+    Ok(families)
+}
+
+fn evacuation_paths(cat: &Catalogue, families: &[Vec<Value>]) -> Result<HashSet<String>, Error> {
+    families
+        .iter()
+        .flatten()
+        .map(|row| {
+            let tree = cat.by_directory(directory(row)?).ok_or_else(|| conflict("Session worktree is not owned"))?;
+            Ok(super::fence::identity(tree.registered()))
+        })
+        .collect()
 }
 async fn clean(target: &Tree) -> Result<(), Error> {
     let status = git(target.registered(), &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).await?;

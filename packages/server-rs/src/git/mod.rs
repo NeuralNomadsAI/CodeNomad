@@ -154,6 +154,14 @@ pub async fn run(dir: &Path, args: &[&str], max: usize) -> Result<Output, Error>
     Ok(Output { code: status.code().unwrap_or(-1), bytes, err })
 }
 pub async fn repo(app: &crate::App, id: &str, slug: &str) -> Result<Workspace, Error> {
+    Ok(repo_target(app, id, slug).await?.0)
+}
+
+async fn repo_target(
+    app: &crate::App,
+    id: &str,
+    slug: &str,
+) -> Result<(Workspace, crate::worktrees::linked::Tree), Error> {
     let w = app.workspace(id)?;
     match worktrees::root_only(&w).await? {
         Some(false) => return Err(missing_git()),
@@ -170,7 +178,7 @@ pub async fn repo(app: &crate::App, id: &str, slug: &str) -> Result<Workspace, E
     if tree.path != cat.main {
         config_guard::effective(&tree.path).await?;
     }
-    Ok(crate::worktrees::linked::scope(w, tree))
+    Ok((crate::worktrees::linked::scope(w, tree), tree.clone()))
 }
 pub async fn guard_config(main: &Path) -> Result<(), Error> {
     for path in [".git/objects/info/alternates", ".git/objects/info/http-alternates"] {
@@ -211,8 +219,9 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
     if items.is_empty() || items.len() > 256 {
         return Err(bad("Invalid path count"));
     }
-    let _guard = app.project_mutation.lock().await;
-    let w = repo(&app, &id, &slug).await?;
+    let (w, tree) = repo_target(&app, &id, &slug).await?;
+    let _admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&w.path)])?;
+    app.workspace(&id)?;
     files::root(&w)?;
     let mut validated = Vec::new();
     for p in items {
@@ -237,6 +246,9 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
         vec!["rm", "--cached", "--quiet", "--"]
     };
     args.extend(validated.iter().map(String::as_str));
+    if !tree.contains_live(&w.path) || app.workspace(&id).is_err() {
+        return Err(error(Status::CONFLICT, "Worktree changed"));
+    }
     run(&w.path, &args, 64 * 1024).await?.mutation()?;
     notify(&app, &w);
     Ok(Json(json!({"ok":true})))
@@ -254,8 +266,12 @@ pub async fn commit(
     if message.is_empty() || message.len() > 16384 || message.contains('\0') {
         return Err(bad("Invalid commit message"));
     }
-    let _guard = app.project_mutation.lock().await;
-    let w = repo(&app, &id, &slug).await?;
+    let (w, tree) = repo_target(&app, &id, &slug).await?;
+    let _admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&w.path)])?;
+    app.workspace(&id)?;
+    if !tree.contains_live(&w.path) {
+        return Err(error(Status::CONFLICT, "Worktree changed"));
+    }
     run(&w.path, &["commit", "-m", message], 64 * 1024).await?.mutation()?;
     notify(&app, &w);
     let mut ack = json!({"ok":true});
@@ -276,8 +292,8 @@ pub async fn init(
     Route(id): Route<String>,
     Json(body): Json<Init>,
 ) -> Result<Json<Value>, Error> {
-    let _guard = app.project_mutation.lock().await;
     let w = app.workspace(&id)?;
+    let _admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&w.path)])?;
     let mismatch =
         || coded(Status::CONFLICT, "Only the opened folder can be initialized", "git_init_directory_mismatch");
     files::directory(&w, Some(&body.directory)).map_err(|_| mismatch())?;

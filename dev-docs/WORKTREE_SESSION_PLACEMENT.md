@@ -34,6 +34,8 @@
 
 Implementation:
 
+- Rust holds a shared deletion permit for each mutation's physical checkouts, including a file's resolved write target. A deletion blocks and drains only the checkouts it needs, then revalidates the session families before evacuation. A dispatched native mutation keeps its permit through the response body; a disconnected observer leaves a bounded 60-second drain.
+
 - Rust root-session mutations verify the opened folder's native project, physical
   checkout, common Git directory and current filesystem identity through a bounded
   point read. Sibling checkout enumeration belongs to the worktree inventory and
