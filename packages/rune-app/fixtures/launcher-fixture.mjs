@@ -157,7 +157,8 @@ const upstream=createServer(async(req,res)=>{
     let raw='';for await(const chunk of req){raw+=chunk;assert(raw.length<262144)}
     const json=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data))}
     if(web){
-      assert(!['prompt','interrupt'].some(action=>url.pathname.endsWith(`/${action}`))&&!(url.pathname==='/api/session'&&req.method==='POST'),'Read-only web fixture')
+      assert(!(url.pathname.endsWith('/interrupt')||url.pathname.endsWith('/prompt')&&!webAndroid)&&
+        !(url.pathname==='/api/session'&&req.method==='POST'),'Web fixture admits one Android prompt only')
       if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
       if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[]})
       if(/^\/api\/session\/[^/]+\/(permission|form)$/.test(url.pathname))return json({data:[]})
@@ -243,6 +244,11 @@ const upstream=createServer(async(req,res)=>{
         return json({data:record})
       }
       if(action==='prompt'){
+        if(webAndroid){
+          assert.equal(++stats.prompts,1)
+          mobile.androidTurn(record,JSON.parse(raw))
+          return json({data:{id:'inbox-android'}})
+        }
         const turn=++stats.prompts;assert(id.startsWith('ses_created_'),'send belongs to selected created session')
         const body=JSON.parse(raw),reply=store.append('assistant','',false)
         if(restoreState){assert.equal(id,turn===1?'ses_created_2':'ses_created_1');assert.equal(body.text,turn===1?'Bêta · 日本語 🦀\nsecond brouillon':'Alpha · été 🦀\npremier brouillon');restorePrompts.push({sessionID:id,turn,utf16Length:body.text.length})}
@@ -337,7 +343,6 @@ try{
     if(mobile)client.on('message',async action=>{
       try{
         if(action==='restart'){
-          assert(!webAndroid)
           const {serverId}=await (await http.get('/api/meta')).json()
           const older=(await (await http.get('/api/workspaces')).json()).map(row=>row.id)
           assert(older.length>=2)
@@ -382,7 +387,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=(webAndroid?1:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,webAndroid?1:0);if(!webRestore)assert(stats.lists>=(webAndroid?1:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(gitPanel){
     await removeReview
     assert(reviewRemoved)

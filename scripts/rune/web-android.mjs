@@ -7,7 +7,9 @@ import path from 'node:path'
 import {promisify} from 'node:util'
 import {_android} from 'playwright'
 import {bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
-import {command,mobileLive,navigatePair} from './web-live.mjs'
+import {command,navigatePair} from './web-live.mjs'
+import {androidLive,androidPrompt} from './web-android-contract.mjs'
+import {chromeMemory,scrollMeasure} from './web-android-metrics.mjs'
 
 const [origin,profile,project,bundle]=process.argv.slice(2)
 const {RUNE_ANDROID_ADB:adb,RUNE_ANDROID_SERIAL:serial,RUNE_ANDROID_ADB_PORT:port}=process.env
@@ -23,6 +25,7 @@ const [device,...others]=await _android.devices({port:Number(port),omitDriverIns
 assert(device?.serial()===serial&&!others.length,'Use a dedicated ADB server with the single named emulator')
 const target=`tcp:${new URL(origin).port}`
 let context, page, cdp
+const evidence={timings:{},memory:{}}
 const metrics=page=>page.evaluate(()=>({height:visualViewport.height,layout:innerHeight,
   canvas:document.querySelector('canvas')?.getBoundingClientRect().height,
   dpr:devicePixelRatio,mobile:navigator.userAgentData?.mobile,ua:navigator.userAgent,
@@ -34,12 +37,25 @@ try {
     args:[`--ignore-certificate-errors-spki-list=${pin}`,'--disable-background-networking']})
   page=context.pages()[0]??await context.newPage()
   page.setDefaultTimeout(20000)
+  cdp=await context.newCDPSession(page)
+  await cdp.send('Performance.enable')
+  await cdp.send('Network.enable')
+  await cdp.send('Network.setCacheDisabled',{cacheDisabled:true})
+  evidence.memory.blank=await chromeMemory(run,cdp)
   const link=new URL(await command('pair'))
   assert.equal(link.origin,origin)
   link.searchParams.set('locale','fr')
-  await navigatePair(page,link)
   const assets=await bundleAssetPaths(bundle); assets.add('/remote-pair')
-  const policy=workspacePolicy({origin,project,assets})
+  const start=performance.now()
+  await navigatePair(page,link,{fromLink:true,assets})
+  const connect=page.getByRole('button',{name:messages['folderSelection.servers.dialog.connect'],exact:true})
+  await connect.waitFor()
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+  evidence.timings.pairingToLauncherMs=performance.now()-start
+  evidence.timings.landingNavigationToLauncherMs=await page.evaluate(()=>performance.now())
+  evidence.timings.moduleReadyMs=await page.evaluate(()=>globalThis.__codenomadRuneBoot.moduleReadyMs)
+  evidence.memory.launcher=await chromeMemory(run,cdp)
+  const policy=workspacePolicy({origin,project,assets,androidPrompt})
   const forbidden=[], errors=[]
   let events=0
   page.on('pageerror',error=>errors.push(error.message))
@@ -56,23 +72,24 @@ try {
     return route.continue()
   })
   const url=new URL('/?locale=fr',origin)
-  await page.goto(url.href,{waitUntil:'domcontentloaded'})
-  await page.waitForFunction(()=>globalThis.__codenomadRuneBoot?.state==='ready',undefined,{timeout:60000})
-  cdp=await context.newCDPSession(page)
   const tap=async(x,y)=>{
     await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]})
     await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]})
   }
   const hit=async locator=>{const box=await locator.boundingBox();assert(box);await tap(box.x+box.width/2,box.y+box.height/2)}
   const button=name=>page.getByRole('button',{name,exact:true})
-  await hit(button(messages['folderSelection.servers.dialog.connect']))
+  await hit(connect)
   await hit(button(project))
   const left=messages['window.menu.leftPanel']
   const sessions=page.getByRole('region',{name:left,exact:true})
   await button(left).waitFor()
   if(await button(left).getAttribute('aria-expanded')!=='true')await hit(button(left))
+  const opened=performance.now()
   await hit(sessions.getByRole('listitem',{name:'Existing history',exact:true}))
   await page.getByText('Existing answer',{exact:true}).waitFor()
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
+  evidence.timings.selectConversationToAnswerMs=performance.now()-opened
+  evidence.memory.conversation=await chromeMemory(run,cdp)
   const group=page.getByRole('group',{name:messages['rune.prompt'],exact:true})
   const viewport=()=>metrics(page)
   const hierarchy='/data/local/tmp/codenomad-rune-web.xml'
@@ -93,10 +110,14 @@ try {
   const content=xml.match(/(?:class="android\.webkit\.WebView"|resource-id="com\.android\.chrome:id\/(?:compositor_view_holder|content_frame)")[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/)
   if(!content)await writeFile(path.join(profile,'android-view-hierarchy.xml'),xml)
   assert(content,'Find the browser content origin in the Android window')
+  const sx=x=>String(Math.round(Number(content[1])+x*before.dpr))
+  const sy=y=>String(Math.round(Number(content[2])+y*before.dpr))
+  evidence.scroll=await scrollMeasure(page,()=>run('shell','input','swipe',sx(160),sy(185),sx(160),sy(490),'480'))
+  await hit(button(messages['rune.latest']))
+  await page.getByText('Existing answer',{exact:true}).waitFor()
   const tapComposer=async()=>{
     const field=await group.boundingBox();assert(field)
-    await run('shell','input','tap',String(Math.round(Number(content[1])+(field.x+field.width/2)*before.dpr)),
-      String(Math.round(Number(content[2])+(field.y+field.height/2)*before.dpr)))
+    await run('shell','input','tap',sx(field.x+field.width/2),sy(field.y+field.height/2))
   }
   await tapComposer()
   const editor=page.locator('textarea:focus')
@@ -107,23 +128,54 @@ try {
   const ime=(await run('shell','settings','get','secure','default_input_method')).stdout.trim()
   const send=await button(messages['promptInput.overlay.send']).boundingBox()
   assert(send&&send.y+send.height<=keyboard.height+1)
+  await cdp.send('Input.insertText',{text:androidPrompt.slice(0,-2)})
   await cdp.send('Input.imeSetComposition',{text:'かな',selectionStart:2,selectionEnd:2})
   await cdp.send('Input.insertText',{text:'仮名'})
-  assert.equal(await editor.inputValue(),'仮名')
+  assert.equal(await editor.inputValue(),androidPrompt)
   await page.screenshot({path:path.join(profile,'android-ime.png')})
   await device.screenshot({path:path.join(profile,'android-gboard.png')})
   await run('shell','input','keyevent','KEYCODE_BACK')
   await page.waitForFunction(height=>visualViewport.height>=height-1,before.height)
   if(!await editor.count())await tapComposer()
-  assert.equal(await editor.inputValue(),'仮名')
-  const live=await mobileLive({page,context,url,messages,revoke:false,eventSources:()=>events,tap})
+  assert.equal(await editor.inputValue(),androidPrompt)
+  evidence.memory.beforeSend=await chromeMemory(run,cdp)
+  const outgoing=page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname.endsWith('/session/ses_existing/prompt'))
+  void outgoing.catch(()=>{})
+  const sent=performance.now()
+  await hit(button(messages['promptInput.overlay.send']))
+  const accepted=await outgoing
+  assert(accepted.ok(),`Android prompt admission returned ${accepted.status()}`)
+  await page.getByText(androidLive,{exact:true}).waitFor()
+  evidence.timings.sendToLiveReplyMs=performance.now()-sent
+  const cut=performance.now()
+  await command('cut')
+  const connecting=page.getByText(messages['instanceShell.connection.connecting'],{exact:true})
+  await connecting.waitFor()
+  const resume=performance.now()
+  await command('resume')
+  await page.getByText('Mobile recovered history',{exact:true}).waitFor()
+  await connecting.waitFor({state:'hidden'})
+  evidence.timings.cutToRecoveryMs=performance.now()-cut
+  evidence.timings.releaseToRecoveredHistoryMs=performance.now()-resume
+  assert(events>0)
+  const previous=[...policy.workspaces],beforeRestart=events,restart=performance.now()
+  await command('restart')
+  await page.getByText('Mobile Rust restart history',{exact:true}).waitFor({timeout:45000})
+  await connecting.waitFor({state:'hidden'})
+  evidence.timings.rustRestartToHistoryMs=performance.now()-restart
+  const fresh=[...policy.workspaces].filter(id=>!previous.includes(id))
+  assert.equal(fresh.length,1)
+  assert(events>beforeRestart)
+  assert.equal(page.url(),url.href)
+  evidence.memory.recovered=await chromeMemory(run,cdp)
+  const live={promptAccepted:accepted.status(),liveOnlyBeforeCut:true,recovered:true,recoveredAfterRustRestart:true}
   assert.deepEqual(forbidden,[])
   assert.deepEqual(errors,[])
-  await writeFile(path.join(profile,'android-proof.json'),JSON.stringify({before,keyboard,ime,live},null,2))
+  await writeFile(path.join(profile,'android-proof.json'),JSON.stringify({before,keyboard,ime,live,...evidence},null,2))
 } catch(error) {
   await page?.screenshot({path:path.join(profile,'android-failure.png')}).catch(()=>{})
   if(page)await writeFile(path.join(profile,'android-failure.json'),JSON.stringify({
-    viewport:await metrics(page).catch(()=>null),ime:(await run('shell','dumpsys','-t','2','input_method').catch(()=>({stdout:''}))).stdout
+    ...evidence,viewport:await metrics(page).catch(()=>null),ime:(await run('shell','dumpsys','-t','2','input_method').catch(()=>({stdout:''}))).stdout
       .split('\n').filter(line=>/mInputShown|mShowRequested|mCurFocusedWindow|mCurAttribute|mCurMethodId/.test(line))},null,2))
   throw error
 } finally {
