@@ -1,6 +1,7 @@
 use super::{MAX_FILE_BYTES, reject_svgz};
 
 const MAX_SIDE: usize = 8192;
+const MAX_TRANSCRIPT_PIXELS: usize = 8 * 1024 * 1024;
 
 pub fn can_decode(bytes: &[u8]) -> bool {
     admit(bytes, cfg!(target_arch = "wasm32"))
@@ -16,8 +17,10 @@ fn admit(bytes: &[u8], browser: bool) -> bool {
     }
     if bytes.get(4..8) == Some(b"ftyp") {
         match bytes.get(8..12) {
-            Some(b"avif") => return !avif_oversized(bytes, false).unwrap_or(false),
-            Some(b"avis") if browser => return !avif_oversized(bytes, true).unwrap_or(false),
+            Some(b"avif") => return !avif_oversized(bytes, false, oversized).unwrap_or(false),
+            Some(b"avis") if browser => {
+                return !avif_oversized(bytes, true, oversized).unwrap_or(false);
+            }
             _ => {}
         }
     }
@@ -40,6 +43,24 @@ fn admit(bytes: &[u8], browser: bool) -> bool {
         None
     };
     !dimensions.is_some_and(|(width, height)| oversized(width, height))
+}
+
+pub fn transcript_dimensions(width: usize, height: usize) -> bool {
+    width != 0
+        && height != 0
+        && !oversized(width, height)
+        && width.saturating_mul(height) <= MAX_TRANSCRIPT_PIXELS
+}
+
+pub(crate) fn transcript_raster(bytes: &[u8]) -> bool {
+    can_decode(bytes)
+        && imagesize::blob_size(bytes)
+            .ok()
+            .is_some_and(|size| transcript_dimensions(size.width, size.height))
+        && (!matches!(bytes.get(4..12), Some(b"ftypavif" | b"ftypavis"))
+            || avif_oversized(bytes, true, |width, height| {
+                !transcript_dimensions(width, height)
+            }) == Some(false))
 }
 
 fn oversized(width: usize, height: usize) -> bool {
@@ -94,8 +115,18 @@ fn jpeg_size(mut bytes: &[u8]) -> Option<(usize, usize)> {
 
 // Inspect declared image extents without invoking the codec or allocating from box lengths.
 // The decoder must still bound bitstream allocation: declared extents aren't authoritative.
-fn avif_oversized(bytes: &[u8], animated: bool) -> Option<bool> {
-    fn scan(mut bytes: &[u8], parent: &[u8], animated: bool, over: &mut bool) -> Option<()> {
+fn avif_oversized(
+    bytes: &[u8],
+    animated: bool,
+    too_large: fn(usize, usize) -> bool,
+) -> Option<bool> {
+    fn scan(
+        mut bytes: &[u8],
+        parent: &[u8],
+        animated: bool,
+        too_large: fn(usize, usize) -> bool,
+        over: &mut bool,
+    ) -> Option<()> {
         while !bytes.is_empty() {
             let size = u32::from_be_bytes(bytes.get(..4)?.try_into().ok()?);
             let kind = bytes.get(4..8)?;
@@ -111,13 +142,15 @@ fn avif_oversized(bytes: &[u8], animated: bool) -> Option<bool> {
             let side: fn(&[u8], usize) -> Option<u32> =
                 |bytes, at| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
             match (parent, kind) {
-                (b"", b"meta") => scan(body.get(4..)?, kind, animated, over)?,
-                (b"meta", b"iprp") | (b"iprp", b"ipco") => scan(body, kind, animated, over)?,
+                (b"", b"meta") => scan(body.get(4..)?, kind, animated, too_large, over)?,
+                (b"meta", b"iprp") | (b"iprp", b"ipco") => {
+                    scan(body, kind, animated, too_large, over)?
+                }
                 (b"ipco", b"ispe") if body.get(..4) == Some(&[0; 4]) => {
-                    *over |= oversized(side(body, 4)? as usize, side(body, 8)? as usize);
+                    *over |= too_large(side(body, 4)? as usize, side(body, 8)? as usize);
                 }
                 (b"", b"moov") | (b"moov", b"trak") if animated => {
-                    scan(body, kind, animated, over)?;
+                    scan(body, kind, animated, too_large, over)?;
                 }
                 (b"trak", b"tkhd") if animated => {
                     let width_offset = match body.first()? {
@@ -127,8 +160,12 @@ fn avif_oversized(bytes: &[u8], animated: bool) -> Option<bool> {
                     };
                     let (width, height) =
                         (side(body, width_offset)?, side(body, width_offset + 4)?);
-                    let limit = (MAX_SIDE as u32) << 16;
-                    *over |= width != 0 && height != 0 && (width > limit || height > limit);
+                    if width != 0 && height != 0 {
+                        *over |= too_large(
+                            (u64::from(width).div_ceil(65536)) as usize,
+                            (u64::from(height).div_ceil(65536)) as usize,
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -137,7 +174,7 @@ fn avif_oversized(bytes: &[u8], animated: bool) -> Option<bool> {
         Some(())
     }
     let mut over = false;
-    scan(bytes, b"", animated, &mut over)?;
+    scan(bytes, b"", animated, too_large, &mut over)?;
     Some(over)
 }
 
@@ -155,6 +192,24 @@ mod tests {
         assert!(can_decode(b"\xef\xbb\xbf <svg/>"));
         assert!(!can_decode(&[0x1f, 0x8b]));
         assert!(can_decode(b"\0\0\0\x0cftypavif"));
+    }
+
+    #[test]
+    fn transcript_raster_enforces_side_area_and_transfer_budgets() {
+        let png = |width: u32, height: u32| {
+            [
+                b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".as_slice(),
+                &width.to_be_bytes(),
+                &height.to_be_bytes(),
+            ]
+            .concat()
+        };
+        assert!(transcript_raster(&png(8192, 1024)));
+        assert!(!transcript_raster(&png(8193, 1)));
+        assert!(!transcript_raster(&png(8192, 1025)));
+        let mut too_many_bytes = png(1, 1);
+        too_many_bytes.resize(MAX_FILE_BYTES + 1, 0);
+        assert!(!transcript_raster(&too_many_bytes));
     }
 
     #[test]

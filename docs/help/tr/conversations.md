@@ -49,6 +49,8 @@ Bunlar daha önceki yanıtlara yönelik düzenlemeler değil, sonraki gönderiml
 
 ## Taslaklar ve ekler {#drafts-attachments}
 
+Rune'da ekli bir görseli önizlemek için üzerine gelin veya **Görseli büyüt** seçeneğini kullanın.
+
 1. Seçili konuşmada yazın. Konuşma değiştirmek taslağı göndermez, korur.
 2. Bu cihazdaki dosyalar için ileti düzenleyicisinin **Diğer eylemler** menüsünde **Dosya ekle…** öğesini seçin ya da dosyaları bırakın veya yapıştırın; proje dosyalarını, aracıları veya becerileri seçmek için `@` yazın.
 3. Ek çiplerini inceleyin ve bir sonraki gönderimde kullanılması amaçlanmayan her şeyi kaldırın.

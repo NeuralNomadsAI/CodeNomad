@@ -13,6 +13,8 @@ mod admission;
 #[cfg(target_arch = "wasm32")]
 mod browser;
 pub use admission::can_decode;
+pub use admission::transcript_dimensions;
+pub(crate) use admission::transcript_raster;
 pub struct Images {
     #[cfg(not(target_arch = "wasm32"))]
     client: Client,

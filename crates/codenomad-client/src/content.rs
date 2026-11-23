@@ -393,7 +393,12 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 metadata: state["metadata"].clone(),
                 output: text_parts.collect::<Vec<_>>().join("\n"),
                 error: error.into(),
-                pictures: media::tool_pictures(state, &mut media_bytes),
+                pictures: media::tool_pictures(
+                    state,
+                    v["id"].as_str().unwrap_or_default(),
+                    index,
+                    &mut media_bytes,
+                ),
                 started: part["time"]["ran"]
                     .as_u64()
                     .or_else(|| part["time"]["created"].as_u64())

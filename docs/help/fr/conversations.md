@@ -49,6 +49,8 @@ Ces choix d’exécution concernent les envois suivants, pas les réponses anté
 
 ## Brouillons et pièces jointes {#drafts-attachments}
 
+Dans Rune, survolez une image jointe pour l’aperçu ou choisissez **Agrandir l’image**.
+
 1. Rédigez dans la conversation sélectionnée. Changer de conversation conserve son brouillon au lieu de l’envoyer.
 2. Choisissez **Joindre un fichier…** dans le menu **Plus d'actions** de la zone de saisie, ou déposez ou collez, pour des fichiers de cet appareil ; ou tapez `@` pour sélectionner des fichiers du projet, agents ou compétences.
 3. Vérifiez les étiquettes des pièces jointes et retirez tout ce qui n’est pas destiné au prochain envoi.

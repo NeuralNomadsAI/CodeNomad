@@ -47,6 +47,30 @@ fn picture_pixels(image: &rune::Image, label: &str) -> Option<El> {
     )
 }
 
+pub fn decoded_size(image: &rune::Image) -> Option<[u32; 2]> {
+    image.size()
+}
+
+pub fn picture_hover(image: &rune::Image, label: &str, anchor: &str) -> Option<El> {
+    let image = picture_pixels(image, label)?.max_w(320.0).max_h(320.0);
+    let dark = layout::dark();
+    let theme = tokens(dark);
+    let body = rune::col()
+        .key("attachment-image-hover")
+        .pad(Space::Sm)
+        .fill(theme.color("surface-overlay"))
+        .child(image)
+        .a11y_hidden()
+        .inert();
+    Some(rune_kit::popover::anchored(
+        crate::kit(dark),
+        body,
+        anchor,
+        rune_kit::Placement::TopStart,
+        theme.space(Space::Sm).px(),
+    ))
+}
+
 pub fn picture_preview<S: 'static>(
     image: &rune::Image,
     label: &str,

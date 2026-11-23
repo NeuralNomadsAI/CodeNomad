@@ -49,6 +49,8 @@ Dies sind Ausführungsentscheidungen für spätere Eingaben, keine Änderungen a
 
 ## Entwürfe und Anhänge {#drafts-attachments}
 
+In Rune zeigt das Überfahren eines Bildanhangs eine Vorschau. Mit **Bild vergrößern** öffnest du eine größere Ansicht.
+
 1. Schreiben Sie in der ausgewählten Unterhaltung. Ein Unterhaltungswechsel behält deren Entwurf, statt ihn zu senden.
 2. Wählen Sie für Dateien dieses Geräts **Datei anhängen…** im Menü **Weitere Aktionen** des Eingabefelds oder legen Sie sie ab bzw. fügen Sie sie ein; oder geben Sie `@` ein, um Projektdateien, Agenten oder Skills auszuwählen.
 3. Prüfen Sie die Anhang-Chips und entfernen Sie alles, was nicht zur nächsten Eingabe gehören soll.

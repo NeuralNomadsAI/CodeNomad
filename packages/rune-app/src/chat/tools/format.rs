@@ -1,0 +1,145 @@
+//! Text projections shared by the tool card and its clipboard actions.
+use super::{Tool, edit, read, search, shell, task, write};
+use crate::strings::t;
+use serde_json::Value;
+use std::io;
+
+pub(super) fn string<'a>(value: &'a Value, keys: &[&str]) -> &'a str {
+    keys.iter()
+        .filter_map(|key| value[*key].as_str())
+        .find(|text| !text.is_empty())
+        .unwrap_or_default()
+}
+
+pub(super) fn path(tool: &Tool) -> &str {
+    match tool.name.as_str() {
+        "read" => read::path(tool),
+        "edit" => edit::path(tool),
+        _ => write::path(tool),
+    }
+}
+
+pub(super) fn bounded_json(value: &Value, limit: usize) -> Option<String> {
+    input_json(value, limit, false)
+}
+
+pub(super) fn input_json(value: &Value, limit: usize, partial: bool) -> Option<String> {
+    struct Limited(Vec<u8>, usize);
+    impl io::Write for Limited {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let count = bytes.len().min(self.1.saturating_sub(self.0.len()));
+            if count == 0 && !bytes.is_empty() {
+                return Err(io::ErrorKind::FileTooLarge.into());
+            }
+            self.0.extend_from_slice(&bytes[..count]);
+            Ok(count)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut out = Limited(Vec::new(), limit);
+    let serialized = serde_json::to_writer_pretty(&mut out, value);
+    if serialized
+        .as_ref()
+        .is_err_and(|error| error.io_error_kind() != Some(io::ErrorKind::FileTooLarge) || !partial)
+    {
+        return None;
+    }
+    if serialized.is_err() {
+        if let Err(error) = std::str::from_utf8(&out.0) {
+            out.0.drain(error.valid_up_to()..);
+        }
+        out.0.extend_from_slice("…".as_bytes());
+    }
+    String::from_utf8(out.0).ok()
+}
+
+pub(super) fn title(tool: &Tool) -> String {
+    let name = tool.name.strip_prefix("opencode_").unwrap_or(&tool.name);
+    let mut chars = name.chars();
+    let mut title = if name == "websearch" {
+        name.into()
+    } else if matches!(name, "bash" | "shell") {
+        t("toolCall.renderer.toolName.shell").to_owned()
+    } else {
+        chars
+            .next()
+            .into_iter()
+            .flat_map(char::to_uppercase)
+            .chain(chars)
+            .collect()
+    };
+    let summary = match name {
+        "read" | "edit" | "write" => {
+            let path = path(tool);
+            path.rsplit(['/', '\\'])
+                .next()
+                .filter(|name| !name.is_empty())
+                .unwrap_or(path)
+        }
+        "bash" | "shell" => shell::summary(tool),
+        "glob" | "grep" => search::pattern(tool),
+        _ => "",
+    };
+    if !summary.is_empty() {
+        title.push(' ');
+        title.extend(summary.chars().take(250));
+    }
+    if name == "websearch" {
+        search::web_title(tool, &mut title);
+    }
+    if task::is_task(tool) {
+        let detail = task::detail(tool);
+        if !detail.is_empty() {
+            if !detail.starts_with('[') {
+                title.push(' ');
+            }
+            title.push_str(&detail);
+        }
+    }
+    match name {
+        "read" => read::detail(tool, &mut title),
+        "bash" | "shell" => shell::detail(tool, &mut title),
+        _ => (),
+    }
+    title
+}
+
+pub(super) fn error(tool: &Tool) -> &str {
+    shell::interrupted(tool).map_or(tool.error.as_str(), |(_, notice)| notice)
+}
+
+pub(super) fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'a str {
+    let live = string(&tool.metadata, &["output", "preview"]);
+    if shell::matches(tool) {
+        *parts = shell::output(tool);
+        "bash"
+    } else if tool.name == "edit" {
+        parts[0] = edit::output(tool, live);
+        "diff"
+    } else if tool.name == "write" {
+        let (content, language) = write::output(tool);
+        parts[0] = content;
+        language
+    } else {
+        parts[0] = if tool.output.is_empty() && tool.status != "completed" {
+            live
+        } else {
+            &tool.output
+        };
+        "text"
+    }
+}
+
+#[test]
+fn nested_tool_arguments_stop_at_the_actual_pretty_json_budget() {
+    let mut value = serde_json::json!(vec!["x"; 2300]);
+    for _ in 0..100 {
+        value = Value::Array(vec![value]);
+    }
+    let limit = crate::chat::document::TOOL_LIMIT;
+    assert!(value.to_string().len() < limit);
+    assert!(serde_json::to_string_pretty(&value).unwrap().len() > 400_000);
+    assert!(input_json(&value, limit, false).is_none());
+}

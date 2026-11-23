@@ -17,6 +17,9 @@ use std::{
 
 const CONCURRENT: usize = 2;
 
+#[cfg(all(feature = "test-support", target_arch = "wasm32"))]
+pub(crate) mod browser_fixture;
+
 #[derive(Default)]
 pub(crate) struct Pictures {
     backend: Option<Backend>,
@@ -24,6 +27,7 @@ pub(crate) struct Pictures {
     images: HashMap<String, Entry>,
     waiting: VecDeque<String>,
     preview: Option<(String, String, Image)>,
+    hover: Option<(String, String)>,
 }
 
 struct Entry {
@@ -47,6 +51,7 @@ impl Pictures {
         self.waiting.clear();
         self.cache = None;
         self.preview = None;
+        self.hover = None;
     }
 
     pub(crate) fn retry_interrupted(&mut self) {
@@ -55,7 +60,9 @@ impl Pictures {
                 && (entry.settled || entry.request.is_some())
                 && matches!(
                     entry.media,
-                    PictureSource::Attachment(_) | PictureSource::Http(_)
+                    PictureSource::Attachment(_)
+                        | PictureSource::Deferred(_)
+                        | PictureSource::Http(_)
                 )
             {
                 entry.request = None;
@@ -97,6 +104,9 @@ impl Pictures {
             // Keep the acquired height and image until the card actually unmounts.
             entry.visible = false;
             self.waiting.retain(|queued| queued != key);
+            if self.hover.as_ref().is_some_and(|(anchor, _)| anchor == key) {
+                self.hover = None;
+            }
         }
     }
 
@@ -126,6 +136,19 @@ impl Pictures {
                 changed = true;
             }
             if !entry.settled && entry.image.as_ref().is_some_and(Image::is_ready) {
+                if entry
+                    .image
+                    .as_ref()
+                    .and_then(attachment::decoded_size)
+                    .is_some_and(|[width, height]| {
+                        !codenomad_client::files::images::transcript_dimensions(
+                            width as usize,
+                            height as usize,
+                        )
+                    })
+                {
+                    entry.image = None;
+                }
                 entry.settled = true;
                 changed = true;
             }
@@ -245,7 +268,16 @@ fn view_on_platform(
     let lease = entry
         .and_then(|entry| entry.lease.upgrade())
         .unwrap_or_default();
-    let image = entry.and_then(|entry| entry.image.as_ref());
+    let image = entry
+        .and_then(|entry| entry.image.as_ref())
+        .filter(|image| {
+            attachment::decoded_size(image).is_none_or(|[width, height]| {
+                codenomad_client::files::images::transcript_dimensions(
+                    width as usize,
+                    height as usize,
+                )
+            })
+        });
     let unavailable = matches!(source, PictureSource::Unavailable)
         || entry.is_some_and(|entry| {
             entry.settled && image.is_none_or(|image| image.error().is_some())
@@ -273,7 +305,8 @@ fn view_on_platform(
         );
     }
     if attachment && image.is_some_and(|image| image.is_ready() && image.error().is_none()) {
-        let (name, anchor, lookup) = (name.to_owned(), format!("{key}-enlarge"), key.clone());
+        let (preview_name, anchor, lookup) =
+            (name.to_owned(), format!("{key}-enlarge"), key.clone());
         content = content.child(
             layout::button(
                 t("messageItem.attachment.enlarge"),
@@ -282,18 +315,35 @@ fn view_on_platform(
                     let anchor = anchor.clone();
                     move |s| {
                         let pictures = &mut s.transcript_display.pictures;
+                        pictures.hover = None;
                         if let Some(image) = pictures
                             .images
                             .get(&lookup)
                             .and_then(|entry| entry.image.clone())
                         {
-                            pictures.preview = Some((anchor.clone(), name.clone(), image));
+                            pictures.preview = Some((anchor.clone(), preview_name.clone(), image));
                         }
                     }
                 }),
             )
             .key(anchor),
         );
+        let (anchor, label, scope) = (key.clone(), name.to_owned(), s.input_scope.clone());
+        content = content.on_hover_change(move |s: &mut State, inside, _| {
+            if !s.current_scope(&scope) {
+                return;
+            }
+            let pictures = &mut s.transcript_display.pictures;
+            if inside && pictures.preview.is_none() {
+                pictures.hover = Some((anchor.clone(), label.clone()));
+            } else if pictures
+                .hover
+                .as_ref()
+                .is_some_and(|(key, _)| key == &anchor)
+            {
+                pictures.hover = None;
+            }
+        });
     }
     let (request, mime, scope, target) = (
         source.clone(),
@@ -324,10 +374,21 @@ fn external_url(source: &PictureSource, unavailable: bool, web: bool) -> Option<
 }
 
 pub(super) fn preview(s: &State) -> Option<El> {
-    let (anchor, name, image) = s.transcript_display.pictures.preview.as_ref()?;
-    attachment::picture_preview(image, name, t("settings.close"), anchor, |s: &mut State| {
-        s.transcript_display.pictures.preview = None;
-    })
+    let pictures = &s.transcript_display.pictures;
+    if let Some((anchor, name, image)) = &pictures.preview {
+        return attachment::picture_preview(
+            image,
+            name,
+            t("settings.close"),
+            anchor,
+            |s: &mut State| {
+                s.transcript_display.pictures.preview = None;
+            },
+        );
+    }
+    let (anchor, name) = pictures.hover.as_ref()?;
+    let image = pictures.images.get(anchor)?.image.as_ref()?;
+    attachment::picture_hover(image, name, anchor)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -389,12 +450,18 @@ fn inline_user_and_tool_images_render_while_active_content_stays_a_label() {
         .find(|key| key.ends_with("-enlarge"))
         .unwrap();
     let (x, y) = rt.find(&attach_key).unwrap();
+    rt.pointer_move(x, y);
+    for _ in 0..8 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rt.find("attachment-image-hover").is_some());
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     for _ in 0..8 {
         rt.frame(1.0 / 60.0);
     }
     assert!(rt.find("close-attachment-preview").is_some());
+    assert!(rt.find("attachment-image-hover").is_none());
     rt.key(rune::KeyEvent {
         key: rune::Key::Escape,
         mods: Default::default(),
@@ -514,4 +581,70 @@ fn web_fallback_is_a_link_and_opens_only_the_qualified_image_url() {
     rt.pointer_up(x, y);
     rt.frame(0.02);
     assert_eq!(rt.take_url_requests(), [URL]);
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn native_animated_avif_falls_back_while_oversized_tracks_are_refused_before_decode() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let encoded = include_str!("../../fixtures/animated-32.avif.b64").trim();
+    let mut native = STANDARD.decode(encoded).unwrap();
+    let source = PictureSource::Inline(encoded.into());
+    let bytes = crate::platform::block_on(source.bytes(None, "image/avif")).unwrap();
+    let cache = ImageCache::new(Arc::new(|| {}));
+    let image = cache.load(bytes.as_slice());
+    assert!(image.wait().is_err());
+    assert!(attachment::decoded_size(&image).is_none());
+    let width = native
+        .windows(4)
+        .position(|bytes| bytes == b"tkhd")
+        .unwrap()
+        + 4
+        + 88;
+    native[width..width + 4].copy_from_slice(&(8193_u32 << 16).to_be_bytes());
+    let oversized = PictureSource::Inline(STANDARD.encode(native).into());
+    assert!(crate::platform::block_on(oversized.bytes(None, "image/avif")).is_err());
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn owned_deferred_image_fetches_passive_bytes_and_refuses_other_sessions() {
+    use crate::files::test_http::Http;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use serde_json::json;
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let path = format!(
+            "/api/workspaces/owned/session-media/session/message/0/1/{}",
+            "a".repeat(64)
+        );
+        let message = crate::history::decode_message(&json!({
+            "id":"message","type":"assistant","content":[
+                {"type":"tool","id":"call","name":"read","state":{"status":"completed","content":[
+                    {"type":"text","text":"Never copy image bytes"},
+                    {"type":"file","mime":"image/png","uri":path}
+                ]}}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(message.body, "");
+        let crate::content::Part::Tool(tool) = &message.parts[0] else {
+            panic!("missing native tool")
+        };
+        assert_eq!(tool.output, "Never copy image bytes");
+        let source = tool.pictures[0].source.clone();
+        assert!(matches!(source, PictureSource::Deferred(_)));
+        let mut foreign = http.backend.clone();
+        foreign.session = "other".into();
+        assert!(source.bytes(Some(&foreign), "image/png").await.is_err());
+        let png = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAYAAACzzX7wAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWNQSFjwHx9moL0CAFNzQ+EMxFw9AAAAAElFTkSuQmCC").unwrap();
+        let backend = http.backend.clone();
+        let read =
+            tokio::spawn(async move { source.bytes(Some(&backend), "image/png").await.unwrap() });
+        let request = http.accept().await;
+        assert!(request.header.starts_with(&format!("GET {path} ")));
+        request.send(&format!("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", png.len()), &png).await;
+        assert_eq!(read.await.unwrap().as_slice(), &png);
+        http.quiet().await;
+    });
 }

@@ -10,6 +10,8 @@ mod document;
 pub(crate) mod events;
 mod links;
 mod media;
+#[cfg(all(feature = "test-support", target_arch = "wasm32"))]
+pub(crate) use media::browser_fixture as images_fixture;
 pub(crate) mod reader;
 pub(crate) mod reading;
 mod receipts;

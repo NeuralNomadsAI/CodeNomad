@@ -52,6 +52,8 @@ Le raccord conversation est couvert par `cargo test --locked -p codenomad-rune-a
 
 La recherche utilise le même banc Rust, via `node packages/rune-app/fixtures/launcher-fixture.mjs --web-history-search` avec les routes `query` et `ranked`. Le scénario vérifie un résultat résident sans fenêtre, le rang d'un résultat d'une autre session, sa lecture unitaire et son ouverture au moyen d'une fenêtre `around`. Les tests `codenomad-client search::tests` couvrent les continuations et le redémarrage classé.
 
+`node packages/rune-app/fixtures/transcript-images-browser.mjs <bundle-test-support> <sortie>` vérifie les pièces jointes et l’agrandissement au clavier, une image d’outil AVIF animée, une référence authentifiée, et deux chargements externes avec et sans CORS. Le fichier `animated-32.avif.b64` contient deux images de `ffmpeg -f lavfi -i testsrc2=size=32x32:rate=2 -frames:v 2 -c:v libaom-av1 animated.avif`.
+
 Le banc Code Mode vérifie quatre écritures de 70 Kio, la relecture après une trame hors borne et l’actualisation du fil enfant sur la connexion d’origine :
 
 ```powershell

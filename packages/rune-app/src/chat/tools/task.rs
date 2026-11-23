@@ -209,7 +209,7 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
                     col()
                         .key(child_key.clone())
                         .role("listitem")
-                        .child(super::render(s, &owner, step, &child_key)),
+                        .child(super::render::render(s, &owner, step, &child_key)),
                 );
             }
         }

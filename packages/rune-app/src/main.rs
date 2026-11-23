@@ -142,6 +142,11 @@ fn init() -> State {
 }
 fn setup(s: &mut State, wake: rune::Waker) {
     s.wake = wake.clone();
+    #[cfg(all(feature = "test-support", target_arch = "wasm32"))]
+    if platform::scene_is("transcript-images") {
+        chat::images_fixture::load(s);
+        return;
+    }
     #[cfg(feature = "test-support")]
     if platform::scene_is("transcript") {
         return;
