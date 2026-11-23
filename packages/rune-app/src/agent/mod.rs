@@ -40,6 +40,7 @@ pub struct Ui {
     handle: Handle,
     pub models: Vec<Model>,
     pub current: Option<serde_json::Value>,
+    pub usage: Option<crate::content::Usage>,
     pub permissions: Vec<Permission>,
     pub forms: Vec<Form>,
     pub drafts: Drafts,
@@ -187,6 +188,7 @@ impl Ui {
             handle,
             models: vec![],
             current: None,
+            usage: None,
             permissions: vec![],
             forms: vec![],
             drafts: Default::default(),
@@ -258,6 +260,7 @@ impl Ui {
         let current_activity = !std::mem::take(&mut self.activity_during_job);
         self.known = s.session_known;
         if s.session_known {
+            self.usage = s.usage;
             self.current = s.current;
             if current_activity {
                 self.running = s.running;

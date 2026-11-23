@@ -79,6 +79,7 @@ fn workspace_chat_keeps_history_agent_and_composer_inside_the_viewport() {
         state.chat_title = "Existing history".into();
         state.messages.push(
             crate::Message {
+                usage: None,
                 id: "visible-history".into(),
                 role: "assistant".into(),
                 completed: true,
@@ -285,6 +286,7 @@ fn audit_settlement_during_edit(permission: bool) {
                     models: None,
                     current: None,
                     session_known: true,
+                    usage: None,
                     running: false,
                     permissions: Some(vec![]),
                     forms: Some(vec![]),

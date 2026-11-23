@@ -188,5 +188,5 @@ pub fn message(s: &State, i: usize) -> El {
             }
         }
     }
-    view
+    view.children(super::usage::message(s, i))
 }

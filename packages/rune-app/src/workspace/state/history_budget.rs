@@ -73,6 +73,7 @@ mod tests {
             s.draft = rune::edit::TextEdit::new(key);
             s.messages.push(
                 Message {
+                    usage: None,
                     id: key.into(),
                     body: key.into(),
                     role: "user".into(),

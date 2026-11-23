@@ -41,6 +41,7 @@ pub struct Message {
     pub role: String,
     pub completed: bool,
     pub body: String,
+    pub usage: Option<content::Usage>,
     pub parts: Vec<content::Part>,
 }
 
