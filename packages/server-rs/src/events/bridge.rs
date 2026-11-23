@@ -131,6 +131,7 @@ fn lane(event: &Value) -> String {
 
 struct Job {
     event: Value,
+    endpoint: Arc<crate::opencode::Endpoint>,
     received: (Instant, i64),
     bytes: usize,
 }
@@ -277,7 +278,7 @@ pub async fn bridge(app: Shared) {
                         break;
                     }
                 }
-                let job = Job { bytes, event, received };
+                let job = Job { bytes, event, received, endpoint: endpoint.clone() };
                 if !lanes.enqueue(&app, &routes, lane(&job.event), job) {
                     break;
                 }
@@ -291,8 +292,9 @@ pub async fn bridge(app: Shared) {
     }
 }
 
-async fn route(app: &Shared, routes: &Routes, Job { event, received: (routed, received), .. }: Job) {
+async fn route(app: &Shared, routes: &Routes, Job { event, endpoint, received: (routed, received), .. }: Job) {
     let kind = event["type"].as_str().unwrap_or_default();
+    let inbox = kind.starts_with("session.inbox.");
     let session = event["data"]["sessionID"]
         .as_str()
         .or_else(|| event["data"]["form"]["sessionID"].as_str())
@@ -324,6 +326,7 @@ async fn route(app: &Shared, routes: &Routes, Job { event, received: (routed, re
     let session_id = event["data"]["sessionID"].as_str();
     let session_id = session_id.filter(|s| *s != "global" && crate::opencode::valid_id(s)).map(str::to_owned);
     let mut recipients = Vec::new();
+    let mut inbox_proofs = HashMap::new();
     if kind == "session.moved"
         && let Some(sid) = session_id.as_deref()
         && let Some(destination) = event["data"]["location"]["directory"]
@@ -356,17 +359,15 @@ async fn route(app: &Shared, routes: &Routes, Job { event, received: (routed, re
     } else {
         for workspace in candidates {
             if let Some(dir) = directory.as_deref() {
-                let owns = if kind.starts_with("session.inbox.") {
-                    match crate::files::paths::canonical(&app.scope, dir) {
-                        Some(physical) => {
-                            crate::worktrees::ownership::capture_directory(app, &workspace, &physical).await.is_some()
-                        }
-                        None => false,
-                    }
-                } else {
-                    crate::worktrees::owns_event(app, &workspace, dir).await
-                };
-                if !owns {
+                if inbox {
+                    let Some(physical) = crate::files::paths::canonical(&app.scope, dir) else { continue };
+                    let Ok(identity) = crate::files::host_identity(&physical) else { continue };
+                    let Some(proof) = crate::worktrees::ownership::capture_directory(app, &workspace, &physical).await
+                    else {
+                        continue;
+                    };
+                    inbox_proofs.insert(workspace.id, (physical, identity, proof));
+                } else if !crate::worktrees::owns_event(app, &workspace, dir).await {
                     continue;
                 }
             }
@@ -384,9 +385,23 @@ async fn route(app: &Shared, routes: &Routes, Job { event, received: (routed, re
         }
     }
     for workspace in &recipients {
-        if app.workspace(&workspace.id.to_string()).is_ok() {
-            app.emit(json!({"type":"instance.event","instanceId":workspace.id,"event":event}));
+        let envelope = json!({"type":"instance.event","instanceId":workspace.id,"event":event});
+        if inbox {
+            let Some((physical, identity, proof)) = inbox_proofs.get(&workspace.id) else { continue };
+            if !directory
+                .as_deref()
+                .is_some_and(|dir| crate::files::paths::canonical(&app.scope, dir).as_ref() == Some(physical))
+                || !crate::sessions::permission_mode::workspace_current(app, workspace)
+                || crate::files::host_identity(physical).ok().as_ref() != Some(identity)
+                || !proof.live(physical)
+                || !app.native.current(&endpoint)
+            {
+                continue;
+            }
+        } else if app.workspace(&workspace.id.to_string()).is_err() {
+            continue;
         }
+        app.emit(envelope);
     }
     let sid = session_id.as_deref().or(event["data"]["session"]["id"].as_str()).or(event["data"]["id"].as_str());
     let (took, count, sid) = (routed.elapsed().as_millis(), recipients.len(), sid.unwrap_or("-"));

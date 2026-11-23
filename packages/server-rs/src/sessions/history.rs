@@ -48,16 +48,18 @@ impl Placement {
         let unavailable = || error(Status::SERVICE_UNAVAILABLE, "History placement unavailable");
         let forbidden = || error(Status::FORBIDDEN, "Session does not belong to workspace");
         let location = &source["location"];
+        if location.get("workspaceID").is_some() {
+            return Err(forbidden());
+        }
         let directory = location["directory"]
             .as_str()
             .filter(|d| crate::files::paths::local_absolute(d))
             .ok_or_else(unavailable)?;
+        if references && !crate::files::paths::under(&app.scope, std::path::Path::new(directory)) {
+            return Err(forbidden());
+        }
         let path = dunce::canonicalize(directory).map_err(|_| unavailable())?;
-        let physical = same_file::Handle::from_path(&path).map_err(|_| unavailable())?;
         let checkout = if references {
-            if location.get("workspaceID").is_some() {
-                return Err(forbidden());
-            }
             if path != workspace.path {
                 displays.push(display(&path));
             }
@@ -70,6 +72,7 @@ impl Placement {
             }
             None
         };
+        let physical = same_file::Handle::from_path(&path).map_err(|_| unavailable())?;
         Ok(Self { workspace, endpoint, source, path, physical, checkout, displays })
     }
     async fn current(&self, app: &App, id: &str, session: &str) -> bool {
@@ -221,18 +224,20 @@ pub async fn handle(
         if defer && action == "window" && has_large_tool_image(&output) {
             return blocked("unavailable");
         }
-        if !placement.current(&app, &id, session).await {
-            return blocked("conflict");
-        }
-        if reference && output["status"] == "window" {
+        let response = if reference && output["status"] == "window" {
             output["userFiles"] = user_files::REFERENCE.into();
             let Ok(projected) = serde_json::to_vec(&output) else { return blocked("unavailable") };
             if projected.len() > 24 * 1024 * 1024 {
                 return blocked("unsupported_storage");
             }
-            return ([(header::CONTENT_TYPE, "application/json")], projected).into_response();
+            ([(header::CONTENT_TYPE, "application/json")], projected).into_response()
+        } else {
+            ([(header::CONTENT_TYPE, "application/json")], body.slice_ref(raw.get().as_bytes())).into_response()
+        };
+        if !placement.current(&app, &id, session).await {
+            return blocked("conflict");
         }
-        ([(header::CONTENT_TYPE, "application/json")], body.slice_ref(raw.get().as_bytes())).into_response()
+        response
     };
     tokio::select! {
         _ = principal.0.cancelled() => Err(crate::auth::unauthorized()),

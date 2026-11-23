@@ -32,12 +32,15 @@ impl DirectoryProof {
                     let marker = ancestor.join(".git");
                     let marker_clear = match std::fs::symlink_metadata(&marker) {
                         Err(error) => error.kind() == std::io::ErrorKind::NotFound,
-                        Ok(meta) if meta.is_dir() => std::fs::read_dir(marker).is_ok_and(|mut dir| dir.next().is_none()),
+                        Ok(meta) if meta.is_dir() => {
+                            std::fs::read_dir(marker).is_ok_and(|mut dir| dir.next().is_none())
+                        }
                         _ => false,
                     };
-                    marker_clear && !(ancestor.join("HEAD").exists()
-                        && (ancestor.join("commondir").exists()
-                            || ancestor.join("objects").is_dir() && ancestor.join("refs").is_dir()))
+                    marker_clear
+                        && !(ancestor.join("HEAD").exists()
+                            && (ancestor.join("commondir").exists()
+                                || ancestor.join("objects").is_dir() && ancestor.join("refs").is_dir()))
                 })
         };
         self.source
@@ -73,13 +76,14 @@ pub(crate) async fn capture_directory_with_refresh(
     }
     for &refresh in if refresh_on_miss { &[false, true][..] } else { &[false] } {
         let catalogue = super::linked::catalogue(app, workspace, refresh).await.ok()?;
-        let source = if external { Some(catalogue.get("root").ok()?.clone()) } else { None };
+        let root = catalogue.get("root").ok()?.clone();
         if let Some(tree) = catalogue
             .trees
             .into_iter()
             .filter(|tree| tree.contains_live(physical))
             .max_by_key(|tree| tree.path.as_os_str().len())
         {
+            let source = (external || tree.registered() != root.registered()).then_some(root);
             let proof = DirectoryProof { tree: Some(tree), source };
             return proof.live(physical).then_some(proof);
         }
