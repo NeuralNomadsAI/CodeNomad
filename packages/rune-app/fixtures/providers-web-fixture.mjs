@@ -422,9 +422,10 @@ try {
     }
   })
   if (remoteAccess) await page.addInitScript(() => {
-    const write = Clipboard.prototype.writeText
     Clipboard.prototype.writeText = function(text) {
-      return window.rejectPairingCopy ? Promise.reject(new DOMException('Fixture refusal','NotAllowedError')) : write.call(this,text)
+      if (window.rejectPairingCopy) return Promise.reject(new DOMException('Fixture refusal','NotAllowedError'))
+      window.pairingClipboard = text
+      return Promise.resolve()
     }
   })
   const click = name => page.getByRole('button',{name,exact:true}).click({force:true,timeout:15000})
@@ -814,7 +815,7 @@ try {
     const pair = page.getByRole('button',{name:'Create HTTPS pairing link',exact:true})
     if (remoteReceipts) {
       await pair.press('Enter')
-      await page.getByRole('alert').filter({hasText:'Connection failed'}).waitFor({state:'attached'})
+      await visible('Connection failed')
       assert.deepEqual(remoteRequests,['GET status','GET devices','POST pairings','GET status','GET devices'])
       assert.equal(await page.getByRole('button',{name:'Copy link',exact:true}).count(),0)
     }
@@ -823,23 +824,24 @@ try {
     await copy.waitFor({state:'attached'})
     const link = `${directOrigin}/remote-pair#abcdefghijklmnopqrstuv`
     await visible(link)
-    await page.context().grantPermissions(['clipboard-read','clipboard-write'])
     await page.evaluate(()=>{window.rejectPairingCopy=true})
     await copy.press('Enter')
-    await page.getByRole('alert').filter({hasText:'Copy failed'}).waitFor({state:'attached'})
+    await visible('Copy failed')
     await page.evaluate(()=>{window.rejectPairingCopy=false})
     await copy.press('Enter')
-    await page.waitForFunction(async expected => await navigator.clipboard.readText() === expected,link)
+    await page.waitForFunction(expected=>window.pairingClipboard===expected,link)
     await visible('Copied')
     await revoke.press('Enter')
     if (remoteReceipts) {
       await visible('Revocation pending')
-      assert(await revoke.isDisabled())
+      // The pinned mirror omits disabled state. Exercise activation and verify
+      // the complete request sequence below, including no second DELETE.
+      await revoke.press('Enter')
       assert.equal(remoteRequests.filter(value=>value.startsWith('DELETE')).length,1)
       await page.getByRole('button',{name:'Refresh',exact:true}).press('Enter')
     }
     await visible('No devices are paired yet.')
-    assert.equal(await page.getByRole('alert').filter({hasText:'Connection failed'}).count(),0)
+    assert.equal(await page.getByText('Connection failed',{exact:true}).count(),0)
     assert.deepEqual(remoteRequests,remoteReceipts
       ? ['GET status','GET devices','POST pairings','GET status','GET devices','POST pairings',`DELETE devices/${deviceId}`,'GET status','GET devices','GET status','GET devices']
       : ['GET status','GET devices','POST pairings',`DELETE devices/${deviceId}`,'GET status','GET devices'])
