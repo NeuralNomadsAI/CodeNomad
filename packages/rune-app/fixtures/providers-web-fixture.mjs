@@ -434,7 +434,11 @@ try {
     }
     assert.fail(`Missing editable field: ${label}`)
   }
-  await edit('Title','Edited project memory')
+  const editedTitle = 'Edited project memory'
+  await edit('Title',editedTitle)
+  // The DOM input updates before Rune draws the dirty form. The pinned mirror
+  // exposes Save even while disabled; the counter confirms the edited frame.
+  await visible(`${[...editedTitle].length}/60`)
   const save = page.getByRole('button',{name:'Save',exact:true}).and(page.locator(':not([disabled], [aria-disabled="true"])'))
   await save.click({force:true,timeout:15000})
   await page.getByRole('button',{name:'Edited project memory',exact:true}).waitFor({state:'attached'})
