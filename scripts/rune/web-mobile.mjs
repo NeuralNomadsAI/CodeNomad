@@ -227,12 +227,10 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       const before = await rowSample()
       assert(before.length, 'No visible fixture history rows')
       const y = Math.min(Math.max(before.at(-1)[1], 170), 350)
-      const points = step => [{x:175, y:y+step, id:1}]
-      await cdp.send('Input.dispatchTouchEvent', {type:'touchStart',touchPoints:points(0)})
-      for (const step of [35,90,160,240]) {
-        await cdp.send('Input.dispatchTouchEvent', {type:'touchMove',touchPoints:points(step)})
-      }
-      await cdp.send('Input.dispatchTouchEvent', {type:'touchEnd',touchPoints:[]})
+      // Let Chromium pace the touch sequence; a host round trip after touchStart can turn it into a hold.
+      await cdp.send('Input.synthesizeScrollGesture', {
+        x:175,y,yDistance:240,speed:1000,gestureSourceType:'touch',preventFling:true,
+      })
       const frames = await page.evaluate(() => new Promise(resolve => {
         const all = []
         let last = performance.now()
