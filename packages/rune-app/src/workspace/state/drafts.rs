@@ -40,6 +40,17 @@ pub fn capture(s: &mut State) {
     let Some(item) = ui.entries.get_mut(ui.active) else {
         return;
     };
+    if capture_draft(
+        item,
+        &s.draft.text,
+        s.composer.attachments_missing || !s.composer.draft.attachments.is_empty(),
+    ) {
+        ui.changed();
+    }
+    ui.stage();
+}
+
+pub(super) fn capture_draft(item: &mut super::Entry, text: &str, has_attachments: bool) -> bool {
     let mut changed = false;
     if let Tab::Workspace(saved) = &mut item.saved {
         let key = saved
@@ -50,27 +61,24 @@ pub fn capture(s: &mut State) {
             b.session == key || b.session.is_empty() && key == "__no_session_draft__"
         });
         if owns_draft {
-            if s.composer.attachments_missing || !s.composer.draft.attachments.is_empty() {
-                changed |= saved.attachment_drafts.insert(key.into());
+            changed |= if has_attachments {
+                saved.attachment_drafts.insert(key.into())
             } else {
-                changed |= saved.attachment_drafts.remove(key);
-            }
-            if s.draft.text.is_empty() {
+                saved.attachment_drafts.remove(key)
+            };
+            if text.is_empty() {
                 if saved.drafts.remove(key).is_some() {
                     item.cleared.insert(key.into());
-                    changed = true;
+                    return true;
                 }
-            } else if saved.drafts.get(key) != Some(&s.draft.text) {
-                saved.drafts.insert(key.into(), s.draft.text.clone());
+            } else if saved.drafts.get(key).is_none_or(|value| value != text) {
+                saved.drafts.insert(key.into(), text.to_owned());
                 item.cleared.remove(key);
-                changed = true;
+                return true;
             }
         }
     }
-    if changed {
-        ui.changed();
-    }
-    ui.stage();
+    changed
 }
 pub fn draft_changed(s: &mut State, _: &mut Tx) {
     capture(s);

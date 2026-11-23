@@ -12,6 +12,7 @@ fn state() -> State {
     let (stop, _) = bounded(1);
     let (_, results) = bounded(1);
     let mut ui = Ui::new(Handle {
+        connection: None,
         jobs,
         stop,
         results,

@@ -7,10 +7,10 @@ pub(crate) use persistence::finish;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use state::active_workspace;
 pub(crate) use state::{
-    Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode, close, connected,
-    draft_changed, files_tab, has_conversation_stream, input_ready, new_tab, opened, panel_width,
-    poll, prepare_open, restore_files_mode, resume, retry, schedule_catalogue, select,
-    set_files_tab, status, strip, unselect_missing,
+    Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
+    close, connected, draft_changed, files_tab, has_conversation_stream, input_ready, new_tab,
+    opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume, retry,
+    schedule_catalogue, select, set_files_tab, status, strip, unselect_missing,
 };
 
 use serde_json::{Map, Value, json};

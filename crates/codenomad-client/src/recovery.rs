@@ -221,6 +221,10 @@ pub async fn run(
                         Ok(()) => PromptOutcome::Confirmed(attempt.clone()),
                         Err(PromptError::Rejected) => PromptOutcome::Rejected,
                         Err(PromptError::Unconfirmed) => PromptOutcome::Unconfirmed,
+                        Err(PromptError::AuthenticationRequired) => {
+                            authentication_required(&backend, &out, &wake, &wire).await;
+                            return Ok(());
+                        }
                     }
                 } else {
                     PromptOutcome::Rejected
@@ -241,6 +245,13 @@ pub async fn run(
                 let outcome = if admitted {
                     match backend.prompt(&prompt).await {
                         Ok(ack) => PromptOutcome::Confirmed(ack.id),
+                        Err(error)
+                            if error.downcast_ref()
+                                == Some(&crate::prompt::PromptError::AuthenticationRequired) =>
+                        {
+                            authentication_required(&backend, &out, &wake, &wire).await;
+                            return Ok(());
+                        }
                         Err(error)
                             if error.downcast_ref()
                                 == Some(&crate::prompt::PromptError::Rejected) =>
@@ -482,6 +493,19 @@ pub async fn run(
             }
         }
     }
+}
+
+async fn authentication_required(
+    backend: &Backend,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+    wire: &stream::State,
+) {
+    wire.cancelled.store(true, SeqCst);
+    while wire.alive.load(SeqCst) {
+        runtime::sleep(Duration::from_millis(25)).await;
+    }
+    publish(out, wake, Event::AuthenticationRequired(backend.clone())).await;
 }
 fn can_restart(row: &crate::Message) -> bool {
     !row.completed && row.body.is_empty() && row.parts.iter().all(|part|

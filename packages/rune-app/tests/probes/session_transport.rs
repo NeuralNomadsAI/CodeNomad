@@ -129,7 +129,7 @@ pub fn contract() {
                 chunks = 0;
                 commands.send(prompt(prompts[completed])).unwrap();
             }
-            Event::AuthenticationRequired(_) | Event::Failed => panic!("adapter failed"),
+            Event::AuthenticationRequired(..) | Event::Failed => panic!("adapter failed"),
             Event::Sync(_)
             | Event::History(_)
             | Event::Older(_)

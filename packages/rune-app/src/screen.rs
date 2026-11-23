@@ -43,6 +43,10 @@ impl Screen {
 pub enum Editor {
     Address,
     Password,
+    #[cfg(not(target_arch = "wasm32"))]
+    DirectUsername,
+    #[cfg(not(target_arch = "wasm32"))]
+    DirectPassword,
     Folder,
     Title,
     Search,
@@ -96,6 +100,10 @@ impl State {
             return &mut self.rejected_edit;
         }
         let edit = match target {
+            #[cfg(not(target_arch = "wasm32"))]
+            Editor::DirectUsername => Some(&mut self.direct_authentication.username),
+            #[cfg(not(target_arch = "wasm32"))]
+            Editor::DirectPassword => Some(&mut self.direct_authentication.password),
             Editor::Address
             | Editor::Password
             | Editor::Folder
@@ -118,7 +126,9 @@ impl State {
                 }
             }
             Editor::Model => self.agent.as_mut().map(|a| &mut a.search),
-            Editor::Composer => (!self.screen.is_launcher()).then_some(&mut self.draft),
+            Editor::Composer => {
+                (!self.screen.is_launcher() && !self.composer.pending()).then_some(&mut self.draft)
+            }
             Editor::Reason(id) => self.agent.as_mut().and_then(|a| a.reasons.get_mut(&id)),
             Editor::Form(id) => self
                 .agent

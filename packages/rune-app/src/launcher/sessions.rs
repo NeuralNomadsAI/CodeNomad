@@ -221,12 +221,14 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
 }
 pub fn can_change_session(s: &State) -> bool {
     s.phase != Phase::Streaming
+        && !s.composer.pending()
         && crate::workspace::input_ready(s)
         && !crate::agent::navigation_blocked(s)
 }
 pub(super) fn can_rebind(s: &State, id: &str) -> bool {
     !s.screen.is_launcher()
         && s.phase == Phase::Failed
+        && !s.composer.pending()
         && crate::workspace::active_session(s) == Some(id)
 }
 pub fn can_visit(s: &State, back: bool) -> bool {
@@ -313,11 +315,8 @@ pub(super) fn bind(
         s.messages.clear();
         s.can_older = false;
     } else if let Some(agent) = &mut s.agent {
-        if reauthenticated {
-            let mut next = crate::agent::Ui::new(crate::agent::start(b.clone(), s.wake.clone()));
-            next.drafts = std::mem::take(&mut agent.drafts);
-            next.reasons = std::mem::take(&mut agent.reasons);
-            *agent = next;
+        if reauthenticated || !agent.uses_connection(&b) {
+            agent.reauthenticate(crate::agent::start(b.clone(), s.wake.clone()));
             crate::files::bind(s, &b);
         } else {
             // The same owned occurrence and session retain their in-flight reply guard.

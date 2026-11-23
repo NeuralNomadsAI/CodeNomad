@@ -34,9 +34,11 @@ impl Cache {
     }
 
     pub fn navigation_blocked(&self) -> bool {
-        self.agent
-            .as_ref()
-            .is_some_and(agent::Ui::navigation_blocked)
+        self.composer.pending()
+            || self
+                .agent
+                .as_ref()
+                .is_some_and(agent::Ui::navigation_blocked)
     }
     pub fn status(&self) -> Option<rune_theme_codenomad::tabs::Status> {
         status(&self.phase, self.agent.as_ref())

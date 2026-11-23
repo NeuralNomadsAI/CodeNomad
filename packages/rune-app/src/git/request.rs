@@ -199,6 +199,14 @@ impl Requests {
         }
     }
 
+    pub fn renew(&mut self, backend: Backend) {
+        self.backend = backend;
+        for (index, slot) in self.slots.iter_mut().enumerate() {
+            slot.cancel();
+            slot.dirty |= index != Lane::InitSessions as usize;
+        }
+    }
+
     pub fn slot(&self, lane: Lane) -> &Slot {
         &self.slots[lane as usize]
     }

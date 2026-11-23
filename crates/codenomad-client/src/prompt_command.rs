@@ -22,7 +22,11 @@ impl Backend {
             .send()
             .await
             .map_err(|_| PromptError::Unconfirmed)?;
-        if response.status().is_success() {
+        if cfg!(not(target_arch = "wasm32"))
+            && response.status() == reqwest::StatusCode::UNAUTHORIZED
+        {
+            Err(PromptError::AuthenticationRequired)
+        } else if response.status().is_success() {
             Ok(())
         } else if response.status().is_client_error()
             || response.status() == reqwest::StatusCode::NOT_IMPLEMENTED

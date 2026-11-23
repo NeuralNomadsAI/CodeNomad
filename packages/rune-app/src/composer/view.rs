@@ -12,6 +12,7 @@ pub fn view(s: &State) -> El {
     let stop = s.phase == Phase::Streaming && s.agent.is_some();
     let editor = layout::composer_field(&s.draft, t("promptInput.placeholder.default"))
         .label(t("rune.prompt"))
+        .disabled(s.composer.pending())
         .on_edit(screen::edit(&scope, screen::Editor::Composer))
         .on_change(screen::action_tx(&scope, changed))
         .on_key(move |s: &mut State, event, tx| s.current_scope(&edit_scope) && key(s, event, tx))

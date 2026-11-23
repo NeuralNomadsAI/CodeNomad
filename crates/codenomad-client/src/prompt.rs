@@ -129,12 +129,14 @@ pub struct Acknowledgement {
 pub enum PromptError {
     Rejected,
     Unconfirmed,
+    AuthenticationRequired,
 }
 impl std::fmt::Display for PromptError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Rejected => f.write_str("prompt was rejected"),
             Self::Unconfirmed => f.write_str("prompt receipt is unconfirmed"),
+            Self::AuthenticationRequired => f.write_str("prompt requires authentication"),
         }
     }
 }

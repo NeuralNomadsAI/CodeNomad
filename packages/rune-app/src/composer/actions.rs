@@ -18,6 +18,15 @@ pub struct Owner {
     pub restored: bool,
     pub attachments_missing: bool,
 }
+impl Owner {
+    pub fn pending(&self) -> bool {
+        self.sending.is_some()
+    }
+    #[cfg(test)]
+    pub fn pending_text(&self) -> Option<&str> {
+        self.sending.as_ref().map(|send| send.edit.text.as_str())
+    }
+}
 struct Send {
     id: String,
     edit: TextEdit,
@@ -197,6 +206,15 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
     }
     if s.phase == Phase::Streaming && !send.was_running {
         s.phase = Phase::Ready;
+    }
+}
+
+pub fn reject_pending(s: &mut State) {
+    if let Some(id) = s.composer.sending.as_ref().map(|send| send.id.clone()) {
+        acknowledge(s, &id, PromptOutcome::Rejected);
+        if s.workspace.is_some() && std::mem::take(&mut s.composer.restored) {
+            workspace::capture(s);
+        }
     }
 }
 

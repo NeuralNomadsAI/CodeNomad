@@ -73,7 +73,7 @@ pub async fn pairing_required() -> Result<Option<bool>> {
     })
 }
 
-pub(crate) fn authentication_expired(error: &crate::history::Error) -> bool {
+pub fn authentication_expired(error: &crate::history::Error) -> bool {
     cfg!(not(target_arch = "wasm32"))
         && error
             .downcast_ref::<reqwest::Error>()

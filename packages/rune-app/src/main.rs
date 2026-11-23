@@ -54,6 +54,8 @@ struct State {
     tool_diff_preferences: chat::ToolDiffPreferences,
     screen: Screen,
     settings: settings::Host,
+    #[cfg(not(target_arch = "wasm32"))]
+    direct_authentication: chat::authentication::Recovery,
     input_scope: std::rc::Rc<()>,
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
@@ -102,6 +104,8 @@ fn init() -> State {
         tool_diff_preferences: Default::default(),
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),
+        #[cfg(not(target_arch = "wasm32"))]
+        direct_authentication: Default::default(),
         input_scope: std::rc::Rc::new(()),
         rejected_edit: TextEdit::new(""),
         workspace: None,
@@ -186,6 +190,17 @@ fn retry_connection(s: &mut State, tx: &mut Tx) {
             return;
         }
     }
+    if s.composer.pending() {
+        // A terminal failure can be delivered ahead of the last transport receipt.
+        poll_chat(s, 64);
+        if s.composer.pending() {
+            return;
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if chat::authentication::retry(s) {
+        return;
+    }
     if s.screen
         .launcher()
         .is_some_and(|l| l.authentication_required)
@@ -200,7 +215,11 @@ fn retry_connection(s: &mut State, tx: &mut Tx) {
             launcher::choose(s, id, tx);
         } else if s.screen.launcher().is_none() && s.incoming.is_some() {
             s.phase = Phase::Reconnecting;
-            transport::start(s, false);
+            if let Some(backend) = settings::bound_backend(s) {
+                transport::start_bound(s, backend);
+            } else {
+                transport::start(s, false);
+            }
         }
     } else if s
         .commands
@@ -240,6 +259,10 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
         changed |= launcher::reopen(s);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        changed |= chat::authentication::poll(s);
     }
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     changed |= git::poll(s, now, tx);
@@ -371,9 +394,13 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::WorkspaceMissing => {
                 #[cfg(target_arch = "wasm32")]
-                { s.phase = Phase::WorkspaceMissing; }
+                {
+                    s.phase = Phase::WorkspaceMissing;
+                }
                 #[cfg(not(target_arch = "wasm32"))]
-                { s.phase = Phase::Failed; }
+                {
+                    s.phase = Phase::Failed;
+                }
             }
             Event::History(messages) => {
                 s.messages = messages;
@@ -406,8 +433,15 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     platform::pairing::observe(s);
                 }
                 if let Event::AuthenticationRequired(expired) = event {
+                    if !settings::authentication_required(s, &expired)
+                        && s.screen.launcher().is_none()
+                    {
+                        continue;
+                    }
                     s.commands = None;
-                    settings::authentication_required(s, &expired);
+                    composer::reject_pending(s);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    chat::authentication::expired(s, expired);
                 }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
@@ -422,6 +456,15 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
         s.revision += 1;
         changed = true;
     }
+    if (s.composer.pending() || s.phase == Phase::Reconnecting)
+        && s.incoming
+            .as_ref()
+            .is_some_and(|receiver| receiver.is_closed() && receiver.is_empty())
+    {
+        composer::reject_pending(s);
+        s.phase = Phase::Failed;
+        changed = true;
+    }
     changed
 }
 fn view(s: &State, cx: &mut Cx<State>) -> El {
@@ -432,7 +475,9 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         }
         let base = shell::view(s, cx, chat_view);
         let mut layer = Vec::new();
-        if !s.screen.is_launcher() { composer::view::overlays(s, &mut layer); }
+        if !s.screen.is_launcher() {
+            composer::view::overlays(s, &mut layer);
+        }
         let body = layout::with_overlays(base, layer);
         #[cfg(target_arch = "wasm32")]
         if platform::pairing::required(s) {
@@ -441,6 +486,14 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
                 .full_height()
                 .child(platform::pairing::view(s))
                 .child(body.remaining());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(dialog) = chat::authentication::dialog(s) {
+            return rune::col()
+                .full_width()
+                .full_height()
+                .child(body)
+                .child(dialog);
         }
         body
     })

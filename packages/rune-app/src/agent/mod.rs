@@ -26,6 +26,7 @@ pub fn navigation_blocked(s: &crate::State) -> bool {
     s.agent.as_ref().is_some_and(Ui::navigation_blocked)
 }
 pub struct Handle {
+    connection: Option<codenomad_client::http::Http>,
     jobs: Sender<Job>,
     stop: Sender<()>,
     results: Receiver<Result>,
@@ -60,6 +61,7 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     let (jobs, rx) = bounded(1);
     let (stop, srx) = bounded(1);
     let (out, results) = bounded(8);
+    let connection = Some(backend.client.clone());
     let b = backend.clone();
     let w = wake.clone();
     let o = out.clone();
@@ -90,6 +92,7 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
         }
     });
     Handle {
+        connection,
         jobs,
         stop,
         results,
@@ -109,6 +112,20 @@ impl Ui {
         self.online = false;
         self.refresh(true);
     }
+    pub(crate) fn uses_connection(&self, backend: &Backend) -> bool {
+        self.handle
+            .connection
+            .as_ref()
+            .is_none_or(|previous| previous.same_connection(&backend.client))
+    }
+
+    pub(crate) fn reauthenticate(&mut self, handle: Handle) {
+        let mut replacement = Self::new(handle);
+        replacement.drafts = std::mem::take(&mut self.drafts);
+        replacement.reasons = std::mem::take(&mut self.reasons);
+        *self = replacement;
+    }
+
     pub fn navigation_blocked(&self) -> bool {
         self.busy
             || self.stopping

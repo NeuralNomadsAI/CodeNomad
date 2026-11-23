@@ -209,15 +209,20 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.server_id = Some(server_id);
             l.projects = projects;
             l.password = TextEdit::new("");
+            if reauthenticated {
+                connection::watch_catalogue(l);
+            }
             crate::workspace::connected(s);
-            if reauthenticated
-                && let Some(id) = crate::workspace::active_session(s).map(str::to_owned)
-            {
-                if let Some(launcher) = s.screen.launcher_mut() {
-                    launcher.reauthenticated_session = Some(id.clone());
+            if reauthenticated {
+                crate::workspace::renew_connection(s);
+                if let Some(id) = selected {
+                    s.show_chat();
+                    choose(s, id, tx);
+                } else {
+                    crate::git::project_opened(s);
+                    crate::workspace::restore_files_mode(s);
+                    crate::workspace::resume(s, tx);
                 }
-                s.show_chat();
-                choose(s, id, tx);
             } else {
                 crate::workspace::resume(s, tx);
             }

@@ -8,7 +8,7 @@ pub(crate) mod storage;
 pub(crate) mod titlebar;
 #[cfg(target_arch = "wasm32")]
 mod web_attachment;
-pub(crate) use connection::configured_backend;
+pub(crate) use connection::configured_target;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod host;
 use std::{future::Future, time::Duration};
