@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { ClientStateManager } from "./client-state"
+import { CrossHostRegistration } from "./client-state-cross-host"
 import { DeveloperMode } from "./developer-mode"
 import { MultiwindowLifecycle, type LifecycleWindow } from "./multiwindow-lifecycle"
 import { WindowStateTracker } from "./window-state"
@@ -121,6 +122,7 @@ for (const refused of [false, true]) test(`quit waits for a window removal on di
     }
     await writeFile(path, contents)
   }, { crossHostElectionDirectory: join(directory, "election") })
+  t.mock.getter(CrossHostRegistration.prototype, "isPrimary", () => assert.fail("close or quit used synchronous lease verification"))
   t.after(async () => {
     await state.drainAndReleasePrimary()
     await rm(directory, { recursive: true, force: true })

@@ -182,7 +182,7 @@ test("simultaneous claimants deterministically recover a stale owner", (t) => {
   mkdirSync(staleDirectory)
   const observed = JSON.stringify(stale)
   writeFileSync(join(staleDirectory, "owner.json"), observed)
-  writeFileSync(join(directory, "participant.603.b.json"), JSON.stringify(second))
+  writeFileSync(join(directory, "participant.603.b.json"), JSON.stringify({ ...second, cohort: null }))
   writeFileSync(join(directory, "recovery.603.b.claim"), observed)
   const identities = new Map([[602, first.processStartIdentity], [603, second.processStartIdentity]])
   const deps = {
@@ -195,39 +195,39 @@ test("simultaneous claimants deterministically recover a stale owner", (t) => {
   assert.equal(loser.isPrimary, false)
 })
 
-test("graceful primary release allows a successor while a secondary remains", (t) => {
+test("graceful primary release allows a successor while a secondary remains", async (t) => {
   const directory = temp(t)
   const primary = CrossHostRegistration.register(directory, owner(401, "primary"), true, dependencies(true, "primary-start"))!
   const secondary = CrossHostRegistration.register(directory, owner(402, "secondary"), true, dependencies(true, "primary-start"))!
   assert.equal(secondary.isPrimary, false)
 
-  assert.equal(primary.release(), true)
+  assert.equal(await primary.release(), true)
   const successor = CrossHostRegistration.register(directory, owner(403, "successor"), true, dependencies(true, "successor-start"))!
   assert.equal(successor.isPrimary, true)
 })
 
-test("graceful handoff retires the old cohort so a crashed successor can recover", (t) => {
+test("graceful handoff retires the old cohort so a crashed successor can recover", async (t) => {
   const directory = temp(t), secondaryOwner = owner(422, "secondary"), successorOwner = owner(423, "successor"), lateOwner = owner(425, "late")
   const malformed = join(directory, "participant.malformed.json")
   const primary = CrossHostRegistration.register(directory, owner(421, "primary"), true, {
     pidAlive: () => true,
     processStartIdentity: () => "primary-start",
     onGracefulOwnerChecked: () => {
-      writeFileSync(join(directory, "participant.423.successor.json"), JSON.stringify(successorOwner))
       writeFileSync(join(directory, "participant.425.late.json"), JSON.stringify(lateOwner))
       writeFileSync(malformed, "malformed")
     },
     onOwnerRetired: () => {
-      mkdirSync(join(directory, CROSS_HOST_OWNER_DIRECTORY))
-      writeFileSync(ownerFile(directory), JSON.stringify(successorOwner))
+      const successor = CrossHostRegistration.register(directory, successorOwner, true, dependencies(true, "successor-start"))!
+      assert.equal(successor.isPrimary, true)
     },
   })!
   CrossHostRegistration.register(directory, secondaryOwner, true, dependencies(true, "primary-start"))!
 
-  primary.release()
+  await primary.release()
   assert.equal(readdirSync(directory).some((name) => name.startsWith("retired.")), false)
   assert.equal(JSON.parse(readFileSync(ownerFile(directory), "utf8")).runToken, "successor")
-  assert.equal(existsSync(join(directory, "participant.423.successor.json")), false)
+  assert.deepEqual(JSON.parse(readFileSync(join(directory, "participant.423.successor.json"), "utf8")), { ...successorOwner, cohort: successorOwner })
+  assert.equal(existsSync(join(directory, "participant.422.secondary.json")), false)
   assert.equal(existsSync(join(directory, "participant.425.late.json")), false)
   assert.equal(existsSync(malformed), false)
 
@@ -243,12 +243,54 @@ test("graceful handoff retires the old cohort so a crashed successor can recover
   assert.equal(claimant.isPrimary, true)
 })
 
-test("non-owner release does not remove a live owner's record", (t) => {
+test("registrations immediately before and after graceful rename bind to different recovery cohorts", async (t) => {
+  const directory = temp(t)
+  const primary = owner(701, "primary"), late = owner(702, "late"), successor = owner(703, "next")
+  const nextSecondary = owner(704, "next-secondary"), claimant = owner(705, "claimant")
+  const ownerlessSecondary = owner(706, "ownerless")
+  const identities = new Map([primary, late, successor, nextSecondary, claimant, ownerlessSecondary].map((actor) => [actor.pid, actor.processStartIdentity]))
+  const deps = {
+    pidAlive: (pid: number) => identities.has(pid),
+    processStartIdentity: (pid: number) => identities.get(pid),
+  }
+  let postRename!: CrossHostRegistration
+  const registration = CrossHostRegistration.register(directory, primary, true, {
+    ...deps,
+    onGracefulOwnerRetiring: () => {
+      assert.equal(CrossHostRegistration.register(directory, late, true, deps)!.isPrimary, false)
+    },
+    onOwnerRetired: () => {
+      assert.equal(existsSync(ownerFile(directory)), false)
+      assert.equal(CrossHostRegistration.register(directory, ownerlessSecondary, false, deps)!.isPrimary, false)
+      assert.equal(CrossHostRegistration.register(directory, successor, true, deps)!.isPrimary, true)
+      postRename = CrossHostRegistration.register(directory, nextSecondary, false, deps)!
+    },
+  })!
+
+  await registration.release()
+  const latePath = join(directory, "participant.702.late.json")
+  const nextPath = join(directory, "participant.704.next-secondary.json")
+  const ownerlessPath = join(directory, "participant.706.ownerless.json")
+  assert.deepEqual(JSON.parse(readFileSync(latePath, "utf8")), { ...late, cohort: primary })
+  assert.deepEqual(JSON.parse(readFileSync(nextPath, "utf8")), { ...nextSecondary, cohort: successor })
+  assert.deepEqual(JSON.parse(readFileSync(ownerlessPath, "utf8")), { ...ownerlessSecondary, cohort: ownerlessSecondary })
+
+  identities.delete(successor.pid)
+  const blocked = CrossHostRegistration.register(directory, claimant, true, deps)!
+  assert.equal(blocked.isPrimary, false, "the successor's live secondary still fences recovery")
+  await blocked.release()
+  await postRename.release()
+  assert.equal(CrossHostRegistration.register(directory, claimant, true, deps)!.isPrimary, true, "unrelated generations cannot fence the successor")
+  assert.equal(existsSync(latePath), true)
+  assert.equal(existsSync(ownerlessPath), true)
+})
+
+test("non-owner release does not remove a live owner's record", async (t) => {
   const directory = temp(t)
   const primary = CrossHostRegistration.register(directory, owner(411, "primary"), true, dependencies(true, "primary-start"))!
   const secondary = CrossHostRegistration.register(directory, owner(412, "secondary"), true, dependencies(true, "primary-start"))!
 
-  assert.equal(secondary.release(), true)
+  assert.equal(await secondary.release(), true)
   assert.equal(primary.isPrimary, true)
   assert.equal(JSON.parse(readFileSync(ownerFile(directory), "utf8")).runToken, "primary")
 })
@@ -263,7 +305,7 @@ test("primary crash remains fenced by its non-claiming secondary cohort", async 
   await waitForExit(winner)
   const blocked = CrossHostRegistration.register(directory, owner(501, "blocked"), true)!
   assert.equal(blocked.isPrimary, false)
-  blocked.release()
+  await blocked.release()
   survivor.process.kill()
   await waitForExit(survivor)
   const successor = CrossHostRegistration.register(directory, owner(502, "successor"), true)!

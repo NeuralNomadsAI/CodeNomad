@@ -137,6 +137,8 @@ fn cancel_before_begin_is_bound_to_one_document_and_bounded() {
         ready: true,
         ..RemoteDocument::default()
     };
+    assert!(document.matches(&document.instance));
+    assert!(!next_document.matches(&document.instance));
     assert!(next_document.allows(id));
     for _ in 0..MAX_CANCELLED_IDS * 2 {
         document.cancel(Uuid::new_v4());
