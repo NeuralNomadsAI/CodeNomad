@@ -28,6 +28,14 @@ wasm-bindgen --target web --out-name probe --out-dir "$CARGO_TARGET_DIR/browser-
 node packages/rune-app/fixtures/browser-preference-events.mjs "$CARGO_TARGET_DIR/browser-sse/probe"
 ```
 
+La sonde notifications remplace `window.Notification` par un enregistreur dans Chromium headless. Elle vérifie la demande d’autorisation depuis un clic, l’envoi après accord et le retrait du gestionnaire après révocation, sans notification système :
+
+```sh
+cargo build --locked -p codenomad-rune-app --features test-support --example browser-notifications --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-name probe --out-dir "$CARGO_TARGET_DIR/browser-notifications" "$CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/examples/browser_notifications.wasm"
+node packages/rune-app/fixtures/browser-notifications.mjs "$CARGO_TARGET_DIR/browser-notifications"
+```
+
 ## Parité par composant
 
 Les composants Solid et Rune demandent des paires de captures exécutées à géométrie identique, dans chaque palette, avec références d'accessibilité et interactions dédiées. Le statut de parité reste à qualifier pour les composants de l'inventaire.

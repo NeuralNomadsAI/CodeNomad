@@ -56,6 +56,7 @@ struct State {
     tool_diff_preferences: chat::ToolDiffPreferences,
     screen: Screen,
     settings: settings::Host,
+    notifications: shell::notifications::Host,
     #[cfg(not(target_arch = "wasm32"))]
     direct_authentication: chat::authentication::Recovery,
     input_scope: std::rc::Rc<()>,
@@ -107,6 +108,7 @@ fn init() -> State {
         tool_diff_preferences: Default::default(),
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),
+        notifications: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
         direct_authentication: Default::default(),
         input_scope: std::rc::Rc::new(()),
@@ -189,6 +191,7 @@ fn latest(s: &mut State, tx: &mut Tx) {
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = poll_chat(s, 64);
+    shell::notifications::collect(s, workspace::notification_target(s));
     if !s.screen.is_launcher()
         && !git::has_preview(s)
         && !files::has_preview(s)
@@ -209,6 +212,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
     changed |= settings::poll(s);
+    changed |= shell::notifications::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
     if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
         changed |= launcher::reopen(s);

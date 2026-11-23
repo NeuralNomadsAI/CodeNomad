@@ -3,10 +3,12 @@ use tabs::{activate, close_blocked};
 pub use tabs::{can_new, close, new_tab, select};
 
 mod drafts;
+mod notification;
 mod panel_state;
 mod strip;
 
 pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
+pub(crate) use notification::{notification_target, open_notification, owns_notification};
 pub use panel_state::{
     capture_files_mode, files_tab, panel_width, restore_files_mode, set_files_tab,
 };
@@ -480,6 +482,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             let awaiting_prompt = s.composer.pending();
             let uncertain_prompt = s.composer.unconfirmed_id().is_some();
             changed |= crate::poll_chat(s, 8);
+            crate::shell::notifications::collect(s, notification::entry_target(item, s));
             if awaiting_prompt && !s.composer.pending()
                 || uncertain_prompt && s.composer.unconfirmed_id().is_none()
             {

@@ -1,6 +1,51 @@
 use super::*;
 
 #[test]
+fn a_recorded_notification_click_returns_to_its_own_project_and_conversation_once() {
+    let mut s = draft_state();
+    let mut first = workspace("session-first", "");
+    first.workspace_id = Some("workspace-first".into());
+    let mut second = workspace("session-second", "");
+    second.workspace_id = Some("workspace-second".into());
+    let ui = s.workspace.as_mut().unwrap();
+    ui.entries[0].saved = Tab::Workspace(first);
+    ui.entries
+        .push(entry("tab-1".into(), Tab::Workspace(second)));
+    s.notifications.record();
+    let mut other = init();
+    other.notifications.record();
+    let mut rt = runtime(s);
+    rt.update(|s, tx| {
+        let (target, title) = notification_target(s).unwrap();
+        s.notifications
+            .present(&title, "Question", target.clone(), s.wake.clone());
+        other
+            .notifications
+            .present(&title, "Another window", target.clone(), other.wake.clone());
+        assert_eq!(s.notifications.recorded()[0].1, "fixture");
+        assert_eq!(other.notifications.recorded()[0].2, "Another window");
+        select(s, "tab-1", tx);
+        assert_eq!(active_session(s), Some("session-second"));
+        s.notifications.simulate_click(0);
+        assert!(!crate::shell::notifications::poll(&mut other, tx));
+        assert!(crate::shell::notifications::poll(s, tx));
+        assert_eq!(s.workspace.as_ref().unwrap().active_key(), "tab-0");
+        assert_eq!(active_session(s), Some("session-first"));
+        select(s, "tab-1", tx);
+        s.notifications.simulate_click(0);
+        assert!(!crate::shell::notifications::poll(s, tx));
+        assert_eq!(active_session(s), Some("session-second"));
+        let mut stale = target;
+        stale.occurrence += 1;
+        s.notifications
+            .present(&title, "Stale", stale, s.wake.clone());
+        s.notifications.simulate_click(1);
+        assert!(!crate::shell::notifications::poll(s, tx));
+        assert_eq!(active_session(s), Some("session-second"));
+    });
+}
+
+#[test]
 fn panel_visibility_returns_only_with_its_own_project_tab() {
     let mut s = init();
     let mut ui = Ui::new();

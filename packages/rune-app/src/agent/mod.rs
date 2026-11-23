@@ -16,11 +16,13 @@ use rune::edit::TextEdit;
 enum Job {
     Read(bool),
     Act(Action),
+    VerifyIdle(u64),
 }
 enum Result {
     Read(Snapshot, bool),
     Act(bool, Snapshot),
     Stop(bool),
+    VerifiedIdle(u64, bool),
 }
 pub fn navigation_blocked(s: &crate::State) -> bool {
     s.agent.as_ref().is_some_and(Ui::navigation_blocked)
@@ -54,6 +56,7 @@ pub struct Ui {
     pub running: bool,
     pub pending_known: bool,
     pub online: bool,
+    pub(crate) attention: crate::shell::notifications::Attention,
     reading: bool,
     activity_during_job: bool,
     trailing: Option<bool>,
@@ -85,6 +88,18 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
                     let ok = backend.agent_action(&action).await.is_ok();
                     Result::Act(ok, backend.agent_snapshot(false).await)
                 }
+                Job::VerifyIdle(idle) => Result::VerifiedIdle(
+                    idle,
+                    backend
+                        .control_get("session/active")
+                        .await
+                        .ok()
+                        .is_some_and(|response| {
+                            response["data"]
+                                .as_object()
+                                .is_some_and(|active| !active.contains_key(&backend.session))
+                        }),
+                ),
             };
             if out.send(result).await.is_err() {
                 break;
@@ -125,6 +140,7 @@ impl Ui {
         let mut replacement = Self::new(handle);
         replacement.drafts = std::mem::take(&mut self.drafts);
         replacement.reasons = std::mem::take(&mut self.reasons);
+        replacement.attention = std::mem::take(&mut self.attention);
         *self = replacement;
     }
 
@@ -201,6 +217,7 @@ impl Ui {
             running: false,
             pending_known: false,
             online: false,
+            attention: Default::default(),
             reading: false,
             activity_during_job: false,
             trailing: None,
@@ -256,6 +273,9 @@ impl Ui {
     }
     fn snapshot(&mut self, s: Snapshot) {
         let current_activity = !std::mem::take(&mut self.activity_during_job);
+        if self.online {
+            self.attention.observe(&s, current_activity);
+        }
         self.known = s.session_known;
         if s.session_known {
             self.current = s.current;
@@ -309,12 +329,19 @@ impl Ui {
                     self.error = !ok;
                     self.refresh(false)
                 }
+                Result::VerifiedIdle(idle, inactive) => {
+                    if inactive && self.online && !self.running {
+                        self.attention.confirm_idle(idle);
+                    }
+                }
             }
             changed = true;
         }
         if !self.reading && !self.busy {
             if let Some(catalog) = self.trailing.take() {
                 self.refresh(catalog)
+            } else if let Some(idle) = self.attention.take_idle_verification() {
+                let _ = self.handle.jobs.try_send(Job::VerifyIdle(idle));
             }
         }
         changed

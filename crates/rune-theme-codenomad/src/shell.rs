@@ -103,18 +103,18 @@ fn titlebar_height() -> f32 {
     tokens(layout::dark()).length(Length::Chrome).px()
 }
 
-pub fn run<S: 'static>(
+pub fn app<S: 'static>(
     spec: AppSpec<S>,
     closing: fn(&mut S, &mut Tx),
     native_chrome: bool,
     locale: &'static str,
-) {
+) -> App<S> {
     let mut app = App::new(spec).on_close(closing).on_quit(closing);
     if native_chrome {
         native_locale(locale);
         app = app.titlebar(rune::Titlebar::new(titlebar_height()));
     }
-    app.run();
+    app
 }
 
 pub fn native_locale(locale: &'static str) {

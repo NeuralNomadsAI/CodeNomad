@@ -5,6 +5,92 @@ use crate::{
 use serde_json::json;
 
 #[test]
+fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification() {
+    use crate::shell::notifications::{self, Target};
+    use agent_api::RootActivity;
+    let (jobs, incoming) = super::bounded(1);
+    let (stop, _) = super::bounded(1);
+    let (out, results) = super::bounded(1);
+    let mut agent = super::Ui::new(super::Handle {
+        connection: None,
+        jobs,
+        stop,
+        results,
+    });
+    agent.online = true;
+    assert!(matches!(incoming.try_recv(), Ok(super::Job::Read(true))));
+    let snapshot = || agent_api::Snapshot {
+        models: Some(vec![]),
+        current: None,
+        session_known: true,
+        running: false,
+        root_activity: Some(RootActivity {
+            busy: None,
+            idle: None,
+        }),
+        permissions: Some(vec![]),
+        forms: Some(vec![Form {
+            id: "question".into(),
+            title: "A question".into(),
+            fields: vec![],
+        }]),
+    };
+    let mut s = crate::init();
+    crate::settings::notification_fixture(&s);
+    s.chat_title = "Private conversation".into();
+    s.agent = Some(agent);
+    s.notifications.record();
+    let target = Target {
+        tab: Some("tab-0".into()),
+        origin: "http://127.0.0.1:9/".into(),
+        server: None,
+        occurrence: 0,
+        workspace: "project".into(),
+        session: "session".into(),
+    };
+    let mut runtime =
+        rune::Runtime::new(s, crate::view, (960.0, 760.0), rune::Env::new(false, 1.0));
+    runtime.frame(0.0);
+    runtime.window_focus(false);
+    runtime.frame(0.02);
+    runtime.update(|s, _| {
+        for _ in 0..2 {
+            assert!(out.try_send(super::Result::Read(snapshot(), false)).is_ok());
+            assert!(crate::poll_chat(s, 8));
+            notifications::collect(s, Some((target.clone(), "Private project".into())));
+        }
+        assert_eq!(
+            s.notifications.recorded(),
+            &[(
+                0,
+                "Private project".into(),
+                "Session “Private conversation” needs your answer".into()
+            )]
+        );
+        let mut finished = snapshot();
+        finished.root_activity = Some(RootActivity {
+            busy: Some(10),
+            idle: Some(20),
+        });
+        assert!(out.try_send(super::Result::Read(finished, false)).is_ok());
+        assert!(crate::poll_chat(s, 8));
+        assert!(matches!(
+            incoming.try_recv(),
+            Ok(super::Job::VerifyIdle(20))
+        ));
+        notifications::collect(s, Some((target.clone(), "Private project".into())));
+        assert_eq!(s.notifications.recorded().len(), 1);
+        assert!(out.try_send(super::Result::VerifiedIdle(20, true)).is_ok());
+        assert!(crate::poll_chat(s, 8));
+        notifications::collect(s, Some((target, "Private project".into())));
+        assert_eq!(
+            s.notifications.recorded()[1].2,
+            "Session “Private conversation” finished"
+        );
+    });
+}
+
+#[test]
 fn terminal_event_fences_only_activity_in_a_pending_control_response() {
     let (jobs, incoming) = super::bounded(1);
     let (stop, _) = super::bounded(1);
@@ -22,6 +108,7 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
         models: Some(vec![]),
         current: None,
         session_known: true,
+        root_activity: None,
         running: true,
         permissions: Some(vec![]),
         forms: Some(forms),

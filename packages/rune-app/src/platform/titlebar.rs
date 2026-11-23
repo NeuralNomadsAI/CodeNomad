@@ -12,7 +12,16 @@ pub fn available() -> bool {
 }
 
 pub fn run(spec: AppSpec<State>, closing: fn(&mut State, &mut Tx)) {
-    shell::run(spec, closing, available(), locale());
+    let app = shell::app(spec, closing, available(), locale());
+    #[cfg(target_os = "windows")]
+    let app = {
+        let handle = app.handle();
+        app.on_ready(move |window| {
+            let window = window.clone();
+            handle.update(move |s, _| s.notifications.attach(window));
+        })
+    };
+    app.run();
 }
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {

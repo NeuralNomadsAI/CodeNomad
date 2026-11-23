@@ -285,6 +285,7 @@ fn audit_settlement_during_edit(permission: bool) {
                     models: None,
                     current: None,
                     session_known: true,
+                    root_activity: None,
                     running: false,
                     permissions: Some(vec![]),
                     forms: Some(vec![]),

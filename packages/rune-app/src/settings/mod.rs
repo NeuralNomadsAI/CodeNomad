@@ -9,7 +9,6 @@ mod view;
 use crate::{State, strings};
 use preferences::Preferences;
 use rune::{Cx, El};
-#[cfg(not(target_arch = "wasm32"))]
 use std::cell::Cell;
 use std::{cell::RefCell, rc::Rc};
 
@@ -19,6 +18,8 @@ pub(crate) struct Host {
     #[cfg(not(target_arch = "wasm32"))]
     window: Option<(rune::WindowHandle, Rc<Cell<bool>>)>,
     last_display: Option<[&'static str; 4]>,
+    #[cfg(target_arch = "wasm32")]
+    notification_permission_changed: Rc<Cell<bool>>,
 }
 
 pub(crate) fn poll(s: &mut State) -> bool {
@@ -57,7 +58,37 @@ pub(crate) fn poll(s: &mut State) -> bool {
         shared.palette(false).map_or("", |p| p.id),
         shared.palette(true).map_or("", |p| p.id),
     ]);
-    expired | (display != std::mem::replace(&mut s.settings.last_display, display))
+    #[cfg(target_arch = "wasm32")]
+    let permission_changed = s.settings.notification_permission_changed.replace(false);
+    #[cfg(not(target_arch = "wasm32"))]
+    let permission_changed = false;
+    expired
+        | (display != std::mem::replace(&mut s.settings.last_display, display))
+        | permission_changed
+}
+
+pub(crate) fn system_notification(
+    s: &State,
+    category: notification_routing::Category,
+    focused: bool,
+    label: &str,
+) -> Option<String> {
+    let prefs = s.settings.shared.borrow();
+    let config = prefs.saved(codenomad_client::settings::Owner::Config);
+    crate::shell::notifications::system_allowed(config, category, focused).then(|| {
+        let key = match category {
+            notification_routing::Category::NeedsInput => "sessionEvents.notify.needsInput",
+            notification_routing::Category::SessionDone => "sessionEvents.notify.done",
+        };
+        strings::with_locale(prefs.locale().unwrap_or_else(strings::locale), || {
+            strings::t(key).replace("{label}", label)
+        })
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn notification_fixture(s: &State) {
+    s.settings.shared.borrow_mut().fixture();
 }
 
 pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {
@@ -114,7 +145,28 @@ pub(crate) fn entry() -> El {
     return rune_theme_codenomad::layout::button(strings::t("settings.title"), false, open)
         .key("open-preferences");
     #[cfg(target_arch = "wasm32")]
-    rune::el()
+    {
+        use web_sys::NotificationPermission;
+        if crate::platform::notifications::permission() != Some(NotificationPermission::Default) {
+            return rune::el();
+        }
+        rune_theme_codenomad::layout::button(
+            strings::t("settings.notifications.requestPermission.action"),
+            false,
+            |s: &mut State| {
+                if let Some(permission) = crate::platform::notifications::request_permission() {
+                    let changed = s.settings.notification_permission_changed.clone();
+                    let wake = s.wake.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let _ = wasm_bindgen_futures::JsFuture::from(permission).await;
+                        changed.set(true);
+                        wake();
+                    });
+                }
+            },
+        )
+        .key("notification-permission")
+    }
 }
 
 pub(crate) fn matches_shortcut(

@@ -18,6 +18,7 @@ pub(crate) use state::{
     opened, panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume, retry,
     schedule_catalogue, select, set_files_tab, status, strip, unselect_missing,
 };
+pub(crate) use state::{notification_target, open_notification, owns_notification};
 
 use crate::composer::draft_storage::SavedParts;
 use save_snapshot::encode_for_save;

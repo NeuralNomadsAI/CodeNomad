@@ -29,8 +29,27 @@ pub struct Snapshot {
     pub current: Option<Value>,
     pub session_known: bool,
     pub running: bool,
+    pub root_activity: Option<RootActivity>,
     pub permissions: Option<Vec<Permission>>,
     pub forms: Option<Vec<Form>>,
+}
+
+/// Metadata from the session read already made by the interruption dock.
+#[derive(Clone, Copy)]
+pub struct RootActivity {
+    pub busy: Option<u64>,
+    pub idle: Option<u64>,
+}
+
+fn root_activity(session: &Value, id: &str) -> Option<RootActivity> {
+    let row = &session["data"];
+    if row["id"] != id || !row["parentID"].is_null() {
+        return None;
+    }
+    Some(RootActivity {
+        busy: row["time"]["busy"].as_u64(),
+        idle: row["time"]["idle"].as_u64(),
+    })
 }
 pub enum Action {
     Model(Value),
@@ -115,6 +134,10 @@ impl Backend {
             current,
             session_known: session.is_ok(),
             running,
+            root_activity: session
+                .as_ref()
+                .ok()
+                .and_then(|row| root_activity(row, &self.session)),
             permissions,
             forms,
         }
