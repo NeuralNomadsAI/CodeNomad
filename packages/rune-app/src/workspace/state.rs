@@ -41,6 +41,7 @@ pub(super) struct Entry {
     binding: Option<Backend>,
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
+    live_drafts: std::collections::BTreeMap<String, drafts::LiveDraft>,
 }
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
@@ -216,6 +217,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         binding: None,
         cleared,
         pending_drafts: HashSet::new(),
+        live_drafts: Default::default(),
     }
 }
 fn busy(s: &State) -> bool {
@@ -424,6 +426,7 @@ pub fn opened(s: &mut State, project: &Project) {
             attachment_parts,
             view: Default::default(),
         });
+        item.live_drafts.clear();
     }
     item.project = Some(project.clone());
     item.binding = l.connection.clone();
@@ -481,14 +484,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             if awaiting_prompt && !s.composer.pending()
                 || uncertain_prompt && s.composer.unconfirmed_id().is_none()
             {
-                drafts_changed |= drafts::capture_draft(
-                    item,
-                    &s.draft.text,
-                    crate::composer::draft_storage::SavedParts::capture(
-                        &s.composer.draft,
-                        s.composer.attachments_missing,
-                    ),
-                );
+                drafts_changed |= drafts::capture_draft(item, s);
             }
             changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
             changed |= crate::git::poll(s, now, tx);
@@ -516,7 +512,7 @@ pub fn status(s: &State) -> Option<&'static str> {
     let ui = s.workspace.as_ref()?;
     if ui.persistence.read_error {
         Some("rune.restore_error")
-    } else if ui.persistence.write_error || ui.persistence.partial {
+    } else if ui.persistence.write_error || ui.persistence.partial || ui.has_unsaved_large_drafts() {
         Some("rune.save_error")
     } else {
         None

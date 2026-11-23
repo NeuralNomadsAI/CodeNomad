@@ -23,10 +23,12 @@ const fresh = process.argv.includes('--fresh-probe')
 const slash = process.argv.includes('--probe-slash')
 const attachments = process.argv.includes('--probe-attachments')
 const bytes = Buffer.from('Rune attachment fixture 🦀\r\n')
-const sha256 = createHash('sha256').update(bytes).digest('hex')
+const capture = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aN0AAAAASUVORK5CYII=','base64')
+const sha = bytes=>createHash('sha256').update(bytes).digest('hex')
 if(attachments) {
-  for(const file of [path.join(project,'sample.txt'),path.join(profile,'selected.txt'),path.join(profile,'dropped.txt')])
+  for(const file of [path.join(project,'sample.txt'),path.join(profile,'selected.txt'),path.join(profile,'dropped.txt'),path.join(profile,'pasted.txt')])
     await writeFile(file,bytes)
+  await writeFile(path.join(profile,'capture.png'),capture)
 }
 const store = new FixtureStore(fresh||slash||attachments?0:10000)
 const upstreamStreams = new Set()
@@ -70,11 +72,12 @@ const upstream = createServer(async(req,res)=>{
     const {input}=JSON.parse(raw)
     assert.equal(input.sessionID,session)
     assert.equal(input.messageID,store.rows[0]?.id)
-    assert(Number.isInteger(input.fileIndex)&&input.fileIndex>=0&&input.fileIndex<3)
-    assert.equal(input.sha256,sha256)
+    assert(Number.isInteger(input.fileIndex)&&input.fileIndex>=0&&input.fileIndex<5)
+    const content=input.fileIndex===4?capture:bytes
+    assert.equal(input.sha256,sha(content))
     if(input.confirm) return json({output:{status:'current'}})
     attachmentReads++
-    return json({output:{status:'file',data:bytes.toString('base64')}})
+    return json({output:{status:'file',data:content.toString('base64')}})
   }
   if(url.pathname==='/api/rpc/codenomad.missions/scheduleCarrierRead') return json({output:{owned:false}})
   if(url.pathname===`/api/session/${session}/environment`) {
@@ -93,15 +96,18 @@ const upstream = createServer(async(req,res)=>{
     if(attachments) {
       const input=JSON.parse(raw)
       assert.equal(input.text,'./sample.txt')
-      assert.equal(input.files.length,3)
+      assert.equal(input.files.length,5)
       assert.equal(input.files[0].name,'sample.txt')
       assert.match(input.files[0].uri,/^file:\/\/\/.*\/sample\.txt$/)
-      assert.deepEqual(input.files.slice(1),['selected.txt','dropped.txt'].map(name=>({
+      assert.deepEqual(input.files.slice(1,4),['selected.txt','dropped.txt','pasted.txt'].map(name=>({
         name,uri:`data:text/plain;base64,${bytes.toString('base64')}`
       })))
+      assert.deepEqual(input.files[4],{name:'clipboard.png',uri:`data:image/png;base64,${capture.toString('base64')}`})
       attachmentPrompts++
       const row=store.append('user',input.text);row.id=input.id
-      row.files=input.files.map(({name})=>({name,mime:'text/plain',source:{type:'deferred',sha256}}))
+      row.files=input.files.map(({name},index)=>({
+        name,mime:index===4?'image/png':'text/plain',source:{type:'deferred',sha256:sha(index===4?capture:bytes)}
+      }))
       const receipt={id:input.id,sessionID:session,type:'user',payload:{text:input.text,files:row.files}}
       emit('session.inbox.enqueued',{item:receipt})
       emit('session.inbox.delivered',{item:receipt})
@@ -165,7 +171,7 @@ try {
   }
   if(attachments) {
     assert.equal(attachmentPrompts,1)
-    assert.equal(attachmentReads,3)
+    assert.equal(attachmentReads,5)
     assert(projectionReads>=2,'Both Rune boots must negotiate the attachment history')
   }
   assert.equal(result,0,'Rune client exit')

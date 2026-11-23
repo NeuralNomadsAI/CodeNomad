@@ -220,6 +220,9 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
     if s.documents.has_tab_edits(&ui.entries[index].key) {
         return true;
     }
+    if ui.entries[index].has_unsaved_large_drafts() {
+        return true;
+    }
     if ui.active == index {
         s.composer.pending() || crate::agent::navigation_blocked(s)
     } else {

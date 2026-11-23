@@ -211,6 +211,14 @@ fn encode_for_save(snapshot: &Snapshot) -> Result<(Vec<u8>, bool), Error> {
                 .attachment_drafts
                 .extend(saved.attachment_parts.keys().cloned());
             saved.attachment_parts.retain(|_, parts| parts.valid());
+            saved.drafts.retain(|id, text| {
+                if !draft_id(id) || text.encode_utf16().nth(MAX_DRAFT).is_some() {
+                    saved.attachment_parts.remove(id);
+                    false
+                } else {
+                    true
+                }
+            });
         }
         valid.tabs[index] = tab;
         if encode(&valid).is_err() {

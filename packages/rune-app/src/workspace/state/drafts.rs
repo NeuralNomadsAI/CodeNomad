@@ -1,11 +1,42 @@
 use super::{Backend, State, Tab, Tx, Ui, same_project};
-use crate::composer::draft_storage::SavedParts;
+use crate::composer::{draft::Draft, draft_storage::SavedParts};
+
+#[derive(Default)]
+pub(super) struct LiveDraft {
+    text: Option<String>,
+    parts: Option<(Draft, bool)>,
+}
+
+impl Ui {
+    pub(crate) fn has_unsaved_large_drafts(&self) -> bool {
+        self.entries.iter().any(|entry| entry.live_drafts.values().any(|draft| draft.text.is_some()))
+    }
+}
+
+impl super::Entry {
+    pub(super) fn has_unsaved_large_drafts(&self) -> bool {
+        self.live_drafts.values().any(|draft| draft.text.is_some())
+    }
+}
+
+fn oversized(text: &str) -> bool {
+    text.encode_utf16().nth(super::super::MAX_DRAFT).is_some()
+}
 
 pub fn attachment_draft_admissible(s: &State) -> bool {
     let Some(ui) = &s.workspace else { return true };
     let Some(id) = super::active_session(s) else {
         return false;
     };
+    const MAX_WINDOW_DEVICE_BYTES: usize = 64 * 1024 * 1024;
+    let retained: usize = ui.entries.iter().enumerate()
+        .flat_map(|(index, entry)| entry.live_drafts.iter()
+            .filter(move |(key, _)| index != ui.active || key.as_str() != id))
+        .filter_map(|(_, draft)| draft.parts.as_ref())
+        .map(|(draft, _)| draft.inline_usage().1).sum();
+    if retained.saturating_add(s.composer.draft.inline_usage().1) > MAX_WINDOW_DEVICE_BYTES {
+        return false;
+    }
     let Some(Tab::Workspace(active)) = ui.entries.get(ui.active).map(|entry| &entry.saved) else {
         return false;
     };
@@ -32,34 +63,25 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
     if let Some(parts) = SavedParts::capture(&s.composer.draft, s.composer.attachments_missing) {
         saved.attachment_parts.insert(id.into(), parts);
     }
-    if !s.draft.text.is_empty() {
+    if !s.draft.text.is_empty() && !oversized(&s.draft.text) {
         saved.drafts.insert(id.into(), s.draft.text.clone());
     }
     super::super::encode(&snapshot).is_ok()
 }
 
 pub fn capture(s: &mut State) {
-    let Some(ui) = &mut s.workspace else {
+    let Some(mut ui) = s.workspace.take() else {
         return;
     };
-    let Some(item) = ui.entries.get_mut(ui.active) else {
-        return;
-    };
-    if capture_draft(
-        item,
-        &s.draft.text,
-        SavedParts::capture(&s.composer.draft, s.composer.attachments_missing),
-    ) {
+    if ui.entries.get_mut(ui.active).is_some_and(|item| capture_draft(item, s)) {
         ui.changed();
     }
     ui.stage();
+    s.workspace = Some(ui);
 }
 
-pub(super) fn capture_draft(
-    item: &mut super::Entry,
-    text: &str,
-    parts: Option<SavedParts>,
-) -> bool {
+pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
+    let text = &s.draft.text;
     let mut changed = false;
     if let Tab::Workspace(saved) = &mut item.saved {
         let key = saved
@@ -70,6 +92,19 @@ pub(super) fn capture_draft(
             b.session == key || b.session.is_empty() && key == "__no_session_draft__"
         });
         if owns_draft {
+            let too_long = oversized(text);
+            let has_device_parts = s.composer.draft.inline_usage().0 != 0;
+            if too_long || has_device_parts {
+                let live = item.live_drafts.entry(key.into()).or_default();
+                live.text = too_long.then(|| text.clone());
+                live.parts = Some((s.composer.draft.clone(), s.composer.attachments_missing));
+            } else {
+                item.live_drafts.remove(key);
+            }
+            if too_long {
+                return false;
+            }
+            let parts = SavedParts::capture(&s.composer.draft, s.composer.attachments_missing);
             changed |= if parts.is_some() {
                 saved.attachment_drafts.insert(key.into())
             } else {
@@ -89,7 +124,7 @@ pub(super) fn capture_draft(
                     return true;
                 }
             } else if saved.drafts.get(key).is_none_or(|value| value != text) {
-                saved.drafts.insert(key.into(), text.to_owned());
+                saved.drafts.insert(key.into(), text.clone());
                 item.cleared.remove(key);
                 return true;
             }
@@ -118,15 +153,18 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
         return String::new();
     };
     saved.active_session_id = Some(backend.session.clone());
-    if !same_session && let Some(parts) = saved.attachment_parts.get(&backend.session) {
+    let live = item.live_drafts.get(&backend.session);
+    if !same_session && let Some((draft, missing)) = live.and_then(|draft| draft.parts.as_ref()) {
+        s.composer.draft = draft.clone();
+        s.composer.attachments_missing = *missing;
+    } else if !same_session && let Some(parts) = saved.attachment_parts.get(&backend.session) {
         (s.composer.draft, s.composer.attachments_missing) = parts.restore();
     } else {
         s.composer.attachments_missing |= saved.attachment_drafts.contains(&backend.session)
             && s.composer.draft.attachments.is_empty();
     }
-    let draft = saved
-        .drafts
-        .get(&backend.session)
+    let draft = live.and_then(|draft| draft.text.as_ref())
+        .or_else(|| saved.drafts.get(&backend.session))
         .cloned()
         .unwrap_or_default();
     ui.changed();
@@ -168,6 +206,7 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         saved.drafts.remove(id);
         saved.attachment_drafts.remove(id);
         saved.attachment_parts.remove(id);
+        item.live_drafts.remove(id);
         item.cleared.remove(id);
         if index == ui.active {
             if current.as_ref().is_some_and(|(_, marked, _)| *marked) {

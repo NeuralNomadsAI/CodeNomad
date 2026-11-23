@@ -1,6 +1,69 @@
 use super::*;
 
 #[test]
+fn switching_conversation_restores_the_exact_device_bytes() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries[0] = entry("tab-0".into(), Tab::Workspace(workspace("alpha", "read it")));
+    ui.entries[0].binding = Some(backend("alpha"));
+    s.workspace = Some(ui);
+    s.draft = TextEdit::new("read it");
+    let file = crate::composer::draft::Attachment::Device {
+        name: "device.txt".into(),
+        mime: "text/plain".into(),
+        bytes: std::sync::Arc::from(b"device bytes".as_slice()),
+        token: None,
+    };
+    assert!(s.composer.draft.attach(file.clone()));
+    s.draft = TextEdit::new(bound(&mut s, &backend("beta")));
+    assert!(s.composer.draft.attachments.is_empty());
+    s.draft = TextEdit::new(bound(&mut s, &backend("alpha")));
+    assert_eq!(s.draft.text, "read it");
+    assert_eq!(s.composer.draft.attachments, [file]);
+    assert!(!s.composer.attachments_missing);
+}
+
+#[test]
+fn oversized_paste_keeps_the_last_valid_draft_and_the_same_tab_sibling() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    let mut saved = workspace("alpha", "last valid version");
+    saved.drafts.insert("beta".into(), "other draft".into());
+    ui.entries[0] = entry("tab-0".into(), Tab::Workspace(saved));
+    ui.entries[0].binding = Some(backend("alpha"));
+    s.workspace = Some(ui);
+    s.phase = Phase::Ready;
+    s.draft = TextEdit::new("last valid version");
+    let mut rt = runtime(s);
+    rt.frame(0.0);
+    let (x, y) = rt.find("composer").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    let long = "🦀".repeat(crate::workspace::MAX_DRAFT / 2 + 1);
+    rt.paste(long.as_str());
+    rt.frame(0.0);
+    rt.update(|s, _| {
+        assert!(s.draft.text.contains(&long));
+        let ui = s.workspace.as_ref().unwrap();
+        assert_eq!(crate::workspace::status(s), Some("rune.save_error"));
+        assert!(super::super::tabs::close_blocked(s, 0));
+        let snapshot = crate::workspace::decode(&crate::workspace::encode(&ui.snapshot()).unwrap()).unwrap();
+        assert!(matches!(&snapshot.tabs[0], Tab::Workspace(tab) if
+            tab.drafts["alpha"] == "last valid version" && tab.drafts["beta"] == "other draft"));
+        s.draft = TextEdit::new(bound(s, &backend("beta")));
+        assert_eq!(s.draft.text, "other draft");
+        s.draft = TextEdit::new(bound(s, &backend("alpha")));
+        assert!(s.draft.text.contains(&long));
+        s.draft = TextEdit::new("small again");
+        capture(s);
+        assert_eq!(crate::workspace::status(s), None);
+    });
+}
+
+#[test]
 fn reopening_a_saved_draft_without_its_files_blocks_every_send() {
     let mut s = init();
     let mut ui = Ui::new();

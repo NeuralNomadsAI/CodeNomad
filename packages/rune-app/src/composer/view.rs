@@ -2,7 +2,7 @@ use super::{can_send, device, picker::Item, send};
 use crate::{Phase, State, platform, screen, strings::t};
 use rune::{El, Key, KeyEvent, Tx, col, text};
 use rune_theme_codenomad::{
-    Space, attachment, field_kit, kit,
+    Space, attachment, kit,
     layout::{self, Layout},
 };
 
@@ -10,23 +10,36 @@ pub fn view(s: &State, compact: bool) -> El {
     let scope = s.input_scope.clone();
     let edit_scope = scope.clone();
     let stop = s.phase == Phase::Streaming && s.agent.is_some();
+    #[cfg(target_arch = "wasm32")]
     let editor = layout::composer_field(&s.draft, t("promptInput.placeholder.default"), compact)
         .label(t("rune.prompt"))
         .disabled(s.composer.pending())
         .on_edit(screen::edit(&scope, screen::Editor::Composer))
         .on_change(screen::action_tx(&scope, changed))
         .on_key(move |s: &mut State, event, tx| s.current_scope(&edit_scope) && key(s, event, tx))
-        .build(field_kit(layout::dark()))
+        .build(rune_theme_codenomad::field_kit(layout::dark()))
         .key("composer");
     #[cfg(not(target_arch = "wasm32"))]
-    let editor = editor.on_drop_files({
-        let scope = scope.clone();
-        move |s: &mut State, paths, _| {
-            if s.current_scope(&scope) {
-                platform::device_picker::drop_files(s, paths);
-            }
-        }
-    });
+    let editor = {
+        let paste_scope = scope.clone();
+        let drop_scope = scope.clone();
+        let input = layout::native_composer_input(&s.draft, t("promptInput.placeholder.default"))
+            .key("input")
+            .label(t("rune.prompt"))
+            .disabled(s.composer.pending())
+            .on_edit(screen::edit(&scope, screen::Editor::Composer))
+            .on_input_change(screen::action_tx(&scope, changed))
+            .on_input_key(move |s: &mut State, event, tx| s.current_scope(&edit_scope) && key(s, event, tx))
+            .on_input_paste(move |s: &mut State, content, _| {
+                s.current_scope(&paste_scope) && platform::device_picker::paste(s, content)
+            })
+            .on_drop_files(move |s: &mut State, paths, _| {
+                if s.current_scope(&drop_scope) {
+                    platform::device_picker::drop_files(s, paths);
+                }
+            });
+        layout::native_composer_field(input, compact).key("composer")
+    };
     let mut actions = layout::action_row()
         .children(
             (s.can_older || s.history_error && s.phase != Phase::Failed).then(|| {

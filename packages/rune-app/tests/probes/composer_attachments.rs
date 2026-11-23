@@ -35,7 +35,8 @@ pub fn run() {
             .iter()
             .find(|row| row.body == "./sample.txt")
             .expect("stored prompt");
-        assert_eq!(row.parts.len(), 3);
+        assert_eq!(row.parts.len(), 5);
+        let capture = std::fs::read("capture.png").unwrap();
         platform::block_on(async {
             let backend = platform::configured_target(false)?;
             let password = platform::setting("RUNE_PASSWORD").unwrap_or_default();
@@ -43,7 +44,7 @@ pub fn run() {
             for (part, name) in row
                 .parts
                 .iter()
-                .zip(["sample.txt", "selected.txt", "dropped.txt"])
+                .zip(["sample.txt", "selected.txt", "dropped.txt", "pasted.txt", "clipboard.png"])
             {
                 let Part::File(file) = part else {
                     panic!("expected file")
@@ -51,10 +52,10 @@ pub fn run() {
                 assert_eq!(file.name.as_deref(), Some(name));
                 let reference = file.reference.as_ref().expect("stored file reference");
                 let bytes = backend.attachment_bytes(reference).await?;
-                assert_eq!(
-                    bytes.as_slice(),
+                let expected = if name == "clipboard.png" { capture.as_slice() } else {
                     "Rune attachment fixture 🦀\r\n".as_bytes()
-                );
+                };
+                assert_eq!(bytes.as_slice(), expected);
             }
             Ok::<_, crate::history::Error>(())
         })
@@ -108,6 +109,15 @@ pub fn run() {
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     rt.frame(0.0);
+    rt.paste_content(rune::ClipboardContent::new("must not replace the draft")
+        .with_files([here.join("pasted.txt")]));
+    rt.frame(0.0);
+    wait(&mut rt, "native clipboard file", |s| s.composer.draft.attachments.len() == 4);
+    let capture = rune::clipboard::ClipboardImage::from_png(std::fs::read(here.join("capture.png")).unwrap()).unwrap();
+    rt.paste_content(rune::ClipboardContent::default().with_image(capture));
+    rt.frame(0.0);
+    wait(&mut rt, "native clipboard capture", |s| s.composer.draft.attachments.len() == 5);
+    assert_eq!(rt.state.draft.text, "@./sample.txt ");
     enter(&mut rt);
     wait(&mut rt, "authoritative stored reference", |s| {
         s.messages.iter().any(|row| {
@@ -116,5 +126,5 @@ pub fn run() {
                 .any(|part| matches!(part, Part::File(file) if file.reference.is_some()))
         })
     });
-    println!("attachment probe: sent one project and two device files");
+    println!("attachment probe: sent project, chooser, drop, clipboard file and capture");
 }

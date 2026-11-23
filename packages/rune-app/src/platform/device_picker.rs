@@ -10,22 +10,46 @@ use rune::Tx;
 use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub type Source = std::path::PathBuf;
+pub enum Source {
+    Path(std::path::PathBuf),
+    Png(Arc<[u8]>),
+}
 #[cfg(target_arch = "wasm32")]
 pub type Source = web_sys::File;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn drop_files(s: &mut State, paths: &[Source]) {
+pub fn drop_files(s: &mut State, paths: &[std::path::PathBuf]) {
     device::enqueue(
         s,
         paths.iter().take(MAX_FILES + 1).filter_map(|path| {
             Some(Offer {
                 name: path.file_name()?.to_string_lossy().into_owned(),
                 mime: super::device_file::mime(path).into(),
-                source: path.clone(),
+            source: Source::Path(path.clone()),
             })
         }),
     );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn paste(s: &mut State, content: &rune::clipboard::ClipboardContent) -> bool {
+    if !content.files().is_empty() {
+        drop_files(s, content.files());
+        return true;
+    }
+    let Some(image) = content.image() else { return false };
+    if !device::available(s) {
+        return true;
+    }
+    let name = "clipboard.png";
+    if image.png().len() > MAX_FILE {
+        s.composer.device.notice = Some(device::notice(name, Error::TooLarge));
+    } else {
+        device::enqueue(s, [Offer {
+            name: name.into(), mime: "image/png".into(), source: Source::Png(image.png().into()),
+        }]);
+    }
+    true
 }
 
 pub fn choose(s: &mut State, tx: &mut Tx) {
@@ -74,7 +98,11 @@ pub fn choose(s: &mut State, tx: &mut Tx) {
 
 pub async fn read(source: &Source, limit: usize) -> Result<Arc<[u8]>, Error> {
     #[cfg(not(target_arch = "wasm32"))]
-    return super::device_file::read(source.clone(), limit.min(MAX_FILE)).await;
+    return match source {
+        Source::Path(path) => super::device_file::read(path.clone(), limit.min(MAX_FILE)).await,
+        Source::Png(bytes) if bytes.len() <= limit => Ok(bytes.clone()),
+        Source::Png(_) => Err(Error::Limit),
+    };
     #[cfg(target_arch = "wasm32")]
     {
         let limit = limit.min(MAX_FILE);
