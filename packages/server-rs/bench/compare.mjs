@@ -164,24 +164,32 @@ async function start(label, fixture, folder, password, trustedCA) {
       "--ui-no-update", "--ui-dir", uiDir, "--config", env.CLI_CONFIG, "--workspace-root", folder],
       { env, cwd: root, windowsHide: true, stdio: [scripted ? "pipe" : "ignore", "pipe", "pipe"] })
     : spawn(rust, rustArgs, { env, cwd: root, windowsHide: true, stdio: [scripted || serve ? "pipe" : "ignore", "pipe", "pipe"] })
-  const stopped = new Promise(resolve => child.once("close", resolve))
+  // The process can exit while an inherited stdio pipe still delays "close".
+  const stopped = new Promise(resolve => child.once("exit", resolve))
   let output = "", spawnError
   child.on("error", error => { spawnError = error })
   for (const stream of [child.stdout, child.stderr]) stream.on("data", data => { output += data })
   const native = scripted ? nativeHost(child) : undefined
   const request = (route, init) => fetch(`${listen}${route}`, { signal: AbortSignal.timeout(HTTP_TIMEOUT), redirect: "manual", ...init })
   const close = async () => {
-    if (serve && !spawnError && child.exitCode === null && child.signalCode === null) {
-      child.stdin.end("codenomad:shutdown\n", () => {})
-      await Promise.race([stopped, delay(15_000, undefined, { ref: false })])
+    try {
+      if (serve && !spawnError && child.exitCode === null && child.signalCode === null) {
+        child.stdin.end("codenomad:shutdown\n", () => {})
+        await Promise.race([stopped, delay(15_000, undefined, { ref: false })])
+      }
+      if (!spawnError && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, stopped)
+    } finally {
+      child.stdin?.destroy()
+      child.stdout?.destroy()
+      child.stderr?.destroy()
+      try { await relay?.close() } finally {
+        await dropRegistration(fixture.env, child.pid)
+        const leaked = (bench?.secrets?.() ?? []).filter(secret => output.includes(secret))
+        const safe = leaked.reduce((text, secret) => text.replaceAll(secret, "<redacted>"), output)
+        await writeFile(path.join(out, `${mode}-${label}.log`), safe.replaceAll(password, "<redacted>").replaceAll(env.CNRS_FIXTURE_PASSWORD, "<redacted>"))
+        if (leaked.length) (result.leaks ??= []).push({ label, count: leaked.length })
+      }
     }
-    if (!spawnError && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, stopped)
-    await relay?.close()
-    await dropRegistration(fixture.env, child.pid)
-    const leaked = (bench?.secrets?.() ?? []).filter(secret => output.includes(secret))
-    const safe = leaked.reduce((text, secret) => text.replaceAll(secret, "<redacted>"), output)
-    await writeFile(path.join(out, `${mode}-${label}.log`), safe.replaceAll(password, "<redacted>").replaceAll(env.CNRS_FIXTURE_PASSWORD, "<redacted>"))
-    if (leaked.length) (result.leaks ??= []).push({ label, count: leaked.length })
   }
   try {
     await eventually(async () => {
@@ -489,7 +497,7 @@ try {
     const settings = `server:\n  opencodeBinary: ${JSON.stringify(exe)}\n${seeded}ui:\n  settings:\n    multiBackend: true\n    locale: en\n`
     await writeFile(path.join(local.root, "ts.yaml"), settings)
     if (mode === "host" || bench?.configure) await writeFile(path.join(remote.root, "rust.yaml"), settings)
-    let ts, rs
+    let ts, rs, sequenceFailed = false
     try {
       rs = await start("rs", remote, rsRoot, password)
       ts = await start("ts", local, tsRoot, password, missionServe ? undefined : path.join(remote.root, "rust.data", "tls", "ca-cert.pem"))
@@ -510,7 +518,17 @@ try {
         { ...hosts[0], fixture: local, folder: "Local Project", root: tsRoot, other: path.join(tsRoot, "No Repository"), pid: ts.pid, native: ts.native },
         { ...hosts[1], fixture: remote, folder: "Rust Project", root: rsRoot, other: path.join(rsRoot, "No Repository"), pid: rs.pid, native: rs.native, data: path.join(remote.root, "rust.data") },
       ])
-    } finally { await Promise.all([ts?.close(), rs?.close(), bench?.close?.()]) }
+    } catch (error) {
+      sequenceFailed = true
+      throw error
+    } finally {
+      const closed = await Promise.allSettled([ts?.close(), rs?.close(), bench?.close?.()])
+      const errors = closed.flatMap(item => item.status === "rejected" ? [String(item.reason?.stack ?? item.reason)] : [])
+      if (errors.length) {
+        result.cleanupErrors = errors
+        if (!sequenceFailed) throw new Error(`Bench teardown failed:\n${errors.join("\n")}`)
+      }
+    }
     assert(!result.leaks, "A server logged a synthetic provider credential")
   }, runtime), runtime)
 } catch (error) {

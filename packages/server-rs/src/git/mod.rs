@@ -139,7 +139,11 @@ pub fn command(dir: &Path, args: &[&str]) -> Command {
     cmd
 }
 pub async fn run(dir: &Path, args: &[&str], max: usize) -> Result<Output, Error> {
+    #[cfg(test)]
+    crate::worktrees::fence_test_trace::record("git semaphore", "waiting");
     let _slot = SLOTS.acquire().await.unwrap();
+    #[cfg(test)]
+    let _trace = crate::worktrees::fence_test_trace::held("git semaphore");
     let mut child = command(dir, args)
         .spawn()
         .map_err(|e| if e.kind() == io::ErrorKind::NotFound { missing_git() } else { bad("Git could not start") })?;

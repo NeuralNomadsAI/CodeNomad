@@ -101,7 +101,18 @@ pub fn enter(directories: &[String]) -> Option<Entered> {
 }
 
 pub(crate) fn admit(directories: &[String]) -> Result<Entered, crate::Error> {
-    enter(directories).ok_or_else(|| crate::error(axum::http::StatusCode::CONFLICT, "Worktree deletion is in progress"))
+    let permit = enter(directories);
+    #[cfg(test)]
+    {
+        super::fence_test_trace::record("checkout fence", if permit.is_some() { "admitted" } else { "refused" });
+        if directories.iter().any(|key| key.starts_with("session:")) {
+            super::fence_test_trace::record(
+                "session reservation",
+                if permit.is_some() { "admitted" } else { "refused" },
+            );
+        }
+    }
+    permit.ok_or_else(|| crate::error(axum::http::StatusCode::CONFLICT, "Worktree deletion is in progress"))
 }
 
 /// A deletion in progress; dropping it unblocks its directories.
@@ -150,8 +161,12 @@ pub async fn block(directories: &[String]) -> Result<Blocked, &'static str> {
         idle.as_mut().enable();
         let busy = STATE.lock().unwrap().active.keys().any(|a| guard.0.iter().any(|b| overlap(b, a)));
         if !busy {
+            #[cfg(test)]
+            super::fence_test_trace::record("checkout fence", "drained");
             return Ok(guard);
         }
+        #[cfg(test)]
+        super::fence_test_trace::record("checkout fence", "waiting on admitted mutations");
         if tokio::time::timeout_at(deadline, idle).await.is_err() {
             return Err("Timed out waiting for worktree mutations to finish");
         }

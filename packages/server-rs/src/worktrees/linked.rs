@@ -80,10 +80,12 @@ fn announce(app: &App, w: &Workspace) {
 }
 
 /// Coordinate topology changes across occurrences of the same repository.
-async fn topology(app: &App, id: &str) -> Result<(Workspace, tokio::sync::OwnedMutexGuard<()>), Error> {
+async fn topology(app: &App, id: &str, queue: &str) -> Result<(Workspace, tokio::sync::OwnedMutexGuard<()>), Error> {
     let workspace = app.workspace(id)?;
     let common = super::ownership::common_directory(&workspace.path).await.ok_or_else(native_error)?;
-    let guard = super::fence::try_serialize(format!("worktree\n{}", super::fence::identity(&common)))
+    #[cfg(test)]
+    super::fence_test_trace::record("topology reservation", "try");
+    let guard = super::fence::try_serialize(format!("{queue}\n{}", super::fence::identity(&common)))
         .ok_or_else(|| conflict("A worktree operation is in progress"))?;
     if !crate::sessions::permission_mode::workspace_current(app, &workspace)
         || super::ownership::common_directory(&workspace.path).await.as_ref() != Some(&common)
@@ -114,12 +116,13 @@ pub async fn create(
     {
         return Err(invalid("Invalid worktree branch"));
     }
-    let (w, _guard) = topology(&app, &id).await?;
+    let (w, _guard) = topology(&app, &id, "worktree-create").await?;
     let catalogue = catalogue(&app, &w, true).await?;
     git::guard_config(&catalogue.main).await?;
     let from = catalogue.get(input.from_slug.as_deref().unwrap_or("root"))?;
-    let _admitted =
-        super::fence::admit(&[super::fence::identity(from.registered()), super::fence::identity(&catalogue.parent)])?;
+    let mut paths: Vec<_> = catalogue.trees.iter().map(|tree| super::fence::identity(tree.registered())).collect();
+    paths.push(super::fence::identity(&catalogue.parent));
+    let _admitted = super::fence::admit(&paths)?;
     if from.nested_missing {
         return Err(conflict("Source worktree does not contain the workspace folder"));
     }
@@ -385,7 +388,7 @@ async fn place_owned(
     input: Move,
     principal: crate::auth::Principal,
 ) -> Result<Json<Value>, Error> {
-    let (w, _guard) = topology(&app, &id).await?;
+    let (w, _guard) = topology(&app, &id, "worktree").await?;
     principal.live()?;
     let cat = catalogue(&app, &w, true).await?;
     let target = cat.get(input.worktree_slug.trim())?;
@@ -480,7 +483,14 @@ async fn remove_owned(
     slug: String,
     principal: crate::auth::Principal,
 ) -> Result<Status, Error> {
-    let (w, _guard) = topology(&app, &id).await?;
+    let trace = |stage: &str| {
+        if std::env::var_os("CNRS_MUTATION_FENCE_TRACE").is_some() {
+            eprintln!("mutation-fence DELETE {slug}: {stage}");
+        }
+    };
+    trace("wait for topology");
+    let (w, _guard) = topology(&app, &id, "worktree").await?;
+    trace("read catalogue");
     principal.live()?;
     let cat = catalogue(&app, &w, true).await?;
     git::guard_config(&cat.main).await?;
@@ -493,7 +503,9 @@ async fn remove_owned(
         return Err(conflict("Worktree is open in another workspace"));
     }
     clean(target).await?;
+    trace("first native blocker inventory");
     no_blockers(&app, target, &cat, true).await?;
+    trace("read evacuation sessions");
     let rows = sessions(&app, &cat.project).await?;
     let root = cat.get("root")?;
     if root.nested_missing {
@@ -506,7 +518,11 @@ async fn remove_owned(
     // A drain timeout is not a `ProjectSessionError`: `asProjectError` answers 502.
     admitted.extend([super::fence::identity(target.registered()), super::fence::identity(root.registered())]);
     let paths: Vec<_> = admitted.iter().cloned().collect();
+    trace("enter fence drain");
     let _fence = crate::worktrees::fence::block(&paths).await.map_err(|message| error(Status::BAD_GATEWAY, message))?;
+    #[cfg(test)]
+    let _trace = super::fence_test_trace::held("checkout fence");
+    trace("fence drained");
     if !crate::sessions::permission_mode::workspace_current(&app, &w)
         || app
             .inner
@@ -541,6 +557,7 @@ async fn remove_owned(
         }
         clean(target).await?;
         principal.live()?;
+        trace("issue native deletion");
         delete_worktree(&app, &cat.project, &target.service_root).await
     }
     .await;
@@ -628,3 +645,7 @@ mod tests {
         assert!(family(&cycle, "child").is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "mutation_race.rs"]
+mod mutation_race;
