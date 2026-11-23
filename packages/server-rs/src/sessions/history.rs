@@ -82,7 +82,7 @@ impl Placement {
     }
 
     fn live(&self, app: &App, id: &str) -> bool {
-        app.native.endpoint().is_some_and(|endpoint| Arc::ptr_eq(&endpoint, &self.endpoint))
+        app.native.current(&self.endpoint)
             && app.workspace(id).is_ok_and(|w| w.id == self.workspace.id && w.path == self.workspace.path)
             && self.source["location"]["directory"]
                 .as_str()

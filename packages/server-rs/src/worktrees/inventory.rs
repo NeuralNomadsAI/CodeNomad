@@ -45,6 +45,7 @@ fn small(path: &Path) -> Result<Vec<u8>, Error> {
 impl Physical {
     fn live(&self) -> bool {
         let canonical = |path: &Path| dunce::canonicalize(path).ok().as_deref() == Some(path);
+        let common_marker = self.admin.join("commondir");
         canonical(&self.root)
             && canonical(&self.admin)
             && canonical(&self.common)
@@ -55,7 +56,11 @@ impl Physical {
             && config_stamp(&self.admin.join("config.worktree")) == Some(self.stamp[1])
             && self.marker.as_ref().is_none_or(|m| small(&self.root.join(".git")).ok().as_ref() == Some(m))
             && self.backlink.as_ref().is_none_or(|m| small(&self.admin.join("gitdir")).ok().as_ref() == Some(m))
-            && self.common_marker.as_ref().is_none_or(|m| small(&self.admin.join("commondir")).ok().as_ref() == Some(m))
+            && match &self.common_marker {
+                Some(marker) => small(&common_marker).ok().as_ref() == Some(marker),
+                None => std::fs::symlink_metadata(&common_marker)
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+            }
     }
 }
 /// The checkout's `.git` is missing, or its `gitdir:` points at a missing
@@ -471,6 +476,8 @@ mod layout_tests {
         ] {
             assert!(crate::git::command(&root, args).status().await.unwrap().success());
         }
+        let main_layout = checkout(&root).await.unwrap();
+        assert!(main_layout.live());
         let layout = checkout(&tree).await.unwrap();
         assert!(layout.live());
         let marker = tree.join(".git");
@@ -480,6 +487,8 @@ mod layout_tests {
         std::fs::write(&marker, original).unwrap();
         std::fs::write(layout.admin.join("commondir"), "../elsewhere\n").unwrap();
         assert!(!layout.live());
+        std::fs::write(main_layout.admin.join("commondir"), "../elsewhere\n").unwrap();
+        assert!(!main_layout.live());
         std::fs::remove_dir_all(base).unwrap();
     }
 }
