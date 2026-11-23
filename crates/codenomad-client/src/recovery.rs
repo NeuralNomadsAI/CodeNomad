@@ -1,4 +1,5 @@
 //! One serialized HTTP lane. SSE is a hint stream; recovery publishes authoritative native windows.
+pub mod demand;
 use crate::{
     Receiver, Sender,
     runtime::{self, Instant},
