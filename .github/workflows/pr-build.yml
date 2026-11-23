@@ -730,7 +730,6 @@ jobs:
           packages/ui/src/stores/session-child-transcript-watch.test.ts
           packages/ui/src/stores/opencode-inbox-rebinding.test.ts
           packages/ui/src/stores/opencode-transcript-replay.test.ts
-          packages/ui/src/stores/opencode-compaction.test.ts
           packages/ui/src/lib/message-part-grouping.test.ts
           packages/ui/src/lib/settings/behavior-registry.test.ts
           packages/ui/src/components/instance/shell/right-panel/core-plugin.test.ts

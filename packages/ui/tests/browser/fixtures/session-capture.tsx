@@ -5,8 +5,9 @@ import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partiti
 import { addInstance } from "../../../src/stores/instances"
 import { attachInstanceTab, getInstanceAppTabId } from "../../../src/stores/app-tabs"
 import {
-  sessions, setSessions, withSession, setSessionDraftPrompt, onSessionDraftHydrated, getSessionDraftPrompt,
+  sessions, setSessions, withSession, setSessionExpanded, setSessionStatus, setSessionDraftPrompt, onSessionDraftHydrated, getSessionDraftPrompt,
 } from "../../../src/stores/session-state"
+import { removeSessionRuntimeState } from "../../../src/stores/session-api"
 import { captureSessionCatalog } from "../../../src/stores/session-catalog-persistence"
 import { hydrateSeenInterruptions } from "../../../src/stores/session-interruption-seen"
 import { addAttachment } from "../../../src/stores/attachments"
@@ -90,6 +91,10 @@ document.body.append(draftInput)
     })
   },
   draft: (value: string) => setSessionDraftPrompt("first", "parent", value),
+  editWhileClosing: () => setSessionDraftPrompt("second", "parent", "store edit during close"),
+  expand: () => setSessionExpanded("first", "parent", true),
+  settleChild: () => setSessionStatus("second", "child", "idle", { force: true }),
+  deleteFirstChild: () => removeSessionRuntimeState("first", "child", "observation"),
   attach: () => addAttachment("first", "parent", createFileAttachment("/synthetic/note.txt", "note.txt")),
   remove: () => setSessions(previous => {
     const rows = new Map(previous.get("second"))

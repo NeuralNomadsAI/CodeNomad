@@ -110,18 +110,39 @@ test("capture defers only busy usage through both real-store effects and keeps f
       await usage(); await usage("second", "child"); await settle()
       assert.equal(await count(), initial, `${host}: busy usage must not checkpoint`)
       assert.equal(await page.evaluate(() => (window as any).fixture.hydrated()), hydrated, "busy usage must not rehydrate preserved drafts")
+      assert.equal((await state()).tabs[1].generationRecovery.child, "working")
 
       for (let elapsed = 0; elapsed < 2_600; elapsed += 100) {
         if (elapsed % 200 === 0) await change("title")
         if (elapsed % 300 === 0) await page.evaluate(elapsed => (window as any).fixture.draft(`ongoing ${elapsed}`), elapsed)
+        if (elapsed === 1_200) await page.evaluate(() => (window as any).fixture.deleteFirstChild())
+        if (elapsed === 1_500) await page.evaluate(() => (window as any).fixture.settleChild())
         await page.clock.runFor(100)
       }
       assert.ok(await count() > initial, "a commit starts while catalog events and typing are still arriving")
       const checkpoint = await page.evaluate(async () => {
         const w = window as any
-        return (await w.fixture.decode(w.persisted)).session.tabs[0].drafts.parent
+        const [first, second] = (await w.fixture.decode(w.persisted)).session.tabs
+        return { draft: first.drafts.parent, title: first.sessionCatalog[0].title, ids: first.sessionCatalog.map((row: any) => row.id),
+          idle: second.unseenIdleSince.child, recovery: second.generationRecovery.child }
       })
-      assert.equal(checkpoint, "ongoing 1800")
+      assert.equal(checkpoint.draft, "ongoing 1800")
+      assert.equal(checkpoint.title, "parent", "the deadline reuses the encoded catalog")
+      assert.ok(!checkpoint.ids.includes("child"), "a confirmed deletion fences the reused catalog")
+      assert.equal(typeof checkpoint.idle, "number", "the deadline includes a settlement during typing")
+      assert.equal(checkpoint.recovery, undefined, "the saved running marker is cleared at the deadline")
+      await settle()
+      assert.notEqual((await state()).tabs[0].sessionCatalog[0].title, checkpoint.title, "quiet capture catches up the catalog")
+
+      await page.evaluate(() => (window as any).fixture.expand())
+      for (let elapsed = 0; elapsed < 2_600; elapsed += 200) {
+        await change("title")
+        await page.clock.runFor(200)
+      }
+      assert.ok(await page.evaluate(async () => {
+        const w = window as any
+        return (await w.fixture.decode(w.persisted)).session.tabs[0].expandedSessionIds.includes("parent")
+      }), "expansion persists during catalog traffic without a draft edit")
 
       const beforeExplicit = await count()
       await page.evaluate(() => (window as any).fixture.draft("flush before quiet"))
@@ -130,7 +151,7 @@ test("capture defers only busy usage through both real-store effects and keeps f
       assert.equal(await count(), beforeExplicit + 1)
       assert.equal((await state()).tabs[0].drafts.parent, "flush before quiet")
 
-      for (const phase of ["close", "navigation"] as const) await t.test(`${host}: a held ${phase} write rejects late typing and unlocks on cancellation`, async () => {
+      for (const phase of ["close", "navigation"] as const) await t.test(`bridge ${host === "electron" ? 1 : 2}: a held ${phase} write rejects late typing and unlocks on cancellation`, async () => {
         const generation = phase === "close" ? 1 : 101
         const input = page.locator("#close-draft")
         await page.evaluate(({ host, phase, generation }) => {
@@ -147,6 +168,7 @@ test("capture defers only busy usage through both real-store effects and keeps f
         }, { host, phase, generation })
         await page.waitForFunction(() => Boolean((window as any).finishHeldCommit))
         await page.keyboard.type(" typed while saving")
+        if (phase === "close") await page.evaluate(() => (window as any).fixture.editWhileClosing())
         await page.evaluate(async host => {
           const w = window as any
           w.finishHeldCommit()
@@ -164,8 +186,16 @@ test("capture defers only busy usage through both real-store effects and keeps f
           if (host === "tauri") w.emit(phase === "close" ? "client-state:flush-cancelled" : "client-state:navigation-flush-cancelled", generation)
           else await w.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__(phase === "close" ? "cancel" : "navigation-cancel")
         }, { host, phase, generation })
+        assert.equal(await page.evaluate(() => document.documentElement.inert), false, "the cancellation reached the renderer")
+        // Let the one-off resumed capture finish before testing the subscription.
+        await settle()
         await input.fill("typed after cancellation", { timeout: 5_000 })
-        await page.waitForFunction(() => (window as any).fixture.state().tabs[0].drafts.parent === "typed after cancellation")
+        await settle()
+        const persisted = await page.evaluate(async () => {
+          const w = window as any
+          return (await w.fixture.decode(w.persisted)).session.tabs[0].drafts.parent
+        })
+        assert.equal(persisted, "typed after cancellation")
         assert.deepEqual([saved, live], [`typed before ${phase}`, `typed before ${phase}`])
       })
 

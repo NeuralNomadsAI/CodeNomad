@@ -6,9 +6,8 @@ import { addInstance, removeInstance } from "./instances"
 import { setInstanceMetadata } from "./instance-metadata"
 import { fetchSessions } from "./session-api"
 import { handleNativeSessionEvent } from "./session-events"
-import { getSessionListIds, getSessionListError, getSessionThreads, getSessionRoot, sessions, setSessions } from "./session-state"
+import { getSessionListIds, getSessionListError, getSessionNextCursor, getSessionThreads, getSessionRoot, sessions, setSessions } from "./session-state"
 import { getDirectoryOnlyWorktree, getGitRepoStatus, reloadWorktrees } from "./worktrees"
-import { createEffect, createRoot } from "solid-js"
 
 test("directory-only inventory loads and paginates UI sessions without claiming non-repository status", async t => {
   const id = "git-degraded-ui", folder = "/repo/nested"
@@ -18,7 +17,8 @@ test("directory-only inventory loads and paginates UI sessions without claiming 
     ? { isGitRepo: true, worktrees: [{ slug: "root", directory: folder, kind: "root" }] }
     : { gitAvailable: false, worktrees: [{ slug: "root", directory: folder, serviceDirectory: folder, kind: "root", directoryOnly: true }] }
   const requests: any[] = []
-  let moved = false
+  let holdPage: Promise<void> | undefined
+  let pageStarted: (() => void) | undefined
   const session = (id: string) => ({ id, title: id, projectID: "project", location: { directory: folder },
     cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 } })
   let ancestorReads = 0
@@ -27,10 +27,11 @@ test("directory-only inventory loads and paginates UI sessions without claiming 
     throw Object.assign(new Error("Session does not belong to workspace"), { status: 403 })
   }, list: async (input: any) => {
     requests.push(input)
+    pageStarted?.()
+    await holdPage
     if (!gitAvailable) assert.equal(input.project, undefined, "never request canonical project scope for an opened subfolder without Git")
     if (input.cursor) return { data: [session("older"), ...(gitAvailable ? [] : [
       { ...session("local-child"), parentID: "foreign-parent" },
-      ...(moved ? [{ ...session("moved-child"), parentID: "held-parent" }] : []),
     ])], cursor: {} }
     return { data: [session("newer")], cursor: { next: "directory-page-2" } }
   } } }
@@ -58,28 +59,34 @@ test("directory-only inventory loads and paginates UI sessions without claiming 
       .set("held-parent", { ...sample, id: "held-parent", parentId: null, location: { directory: "/repo" } })
       .set("moved-child", { ...sample, id: "moved-child", parentId: "held-parent", location: { directory: "/repo" } })))
     assert.ok(!getSessionListIds(id).includes("moved-child"))
-    const listed = new Promise<void>(resolve => createRoot(dispose => {
-      t.after(dispose)
-      createEffect(() => {
-        if (!getSessionListIds(id).includes("moved-child")) return
-        dispose()
-        resolve()
+    setInstanceMetadata(id, undefined)
+    let releasePage!: () => void
+    holdPage = new Promise(resolve => { releasePage = resolve })
+    const started = new Promise<void>(resolve => { pageStarted = resolve })
+    const inventory = fetchSessions(id, { reset: true, strictStatus: true })
+    try {
+      await started
+      const cursor = getSessionNextCursor(id)
+      t.mock.timers.enable({ apis: ["setTimeout"] })
+      handleNativeSessionEvent(id, {
+        type: "session.moved", id: "move", created: 2,
+        durable: { aggregateID: "moved-child", seq: 1, version: 1 },
+        data: { sessionID: "moved-child", projectID: "project", location: { directory: folder } },
       })
-    }))
-    t.mock.timers.enable({ apis: ["setTimeout"] })
-    moved = true
-    handleNativeSessionEvent(id, {
-      type: "session.moved", id: "move", created: 2,
-      durable: { aggregateID: "moved-child", seq: 1, version: 1 },
-      data: { sessionID: "moved-child", projectID: "project", location: { directory: folder } },
-    })
-    t.mock.timers.tick(100)
-    t.mock.timers.reset()
-    await listed
-    assert.ok(getSessionThreads(id).some(thread => thread.session.id === "moved-child"))
-    assert.equal(sessions().get(id)?.get("moved-child")?.parentId, "held-parent")
+      t.mock.timers.tick(100)
+      assert.ok(getSessionListIds(id).includes("moved-child"), "move publishes before the held root-only inventory returns")
+      assert.ok(getSessionThreads(id).some(thread => thread.session.id === "moved-child"))
+      assert.equal(sessions().get(id)?.get("moved-child")?.parentId, "held-parent")
+      assert.equal(getSessionNextCursor(id), cursor)
+    } finally {
+      t.mock.timers.reset()
+      releasePage()
+      await inventory
+    }
+    assert.ok(getSessionListIds(id).includes("moved-child"), "a roots-only refresh keeps the projected child")
 
     gitAvailable = true
+    setInstanceMetadata(id, { project: { id: "project", canonical: "/repo" } as any })
     await reloadWorktrees(id)
     requests.length = 0
     await fetchSessions(id, { reset: true, strictStatus: true })

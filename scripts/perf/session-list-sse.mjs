@@ -1,5 +1,5 @@
 // Run against a sourcemapped production UI build, with no native app or daemon.
-// node scripts/perf/session-list-sse.mjs <dist> <artifacts> [seconds] [--exercise-clock]
+// node scripts/perf/session-list-sse.mjs <dist> <artifacts> [seconds]
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import { readFile, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises"
@@ -7,7 +7,7 @@ import { resolve, join, extname, sep } from "node:path"
 import { chromium } from "playwright"
 import { sampleSessionList } from "./session-list-probes.mjs"
 
-const [dist, artifacts, seconds = "90", ...flags] = process.argv.slice(2)
+const [dist, artifacts, seconds = "90"] = process.argv.slice(2)
 const root = resolve(dist)
 const output = resolve(artifacts)
 await mkdir(output, { recursive: true })
@@ -138,29 +138,6 @@ try {
   })
   emit(rename("ses_5998", 1, "Fixture ready"))
   await page.locator(".session-item-base").getByText("Fixture ready", { exact: true }).waitFor({ timeout: 12000 })
-  if (flags.includes("--exercise-clock")) {
-    const sessionID = "ses_5998"
-    emit({
-      type: "session.retry.scheduled", id: "clock-retry", created: Date.now(), location: { directory: folder },
-      durable: { aggregateID: sessionID, seq: 2, version: 1 },
-      data: { sessionID, assistantMessageID: "msg_fixture", attempt: 1, at: Date.now() + 3_000,
-        error: { name: "UnknownError", message: "Fixture backoff" } },
-    })
-    const header = page.locator(".session-header-indicators .session-status-text").filter({ hasText: /Retrying/i }).first()
-    await header.filter({ hasText: /[123]/ }).waitFor({ timeout: 6_000 })
-    const tabStatus = page.getByRole("tab").getByRole("img", { name: /^Instance status: .+/ })
-    await tabStatus.waitFor({ timeout: 6_000 })
-    const accessibility = await context.newCDPSession(page)
-    const { nodes } = await accessibility.send("Accessibility.getFullAXTree")
-    await accessibility.detach()
-    assert.ok(nodes.some(node => !node.ignored && node.role?.value === "image"
-      && /^Instance status: .+/.test(node.name?.value)), "Chromium exposes the project-tab status name")
-    await page.keyboard.press("a")
-    assert.equal(await editor.inputValue(), "a")
-    await page.keyboard.press("Backspace")
-    assert.equal(await editor.inputValue(), "")
-    await header.filter({ hasNotText: /\d/ }).waitFor({ timeout: 6_000 })
-  }
   await page.evaluate(() => {
     window.perfKeys = []
     document.addEventListener("keydown", event => {
@@ -174,16 +151,23 @@ try {
   const finishSample = await sampleSessionList(context, page)
   measuring = true
   let seq = 0
+  let presses = Promise.resolve()
+  const keyboardErrors = []
   activity = setInterval(() => {
     const ordinal = ++seq
     const sessionID = ordinal % 12 === 0 ? `ses_${6000 + Math.floor(ordinal / 12) % 120}` : `ses_${(ordinal * 283) % 5900}`
     emit(rename(sessionID, ordinal * 2, `Renamed ${ordinal}`))
     if (ordinal % 12 === 0) emit(rename(sessionID, ordinal * 2 + 1, `Renamed twice ${ordinal}`))
-    if (ordinal % 3 === 0) void page.keyboard.press(ordinal % 6 === 0 ? "Backspace" : "a").catch(() => {})
+    if (ordinal % 3 === 0) presses = presses
+      .then(() => page.keyboard.press(ordinal % 6 === 0 ? "Backspace" : "a"))
+      .catch(error => { keyboardErrors.push(error) })
   }, 83)
   await new Promise(resolve => setTimeout(resolve, Number(seconds) * 1000))
-  measuring = false
   clearInterval(activity)
+  await presses
+  if (keyboardErrors.length) throw new AggregateError(keyboardErrors, "Production composer keyboard presses failed")
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)))
+  measuring = false
   const { tasks, ...report } = await finishSample()
   await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2))
   await writeFile(join(output, "longtasks.json"), JSON.stringify(tasks, null, 2))
@@ -191,6 +175,7 @@ try {
     mockPartitionCommits: await page.evaluate(start => window.perfCommits - start, commitsBefore) }
   const keys = await page.evaluate(() => window.perfKeys.sort((a, b) => a - b))
   assert.ok(keys.length > 0, "the production composer received keyboard input")
+  assert.equal(keys.length, Math.floor(seq / 3), "every scheduled press reached the production composer")
   counters.keyToFrame = { count: keys.length, p50: keys[Math.ceil(keys.length * 0.5) - 1],
     p95: keys[Math.ceil(keys.length * 0.95) - 1], max: keys.at(-1) }
   await writeFile(join(output, "fixture.json"), JSON.stringify(counters, null, 2))

@@ -47,7 +47,7 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, canRelistReturnedSession, forgetSessionMovedAway, getAuthoritativelyDeletedSessionIdsForInstance, getMovedAwaySessions, invalidateSessionMessageLoad, markSessionMovedAway, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
+import { activeSessionId, canRelistReturnedSession, forgetSessionMovedAway, getAuthoritativelyDeletedSessionIdsForInstance, getMovedAwaySessions, getSessionRoot, invalidateSessionMessageLoad, markSessionMovedAway, isSessionInWorkspaceScope, prependSessionListId, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
@@ -81,6 +81,7 @@ const COMPACTION_TOAST_MS = 10000
 const pendingSessionFetches = new Map<string, {
   status: SessionStatus
   retry?: SessionRetryState | null
+  lifecycle: number
   /** Settles once the session's metadata read ends. */
   settled: Promise<void>
   signal: AbortSignal
@@ -515,8 +516,7 @@ function handleSessionMoved(instanceId: string, data: SessionMoved["data"]): voi
     const moves = pendingSessionMoves.get(instanceId) ?? new Map<string, SessionMove>()
     pendingSessionMoves.delete(instanceId)
     if (!authority.current()) return
-    // A folder-only list can gain display roots when a move splits a family.
-    const needsInventory = !!getDirectoryOnlyWorktree(instanceId) || [...moves].some(([id, move]) => !move.data
+    const needsInventory = [...moves].some(([id, move]) => !move.data
       || !sessions().get(instanceId)?.has(id) || !listsSessionDirectory(instanceId, move.data.location.directory))
     void Promise.all([...moves].map(([movedId, move]) => settleSessionMove(instanceId, movedId, move)))
       .then(() => {
@@ -580,7 +580,8 @@ async function settleSessionMove(instanceId: string, sessionId: string, move: Se
       }
     }
     if (!current()) return false
-    if (inventoryKnown && listsSessionDirectory(instanceId, data.location.directory)) {
+    if (inventoryKnown && listsSessionDirectory(instanceId, data.location.directory)
+      && (!getDirectoryOnlyWorktree(instanceId) || sessions().get(instanceId)?.has(sessionId))) {
       return finishSessionMove(instanceId, sessionId, move, data)
     }
   }
@@ -621,10 +622,16 @@ function finishSessionMove(instanceId: string, sessionId: string, move: SessionM
   clearPendingSessionMove(instanceId, sessionId)
   if (typeof placement !== "symbol") {
     if (verified) confirmSessionPlacement(instanceId, sessionId, placement)
+    const listed = confirmedSessionListDirectory(instanceId, sessionId, placement)
+    const localDisplay = !!getDirectoryOnlyWorktree(instanceId) && (listed || listsSessionDirectory(instanceId, placement.location.directory))
     if (held) applySessionMovePlacement(instanceId, { ...placement, sessionID: sessionId })
-    else if (verified && (confirmedSessionListDirectory(instanceId, sessionId, placement)
+    else if (verified && (localDisplay || listed
       || (!move.data && listsSessionDirectory(instanceId, placement.location.directory)))) {
       publishFetchedSessionInfo(instanceId, verified, undefined, move.authority.current)
+    }
+    if (localDisplay) {
+      const root = getSessionRoot(instanceId, sessionId)
+      if (root) prependSessionListId(instanceId, root.id)
     }
     if (!move.data && held) refreshSelectedMoveCatalog(instanceId, sessionId)
     return true
@@ -935,18 +942,20 @@ function ensureSessionStatus(
   }
 
   // Reads coalesce within one instance generation: a replaced client reads again.
+  const lifecycle = nativeSessionLifecycleGeneration(instanceId, sessionId)
   const key = `${instanceId}:${getOpenCodeInstanceGeneration(instanceId)}:${sessionId}`
   const existingFetch = pendingSessionFetches.get(key)
   if (existingFetch?.current() && existingFetch.signal === authority.signal) {
     existingFetch.status = status
     existingFetch.retry = retry
+    existingFetch.lifecycle = lifecycle
     return existingFetch.settled
   }
 
-  const pendingState = { status, retry, settled: Promise.resolve(), signal: authority.signal, current: authority.current }
+  const pendingState = { status, retry, lifecycle, settled: Promise.resolve(), signal: authority.signal, current: authority.current }
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
-    if (!fetched || !authority.current()) return
+    if (!fetched || !authority.current() || !isCurrentNativeLifecycle(instanceId, sessionId, pendingState.lifecycle)) return
     setSessionStatus(instanceId, sessionId, pendingState.status, { retry: pendingState.retry })
   })()
 

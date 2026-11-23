@@ -36,12 +36,14 @@ Keep domain-specific implementations where authority, lifetime or runtime differ
 Session list placement is cached by topology (parent and native location), independently
 of row metadata. Single-row publications retain unaffected descendant indexes and
 family trees; bulk inventory publication rebuilds the affected workspace's indexes
-on demand. Client-state capture tracks workspace checkpoint tokens and encodes
-changed catalog chunks after 500 ms of quiet. Draft and attachment edits wait
-for the same quiet period, up to 2 s from their first dirty change; at that
-deadline they reuse the last catalog checkpoint. Persistence waits for 250 ms
-of quiet, up to another 500 ms before starting or queueing the commit. Explicit
-flushes capture fresh data and start persistence immediately.
+on demand. Catalog-only changes may wait for 500 ms of quiet. Draft and
+attachment edits and other restore state (such as selection, expansion and
+scroll) trigger a capture within 2 s of the first dirty change. A deadline
+capture reads current runtime markers and membership/deletion authority and
+reuses only the encoded catalog. Persistence waits for 250 ms of quiet, with
+an additional 500 ms maximum to queue the commit; completion depends on the
+write queue and storage. Explicit flushes capture fresh data and start
+persistence immediately.
 Draft and attachment signals schedule capture without materializing their saved
 maps on each edit; serialization reads the current maps at the checkpoint.
 Session rename events publish their title directly in the catalog; unseen IDs
@@ -113,12 +115,12 @@ changes or a publisher replaces the workspace map.
 Only cost/token changes while a session is working or compacting are deferred.
 Session membership, metadata, runtime transitions and idle usage still invalidate;
 drafts, attachments, selection, expansion, scrolls and outlines retain their triggers.
-Capture and explicit flush always read the fresh stores, including deferred counters.
+Quiet captures and explicit flushes encode fresh catalog data, including deferred counters.
 
 The accepted crash-freshness limit for these display-cache counters is the last
 successful checkpoint: an uninterrupted run with only usage changes can leave them
-at its starting checkpoint for the whole run. The next draft/metadata/view checkpoint,
-runtime transition or explicit navigation/shutdown flush includes the latest counters.
+at its starting checkpoint for the whole run. The next quiet capture or
+explicit navigation/shutdown flush includes the latest counters.
 Native hydration revalidates restored display data. Persistence retains its complete
 partition payloads, atomic publication, write-failure dirty state, ownership fences
 and native shutdown generation/cancellation rules.

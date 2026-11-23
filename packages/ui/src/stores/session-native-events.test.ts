@@ -5,6 +5,7 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import { sseManager } from "../lib/sse-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
+import { createClientSession } from "../types/session.ts"
 import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, messagesLoaded, sessions, setActiveSession, setMessagesLoaded, setSessions } from "./session-state.ts"
 
@@ -106,6 +107,49 @@ describe("native session event reducer", () => {
     } finally {
       setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  for (const retry of [false, true]) it(`drops ${retry ? "backoff after a new attempt" : "compaction after settlement"} from a shared cold read`, async () => {
+    const instanceId = `shared-status-read-${retry}`
+    const sessionId = "cold"
+    let reads = 0
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const info = {
+      id: sessionId, title: "old", projectID: "project", version: "1",
+      location: { directory: "/work" }, time: { created: 1, updated: 1 },
+      cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    }
+    const client = { session: { active: async () => ({}), get: async () => { reads++; await gate; return info } } } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    let seq = 0
+    const emit = (type: string, extra = {}) => handleNativeSessionEvent(instanceId, {
+      id: `event-${++seq}`, type, created: seq + 1, location: info.location,
+      durable: { aggregateID: sessionId, seq, version: 1 }, data: { sessionID: sessionId, ...extra },
+    } as any)
+    const row = () => sessions().get(instanceId)?.get(sessionId)
+    try {
+      emit("session.renamed", { title: "Renamed" })
+      if (retry) emit("session.retry.scheduled", { assistantMessageID: "msg_retry", attempt: 1, at: Date.now() + 5_000,
+        error: { name: "UnknownError", message: "Provider backoff" } })
+      else emit("session.compaction.started")
+      assert.equal(reads, 1)
+      setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, createClientSession(info as any, instanceId)]])))
+      await emit(retry ? "session.execution.started" : "session.execution.succeeded")
+      const expectedStatus = retry ? "working" : "idle"
+      assert.equal(row()?.status, expectedStatus)
+      assert.equal(row()?.retry, null)
+      release()
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(row()?.title, "Renamed")
+      assert.equal(row()?.status, expectedStatus)
+      assert.equal(row()?.retry, null)
+    } finally {
+      release()
       removeInstance(instanceId, { authoritative: false })
       sdkManager.destroyClientsForInstance(instanceId)
     }

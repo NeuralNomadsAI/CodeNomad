@@ -55,13 +55,14 @@ import {
 const log = getLogger("actions")
 const MAX_CAPTURED_SCROLL_SNAPSHOTS = 96
 const CAPTURE_DEBOUNCE_MS = 500
-const DRAFT_CAPTURE_MAX_WAIT_MS = 2_000
+const RESTORE_CAPTURE_MAX_WAIT_MS = 2_000
 const NO_SESSION_ROWS: SessionRows = new Map()
 const capturedSessionData = new WeakMap<object, {
   rows: SessionRows
   seenRevision: ReturnType<typeof seenInterruptionsRevision>
   sessionIds: ReadonlySet<string>
   runtime: ReturnType<typeof captureRuntimeState>
+  catalogRows: SessionRows
   catalog: ReturnType<typeof captureSessionCatalog>
 }>()
 function captureScrollSnapshots(instanceId: string): Record<string, ScrollSnapshot> {
@@ -120,12 +121,16 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     const rows = sessionRows().get(id) ?? NO_SESSION_ROWS
     const seenRevision = seenInterruptionsRevision()
     let sessionData = capturedSessionData.get(tab)
-    if (!sessionData || !reuseCatalog && (sessionData.rows !== rows || sessionData.seenRevision !== seenRevision)) {
+    if (!sessionData || sessionData.rows !== rows || sessionData.seenRevision !== seenRevision
+      || (!reuseCatalog && sessionData.catalogRows !== rows)) {
       const sessions = [...rows.values()]
+      const checkpoint = reuseCatalog || sessionData?.catalogRows === rows ? sessionData : undefined
       sessionData = {
         rows, seenRevision, sessionIds: sessionData?.rows === rows ? sessionData.sessionIds : new Set(rows.keys()),
-        runtime: captureRuntimeState(id, sessions),
-        catalog: sessionData?.rows === rows ? sessionData.catalog : captureSessionCatalog(sessions, tab),
+        runtime: sessionData?.rows === rows && sessionData.seenRevision === seenRevision
+          ? sessionData.runtime : captureRuntimeState(id, sessions),
+        catalogRows: checkpoint?.catalogRows ?? rows,
+        catalog: checkpoint ? checkpoint.catalog : captureSessionCatalog(sessions, tab),
       }
       capturedSessionData.set(tab, sessionData)
     }
@@ -138,6 +143,8 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     const live = serializeDraftAttachments(
       getSessionDraftPromptsForInstance(id), getSessionAttachmentsForInstance(id), prioritySessionIds,
     )
+    const deletedSessions = getAuthoritativelyDeletedSessionIdsForInstance(id)
+    const catalog = sessionData.catalog
     const result: RestorableWorkspaceTabState = {
       kind: "workspace", folder: tab.instance.folder, occurrence: occurrenceByInstance.get(id) ?? 0, workspaceId: id,
       ...(tab.instance.backendId ? { backendId: tab.instance.backendId } : {}),
@@ -145,8 +152,9 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
       drafts: { ...pending.drafts, ...live.drafts },
       attachments: { ...pending.attachments, ...live.attachments },
       ...sessionData.runtime, scrollSnapshots: captureScrollSnapshots(id),
-      outlineIndexes: captureSessionOutlineIndexes(id, getAuthoritativelyDeletedSessionIdsForInstance(id)),
-      sessionCatalog: sessionData.catalog,
+      outlineIndexes: captureSessionOutlineIndexes(id, deletedSessions),
+      sessionCatalog: reuseCatalog && deletedSessions.size && catalog?.some(row => deletedSessions.has(row.id))
+        ? catalog.filter(row => !deletedSessions.has(row.id)) : catalog,
       viewState: captureTabViewState(id),
       expandedSessionIds: [
         ...expanded.filter((sessionId) => expansionAuthority.has(sessionId)),
@@ -200,15 +208,15 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   let disposed = false
   const hydrationController = new AbortController()
   let timer: ReturnType<typeof setTimeout> | null = null
-  let draftDeadline: ReturnType<typeof setTimeout> | null = null
-  const cancelDraftDeadline = () => {
-    if (draftDeadline !== null) clearTimeout(draftDeadline)
-    draftDeadline = null
+  let restoreDeadline: ReturnType<typeof setTimeout> | null = null
+  const cancelRestoreDeadline = () => {
+    if (restoreDeadline !== null) clearTimeout(restoreDeadline)
+    restoreDeadline = null
   }
   const cancelCapture = () => {
     if (timer !== null) clearTimeout(timer)
     timer = null
-    cancelDraftDeadline()
+    cancelRestoreDeadline()
   }
   let preservation: RestorableSessionPreservation | null = null
   let nativeFallbackState: RestorableSessionState | null = null
@@ -289,10 +297,10 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     releasing = undefined
     releaseResults = new Map()
     if (navigationGeneration === null) unlockInput?.()
-    schedule()
+    schedule(true)
   }
   const capture = (reuseCatalog = false) => {
-    if (reuseCatalog) cancelDraftDeadline()
+    if (reuseCatalog) cancelRestoreDeadline()
     else cancelCapture()
     if (enabled() && !disposed && !releasing && nativeShutdownGeneration === null) {
       const state = mergedState(reuseCatalog)
@@ -300,10 +308,12 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
       updateRestorableSession(state)
     }
   }
-  const schedule = () => {
+  const schedule = (bounded = false) => {
     if (!enabled() || disposed || releasing || nativeShutdownGeneration !== null) return
     if (timer !== null) clearTimeout(timer)
     timer = setTimeout(capture, CAPTURE_DEBOUNCE_MS)
+    // Bounded restore captures reuse the encoded catalog and leave its quiet save armed.
+    if (bounded) restoreDeadline ??= setTimeout(() => capture(true), RESTORE_CAPTURE_MAX_WAIT_MS)
   }
   const flush = async (nativeShutdownGenerationRequest?: number) => {
     const nativeShutdown = nativeShutdownGenerationRequest !== undefined
@@ -418,7 +428,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     const sessionIds = scrollAuthority.get(instanceId) ?? new Set<string>()
     sessionIds.add(sessionId)
     scrollAuthority.set(instanceId, sessionIds)
-    schedule()
+    schedule(true)
   }
   const cleanups = [
     messageStoreBus.onScrollSnapshotChanged((instanceId, sessionId, scope) => {
@@ -499,23 +509,24 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   ]
   createEffect(() => {
     if (!enabled()) return
-    const tabs = appTabs()
-    activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions()
-    outlineCacheRevision(); seenInterruptionsRevision()
     checkpointSessions()
-    for (const tab of tabs) if (tab.kind === "instance") {
-      captureTabViewState(tab.instance.id)
-    }
     schedule()
   })
   createEffect(() => {
-    if (!enabled() || disposed || releasing || nativeShutdownGeneration !== null) return
+    if (!enabled()) return
+    const tabs = appTabs()
+    activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions()
+    outlineCacheRevision(); seenInterruptionsRevision()
+    for (const tab of tabs) if (tab.kind === "instance") {
+      captureTabViewState(tab.instance.id)
+    }
+    schedule(true)
+  })
+  createEffect(() => {
+    if (!enabled()) return
     trackSessionDraftChanges()
     trackSessionAttachmentChanges()
-    schedule()
-    // Only draft/attachment changes start this deadline. A forced draft save
-    // keeps the last catalog checkpoint and leaves the quiet-period save armed.
-    draftDeadline ??= setTimeout(() => capture(true), DRAFT_CAPTURE_MAX_WAIT_MS)
+    schedule(true)
   })
   createEffect(() => {
     if (!enabled()) return

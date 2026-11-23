@@ -58,8 +58,9 @@ Implementation:
 - The UI follows creation with the verified family transaction, using the
   returned identifier rather than guessing it from the branch name.
 - Native worktree events invalidate ownership and UI state. Opening the selector also
-  discovers external Git changes. Native session moves refresh the catalogue before
-  list reconciliation. When a move's destination does not exactly match the
+  discovers external Git changes. In directory-only mode a verified arrival
+  adds its computed display root directly, preserving native parent links and
+  the list cursor. When a move's destination does not exactly match the
   opened folder or a listed worktree, consult a fresh inventory, then use a
   workspace-scoped session read for any remaining miss. The proxy resolves aliases such as symlinks
   and junctions. Move and restore placement reads return a registered worktree slug only

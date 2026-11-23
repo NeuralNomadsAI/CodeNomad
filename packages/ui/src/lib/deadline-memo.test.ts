@@ -9,6 +9,8 @@ import type { Session } from "../types/session"
 
 test("status work runs at its own deadline and stops when disposed", t => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10_000 })
+  const setTimer = t.mock.method(globalThis, "setTimeout")
+  const clearTimer = t.mock.method(globalThis, "clearTimeout")
   createRoot(dispose => {
     const [retryAt, setRetryAt] = createSignal(0)
     let unrelatedRuns = 0
@@ -29,7 +31,9 @@ test("status work runs at its own deadline and stops when disposed", t => {
       assert.equal(retry(), 1)
       assert.equal(unrelated(), 1)
     } finally {
+      const pending = setTimer.mock.calls.at(-1)!.result
       dispose()
+      assert.ok(clearTimer.mock.calls.some(call => call.arguments[0] === pending))
     }
     t.mock.timers.tick(2_000)
     assert.equal(retry(), 1)

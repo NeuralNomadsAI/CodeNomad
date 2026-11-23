@@ -1,9 +1,9 @@
 import { ContextMenu } from "@kobalte/core/context-menu"
-import { Component, Show, createMemo } from "solid-js"
+import { Component, Show, createMemo, createUniqueId } from "solid-js"
 import type { Instance } from "../types/instance"
 import { getInstanceStatusPresentation } from "../stores/session-status"
 import { createDeadlineMemo } from "../lib/deadline-memo"
-import { FolderCheck, FolderOpen, Hourglass, Pencil, Server, ShieldAlert, X } from "lucide-solid"
+import { Activity, FolderCheck, FolderOpen, Hourglass, Pencil, Server, ShieldAlert, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
 import { keepTemporaryInstance } from "../stores/temporary-instances"
@@ -24,6 +24,7 @@ interface InstanceTabProps {
 const InstanceTab: Component<InstanceTabProps> = (props) => {
   const { t } = useI18n()
   const { preferences, remoteServers } = useConfig()
+  const statusId = createUniqueId()
   const statusPresentation = createDeadlineMemo((now, wakeAt) =>
     getInstanceStatusPresentation(props.instance.id, now, preferences().keepUnseenSubagentIdleStatus, wakeAt),
   )
@@ -81,6 +82,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
           }}
           title={remoteDetail() ?? (props.instance.temporary ? t("instanceTab.temporary.title") : props.instance.folder)}
           aria-label={remoteDetail()}
+          aria-describedby={statusTitle() ? statusId : undefined}
           role="tab"
           aria-selected={props.active}
         >
@@ -96,15 +98,17 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
             <span
               class={`status-indicator session-status ml-auto ${statusClassName()}`}
               title={statusTitle() ?? undefined}
-              role="img"
-              aria-label={t("instanceTab.status.ariaLabel", { status: statusTitle() ?? "" })}
+              aria-hidden="true"
             >
               {aggregatedStatus() === "permission" ? (
                 <ShieldAlert class="w-3.5 h-3.5" aria-hidden="true" />
-              ) : (
+              ) : aggregatedStatus() === "idle" ? (
                 <span class="status-dot" />
+              ) : (
+                <Activity class="w-3.5 h-3.5" style={{ color: "var(--session-status-dot)" }} />
               )}
             </span>
+            <span id={statusId} hidden>{t("instanceTab.status.ariaLabel", { status: statusTitle() ?? "" })}</span>
           </Show>
           <span
             class="tab-close"

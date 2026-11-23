@@ -56,10 +56,12 @@ export function projectUnarchivedSessionThreads(threads: SessionThread[], select
     }
     return result
   }
-  return threads.flatMap(thread => {
+  const visible: SessionThread[] = []
+  for (const thread of threads) {
     const result = visit(thread)
-    return result ? [result.thread] : []
-  })
+    if (result) visible.push(result.thread)
+  }
+  return visible
 }
 
 type SessionFamilyProjection = {
@@ -104,7 +106,7 @@ export function projectSessionFamilies(
     return someSession(thread, (session) => normalizeSessionDirectory(session.location?.directory) === worktreeDirectory)
   })
 
-  const sorted = [...projected].sort((left, right) => {
+  projected.sort((left, right) => {
     if (options.sort === "activity") {
       return right.latestUpdated - left.latestUpdated || right.session.id.localeCompare(left.session.id)
     }
@@ -115,7 +117,7 @@ export function projectSessionFamilies(
     const rightLabel = options.getWorktreeLabel(right.session.location?.directory ?? "")
     return leftLabel.localeCompare(rightLabel) || (left.session.title ?? "").localeCompare(right.session.title ?? "")
   })
-  return options.sort === "activity" && options.favoriteIds ? prioritizeActivity(sorted, options.favoriteIds) : sorted
+  return options.sort === "activity" && options.favoriteIds ? prioritizeActivity(projected, options.favoriteIds) : projected
 }
 
 // Search rows are independent leaves: filtering, sorting and selection all use
