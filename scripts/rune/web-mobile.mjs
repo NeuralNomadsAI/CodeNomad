@@ -127,22 +127,31 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
   }
   const inkClip=field=>({...field,height:Math.min(line,field.height)})
   const capture=async clip=>`data:image/png;base64,${(await page.screenshot({clip,scale:'css'})).toString('base64')}`
-  async function glyphMatch(baseline, reference, candidate, startX=0){
-    return imagePage.evaluate(async ([baseline,reference,candidate,startX])=>{
+  async function glyphMatch(baseline, reference, candidate, startX=0, align=0){
+    return imagePage.evaluate(async ([baseline,reference,candidate,startX,align])=>{
       const [a,b,c]=await globalThis.__codenomadReadPngs([baseline,reference,candidate])
-      let referencePixels=0,matched=0,minX=a.width,maxX=0,minY=a.height,maxY=0
+      const glyphs=[]
       for(let i=0;i<a.pixels.length;i+=4){
         const x=i/4%a.width,y=Math.floor(i/4/a.width)
         if(x<startX)continue
         if(![0,1,2].some(k=>Math.abs(a.pixels[i+k]-b.pixels[i+k])>28))continue
-        referencePixels++
-        if(![0,1,2].every(k=>Math.abs(c.pixels[i+k]-b.pixels[i+k])<=36)||
-           ![0,1,2].some(k=>Math.abs(c.pixels[i+k]-a.pixels[i+k])>20))continue
-        minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y)
-        matched++
+        glyphs.push({i,x,y})
       }
-      return {matched,referencePixels,width:maxX-minX+1,height:maxY-minY+1,lastX:maxX}
-    },[baseline,reference,candidate,startX])
+      let best={matched:-1}
+      for(let dy=-align;dy<=align;dy++)for(let dx=-align;dx<=align;dx++){
+        let matched=0,minX=a.width,maxX=0,minY=a.height,maxY=0
+        for(const {i,x,y} of glyphs){
+          if(x+dx<0||x+dx>=c.width||y+dy<0||y+dy>=c.height)continue
+          const at=((y+dy)*c.width+x+dx)*4
+          if(![0,1,2].every(k=>Math.abs(c.pixels[at+k]-b.pixels[i+k])<=36)||
+             ![0,1,2].some(k=>Math.abs(c.pixels[at+k]-a.pixels[i+k])>20))continue
+          minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y)
+          matched++
+        }
+        if(matched>best.matched)best={matched,referencePixels:glyphs.length,width:maxX-minX+1,height:maxY-minY+1,lastX:maxX,dx,dy}
+      }
+      return best
+    },[baseline,reference,candidate,startX,align])
   }
   function looksLikeGlyphs(match){
     return match.matched>=25&&match.matched>=match.referencePixels*0.5&&match.width>=8&&match.height>=4
@@ -267,9 +276,10 @@ export async function mobileInteraction(page, labels, imagePage, theme) {
       const clip=inkClip(field)
       let draftInk
       for(const until=Date.now()+2500;;){
-        draftInk=await glyphMatch(blank,paintedDraft,await capture(clip))
+        // CSS screenshots at fractional DPR can round the two crops differently.
+        draftInk=await glyphMatch(blank,paintedDraft,await capture(clip),0,2)
         if(looksLikeGlyphs(draftInk))break
-        assert(Date.now()<until,'The resized field must paint the known draft, not only a background')
+        assert(Date.now()<until,`The resized field must paint the known draft: ${JSON.stringify(draftInk)}`)
       }
       assert(!looksLikeGlyphs(await glyphMatch(blank,paintedDraft,blank)),'A field without draft text must fail')
       assert(button?.y>=top && button?.y+button?.height<=bottom+1,'Send must stay within the smaller viewport')
