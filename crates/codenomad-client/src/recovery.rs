@@ -202,6 +202,7 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Opened(e)) if e == epoch => {
                 opened = true;
+                attempts = 0;
                 publish(&out, &wake, Event::AgentHint(true)).await;
                 dirty = true;
                 parked = false;
@@ -519,7 +520,6 @@ pub(crate) async fn run_with_reading(
                             .is_some_and(|t| t.provenance == TextProvenance::Closed)
                     });
                     fence = stamp;
-                    attempts = 0;
                     connection_lost = false;
                     dirty = false;
                     initial = false;

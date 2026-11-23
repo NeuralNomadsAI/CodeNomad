@@ -19,7 +19,7 @@ const session='ses_recovery_synthetic'
 const store=new FixtureStore(600)
 const nativeStreams=new Set(),proxyStreams=new Set()
 const stats={pages:0,latestReads:0,prompts:0,transportConnections:0,nativeConnections:0,blockedPages:0,stalePages:0}
-let blockOlder=false,staleOlder=false,holdWindow=false,hiddenPermission=false,recoveredPermission=false,liveRow,liveText,busy=0,idle=1
+let blockOlder=false,staleOlder=false,holdWindow=false,hiddenPermission=false,recoveredPermission=false,afterCutsPermission=false,liveRow,liveText,busy=0,idle=1
 const permission={id:'permission-suspended',sessionID:session,action:'read',resources:['synthetic.txt'],message:'Permission sent while hidden'}
 if(suspend)Object.assign(stats,{heldReadStarted:0,heldReadCancelled:0,aroundReads:0,gapPermissionReads:0})
 const record=()=>({id:session,projectID:'global',location:{directory:project},time:{created:1,busy,idle}})
@@ -43,7 +43,8 @@ const native=createServer(async(req,res)=>{
   if(url.pathname===`/api/session/${session}`)return json({data:record()})
   if(suspend&&url.pathname===`/api/session/${session}/permission`){
     if(recoveredPermission&&stats.nativeConnections>=2)stats.gapPermissionReads++
-    return json({data:[...(hiddenPermission?[permission]:[]),...(recoveredPermission?[{...permission,id:'permission-during-gap'}]:[])]})
+    return json({data:[...(hiddenPermission?[permission]:[]),...(recoveredPermission?[{...permission,id:'permission-during-gap'}]:[]),
+      ...(afterCutsPermission?[{...permission,id:'permission-after-reopens'}]:[])]})
   }
   if(suspend&&(url.pathname===`/api/session/${session}/form`||url.pathname==='/api/model'))return json({data:[]})
   if(url.pathname==='/api/plugin')return json({location:{directory:project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
@@ -98,6 +99,11 @@ try{
       if(action==='permission-during-gap'){
         for(const stream of nativeStreams)stream.destroy()
         recoveredPermission=true
+      }
+      if(action==='cut-observer')cutTransport()
+      if(action==='permission-after-reopens'){
+        afterCutsPermission=true
+        emit('permission.asked',{permissionID:'permission-after-reopens',action:permission.action,resources:permission.resources})
       }
       if(action==='stale-older')staleOlder=true
       if(action==='transport-cut'){
@@ -160,7 +166,7 @@ try{
   if(suspend){
     assert.equal(stats.heldReadStarted,1);assert.equal(stats.heldReadCancelled,1)
     assert.equal(stats.aroundReads,1);assert.equal(stats.prompts,0)
-    assert.equal(stats.transportConnections,1)
+    assert.equal(stats.transportConnections,8)
     assert(stats.nativeConnections>=2)
   }else{
     assert.equal(stats.blockedPages,1);assert.equal(stats.stalePages,1)
