@@ -48,6 +48,43 @@ fn publishes_a_verified_complete_row_with_utf16_offsets() {
         panic!("summary directory");
     };
     assert_eq!(rows[0].objective, "😀");
+    assert_eq!(rows[0].coordinator_session_id, "ses_one");
+}
+
+#[test]
+fn reads_the_servers_nonempty_cleanup_projection() {
+    // Output of projectMissionCleanups(events("pending", 1)) from cleanup-projection.test.ts.
+    const ROW: &str = r#"{"missionID":"pending","deletionID":"pending-delete","requestID":"request-pending","expectedRevision":4,"deleteManagedSessions":true,"objective":"Latest objective","removed":0,"retained":0,"pending":1,"reasons":[],"createdAt":1.2}"#;
+    let mut read = reader()
+        .backend
+        .mission_cleanups(Some("project"), 0, None)
+        .unwrap();
+    let page = read
+        .accept(json!({
+            "available": true, "version": 1, "projectID": "project", "source": "cleanups",
+            "discardedEvents": 0, "controlUnavailable": false,
+            "notificationUnavailable": false, "cleanupUnavailable": false,
+            "window": {"order": ORDER, "offset": 0, "end": 1, "total": 1},
+            "page": {
+                "digest": "9FZPnco2qtddMIj1YpB-RcirZ_1Xpjwn71NrXFoZMkU", "total": 1,
+                "pieces": [{"index": 0, "offset": 0, "characters": ROW.len(), "text": ROW}]
+            }
+        }))
+        .unwrap()
+        .unwrap();
+    let DirectoryRows::Cleanups(rows) = page.rows else {
+        panic!("cleanup directory");
+    };
+    let cleanup = &rows[0];
+    assert_eq!(
+        (
+            &*cleanup.mission_id,
+            &*cleanup.deletion_id,
+            &*cleanup.request_id
+        ),
+        ("pending", "pending-delete", "request-pending")
+    );
+    assert_eq!(cleanup.pending, 1);
 }
 
 #[test]
