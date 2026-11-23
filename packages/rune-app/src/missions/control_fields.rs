@@ -1,5 +1,8 @@
 use super::{Gesture, Panel, Source, detail::read_window, lifecycle_view::Act};
-use crate::{State, platform, strings::t};
+use crate::{
+    State, platform,
+    strings::{locale, t},
+};
 use codenomad_client::{
     Receiver, bounded,
     history::Result,
@@ -7,8 +10,9 @@ use codenomad_client::{
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, git_panel as theme,
+    Space, TextRole, catalogue, git_panel as theme,
     layout::{self, Layout},
+    markdown,
 };
 
 #[derive(Default)]
@@ -18,11 +22,75 @@ pub(super) struct Fields {
     shown: Option<ControlPage>,
     flight: Option<Receiver<Result<ControlPage>>>,
     failed: Option<u64>,
+    receipt: Option<ReceiptView>,
+}
+
+const RECEIPT_BYTES: usize = 12 * 1024;
+
+struct ReceiptView {
+    id: String,
+    starts: Vec<usize>,
+    page: usize,
+}
+
+impl ReceiptView {
+    fn new(id: String, source: &str) -> Self {
+        let mut starts = vec![0];
+        while let Some(&last) = starts.last() {
+            if source.len() - last <= RECEIPT_BYTES {
+                break;
+            }
+            let mut next = last + RECEIPT_BYTES;
+            while !source.is_char_boundary(next) {
+                next -= 1;
+            }
+            starts.push(next);
+        }
+        Self {
+            id,
+            starts,
+            page: 0,
+        }
+    }
+
+    fn text<'a>(&self, source: &'a str) -> &'a str {
+        source
+            .get(
+                self.starts[self.page]
+                    ..self
+                        .starts
+                        .get(self.page + 1)
+                        .copied()
+                        .unwrap_or(source.len()),
+            )
+            .unwrap_or_default()
+    }
 }
 
 impl Fields {
     pub fn cancel(&mut self) {
         *self = Self::default();
+    }
+
+    pub fn show_receipt(&mut self, id: String, page: Option<usize>) {
+        if self.flight.is_some() {
+            return;
+        }
+        let Some(receipt) = self.shown.as_ref().and_then(|shown| {
+            shown
+                .rows
+                .iter()
+                .filter_map(|row| row.receipt.as_ref())
+                .find(|row| row.id == id)
+        }) else {
+            return;
+        };
+        match (self.receipt.as_mut().filter(|open| open.id == id), page) {
+            (Some(open), Some(page)) if page < open.starts.len() => open.page = page,
+            (Some(_), None) => self.receipt = None,
+            (None, None) => self.receipt = Some(ReceiptView::new(id, &receipt.json)),
+            _ => {}
+        }
     }
 
     fn poll(&mut self, revision: Option<u64>) -> bool {
@@ -39,6 +107,7 @@ impl Fields {
                 Ok(page) => {
                     self.failed = None;
                     self.shown = Some(page);
+                    self.receipt = None;
                 }
                 Err(_) => {}
             }
@@ -161,7 +230,64 @@ pub(super) fn view(fields: &Fields, control: &ControlReceipt, source: &Source, a
                 } else {
                     row.session.clone()
                 };
-                out = out.child(text(label).text_role(TextRole::Small).wrap_anywhere());
+                if let Some(receipt) = &row.receipt {
+                    let id = &receipt.id;
+                    let open = fields.receipt.as_ref().filter(|open| &open.id == id);
+                    let detail = |label: &str, page, key: String| {
+                        let (source, id, revision) = (source.clone(), id.clone(), fields.revision);
+                        layout::button_tx(
+                            label,
+                            fields.flight.is_some(),
+                            move |state: &mut State, tx| {
+                                act(
+                                    state,
+                                    &source,
+                                    Gesture::ReceiptDetails(id.clone(), revision, page),
+                                );
+                                tx.instant();
+                            },
+                        )
+                        .key(key)
+                    };
+                    out = out.child(
+                        detail(&label, None, format!("receipt-{id}")).expanded(open.is_some()),
+                    );
+                    if let Some(open) = open {
+                        out = out.child(markdown::code(
+                            open.text(&receipt.json),
+                            "json",
+                            false,
+                            true,
+                        ));
+                        if open.starts.len() > 1 {
+                            let status = catalogue::format(
+                                locale(),
+                                "missionsPanel.pages.rawPage",
+                                &[
+                                    ("page", &(open.page + 1).to_string()),
+                                    ("total", &open.starts.len().to_string()),
+                                ],
+                            );
+                            out = out.child(text(status).text_role(TextRole::Small).role("status"));
+                            if let Some(previous) = open.page.checked_sub(1) {
+                                out = out.child(detail(
+                                    t("missionsPanel.pages.previous"),
+                                    Some(previous),
+                                    format!("receipt-prev-{id}"),
+                                ));
+                            }
+                            if open.page + 1 < open.starts.len() {
+                                out = out.child(detail(
+                                    t("missionsPanel.pages.next"),
+                                    Some(open.page + 1),
+                                    format!("receipt-next-{id}"),
+                                ));
+                            }
+                        }
+                    }
+                } else {
+                    out = out.child(text(label).text_role(TextRole::Small).wrap_anywhere());
+                }
             }
             if fields.flight.is_none()
                 && fields.failed.is_none()
@@ -189,4 +315,23 @@ pub(super) fn view(fields: &Fields, control: &ControlReceipt, source: &Source, a
         }
     }
     out
+}
+
+#[cfg(test)]
+#[test]
+fn receipt_display_pages_reassemble_the_original_without_splitting_unicode() {
+    let source = format!(
+        "{}🦀{}",
+        "a".repeat(RECEIPT_BYTES - 1),
+        "é".repeat(RECEIPT_BYTES)
+    );
+    let mut view = ReceiptView::new("receipt".into(), &source);
+    let mut restored = String::new();
+    for page in 0..view.starts.len() {
+        view.page = page;
+        let text = view.text(&source);
+        assert!(text.len() <= RECEIPT_BYTES);
+        restored.push_str(text);
+    }
+    assert_eq!(restored, source);
 }

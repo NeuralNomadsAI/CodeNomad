@@ -48,6 +48,7 @@ pub(crate) enum Gesture {
     StopDialog(u64),
     ConfirmStop(bool),
     ReadField(codenomad_client::missions::ControlPart, u64),
+    ReceiptDetails(String, u64, Option<usize>),
 }
 
 impl Panel {
@@ -87,6 +88,12 @@ impl Panel {
         let request = match gesture {
             Gesture::ReadField(part, offset) => {
                 self.read_control_field(part, offset);
+                return;
+            }
+            Gesture::ReceiptDetails(id, witnessed, page) => {
+                if ready && witnessed == revision {
+                    self.control_fields.show_receipt(id, page);
+                }
                 return;
             }
             Gesture::New(action, graceful, witnessed)

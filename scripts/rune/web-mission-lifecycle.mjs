@@ -7,7 +7,12 @@ export function lifecycleFixture(){
     header:()=>({runState:state,...(control?{control}:{})}),
     rows(part){
       return part==='pending' ? Array.from({length:control.pending},(_,i)=>`ses-pending-${i+1}`)
-        : [{receiptID:'rcpt-unknown',sessionID:'ses-unknown',acknowledgementState:'unknown'}]
+        : [{receiptID:'rcpt-unknown',sessionID:'ses-unknown',acknowledgementState:'unknown'},
+          {receiptID:'rcpt-known',sessionID:'ses-known',acknowledgementState:'known',nativeAcknowledgement:{
+            missionID:'gamma',operationID:control.id,sessionID:'ses-known',action:control.action,disposition:'start-admitted',
+            admission:{id:'inb-recorded',sessionID:'ses-known',type:'synthetic',delivery:'queue',
+              time:{created:1},payload:{text:'Resume the Mission',metadata:{}}},
+          }}]
     },
     async reply(route,revision,publish){
       const input=route.request().postDataJSON()
@@ -35,7 +40,7 @@ export function lifecycleFixture(){
         completedRevision:revision+1,receipts:action==='pause'?0:1,unconfirmedReceipts:0,partialDescendants:0,
         ...(graceful?{graceful:true}:{})}
       if(action==='start'){
-        control={...control,pending:51,unconfirmedReceipts:1}
+        control={...control,pending:51,receipts:2,unconfirmedReceipts:1}
         delete control.completedRevision
         publish(revision+1)
         await route.fulfill({status:503,json:{code:'control-pending'}})
@@ -86,9 +91,18 @@ export async function checkLifecycle(page,messages,calls){
   await act(resume)
   await button(check).waitFor()
   await enabled(button(check))
-  const receipts=page.getByRole('button',{name:'control.receipts (1)',exact:true})
+  const receipts=page.getByRole('button',{name:'control.receipts (2)',exact:true})
+  await enabled(receipts)
   await receipts.dispatchEvent('click')
-  await page.getByText(`ses-unknown · ${messages['missions.control.activity.state.unknown']}`,{exact:true}).waitFor()
+  const unknown=page.getByRole('button',{name:`ses-unknown · ${messages['missions.control.activity.state.unknown']}`,exact:true})
+  await enabled(unknown)
+  await unknown.dispatchEvent('click')
+  await page.getByText(/"acknowledgementState":"unknown"/).waitFor()
+  const recorded=page.getByRole('button',{name:'ses-known',exact:true})
+  await enabled(recorded)
+  await recorded.dispatchEvent('click')
+  await page.getByText(/"id":"inb-recorded"/).waitFor()
+  await page.getByText(/"acknowledgementState":"unknown"/).waitFor({state:'detached'})
   await page.getByRole('button',{name:'control.pending (51)',exact:true}).dispatchEvent('click')
   await page.getByText('ses-pending-1',{exact:true}).waitFor()
   const fields = page.getByRole('region',{name:messages['missionsPanel.pages.fields'],exact:true})

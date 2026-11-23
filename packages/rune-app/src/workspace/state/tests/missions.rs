@@ -5,6 +5,7 @@ use serde_json::json;
 const ORDER: &str = "Z9o1qhx0QOJajoRR0hwuPNcxx5rwfCUjOU-J6kgtbPE";
 const HEADER: &str = r#"{"root":{"version":1,"id":"alpha","projectID":"fixture-project","projectCanonical":"/repo","title":"Owned mission","excerpt":"Owned mission objective 🦀","template":"custom","status":"active","coordinatorSessionId":"ses_fixture","revision":3,"createdAt":1,"updatedAt":3,"historyTruncated":false,"bodies":{}},"collections":{"actors":{"characters":2,"digest":"XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc","total":0,"array":true},"history":{"characters":2,"digest":"XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc","total":0,"array":true},"reports":{"characters":2,"digest":"XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc","total":0,"array":true}},"tasks":{"page":{"order":"Z9o1qhx0QOJajoRR0hwuPNcxx5rwfCUjOU-J6kgtbPE","offset":0,"end":1,"total":1,"reports":0,"counts":{"ready":1}},"pins":[],"reportPins":[],"version":"Z9o1qhx0QOJajoRR0hwuPNcxx5rwfCUjOU-J6kgtbPE"}}"#;
 const TASKS: &str = r#"{"taskPage":{"order":"Z9o1qhx0QOJajoRR0hwuPNcxx5rwfCUjOU-J6kgtbPE","offset":0,"end":1,"total":1,"reports":0,"counts":{"ready":1}},"tasks":[{"id":"task-one","key":"task-one","title":"Owned task","role":"specialist","status":"ready","blockedBy":[],"order":0,"createdAt":1,"updatedAt":3,"dependents":0,"reportCount":0,"outstandingExecution":false}],"reports":[]}"#;
+const RECEIPT: &str = r#"{"receiptID":"evt-actor","sessionID":"ses_fixture","acknowledgementState":"known","nativeAcknowledgement":{"missionID":"alpha","operationID":"op-fixture","sessionID":"ses_fixture","action":"pause","disposition":"interrupt-observed","interrupt":{"interrupted":true},"cancellations":[],"descendants":{"observed":2,"interrupted":1,"cancelled":0,"unconfirmed":1,"complete":false,"sessions":["ses-child-quiet","ses-child-pending"]}}}"#;
 
 fn detail_page(source: &str, text: &str, digest: &str) -> serde_json::Value {
     let mut page = json!({
@@ -68,6 +69,16 @@ fn project_observer_qualifies_changes_without_a_conversation_id() {
 fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
     crate::platform::block_on(async {
         let http = test_http::Http::new().await;
+        let backend = http.backend.clone();
+        let identity = tokio::spawn(async move { backend.attest_server().await });
+        let meta = http.accept().await;
+        assert!(meta.header.starts_with("GET /api/meta "));
+        meta.reply(200, json!({"apiContract":1,"serverId":"fixture-server"}))
+            .await;
+        assert_eq!(
+            test_http::wait(identity).await.unwrap().unwrap(),
+            "fixture-server"
+        );
         let (wake, signal) = bounded(8);
         let mut s = init();
         crate::gallery::shell::fixture(&mut s);
@@ -173,13 +184,18 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
             header.body,
             json!({"source":"mission","missionID":"alpha","header":true})
         );
+        let header_text = format!(
+            "{}{}",
+            HEADER.strip_suffix('}').unwrap(),
+            r#","control":{"id":"op-fixture","requestID":"pause-request","action":"pause","expectedRevision":2,"completedRevision":3,"pending":0,"receipts":1,"unconfirmedReceipts":0,"partialDescendants":1}}"#
+        );
         header
             .reply(
                 200,
                 detail_page(
                     "mission",
-                    HEADER,
-                    "uDS7g8VEb6PKLiSr2L9qKE-T8fVcL6rd5FuClby5F20",
+                    &header_text,
+                    "sroHj1qVqLjPp9aSmuG0e5eUKhRU1N7fV1TWCHtG2ZA",
                 ),
             )
             .await;
@@ -220,6 +236,31 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
             .await;
         test_http::wait(signal.recv()).await.unwrap();
         tick(&mut rt);
+        click(&mut rt, "control.receipts");
+        let receipts = http.accept().await;
+        assert_eq!(
+            receipts.body,
+            json!({"source":"mission","missionID":"alpha","field":"control","part":"receipts","window":{"offset":0}})
+        );
+        let digest = "rP23EDXdvL_epC0d9GiNxzXO5BekTQKgEj_v548s3pA";
+        let mut page = detail_page("mission", RECEIPT, digest);
+        page.as_object_mut().unwrap().remove("header");
+        page["field"] = json!("control");
+        page["part"] = json!("receipts");
+        page["window"] = json!({"order":digest,"offset":0,"end":1,"total":1});
+        receipts.reply(200, page).await;
+        test_http::wait(signal.recv()).await.unwrap();
+        tick(&mut rt);
+        let has_descendant = |rt: &rune::Runtime<State>| {
+            rt.accessibility_json()
+                .to_string()
+                .contains("ses-child-pending")
+        };
+        assert!(!has_descendant(&rt));
+        click(&mut rt, "receipt-evt-actor");
+        assert!(has_descendant(&rt));
+        click(&mut rt, "receipt-evt-actor");
+        assert!(!has_descendant(&rt));
         let ui = rt.state.workspace.as_ref().unwrap();
         assert!(
             matches!(&ui.entries[ui.active].saved,Tab::Workspace(w) if w.view.selected_mission.as_deref()==Some("alpha"))

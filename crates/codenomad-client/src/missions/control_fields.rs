@@ -21,6 +21,12 @@ pub struct ControlPage {
 pub struct ControlRow {
     pub session: String,
     pub known: bool,
+    pub receipt: Option<ReceiptContent>,
+}
+
+pub struct ReceiptContent {
+    pub id: String,
+    pub json: String,
 }
 
 #[derive(Deserialize)]
@@ -72,10 +78,11 @@ impl Backend {
                     return Err("invalid control count".into());
                 }
                 let mut seen = HashSet::new();
+                let mut receipt_ids = HashSet::new();
                 let mut rows = Vec::new();
                 for text in page.rows {
-                    let (session, known) = match part {
-                        ControlPart::Pending => (serde_json::from_str(&text)?, false),
+                    let (session, known, receipt) = match part {
+                        ControlPart::Pending => (serde_json::from_str(&text)?, false, None),
                         ControlPart::Receipts => {
                             let receipt: Receipt = serde_json::from_str(&text)?;
                             let known = match (
@@ -97,19 +104,67 @@ impl Backend {
                                 }
                                 _ => return Err("invalid Mission control receipt".into()),
                             };
-                            if !panel_id(&receipt.receipt_id) {
+                            if !panel_id(&receipt.receipt_id)
+                                || !receipt_ids.insert(receipt.receipt_id.clone())
+                            {
                                 return Err("invalid Mission receipt ID".into());
                             }
-                            (receipt.session_id, known)
+                            (
+                                receipt.session_id,
+                                known,
+                                Some(ReceiptContent {
+                                    id: receipt.receipt_id,
+                                    json: text,
+                                }),
+                            )
                         }
                     };
                     if !panel_id(&session) || !seen.insert(session.clone()) {
                         return Err("invalid Mission control session".into());
                     }
-                    rows.push(ControlRow { session, known });
+                    rows.push(ControlRow {
+                        session,
+                        known,
+                        receipt,
+                    });
                 }
                 Ok(ControlPage { window, rows })
             }),
         })
     }
+}
+
+#[cfg(test)]
+#[test]
+fn receipt_read_preserves_nested_native_evidence_exactly() {
+    use super::codec::digest;
+    let mut backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+    backend.workspace = "workspace".into();
+    let header = serde_json::from_value(json!({
+        "root":{"version":1,"id":"mission","projectID":"project","projectCanonical":"/fixture",
+            "excerpt":"Fixture","template":"custom","status":"active","coordinatorSessionId":"session",
+            "revision":8,"createdAt":1,"updatedAt":1,"historyTruncated":false,"bodies":{}},
+        "collections":{},"tasks":{"page":{"order":"","offset":0,"end":0,"total":0,"counts":{},"reports":0},
+            "pins":[],"reportPins":[],"version":""},
+        "control":{"id":"operation","requestID":"request","action":"pause","expectedRevision":7,
+            "pending":0,"receipts":1,"unconfirmedReceipts":0,"partialDescendants":1}
+    })).unwrap();
+    let evidence = r#"{"receiptID":"receipt","sessionID":"actor","acknowledgementState":"known","nativeAcknowledgement":{"missionID":"mission","operationID":"operation","sessionID":"actor","action":"pause","disposition":"interrupt-observed","descendants":{"complete":false,"unconfirmed":1,"sessions":["child-🦀"]}}}"#;
+    let digest = digest(&[evidence.into()]);
+    let envelope = json!({"available":true,"version":1,"projectID":"project","source":"mission","missionID":"mission",
+        "revision":8,"field":"control","part":"receipts","discardedEvents":0,"controlUnavailable":false,
+        "notificationUnavailable":false,"cleanupUnavailable":false,"window":{"order":digest,"offset":0,"end":1,"total":1},
+        "page":{"digest":digest,"total":1,"pieces":[{"index":0,"offset":0,"characters":evidence.encode_utf16().count(),"text":evidence}]}});
+    let mut read = backend
+        .mission_control_page(&header, ControlPart::Receipts, 0, None)
+        .unwrap();
+    let page = read.accept(envelope.clone()).unwrap().unwrap();
+    assert!(page.rows[0].known);
+    assert_eq!(page.rows[0].receipt.as_ref().unwrap().json, evidence);
+    let mut modified = envelope;
+    modified["page"]["pieces"][0]["text"] = json!(evidence.replace("child-", "wrong-"));
+    let mut read = backend
+        .mission_control_page(&header, ControlPart::Receipts, 0, None)
+        .unwrap();
+    assert!(read.accept(modified).is_err());
 }
