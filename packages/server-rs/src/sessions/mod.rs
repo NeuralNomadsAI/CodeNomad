@@ -4,7 +4,7 @@ pub mod contracts;
 pub mod favorites;
 pub mod history;
 mod history_search;
-mod media;
+pub(crate) mod media;
 pub mod pending;
 pub mod permission_mode;
 pub mod receipts;
