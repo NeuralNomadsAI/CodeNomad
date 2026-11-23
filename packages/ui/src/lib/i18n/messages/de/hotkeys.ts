@@ -1,5 +1,6 @@
 export const hotkeyMessages = {
   "hotkeys.unavailable": "Für diese Aktion gibt es in Rune noch kein konfigurierbares Tastenkürzel.",
+  "hotkeys.reserved": "Dieses Tastenkürzel ist für den Editor reserviert. Wählen Sie eine andere Kombination.",
   "settings.nav.hotkeys": "Tastenkürzel",
   "hotkeys.filter": "Tastenkürzel filtern",
   "hotkeys.resetAll": "Alle zurücksetzen",

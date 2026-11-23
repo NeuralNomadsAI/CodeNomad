@@ -77,8 +77,15 @@ pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
     s.revision += 1;
 }
 
-pub(crate) fn poll_memory_cleanup(s: &mut State, tx: &mut rune::Tx) -> bool {
-    memory::cleanup::poll(s, tx)
+pub(crate) fn poll_window_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
+    let changed = memory::cleanup::poll(s, tx);
+    #[cfg(target_arch = "wasm32")]
+    return changed
+        | s.settings
+            .web
+            .poll_shortcuts(&s.settings.shared.borrow(), tx);
+    #[cfg(not(target_arch = "wasm32"))]
+    changed
 }
 
 pub(crate) fn poll(s: &mut State) -> bool {

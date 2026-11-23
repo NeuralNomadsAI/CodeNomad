@@ -476,6 +476,7 @@
   "hotkeys.empty": "ללא קיצור דרך",
   "hotkeys.filter": "סינון קיצורים",
   "hotkeys.noResults": "לא נמצאו קיצורים.",
+  "hotkeys.reserved": "קיצור זה שמור לעורך. יש לבחור שילוב אחר.",
   "hotkeys.reset": "איפוס",
   "hotkeys.resetAll": "איפוס הכול",
   "hotkeys.saveFailed": "לא ניתן לשמור את קיצורי המקלדת. נסו שוב.",

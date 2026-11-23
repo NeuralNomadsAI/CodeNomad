@@ -476,6 +476,7 @@
   "hotkeys.empty": "Sin atajo",
   "hotkeys.filter": "Filtrar atajos",
   "hotkeys.noResults": "No se encontraron atajos.",
+  "hotkeys.reserved": "El editor reserva este atajo. Elige otra combinación.",
   "hotkeys.reset": "Restablecer",
   "hotkeys.resetAll": "Restablecer todos",
   "hotkeys.saveFailed": "No se pudieron guardar los atajos. Inténtalo de nuevo.",

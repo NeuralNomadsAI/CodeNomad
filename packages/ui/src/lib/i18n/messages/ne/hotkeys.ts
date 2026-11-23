@@ -1,5 +1,6 @@
 export const hotkeyMessages = {
   "hotkeys.unavailable": "यो कार्यको सर्टकट Rune मा अझै कन्फिगर गर्न सकिँदैन।",
+  "hotkeys.reserved": "यो सर्टकट सम्पादकका लागि आरक्षित छ। अर्को संयोजन छान्नुहोस्।",
   "settings.nav.hotkeys": "किबोर्ड सर्टकटहरू",
   "hotkeys.filter": "सर्टकटहरू छान्नुहोस्",
   "hotkeys.resetAll": "सबै रिसेट गर्नुहोस्",

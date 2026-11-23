@@ -476,6 +476,7 @@
   "hotkeys.empty": "No shortcut",
   "hotkeys.filter": "Filter shortcuts",
   "hotkeys.noResults": "No shortcuts found.",
+  "hotkeys.reserved": "The editor reserves this shortcut. Choose another combination.",
   "hotkeys.reset": "Reset",
   "hotkeys.resetAll": "Reset all",
   "hotkeys.saveFailed": "Could not save keyboard shortcuts. Try again.",

@@ -476,6 +476,7 @@
   "hotkeys.empty": "未设置快捷键",
   "hotkeys.filter": "筛选快捷键",
   "hotkeys.noResults": "未找到快捷键。",
+  "hotkeys.reserved": "此快捷键为编辑器保留。请选择其他组合。",
   "hotkeys.reset": "重置",
   "hotkeys.resetAll": "全部重置",
   "hotkeys.saveFailed": "无法保存键盘快捷键。请重试。",

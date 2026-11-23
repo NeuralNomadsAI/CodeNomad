@@ -117,8 +117,9 @@ impl Preferences {
         self.config.shortcuts_pending()
     }
 
-    pub(super) fn shortcuts_failed(&self) -> bool {
-        self.config.shortcuts_failed()
+    pub(super) fn shortcut_failed(&self, id: Option<&'static str>) -> bool {
+        self.config
+            .choice_failed(id.map_or(Choice::ShortcutReset, Choice::Shortcut))
     }
 
     pub(super) fn resetting_shortcuts(&self) -> bool {
