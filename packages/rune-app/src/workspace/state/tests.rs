@@ -68,6 +68,19 @@ fn reopening_a_saved_draft_without_its_files_blocks_every_send() {
     assert!(commands.try_recv().is_err());
     assert_eq!(rt.state.draft.text, "from the attached file");
     assert!(rt.find("keep-draft-text").is_some());
+    rt.update(|s, tx| {
+        s.composer
+            .draft
+            .attach(crate::composer::draft::Attachment::Path(
+                "./other.txt".into(),
+            ));
+        let text = bound(s, &backend("alpha"));
+        s.draft = TextEdit::new(text);
+        s.composer.picker.set_attachments_supported(true);
+        crate::composer::send(s, tx, false);
+    });
+    assert!(rt.state.composer.attachments_missing);
+    assert!(commands.try_recv().is_err());
 }
 
 #[test]

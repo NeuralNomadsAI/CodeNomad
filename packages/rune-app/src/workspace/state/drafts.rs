@@ -60,7 +60,7 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
         return String::new();
     };
     saved.active_session_id = Some(backend.session.clone());
-    s.composer.attachments_missing = saved.attachment_drafts.contains(&backend.session)
+    s.composer.attachments_missing |= saved.attachment_drafts.contains(&backend.session)
         && s.composer.draft.attachments.is_empty();
     let draft = saved
         .drafts
