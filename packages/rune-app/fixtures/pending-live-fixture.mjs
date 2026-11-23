@@ -75,4 +75,4 @@ finally{
     await writeFile(path.join(root,'proof.json'),JSON.stringify(proof,null,2));await writeFile(path.join(root,'rust.log'),rust?.output()??'');await writeFile(path.join(root,'rune.log'),ui?.output()??'')
     console.log(JSON.stringify({result:proof.result,version:proof.version,cases:proof.cases.length,cleaned:proof.cleaned,rustExit:proof.rustExit,root,error:proof.error?.split('\n')[0]}))}
 }
-},{pruning:false})
+})
