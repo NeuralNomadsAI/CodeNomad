@@ -12,6 +12,8 @@ pub(super) struct Message {
     title: String,
     body: String,
     target: Option<Target>,
+    event: Option<String>,
+    error: bool,
 }
 
 pub(crate) fn emit(
@@ -20,13 +22,23 @@ pub(crate) fn emit(
     title: Option<String>,
     body: impl Into<String>,
 ) {
+    emit_outcome(s, category, title, body, false);
+}
+
+pub(crate) fn emit_outcome(
+    s: &mut State,
+    category: Category,
+    title: Option<String>,
+    body: impl Into<String>,
+    error: bool,
+) {
     let source = s
         .screen
         .launcher()
         .and_then(|launcher| launcher.connection.clone())
         .or_else(|| settings::bound_backend(s));
     if let Some(source) = source {
-        enqueue(s, source, category, title, body.into(), None);
+        enqueue(s, source, category, title, body.into(), None, None, error);
     }
 }
 
@@ -37,6 +49,8 @@ pub(super) fn enqueue(
     title: Option<String>,
     body: String,
     target: Option<Target>,
+    event: Option<String>,
+    error: bool,
 ) {
     let body: String = body.trim().chars().take(4096).collect();
     if body.is_empty() {
@@ -57,6 +71,8 @@ pub(super) fn enqueue(
             .collect(),
         body,
         target,
+        event,
+        error,
     });
 }
 
@@ -68,19 +84,25 @@ pub(crate) fn native(
     event: WorkspaceEvent,
 ) {
     match event {
-        WorkspaceEvent::OpenCodeNotice { id, title, body } => {
-            if !claim(s, &target, Category::Opencode, &id) {
-                return;
-            }
+        WorkspaceEvent::OpenCodeNotice {
+            id,
+            title,
+            body,
+            error,
+        } => {
             let mut target = target;
-            target.session.clear();
+            if target.tab.is_some() {
+                target.session.clear();
+            }
             enqueue(
                 s,
                 source,
                 Category::Opencode,
                 title,
                 body,
-                target.tab.is_some().then_some(target),
+                Some(target),
+                Some(id),
+                error,
             );
         }
         WorkspaceEvent::SessionCompacted { id } => {
@@ -91,9 +113,6 @@ pub(crate) fn native(
                 label
             };
             let body = compaction(label);
-            if !claim(s, &target, Category::Sessions, &id) {
-                return;
-            }
             enqueue(
                 s,
                 source,
@@ -101,6 +120,8 @@ pub(crate) fn native(
                 Some(project),
                 body,
                 Some(target),
+                Some(id),
+                false,
             );
         }
         _ => {}
@@ -137,14 +158,31 @@ pub(super) fn poll(s: &mut State) {
         match settings::notification_route(s, &message.source, message.category) {
             ConfirmedRoute::Unavailable => {}
             ConfirmedRoute::Refreshing => s.notifications.messages.push_back(message),
-            ConfirmedRoute::Ready(route, allow_focused) => publish(
-                s,
-                &message.title,
-                &message.body,
-                message.target,
-                route,
-                allow_focused,
-            ),
+            ConfirmedRoute::Ready(mut route, allow_focused) => {
+                route.screen |= message.error;
+                route.history |= message.error;
+                if !route.screen
+                    && !route.history
+                    && (!route.system || !allow_focused && s.notifications.focused())
+                {
+                    continue;
+                }
+                if let (Some(target), Some(id)) = (&message.target, &message.event)
+                    && !claim(s, target, message.category, id)
+                {
+                    continue;
+                }
+                publish(
+                    s,
+                    &message.title,
+                    &message.body,
+                    message.target.filter(|target| {
+                        message.category != Category::Opencode || target.tab.is_some()
+                    }),
+                    route,
+                    allow_focused,
+                );
+            }
         }
     }
 }
@@ -160,12 +198,11 @@ pub(super) fn publish(
     let host = &mut s.notifications;
     if route.history || route.screen {
         host.in_app.push(title, body, target.clone(), &route);
-        (s.wake)();
     }
     if !route.system || !allow_focused && host.focused() {
         return;
     }
-    if let Some(target) = target.filter(|target| !target.session.is_empty()) {
+    if let Some(target) = target {
         host.present(title, body, target, s.wake.clone());
     } else {
         let id = host.next_id;

@@ -58,21 +58,27 @@ impl Backend {
         if !valid_id(&self.session) || self.session.starts_with("ses_cn_schedule_") {
             return None;
         }
-        let record = self
-            .control_get(&format!("session/{}", self.session))
+        let project = self
+            .projects()
+            .await
+            .ok()?
+            .into_iter()
+            .find(|project| project.id == self.workspace)?;
+        let (_, session) = self
+            .bind_session(&project, &self.session, false)
             .await
             .ok()?;
-        let row = &record["data"];
-        (row["id"] == self.session).then(|| {
-            row["title"]
-                .as_str()
-                .map(str::trim)
-                .filter(|title| !title.is_empty())
-                .unwrap_or(&self.session)
-                .chars()
-                .take(256)
-                .collect()
-        })
+        let title = session.title.trim();
+        Some(
+            if title.is_empty() {
+                self.session.as_str()
+            } else {
+                title
+            }
+            .chars()
+            .take(256)
+            .collect(),
+        )
     }
 
     pub async fn notification_session(&self, pending: Option<(bool, &str)>) -> Option<String> {

@@ -15,7 +15,7 @@ pub(super) fn other_notice(event: &Value) -> Option<WorkspaceEvent> {
         "session.compaction.ended" => Some(WorkspaceEvent::SessionCompacted { id: id()? }),
         "tui.toast.show" => {
             let data = &event["data"];
-            data["variant"].as_str()?;
+            let variant = data["variant"].as_str()?;
             let body = data["message"].as_str()?.trim();
             if body.is_empty() {
                 return None;
@@ -26,6 +26,7 @@ pub(super) fn other_notice(event: &Value) -> Option<WorkspaceEvent> {
                     .as_str()
                     .map(|title| title.chars().take(256).collect()),
                 body: body.chars().take(4096).collect(),
+                error: variant == "error",
             })
         }
         _ => None,

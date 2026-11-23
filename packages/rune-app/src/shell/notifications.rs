@@ -1,6 +1,7 @@
 use crate::{State, agent_api::Snapshot, settings::notification_routing};
 pub(crate) use notification_routing::Category;
 use rune::Tx;
+#[cfg(test)]
 use serde_json::Value;
 use std::collections::{HashSet, VecDeque};
 
@@ -13,7 +14,7 @@ pub(crate) use in_app::{
     entry as history_entry, layers as app_layers, measure as measure_notices,
     tick as poll_app_notices,
 };
-pub(crate) use messages::emit;
+pub(crate) use messages::{emit, emit_outcome};
 pub(crate) fn relay_notice(s: &mut State, event: codenomad_client::transport::WorkspaceEvent) {
     if let Some((target, project)) = crate::workspace::notification_target(s)
         && let Some(source) = crate::settings::bound_backend(s)
@@ -490,12 +491,13 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             deliver(s, notice);
         }
     }
+    let app_changed = s.notifications.in_app.take_change();
     if s.notifications.routes.is_empty()
         && s.notifications.activation.is_none()
         && s.notifications.click_check.is_none()
         && s.notifications.click_wait.is_none()
     {
-        return false;
+        return app_changed;
     }
     let mut routes = std::mem::take(&mut s.notifications.routes);
     routes.retain(|(_, target, _)| crate::workspace::owns_notification(s, target));
@@ -558,19 +560,20 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let Some((click, mut started)) =
         target.filter(|(click, _)| click.ticket == s.notifications.navigation_ticket())
     else {
-        return false;
+        return app_changed;
     };
     let before = s.workspace.as_ref().map(|ui| ui.active_key().to_owned());
     match crate::workspace::open_notification(s, &click.target, click.ticket, &mut started, tx) {
         Activation::Wait => {
             s.notifications.activation = Some((click, started));
-            before.as_deref() != s.workspace.as_ref().map(|ui| ui.active_key())
+            app_changed || before.as_deref() != s.workspace.as_ref().map(|ui| ui.active_key())
         }
         Activation::Opened => true,
-        Activation::Gone => false,
+        Activation::Gone => app_changed,
     }
 }
 
+#[cfg(test)]
 pub(crate) fn system_allowed(config: Option<&Value>, category: Category, focused: bool) -> bool {
     notification_routing::route(config, category).is_some_and(|route| route.system)
         && (!focused || notification_routing::allow_focused(config))

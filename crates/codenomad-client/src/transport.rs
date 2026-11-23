@@ -15,6 +15,7 @@ pub enum WorkspaceEvent {
         id: String,
         title: Option<String>,
         body: String,
+        error: bool,
     },
     SessionRequest {
         form: bool,

@@ -23,10 +23,12 @@ pub(super) struct Inbox {
     bubbles: VecDeque<(Rc<Record>, Instant)>,
     open: bool,
     viewport: (f32, f32),
+    dirty: bool,
 }
 
 impl Inbox {
     pub(super) fn push(&mut self, title: &str, body: &str, target: Option<Target>, route: &Route) {
+        self.dirty = true;
         let record = Rc::new(Record {
             id: self.next,
             title: title.into(),
@@ -46,6 +48,10 @@ impl Inbox {
                 self.bubbles.pop_back();
             }
         }
+    }
+
+    pub(super) fn take_change(&mut self) -> bool {
+        std::mem::take(&mut self.dirty)
     }
 
     pub(super) fn forget_tab(&mut self, tab: &str) {
@@ -229,6 +235,48 @@ fn card(record: &Record, bubble: bool) -> El {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_bell_opens_history_from_the_keyboard_without_sending_a_system_notice() {
+        let mut s = crate::init();
+        crate::settings::notification_fixture(&s);
+        crate::settings::notification_test_config(
+            &s,
+            serde_json::json!({"settings":{"notificationRouting":{
+                "settings":{"screen":false,"history":false,"system":false}
+            }}}),
+        );
+        s.notifications.record();
+        super::super::emit_outcome(
+            &mut s,
+            super::super::Category::Settings,
+            None,
+            "Recorded failure",
+            true,
+        );
+        super::super::messages::poll(&mut s);
+        assert!(s.notifications.recorded().is_empty());
+        assert_eq!(s.notifications.in_app.unread(), 1);
+        assert_eq!(s.notifications.in_app.bubbles.len(), 1);
+        let mut runtime =
+            rune::Runtime::new(s, crate::view, (900.0, 650.0), rune::Env::new(false, 1.0));
+        runtime.frame(0.0);
+        runtime.update(|_, tx| tx.focus(theme::ANCHOR, true));
+        runtime.frame(0.02);
+        let enter = rune::KeyEvent {
+            key: rune::Key::Enter,
+            mods: rune::Mods::default(),
+        };
+        runtime.key(enter.clone());
+        runtime.key_up(enter);
+        runtime.frame(0.04);
+        assert!(runtime.state.notifications.in_app.open);
+        let tree = runtime.accessibility_json().to_string();
+        assert!(
+            tree.contains("notification-history") && tree.contains("Recorded failure"),
+            "{tree}"
+        );
+    }
 
     #[test]
     fn confirmed_destinations_control_history_and_bubbles_per_window() {

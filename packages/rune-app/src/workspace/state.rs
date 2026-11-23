@@ -496,6 +496,7 @@ fn poll_cached(s: &mut State, ui: &mut Ui, now: Option<f64>, tx: &mut Tx) -> boo
             let awaiting_prompt = s.composer.pending();
             let uncertain_prompt = s.composer.unconfirmed_id().is_some();
             changed |= crate::poll_chat(s, 8);
+            changed |= crate::files::poll_notices(s);
             crate::shell::notifications::collect(s, |s| notification::entry_target(item, s));
             if awaiting_prompt && !s.composer.pending()
                 || uncertain_prompt && s.composer.unconfirmed_id().is_none()

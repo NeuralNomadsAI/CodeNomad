@@ -36,6 +36,8 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         body
     })
     .on_window_focus(shell::notifications::focus_changed)
-    .on_layout_tx(shell::notifications::measure_notices)
-    .on_layout_tx(chat::ToolDiffPreferences::layout)
+    .on_layout_tx(|s, bounds, tx| {
+        chat::ToolDiffPreferences::layout(s, bounds, tx);
+        shell::notifications::measure_notices(s, bounds, tx);
+    })
 }

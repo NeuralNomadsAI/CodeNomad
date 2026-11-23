@@ -185,16 +185,16 @@ pub(super) fn poll(s: &mut State) {
                 }
                 Delivery::Suppressed => {}
                 Delivery::Body(..) if cue.category == Category::Sessions => {
-                    if super::messages::claim(s, &cue.target, cue.category, &cue.id) {
-                        super::messages::enqueue(
-                            s,
-                            cue.backend,
-                            cue.category,
-                            Some(cue.project),
-                            super::messages::compaction(&label),
-                            Some(cue.target),
-                        );
-                    }
+                    super::messages::enqueue(
+                        s,
+                        cue.backend,
+                        cue.category,
+                        Some(cue.project),
+                        super::messages::compaction(&label),
+                        Some(cue.target),
+                        Some(cue.id),
+                        false,
+                    );
                 }
                 Delivery::Body(..) => deliver(
                     s,

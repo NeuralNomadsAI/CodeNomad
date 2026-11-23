@@ -24,9 +24,10 @@ pub fn bell<S: 'static>(
         .build(kit(layout::dark()))
         .on_key(super::enter_action(invoke))
         .key(ANCHOR);
-    row().center_y().child(button).children(
-        unread.map(|(count, label)| text(count).text_role(TextRole::Caption).label(label)),
-    )
+    row()
+        .center_y()
+        .child(button)
+        .children(unread.map(|(count, label)| text(count).text_role(TextRole::Small).label(label)))
 }
 
 pub fn record(title: &str, body: &str, toolbar: El, live: bool) -> El {
@@ -37,7 +38,7 @@ pub fn record(title: &str, body: &str, toolbar: El, live: bool) -> El {
         .fill(tokens(layout::dark()).color("surface-overlay"))
         .child(text(title).text_role(TextRole::Button).wrap_anywhere())
         .child(if live {
-            text(body).wrap_anywhere().role("status")
+            text(body).wrap_anywhere().max_lines(5).role("status")
         } else {
             text(body).wrap_anywhere()
         })
@@ -69,7 +70,7 @@ pub fn history<S: 'static>(
         .fill(t.color("surface-overlay"))
         .pad(Space::Sm)
         .separate(Space::Sm)
-        .w((viewport.0 - inset * 2.0).max(0.0).min(360.0))
+        .w((viewport.0 - inset * 2.0).max(0.0).min(380.0))
         .child(text(label).text_role(TextRole::Button).role("heading"))
         .child(toolbar)
         .child(

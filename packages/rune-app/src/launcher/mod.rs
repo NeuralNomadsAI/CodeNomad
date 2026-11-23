@@ -381,8 +381,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.error = Some(key);
             if matches!(key, "rune.restore_error" | "rune.open_error") {
-                use crate::shell::notifications::{Category, emit};
-                emit(s, Category::Projects, None, crate::strings::t(key));
+                use crate::shell::notifications::{Category, emit_outcome};
+                emit_outcome(s, Category::Projects, None, crate::strings::t(key), true);
             }
             #[cfg(target_arch = "wasm32")]
             {
