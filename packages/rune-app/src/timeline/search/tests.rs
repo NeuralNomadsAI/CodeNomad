@@ -1,6 +1,7 @@
 use super::*;
 use codenomad_client::search::{Hit, Kind};
 use rune::{Cx, El, Env, Mods, Runtime};
+use rune_theme_codenomad::layout::Layout;
 
 fn hit(session: &str, message: &str, kind: Kind, part: u64) -> Hit {
     Hit {
@@ -129,9 +130,55 @@ fn preview_selection_revokes_a_previous_distant_jump_and_keeps_the_broker_excerp
 }
 
 fn view(s: &State, cx: &mut Cx<State>) -> El {
-    rune_theme_codenomad::layout::render(cx, |_| {
-        rune::col().children(trigger(s)).children(panel(s))
+    rune_theme_codenomad::layout::render(cx, |cx| {
+        let mut overlays = Vec::new();
+        super::overlay(s, cx, &mut overlays);
+        rune_theme_codenomad::layout::with_overlays(
+            rune::col().full_width().full_height().children(trigger(s)),
+            overlays,
+        )
+        .key(super::HOST)
     })
+}
+
+#[test]
+fn the_toolbar_drags_the_search_window_and_resize_keeps_its_close_button_visible() {
+    let mut s = crate::init();
+    let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    backend.session = "here".into();
+    super::super::observe(&mut s, &crate::transport::Event::Connected(backend));
+    let mut rt = Runtime::new(s, view, (900., 600.), Env::new(false, 1.));
+    let settle = |rt: &mut Runtime<State>| {
+        for _ in 0..12 {
+            rt.frame(0.016);
+        }
+    };
+    settle(&mut rt);
+    rt.update(|s, _| state(s).open = true);
+    settle(&mut rt);
+    let before = rt.presented("history-search").unwrap().0;
+    let (x, y) = rt.find("history-search-drag").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_move(x + 40., y + 80.);
+    rt.frame(0.016);
+    rt.pointer_up(x + 40., y + 80.);
+    settle(&mut rt);
+    let dragged = rt.presented("history-search").unwrap().0;
+    let model = state(&mut rt.state);
+    assert!(
+        dragged[0] > before[0] + 30. && dragged[1] > before[1] + 70.,
+        "before={before:?} after={dragged:?} frame={:?} position={:?}",
+        model.frame.0.get(),
+        model.position,
+    );
+    rt.set_viewport((390., 300.), 1.);
+    settle(&mut rt);
+    let [x, y, w, h] = rt.presented("history-search-close").unwrap().0;
+    assert!(
+        x >= 0. && y >= 0. && x + w <= 390. && y + h <= 300.,
+        "close bounds={:?}",
+        [x, y, w, h]
+    );
 }
 
 #[test]

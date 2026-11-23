@@ -3,7 +3,7 @@ mod preview;
 #[cfg(test)]
 mod tests;
 mod view;
-pub(crate) use view::{panel, trigger};
+pub(crate) use view::{HOST, overlay, trigger};
 
 use crate::{State, history::Result, platform};
 use codenomad_client::{
@@ -27,12 +27,24 @@ enum Message {
     Complete(Result<Ranked>),
 }
 
+struct Frame(rune_theme_codenomad::layout::DrawnRect);
+
+impl Default for Frame {
+    fn default() -> Self {
+        Self(rune_theme_codenomad::layout::DrawnRect::new([0.; 4]))
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Search {
     open: bool,
     query: TextEdit,
     text: String,
     ranked: bool,
+    scope_open: bool,
+    frame: Frame,
+    position: Option<[f32; 2]>,
+    drag: Option<([f32; 2], Option<[f32; 2]>)>,
     technical: bool,
     due: Option<f64>,
     cursor: Option<String>,
@@ -102,6 +114,9 @@ pub(super) fn retry_selected(s: &mut State, tx: &mut Tx) {
 
 pub(crate) fn keys(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if event.key == Key::Escape && state(s).open {
+        if std::mem::take(&mut state(s).scope_open) {
+            return true;
+        }
         close(s);
         tx.focus("history-search-toggle", true);
         return true;

@@ -11,13 +11,34 @@ export async function historySearch(page, messages) {
     && (route==='window'||response.request().postDataJSON()?.query==='Existing'))
   const [literal]=await Promise.all([read('query'),input.fill('Existing')])
   assert(literal.ok(),`Literal broker status ${literal.status()}`)
+  await search.getByRole('button',{name:'Existing answer',exact:true}).waitFor()
+  const title=search.getByText(messages['messageSection.search.ariaLabel'],{exact:true})
+  const start=await title.boundingBox()
+  assert(start)
+  await page.mouse.move(start.x+8,start.y+start.height/2)
+  await page.mouse.down()
+  // Move the window away from the transcript area sampled for active-match ink.
+  const height=page.viewportSize().height
+  await page.mouse.move(start.x+48,height-20,{steps:5})
+  await page.mouse.up()
+  await title.evaluate((element,start)=>new Promise((resolve,reject)=>{
+    const until=performance.now()+3000
+    const sample=now=>{
+      if(element.getBoundingClientRect().top>start+80)resolve()
+      else if(now>=until)reject(Error('Dragging the toolbar must move the search window'))
+      else requestAnimationFrame(sample)
+    }
+    requestAnimationFrame(sample)
+  }),start.y)
   let windows=0
   const count=request=>{if(request.url().endsWith('/session-history/window'))windows++}
   page.on('request',count)
   try{
     await press(search,'Existing answer')
     assert.equal(windows,0,'A resident result needs no window')
-    await Promise.all([read('query'),press(search,'history.technical')])
+    const technical=search.getByRole('checkbox',{name:messages['history.technical'],exact:true})
+    await Promise.all([read('query'),technical.click({force:true})])
+    assert.equal(await technical.getAttribute('aria-checked'),'true')
     await installPngReader(page)
     for(const [hit,body] of [
       ['Existing technical tool match','Found Existing technical tool match'],
@@ -37,7 +58,11 @@ export async function historySearch(page, messages) {
       assert(active,`The active occurrence is painted for ${hit}`)
     }
     assert.equal(windows,0,'Revealing technical matches must also stay local')
-    const [ranked]=await Promise.all([read('ranked'),press(search,'history.workspace')])
+    // Rune exposes the select trigger as a button in the unfocused web mirror.
+    const picker=search.getByRole('button',{name:`${messages['history.scope']}: ${messages['history.session']}`,exact:true})
+    await picker.click({force:true})
+    const workspace=page.getByRole('option',{name:messages['history.workspace'],exact:true})
+    const [ranked]=await Promise.all([read('ranked'),workspace.click({force:true})])
     if(!ranked.ok())assert.fail(`Ranked broker status ${ranked.status()}: ${await ranked.text()}`)
     await search.getByRole('button',{name:'Existing ranked destination',exact:true}).waitFor()
     const first=search.getByRole('button',{name:'Existing ranked destination',exact:true})

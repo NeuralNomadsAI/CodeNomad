@@ -522,9 +522,9 @@ try{
   const origin=await startServer()
   if(web){
     await signIn(origin)
-    if(webTimeline){
+    if(webTimeline||webSearch){
       const config=await http.patch('/api/storage/config/ui',{data:{settings:{showThinkingBlocks:true,systemMessagesVisibility:'expanded'}}})
-      assert(config.ok(),`Configure the timeline fixture: ${await config.text()}`)
+      assert(config.ok(),`Configure the history fixture: ${await config.text()}`)
     }
     const storage=path.join(profile,'browser-storage.json')
     let uiOrigin=origin, paired

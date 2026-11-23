@@ -204,12 +204,78 @@ pub fn panel() -> El {
         .border(1.0, t.color("border-base"))
 }
 
-pub fn floating(panel: El) -> El {
-    let inset = tokens(layout::dark()).space(Space::Md).px();
-    rune::col()
-        .pin(Some(inset), Some(inset), Some(inset), None)
-        .items_center()
-        .child(panel)
+pub fn floating(panel: El, position: Option<[f32; 2]>, host: [f32; 4], height: f32) -> El {
+    let t = tokens(layout::dark());
+    let inset = t.space(Space::Md).px();
+    let [left, top, w, h] = host;
+    if w <= inset * 2.0 || h <= inset * 2.0 {
+        return rune::col()
+            .pin(Some(inset), Some(inset), Some(inset), None)
+            .items_center()
+            .child(panel);
+    }
+    let width = (w - 2.0 * inset).min(38.0 * t.number("font-size-base").px());
+    let available = h - 2.0 * inset;
+    let [x, y] = position.unwrap_or([left + (w - width) / 2.0, top + inset]);
+    panel.w(width).max_h(available).pin(
+        Some((x - left).clamp(inset, w - width - inset)),
+        Some((y - top).clamp(inset, h - height.min(available) - inset)),
+        None,
+        None,
+    )
+}
+
+pub fn close<S: 'static>(label: &str, action: impl Fn(&mut S, &mut rune::Tx) + 'static) -> El {
+    let dark = layout::dark();
+    crate::window_control::close_button(dark, false)
+        .hover(tokens(dark).color("surface-interactive-hover"))
+        .role("button")
+        .focusable(true)
+        .label(label)
+        .on_press_tx(action)
+}
+
+pub fn scope_picker(key: &str, options: &[&str], label: String) -> rune_kit::Select {
+    rune_kit::Select::new(key, options).label(label)
+}
+
+pub fn build_scope(picker: rune_kit::Select, layer: &mut Vec<El>) -> El {
+    picker.build(crate::kit(layout::dark()), layer)
+}
+
+pub fn technical<S: 'static>(checked: bool, label: &str, action: impl Fn(&mut S) + 'static) -> El {
+    rune_kit::Checkbox::new(checked)
+        .label(label)
+        .on_toggle(action)
+        .build(crate::kit(layout::dark()))
+}
+
+pub enum WindowDrag {
+    Start,
+    Move([f32; 2]),
+    End(Option<[f32; 2]>),
+}
+
+pub fn drag_title<S: 'static>(
+    label: &str,
+    drag: impl Fn(&mut S, WindowDrag, &mut rune::Tx) + 'static,
+) -> El {
+    rune::row()
+        .grow(1.0)
+        .min_w(0.0)
+        .center_y()
+        .pad(Space::Xs)
+        .child(rune::text(label).text_role(crate::TextRole::Label))
+        .touch_drags_at_once()
+        .on_drag(move |s, gesture, tx| {
+            let at = [gesture.dx, gesture.dy];
+            let event = match gesture.phase {
+                rune::Phase::Down => WindowDrag::Start,
+                rune::Phase::Move => WindowDrag::Move(at),
+                rune::Phase::Up => WindowDrag::End((!gesture.cancelled()).then_some(at)),
+            };
+            drag(s, event, tx)
+        })
 }
 
 pub fn toggle<S: 'static>(label: &str, press: impl Fn(&mut S, &mut rune::Tx) + 'static) -> El {
@@ -224,6 +290,7 @@ pub fn results() -> El {
     rune::col()
         .w_full()
         .max_h(18.0 * tokens(layout::dark()).number("font-size-base").px())
+        .shrink()
         .scroll(ScrollSpec {
             stick_bottom: false,
         })

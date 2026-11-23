@@ -4,7 +4,7 @@ use crate::{
     strings::{locale, t},
 };
 use codenomad_client::search::{Kind, Ranked};
-use rune::{El, Tx};
+use rune::{Cx, El, Tx};
 use rune_theme_codenomad::{
     TextRole, catalogue, field_kit,
     layout::{self, Layout},
@@ -44,54 +44,107 @@ fn button(s: &State, id: &str, label: &str, f: impl Fn(&mut State, &mut Tx) + 's
     layout::button_tx(t(label), false, screen::action_tx(&s.input_scope, f)).key(id)
 }
 
-pub(crate) fn panel(s: &State) -> Option<El> {
+pub(crate) const HOST: &str = "history-search-host";
+const WINDOW: &str = "history-search";
+
+fn drag(s: &mut State, gesture: search::WindowDrag, tx: &mut Tx) {
+    let model = state(s);
+    if matches!(gesture, search::WindowDrag::Start) {
+        let [x, y, _, _] = model.frame.0.get();
+        model.drag = Some(([x, y], model.position));
+    } else if let Some(([x, y], original)) = model.drag {
+        let delta = match gesture {
+            search::WindowDrag::Start => return,
+            search::WindowDrag::Move(at) => Some(at),
+            search::WindowDrag::End(at) => {
+                model.drag = None;
+                at
+            }
+        };
+        model.position = delta.map(|[dx, dy]| [x + dx, y + dy]).or(original);
+        tx.instant();
+    }
+}
+
+pub(crate) fn overlay(s: &State, cx: &Cx<State>, layers: &mut Vec<El>) {
+    let mut picker = Vec::new();
+    if let Some(panel) = panel(s, &mut picker) {
+        let m = &s.transcript_display.timeline.search;
+        let host = cx.window_layout(HOST).unwrap_or_default();
+        let height = cx.layout_with(WINDOW, |rect| rect[3]).unwrap_or_default();
+        layers.push(search::floating(panel, m.position, host, height));
+        layers.extend(picker);
+    }
+}
+
+fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
     if !is_open(s) {
         return None;
     }
     let model = &s.transcript_display.timeline.search;
     let scope = s.input_scope.clone();
+    let labels = [t("history.session"), t("history.workspace")];
+    let selected = labels[usize::from(model.ranked)];
+    let choose = scope.clone();
+    let picker = search::scope_picker(
+        "history-search-scope",
+        &labels,
+        format!("{}: {selected}", t("history.scope")),
+    )
+    .current(Some(selected))
+    .open(model.scope_open)
+    .on_toggle(screen::action(&scope, |s| {
+        state(s).scope_open = !state(s).scope_open
+    }))
+    .on_close(screen::action(&scope, |s| state(s).scope_open = false))
+    .on_choose(move |s: &mut State, label, _| {
+        if !s.current_scope(&choose) {
+            return;
+        }
+        let ranked = label == labels[1];
+        state(s).scope_open = false;
+        if ranked != state(s).ranked {
+            super::clear_selection(s);
+            let model = state(s);
+            model.ranked = ranked;
+            model.reset();
+        }
+    });
+    let drag_scope = scope.clone();
+    let title = search::drag_title(
+        t("messageSection.search.ariaLabel"),
+        move |s: &mut State, gesture, tx| {
+            if s.current_scope(&drag_scope) {
+                drag(s, gesture, tx)
+            }
+        },
+    )
+    .key("history-search-drag");
     let preferences = layout::action_row()
+        .child(search::build_scope(picker, layers))
         .child(
-            button(s, "history-search-session", "history.session", |s, _| {
-                super::clear_selection(s);
-                let model = state(s);
-                if model.ranked {
-                    model.ranked = false;
-                    model.reset();
-                }
-            })
-            .checked(!model.ranked),
-        )
-        .child(
-            button(
-                s,
-                "history-search-workspace",
-                "history.workspace",
-                |s, _| {
-                    super::clear_selection(s);
-                    let model = state(s);
-                    if !model.ranked {
-                        model.ranked = true;
-                        model.reset();
-                    }
-                },
-            )
-            .checked(model.ranked),
-        )
-        .child(
-            button(
-                s,
-                "history-search-technical",
-                "history.technical",
-                |s, _| {
+            search::technical(
+                model.technical,
+                t("history.technical"),
+                screen::action(&scope, |s| {
                     super::clear_selection(s);
                     let model = state(s);
                     model.technical = !model.technical;
                     model.reset();
-                },
+                }),
             )
-            .checked(model.technical),
+            .key("history-search-technical"),
         );
+    let toolbar = layout::action_row().child(title).child(
+        search::close(
+            t("messageSection.search.closeAriaLabel"),
+            screen::action_tx(&scope, |s, tx| {
+                close(s);
+                tx.focus("history-search-toggle", true);
+            }),
+        )
+        .key("history-search-close"),
+    );
     let change = screen::action_tx(&scope, super::query_changed);
     let input = layout::hinted_field(&model.query, t("messageSection.search.placeholder"))
         .label(t("messageSection.search.ariaLabel"))
@@ -116,21 +169,15 @@ pub(crate) fn panel(s: &State) -> Option<El> {
         })
         .build(field_kit(layout::dark()))
         .key(super::FIELD);
-    let header = layout::action_row().child(input.remaining()).child(button(
-        s,
-        "history-search-close",
-        "messageSection.search.closeAriaLabel",
-        |s, tx| {
-            close(s);
-            tx.focus("history-search-toggle", true);
-        },
-    ));
+    let header = layout::action_row().child(input.remaining());
     let mut frame = search::panel()
-        .key("history-search")
+        .key(WINDOW)
         .role("region")
         .label_static(t("messageSection.search.ariaLabel"))
-        .child(header)
+        .drawn_rect_into(&model.frame.0)
+        .child(toolbar)
         .child(preferences)
+        .child(header)
         .children(model.page().filter(|p| !p.hits.is_empty()).map(|_| {
             layout::action_row()
                 .child(button(
