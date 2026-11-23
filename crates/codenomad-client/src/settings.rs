@@ -170,22 +170,28 @@ fn setup_status_keeps_restart_decisions_separate_from_update_lookup() {
     }
 }
 
-/// One scope-less subscription per connected host, independent of conversation lifetimes.
+/// Host preferences subscription with an optional workspace filter for Mission events.
 pub struct PreferencesWatch {
     _cancel: crate::Sender<()>,
     closed: crate::Receiver<()>,
     dirty: Arc<AtomicU8>,
     missions: Arc<Mutex<Vec<crate::transport::WorkspaceEvent>>>,
+    project: Option<String>,
 }
 impl PreferencesWatch {
-    pub fn task(mut backend: Backend, wake: Wake) -> (Self, impl std::future::Future<Output = ()>) {
+    pub fn task(
+        mut backend: Backend,
+        project: Option<&str>,
+        wake: Wake,
+    ) -> (Self, impl std::future::Future<Output = ()> + 'static) {
         let (hold, cancel) = crate::bounded(1);
         let (close, closed) = crate::bounded(1);
         let dirty = Arc::new(AtomicU8::new(0));
         let notices = dirty.clone();
         let missions = Arc::new(Mutex::new(Vec::new()));
         let mission_notices = missions.clone();
-        backend.workspace.clear();
+        let project = project.map(str::to_owned);
+        backend.workspace = project.clone().unwrap_or_default();
         backend.session.clear();
         backend.client_id.push_str("-preferences");
         let run = async move {
@@ -253,6 +259,7 @@ impl PreferencesWatch {
                 closed,
                 dirty,
                 missions,
+                project,
             },
             run,
         )
@@ -277,6 +284,10 @@ impl PreferencesWatch {
             reconnect,
             std::mem::take(&mut *self.missions.lock().unwrap()),
         )
+    }
+
+    pub fn project(&self) -> Option<&str> {
+        self.project.as_deref()
     }
 
     pub fn stop(self) -> crate::Receiver<()> {

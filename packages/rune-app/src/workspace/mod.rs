@@ -22,8 +22,8 @@ pub(crate) use state::{
     retry, schedule_catalogue, select, status, strip, toggle_file_wrap, unselect_missing,
 };
 pub(crate) use state::{
-    mission_event, mission_panel, mission_supported, right_panel_tab, set_right_panel_tab,
-    suspend_missions,
+    mission_event, mission_observation_project, mission_panel, mission_supported, right_panel_tab,
+    set_right_panel_tab, suspend_missions,
 };
 
 use crate::composer::draft_storage::SavedParts;

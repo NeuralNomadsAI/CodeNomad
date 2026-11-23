@@ -88,11 +88,14 @@ pub(crate) fn poll(s: &mut State) -> bool {
             }
         }
     }
-    if crate::workspace::has_conversation_stream(s)
-        || s.screen
-            .launcher()
-            .is_some_and(|launcher| launcher.authentication_required)
+    if s.screen
+        .launcher()
+        .is_some_and(|launcher| launcher.authentication_required)
     {
+        shared.unwatch();
+    } else if let Some(project) = crate::workspace::mission_observation_project(s) {
+        shared.watch_project(Some(project), &s.wake);
+    } else if crate::workspace::has_conversation_stream(s) {
         shared.unwatch();
     } else {
         shared.watch(&s.wake);

@@ -209,6 +209,31 @@ pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
     }
 }
 
+pub(crate) fn mission_observation_project(s: &State) -> Option<&str> {
+    // Cached streams belong to other occurrences. Only the current conversation
+    // can carry this occurrence's events in place of the project observer.
+    if !crate::shell::right_panel_visible(s)
+        || right_panel_tab(s) != RightPanelTab::Missions
+        || s.incoming
+            .as_ref()
+            .is_some_and(|stream| !stream.is_closed())
+    {
+        return None;
+    }
+    let ui = s.workspace.as_ref()?;
+    let entry = &ui.entries[ui.active];
+    let backend = s.screen.launcher()?.connection.as_ref()?;
+    if !entry
+        .binding
+        .as_ref()?
+        .client
+        .same_connection(&backend.client)
+    {
+        return None;
+    }
+    Some(entry.project.as_ref()?.id.as_str())
+}
+
 pub fn restore_files_mode(s: &mut State) {
     if let Some(mode) = s
         .workspace
