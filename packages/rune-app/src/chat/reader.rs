@@ -24,7 +24,7 @@ pub(crate) struct Reader {
     pending_scroll: bool,
     gap: bool,
     parked: bool,
-    running: Option<bool>,
+    activity: Option<(bool, u64)>,
 }
 
 impl Reader {
@@ -44,7 +44,7 @@ impl Reader {
                 pending_scroll: false,
                 gap: false,
                 parked: false,
-                running: None,
+                activity: None,
             },
             ReadingLane {
                 demand,
@@ -78,7 +78,11 @@ impl Reader {
     }
 
     pub(crate) fn blocks_send(&self) -> bool {
-        self.hidden || self.resume_pending || self.gap || self.parked || self.running == Some(true)
+        self.hidden
+            || self.resume_pending
+            || self.gap
+            || self.parked
+            || self.running() == Some(true)
     }
 
     pub(crate) fn needs_latest(&self) -> bool {
@@ -117,15 +121,21 @@ impl Reader {
         self.parked = true;
     }
 
-    pub(crate) fn observed_running(&mut self, running: bool) {
-        self.running = Some(running);
+    pub(crate) fn observed_running(&mut self, running: bool, version: u64) {
+        self.activity = Some((running, version));
     }
 
     pub(crate) fn running(&self) -> Option<bool> {
-        self.running
+        self.activity.map(|(running, _)| running)
+    }
+
+    pub(crate) fn activity_after(&self, version: u64) -> bool {
+        self.activity
+            .is_some_and(|(_, observed)| observed > version)
     }
 
     fn reconnecting(&mut self, reading: &Reading, paging: bool) {
+        self.activity = None;
         if !self.hidden && (self.resume_pending || paging) {
             self.resume(self.bookmark(reading));
         }
@@ -150,6 +160,7 @@ pub(crate) fn reconnecting(s: &mut State) {
     if let Some(reader) = &mut s.reader {
         reader.reconnecting(s.transcript_display.reading_mut(), s.paging);
     }
+
     s.paging = false;
 }
 
@@ -176,6 +187,7 @@ pub(crate) fn resume(s: &mut State, tx: &mut Tx) {
 }
 
 pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
+    let covered = crate::files::has_preview(s) || crate::git::has_preview(s);
     if let Some(reader) = &mut s.reader
         && (reader.needs_latest() || s.history_error)
     {
@@ -183,6 +195,9 @@ pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
         s.history_error = false;
         s.paging = false;
         tx.instant();
+    } else if covered && let Some(reader) = &mut s.reader {
+        reader.bookmark = Bookmark::Latest;
+        reader.pending_scroll = true;
     } else {
         Reading::restore(&Bookmark::Latest, tx);
     }
@@ -249,29 +264,47 @@ mod tests {
     }
 
     #[test]
-    fn a_queued_idle_page_cannot_override_a_newer_running_observation() {
-        let mut state = init();
-        let (reader, lane) = Reader::open();
-        state.reader = Some(reader);
-        let (out, incoming) = bounded(2);
-        state.incoming = Some(incoming);
-        lane.events
-            .try_send((
-                0,
-                0,
-                Event::Sync(crate::history::Page {
-                    rows: vec![],
-                    older: None,
-                    newer: None,
-                    running: false,
-                }),
-            ))
+    fn a_page_queued_before_an_activity_change_cannot_reopen_admission() {
+        for previous in [false, true] {
+            let mut state = init();
+            let (reader, lane) = Reader::open();
+            state.reader = Some(reader);
+            let (out, incoming) = bounded(2);
+            state.incoming = Some(incoming);
+            let queue_page = |running, version| {
+                lane.events
+                    .try_send((
+                        0,
+                        0,
+                        Event::ReaderSync {
+                            page: crate::history::Page {
+                                rows: vec![],
+                                older: None,
+                                newer: None,
+                                running,
+                            },
+                            version,
+                        },
+                    ))
+                    .unwrap();
+            };
+            queue_page(previous, 1);
+            out.try_send(Event::ObservedRunning {
+                running: !previous,
+                version: 2,
+            })
             .unwrap();
-        out.try_send(Event::ObservedRunning(false)).unwrap();
-        out.try_send(Event::ObservedRunning(true)).unwrap();
-        assert!(poll_chat(&mut state, 8));
-        assert!(state.phase == Phase::Streaming);
-        assert!(state.reader.as_ref().unwrap().blocks_send());
+            assert!(poll_chat(&mut state, 8));
+            assert!(state.phase == Phase::Streaming);
+            out.try_send(Event::ObservedRunning {
+                running: false,
+                version: 3,
+            })
+            .unwrap();
+            queue_page(false, 3);
+            assert!(poll_chat(&mut state, 8));
+            assert!(state.phase == Phase::Ready);
+        }
     }
 
     #[test]
@@ -315,7 +348,11 @@ mod tests {
         state.phase = Phase::Streaming;
         let (out, incoming) = bounded(1);
         state.incoming = Some(incoming);
-        out.try_send(Event::ObservedRunning(false)).unwrap();
+        out.try_send(Event::ObservedRunning {
+            running: false,
+            version: 1,
+        })
+        .unwrap();
         assert!(poll_chat(&mut state, 8));
         assert!(
             state.phase == Phase::Streaming,

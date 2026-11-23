@@ -354,9 +354,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     a.refresh(catalog)
                 }
             }
-            Event::ObservedRunning(running) => {
+            Event::ObservedRunning { running, version } => {
                 if let Some(reader) = &mut s.reader {
-                    reader.observed_running(running);
+                    reader.observed_running(running, version);
                 }
                 if s.phase != Phase::Reconnecting
                     && s.phase != Phase::Failed
@@ -385,7 +385,17 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
-            Event::Sync(page) => {
+            Event::Sync(_) | Event::ReaderSync { .. } => {
+                let (page, stale_activity) = match event {
+                    Event::Sync(page) => (page, false),
+                    Event::ReaderSync { page, version } => (
+                        page,
+                        s.reader
+                            .as_ref()
+                            .is_some_and(|reader| reader.activity_after(version)),
+                    ),
+                    _ => unreachable!(),
+                };
                 if let Some(reader) = &mut s.reader {
                     reader.install(page.newer.is_some());
                 }
@@ -403,10 +413,8 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.can_older = page.older.is_some();
                 s.paging = false;
                 s.history_error = false;
-                // Status and snapshots have separate mailboxes; the observation is ordered
-                // with native activity even if the snapshot is still queued.
-                let running = s.reader.as_ref().and_then(chat::reader::Reader::running);
-                s.phase = if running.unwrap_or(page.running) {
+                // A newer activity event can run ahead of a snapshot in the content lane.
+                s.phase = if stale_activity || page.running {
                     Phase::Streaming
                 } else {
                     Phase::Ready

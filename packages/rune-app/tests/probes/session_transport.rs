@@ -126,6 +126,7 @@ pub fn contract() {
             }
             Event::AuthenticationRequired(..) | Event::Failed => panic!("adapter failed"),
             Event::Sync(_)
+            | Event::ReaderSync { .. }
             | Event::History(_)
             | Event::Older(_)
             | Event::Reconnecting
@@ -134,7 +135,7 @@ pub fn contract() {
             | Event::PromptSettled { .. }
             | Event::Connected(_)
             | Event::AgentHint(_)
-            | Event::ObservedRunning(_)
+            | Event::ObservedRunning { .. }
             | Event::Workspace(_)
             | Event::Preferences(_)
             | Event::PagingFailed => {}

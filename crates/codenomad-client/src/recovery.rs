@@ -392,13 +392,29 @@ pub(crate) async fn run_with_reading(
                     match kind {
                         "session.step.started" => {
                             busy = true;
-                            publish(&out, &wake, Event::ObservedRunning(true)).await;
+                            publish(
+                                &out,
+                                &wake,
+                                Event::ObservedRunning {
+                                    running: true,
+                                    version: v,
+                                },
+                            )
+                            .await;
                         }
                         "session.execution.succeeded"
                         | "session.execution.failed"
                         | "session.execution.interrupted" => {
                             busy = false;
-                            publish(&out, &wake, Event::ObservedRunning(false)).await;
+                            publish(
+                                &out,
+                                &wake,
+                                Event::ObservedRunning {
+                                    running: false,
+                                    version: v,
+                                },
+                            )
+                            .await;
                         }
                         _ => {}
                     }
@@ -428,7 +444,15 @@ pub(crate) async fn run_with_reading(
                         }
                         busy = true;
                         if reading.is_some() {
-                            publish(&out, &wake, Event::ObservedRunning(true)).await;
+                            publish(
+                                &out,
+                                &wake,
+                                Event::ObservedRunning {
+                                    running: true,
+                                    version: v,
+                                },
+                            )
+                            .await;
                         }
                         if let Some(Event::Message(row)) = crate::wire::decode_native(&native) {
                             if known.insert(row.id.clone()) {
@@ -499,7 +523,15 @@ pub(crate) async fn run_with_reading(
                     | "session.execution.interrupted" => {
                         terminal = busy;
                         if reading.is_some() {
-                            publish(&out, &wake, Event::ObservedRunning(false)).await;
+                            publish(
+                                &out,
+                                &wake,
+                                Event::ObservedRunning {
+                                    running: false,
+                                    version: v,
+                                },
+                            )
+                            .await;
                         }
                         parked = false;
                         dirty = true;
@@ -579,12 +611,27 @@ pub(crate) async fn run_with_reading(
                     }
                     busy = page.running;
                     terminal = false;
-                    if reading.is_some()
-                        && !publish(&out, &wake, Event::ObservedRunning(busy)).await
-                    {
-                        return Ok(());
-                    }
-                    if !reader_event(reading, generation, &out, &wake, Event::Sync(page)).await {
+                    let event = if reading.is_some() {
+                        if !publish(
+                            &out,
+                            &wake,
+                            Event::ObservedRunning {
+                                running: busy,
+                                version: stamp,
+                            },
+                        )
+                        .await
+                        {
+                            return Ok(());
+                        }
+                        Event::ReaderSync {
+                            page,
+                            version: stamp,
+                        }
+                    } else {
+                        Event::Sync(page)
+                    };
+                    if !reader_event(reading, generation, &out, &wake, event).await {
                         return Ok(());
                     }
                     if done && reading.is_none() {
