@@ -168,7 +168,11 @@ try {
   const located = route => async directory => (await api("GET", `${route}?location[directory]=${encodeURIComponent(directory)}`)).json?.data ?? []
   const agents = located("/api/agent"), skills = located("/api/skill"), plugins = located("/api/plugin")
   // Discovery sees only the fixture's loopback providers, whatever the caller's environment holds.
-  results.models = (await located("/api/model")(project("p1"))).map(model => `${model.providerID}/${model.id}`)
+  const models = located("/api/model")
+  results.models = await until("fixture chat catalog", async () => {
+    const names = (await models(project("p1"))).map(model => `${model.providerID}/${model.id}`)
+    return names.includes("fixture/vision") && names
+  })
   assert(results.models.every(ref => /^(fixture|fiximg)\//.test(ref)), `only fixture models are discovered: ${results.models}`)
   const designSkills = async directory => (await skills(directory)).filter(skill => skill.id.startsWith("design-"))
   const hasDesign = async directory => (await agents(directory)).some(agent => agent.id === "design")

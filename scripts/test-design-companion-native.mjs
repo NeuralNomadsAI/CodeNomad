@@ -221,9 +221,9 @@ try {
   const readParts = list => list.flatMap(message => message.type === "assistant"
     ? message.content.filter(part => part.type === "tool" && part.name === "read" && part.state?.status === "completed").map(part => ({ message: message.id, part })) : [])
   const idle = async () => { await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(60_000) }); await delay(300) }
-  async function turn(prompt, settled, label) {
+  async function turn(prompt, settled, label, timeout) {
     await client.session.prompt({ sessionID, text: prompt })
-    await until(label, async () => settled(await messages()))
+    await until(label, async () => settled(await messages()), timeout)
     await idle()
   }
   // Every page, as the panel reads them; each answer is checked against the published contract.
@@ -315,7 +315,7 @@ try {
   else {
     // The Design extension's English request, as `composer.prefill` substitutes its reference.
     await turn(`Read the generated image \`${reference.path}\` and show it here with your critique.`,
-      list => readParts(list).length >= 4 && answered(list, "Here it is"), "late read-back")
+      list => readParts(list).length >= 4 && answered(list, "Here it is"), "late read-back", 120_000)
   }
 
   const after = await messages()
