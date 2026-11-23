@@ -432,4 +432,3 @@ fn integer(value: Option<&Value>) -> Result<u64, Error> {
 
 #[cfg(test)]
 mod tests;
-pub(crate) use state::{capture_files_mode, files_tab, restore_files_mode, set_files_tab};
