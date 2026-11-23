@@ -114,7 +114,9 @@ async function toolMedia(call, client, id, root, location, other, database) {
   database.prepare("UPDATE session_v2 SET revert=? WHERE id=?").run(JSON.stringify({ messageID: message }), session.id)
   const undoStatus = await assertNoImage(reference, 404)
   database.prepare("UPDATE session_v2 SET revert=NULL WHERE id=?").run(session.id)
-  await client.session.move({ sessionID: session.id, directory: other })
+  database.prepare("UPDATE session_v2 SET directory=(SELECT directory FROM session_v2 WHERE id=?), project_id=(SELECT project_id FROM session_v2 WHERE id=?) WHERE id=?")
+    .run(foreign.id, foreign.id, session.id)
+  assert.equal((await client.session.get({ sessionID: session.id })).location.directory, foreign.location.directory)
   const movedStatus = await assertNoImage(reference, 403)
   return { order: digest(order.join("\n")), cursors, listDeferred: true,
     reference: reference.replace(root, "/api/workspaces/workspace").replace(session.id, "session"),

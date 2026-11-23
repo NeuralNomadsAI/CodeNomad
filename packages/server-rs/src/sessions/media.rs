@@ -140,6 +140,9 @@ pub(super) async fn route(
         let placement = Placement::capture_with_media(&app, &r.workspace, &r.session, false, true)
             .await
             .map_err(|failure| if failure.0 == Status::FORBIDDEN { failure } else { unavailable() })?;
+        if !placement.operation_current(&app, &r.workspace) {
+            return Err(unavailable());
+        }
         if !placement.live(&app, &r.workspace) {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
@@ -160,6 +163,9 @@ pub(super) async fn route(
             .await
             .map_err(|_| unavailable())?;
         if !response.status().is_success() {
+            return Err(unavailable());
+        }
+        if !placement.operation_current(&app, &r.workspace) {
             return Err(unavailable());
         }
         if !placement.live(&app, &r.workspace) {
@@ -195,6 +201,9 @@ pub(super) async fn route(
             return Err(missing());
         }
         principal.live()?;
+        if !placement.operation_current(&app, &r.workspace) {
+            return Err(unavailable());
+        }
         if !placement.live(&app, &r.workspace) {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
@@ -322,7 +331,35 @@ mod tests {
         );
         assert_eq!(raster(&[0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), Some("image/x-icon"));
         assert_eq!(raster(b"\0\0\0\x14ftypavif\0\0\0\0mif1"), Some("image/avif"));
+        assert_eq!(raster(b"\0\0\0\x18ftypmif1\0\0\0\0msf1avis"), Some("image/avif"));
+        assert_eq!(raster(b"\0\0\0\x0cftypavif\0\0\0\0"), None);
+        assert_eq!(raster(b"\0\0\0\x20ftypavif\0\0\0\0mif1"), None);
+        assert_eq!(raster(b"\0\0\0\x15ftypavif\0\0\0\0mif1a"), None);
         assert_eq!(raster(b"<svg xmlns='http://www.w3.org/2000/svg'/>"), None);
         assert_eq!(raster(b""), None);
+    }
+
+    #[test]
+    fn inline_limit_counts_utf16_code_units() {
+        let prefix = "data:image/png;base64,";
+        let at_limit = format!("{prefix}{}", "A".repeat(INLINE_LIMIT - prefix.len()));
+        let over_limit = format!("{prefix}{}", "A".repeat(INLINE_LIMIT - prefix.len() + 1));
+        let mut messages = json!([{
+            "id": "msg_1",
+            "type": "assistant",
+            "content": [{
+                "type": "tool",
+                "state": {
+                    "content": [
+                        {"type": "file", "mime": "image/png", "uri": at_limit},
+                        {"type": "file", "mime": "image/png", "uri": over_limit}
+                    ]
+                }
+            }]
+        }]);
+        assert!(defer("ws_1", "ses_1", &mut messages));
+        let content = messages[0]["content"][0]["state"]["content"].as_array().unwrap();
+        assert_eq!(content[0]["uri"].as_str().unwrap(), at_limit);
+        assert!(content[1]["uri"].as_str().unwrap().starts_with("/api/workspaces/ws_1/session-media/"));
     }
 }

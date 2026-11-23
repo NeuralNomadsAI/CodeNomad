@@ -59,7 +59,7 @@ impl Placement {
             displays.push(display(&workspace.path));
         }
         let endpoint = if media {
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
             app.native.acquire(deadline).await.map_err(|_| crate::opencode::upstream_error())?
         } else {
             app.native.endpoint().ok_or_else(crate::opencode::upstream_error)?
@@ -96,6 +96,7 @@ impl Placement {
             dunce::canonicalize(directory).map_err(|_| unavailable())?
         };
         let anchor = if media { directory_anchor(&path).ok_or_else(forbidden)?.to_owned() } else { path.clone() };
+        let physical = same_file::Handle::from_path(&anchor).map_err(|_| unavailable())?;
         let checkout = if references || media {
             if path != workspace.path {
                 displays.push(display(&path));
@@ -114,19 +115,30 @@ impl Placement {
             }
             None
         };
-        let physical = same_file::Handle::from_path(&anchor).map_err(|_| unavailable())?;
         Ok(Self { workspace, endpoint, source, path, anchor, physical, workspace_physical, checkout, displays, media })
     }
     async fn current(&self, app: &App, id: &str, session: &str) -> bool {
         self.latest(app, id, session).await.is_ok_and(|newest| newest["revert"] == self.source["revert"])
     }
 
+    pub(super) fn operation_current(&self, app: &App, id: &str) -> bool {
+        app.native.current(&self.endpoint)
+            && app.workspace(id).is_ok_and(|w| w.id == self.workspace.id && w.path == self.workspace.path)
+            && same_identity(&self.workspace.path, self.workspace_physical.as_ref())
+    }
+
     pub(super) async fn latest(&self, app: &App, id: &str, session: &str) -> Result<Value, Error> {
         let changed = || error(Status::CONFLICT, "Session location changed");
+        if !self.operation_current(app, id) {
+            return Err(crate::opencode::upstream_error());
+        }
         if !self.live(app, id) {
             return Err(changed());
         }
         let newest = crate::opencode::session_record_at(app, &self.endpoint, session).await?;
+        if !self.operation_current(app, id) {
+            return Err(crate::opencode::upstream_error());
+        }
         if newest["id"] != self.source["id"]
             || newest["location"] != self.source["location"]
             || newest["projectID"] != self.source["projectID"]
@@ -144,6 +156,9 @@ impl Placement {
             )
             .await?
             .ok_or_else(changed)?;
+            if !self.operation_current(app, id) {
+                return Err(crate::opencode::upstream_error());
+            }
             if !self.checkout.as_ref().is_some_and(|proof| proof.same_checkout(&current)) || !self.live(app, id) {
                 return Err(changed());
             }
@@ -152,9 +167,7 @@ impl Placement {
     }
 
     pub(super) fn live(&self, app: &App, id: &str) -> bool {
-        app.native.current(&self.endpoint)
-            && app.workspace(id).is_ok_and(|w| w.id == self.workspace.id && w.path == self.workspace.path)
-            && same_identity(&self.workspace.path, self.workspace_physical.as_ref())
+        self.operation_current(app, id)
             && self.source["location"]["directory"]
                 .as_str()
                 .and_then(|directory| {

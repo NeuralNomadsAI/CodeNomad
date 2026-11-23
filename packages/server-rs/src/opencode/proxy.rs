@@ -158,6 +158,17 @@ fn is_json_content_type(headers: &axum::http::HeaderMap) -> bool {
     })
 }
 
+fn defer_message_list(id: &str, session: &str, bytes: Vec<u8>) -> Body {
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(mut native)
+            if native.get_mut("data").is_some_and(|data| crate::sessions::media::defer(id, session, data)) =>
+        {
+            Body::from(native.to_string())
+        }
+        _ => Body::from(bytes),
+    }
+}
+
 fn one_location(location: &Value, directory: &str) -> Result<(), Error> {
     if !location.as_object().is_some_and(|o| o.len() == 1) || location["directory"].as_str() != Some(directory) {
         return Err(foreign());
@@ -724,19 +735,23 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     if defer_media && response.status().is_success() && is_json_content_type(response.headers()) {
         let builder = relayed(&response);
+        let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
         let bytes = tokio::select! {
+            biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-            read = super::read_bytes(response, 64 * 1024 * 1024) => read.map_err(|_| error(Status::BAD_GATEWAY, "OpenCode response was interrupted"))?,
-        };
-        let body = match serde_json::from_slice::<Value>(&bytes) {
-            Ok(mut native) => {
-                if let Some(session) = session {
-                    crate::sessions::media::defer(id, session, &mut native["data"]);
-                }
-                Body::from(native.to_string())
+            read = tokio::time::timeout(Duration::from_secs(30), super::read_bytes(response, 256 * 1024 * 1024)) => {
+                read.map_err(|_| interrupted())?.map_err(|_| interrupted())?
             }
-            Err(_) => Body::from(bytes),
         };
+        let body = match session {
+            Some(session) => defer_message_list(id, session, bytes),
+            None => Body::from(bytes),
+        };
+        if !app.native.current(&endpoint) {
+            return Err(upstream_error());
+        }
+        app.workspace(id)?;
+        principal.live()?;
         return builder.extension(NativeBody).body(body).map_err(|_| upstream_error());
     }
     let builder = relayed(&response);
@@ -752,4 +767,30 @@ fn ordinary_input_refuses_reserved_metadata_even_with_null_values() {
         assert!(schedule_input(input.as_object().unwrap()));
     }
     assert!(!schedule_input(json!({"metadata":{"other":"automation"}}).as_object().unwrap()));
+}
+
+#[tokio::test]
+async fn deferred_message_list_preserves_non_object_and_unchanged_json() {
+    use axum::body::to_bytes;
+    let mut headers = axum::http::HeaderMap::new();
+    for (ct, expected) in [
+        ("application/json", true),
+        ("Application/JSON; charset=utf-8", true),
+        ("application/jsonp", false),
+        ("text/plain", false),
+    ] {
+        headers.insert(header::CONTENT_TYPE, ct.parse().unwrap());
+        assert_eq!(is_json_content_type(&headers), expected, "{ct}");
+    }
+    for raw in [b"[]".as_slice(), b"{}", b"null", b"not json", b"{\"data\":[]}"] {
+        let out = to_bytes(defer_message_list("ws_1", "ses_1", raw.to_vec()), 1024).await.unwrap();
+        assert_eq!(out.as_ref(), raw);
+    }
+    let large = format!("data:image/png;base64,{}", "A".repeat(32 * 1024));
+    let payload = json!({"data":[{"id":"msg_1","type":"assistant","content":[{"type":"tool","state":{"content":[{"type":"file","mime":"image/png","uri":large}]}}]}]});
+    let out =
+        to_bytes(defer_message_list("ws_1", "ses_1", payload.to_string().into_bytes()), 1024 * 1024).await.unwrap();
+    let rewritten: Value = serde_json::from_slice(&out).unwrap();
+    let uri = rewritten["data"][0]["content"][0]["state"]["content"][0]["uri"].as_str().unwrap();
+    assert!(uri.starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_1/0/0/"), "{uri}");
 }
