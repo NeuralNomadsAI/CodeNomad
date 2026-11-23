@@ -7,6 +7,7 @@ pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;
 pub(crate) use connection::configured_target;
+pub(crate) mod workspace_open;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod host;
 use std::{future::Future, time::Duration};
