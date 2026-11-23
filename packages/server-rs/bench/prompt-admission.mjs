@@ -272,9 +272,20 @@ export async function run(commandOnly=false){
         if(response.status===200)assert.deepEqual(calls.find(r=>r.path.endsWith('/prompt'))?.body,forwardedBody,`${label}/${name} normalized directory payload`)
         rows.push({name,status:response.status,forwarded:calls.filter(r=>r.path.endsWith('/prompt')||r.path.endsWith('/environment')).length})
       }
-      for(const [name,route,body] of [['interrupt-valid','interrupt',{}],['interrupt-invalid','interrupt',{resume:'bad'}],['model-large','model',{model:'x'.repeat(1024*1024)}]]){
-        const response=await host.call(`${host.base}/session/ses_owned/${route}`,post(body));const received=await response.arrayBuffer()
-        if(typeof response.status==='number'&&response.status>=400)errors[name]=JSON.parse(Buffer.from(received).toString())
+       for(const [name,route,body] of [['interrupt-valid','interrupt',{}],['interrupt-invalid','interrupt',{resume:'bad'}],['model-large','model',{model:'x'.repeat(1024*1024)}]]){
+         const before=native.calls.length
+         const response=await host.call(`${host.base}/session/ses_owned/${route}`,post(body))
+         const received=await response.text()
+         if(name==='model-large'){
+           assert.equal(native.calls.slice(before).filter(call=>call.path.endsWith('/model')).length,0)
+           // Fastify may reject Content-Length before the upload finishes, resetting
+           // the socket. The chunked case below compares the exact HTTP refusal.
+           assert(response.status===413 || label==='ts' && response.status==='ECONNRESET',`${label}/${name}: ${response.status}`)
+           ;(result.declaredOverrun??={})[label]={status:response.status,body:received?JSON.parse(received):null}
+           if(response.status===413) assert.equal(result.declaredOverrun[label].body.code,'FST_ERR_CTP_BODY_TOO_LARGE')
+           continue
+         }
+         if(typeof response.status==='number'&&response.status>=400)errors[name]=JSON.parse(received)
         rows.push({name,status:response.status})
       }
       for(const [name,route,body,chunked,type,expected] of process.argv.includes('--admission-order-only')?[]:[
