@@ -46,7 +46,7 @@ export const readNativeScheduleFlag = Effect.fn("missions.readScheduleFlag")(fun
   if (!("automations" in resolved)) {
     if (!states.length || !states.every(state => state && typeof state.enabled === "boolean" && ["env", "config", "default"].includes(state.source)))
       throw new Error("Native schedule flag resolution unavailable")
-    const setting = yield* Effect.tryPromise({ try: () => nativeAutomationsSetting(entries), catch: error => error })
+    const setting = yield* Effect.tryPromise({ try: () => nativeAutomationsSetting(entries, location.directory), catch: error => error })
     current()
     return { enabled: setting.enabled, provenance: setting.source === "setting" ? "automations-setting"
       : setting.source === "legacy-off" ? "experimental-block" : setting.source === "environment" ? "environment" : "channel-default",

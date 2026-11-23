@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises"
+import { open } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { parse, type ParseError } from "jsonc-parser"
@@ -21,11 +21,20 @@ export type NativeAutomationsSources = { env: Env; readText(file: string): Promi
 const unreadable = () => new Error("Native automations setting unreadable")
 
 async function readBounded(file: string) {
-  const info = await stat(file).catch(() => { throw unreadable() })
-  if (!info.isFile() || info.size > MAX_DOCUMENT_BYTES) throw unreadable()
-  const bytes = await readFile(file).catch(() => { throw unreadable() })
-  if (bytes.length > MAX_DOCUMENT_BYTES) throw unreadable()
-  return bytes.toString("utf8")
+  const handle = await open(file, "r").catch(() => { throw unreadable() })
+  try {
+    if (!(await handle.stat()).isFile()) throw unreadable()
+    // One handle, at most one byte past the limit, whatever the file became since it was listed.
+    const bytes = Buffer.alloc(MAX_DOCUMENT_BYTES + 1)
+    let size = 0
+    for (;;) {
+      const { bytesRead } = await handle.read(bytes, size, bytes.length - size, null)
+      if (!bytesRead) break
+      size += bytesRead
+      if (size > MAX_DOCUMENT_BYTES) throw unreadable()
+    }
+    return bytes.subarray(0, size).toString("utf8")
+  } finally { await handle.close() }
 }
 const defaults: NativeAutomationsSources = { env: process.env, readText: readBounded }
 
@@ -55,6 +64,10 @@ async function substitute(text: string, directory: string, sources: NativeAutoma
   return errors.length ? files(env(true)) : raw
 }
 
+/** A managed preference plist (XML or binary), which OpenCode converts before publishing its entry.
+ * Any other file, whatever its name, is JSONC as OpenCode's file loader reads it. */
+const managedPreferences = (text: string) => /^(?:﻿?\s*(?:<\?xml|<!DOCTYPE plist|<plist)|bplist0)/.test(text)
+
 /** The legacy `experimental.automations` (or its `schedules` alias) is OFF, decoded as 2.3.2 did:
  * only booleans count, the canonical key before the alias. Text OpenCode would not parse is unknown. */
 export async function legacyAutomationsOff(text: string, directory: string, sources: NativeAutomationsSources = defaults): Promise<boolean> {
@@ -74,7 +87,7 @@ export async function legacyAutomationsOff(text: string, directory: string, sour
  * top-level choice above it decides, so an upgrade never turns them back on. Managed preference
  * plists and remote (well-known) configuration are administered for the runtime that reads them
  * and are not inspected for the legacy block. Inline config is the highest-priority pathless document. */
-export async function nativeAutomationsSetting(entries: readonly ConfigEntry[],
+export async function nativeAutomationsSetting(entries: readonly ConfigEntry[], directory: string,
   sources: NativeAutomationsSources = defaults): Promise<NativeAutomationsSetting> {
   const flags = (sources.env.OPENCODE_FLAGS ?? "").split(",").map(item => item.trim())
   const inlineText = sources.env[INLINE_CONFIG_SOURCE]
@@ -87,9 +100,10 @@ export async function nativeAutomationsSetting(entries: readonly ConfigEntry[],
     const label = entry.path ?? (entry === inlineEntry ? INLINE_CONFIG_SOURCE : REMOTE_CONFIG_SOURCE)
     const value = (entry.info as { automations?: unknown }).automations
     if (value !== undefined && typeof value !== "boolean") throw new Error("Native automations setting invalid")
-    const legacy = entry.path && !entry.path.toLowerCase().endsWith(".plist")
-      ? await legacyAutomationsOff(await sources.readText(entry.path), path.dirname(entry.path), sources)
-      : entry === inlineEntry ? await legacyAutomationsOff(inlineText!, process.cwd(), sources) : false
+    // Inline `{file:}` references resolve from the Location, as OpenCode resolves them.
+    const text = entry.path ? await sources.readText(entry.path) : entry === inlineEntry ? inlineText! : undefined
+    const legacy = text !== undefined && !managedPreferences(text)
+      && await legacyAutomationsOff(text, entry.path ? path.dirname(entry.path) : directory, sources)
     const deciding = !decided && (value !== undefined || legacy)
     if (deciding) decided = value !== undefined ? { enabled: value, source: "setting", path: label } : { enabled: false, source: "legacy-off", path: label }
     // The deciding OFF is reported as the decision; any other OFF, including a legacy OFF beside
