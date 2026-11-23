@@ -8,11 +8,13 @@ mod refresh;
 mod request;
 mod view;
 pub(crate) use binding::{
-    Binding, close_preview, connected, connected_placed, diff_preferences, event, files_checkout,
-    has_preview, mode, online, poll, project_opened, set_diff_preferences, set_mode, show,
+    Binding, can_place, close_preview, connected, connected_placed, diff_preferences, event,
+    files_checkout, has_preview, hold_placement, mode, online, placeable, placement,
+    placement_hold, placement_unconfirmed, poll, project_opened, release_placement,
+    set_diff_preferences, set_mode, show,
 };
 pub(crate) use diff::DiffPreferences;
-pub(crate) use view::{panel, reader};
+pub(crate) use view::{panel, reader, session_worktree};
 
 use crate::platform::{collation::Collation, reads::Reads};
 use changes::{Changes, Id};
@@ -77,6 +79,7 @@ pub(crate) struct Ui {
     index_revision: u64,
     index_checked: Option<u64>,
     picker: bool,
+    placement_picker: Option<Vec<(String, String)>>,
     zones: [[f32; 4]; 2],
     body_bounds: [f32; 4],
     active: bool,
@@ -126,6 +129,7 @@ impl Ui {
             index_revision: 0,
             index_checked: None,
             picker: false,
+            placement_picker: None,
             zones: [[0.0; 4]; 2],
             body_bounds: [0.0; 4],
             active: true,
@@ -215,6 +219,7 @@ impl Ui {
     pub(crate) fn activate(&mut self, active: bool) {
         if !active {
             self.keep_scroll();
+            self.placement_picker = None;
         } else if !self.active {
             self.invalidate_index();
             self.retry_panel_reads();

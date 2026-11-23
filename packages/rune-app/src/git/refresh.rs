@@ -93,7 +93,9 @@ impl Ui {
         let tree_wanted = shown
             || preview
             || available
-                && (self.workspace_preview || self.requests.slot(Lane::InitSessions).dirty);
+                && (self.workspace_preview
+                    || !self.backend.session.is_empty()
+                    || self.requests.slot(Lane::InitSessions).dirty);
         let git = self.repository() != Repository::Uninitialized && self.tree().is_some();
         let changes = shown && git && self.mode == Mode::Changes;
         let history = shown && git && self.mode == Mode::History;

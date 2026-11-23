@@ -65,6 +65,11 @@ fn owned_routes_pin_history_and_submit_each_mutation_once() {
             200,
             json!({"data":[],"cursor":{}}),
         ),
+        (
+            "POST /api/workspaces/w/sessions/child/worktree".into(),
+            200,
+            json!({"rootSessionId":"root-session","sessionIds":["root-session","child"],"worktreeSlug":"link % #"}),
+        ),
     ];
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}/", listener.local_addr().unwrap());
@@ -97,6 +102,8 @@ fn owned_routes_pin_history_and_submit_each_mutation_once() {
                     json!({"directory":"D:/repo"})
                 } else if route.ends_with("git-commit") {
                     json!({"message":"message"})
+                } else if route.ends_with("/worktree") {
+                    json!({"worktreeSlug":"link % #"})
                 } else {
                     json!({"paths":["a + b.rs"]})
                 };
@@ -163,6 +170,12 @@ fn owned_routes_pin_history_and_submit_each_mutation_once() {
                     .unwrap()
                     .rows
                     .is_empty()
+            );
+            assert!(backend.place_session(&tree.slug).await.is_err());
+            backend.session = "child".into();
+            assert_eq!(
+                backend.place_session(&tree.slug).await.unwrap(),
+                ["root-session", "child"]
             );
         });
     server.join().unwrap();
