@@ -21,7 +21,6 @@ pub struct Row {
     pub busy: bool,
 }
 pub struct Ui {
-    pub reading: crate::chat::reading::Position,
     pub reader_close: crate::window_control::WindowCloseState,
     pub(super) pictures: super::markdown_images::Pictures,
     pub presentation: super::presentation::Presentation,
@@ -56,7 +55,6 @@ impl Ui {
     pub fn new(backend: Backend, directory: String, reads: Reads, wake: Wake) -> Self {
         let (out, incoming) = bounded(16);
         Self {
-            reading: Default::default(),
             reader_close: Default::default(),
             pictures: super::markdown_images::Pictures::new(wake.clone()),
             presentation: super::presentation::Presentation::new(wake.clone()),
@@ -335,22 +333,16 @@ impl Ui {
             .target()
             .is_some_and(|target| target.directory == self.tree.directory() && target.path == path)
     }
-    pub(super) fn toggle_preview(
-        &mut self,
-        directory: &str,
-        path: &str,
-        tx: &mut rune::Tx,
-    ) -> bool {
+    pub(super) fn toggle_preview(&mut self, directory: &str, path: &str) -> Option<bool> {
         if self.stopped || self.tree.directory() != directory {
-            return false;
+            return None;
         }
         if self.previews(path) {
             self.close_reader();
-            self.reading.restore(tx);
-            false
+            Some(false)
         } else {
             self.open(path.into());
-            true
+            Some(true)
         }
     }
     pub fn open(&mut self, path: String) {

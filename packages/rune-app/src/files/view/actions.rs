@@ -135,13 +135,15 @@ pub(super) fn row(s: &State, ui: &Ui, row: &Row, width: f32, touch: bool) -> (El
         let run = screen::action_tx(scope, {
             let (directory, path) = (directory.to_owned(), path.clone());
             move |s, tx| {
-                if has_session(s)
-                    && s.files
-                        .as_mut()
-                        .filter(|ui| owns(ui, &directory, &path))
-                        .is_some_and(|ui| ui.toggle_preview(&directory, &path, tx))
+                if !has_session(s) {
+                    return;
+                }
+                match s.files.as_mut().filter(|ui| owns(ui, &directory, &path))
+                    .and_then(|ui| ui.toggle_preview(&directory, &path))
                 {
-                    crate::git::close_preview(s);
+                    Some(true) => crate::git::close_preview(s),
+                    Some(false) => crate::chat::reading::restore_position(s, tx),
+                    None => {}
                 }
             }
         });

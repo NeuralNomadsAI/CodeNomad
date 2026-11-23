@@ -23,12 +23,17 @@ struct StreamRender {
 
 #[derive(Default)]
 struct SessionDisplay {
+    reading: super::reading::Reading,
     toggled: HashSet<String>,
     revealed: HashMap<String, usize>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     compact_diffs: (u64, HashSet<String>),
 }
 impl Display {
+    pub(super) fn reading_mut(&mut self) -> &mut super::reading::Reading {
+        &mut self.active.reading
+    }
+
     pub fn bind(&mut self, server: &str, workspace: &str, session: &str) {
         if !self
             .workspace

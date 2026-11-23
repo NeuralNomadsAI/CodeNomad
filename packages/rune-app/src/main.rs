@@ -475,7 +475,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                 .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
                 .on_layout_tx(chat::ToolDiffPreferences::history_layout)
                 .child(transcript::rows(s));
-            files::view::body(s, chat::reading::history(s, history), expanded)
+            files::view::body(s, chat::reading::viewport(s, history), expanded)
         }))
         .child(agent_view::view(s, cx))
         .child(composer(s, expanded.then_some(cx)))
