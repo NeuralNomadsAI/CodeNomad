@@ -27,6 +27,48 @@ fn literal_and_ranked_validate_their_distinct_result_bounds() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn the_selected_preview_keeps_time_and_rejects_a_different_message() {
+    let route = "GET /workspaces/workspace/instance/api/session/session/message/selected HTTP/1.1";
+    let message = |id, created| {
+        json!({"data":{
+            "id":id,"type":"user","text":"Visible data","time":{"created":created}
+        }})
+    };
+    crate::timeline::tests::http_probe(
+        vec![
+            (
+                route,
+                None,
+                message("selected", 1_700_000_000_000_u64),
+                false,
+            ),
+            (
+                route,
+                None,
+                message("selected", 9_000_000_000_000_000_u64),
+                false,
+            ),
+            (route, None, message("other", 1), false),
+        ],
+        async |backend, _| {
+            let first = backend.history_search_preview("selected").await.unwrap();
+            assert_eq!(first.row.body, "Visible data");
+            assert_eq!(first.created, Some(1_700_000_000_000));
+            assert_eq!(
+                backend
+                    .history_search_preview("selected")
+                    .await
+                    .unwrap()
+                    .created,
+                None
+            );
+            assert!(backend.history_search_preview("selected").await.is_err());
+        },
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn literal_pages_publish_progress_and_preserve_the_last_whole_batch() {
     let route = "POST /api/workspaces/workspace/session-history/query HTTP/1.1";
     let input =

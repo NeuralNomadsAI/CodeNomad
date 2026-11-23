@@ -206,9 +206,6 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                 )),
         );
     }
-    if model.open_error {
-        frame = frame.child(rune::text(t("history.openFailed")).role("alert"));
-    }
     if s.transcript_display.timeline.jump.filtered {
         frame = frame.child(
             rune::text(t("history.destinationFiltered"))
@@ -295,8 +292,8 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
             };
             let launch = s.screen.launcher();
             let groups = group_starts(&page.hits);
-            frame = frame.child(search::results().children(
-                page.hits.iter().enumerate().flat_map(|(i, hit)| {
+            frame = frame.child(
+                search::results().children(page.hits.iter().enumerate().flat_map(|(i, hit)| {
                     let group = format!("history-result-group-{}", groups[i]);
                     let header = (model.ranked && groups[i] == i)
                         .then(|| {
@@ -353,8 +350,8 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                     } else {
                         result.description_static(kind)
                     }))
-                }),
-            ));
+                })),
+            );
             if let Some(hit) = model.selected.and_then(|index| page.hits.get(index))
                 && s.transcript_display
                     .timeline
@@ -362,25 +359,7 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                     .as_ref()
                     .is_some_and(|backend| backend.session != hit.session)
             {
-                frame = frame
-                    .child(
-                        search::results().children(
-                            super::preview::blocks(hit, &model.preview.blocks)
-                                .map(|block| search::excerpt(block, &terms)),
-                        ),
-                    )
-                    .children(
-                        model
-                            .preview
-                            .failed
-                            .then(|| rune::text(t("messageSection.search.failed")).role("status")),
-                    )
-                    .child(button(
-                        s,
-                        "history-search-open",
-                        "history.openSession",
-                        super::open_result,
-                    ));
+                frame = frame.child(preview(s, model, hit, &terms));
             }
             if model.flight.is_none()
                 && let Some(cursor) = &page.cursor
@@ -414,6 +393,71 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
             .child(toolbar)
             .child(frame),
     )
+}
+
+fn preview(
+    s: &State,
+    model: &super::Search,
+    hit: &codenomad_client::search::Hit,
+    terms: &[String],
+) -> El {
+    let data = model.preview.body.as_ref();
+    let (title, slug) = data
+        .map(|body| (body.title.as_str(), body.slug.as_str()))
+        .or_else(|| {
+            model
+                .labels
+                .get(&hit.session)
+                .and_then(|label| label.as_ref())
+                .map(|(title, slug)| (title.as_str(), slug.as_str()))
+        })
+        .unwrap_or_default();
+    let title = if title.is_empty() {
+        t("sessionList.session.untitled")
+    } else {
+        title
+    };
+    let worktree = (!slug.is_empty())
+        .then(|| crate::git::history_worktree(s, slug))
+        .flatten();
+    let age = data
+        .and_then(|data| data.created)
+        .map(|created| super::preview::age(created, crate::platform::storage::unix_millis()));
+    let body = search::results()
+        .children(
+            model
+                .preview
+                .pending()
+                .then(|| rune::text(t("messageSection.search.searching")).role("status")),
+        )
+        .children(
+            model
+                .preview
+                .failed
+                .then(|| rune::text(t("messageSection.search.failed")).role("alert")),
+        )
+        .children(
+            model
+                .open_error
+                .then(|| rune::text(t("history.openFailed")).role("alert")),
+        )
+        .children(
+            super::preview::blocks(hit, data.map_or(&[], |data| data.blocks.as_slice()))
+                .map(|block| search::excerpt(block, terms)),
+        );
+    search::preview(
+        title,
+        worktree.as_deref(),
+        age,
+        layout::button_tx(
+            t("history.openSession"),
+            model.destination.is_some(),
+            screen::action_tx(&s.input_scope, super::open_result),
+        )
+        .key("history-search-open"),
+        body,
+    )
+    .key("history-inter-session-preview")
 }
 
 pub(super) fn group_starts(hits: &[codenomad_client::search::Hit]) -> Vec<usize> {

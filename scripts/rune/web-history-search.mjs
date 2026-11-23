@@ -82,7 +82,11 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
   }),{y:start.y,moved:touch?10:80})
   assert(await input.evaluate(el=>el===document.activeElement),'Releasing the toolbar must keep the query editable')
   let windows=0
-  const count=request=>{if(request.url().endsWith('/session-history/window'))windows++}
+  let excerpts=0
+  const count=request=>{
+    if(request.url().endsWith('/session-history/window'))windows++
+    if(request.url().endsWith('/session/ses_another/message/message-00000'))excerpts++
+  }
   page.on('request',count)
   try{
     await press(search,'Existing answer')
@@ -157,12 +161,11 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
     const remotePreview=page.waitForResponse(response=>response.url().endsWith('/session/ses_another/message/message-00001'))
     await press(search,'Existing remote tool match')
     assert((await remotePreview).ok())
-    const open=search.getByRole('button',{name:messages['history.openSession'],exact:true})
     const release=holdNextAnchor()
     try{
       const proposed=page.waitForRequest(request=>request.url().endsWith('/session-history/window')
         && request.postDataJSON()?.target?.messageID==='message-00001')
-      await open.focus()
+      await search.getByRole('button',{name:messages['history.openSession'],exact:true}).focus()
       await page.keyboard.press('Enter')
       assert.equal((await proposed).postDataJSON().sessionID,'ses_another')
       await setTool('hidden')
@@ -217,10 +220,26 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
       // The inter-session preview adds content; return to the original mobile viewport.
       await resize(viewport)
     }
+    const route='**/instance/api/session/ses_another/message/message-00000'
+    const gate=Promise.withResolvers()
+    const hold=async request=>{await gate.promise;await request.fallback()}
+    await page.route(route,hold)
     const preview=page.waitForResponse(response=>response.url().endsWith('/session/ses_another/message/message-00000'))
-    await press(search,'Existing ranked destination')
+    const details=search.getByRole('group',{name:'Another session',exact:true})
+    try{
+      await press(search,'Existing ranked destination')
+      await details.getByText(messages['messageSection.search.searching'],{exact:true}).waitFor()
+      assert.equal(windows,1,'Loading an excerpt must not page the transcript')
+    }finally{
+      gate.resolve()
+      await page.unroute(route,hold)
+    }
     assert((await preview).ok())
+    await details.getByText('history-fixture',{exact:true}).waitFor()
+    await details.getByText(messages['time.relative.hoursAgoShort'].replace('{count}','2'),{exact:true}).waitFor()
+    await details.getByText(/Stored preview detail/).waitFor()
     assert.equal(windows,1,'Preview must not read a transcript window')
+    assert.equal(excerpts,1,'The preview reads the selected message once')
     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
     const open=search.getByRole('button',{name:messages['history.openSession'],exact:true})
     if(touch){
@@ -228,9 +247,43 @@ export async function historySearch(page, messages, touch, holdNextAnchor) {
       assert(bounds&&box&&box.y>=bounds.y&&box.y+box.height<=bounds.y+bounds.height,
         'The open action must be inside the search window before the tap')
     }
+    if(!touch){
+      const placement='**/instance/api/session/ses_another'
+      const release=Promise.withResolvers()
+      let placements=0
+      const observe=request=>{if(request.url().endsWith('/instance/api/session/ses_another'))placements++}
+      page.on('request',observe)
+      const box=await open.boundingBox()
+      assert(box)
+      const fail=async route=>{
+        await release.promise
+        await route.fulfill({status:503})
+      }
+      await page.route(placement,fail,{times:1})
+      const placing=page.waitForRequest(request=>request.url().endsWith('/instance/api/session/ses_another'))
+      const refused=page.waitForResponse(response=>response.url().endsWith('/instance/api/session/ses_another')&&response.status()===503)
+      void refused.catch(()=>{})
+      try{
+        try{
+          await Promise.all([placing,activate(open)])
+          // The pinned Rune mirror does not expose Kit button disabled state.
+          // Press the same physical point while the real request remains pending.
+          await page.mouse.click(box.x+box.width/2,box.y+box.height/2)
+        }finally{
+          release.resolve()
+        }
+        await refused
+        await details.getByText(messages['history.openFailed'],{exact:true}).waitFor()
+        assert.equal(placements,1,'Repeated Open must not bind the destination twice')
+        assert.equal(windows,1)
+      }finally{
+        page.off('request',observe)
+      }
+    }
     const [destination]=await Promise.all([read('window'),activate(open)])
     const requested=destination.request().postDataJSON()
     assert.deepEqual(requested,{sessionID:'ses_another',target:{kind:'around',messageID:'message-00000'}})
+    assert.equal(excerpts,1,'Opening reads the destination window, not a second excerpt')
     await page.getByRole('heading',{name:'Another session',exact:true}).waitFor()
     await page.getByRole('paragraph').filter({hasText:'Existing ranked destination'}).waitFor()
     assert.equal(await search.count(),0,'The previous search belongs to its source view')

@@ -28,7 +28,8 @@ export function seedHistory({stores,webTimeline,webMobile,webAndroid,webSearch})
       {type:'tool',id:'search-input',name:'grep',state:{status:'completed',input:{extra:'Existing arguments only'},content:[{type:'text',text:'No match here'}]}},
     )
     const another=stores.get('ses_another')
-    another.append('user','Existing ranked destination')
+    const hit=another.append('user','Existing ranked destination\n\nStored preview detail')
+    hit.time.created-=2*60*60*1000
     another.append('assistant','Remote tool fixture').content.push(
       {type:'tool',id:'remote-tool',name:'grep',state:{status:'completed',content:[{type:'text',text:'Existing remote tool match'}]}},
     )
@@ -57,15 +58,18 @@ export function historyResponse(pathname, raw, {stores,records,project,webSearch
     assert.equal(input.query,'Existing')
     const shape=(sessionID,index,excerpt,kind='text',partIndex=0)=>({sessionID,messageID:stores.get(sessionID).rows[index].id,
       role:'assistant',partIndex,kind,excerpt,createdAt:100})
-    const hits=[shape('ses_another',0,'Existing ranked destination'),shape('ses_existing',1,'Existing answer')]
-    if(input.includeTechnical)hits.splice(1,0,shape('ses_another',1,'Existing remote tool match','tool',1))
+    const continued=input.cursor!==undefined
+    if(continued)assert.equal(input.cursor,'fixture-ranked-continuation')
+    const hits=continued?[shape('ses_existing',1,'Existing older result')]:
+      [shape('ses_another',0,'Existing ranked destination'),shape('ses_existing',1,'Existing answer')]
+    if(input.includeTechnical&&!continued)hits.splice(1,0,shape('ses_another',1,'Existing remote tool match','tool',1))
     const sessions=hits.filter(({sessionID},i)=>i===hits.findIndex(hit=>hit.sessionID===sessionID)).map(({sessionID})=>{
       const count=hits.filter(hit=>hit.sessionID===sessionID).length
       return {sessionID,directory:project,title:records.get(sessionID).title,scanned:count,candidates:count,
         judged:count,matchedMessages:count,tools:0,reasoning:0,skipped:0,prefilterBypassed:0}
     })
     return {output:{version:1,status:'ranked',scanned:hits.length,candidates:hits.length,judged:hits.length,skipped:0,prefilterBypassed:0,
-      matchedSessions:sessions.length,capped:false,examinedBefore:0,cursor:null,exclusions:[],caps:[],hits,sessions}}
+      matchedSessions:sessions.length,capped:false,examinedBefore:0,cursor:continued?null:'fixture-ranked-continuation',exclusions:[],caps:[],hits,sessions}}
   }
   if(method==='outlinePreview'){
     const {input}=JSON.parse(raw), rows=stores.get(input.sessionID).rows

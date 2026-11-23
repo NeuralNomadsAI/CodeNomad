@@ -98,9 +98,14 @@ enum Literal {
     Blocked { reason: Blocked },
 }
 
+pub struct PreviewMessage {
+    pub row: crate::Message,
+    pub created: Option<u64>,
+}
+
 impl Backend {
     /// Fetch the single message behind an explicitly selected preview.
-    pub async fn history_search_preview(&self, message: &str) -> Result<crate::Message> {
+    pub async fn history_search_preview(&self, message: &str) -> Result<PreviewMessage> {
         if !valid_id(&self.workspace) || !valid_id(&self.session) || !valid_id(message) {
             return Err("invalid history preview target".into());
         }
@@ -120,7 +125,12 @@ impl Backend {
         if record["id"] != message {
             return Err("history preview returned another message".into());
         }
-        crate::history::decode_message(record)
+        Ok(PreviewMessage {
+            row: crate::history::decode_message(record)?,
+            created: record["time"]["created"]
+                .as_u64()
+                .filter(|at| *at <= 8_640_000_000_000_000),
+        })
     }
 
     /// Publish incremental results up to one UI page; keep the last batch in full.

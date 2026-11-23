@@ -306,6 +306,37 @@ pub fn results() -> El {
     rune::col().w_full()
 }
 
+pub fn preview(
+    title: &str,
+    worktree: Option<&str>,
+    age: Option<String>,
+    open: El,
+    blocks: El,
+) -> El {
+    let t = tokens(layout::dark());
+    let header = layout::action_row()
+        .child(rune::text(title).text_role(crate::TextRole::Label))
+        .children(worktree.map(|label| {
+            rune::text(label)
+                .text_role(crate::TextRole::Small)
+                .color(t.color("text-secondary"))
+        }))
+        .children(age.map(|label| {
+            rune::text(label)
+                .role("time")
+                .color(t.color("text-secondary"))
+        }))
+        .child(open);
+    rune::col()
+        .w_full()
+        .shrink()
+        .min_h(0.0)
+        .role("group")
+        .label(title)
+        .child(header)
+        .child(blocks)
+}
+
 #[cfg(test)]
 #[test]
 fn unicode_terms_highlight_complete_words_without_rewriting_the_excerpt() {

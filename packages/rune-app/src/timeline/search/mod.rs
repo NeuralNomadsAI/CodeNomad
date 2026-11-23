@@ -363,7 +363,7 @@ fn select(s: &mut State, index: usize, tx: &mut Tx) {
             super::navigation::seek_message(s, &hit.message, tx);
             state(s).preview = Default::default();
         } else {
-            preview::start(s, hit);
+            preview::start(s, hit, tx);
         }
     }
 }
@@ -373,6 +373,9 @@ fn open_result(s: &mut State, _: &mut Tx) {
         return;
     }
     let model = state(s);
+    if model.destination.is_some() {
+        return;
+    }
     let hit = model
         .selected
         .and_then(|i| model.page()?.hits.get(i))
