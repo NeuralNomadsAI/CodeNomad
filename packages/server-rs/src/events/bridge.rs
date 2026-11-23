@@ -355,10 +355,20 @@ async fn route(app: &Shared, routes: &Routes, Job { event, received: (routed, re
         }
     } else {
         for workspace in candidates {
-            if let Some(dir) = directory.as_deref()
-                && !crate::worktrees::owns_event(app, &workspace, dir).await
-            {
-                continue;
+            if let Some(dir) = directory.as_deref() {
+                let owns = if kind.starts_with("session.inbox.") {
+                    match crate::files::paths::canonical(&app.scope, dir) {
+                        Some(physical) => {
+                            crate::worktrees::ownership::capture_directory(app, &workspace, &physical).await.is_some()
+                        }
+                        None => false,
+                    }
+                } else {
+                    crate::worktrees::owns_event(app, &workspace, dir).await
+                };
+                if !owns {
+                    continue;
+                }
             }
             recipients.push(workspace);
         }

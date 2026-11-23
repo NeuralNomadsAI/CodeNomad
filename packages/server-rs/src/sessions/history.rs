@@ -11,7 +11,13 @@ use axum::{
 };
 use bytes::Bytes;
 use serde_json::{Value, json, value::RawValue};
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering::Relaxed},
+    },
+    time::Duration,
+};
 pub fn pending_valid(value: &Value) -> bool {
     crate::sessions::contracts::valid(crate::sessions::contracts::get("pending", true), value)
 }
@@ -24,11 +30,18 @@ struct Placement {
     path: std::path::PathBuf,
     physical: same_file::Handle,
     checkout: Option<crate::worktrees::ownership::DirectoryProof>,
+    displays: Vec<Arc<AtomicBool>>,
 }
 
 impl Placement {
     async fn capture(app: &App, id: &str, session: &str, references: bool) -> Result<Self, Error> {
         let workspace = app.workspace(id)?;
+        let display =
+            |path: &std::path::Path| crate::worktrees::fence::capture_display(&crate::worktrees::fence::identity(path));
+        let mut displays = Vec::new();
+        if references {
+            displays.push(display(&workspace.path));
+        }
         let endpoint = app.native.endpoint().ok_or_else(crate::opencode::upstream_error)?;
         let source = crate::opencode::session_record_at(app, &endpoint, session).await?;
         // Reference: `ownsLocation(id, session.location)`, linked worktrees included.
@@ -45,6 +58,9 @@ impl Placement {
             if location.get("workspaceID").is_some() {
                 return Err(forbidden());
             }
+            if path != workspace.path {
+                displays.push(display(&path));
+            }
             Some(crate::worktrees::ownership::capture_directory(app, &workspace, &path).await.ok_or_else(forbidden)?)
         } else {
             match crate::worktrees::placement(app, &workspace, location).await {
@@ -54,7 +70,7 @@ impl Placement {
             }
             None
         };
-        Ok(Self { workspace, endpoint, source, path, physical, checkout })
+        Ok(Self { workspace, endpoint, source, path, physical, checkout, displays })
     }
     async fn current(&self, app: &App, id: &str, session: &str) -> bool {
         let Ok(newest) = crate::opencode::session_record_at(app, &self.endpoint, session).await else { return false };
@@ -75,6 +91,7 @@ impl Placement {
                 == Some(&self.path)
             && same_file::Handle::from_path(&self.path).is_ok_and(|physical| physical == self.physical)
             && self.checkout.as_ref().is_none_or(|checkout| checkout.live(&self.path))
+            && self.displays.iter().all(|display| display.load(Relaxed))
     }
 
     async fn ready(&self, app: &App, id: &str, session: &str) -> Option<&str> {
@@ -207,6 +224,14 @@ pub async fn handle(
         if !placement.current(&app, &id, session).await {
             return blocked("conflict");
         }
+        if reference && output["status"] == "window" {
+            output["userFiles"] = user_files::REFERENCE.into();
+            let Ok(projected) = serde_json::to_vec(&output) else { return blocked("unavailable") };
+            if projected.len() > 24 * 1024 * 1024 {
+                return blocked("unsupported_storage");
+            }
+            return ([(header::CONTENT_TYPE, "application/json")], projected).into_response();
+        }
         ([(header::CONTENT_TYPE, "application/json")], body.slice_ref(raw.get().as_bytes())).into_response()
     };
     tokio::select! {
@@ -236,12 +261,10 @@ pub async fn attachment(
         let placement = Placement::capture(&app, &id, &session, true)
             .await
             .map_err(|e| if e.0 == Status::FORBIDDEN { e } else { missing() })?;
-        use std::sync::atomic::Ordering::Relaxed;
-        let fence = crate::worktrees::fence::capture_display(&crate::worktrees::fence::identity(&placement.path));
-        let directory = placement.ready(&app, &id, &session).await.ok_or_else(missing)?;
-        if !fence.load(Relaxed) {
+        if !placement.live(&app, &id) {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
+        let directory = placement.ready(&app, &id, &session).await.ok_or_else(missing)?;
         let mut input = json!({"sessionID":session,"messageID":message,"fileIndex":index,"sha256":sha});
         let (status, body) =
             rpc(&app, &placement.endpoint, directory, "sessionAttachment", &input).await.map_err(|_| missing())?;
@@ -269,7 +292,7 @@ pub async fn attachment(
             return Err(missing());
         }
         principal.live()?;
-        if !placement.live(&app, &id) || !fence.load(Relaxed) {
+        if !placement.live(&app, &id) {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
         Ok((

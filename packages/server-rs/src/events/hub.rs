@@ -182,6 +182,9 @@ impl Hub {
                 continue;
             }
             if preprojected && !sub.reference_files {
+                if let Some(workspace) = frame.workspace.as_deref() {
+                    q.resync(workspace, &self.statuses.lock().unwrap(), &self.retained);
+                }
                 q.closing = true;
                 sub.ready.notify_one();
                 continue;

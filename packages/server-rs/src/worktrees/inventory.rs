@@ -22,6 +22,7 @@ struct Physical {
     admin_id: String,
     marker: Option<Vec<u8>>,
     backlink: Option<Vec<u8>>,
+    common_marker: Option<Vec<u8>>,
     stamp: [Option<(std::time::SystemTime, u64)>; 2],
 }
 fn config_stamp(path: &Path) -> Option<Option<(std::time::SystemTime, u64)>> {
@@ -54,6 +55,7 @@ impl Physical {
             && config_stamp(&self.admin.join("config.worktree")) == Some(self.stamp[1])
             && self.marker.as_ref().is_none_or(|m| small(&self.root.join(".git")).ok().as_ref() == Some(m))
             && self.backlink.as_ref().is_none_or(|m| small(&self.admin.join("gitdir")).ok().as_ref() == Some(m))
+            && self.common_marker.as_ref().is_none_or(|m| small(&self.admin.join("commondir")).ok().as_ref() == Some(m))
     }
 }
 /// The checkout's `.git` is missing, or its `gitdir:` points at a missing
@@ -87,11 +89,11 @@ async fn checkout(path: &Path) -> Result<Physical, Error> {
     if lines.next().is_some() {
         return Err(native_error());
     }
-    let (marker, backlink) = if admin == common {
+    let (marker, backlink, common_marker) = if admin == common {
         if common != root.join(".git") {
             return Err(conflict("External Git directory is unavailable"));
         }
-        (None, None)
+        (None, None, None)
     } else {
         if admin.parent() != Some(common.join("worktrees").as_path()) {
             return Err(conflict("Foreign worktree administration"));
@@ -102,7 +104,12 @@ async fn checkout(path: &Path) -> Result<Physical, Error> {
         if dunce::canonicalize(text).ok().as_ref() != Some(&root.join(".git")) {
             return Err(conflict("Foreign Git backlink"));
         }
-        (Some(marker), Some(backlink))
+        let common_marker = small(&admin.join("commondir"))?;
+        let text = std::str::from_utf8(&common_marker).map_err(|_| native_error())?.trim_end();
+        if dunce::canonicalize(admin.join(text)).ok().as_ref() != Some(&common) {
+            return Err(conflict("Foreign Git common directory"));
+        }
+        (Some(marker), Some(backlink), Some(common_marker))
     };
     Ok(Physical {
         stamp: [
@@ -117,6 +124,7 @@ async fn checkout(path: &Path) -> Result<Physical, Error> {
         common,
         marker,
         backlink,
+        common_marker,
     })
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -408,7 +416,7 @@ pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalo
 
 #[cfg(test)]
 mod layout_tests {
-    use super::git_layout_gone;
+    use super::{checkout, git_layout_gone};
 
     #[test]
     fn a_registration_without_git_layout_is_gone() {
@@ -425,5 +433,34 @@ mod layout_tests {
         std::fs::create_dir_all(tree.join(".git")).unwrap();
         assert!(!git_layout_gone(&tree), "main checkout directory");
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_changed_common_directory_invalidates_a_captured_layout() {
+        let base = crate::shared::test_dir("worktree-common-directory");
+        let root = base.join("root");
+        let tree = base.join("tree");
+        std::fs::create_dir_all(&root).unwrap();
+        for args in [
+            &["init", "-q"][..],
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "-qm",
+                "initial",
+                "--allow-empty",
+            ],
+            &["worktree", "add", "--detach", tree.to_str().unwrap(), "HEAD"],
+        ] {
+            assert!(crate::git::command(&root, args).status().await.unwrap().success());
+        }
+        let layout = checkout(&tree).await.unwrap();
+        assert!(layout.live());
+        std::fs::write(layout.admin.join("commondir"), "../elsewhere\n").unwrap();
+        assert!(!layout.live());
+        std::fs::remove_dir_all(base).unwrap();
     }
 }

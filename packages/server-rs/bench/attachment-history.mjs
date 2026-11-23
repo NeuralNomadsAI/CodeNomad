@@ -10,7 +10,7 @@ const post = (value, headers = {}) => ({
   method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(value),
 })
 
-async function qualifyStream(call, client, id, location, size, count) {
+async function qualifyStream(call, client, id, location, size, count, nativeSend = false) {
   const session = await client.session.create({ location, title: "Reference SSE fixture" })
   const controller = new AbortController()
   const response = await call("/api/events?clientId=files&connectionId=projected&userFiles=reference-v1", {
@@ -22,10 +22,12 @@ async function qualifyStream(call, client, id, location, size, count) {
     const bytes = Buffer.alloc(size, 17)
     const name = "queued.bin", mime = "application/octet-stream"
     const file = { name, uri: `data:${mime};base64,${bytes.toString("base64")}` }
-    const prompt = await call(`/workspaces/${id}/instance/api/session/${session.id}/prompt`, post({
-      text: "stream fixture", files: Array.from({ length: count }, () => file),
-    }))
-    assert.equal(prompt.status, 200, await prompt.text())
+    const input = { text: "stream fixture", files: Array.from({ length: count }, () => file) }
+    if (nativeSend) await client.session.prompt({ sessionID: session.id, ...input })
+    else {
+      const prompt = await call(`/workspaces/${id}/instance/api/session/${session.id}/prompt`, post(input))
+      assert.equal(prompt.status, 200, await prompt.text())
+    }
     let pending = "", found = false
     for (;;) {
       const { value, done } = await reader.read()
@@ -119,7 +121,8 @@ export async function run({ call, fixture, folder, other }) {
     assert.equal((await call(route)).status, 413)
     result.push({ blob: true, bound: bytes.length })
     return { history: result, stream: await qualifyStream(call, client, id, location, 255 * 1024, 1),
-      largeStream: await qualifyStream(call, client, id, location, 5 * MiB, 3) }
+      largeStream: await qualifyStream(call, client, id, location, 5 * MiB, 3),
+      nestedStream: await qualifyStream(call, client, id, nested, 5 * MiB, 3, true) }
   } finally {
     database.close()
     await call(root, { method: "DELETE" })

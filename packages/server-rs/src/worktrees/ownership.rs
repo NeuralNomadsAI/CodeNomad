@@ -19,11 +19,22 @@ pub struct Owned {
     pub checkout: PathBuf,
 }
 
-pub(crate) struct DirectoryProof(Option<super::inventory::Tree>);
+pub(crate) struct DirectoryProof {
+    tree: Option<super::inventory::Tree>,
+    source: Option<super::inventory::Tree>,
+}
 
 impl DirectoryProof {
     pub(crate) fn live(&self, physical: &Path) -> bool {
-        self.0.as_ref().is_none_or(|tree| tree.contains_live(physical))
+        self.source.as_ref().is_none_or(|source| source.contains_live(&source.path))
+            && self.tree.as_ref().is_none_or(|tree| {
+                tree.contains_live(physical)
+                    && (self.source.is_none()
+                        || physical.ancestors().take_while(|ancestor| *ancestor != tree.registered()).all(|ancestor| {
+                            std::fs::symlink_metadata(ancestor.join(".git"))
+                                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+                        }))
+            })
     }
 }
 
@@ -33,19 +44,22 @@ pub(crate) async fn capture_directory(app: &App, workspace: &Workspace, physical
     if !physical.starts_with(&app.scope) {
         return None;
     }
-    if physical == workspace.path {
-        return Some(DirectoryProof(None));
+    let external = !physical.starts_with(&workspace.path);
+    if physical == workspace.path || !external && matches!(super::root_only(workspace).await, Ok(Some(true))) {
+        return Some(DirectoryProof { tree: None, source: None });
     }
-    if physical.starts_with(&workspace.path) && matches!(super::root_only(workspace).await, Ok(Some(true))) {
-        return Some(DirectoryProof(None));
+    if external && !shares_common_directory(&workspace.path, physical).await.ok()? {
+        return None;
     }
     let catalogue = super::linked::catalogue(app, workspace, false).await.ok()?;
+    let source = if external { Some(catalogue.get("root").ok()?.clone()) } else { None };
     let tree = catalogue
         .trees
         .into_iter()
         .filter(|tree| tree.contains_live(physical))
         .max_by_key(|tree| tree.path.as_os_str().len())?;
-    Some(DirectoryProof(Some(tree)))
+    let proof = DirectoryProof { tree: Some(tree), source };
+    proof.live(physical).then_some(proof)
 }
 
 /// `resolveDirectoryPath`: the real path, or the real nearest ancestor joined with the
