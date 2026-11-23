@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { test } from "node:test"
 import Fastify from "fastify"
 import { registerSessionNavigationRoutes } from "./session-navigation"
@@ -12,7 +13,7 @@ function fixture(pluginsReady: () => Promise<void> = async () => {}) {
   const calls: any[] = []
   const outline = (layout?: object) => ({ status: "outline", entries: [{ id: "m", seq: 1, type: "assistant", tools: 1, reasoning: 0, text: 1,
     toolName: "read", ...layout }], total: 1, cursor: null, checkpoints: [] })
-  const methods: Record<string, () => unknown> = {
+  const methods: Record<string, (signal: AbortSignal, input: any) => unknown> = {
     outline: () => outline(), outlineLayout: () => outline({ layout: "TX" }), outlinePreview: () => ({ status: "previews", entries: [] }),
     window: () => ({ status: "window", messages: [], older: null, newer: null, resume: { kind: "latest" }, latest: true }),
   }
@@ -21,15 +22,15 @@ function fixture(pluginsReady: () => Promise<void> = async () => {}) {
     ownsLocation: async () => owned,
     desktopPluginsReady: pluginsReady,
     ...brokerConnection({ session: { get: async () => structuredClone(session) }, rpc: {
-      call: async (input: any) => {
-        calls.push(input); afterRead()
-        return { output: methods[input.method]() }
+       call: async (input: any, options: { signal: AbortSignal }) => {
+         calls.push(input); afterRead()
+         return { output: await methods[input.method](options.signal, input.input) }
       },
     } } as any),
   } as any })
   return { app, calls, ownership: (value: boolean) => { owned = value }, race: (callback: () => void) => { afterRead = callback },
     change: (value: object) => { session = { ...session, ...value } },
-    plugin: (method: string, handler: () => unknown) => { methods[method] = handler } }
+     plugin: (method: string, handler: (signal: AbortSignal, input: any) => unknown) => { methods[method] = handler } }
 }
 // The native SDK throws a declared RPC error with its body's fields.
 const rpcError = (type: string) => Object.assign(new Error(type), { _tag: "RpcError", type, message: type })
@@ -79,6 +80,52 @@ test("an opted-in history window defers large tool images like the message list"
     assert.match(await read({ "x-codenomad-media": "deferred" }), /^\/api\/workspaces\/w\/session-media\/s\/m\/0\/0\/[a-f0-9]{64}$/)
     assert.equal(await read({}), uri)
   } finally { await f.app.close() }
+})
+
+test("attachment reads publish only the requested stored bytes while placement and undo remain current", async t => {
+  const f = fixture()
+  t.after(() => f.app.close())
+  const bytes = Buffer.from("attachment fixture")
+  const digest = createHash("sha256").update(bytes).digest("hex")
+  const url = `/api/workspaces/w/session-attachment/s/m/0/${digest}`
+  const send = () => f.app.inject(url)
+  const file = { status: "file", data: bytes.toString("base64") }
+  f.plugin("sessionAttachment", (_signal, input) => input.confirm ? { status: "current" } : file)
+  const response = await send()
+  assert.equal(response.statusCode, 200)
+  assert.equal(response.headers["content-disposition"], "attachment")
+  assert.deepEqual(response.rawPayload, bytes)
+  assert.deepEqual(f.calls[0].input, { sessionID: "s", messageID: "m", fileIndex: 0, sha256: digest })
+  assert.deepEqual(f.calls[1].input, { ...f.calls[0].input, confirm: true })
+  f.plugin("sessionAttachment", (_signal, input) => input.confirm ? { status: "missing" } : file)
+  assert.equal((await send()).statusCode, 404, "a committed undo can remove the row without leaving a revert marker")
+  f.plugin("sessionAttachment", () => ({ status: "file", data: Buffer.from("different").toString("base64") }))
+  assert.equal((await send()).statusCode, 404)
+  f.plugin("sessionAttachment", () => file)
+  f.race(() => f.change({ revert: { messageID: "m" } }))
+  assert.equal((await send()).statusCode, 409)
+})
+
+test("closing an attachment download cancels the outstanding plugin request", async t => {
+  const f = fixture()
+  t.after(() => f.app.close())
+  let entered!: (signal: AbortSignal) => void
+  const waiting = new Promise<AbortSignal>(resolve => { entered = resolve })
+  f.plugin("sessionAttachment", signal => {
+    entered(signal)
+    return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }))
+  })
+  const origin = await f.app.listen({ host: "127.0.0.1", port: 0 })
+  const controller = new AbortController()
+  const request = fetch(`${origin}/api/workspaces/w/session-attachment/s/m/0/${"a".repeat(64)}`, {
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]),
+  })
+  const result = assert.rejects(request, { name: "AbortError" })
+  const signal = await Promise.race([waiting, request.then(() => { throw new Error("Expected plugin request") })])
+  const aborted = new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }))
+  controller.abort()
+  await result
+  await aborted
 })
 
 for (const method of ["outline", "window", "outlinePreview"]) test(`${method} validates ownership and fences location, project, revert and inventory changes`, async () => {

@@ -52,6 +52,7 @@ interface EventRoute {
   signal: AbortSignal
   queue: InstanceEventQueue
   key: string
+  payload: object
   bytes: number
   recipients: Array<{ id: string; epoch: number }>
   receivedAt: number
@@ -177,8 +178,8 @@ export class InstanceEventBridge {
             id: workspace.id, epoch: this.workspaceEpochs.get(workspace.id) ?? 0,
           }))
           queue.enqueue(`resolve:${key}`, bytes, () => this.publishEvent(event, {
-            current, signal: attempt.signal, queue, key, bytes, recipients, receivedAt,
-          }))
+             current, signal: attempt.signal, queue, key, bytes, payload: event, recipients, receivedAt,
+           }), event)
         }
         if (!this.controller.signal.aborted) throw failure ?? new Error("Shared OpenCode event stream ended")
       } catch (error) {
@@ -333,7 +334,7 @@ export class InstanceEventBridge {
         else if (event.type === "session.moved" || event.type === "session.deleted") this.forgetSessionRecipient(sessionId, instanceId)
         else if (allowed) this.rememberSessionRecipient(sessionId, instanceId)
         else if (location && this.sessionRecipients.get(sessionId)?.has(instanceId)) this.requestRoutingResync(instanceId)
-      })
+      }, route.payload)
     }
   }
 

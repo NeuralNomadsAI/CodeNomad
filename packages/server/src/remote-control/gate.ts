@@ -76,6 +76,7 @@ const SERVER_DEVICE_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["POST", /^\/api\/workspaces\/[^/]+\/sessions\/[^/]+\/worktree$/],
   ["GET", /^\/api\/workspaces\/[^/]+\/sessions\/[^/]+\/(?:permission-receipts|goal)$/],
   ["GET", /^\/api\/workspaces\/[^/]+\/session-media\/[^/]+\/[^/]+\/[^/]+\/[^/]+\/[^/]+$/],
+  ["GET", /^\/api\/workspaces\/[^/]+\/session-attachment\/[^/]+\/[^/]+\/[^/]+\/[^/]+$/],
   ["POST", /^\/api\/workspaces\/[^/]+\/session-history\/(?:window|outline|outlinePreview|query|ranked|prune)$/],
   ["POST", /^\/api\/workspaces\/[^/]+\/session-pruning\/(?:preview|prune)$/],
   ["GET POST", /^\/api\/workspaces\/[^/]+\/missions$/],
