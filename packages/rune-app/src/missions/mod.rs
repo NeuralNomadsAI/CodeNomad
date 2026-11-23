@@ -1,4 +1,5 @@
 //! Read-only Mission views owned by a project occurrence.
+mod control_fields;
 mod detail;
 mod directory;
 mod lifecycle;

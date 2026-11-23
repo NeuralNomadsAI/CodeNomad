@@ -4,6 +4,7 @@ export const missionMessages = {
   "missions.control.reader.loading": "Reading content…",
   "missions.control.form.loading": "Loading form…",
   "missions.control.run.checking": "Checking action status…",
+  "missions.control.run.superseded": "This action was superseded by a newer one.",
   "missions.control.run.pending.start": "Starting mission…",
   "missions.control.run.pending.pause": "Pausing mission…",
   "missions.control.run.pending.interrupt": "Interrupting mission…",

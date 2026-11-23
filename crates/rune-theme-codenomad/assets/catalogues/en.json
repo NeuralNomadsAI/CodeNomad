@@ -1260,6 +1260,7 @@
   "missions.control.run.start": "Start mission",
   "missions.control.run.stop": "Stop mission permanently",
   "missions.control.run.stopConfirm": "Stop this mission permanently?",
+  "missions.control.run.superseded": "This action was superseded by a newer one.",
   "missions.control.save": "Save",
   "missions.control.status.active": "Active",
   "missions.control.status.completed": "Completed",

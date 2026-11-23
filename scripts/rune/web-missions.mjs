@@ -43,6 +43,18 @@ export function missionsFixture({page,messages,artifact,project}){
     }
     if(!path.endsWith('/missions/panel-page'))return false
     const request=route.request().postDataJSON()
+    if(request.field==='control'){
+      const rows=lifecycle.rows(request.part).map(row=>JSON.stringify(row))
+      const {offset,order}=request.window
+      const selected=rows.slice(offset,offset+50), actual=digest(rows)
+      assert(!order||order===actual)
+      await route.fulfill({json:{available:true,version:1,projectID:'fixture-project',source:'mission',missionID:'gamma',
+        revision:gammaRevision,field:'control',part:request.part,discardedEvents:0,controlUnavailable:false,
+        notificationUnavailable:false,cleanupUnavailable:false,window:{order:actual,offset,end:offset+selected.length,total:rows.length},
+        page:{digest:digest(selected),total:selected.length,pieces:selected.map((text,index)=>({index,offset:0,characters:text.length,text}))},
+      }})
+      return true
+    }
     if(['mission','tasks','activity'].includes(request.source)){
       const task=request.task
       const missionID=request.missionID??task.missionID

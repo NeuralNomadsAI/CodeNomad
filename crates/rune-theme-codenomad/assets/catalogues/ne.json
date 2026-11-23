@@ -1260,6 +1260,7 @@
   "missions.control.run.start": "मिसन सुरु गर्नुहोस्",
   "missions.control.run.stop": "मिसन स्थायी रूपमा रोक्नुहोस्",
   "missions.control.run.stopConfirm": "यो मिसन स्थायी रूपमा रोक्ने?",
+  "missions.control.run.superseded": "यो कार्यलाई नयाँ कार्यले प्रतिस्थापन गरेको छ।",
   "missions.control.save": "सेभ गर्नुहोस्",
   "missions.control.status.active": "सक्रिय",
   "missions.control.status.completed": "पूरा",

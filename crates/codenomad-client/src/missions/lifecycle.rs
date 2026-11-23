@@ -6,6 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 const MAX_REVISION: u64 = (1 << 53) - 1;
+const CONTROL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -193,7 +194,7 @@ impl Backend {
                 target.mission.as_str(),
                 "control",
             ]);
-        let response = self.client.post(url).json(request).send().await?;
+        let response = control_post(self, url, request).send().await?;
         let status = response.status();
         let body = read_json_limited(response, 4 * 1024 * 1024).await?;
         Ok(settle(status, &body, target, request))
@@ -221,6 +222,7 @@ fn settle(
             == Some(request.action)
         && control.get("graceful").map(|value| value == true) == request.graceful
         && control["pending"].as_array().is_some_and(Vec::is_empty)
+        && known_receipts(control)
         && let (Some(revision), Some(completed)) = (revision, control["completedRevision"].as_u64())
         && (request.expected_revision.saturating_add(1)..=revision).contains(&completed)
         && revision <= MAX_REVISION
@@ -230,10 +232,58 @@ fn settle(
     LifecycleOutcome::Unconfirmed
 }
 
+fn control_post(
+    backend: &Backend,
+    url: reqwest::Url,
+    request: &LifecycleRequest,
+) -> reqwest::RequestBuilder {
+    backend
+        .client
+        .post(url)
+        .timeout(CONTROL_TIMEOUT)
+        .json(request)
+}
+
+fn known_receipts(control: &serde_json::Value) -> bool {
+    control
+        .get("unconfirmedReceipts")
+        .is_none_or(|count| count.as_u64() == Some(0))
+        && control.get("receipts").is_none_or(|rows| {
+            rows.as_array().is_some_and(|rows| {
+                rows.iter().all(|row| {
+                    row["acknowledgementState"] == "known"
+                        && row["nativeAcknowledgement"].is_object()
+                })
+            })
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn lifecycle_post_keeps_the_native_family_budget() {
+        let backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+        let url = reqwest::Url::parse(&backend.base).unwrap();
+        let request = LifecycleRequest::new(LifecycleAction::Stop, 7, false).unwrap();
+        let built = control_post(&backend, url.clone(), &request)
+            .build()
+            .unwrap();
+        assert_eq!(built.timeout().unwrap().as_secs(), 90);
+        assert_eq!(
+            backend
+                .client
+                .get(url)
+                .build()
+                .unwrap()
+                .timeout()
+                .unwrap()
+                .as_secs(),
+            30
+        );
+    }
 
     #[test]
     fn lifecycle_ack_is_exact_and_only_revision_conflict_certifies_rejection() {
@@ -265,6 +315,13 @@ mod tests {
         assert_eq!(
             settle(reqwest::StatusCode::OK, &body, &target, &request),
             LifecycleOutcome::Acknowledged(8)
+        );
+        let mut unknown = body.clone();
+        unknown["mission"]["control"]["receipts"] =
+            json!([{"sessionID":"ses-one","receiptID":"rec-one","acknowledgementState":"unknown"}]);
+        assert_eq!(
+            settle(reqwest::StatusCode::OK, &unknown, &target, &request),
+            LifecycleOutcome::Unconfirmed
         );
         for (path, value) in [
             ("/mission/control/requestID", json!("foreign")),

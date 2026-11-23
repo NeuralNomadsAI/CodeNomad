@@ -1260,6 +1260,7 @@
   "missions.control.run.start": "הפעלת משימה",
   "missions.control.run.stop": "עצירת משימה לצמיתות",
   "missions.control.run.stopConfirm": "לעצור את המשימה הזו לצמיתות?",
+  "missions.control.run.superseded": "פעולה חדשה יותר החליפה את הפעולה הזו.",
   "missions.control.save": "שמירה",
   "missions.control.status.active": "פעילה",
   "missions.control.status.completed": "הושלמה",

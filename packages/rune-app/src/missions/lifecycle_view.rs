@@ -23,20 +23,24 @@ pub(crate) fn controls(panel: &Panel, owner: &Lifecycle, occurrence: &str, act: 
         panel.observation.working(),
     );
     let mut row = layout::action_row();
-    let button = |label, disabled, gesture: fn() -> Gesture, key| {
+    let button = |label, disabled: bool, gesture: fn() -> Gesture, key| {
         let origin = source.clone();
-        layout::button_tx(label, disabled, move |s: &mut State, tx| {
-            act(s, &origin, gesture());
-            tx.instant();
+        layout::button_tx(label, false, move |s: &mut State, tx| {
+            if !disabled {
+                act(s, &origin, gesture());
+                tx.instant();
+            }
         })
+        .disabled(disabled)
+        .focusable(true)
         .key(key)
     };
-    if owner.unresolved(&source, header) {
+    if owner.unresolved(&source, header) || owner.busy(&source) {
         row = row.child(button(
             t("missionsPanel.action.checkStatus"),
             owner.busy(&source),
             || Gesture::Check,
-            "mission-control-check",
+            "mission-control-primary",
         ));
         if owner.replayable(&source, revision) {
             row = row.child(button(
@@ -61,10 +65,14 @@ pub(crate) fn controls(panel: &Panel, owner: &Lifecycle, occurrence: &str, act: 
         };
         let origin = source.clone();
         row = row.child(
-            layout::button_tx(t(label), disabled, move |s, tx| {
-                act(s, &origin, Gesture::New(action, graceful, revision));
-                tx.instant();
+            layout::button_tx(t(label), false, move |s, tx| {
+                if !disabled {
+                    act(s, &origin, Gesture::New(action, graceful, revision));
+                    tx.instant();
+                }
             })
+            .disabled(disabled)
+            .focusable(true)
             .key("mission-control-primary"),
         );
         if pausing {
@@ -85,6 +93,11 @@ pub(crate) fn controls(panel: &Panel, owner: &Lifecycle, occurrence: &str, act: 
                 .key("mission-control-interrupt"),
             );
         }
+    }
+    if Lifecycle::allow(header, LifecycleAction::Stop, false, false)
+        && (owner.can_stop(&source, header) || owner.busy(&source))
+    {
+        let disabled = !ready || !owner.can_stop(&source, header);
         let origin = source.clone();
         row = row.child(
             layout::button_tx(t("missions.control.run.stop"), disabled, move |s, tx| {
@@ -115,6 +128,14 @@ pub(crate) fn controls(panel: &Panel, owner: &Lifecycle, occurrence: &str, act: 
         view = view.child(theme::note(
             t("missions.control.run.partialInterrupt"),
             "status",
+        ));
+    }
+    if let Some(control) = &header.control {
+        view = view.child(super::control_fields::view(
+            &panel.control_fields,
+            control,
+            &source,
+            act,
         ));
     }
     view

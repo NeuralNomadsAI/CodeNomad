@@ -1260,6 +1260,7 @@
   "missions.control.run.start": "Mission starten",
   "missions.control.run.stop": "Mission endgültig stoppen",
   "missions.control.run.stopConfirm": "Diese Mission dauerhaft stoppen?",
+  "missions.control.run.superseded": "Diese Aktion wurde durch eine neuere ersetzt.",
   "missions.control.save": "Speichern",
   "missions.control.status.active": "Aktiv",
   "missions.control.status.completed": "Abgeschlossen",
