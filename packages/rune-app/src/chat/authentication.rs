@@ -74,7 +74,7 @@ fn submit(s: &mut State) {
     };
     if !challenge.required
         || challenge.flight.is_some()
-        || s.direct_authentication.username.text.trim().is_empty()
+        || s.direct_authentication.username.text.is_empty()
         || s.direct_authentication.password.text.is_empty()
     {
         return;
@@ -84,10 +84,7 @@ fn submit(s: &mut State) {
     request(
         challenge,
         &s.wake,
-        Some((
-            s.direct_authentication.username.text.trim().to_owned(),
-            password,
-        )),
+        Some((s.direct_authentication.username.text.clone(), password)),
     );
 }
 
@@ -236,7 +233,7 @@ pub(crate) fn dialog(s: &State) -> Option<El> {
         } else {
             "authRecovery.signIn"
         }),
-        waiting || username.text.trim().is_empty() || password.text.is_empty(),
+        waiting || username.text.is_empty() || password.text.is_empty(),
         crate::screen::action(scope, submit),
     )
     .key("direct-recovery-sign-in");

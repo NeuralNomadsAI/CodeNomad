@@ -436,7 +436,7 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
             key: rune::Key::Home,
             mods: Default::default(),
         });
-        runtime.paste("operator-");
+        runtime.paste(" operator-");
         runtime.frame(0.02);
         for password in ["old-fixture-password", "new-fixture-password"] {
             let (x, y) = runtime.find("direct-recovery-password").unwrap();
@@ -452,7 +452,7 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
             let mut login = request(&listener).await;
             assert_eq!(login.first, "POST /api/auth/login HTTP/1.1");
             assert_eq!(login.body["password"], password);
-            assert_eq!(login.body["username"], "operator-codenomad");
+            assert_eq!(login.body["username"], " operator-codenomad");
             if password.starts_with("old") {
                 login.reply(401, json!({})).await;
                 wait_until(|| {
