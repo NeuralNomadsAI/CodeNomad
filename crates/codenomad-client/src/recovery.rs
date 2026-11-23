@@ -294,19 +294,39 @@ pub(crate) async fn run_with_reading(
                 }
                 publish(&out, &wake, Event::Reconnecting).await;
             }
-            Some(Input::Command(Command::Older)) => {
+            Some(Input::Command(command @ (Command::Older | Command::OlderCancellable(_)))) => {
+                let cancel = if let Command::OlderCancellable(ref signal) = command {
+                    Some(signal)
+                } else {
+                    None
+                };
+                let failed = || {
+                    cancel
+                        .cloned()
+                        .map_or(Event::PagingFailed, Event::OlderFailed)
+                };
                 if let Some(target) = older.clone().filter(|_| {
                     active_reader && opened && (!dirty || historical) && wire.upstream.load(SeqCst)
                 }) {
                     let stamp = wire.version.load(SeqCst);
-                    let Some(page) =
-                        read_page(reading, generation, &wire, backend.page(target)).await
+                    let Some(page) = crate::timeline::until_cancelled(
+                        cancel,
+                        read_page(reading, generation, &wire, backend.page(target)),
+                    )
+                    .await
                     else {
                         continue;
                     };
                     match page {
                         Ok(page) if wire.valid(stamp) && rx.is_empty() => {
                             if history::previous_page(&page, &resident).is_ok() {
+                                if !crate::timeline::older_offer(
+                                    cancel, &page, &wire, stamp, &out, &wake,
+                                )
+                                .await
+                                {
+                                    continue;
+                                }
                                 if !page.rows.is_empty() {
                                     historical = page.newer.is_some();
                                     resident = page.rows.clone();
@@ -315,26 +335,31 @@ pub(crate) async fn run_with_reading(
                                     owed.retain(|(id, _)| known.contains(id));
                                 }
                                 older = page.older.clone();
-                                reader_event(reading, generation, &out, &wake, Event::Older(page))
+                                if cancel.is_none() {
+                                    reader_event(
+                                        reading,
+                                        generation,
+                                        &out,
+                                        &wake,
+                                        Event::Older(page),
+                                    )
                                     .await;
+                                }
                             } else {
-                                reader_event(reading, generation, &out, &wake, Event::PagingFailed)
-                                    .await;
+                                reader_event(reading, generation, &out, &wake, failed()).await;
                             }
                         }
                         Ok(_) => {
                             dirty = true;
                             quiet = Instant::now() + Duration::from_millis(100);
-                            reader_event(reading, generation, &out, &wake, Event::PagingFailed)
-                                .await;
+                            reader_event(reading, generation, &out, &wake, failed()).await;
                         }
                         Err(_) => {
-                            reader_event(reading, generation, &out, &wake, Event::PagingFailed)
-                                .await;
+                            reader_event(reading, generation, &out, &wake, failed()).await;
                         }
                     }
                 } else if active_reader {
-                    reader_event(reading, generation, &out, &wake, Event::PagingFailed).await;
+                    reader_event(reading, generation, &out, &wake, failed()).await;
                 }
             }
             Some(Input::Command(Command::Anchor(jump))) => {

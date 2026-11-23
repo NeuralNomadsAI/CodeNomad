@@ -1,9 +1,11 @@
 //! The visible conversation owns structure and selection; the reader owns bodies.
 mod navigation;
+mod reading_line;
 #[cfg(test)]
 mod tests;
 mod view;
 pub(crate) use navigation::{admit, cancel_jump, failed};
+pub(crate) use reading_line::watch as watch_block;
 pub(crate) use view::{view, watch};
 
 use crate::{State, backend::Backend, platform, transport::Event};
@@ -58,16 +60,12 @@ pub(crate) struct Timeline {
     scroll: Rc<Cell<view::Scroll>>,
     resident: Vec<(String, Vec<Marker>)>,
     detached: bool,
+    pub(crate) older: Option<Sender<()>>,
+    reading_line: reading_line::Blocks,
 }
 
 fn owner(s: &mut State) -> &mut Timeline {
     &mut s.transcript_display.timeline
-}
-
-pub(crate) fn reading_changed(s: &State) {
-    if demanded(s) {
-        (s.wake)();
-    }
 }
 
 pub(crate) fn structure_changed(s: &mut State) {
@@ -144,7 +142,7 @@ pub(crate) fn observe(s: &mut State, event: &Event) {
     }
 }
 
-fn demanded(s: &State) -> bool {
+pub(crate) fn demanded(s: &State) -> bool {
     let t = &s.transcript_display.timeline;
     !s.screen.is_launcher()
         && !crate::files::has_preview(s)

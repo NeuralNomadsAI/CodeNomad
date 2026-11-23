@@ -47,6 +47,7 @@ pub(super) fn retry(s: &mut State, tx: &mut Tx) {
 
 fn start(s: &mut State, target: Marker, tx: &mut Tx) {
     gesture(s);
+    reader::cancel_older(s);
     cancel_jump(s);
     let serial = owner(s).jump.serial;
     if let Some(row) = s.messages.iter().find(|row| row.id == target.message) {
@@ -194,19 +195,9 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if owner(s).jump.locked || owner(s).jump.flight.is_some() {
         return moved || aligned;
     }
-    let reading = reader::timeline_reading(s);
+    let bounds = s.tool_diff_preferences.history_bounds.get();
     let t = owner(s);
-    let marker = reading
-        .and_then(|(message, following)| {
-            if following {
-                t.resident.last().and_then(|(_, markers)| markers.last())
-            } else {
-                t.resident
-                    .get(message)
-                    .and_then(|(_, markers)| markers.first())
-            }
-        })
-        .map(|m| m.id.clone());
+    let marker = t.reading_line.first(bounds);
     if t.jump.active == marker {
         return moved || aligned;
     }

@@ -141,3 +141,124 @@ fn reasoning_uses_the_rendered_run_not_the_native_fragment_ordinal() {
         "history top {top}, group top {group}"
     );
 }
+
+#[test]
+fn a_new_resident_jump_rejects_an_older_page_already_in_the_mailbox() {
+    let mut s = crate::init();
+    s.messages.push(assistant("anchored"));
+    s.can_older = true;
+    let (send, commands) = bounded(1);
+    s.commands = Some(send);
+    owner(&mut s).width = 800.0;
+    owner(&mut s).changed = true;
+    let mut rt = Runtime::new(s, view, (800.0, 600.0), Env::new(false, 1.0));
+    rt.update(|s, tx| {
+        poll(s, tx);
+        crate::chat::reader::older(s);
+        let crate::transport::Command::OlderCancellable(cancelled) = commands.try_recv().unwrap()
+        else {
+            panic!("older page must be cancellable");
+        };
+        navigation::select(s, "anchored:Assistant:1:false", tx);
+        assert!(cancelled.is_closed());
+        crate::chat::reader::older(s);
+        assert!(!crate::chat::reader::admit_older(s, &cancelled, || panic!(
+            "obsolete page admitted"
+        )));
+        assert_eq!(s.messages[0].id, "anchored");
+        assert!(
+            s.paging,
+            "an obsolete response must not clear the new request"
+        );
+    });
+}
+
+#[test]
+fn reading_line_tracks_the_first_displayed_block_below_its_cutoff() {
+    let mut s = crate::init();
+    s.messages = std::iter::once(assistant("anchored"))
+        .chain((0..35).map(|i| user(&format!("after-{i}"))))
+        .collect();
+    owner(&mut s).width = 800.0;
+    owner(&mut s).changed = true;
+    let mut rt = Runtime::new(s, view, (800.0, 600.0), Env::new(false, 1.0));
+    rt.frame(0.016);
+    rt.update(|s, tx| {
+        poll(s, tx);
+        tx.scroll_key_to("anchored/fragment-anchored:1", 0.0);
+    });
+    for _ in 0..8 {
+        rt.frame(0.016);
+    }
+    rt.update(|s, tx| {
+        navigation::poll(s, tx);
+    });
+    assert_eq!(
+        rt.state.transcript_display.timeline.jump.active.as_deref(),
+        Some("anchored:Assistant:1:false")
+    );
+}
+
+#[test]
+fn native_system_and_compaction_content_have_exact_rendered_anchors() {
+    for (role, field, kind) in [
+        ("compaction", "summary", "Compaction"),
+        ("system", "text", "System"),
+    ] {
+        let mut native = json!({"id":"context","type":role});
+        native[field] = json!("Native context body");
+        let row: crate::history::Row = crate::history::decode_message(&native).unwrap().into();
+        assert_eq!(row.body, "Native context body");
+        let mut s = crate::init();
+        s.messages = std::iter::once(row)
+            .chain((0..35).map(|i| user(&format!("after-{i}"))))
+            .collect();
+        owner(&mut s).width = 800.0;
+        owner(&mut s).changed = true;
+        let mut rt = Runtime::new(s, view, (800.0, 600.0), Env::new(false, 1.0));
+        rt.frame(0.016);
+        rt.update(|s, tx| {
+            poll(s, tx);
+            navigation::select(s, &format!("context:{kind}:0:false"), tx);
+        });
+        for _ in 0..5 {
+            rt.frame(0.016);
+        }
+        let top = rt.presented("history").unwrap().0[1];
+        assert!((rt.presented("context-context").unwrap().0[1] - top).abs() < 2.0);
+        assert!(
+            rt.accessibility_json()
+                .to_string()
+                .contains("Native context body")
+        );
+    }
+}
+
+#[test]
+fn marker_names_are_bounded_and_only_the_current_marker_reports_position() {
+    let mut s = crate::init();
+    let long = "é".repeat(210) + &"😀".repeat(20);
+    let row =
+        crate::history::decode_message(&json!({"id":"long","type":"user","text":long})).unwrap();
+    s.messages = vec![assistant("anchored"), row.into()];
+    owner(&mut s).width = 800.0;
+    owner(&mut s).changed = true;
+    let mut rt = Runtime::new(s, view, (800.0, 600.0), Env::new(false, 1.0));
+    rt.frame(0.016);
+    rt.update(|s, tx| {
+        poll(s, tx);
+        navigation::select(s, "long:User:0:false", tx);
+    });
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    let label = view::excerpt(&long);
+    assert!(label.ends_with('…') && label.encode_utf16().count() <= 220);
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains(&label));
+    assert_eq!(
+        tree.matches(crate::strings::t("messageTimeline.current"))
+            .count(),
+        1
+    );
+}

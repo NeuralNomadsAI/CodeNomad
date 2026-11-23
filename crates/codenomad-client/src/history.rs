@@ -45,10 +45,15 @@ pub fn decode_message(v: &Value) -> Result<Message> {
         .ok_or("invalid message id")?;
     let role = v["type"].as_str().ok_or("missing message type")?;
     let parts = crate::content::decode(v)?;
-    let body = if role == "user" {
-        v["text"].as_str().ok_or("invalid native user text")?.into()
-    } else {
-        crate::content::text_body(&parts)
+    let body = match role {
+        "user" => v["text"].as_str().ok_or("invalid native user text")?.into(),
+        "system" => v["text"].as_str().unwrap_or_default().into(),
+        "compaction" => v["summary"]
+            .as_str()
+            .or_else(|| v["error"]["message"].as_str())
+            .unwrap_or_default()
+            .into(),
+        _ => crate::content::text_body(&parts),
     };
     Ok(Message {
         id: id.into(),

@@ -166,14 +166,7 @@ fn send(s: &mut State, tx: &mut Tx) {
     composer::send(s, tx, false);
 }
 fn request_older(s: &mut State, _: &mut Tx) {
-    if s.can_older
-        && !s.paging
-        && s.commands
-            .as_ref()
-            .is_some_and(|c| c.try_send(Command::Older).is_ok())
-    {
-        s.paging = true;
-    }
+    chat::reader::older(s);
 }
 fn latest(s: &mut State, tx: &mut Tx) {
     if s.reader.is_none() && s.history_detached {

@@ -50,7 +50,8 @@ fn view(s: &Scene, cx: &mut Cx<Scene>) -> El {
             0,
             |s: &Scene, i| s.ids[i].as_str().into(),
             |s: &Scene, i| timeline::Marker {
-                label: &s.ids[i],
+                label: s.ids[i].as_str().into(),
+                current: "Current position",
                 glyph: if i % 2 == 0 {
                     &timeline::icons::USER
                 } else {

@@ -148,6 +148,7 @@ export const messagingMessages = {
   "messageSection.search.noVisibleMatches": "Нет видимых совпадений",
 
   "messageTimeline.ariaLabel": "Таймлайн сообщений",
+  "messageTimeline.current": "Текущая позиция",
   "messageTimeline.segment.user.label": "Вы",
   "messageTimeline.segment.assistant.label": "Асс.",
   "messageTimeline.segment.compaction.label": "Компактация",

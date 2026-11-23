@@ -140,19 +140,15 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     Phase::Ready
                 };
             }
-            Event::Older(page) => {
-                if !page.rows.is_empty() {
-                    s.attachments.cancel();
-                    s.history_detached = page.newer.is_some();
-                    if let Some(reader) = &mut s.reader {
-                        reader.install(s.history_detached);
-                    }
-                    s.messages = page.rows;
-                    composer::reconcile(s);
+            Event::Older(page) => chat::reader::install_older(s, page),
+            Event::OlderOffered {
+                page,
+                admit,
+                cancelled,
+            } => {
+                if chat::reader::admit_older(s, &cancelled, || admit.accept()) {
+                    chat::reader::install_older(s, page);
                 }
-                s.can_older = page.older.is_some();
-                s.history_error = false;
-                s.paging = false;
             }
             Event::Reconnecting | Event::ConnectionLost => {
                 s.composer.picker.set_attachments_supported(false);
@@ -174,8 +170,12 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::PagingFailed => {
+                chat::reader::cancel_older(s);
                 s.paging = false;
                 s.history_error = true;
+            }
+            Event::OlderFailed(cancelled) => {
+                chat::reader::admit_older(s, &cancelled, || false);
             }
             Event::Anchor {
                 ticket,
@@ -186,6 +186,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AnchorFailed(ticket) => crate::timeline::failed(s, ticket),
             Event::HistoryInvalidated => {
+                chat::reader::cancel_older(s);
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();

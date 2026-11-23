@@ -58,7 +58,8 @@ fn row_top(index: usize) -> f32 {
 }
 
 pub struct Marker<'a> {
-    pub label: &'a str,
+    pub label: Cow<'a, str>,
+    pub current: &'static str,
     pub glyph: &'static Icon,
     pub tone: &'static str,
     pub active: bool,
@@ -166,7 +167,7 @@ fn button(dark: bool, marker: Marker<'_>) -> El {
     let mut button = rune::row()
         .role("button")
         .focusable(true)
-        .label(marker.label)
+        .label(marker.label.into_owned())
         .w_full()
         .h(metric("minHeight"))
         .center()
@@ -191,7 +192,11 @@ fn button(dark: bool, marker: Marker<'_>) -> El {
                 .a11y_hidden(),
         );
     if marker.active {
-        button = button.fill(highlight).border(border, color);
+        // Rune's native tree and DOM bridge expose descriptions for buttons.
+        button = button
+            .description_static(marker.current)
+            .fill(highlight)
+            .border(border, color);
     } else {
         button = button
             .child(

@@ -6,11 +6,22 @@ pub(crate) struct Block<'a> {
     pub marker: Marker<'a>,
     pub key: String,
     pub reveal: usize,
+    pub text: &'a str,
+    pub part: Option<usize>,
+}
+
+pub(super) fn context(row: &crate::Message) -> Option<(String, &'static str)> {
+    let label = match row.role.as_str() {
+        "compaction" => "messageTimeline.segment.compaction.label",
+        "system" => "messageBlock.system.label",
+        _ => return None,
+    };
+    Some((format!("context-{}", row.id), label))
 }
 
 pub(crate) fn blocks<'a>(row: &'a Row, steps: usize, hidden: bool) -> Vec<Block<'a>> {
     let mut out = Vec::new();
-    let mut push = |kind, ordinal, continued, key, reveal, tool_name| {
+    let mut push = |kind, ordinal, continued, key, reveal, tool_name, text, part| {
         out.push(Block {
             marker: Marker {
                 message: &row.id,
@@ -22,6 +33,8 @@ pub(crate) fn blocks<'a>(row: &'a Row, steps: usize, hidden: bool) -> Vec<Block<
             },
             key,
             reveal,
+            text,
+            part,
         });
     };
     if row.role != "assistant" || row.parts.is_empty() {
@@ -36,12 +49,16 @@ pub(crate) fn blocks<'a>(row: &'a Row, steps: usize, hidden: bool) -> Vec<Block<
             kind,
             0,
             false,
-            if row.body.is_empty() {
+            if let Some((key, _)) = context(row) {
+                key
+            } else if row.body.is_empty() {
                 row.id.clone()
             } else {
                 format!("body-{}", row.id)
             },
             0,
+            None,
+            row.body.as_str(),
             None,
         );
         return out;
@@ -55,19 +72,25 @@ pub(crate) fn blocks<'a>(row: &'a Row, steps: usize, hidden: bool) -> Vec<Block<
     let mut first_at = 0;
     for (i, part) in row.parts.iter().enumerate() {
         let omitted = i >= head && i < tail;
-        let (kind, family, key) = match part {
+        let (kind, family, key, source) = match part {
             Part::Text(part) => {
                 let fragment = text;
                 text += 1;
                 if part.text.trim().is_empty() {
                     continue;
                 }
-                (Assistant, 0, format!("fragment-{}:{fragment}", row.id))
+                (
+                    Assistant,
+                    0,
+                    format!("fragment-{}:{fragment}", row.id),
+                    part.text.as_str(),
+                )
             }
             Part::Reasoning(part) if part.visible() => (
                 Reasoning,
                 1,
                 super::reasoning::block_key(&row.id, part.ordinal),
+                part.text.as_str(),
             ),
             Part::Reasoning(_) => continue,
             Part::Tool(call) => {
@@ -80,6 +103,8 @@ pub(crate) fn blocks<'a>(row: &'a Row, steps: usize, hidden: bool) -> Vec<Block<
                         super::tools::tool_key(&row.id, &call.id),
                         if omitted { extra_steps(i) } else { 0 },
                         Some(call.name.as_str()),
+                        call.name.as_str(),
+                        Some(i),
                     );
                 }
                 tool += 1;
@@ -110,10 +135,21 @@ pub(crate) fn blocks<'a>(row: &'a Row, steps: usize, hidden: bool) -> Vec<Block<
                     0
                 },
                 None,
+                source,
+                Some(i),
             );
             segment = Some(back);
         } else if omitted && hidden && first_at == i {
-            push(kind, runs[family] - 1, false, key, extra_steps(i), None);
+            push(
+                kind,
+                runs[family] - 1,
+                false,
+                key,
+                extra_steps(i),
+                None,
+                source,
+                Some(i),
+            );
         }
     }
     out

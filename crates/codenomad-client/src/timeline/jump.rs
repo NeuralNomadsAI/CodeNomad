@@ -9,6 +9,61 @@ use crate::{
 };
 use std::sync::{Arc, atomic::Ordering::SeqCst};
 
+pub(crate) async fn until_cancelled<T>(
+    cancelled: Option<&Receiver<()>>,
+    task: impl std::future::Future<Output = Option<T>>,
+) -> Option<T> {
+    let Some(cancelled) = cancelled else {
+        return task.await;
+    };
+    futures_lite::future::or(
+        async {
+            cancelled.recv().await.ok();
+            None
+        },
+        task,
+    )
+    .await
+}
+
+pub(crate) async fn older_offer(
+    cancelled: Option<&Receiver<()>>,
+    page: &crate::history::Page,
+    wire: &Arc<stream::State>,
+    stamp: u64,
+    out: &Sender<Event>,
+    wake: &Wake,
+) -> bool {
+    let Some(cancelled) = cancelled else {
+        return true;
+    };
+    let (admit, verdict) = bounded(1);
+    if cancelled.is_closed()
+        || !publish(
+            out,
+            wake,
+            Event::OlderOffered {
+                page: page.clone(),
+                admit: Admission {
+                    wire: wire.clone(),
+                    revision: wire.history_revision.load(SeqCst),
+                    live_version: Some(stamp),
+                    admit,
+                },
+                cancelled: cancelled.clone(),
+            },
+        )
+        .await
+    {
+        return false;
+    }
+    futures_lite::future::or(async { verdict.recv().await.is_ok() }, async {
+        cancelled.recv().await.ok();
+        verdict.try_recv().is_ok()
+    })
+    .await
+}
+
 pub struct Admission {
     wire: Arc<stream::State>,
     revision: u64,

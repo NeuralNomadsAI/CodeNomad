@@ -56,6 +56,7 @@ try {
       const page = await context.newPage()
       page.setDefaultTimeout(15000)
       const errors = [], forbiddenRequests = [], routes=[], history=[]
+      let holdOlder
       let measured
       const policy=workspacePolicy({origin:url.origin,project:values.project,assets})
       let eventSource=0
@@ -94,6 +95,11 @@ try {
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/worktrees')){
           markLinked()
           await beforeLinked
+        }
+        if(holdOlder&&p.endsWith('/session-history/window')&&req.postDataJSON()?.target?.kind==='before'){
+          const release=holdOlder;holdOlder=undefined
+          await release
+          return route.continue().catch(()=>{})
         }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/instance/api/session')&&
           requested.searchParams.get('directory')===path.join(path.dirname(values.project),'linked')){
@@ -222,18 +228,40 @@ try {
               &&res.request().postDataJSON()?.target?.kind==='around')
             await run.click({force:true})
             assert.equal((await result).request().postDataJSON().target.messageID,'message-00000')
-            const exact=page.getByText('Exact position in the old message',{exact:true})
+            const exact=page.getByRole('paragraph').filter({hasText:'Exact position in the old message'})
             await exact.waitFor()
             assert(Math.abs((await exact.boundingBox()).y-box.y)<8,'The text block, not its message header, must land at the reading line')
             assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1)
             const reasoning=run.locator('xpath=following-sibling::button[1]')
-            await reasoning.and(rail.getByRole('button',{name:messages['messageBlock.reasoning.thinkingLabel'],exact:true})).waitFor()
+            await reasoning.and(rail.getByRole('button',{name:'**Second fixture reasoning**',exact:true})).waitFor()
             await reasoning.click({force:true})
             const group=page.getByText('Second fixture reasoning',{exact:true})
             await group.waitFor()
             assert(Math.abs((await group.boundingBox()).y-box.y)<16,'The second reasoning run must land on its own group')
+            await reasoning.and(rail.locator(`[aria-description="${messages['messageTimeline.current']}"]`)).waitFor()
             assert.equal(history.filter(r=>r.input.target.kind==='around').length,before+1,'A resident jump uses no window')
+            for(const passage of ['Native compacted passage','Native conversation context']){
+              await rail.getByRole('button',{name:passage,exact:true}).click({force:true})
+              const content=page.getByRole('paragraph').filter({hasText:passage})
+              await content.waitFor()
+              assert(Math.abs((await content.boundingBox()).y-box.y)<65,'Native context must land at its dedicated block')
+            }
             await press(messages['rune.latest'])
+            await reading()
+            const older=page.getByRole('button',{name:messages['rune.older'],exact:true})
+            const resident=rail.getByRole('button',{name:'Existing answer',exact:true})
+            await page.mouse.move(box.x+10,box.y+10)
+            await page.mouse.wheel(0,100000)
+            await resident.waitFor()
+            const release=Promise.withResolvers()
+            holdOlder=release.promise
+            try{
+              const started=page.waitForRequest(req=>req.url().endsWith('/session-history/window')&&req.postDataJSON()?.target?.kind==='before')
+              await older.click({force:true})
+              await started
+              await resident.click({force:true})
+              await resident.and(rail.locator(`[aria-description="${messages['messageTimeline.current']}"]`)).waitFor()
+            }finally{release.resolve()}
             await reading()
             // The text mirror updates before the newly mounted glyphs finish fading in.
             await page.waitForTimeout(250)

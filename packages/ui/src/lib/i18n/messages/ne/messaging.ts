@@ -147,6 +147,7 @@ export const messagingMessages = {
   "messageSection.search.retry": "पुन: प्रयास गर्नुहोस्",
   "messageSection.search.noVisibleMatches": "कुनै देखिने परिणामहरू छैनन्",
   "messageTimeline.ariaLabel": "सन्देश टाइमलाइन",
+  "messageTimeline.current": "हालको स्थान",
   "messageTimeline.segment.user.label": "तपाईं",
   "messageTimeline.segment.assistant.label": "सहायक",
   "messageTimeline.segment.compaction.label": "संक्षिप्तीकरण",

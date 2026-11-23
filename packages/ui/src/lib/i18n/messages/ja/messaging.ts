@@ -148,6 +148,7 @@ export const messagingMessages = {
   "messageSection.search.noVisibleMatches": "表示中の一致はありません",
 
   "messageTimeline.ariaLabel": "メッセージタイムライン",
+  "messageTimeline.current": "現在の位置",
   "messageTimeline.segment.user.label": "あなた",
   "messageTimeline.segment.assistant.label": "AI",
   "messageTimeline.segment.compaction.label": "圧縮",

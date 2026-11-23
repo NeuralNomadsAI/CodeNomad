@@ -148,6 +148,7 @@ export const messagingMessages = {
   "messageSection.search.noVisibleMatches": "No hay coincidencias visibles",
 
   "messageTimeline.ariaLabel": "Línea de tiempo de mensajes",
+  "messageTimeline.current": "Posición actual",
   "messageTimeline.segment.user.label": "Tú",
   "messageTimeline.segment.assistant.label": "Asist.",
   "messageTimeline.segment.compaction.label": "Compactación",

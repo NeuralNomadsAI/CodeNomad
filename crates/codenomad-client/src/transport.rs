@@ -39,6 +39,7 @@ pub enum Command {
         text: String,
     },
     Older,
+    OlderCancellable(Receiver<()>),
     Anchor(crate::timeline::Jump),
     Latest,
     Retry,
@@ -67,6 +68,12 @@ pub enum Event {
         version: u64,
     },
     Older(Page),
+    OlderOffered {
+        page: Page,
+        admit: crate::timeline::Admission,
+        cancelled: Receiver<()>,
+    },
+    OlderFailed(Receiver<()>),
     Anchor {
         ticket: u64,
         page: Page,

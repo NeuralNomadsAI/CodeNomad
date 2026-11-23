@@ -147,6 +147,7 @@ export const messagingMessages = {
   "messageSection.search.retry": "נסה שוב",
   "messageSection.search.noVisibleMatches": "אין התאמות גלויות",
   "messageTimeline.ariaLabel": "ציר זמן הודעות",
+  "messageTimeline.current": "מיקום נוכחי",
   "messageTimeline.segment.user.label": "אתה",
   "messageTimeline.segment.assistant.label": "סוכן",
   "messageTimeline.segment.compaction.label": "סיכום",

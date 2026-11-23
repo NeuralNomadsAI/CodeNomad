@@ -212,6 +212,7 @@ pub(crate) fn reconcile_bookmark(s: &mut State, rows: &[crate::history::Row]) {
 }
 
 pub(crate) fn suspend(s: &mut State) {
+    cancel_older(s);
     crate::timeline::suspend(s);
     if let Some(reader) = &mut s.reader {
         reader.bookmark = reader.bookmark(s.transcript_display.reading_mut());
@@ -222,6 +223,61 @@ pub(crate) fn suspend(s: &mut State) {
         s.paging = false;
         s.transcript_display.evict_rendered();
     }
+}
+
+pub(crate) fn older(s: &mut State) {
+    if !s.can_older || s.paging {
+        return;
+    }
+    let (signal, cancelled) = bounded(1);
+    if s.commands.as_ref().is_some_and(|commands| {
+        commands
+            .try_send(crate::transport::Command::OlderCancellable(cancelled))
+            .is_ok()
+    }) {
+        s.transcript_display.timeline.older = Some(signal);
+        s.paging = true;
+    }
+}
+
+pub(crate) fn cancel_older(s: &mut State) {
+    if s.transcript_display.timeline.older.take().is_some() {
+        s.paging = false;
+    }
+}
+
+pub(crate) fn admit_older(
+    s: &mut State,
+    cancelled: &Receiver<()>,
+    admit: impl FnOnce() -> bool,
+) -> bool {
+    if cancelled.is_closed() {
+        return false;
+    }
+    let Some(_ticket) = s.transcript_display.timeline.older.take() else {
+        return false;
+    };
+    s.paging = false;
+    let accepted = admit();
+    s.history_error = !accepted;
+    accepted
+}
+
+pub(super) fn install_older(s: &mut State, page: crate::history::Page) {
+    if !page.rows.is_empty() {
+        s.attachments.cancel();
+        s.history_detached = page.newer.is_some();
+        if let Some(reader) = &mut s.reader {
+            reader.install(s.history_detached);
+        }
+        s.messages = page.rows;
+        crate::composer::reconcile(s);
+    }
+    s.can_older = page.older.is_some();
+    s.history_error = false;
+    s.paging = false;
+    cancel_older(s);
+    crate::timeline::structure_changed(s);
 }
 
 pub(crate) fn install_anchor(s: &mut State, page: crate::history::Page) {
@@ -243,21 +299,6 @@ pub(crate) fn set_timeline_position(s: &mut State, message: String) {
     s.transcript_display.reading_mut().hold(message);
 }
 
-pub(crate) fn timeline_reading(s: &mut State) -> Option<(usize, bool)> {
-    if s.messages.is_empty() {
-        return None;
-    }
-    let reading = s.transcript_display.reading_mut();
-    match reading.bookmark(s.history_detached) {
-        Bookmark::Latest => Some((s.messages.len() - 1, true)),
-        Bookmark::Message { id, .. } => s
-            .messages
-            .iter()
-            .position(|row| row.id == id)
-            .map(|index| (index, false)),
-    }
-}
-
 pub(crate) fn resume(s: &mut State, tx: &mut Tx) {
     if let Some(reader) = &mut s.reader {
         if reader.hidden {
@@ -269,6 +310,7 @@ pub(crate) fn resume(s: &mut State, tx: &mut Tx) {
 }
 
 pub(crate) fn latest(s: &mut State, tx: &mut Tx) {
+    cancel_older(s);
     crate::timeline::cancel_jump(s);
     let covered = crate::files::has_preview(s) || crate::git::has_preview(s);
     if let Some(reader) = &mut s.reader

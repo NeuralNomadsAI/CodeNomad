@@ -72,9 +72,7 @@ pub(crate) fn view(s: &State, history: El, expanded: bool) -> El {
         t.markers.len(),
         t.version,
         |s: &State, i| s.transcript_display.timeline.markers[i].id.as_str().into(),
-        move |s: &State, i| {
-            crate::strings::with_locale(locale, || glyph(&s.transcript_display.timeline, i))
-        },
+        move |s: &State, i| crate::strings::with_locale(locale, || glyph(s, i)),
         move |s, id, tx| {
             if s.current_scope(&scope) {
                 super::navigation::select(s, id, tx);
@@ -122,8 +120,9 @@ fn retry_outline(s: &mut State, _: &mut rune::Tx) {
     (s.wake)();
 }
 
-fn glyph(owner: &super::Timeline, index: usize) -> timeline::Marker<'_> {
+fn glyph(s: &State, index: usize) -> timeline::Marker<'_> {
     use super::MarkerKind::*;
+    let owner = &s.transcript_display.timeline;
     let m = &owner.markers[index];
     let (label, glyph, tone) = match m.kind {
         User => (
@@ -154,9 +153,44 @@ fn glyph(owner: &super::Timeline, index: usize) -> timeline::Marker<'_> {
         System => ("messageBlock.system.label", &icons::INFO, "text-secondary"),
     };
     timeline::Marker {
-        label: m.tool.as_deref().unwrap_or_else(|| t(label)),
+        label: s
+            .messages
+            .iter()
+            .find(|row| row.id == m.message)
+            .and_then(|row| {
+                crate::chat::anchors::blocks(row, crate::chat::anchors::steps(s, &row.id), false)
+                    .into_iter()
+                    .find(|block| {
+                        block.marker.kind == m.kind
+                            && block.marker.ordinal == m.ordinal
+                            && block.marker.continued == m.continued
+                    })
+            })
+            .map(|block| excerpt(block.text))
+            .filter(|text| !text.is_empty())
+            .map(std::borrow::Cow::Owned)
+            .unwrap_or_else(|| m.tool.as_deref().unwrap_or_else(|| t(label)).into()),
+        current: t("messageTimeline.current"),
         glyph,
         tone,
         active: owner.jump.active.as_deref() == Some(m.id.as_str()),
     }
+}
+
+pub(super) fn excerpt(source: &str) -> String {
+    const LIMIT: usize = 220; // message-timeline-projection.ts:7,76
+    let source = source.trim_start();
+    let mut end = 0;
+    let mut units = 0;
+    for (offset, ch) in source.char_indices() {
+        if units + ch.len_utf16() > LIMIT {
+            if units == LIMIT {
+                end -= source[..end].chars().next_back().unwrap().len_utf8();
+            }
+            return format!("{}…", source[..end].trim_end());
+        }
+        units += ch.len_utf16();
+        end = offset + ch.len_utf8();
+    }
+    source[..end].trim_end().into()
 }

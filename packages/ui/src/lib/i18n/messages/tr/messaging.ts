@@ -146,6 +146,7 @@ export const messagingMessages = {
   "messageSection.search.searching": "Aranıyor...",
   "messageSection.search.noVisibleMatches": "Görünür eşleşme yok",
   "messageTimeline.ariaLabel": "Mesaj zaman çizelgesi",
+  "messageTimeline.current": "Geçerli konum",
   "messageTimeline.segment.user.label": "Sen",
   "messageTimeline.segment.assistant.label": "Asistan",
   "messageTimeline.segment.compaction.label": "Sıkıştırma",

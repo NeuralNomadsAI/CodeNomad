@@ -148,6 +148,10 @@ if(webTimeline){
     {type:'text',text:'Exact position in the old message'},
     {type:'reasoning',text:'**Second fixture reasoning**'},
   )
+  store.rows.push(
+    {id:'timeline-compaction',type:'compaction',reason:'auto',status:'completed',summary:'Native compacted passage',time:{created:2,completed:3}},
+    {id:'timeline-system',type:'system',text:'Native conversation context',time:{created:4}},
+  )
   for(let i=0;i<220;i++)store.append('assistant',`Fixture passage ${i}`)
 }
 if(webMobile)for(let i=0;i<(webAndroid?70:210);i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)

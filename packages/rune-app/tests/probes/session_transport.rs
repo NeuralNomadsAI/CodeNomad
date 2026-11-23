@@ -134,6 +134,8 @@ pub fn contract() {
             | Event::ReaderSync { .. }
             | Event::History(_)
             | Event::Older(_)
+            | Event::OlderOffered { .. }
+            | Event::OlderFailed(_)
             | Event::Anchor { .. }
             | Event::AnchorFailed(_)
             | Event::Reconnecting
