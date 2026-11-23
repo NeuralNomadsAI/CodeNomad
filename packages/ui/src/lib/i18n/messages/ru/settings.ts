@@ -442,7 +442,7 @@ export const settingsMessages = {
   "settings.opencode.update.title": "Версия OpenCode",
   "settings.opencode.update.subtitle": "Установленная версия настроенного бинарного файла OpenCode.",
   "settings.opencode.update.checking": "Чтение установленной версии...",
-  "settings.opencode.update.checkFailed": "Не удалось прочитать установленную версию OpenCode.",
+  "settings.opencode.update.checkFailed": "Не удалось проверить наличие обновлений OpenCode.",
   "settings.opencode.update.retry": "Повторить",
   "settings.opencode.update.installed": "Установленная версия",
   "settings.opencode.update.availableUnsupported": "Доступен OpenCode {version}. OpenCode V2 не поддерживает автоматическую установку.",

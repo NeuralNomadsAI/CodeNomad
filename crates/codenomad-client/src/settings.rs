@@ -91,9 +91,11 @@ fn open_code_status(data: Value) -> Result<OpenCodeStatus> {
             .map(str::to_owned)
     };
     let state = match (data["state"].as_str(), data["serviceState"].as_str()) {
-        (_, Some("ready" | "restart_available")) => "connected",
+        (_, Some("ready")) => "connected",
+        (_, Some("restart_available")) => "restartAvailable",
         (_, Some("error")) => "serviceError",
-        (_, Some("restart_required" | "incompatible")) => "update_required",
+        (_, Some("restart_required")) => "restartRequired",
+        (_, Some("incompatible")) => "update_required",
         (Some("ready"), _) => "disconnected",
         (Some("missing"), _) => "missing",
         (Some("update_required"), _) => "update_required",
@@ -124,6 +126,25 @@ fn setup_status_distinguishes_daemon_from_executable_and_redacts_invalid_fields(
     assert_eq!(status.current.as_deref(), Some("2.3.0"));
     assert!(status.running.is_none());
     assert!(open_code_status(serde_json::json!({"state":"unrecognized"})).is_err());
+}
+
+#[cfg(test)]
+#[test]
+fn setup_status_keeps_restart_decisions_separate_from_update_lookup() {
+    for (service, label) in [
+        ("restart_available", "restartAvailable"),
+        ("restart_required", "restartRequired"),
+    ] {
+        let status = open_code_status(serde_json::json!({
+            "state":"ready", "serviceState":service, "currentVersion":"2.3.0",
+            "daemonVersion":"2.2.5", "checkError":"update_check_failed"
+        }))
+        .unwrap();
+        assert_eq!(status.state, label);
+        assert_eq!(status.running.as_deref(), Some("2.2.5"));
+        assert!(status.check_failed);
+        assert!(!status.update_available);
+    }
 }
 
 /// One scope-less subscription per connected host, independent of conversation lifetimes.

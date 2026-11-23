@@ -99,11 +99,8 @@ pub(super) fn view(s: &Window) -> El {
                 "settings.opencode.update.installed",
                 snapshot.current.as_deref(),
             ));
-        if snapshot.current != snapshot.running || snapshot.running.is_none() {
-            card = card.child(version(
-                "settings.opencode.setup.daemon",
-                snapshot.running.as_deref(),
-            ));
+        if let Some(running) = &snapshot.running {
+            card = card.child(version("settings.opencode.setup.daemon", Some(running)));
         }
         if snapshot.update_available
             && let Some(latest) = &snapshot.latest

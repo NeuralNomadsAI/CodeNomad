@@ -2775,7 +2775,7 @@
   "settings.opencode.update.action": "עדכון ל-OpenCode {version}",
   "settings.opencode.update.available": "OpenCode {version} זמין.",
   "settings.opencode.update.availableUnsupported": "OpenCode {version} זמין. OpenCode V2 אינו תומך בהתקנה אוטומטית.",
-  "settings.opencode.update.checkFailed": "לא ניתן לקרוא את גרסת OpenCode המותקנת.",
+  "settings.opencode.update.checkFailed": "לא ניתן לבדוק אם יש עדכונים ל-OpenCode.",
   "settings.opencode.update.checking": "קורא את הגרסה המותקנת...",
   "settings.opencode.update.failed": "עדכון OpenCode נכשל. הגרסה המותקנת לא השתנתה.",
   "settings.opencode.update.installed": "גרסה מותקנת",
