@@ -79,6 +79,33 @@ fn git_layout_gone(root: &Path) -> bool {
 pub async fn readable_checkout(path: &Path) -> bool {
     checkout(path).await.is_ok()
 }
+
+fn linked_markers(root: &Path, admin: &Path, common: &Path) -> Result<[Vec<u8>; 3], Error> {
+    if admin.parent() != Some(common.join("worktrees").as_path()) {
+        return Err(conflict("Foreign worktree administration"));
+    }
+    let marker = small(&root.join(".git"))?;
+    let gitdir = std::str::from_utf8(&marker)
+        .ok()
+        .and_then(|text| text.trim_end().strip_prefix("gitdir: "))
+        .filter(|path| !path.is_empty())
+        .ok_or_else(native_error)?;
+    if dunce::canonicalize(root.join(gitdir)).ok().as_deref() != Some(admin) {
+        return Err(conflict("Git worktree marker changed"));
+    }
+    let backlink = small(&admin.join("gitdir"))?;
+    let text = std::str::from_utf8(&backlink).map_err(|_| native_error())?.trim_end();
+    if dunce::canonicalize(admin.join(text)).ok().as_ref() != Some(&root.join(".git")) {
+        return Err(conflict("Foreign Git backlink"));
+    }
+    let common_marker = small(&admin.join("commondir"))?;
+    let text = std::str::from_utf8(&common_marker).map_err(|_| native_error())?.trim_end();
+    if dunce::canonicalize(admin.join(text)).ok().as_deref() != Some(common) {
+        return Err(conflict("Foreign Git common directory"));
+    }
+    Ok([marker, backlink, common_marker])
+}
+
 async fn checkout(path: &Path) -> Result<Physical, Error> {
     let text =
         git(path, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"]).await?;
@@ -95,20 +122,7 @@ async fn checkout(path: &Path) -> Result<Physical, Error> {
         }
         (None, None, None)
     } else {
-        if admin.parent() != Some(common.join("worktrees").as_path()) {
-            return Err(conflict("Foreign worktree administration"));
-        }
-        let marker = small(&root.join(".git"))?;
-        let backlink = small(&admin.join("gitdir"))?;
-        let text = std::str::from_utf8(&backlink).map_err(|_| native_error())?.trim_end();
-        if dunce::canonicalize(text).ok().as_ref() != Some(&root.join(".git")) {
-            return Err(conflict("Foreign Git backlink"));
-        }
-        let common_marker = small(&admin.join("commondir"))?;
-        let text = std::str::from_utf8(&common_marker).map_err(|_| native_error())?.trim_end();
-        if dunce::canonicalize(admin.join(text)).ok().as_ref() != Some(&common) {
-            return Err(conflict("Foreign Git common directory"));
-        }
+        let [marker, backlink, common_marker] = linked_markers(&root, &admin, &common)?;
         (Some(marker), Some(backlink), Some(common_marker))
     };
     Ok(Physical {
@@ -416,7 +430,7 @@ pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalo
 
 #[cfg(test)]
 mod layout_tests {
-    use super::{checkout, git_layout_gone};
+    use super::{checkout, git_layout_gone, linked_markers};
 
     #[test]
     fn a_registration_without_git_layout_is_gone() {
@@ -459,6 +473,11 @@ mod layout_tests {
         }
         let layout = checkout(&tree).await.unwrap();
         assert!(layout.live());
+        let marker = tree.join(".git");
+        let original = std::fs::read(&marker).unwrap();
+        std::fs::write(&marker, format!("gitdir: {}\n", layout.common.display())).unwrap();
+        assert!(linked_markers(&layout.root, &layout.admin, &layout.common).is_err());
+        std::fs::write(&marker, original).unwrap();
         std::fs::write(layout.admin.join("commondir"), "../elsewhere\n").unwrap();
         assert!(!layout.live());
         std::fs::remove_dir_all(base).unwrap();
