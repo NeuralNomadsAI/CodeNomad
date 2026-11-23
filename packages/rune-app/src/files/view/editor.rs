@@ -63,13 +63,28 @@ pub(super) fn source(
         })
         .build(theme::editor::code_kit(dark))
         .key("file-editor");
-    Some(theme::editor::editor_view(
-        dark,
-        field,
-        &ui.document.edit().text,
-        wrap,
-        view_width,
-    ))
+    Some(
+        theme::editor::editor_view(dark, field, &ui.document.edit().text, wrap, view_width)
+            .on_scroll_offset({
+                let viewport = ui.document.source_viewport();
+                move |scroll| viewport.observe(scroll.offset)
+            })
+            .on_layout_tx({
+                let viewport = ui.document.source_viewport();
+                let input_scope = s.input_scope.clone();
+                move |s: &mut State, [_, _, w, h], tx| {
+                    if w > 0.0
+                        && h > 0.0
+                        && s.current_scope(&input_scope)
+                        && s.files
+                            .as_ref()
+                            .is_some_and(|ui| ui.document.scope() == scope)
+                    {
+                        viewport.restore(tx);
+                    }
+                }
+            }),
+    )
 }
 
 pub(super) fn decision(s: &State, ui: &Ui) -> Option<El> {

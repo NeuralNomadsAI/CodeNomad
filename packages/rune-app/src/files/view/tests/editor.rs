@@ -1,6 +1,69 @@
 use super::*;
 
 #[test]
+fn reopening_source_restores_selection_and_both_scroll_axes() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "source-position"));
+        let contents = STANDARD.encode(format!("{}\n", "un mot été 🦀 ".repeat(20)).repeat(80));
+        let source_rect = |rt: &Runtime<State>| {
+            rt.elements()
+                .into_iter()
+                .find(|node| editable_source(&node.path, &node.role))
+                .unwrap()
+                .rect
+        };
+        let selection = |rt: &Runtime<State>| {
+            let edit = rt.state.files.as_ref().unwrap().document.edit();
+            [edit.anchor, edit.focus]
+        };
+        open(&mut rt, &http, "main.rs", &contents).await;
+        let input = rt
+            .elements()
+            .into_iter()
+            .find(|node| editable_source(&node.path, &node.role))
+            .unwrap();
+        let [x, y, _, _] = input.visible;
+        rt.pointer_down(x + 30.0, y + 10.0);
+        rt.pointer_move(x + 105.0, y + 10.0);
+        rt.pointer_up(x + 105.0, y + 10.0);
+        rt.frame(0.02);
+        let selected = selection(&rt);
+        assert_ne!(selected[0], selected[1]);
+        let initial = source_rect(&rt);
+        rt.update(|_, tx| tx.scroll_to_instant("file-source-scroll", 200.0, 500.0));
+        rt.frame(0.02);
+        let scrolled = source_rect(&rt);
+        assert!(scrolled[0] < initial[0] && scrolled[1] < initial[1]);
+
+        click(&mut rt, "file-close");
+        open(&mut rt, &http, "other.rs", &contents).await;
+        let other = source_rect(&rt);
+        assert_eq!(other[..2], initial[..2]);
+        assert_ne!(selection(&rt), selected);
+        click(&mut rt, "file-close");
+        open(&mut rt, &http, "main.rs", &contents).await;
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        assert_eq!(selection(&rt), selected);
+        let restored = source_rect(&rt);
+        assert_eq!(restored[..2], scrolled[..2]);
+
+        click(&mut rt, "file-close");
+        open(&mut rt, &http, "main.rs", "YQ==").await;
+        assert_eq!(selection(&rt), [1, 1], "shorter source clamps both ends");
+        assert_eq!(
+            source_rect(&rt)[..2],
+            initial[..2],
+            "shorter source clamps scroll"
+        );
+        http.quiet().await;
+    });
+}
+
+#[test]
 fn overwrite_dialog_defaults_to_cancel_and_keeps_the_draft() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;

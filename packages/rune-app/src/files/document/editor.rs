@@ -7,7 +7,11 @@ use crate::{files::reader::Reader, platform};
 use codenomad_client::{Receiver, Wake, backend::Backend, bounded, catalog::Project};
 use rune::TextEdit;
 
+mod position;
 mod save;
+pub(super) use position::SavedPosition;
+use position::{Position, Viewport};
+use std::rc::Rc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decision {
     Overwrite,
@@ -55,6 +59,7 @@ pub struct Editor {
     scope: u64,
     revision: u64,
     edit: TextEdit,
+    position: Position,
     rejected: TextEdit,
 }
 impl Editor {
@@ -83,6 +88,7 @@ impl Editor {
             scope: 0,
             revision: 0,
             edit: TextEdit::new(""),
+            position: Position::default(),
             rejected: TextEdit::new(""),
         }
     }
@@ -163,6 +169,13 @@ impl Editor {
     pub fn edit(&self) -> &TextEdit {
         &self.edit
     }
+    pub(crate) fn source_viewport(&self) -> Rc<Viewport> {
+        self.position.viewport.clone()
+    }
+
+    pub(crate) fn restore_source_scroll(&self) {
+        self.position.viewport.arm();
+    }
     pub fn editable(&self) -> bool {
         self.active
             && (self.project.is_none() || self.native_project.is_some())
@@ -235,6 +248,7 @@ impl Editor {
         }
         self.edit = TextEdit::new(&lock(&draft).text);
         self.revision = lock(&draft).revision;
+        self.position = Position::new(self.store.take_position(&key));
         self.draft = Some(draft);
         self.key = Some(key);
         self.saved_key = saved_key;
@@ -242,6 +256,16 @@ impl Editor {
     pub fn close(&mut self) {
         self.cancel_check();
         if let (Some(key), Some(draft)) = (&self.key, &self.draft) {
+            let has_text = {
+                let draft = lock(draft);
+                draft.original.is_some() || draft.recovered
+            };
+            if has_text && (self.project.is_none() || self.native_project.is_some()) {
+                self.store.remember_position(
+                    key.clone(),
+                    SavedPosition::capture(&self.edit, self.position.viewport.offset()),
+                );
+            }
             self.store.sync_saved(key, self.saved_key.as_ref(), draft);
         }
         self.key = None;
@@ -251,8 +275,12 @@ impl Editor {
         self.observed = None;
         self.scope = self.store.next();
         self.edit = TextEdit::new("");
+        self.position = Position::default();
     }
     pub fn activate(&mut self, active: bool) {
+        if active && !self.active {
+            self.restore_source_scroll();
+        }
         self.active = active;
         if !active {
             self.cancel_check();
@@ -400,6 +428,9 @@ impl Editor {
             self.edit = TextEdit::new(&draft.text);
             self.revision = draft.revision;
             changed = true;
+        }
+        if draft.original.is_some() || draft.recovered {
+            changed |= self.position.restore_selection(&mut self.edit);
         }
         let observed = (draft.dirty(), draft.pending.is_some(), draft.error.clone());
         changed |= self.observed.as_ref() != Some(&observed);

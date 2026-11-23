@@ -39,6 +39,7 @@ Cerrar el lector con su botón de cierre final devuelve a la conversación; el e
 Reemplazar o cerrar el lector afecta solo a la pestaña de proyecto actual. Las pestañas duplicadas pueden leer archivos distintos o mantener un archivo junto al chat, la web o el contenido de una Misión. La elección entre fuente y vista renderizada, la selección del editor y el desplazamiento se conservan al cambiar de pestaña mientras su destino y modelo sigan en memoria. El modo de Archivos se restaura por pestaña; las preferencias de diff y ajuste de línea siguen compartidas.
 
 El lector de código conserva el ajuste de línea al cambiar de archivo o pestaña de proyecto y lo restaura con el estado de la ventana.
+Al volver a abrir un archivo de código reciente en la misma pestaña de proyecto, se restauran la selección y la posición de desplazamiento.
 
 ## Vistas previas de solo lectura y acotadas {#preview-limits}
 

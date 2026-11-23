@@ -39,6 +39,7 @@ Okuyucunun sonundaki kapatma düğmesi konuşmaya döner; ileti düzenleyicisi o
 Okuyucunun değiştirilmesi ve kapatılması yalnızca geçerli proje sekmesini etkiler. Aynı projeye ait sekmeler farklı dosyaları okuyabilir veya bir dosyayı sohbet, web ya da Görev içeriğinin yanında tutabilir. Hedef ve model bellekte tutulduğu sürece kaynak/işlenmiş görünüm tercihi, düzenleyici seçimi ve kaydırma konumu sekme geçişlerinde korunur. Dosyalar modu sekme başına geri yüklenir; diff ve satır kaydırma tercihleri ortak kalır.
 
 Kaynak okuyucu, dosya veya proje sekmesi değiştiğinde satır kaydırma tercihini korur ve pencere durumuyla birlikte geri yükler.
+Yakın zamanda görüntülenen bir kaynak dosyayı aynı proje sekmesinde yeniden açtığınızda seçim ve kaydırma konumu geri yüklenir.
 
 ## Salt okunur ve sınırlı önizlemeler {#preview-limits}
 

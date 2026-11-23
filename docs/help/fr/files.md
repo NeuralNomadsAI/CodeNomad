@@ -39,6 +39,7 @@ Fermer le lecteur avec son bouton de fermeture final revient à la conversation 
 Remplacer ou fermer le lecteur affecte uniquement l’onglet de projet courant. Des onglets ouverts sur le même projet peuvent lire des fichiers différents ou garder un fichier à côté du chat, du web ou d’un contenu de Mission. Le choix source/rendu, la sélection dans l’éditeur et le défilement sont conservés lors des changements d’onglet tant que la cible et le modèle restent en mémoire. Le mode Fichiers est restauré par onglet ; les préférences de diff et de retour à la ligne restent partagées.
 
 Le lecteur de source garde le retour à la ligne d’un fichier ou d’un onglet à l’autre et le rétablit avec l’état de la fenêtre.
+Rouvrir un fichier source récent dans le même onglet de projet rétablit la sélection et la position de défilement.
 
 ## Aperçus bornés et en lecture seule {#preview-limits}
 

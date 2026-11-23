@@ -203,6 +203,7 @@ fn reader_content(s: &State) -> El {
                             ui.presentation.source = !ui.presentation.source;
                             if ui.presentation.source {
                                 ui.pictures.suspend();
+                                ui.document.restore_source_scroll();
                             } else {
                                 tx.scroll_to_y(
                                     "file-rendered-scroll",
