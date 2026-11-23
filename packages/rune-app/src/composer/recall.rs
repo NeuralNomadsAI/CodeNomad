@@ -3,10 +3,14 @@ use crate::{State, settings, workspace};
 use rune::{Tx, edit::TextEdit};
 use std::collections::VecDeque;
 
-const MAX_ENTRIES: usize = 100;
+mod persistence;
+pub(crate) use persistence::poll;
+
+use codenomad_client::prompt_history::MAX_ENTRIES;
+const MAX_WINDOW_ENTRIES: usize = 3200;
 const MAX_BYTES: usize = 80 * 1024 * 1024;
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) enum Project {
     Workspace(Option<String>, Option<String>, String),
     Direct(String, String),
@@ -45,18 +49,21 @@ pub(super) fn command_target(s: &State) -> Option<super::command_receipts::Targe
 
 struct Entry {
     project: Project,
-    tab: String,
-    session: String,
+    origin: Option<(String, String)>,
     edit: TextEdit,
     draft: Draft,
     resolved: String,
     bytes: usize,
-    id: u64,
+    id: i64,
 }
 
 impl Entry {
     fn originates_in(&self, tab: &str, session: &str) -> bool {
-        self.tab == tab && self.session == session
+        self.origin
+            .as_ref()
+            .is_some_and(|(origin_tab, origin_session)| {
+                origin_tab == tab && origin_session == session
+            })
     }
 
     fn visible_in(&self, project: &Project, tab: &str, session: &str) -> bool {
@@ -68,11 +75,32 @@ impl Entry {
 pub(crate) struct History {
     entries: VecDeque<Entry>,
     bytes: usize,
-    next: u64,
+    next: i64,
+    oldest: i64,
+    persistence: persistence::Storage,
+}
+
+impl History {
+    fn discard(&mut self, index: usize) {
+        if let Some(entry) = self.entries.remove(index) {
+            self.bytes -= entry.bytes;
+        }
+    }
+
+    fn count(&self, project: &Project) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| &entry.project == project)
+            .count()
+    }
+
+    fn full(&self, additional: usize) -> bool {
+        self.entries.len() >= MAX_WINDOW_ENTRIES || self.bytes + additional > MAX_BYTES
+    }
 }
 
 pub(crate) struct Recall {
-    id: u64,
+    id: i64,
     edit: TextEdit,
     draft: Draft,
     missing: bool,
@@ -118,21 +146,27 @@ pub(super) fn record(s: &mut State, resolved: String, slash: bool) -> bool {
             })
             .sum::<usize>();
     if bytes > MAX_BYTES {
+        persistence::append(s, &resolved);
         return false;
     }
+    persistence::append(s, &resolved);
     let history = &mut s.prompt_history;
-    while history.entries.len() >= MAX_ENTRIES || history.bytes + bytes > MAX_BYTES {
-        let Some(old) = history.entries.pop_back() else {
-            break;
-        };
-        history.bytes -= old.bytes;
+    if history.count(&project) >= MAX_ENTRIES
+        && let Some(index) = history
+            .entries
+            .iter()
+            .rposition(|entry| entry.project == project)
+    {
+        history.discard(index);
+    }
+    while history.full(bytes) {
+        history.discard(history.entries.len() - 1);
     }
     history.next += 1;
     history.bytes += bytes;
     history.entries.push_front(Entry {
         project,
-        tab,
-        session,
+        origin: Some((tab, session)),
         edit,
         draft,
         resolved,

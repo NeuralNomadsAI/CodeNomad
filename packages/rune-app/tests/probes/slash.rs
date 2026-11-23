@@ -25,6 +25,28 @@ pub fn run() {
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     rt.frame(0.0);
+    let stage = crate::platform::setting("RUNE_PROMPT_HISTORY_STAGE");
+    if stage.as_deref() == Some("read") {
+        let until = Instant::now() + Duration::from_secs(15);
+        while rt.find("previous-prompt").is_none() {
+            assert!(
+                Instant::now() < until,
+                "history did not load on the second launch"
+            );
+            rt.frame(0.02);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let up = KeyEvent {
+            key: Key::Up,
+            mods: Mods::default(),
+        };
+        rt.key(up.clone());
+        rt.key_up(up);
+        rt.frame(0.02);
+        assert_eq!(rt.state.draft.text, "/review résumé 🦀");
+        println!("slash probe: second process recalls the stored text");
+        return;
+    }
     let supported = rt.state.composer.picker.attachments_supported();
     assert_eq!(rt.find("attachments-disabled").is_none(), supported);
     if !supported {
@@ -57,4 +79,11 @@ pub fn run() {
         "command was not confirmed by the Rust relay"
     );
     println!("slash probe: command confirmed through the Rust relay");
+    if stage.as_deref() == Some("write") {
+        let backend = crate::settings::bound_backend(&rt.state).expect("bound server");
+        wait(&mut rt, "prompt history written by the composer", |_| {
+            crate::platform::block_on(codenomad_client::prompt_history::read(&backend))
+                .is_ok_and(|history| history == ["/review résumé 🦀"])
+        });
+    }
 }
