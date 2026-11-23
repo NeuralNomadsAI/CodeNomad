@@ -1,14 +1,13 @@
+use super::{codec::digest, detail::DetailRead};
 use crate::{
     backend::Backend,
     history::{Result, valid_id},
     runtime::{Instant, sleep},
 };
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_lite::StreamExt;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::{collections::HashSet, time::Duration};
 
 const ROWS: usize = 50;
@@ -20,10 +19,24 @@ const JS_MAX: u64 = (1 << 53) - 1;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-enum Source {
+pub(super) enum Source {
     Summaries,
     Cleanups,
+    Mission,
+    Tasks,
+    Activity,
 }
+
+#[derive(Debug)]
+pub struct DirectoryChanged;
+
+impl std::fmt::Display for DirectoryChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Mission directory changed")
+    }
+}
+
+impl std::error::Error for DirectoryChanged {}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -38,8 +51,20 @@ struct Envelope {
     control_unavailable: bool,
     notification_unavailable: bool,
     cleanup_unavailable: bool,
-    window: Window,
+    window: Option<Window>,
+    #[serde(rename = "missionID")]
+    mission_id: Option<String>,
+    revision: Option<u64>,
+    header: Option<bool>,
+    phase: Option<Phase>,
+    observed_at: Option<f64>,
     page: Page,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum Phase {
+    Observed,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,7 +95,9 @@ struct Cursor {
 
 struct Identity {
     project: String,
-    window: Window,
+    window: Option<Window>,
+    revision: Option<u64>,
+    observed_at: Option<f64>,
     digest: String,
     finish_high_water: Option<u64>,
 }
@@ -78,17 +105,22 @@ struct Identity {
 /// One logical directory window. The backend and selector remain fixed across its byte slices.
 /// The caller can release its I/O permit between `read_next` calls. Discard on cancellation;
 /// after any error, an explicit retry opens a new read from its first slice.
-pub struct DirectoryRead {
-    backend: Backend,
-    url: Url,
+pub type DirectoryRead = DetailRead<DirectoryPage>;
+
+pub(super) struct PageRead {
+    pub(super) backend: Backend,
+    pub(super) url: Url,
     project: Option<String>,
     source: Source,
     offset: u64,
     order: Option<String>,
     initial: bool,
+    selector: Value,
+    mission: Option<String>,
     started: Instant,
     bytes: usize,
     characters: usize,
+    text_bytes: usize,
     first: Option<Identity>,
     cursor: Option<Cursor>,
     rows: Vec<String>,
@@ -96,6 +128,15 @@ pub struct DirectoryRead {
     partial_units: usize,
     row_units: usize,
     closed: bool,
+}
+
+pub(super) struct Verified {
+    pub project: String,
+    pub revision: Option<u64>,
+    pub observed_at: Option<f64>,
+    pub window: Option<Window>,
+    pub finish_high_water: Option<u64>,
+    pub rows: Vec<String>,
 }
 
 impl Backend {
@@ -106,7 +147,7 @@ impl Backend {
         order: Option<&str>,
         initial: bool,
     ) -> Result<DirectoryRead> {
-        DirectoryRead::new(self, project, Source::Summaries, offset, order, initial)
+        directory_read(self, project, Source::Summaries, offset, order, initial)
     }
 
     pub fn mission_cleanups(
@@ -115,18 +156,86 @@ impl Backend {
         offset: u64,
         order: Option<&str>,
     ) -> Result<DirectoryRead> {
-        DirectoryRead::new(self, project, Source::Cleanups, offset, order, false)
+        directory_read(self, project, Source::Cleanups, offset, order, false)
     }
 }
 
-impl DirectoryRead {
+fn directory_read(
+    backend: &Backend,
+    project: Option<&str>,
+    source: Source,
+    offset: u64,
+    order: Option<&str>,
+    initial: bool,
+) -> Result<DirectoryRead> {
+    Ok(DetailRead {
+        read: PageRead::new(
+            backend,
+            project,
+            source,
+            None,
+            offset,
+            order,
+            initial,
+            json!({ "source": source }),
+        )?,
+        decode: Box::new(move |page| decode_directory(source, page)),
+    })
+}
+
+fn decode_directory(source: Source, page: Verified) -> Result<DirectoryPage> {
+    let rows = match source {
+        Source::Summaries => DirectoryRows::Summaries(summaries(&page.rows)?),
+        Source::Cleanups => DirectoryRows::Cleanups(cleanups(&page.rows)?),
+        _ => return invalid(),
+    };
+    Ok(DirectoryPage {
+        project_id: page.project,
+        finish_high_water: page.finish_high_water,
+        window: page.window.ok_or("missing Mission directory window")?,
+        rows,
+    })
+}
+
+impl PageRead {
+    pub(super) fn live<T>(&self, value: T) -> Result<T> {
+        if self.started.elapsed() >= DEADLINE {
+            return Err("Mission read timed out".into());
+        }
+        Ok(value)
+    }
+
+    pub(super) fn selected(
+        backend: &Backend,
+        project: &str,
+        source: Source,
+        mission: &str,
+        selector: Value,
+    ) -> Result<Self> {
+        if !panel_id(mission) {
+            return invalid();
+        }
+        Self::new(
+            backend,
+            Some(project),
+            source,
+            Some(mission),
+            0,
+            None,
+            false,
+            selector,
+        )
+    }
+
     fn new(
         backend: &Backend,
         project: Option<&str>,
         source: Source,
+        mission: Option<&str>,
         offset: u64,
         order: Option<&str>,
         initial: bool,
+        selector: Value,
     ) -> Result<Self> {
         if !valid_id(&backend.workspace)
             || project.is_some_and(|project| !panel_id(project))
@@ -149,9 +258,12 @@ impl DirectoryRead {
             offset,
             order: order.map(str::to_owned),
             initial,
+            selector,
+            mission: mission.map(str::to_owned),
             started: Instant::now(),
             bytes: 0,
             characters: 0,
+            text_bytes: 0,
             first: None,
             cursor: None,
             rows: Vec::new(),
@@ -162,7 +274,7 @@ impl DirectoryRead {
         })
     }
 
-    pub async fn read_next(&mut self) -> Result<Option<DirectoryPage>> {
+    pub(super) async fn read_next(&mut self) -> Result<Option<Verified>> {
         if self.closed {
             return Err("Mission directory read already closed".into());
         }
@@ -186,15 +298,19 @@ impl DirectoryRead {
     }
 
     async fn transfer(&self) -> Result<(Value, usize)> {
-        let mut window = json!({ "offset": self.offset });
-        if let Some(order) = self
-            .order
-            .as_ref()
-            .or_else(|| self.first.as_ref().map(|i| &i.window.order))
-        {
-            window["order"] = json!(order);
+        let mut request = self.selector.clone();
+        if self.mission.is_none() {
+            let mut window = json!({ "offset": self.offset });
+            if let Some(order) = self.order.as_ref().or_else(|| {
+                self.first
+                    .as_ref()
+                    .and_then(|i| i.window.as_ref())
+                    .map(|window| &window.order)
+            }) {
+                window["order"] = json!(order);
+            }
+            request["window"] = window;
         }
-        let mut request = json!({ "source": self.source, "window": window });
         if self.initial {
             request["initial"] = json!(true);
         }
@@ -230,10 +346,10 @@ impl DirectoryRead {
         Ok((value, bytes.len()))
     }
 
-    fn accept(&mut self, value: Value) -> Result<Option<DirectoryPage>> {
+    pub(super) fn accept(&mut self, value: Value) -> Result<Option<Verified>> {
         if value["available"] == false {
             return Err(match value["reason"].as_str() {
-                Some("changed") => "Mission directory changed",
+                Some("changed") => return Err(DirectoryChanged.into()),
                 Some("damaged") => "Mission directory damaged",
                 Some("plugin-failed") => "Missions plugin failed",
                 Some("plugin-unavailable") => "Missions plugin unavailable",
@@ -252,17 +368,32 @@ impl DirectoryRead {
                 .project
                 .as_ref()
                 .is_some_and(|id| id != &envelope.project_id)
-            || !digest_id(&window.order)
             || !digest_id(&page.digest)
-            || window.total > JS_MAX
-            || window.offset != self.offset.min(window.total)
-            || window.end != (window.offset + ROWS as u64).min(window.total)
-            || (window.end - window.offset) as usize != page.total
             || page.pieces.len() > ROWS
-            || self
-                .order
-                .as_ref()
-                .is_some_and(|order| order != &window.order)
+            || envelope.mission_id != self.mission
+            || envelope.header != (self.source == Source::Mission).then_some(true)
+            || envelope.phase != (self.source == Source::Activity).then_some(Phase::Observed)
+            || (self.source == Source::Activity) != envelope.observed_at.is_some()
+            || envelope
+                .observed_at
+                .is_some_and(|time| !time.is_finite() || time < 0.0)
+            || !match (window, &self.mission, envelope.revision) {
+                (Some(window), None, None) => {
+                    digest_id(&window.order)
+                        && window.total <= JS_MAX
+                        && window.offset == self.offset.min(window.total)
+                        && window.end == (window.offset + ROWS as u64).min(window.total)
+                        && (window.end - window.offset) as usize == page.total
+                        && self
+                            .order
+                            .as_ref()
+                            .is_none_or(|order| order == &window.order)
+                }
+                (None, Some(_), Some(revision)) => {
+                    revision <= JS_MAX && page.total == 1 && !page.pieces.is_empty()
+                }
+                _ => false,
+            }
             || (self.initial && self.first.is_none()) != envelope.finish_high_water.is_some()
             || envelope
                 .finish_high_water
@@ -281,20 +412,25 @@ impl DirectoryRead {
             if first.project != envelope.project_id
                 || first.window != *window
                 || first.digest != page.digest
+                || first.revision != envelope.revision
             {
-                return Err("Mission directory changed".into());
+                return Err(DirectoryChanged.into());
             }
         } else {
             self.first = Some(Identity {
                 project: envelope.project_id.clone(),
                 window: window.clone(),
+                revision: envelope.revision,
+                observed_at: envelope.observed_at,
                 digest: page.digest.clone(),
                 finish_high_water: envelope.finish_high_water,
             });
         }
         let units_limit: usize = match self.source {
             Source::Summaries => 256 * 1024,
-            Source::Cleanups => 8 * 1024 * 1024,
+            Source::Mission => 1024 * 1024,
+            Source::Activity => 24 * 1024 * 1024,
+            Source::Cleanups | Source::Tasks => 8 * 1024 * 1024,
         };
         for piece in &page.pieces {
             let units = piece.text.encode_utf16().count();
@@ -306,10 +442,12 @@ impl DirectoryRead {
                 || units > piece.characters.saturating_sub(piece.offset)
                 || piece.characters
                     > units_limit.saturating_sub(self.characters - self.partial_units)
+                || piece.text.len() > (units_limit * 3 - self.text_bytes)
             {
                 return invalid();
             }
             self.characters += units;
+            self.text_bytes += piece.text.len();
             self.row_units = piece.characters;
             self.partial_units += units;
             self.partial.push_str(&piece.text);
@@ -345,15 +483,13 @@ impl DirectoryRead {
             .first
             .take()
             .ok_or("missing Mission directory identity")?;
-        let rows = match self.source {
-            Source::Summaries => DirectoryRows::Summaries(summaries(&self.rows)?),
-            Source::Cleanups => DirectoryRows::Cleanups(cleanups(&self.rows)?),
-        };
-        Ok(Some(DirectoryPage {
-            project_id: first.project,
+        Ok(Some(Verified {
+            project: first.project,
+            revision: first.revision,
+            observed_at: first.observed_at,
             finish_high_water: first.finish_high_water,
             window: first.window,
-            rows,
+            rows: std::mem::take(&mut self.rows),
         }))
     }
 }
@@ -362,38 +498,15 @@ fn invalid<T>() -> Result<T> {
     Err("invalid Mission directory page".into())
 }
 
-fn digest_id(digest: &str) -> bool {
+pub(super) fn digest_id(digest: &str) -> bool {
     digest.len() == 43
         && digest
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 }
 
-fn panel_id(id: &str) -> bool {
+pub(super) fn panel_id(id: &str) -> bool {
     !id.is_empty() && id.encode_utf16().count() <= 240
-}
-
-fn digest(rows: &[String]) -> String {
-    let mut hash = Sha256::new();
-    let mut buffer = [0; 2048];
-    hash.update([b'[', 0]);
-    for (index, row) in rows.iter().enumerate() {
-        if index != 0 {
-            hash.update([b',', 0]);
-        }
-        let mut written = 0;
-        for unit in row.encode_utf16() {
-            buffer[written..written + 2].copy_from_slice(&unit.to_le_bytes());
-            written += 2;
-            if written == buffer.len() {
-                hash.update(buffer);
-                written = 0;
-            }
-        }
-        hash.update(&buffer[..written]);
-    }
-    hash.update([b']', 0]);
-    URL_SAFE_NO_PAD.encode(hash.finalize())
 }
 
 fn summaries(rows: &[String]) -> Result<Vec<Summary>> {

@@ -15,6 +15,7 @@ mod gallery;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use platform::host;
 mod launcher;
+mod missions;
 pub(crate) use launcher::view as launcher_view;
 mod platform;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]

@@ -50,6 +50,6 @@ pub fn bind(s: &mut crate::State, backend: &crate::backend::Backend) {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod test_http;
+pub(crate) mod test_http;
 #[cfg(test)]
 mod tests;

@@ -11,6 +11,7 @@ use std::{
 };
 mod catalogue;
 mod children;
+mod mission_events;
 pub use catalogue::{CatalogueChanges, CatalogueWatch};
 pub(crate) use children::Children;
 #[cfg(target_arch = "wasm32")]
@@ -335,6 +336,12 @@ pub(super) async fn dispatch(
         children::observe(b, native);
     } else if own && value["type"] == "instance.eventStatus" && value["status"] == "connected" {
         b.client.children().invalidate(b, None);
+    }
+    // A conversation move revokes its reader before any send and relays SessionMoved itself.
+    if !(own && native["type"] == "session.moved" && native["data"]["sessionID"] == b.session)
+        && let Some(event) = mission_events::decode(&b.workspace, &value)
+    {
+        out.send(Input::Workspace(epoch, event)).await?;
     }
     let catalogues = (own && value["type"] == "instance.event")
         .then(|| match native["type"].as_str() {
