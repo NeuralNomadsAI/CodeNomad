@@ -71,6 +71,8 @@ Slash commands retain native `name`, `text`, delivery and attachment fields insi
 
 Prompt and command sends accept sessions in existing subfolders of the opened workspace or a live linked checkout. The proxy verifies the physical directory and native checkout registration before updating the environment and forwarding the input.
 
+Instance storage accepts workspace IDs and directory keys. A verified linked checkout of an open project uses its supplied directory spelling as the document key. The shared GET and PUT carry the same document as the TypeScript server.
+
 Known divergence: when a platform package does not match its registry integrity, the TypeScript server installs it anyway through `@opencode/cli`'s postinstall fallback; Rust refuses it (`bench/opencode-install.mjs`). OpenCode 1.x npm replacement is not ported: such an installation is refused.
 
 The Source prompt client uses `application/json`. For a `text/plain` prompt, Rust refuses the non-JSON content with HTTP 400; TypeScript fails to serialize its error and returns HTTP 500. `prompt-admission` keeps this observation and both error bodies in `outsideJson`.

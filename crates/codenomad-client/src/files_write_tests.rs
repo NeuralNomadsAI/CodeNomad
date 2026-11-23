@@ -19,6 +19,7 @@ fn backend(base: String) -> Backend {
         workspace: "workspace".into(),
         session: "session".into(),
         client_id: "write-fixture".into(),
+        session_directory: None,
         fresh_mode: false,
     }
 }

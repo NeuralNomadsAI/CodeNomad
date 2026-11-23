@@ -28,6 +28,7 @@ fn backend(session: &str) -> Backend {
         workspace: "fixture".into(),
         session: session.into(),
         client_id: "fixture".into(),
+        session_directory: None,
         fresh_mode: false,
     }
 }
