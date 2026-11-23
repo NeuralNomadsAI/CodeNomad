@@ -73,6 +73,7 @@ import { updateSessionInfo } from "./message-v2/session-info"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
 import { createCompactionNoticeClaims, createSessionBubbles } from "./compaction-notice"
 import { TrailingResyncCoordinator } from "../lib/trailing-resync"
+import { replaceSessionRow } from "./session-state"
 
 const log = getLogger("sse")
 const claimCompactionNotice = createCompactionNoticeClaims()
@@ -836,12 +837,10 @@ function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captur
   if (!current()) return null
   const sessionId = info.id
   const fetched = createClientSession(info, instanceId)
-  let updatedInstanceSessions: Map<string, Session> | undefined
+  let published: Session | null = null
 
   setSessions((prev) => {
-    const next = new Map(prev)
-    const instanceSessions = new Map(prev.get(instanceId))
-    const existing = instanceSessions.get(sessionId)
+    const existing = prev.get(instanceId)?.get(sessionId)
     const compacting = existing?.status === "compacting"
     const candidate: Session = {
       ...fetched,
@@ -860,18 +859,14 @@ function publishFetchedSessionInfo(instanceId: string, info: SessionInfo, captur
       existing,
       getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId),
     )
-    if (!merged) return prev
-    instanceSessions.set(sessionId, merged)
-    next.set(instanceId, instanceSessions)
-    updatedInstanceSessions = instanceSessions
-    return next
+    published = merged
+    return merged ? replaceSessionRow(prev, instanceId, merged) : prev
   })
 
   if (!current()) return null
   reconcilePendingSessionIndicators(instanceId)
 
-  const published = updatedInstanceSessions?.get(sessionId)
-  if (published && !published.parentId) prependSessionListId(instanceId, sessionId)
+  if ((published as Session | null)?.parentId === null) prependSessionListId(instanceId, sessionId)
 
   return fetched
 }

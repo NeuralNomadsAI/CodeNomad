@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Session } from "../types/session"
 import { handleNativeSessionEvent } from "./session-events"
-import { getListedSessionMap, getSessionCheckpoint, getSessionFamily, getSessionThreads, setSessionPage, setSessions } from "./session-state"
+import { getListedSessionMap, getSessionCheckpoint, getSessionFamily, getSessionThreads, replaceSessionRow, setSessionPage, setSessions } from "./session-state"
 import { projectSessionFamilies, projectUnarchivedSessionThreads } from "./session-tree"
 
 test("a session event among 6,000 rows only rebuilds the affected family", t => {
@@ -58,4 +58,8 @@ test("a session event among 6,000 rows only rebuilds the affected family", t => 
   t.diagnostic(`6,000 rows, 32 events, p95 ${elapsedP95.toFixed(2)} ms elapsed, max batch mean ${maxMeanCpu.toFixed(2)} ms thread CPU/event`)
   // Other Node workers can deschedule this worker during a full-suite run.
   assert.ok(maxMeanCpu < 16, `reducer + projections max batch mean CPU: ${maxMeanCpu.toFixed(2)} ms/event`)
+  setSessions(previous => replaceSessionRow(previous, instanceId, { ...rows.get("ses_1")!, id: "cold-child" }))
+  const afterDiscovery = project()
+  assert.ok(afterDiscovery.slice(0, -1).every((thread, index) => thread === initial[index]))
+  assert.equal(afterDiscovery.at(-1)?.children.length, 2)
 })

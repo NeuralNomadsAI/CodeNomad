@@ -640,17 +640,39 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
       return prev
     }
 
-    const updated = new Map(instanceSessions).set(sessionId, updatedSession)
-    carrySessionProjection(instanceSessions, updated, current, updatedSession)
-    const projection = listedSessionMaps.get(instanceSessions)
-    if (projection && sessionTopology(instanceSessions) === sessionTopology(updated)) {
-      const before = projection.listed
-      const listed = before === instanceSessions ? updated : before.has(sessionId) ? new Map(before).set(sessionId, updatedSession) : before
-      if (listed !== before && listed !== updated) carrySessionProjection(before, listed, current, updatedSession)
-      listedSessionMaps.set(updated, { ...projection, listed })
-    }
-    return new Map(prev).set(instanceId, updated)
+    return replaceSessionRow(prev, instanceId, updatedSession)
   })
+}
+
+/** Publish one row while retaining projections that it cannot affect. */
+export function replaceSessionRow(previous: Map<string, Map<string, Session>>, instanceId: string, session: Session) {
+  const instanceSessions = previous.get(instanceId)
+  const sessionId = session.id
+  const updated = new Map(instanceSessions).set(sessionId, session)
+  if (!instanceSessions) return new Map(previous).set(instanceId, updated)
+  const current = instanceSessions.get(sessionId)
+  carrySessionProjection(instanceSessions, updated, current, session)
+  const projection = listedSessionMaps.get(instanceSessions)
+  const previousTopology = sessionTopology(instanceSessions)
+  const nextTopology = sessionTopology(updated)
+  const parent = !current && session.parentId ? instanceSessions.get(session.parentId) : undefined
+  const scope = parent ? workspaceScopes.get(previousTopology) : undefined
+  const sameLocationLeaf = scope && parent && !childSessionIds(instanceSessions, sessionId).length
+    && !getMovedAwaySessions(instanceId).has(sessionId)
+    && (confirmedSessionListDirectory(instanceId, parent.id, parent) ?? parent.location.directory)
+      === (confirmedSessionListDirectory(instanceId, sessionId, session) ?? session.location.directory)
+    && parent.location.directory === session.location.directory
+    && scope.scope.has(parent.id)
+  const extendedScope = sameLocationLeaf && new Set(scope.scope).add(sessionId)
+  if (extendedScope && scope) workspaceScopes.set(nextTopology, { ...scope, scope: extendedScope })
+  if (projection && (previousTopology === nextTopology || (extendedScope && projection.scope === scope?.scope))) {
+    const before = projection.listed
+    const include = before.has(sessionId) || Boolean(extendedScope && parent && before.has(parent.id))
+    const listed = before === instanceSessions ? updated : include ? new Map(before).set(sessionId, session) : before
+    if (listed !== before && listed !== updated) carrySessionProjection(before, listed, current, session)
+    listedSessionMaps.set(updated, { ...projection, scope: extendedScope || projection.scope, listed })
+  }
+  return new Map(previous).set(instanceId, updated)
 }
 
 function setSessionPending(

@@ -479,7 +479,8 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
   const client = instances().get(instanceId)?.client
   if (!client) return
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
-  const captured = new Map(sessions().get(instanceId) ?? [])
+  // Session maps are snapshots; retained rows protect the read across SSE.
+  const captured = sessions().get(instanceId) ?? new Map<string, Session>()
   let active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
   if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
   // An active-only map cannot explain a run that settled during an SSE gap.
@@ -510,10 +511,15 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
     if (baseline.status === "working" && !Object.prototype.hasOwnProperty.call(active, id)) settledWithoutEvent.push(id)
   }
   setSessions(previous => {
-    const next = new Map(previous)
-    const current = new Map(next.get(instanceId) ?? [])
+    const held = previous.get(instanceId)
+    if (!held) return previous
+    let current: Map<string, Session> | undefined
+    const update = (id: string, row: Session) => {
+      current ??= new Map(held)
+      current.set(id, row)
+    }
     for (const [id, baseline] of captured) {
-      const latest = current.get(id)
+      const latest = held.get(id)
       if (!latest) continue
       const info = outcomes.get(id)
       // Activity can release an acknowledged send's brief delivery hold even
@@ -521,16 +527,21 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
       if (outcomes.has(id) && !info && !Object.prototype.hasOwnProperty.call(active, id)) {
         const epoch = idleReadAdmissionEpoch(baseline, latest)
         if (epoch !== latest.idleReadAdmissionEpoch) {
-          current.set(id, { ...latest, idleReadAdmissionEpoch: epoch })
+          update(id, { ...latest, idleReadAdmissionEpoch: epoch })
         }
         continue
       }
+      // An unchanged, already-authoritative idle row needs neither a new
+      // object nor publication. Unknown and unsettled rows still reconcile.
+      if (latest === baseline && !info && !Object.prototype.hasOwnProperty.call(active, id)
+        && baseline.status === "idle" && baseline.runtimeStatusKnown && baseline.retry === null
+        && baseline.generationRecovery === null && baseline.outcome !== "interrupted"
+        && baseline.idleReadAdmissionEpoch === idleReadAdmissionEpoch(baseline)) continue
       const fetched = withRuntimeStatus(info ? toClientSessionV2(instanceId, info, baseline) : baseline, baseline, active)
       const merged = mergeFetchedSessionRuntimeState(fetched, baseline, latest)
-      if (merged) current.set(id, merged)
+      if (merged) update(id, merged)
     }
-    next.set(instanceId, current)
-    return next
+    return current ? new Map(previous).set(instanceId, current) : previous
   })
   reconcilePendingSessionIndicators(instanceId)
   for (const sessionId of settledWithoutEvent) observeNonEventSettlement(instanceId, sessionId)

@@ -82,38 +82,45 @@ function sameCheckpoint(a: Session, b: Session): boolean {
     && (b.status !== "idle" || a.cost === b.cost && a.tokens === b.tokens)
 }
 
-export function carrySessionProjection(previous: SessionRows, next: SessionRows, before: Session, after: Session): void {
+export function carrySessionProjection(previous: SessionRows, next: SessionRows, before: Session | undefined, after: Session): void {
   const previousIndex = index(previous)
-  const sameTopology = before.parentId === after.parentId
+  const sameTopology = before !== undefined && before.parentId === after.parentId
     && before.location?.directory === after.location?.directory && before.location?.workspaceID === after.location?.workspaceID
     && before.projectID === after.projectID && before.subpath === after.subpath
+  // An unreferenced child can only affect its ancestors. An insertion that
+  // attaches existing orphans instead needs a new index and scope projection.
+  const leaf = !before && after.parentId && !childSessionIds(previous, after.id).length
+  const reuse = sameTopology || leaf
   // Move the derived caches to the new snapshot. A retained old snapshot can
   // still recreate its own caches from its immutable rows.
-  const families = sameTopology ? previousIndex.families : new Map<string, Session[]>()
-  const threads = sameTopology ? previousIndex.threads : new Map<string, SessionThread>()
-  if (sameTopology) {
+  const families = reuse ? previousIndex.families : new Map<string, Session[]>()
+  const threads = reuse ? previousIndex.threads : new Map<string, SessionThread>()
+  if (reuse) {
     previousIndex.families = new Map()
     previousIndex.threads = new Map()
   }
-  let current: string | null = before.id
+  let current: string | null = after.id
   const seen = new Set<string>()
   while (current && !seen.has(current)) {
     seen.add(current)
-    if (current !== before.id) families.delete(current)
+    if (current !== after.id) families.delete(current)
     threads.delete(current)
-    current = previous.get(current)?.parentId ?? null
+    current = (current === after.id ? after : previous.get(current))?.parentId ?? null
   }
   let indicators = previousIndex.indicators
-  if (indicators && (indicators.has(before.id) || hasSessionIndicator(after))) {
+  if (indicators && (indicators.has(after.id) || hasSessionIndicator(after))) {
     indicators = new Map(indicators)
     if (hasSessionIndicator(after)) indicators.set(after.id, after)
-    else indicators.delete(before.id)
+    else indicators.delete(after.id)
   }
+  const children = sameTopology ? previousIndex.children
+    : leaf && after.parentId ? new Map(previousIndex.children).set(after.parentId, [...childSessionIds(previous, after.parentId), after.id])
+    : undefined
   indexes.set(next, {
     topology: sameTopology ? previousIndex.topology : {},
-    children: sameTopology ? previousIndex.children : undefined,
+    children,
     families,
-    checkpoint: sameCheckpoint(before, after) ? previousIndex.checkpoint : {},
+    checkpoint: before && sameCheckpoint(before, after) ? previousIndex.checkpoint : {},
     threads,
     indicators,
   })
