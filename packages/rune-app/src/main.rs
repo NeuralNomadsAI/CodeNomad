@@ -201,7 +201,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= launcher::poll(s, tx);
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);
-    changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
+    changed |= files::poll(s, now, tx);
     changed |= git::poll(s, now, tx);
     workspace::capture_files_mode(s);
     if changed {
@@ -333,7 +333,11 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let rows = layout::transcript_rows(
         s.messages.len(),
         |s: &State, i| s.messages[i].id.clone().into(),
-        move |s: &State, i| strings::with_locale(locale, || transcript::message(s, i)),
+        move |s: &State, i| {
+            strings::with_locale(locale, || {
+                chat::reading::row(s, i, transcript::message(s, i))
+            })
+        },
     )
     .key("rows")
     .virtual_rows_version(s.revision);
@@ -343,13 +347,20 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         .is_some_and(|a| a.picker || !a.ids().is_empty());
     rune_theme_codenomad::interruption::session_surface(expanded)
         .child(shell::reader(s, || {
-            rune_theme_codenomad::interruption::history(expanded).child(rows)
+            files::view::body(
+                s,
+                chat::reading::history(
+                    s,
+                    rune_theme_codenomad::interruption::history(expanded).child(rows),
+                ),
+                expanded,
+            )
         }))
         .child(agent_view::view(s, cx))
-        .child(composer(s))
+        .child(composer(s, expanded.then_some(cx)))
 }
 
-fn composer(s: &State) -> El {
+fn composer(s: &State, scroll_stack: Option<&Cx<State>>) -> El {
     let scope = s.input_scope.clone();
     col()
         .key("session-composer")
@@ -371,6 +382,7 @@ fn composer(s: &State) -> El {
                     .on_edit(screen::edit(&scope, screen::Editor::Composer))
                     .on_input_change(crate::screen::action_tx(&scope, workspace::draft_changed))
                     .on_submit(crate::screen::action_tx(&scope, send)),
+                scroll_stack,
             )
             .field_surface(),
         )
@@ -428,6 +440,11 @@ fn main() {
     #[cfg(feature = "test-support")]
     if platform::has_flag("--gallery-action-menu") {
         gallery::action_menu::run();
+        return;
+    }
+    #[cfg(feature = "test-support")]
+    if platform::has_flag("--gallery-reader") {
+        gallery::reader::run();
         return;
     }
     #[cfg(feature = "test-support")]

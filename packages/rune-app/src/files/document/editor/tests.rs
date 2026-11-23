@@ -1,11 +1,11 @@
 use super::*;
+use crate::files::test_http as http;
 use crate::{files::Ui, platform::reads::Reads};
+use http::{Http, Request};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-mod http;
-use http::{Http, Request};
 
 async fn poll(ui: &mut Ui, done: impl Fn(&Ui) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -396,14 +396,26 @@ fn clean_undo_after_a_lost_acknowledgement_can_refresh_without_replaying() {
         assert_eq!(put.body["contents"], "b");
         edit(&mut ui, "a");
         drop(put);
-        poll(&mut ui, |ui| !ui.document.pending()).await;
+        http::wait(async {
+            while ui.document.writing() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        request(&mut ui, &http, "GET", "first.txt")
+            .await
+            .preview("first.txt", "Yg==", Some("v3"))
+            .await;
+        poll(&mut ui, |ui| !ui.reader.busy()).await;
+        assert_eq!(ui.reader.preview().unwrap().bytes.as_slice(), b"b");
+        assert_eq!(ui.document.edit().text, "a");
         assert!(!ui.document.dirty());
         assert_eq!(ui.document.error(), Some(Error::Uncertain));
         http.quiet().await;
         ui.refresh_document(ui.document.scope());
         request(&mut ui, &http, "GET", "first.txt")
             .await
-            .preview("first.txt", "Yg==", Some("v3"))
+            .preview("first.txt", "Yg==", Some("v4"))
             .await;
         poll(&mut ui, |ui| !ui.reader.busy()).await;
         assert_eq!(ui.document.edit().text, "b");

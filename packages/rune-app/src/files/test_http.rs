@@ -1,4 +1,6 @@
-use super::*;
+use super::{Ui, document::store::Store};
+use crate::{backend::Backend, platform::reads::Reads};
+use std::{sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -49,7 +51,9 @@ impl Http {
         }
         let header = String::from_utf8(bytes).unwrap();
         assert!(
-            header.starts_with(&format!("{method} /api/workspaces/owned/files/")),
+            ['/', '?'].into_iter().any(|suffix| {
+                header.starts_with(&format!("{method} /api/workspaces/owned/files{suffix}"))
+            }),
             "{header}"
         );
         assert!(
