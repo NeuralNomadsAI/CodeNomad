@@ -71,7 +71,7 @@ Taslaklar paylaşılan OpenCode mesajları değil, istemci çalışma durumudur.
 ## Yanıtlardan dosya açma {#open-files-from-replies}
 
 1. Aracı yanıtları proje dosyalarına göreli ve mutlak yollarla bağlantı verir.
-2. Düz metin olarak yazılan bir yol da, dosya sohbetin worktree'sinde bulunduğunda bağlantı olur; var olmayan yollar düz metin olarak kalır.
+2. Düz metin olarak yazılan bir yol da, sohbetin worktree'sinin dosyayı içerdiği bilindiğinde bağlantı olur; var olmayan yollar düz metin olarak kalır.
 3. Düz bir tıklama, bağlantılı dosyayı sohbetin worktree'sinden okuyarak dosya önizlemesinde açar.
 4. Değiştirici tıklamalar (Ctrl/⌘, Shift, orta tıklama) ve oturumun worktree'si dışındaki bağlantılar normal bağlantı davranışını korur.
 

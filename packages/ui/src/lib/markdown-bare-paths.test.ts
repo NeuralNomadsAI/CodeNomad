@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { BARE_PATH_MAX_CANDIDATES, barePathCandidates, candidateParentDirectory } from "./markdown-bare-paths"
+import { BARE_PATH_MAX_CANDIDATES, barePathCandidates } from "./markdown-bare-paths"
 
 const hrefs = (text: string) => barePathCandidates(text).map(candidate => candidate.href)
 
@@ -40,11 +40,6 @@ describe("bare path candidates", () => {
     assert.deepEqual(hrefs("visit s://example.com/x"), [])
   })
 
-  it("never returns a candidate spanning a space", () => {
-    assert.equal(hrefs("my file.md").includes("my file.md"), false)
-    assert.equal(hrefs("my file.md").includes("my"), false)
-  })
-
   it("caps candidates per call", () => {
     const text = Array.from({ length: BARE_PATH_MAX_CANDIDATES + 6 }, (_, index) => `d/f${index}.ts`).join(" ")
     const candidates = barePathCandidates(text)
@@ -56,14 +51,11 @@ describe("bare path candidates", () => {
     const [candidate] = barePathCandidates(text)
     assert.equal(text.slice(candidate.start, candidate.end), candidate.href)
   })
-})
 
-describe("candidate parent directories", () => {
-  it("groups candidates by their leading directories", () => {
-    assert.equal(candidateParentDirectory("src/app.ts"), "src")
-    assert.equal(candidateParentDirectory("a/b/c.md"), "a/b")
-    assert.equal(candidateParentDirectory("README.md"), "")
-    assert.equal(candidateParentDirectory("C:\\repo\\src\\app.ts"), "C:/repo/src")
-    assert.equal(candidateParentDirectory("./docs/guide.md"), "./docs")
+  it("keeps a space-truncated suffix as its own candidate", () => {
+    // A path containing a space cannot be recovered from prose; its last
+    // space-free segment stays a legal candidate that existence gating
+    // decides — it links only when that file exists in the worktree.
+    assert.deepEqual(hrefs("my file.md"), ["file.md"])
   })
 })

@@ -44,14 +44,3 @@ export function barePathCandidates(text: string): BarePathCandidate[] {
   }
   return candidates
 }
-
-/** The directory a candidate resolves against: the portion before the last
- * separator (backslashes normalized), `.` for a rooted empty parent, `""` for
- * a bare file name. */
-export function candidateParentDirectory(candidateHref: string): string {
-  const normalized = candidateHref.replace(/\\/g, "/")
-  const lastSlash = normalized.lastIndexOf("/")
-  if (lastSlash < 0) return ""
-  const parent = normalized.slice(0, lastSlash)
-  return parent === "" ? "." : parent
-}
