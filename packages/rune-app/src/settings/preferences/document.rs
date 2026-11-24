@@ -271,6 +271,14 @@ impl Document {
         self.read.failed
     }
 
+    pub(super) fn choice_retrying(&self, choice: Choice) -> bool {
+        self.write.retry.contains(&choice)
+            || matches!(
+                self.flight.as_ref().map(|flight| &flight.operation),
+                Some(Operation::Read { retry }) if retry.contains(&choice)
+            )
+    }
+
     pub(super) fn awaiting_initial_read(&self) -> bool {
         self.snapshot.is_none() && !self.read.failed
     }

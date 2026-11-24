@@ -265,7 +265,7 @@ pub async fn mission(
     if !valid(&mission, 100) {
         return Err(bad("Invalid mission ID"));
     }
-    Ok(read(app, id, "mission", json!({"missionID":mission}), 4 * 1024 * 1024).await)
+    Ok(read(app, id, "mission", json!({"missionID":mission}), super::run::LARGE_MISSION_RPC_LIMIT).await)
 }
 
 pub async fn admission(
@@ -276,7 +276,7 @@ pub async fn admission(
     if !valid(mission, 100) {
         return Err(bad("Invalid mission read request"));
     }
-    Ok(read(app, id, "snapshot", json!({"missionID":mission}), 4 * 1024 * 1024).await)
+    Ok(read(app, id, "snapshot", json!({"missionID":mission}), super::run::LARGE_MISSION_RPC_LIMIT).await)
 }
 pub async fn content(
     State(app): State<Shared>,

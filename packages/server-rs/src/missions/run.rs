@@ -714,8 +714,10 @@ async fn lifecycle(app: &Shared, mut scope: Scope, co: Value, input: Value) -> R
     Ok(json!({"nativeAcknowledgement":ack}))
 }
 
+pub(super) const LARGE_MISSION_RPC_LIMIT: usize = 128 * 1024 * 1024;
+
 fn rpc_response_limit(method: &str) -> usize {
-    if method == "recover" { 128 * 1024 * 1024 } else { 4 * 1024 * 1024 }
+    if method == "recover" { LARGE_MISSION_RPC_LIMIT } else { 4 * 1024 * 1024 }
 }
 
 /// Mission mutations use the same private bridge registration as the desktop tools.

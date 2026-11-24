@@ -520,10 +520,8 @@ impl Preferences {
     pub fn mission_delete_sessions(&self) -> Option<bool> {
         if self.authentication_required
             || self.stream_offline
-            || self
-                .config
-                .requested(Choice::MissionDeleteSessions)
-                .is_some()
+            || self.mission_delete_sessions_pending()
+            || self.config.choice_retrying(Choice::MissionDeleteSessions)
         {
             return None;
         }

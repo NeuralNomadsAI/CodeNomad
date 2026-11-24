@@ -321,6 +321,9 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
                 panel.refresh_when_due(ui.clock, tx);
             }
             changed |= panel.poll();
+            if let Some(expired) = panel.take_auth_expired() {
+                ui.mission_auth_expired = Some(expired);
+            }
             panel.show(panel.supported() && visible);
             active_visible = panel.supported() && visible;
         }

@@ -61,7 +61,7 @@ pub(super) async fn session(app: &App, scope: &Scope, sid: &str) -> Result<Value
 }
 
 pub(super) async fn snapshot(app: &App, scope: &Scope) -> Result<Value, Error> {
-    let (status, body) = scope.call(app, "snapshot", &json!({}), 10, 4 * 1024 * 1024).await?;
+    let (status, body) = scope.call(app, "snapshot", &json!({}), 10, super::run::LARGE_MISSION_RPC_LIMIT).await?;
     let s = &body["output"];
     if !status.is_success()
         || s["projectID"] != scope.project

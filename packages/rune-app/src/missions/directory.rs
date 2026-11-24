@@ -8,7 +8,10 @@ use codenomad_client::{
     backend::Backend,
     bounded,
     history::Result,
-    missions::{Cleanup, DirectoryChanged, DirectoryPage, DirectoryRows, Summary, Window},
+    missions::{
+        Cleanup, DirectoryAuthExpired, DirectoryChanged, DirectoryPage, DirectoryRows, Summary,
+        Window,
+    },
 };
 use rune::edit::TextEdit;
 use std::{
@@ -87,6 +90,7 @@ pub(crate) struct Panel {
     supported: Option<bool>,
     capability: Option<Receiver<Option<bool>>>,
     probe_attempted: bool,
+    auth_expired: Option<Backend>,
     lanes: [Lane; 2],
     pub(super) summaries: Vec<Summary>,
     pub(super) cleanups: Vec<Cleanup>,
@@ -130,6 +134,7 @@ impl Panel {
             supported: None,
             capability: None,
             probe_attempted: false,
+            auth_expired: None,
             lanes: Default::default(),
             summaries: vec![],
             cleanups: vec![],
@@ -360,22 +365,24 @@ impl Panel {
         } else {
             self.cleanups.insert(0, receipt.clone());
             let lane_seen = &mut self.lanes[Kind::Cleanups as usize].seen;
-            while self.cleanups.len() > CLEANUP_DISPLAY_CAP {
+            // Cap only off-page adopted rows without evicting the newly inserted receipt (index 0)
+            // or any directory-loaded / pending rows.
+            let max_rows = CLEANUP_DISPLAY_CAP.max(lane_seen.len().saturating_add(1));
+            while self.cleanups.len() > max_rows {
                 let row_key =
                     |row: &Cleanup| (row.mission_id.clone(), Some(row.deletion_id.clone()));
-                let pos = self
-                    .cleanups
+                let tail = &self.cleanups[1..];
+                let Some(rel) = tail
                     .iter()
                     .rposition(|row| !row.is_pending() && !lane_seen.contains(&row_key(row)))
                     .or_else(|| {
-                        self.cleanups
-                            .iter()
+                        tail.iter()
                             .rposition(|row| !lane_seen.contains(&row_key(row)))
                     })
-                    .or_else(|| self.cleanups.iter().rposition(|row| !row.is_pending()))
-                    .unwrap_or(self.cleanups.len() - 1);
-                let removed = self.cleanups.remove(pos);
-                lane_seen.remove(&row_key(&removed));
+                else {
+                    break;
+                };
+                self.cleanups.remove(rel + 1);
             }
         }
         if !receipt.is_pending() {
@@ -480,6 +487,11 @@ impl Panel {
     #[cfg(test)]
     pub(crate) fn refresh_for_test(&mut self) {
         self.refresh();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn load_more_cleanups_for_test(&mut self) {
+        self.start(Kind::Cleanups, Read::More);
     }
 
     pub(crate) fn invalidate(&mut self, change: Option<(&str, u64)>, now: f64) {
@@ -640,10 +652,14 @@ impl Panel {
         self.loaded(kind)
             && !self.failed(kind)
             && !self.busy(kind)
-            && self.lanes[kind as usize].window.as_ref().is_some_and(|w| {
-                w.end == w.total
-                    && (kind != Kind::Cleanups || w.total <= CLEANUP_DISPLAY_CAP as u64)
-            })
+            && self.lanes[kind as usize]
+                .window
+                .as_ref()
+                .is_some_and(|w| w.end == w.total)
+    }
+
+    pub(crate) fn take_auth_expired(&mut self) -> Option<Backend> {
+        self.auth_expired.take()
     }
 
     fn start(&mut self, kind: Kind, read: Read) {
@@ -745,6 +761,14 @@ impl Panel {
                     if owed {
                         self.start(done.kind, Read::Refresh);
                     }
+                }
+                Err(error) if error.is::<DirectoryAuthExpired>() => {
+                    self.lanes[done.kind as usize].failed = Some(done.read);
+                    if done.kind == Kind::Cleanups {
+                        self.cleanup_view_live.store(false, Ordering::Release);
+                        self.revoke_all_cleanup_tokens();
+                    }
+                    self.auth_expired = Some(self.backend.clone());
                 }
                 Err(error) if error.is::<DirectoryChanged>() => {
                     self.lanes[done.kind as usize].failed = Some(Read::Refresh);
@@ -905,28 +929,7 @@ impl Panel {
                 {
                     return false;
                 }
-                let mut truncated = false;
-                if self.cleanups.len() > CLEANUP_DISPLAY_CAP {
-                    if read == Read::More {
-                        // Sliding window: keep freshly paged rows at the tail reachable within the cap.
-                        let excess = self.cleanups.len() - CLEANUP_DISPLAY_CAP;
-                        self.cleanups.drain(..excess);
-                        truncated = true;
-                    } else {
-                        self.cleanups.drain(CLEANUP_DISPLAY_CAP..);
-                    }
-                    if lane.seen.len() > CLEANUP_DISPLAY_CAP {
-                        lane.seen = self
-                            .cleanups
-                            .iter()
-                            .map(|row| (row.mission_id.clone(), Some(row.deletion_id.clone())))
-                            .collect();
-                        truncated = true;
-                    }
-                }
-                let covered = page.window.end == page.window.total
-                    && !truncated
-                    && page.window.total <= CLEANUP_DISPLAY_CAP as u64;
+                let covered = page.window.end == page.window.total;
                 self.project = Some(page.project_id);
                 lane.window = Some(page.window);
                 let doc_updates: Vec<(CleanupIdentity, Option<bool>)> = self

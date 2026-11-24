@@ -16,15 +16,15 @@ export function recoveryCleanupFixture(){
   let lastConfig=null
   const cleanupRow=()=>JSON.stringify({
     missionID:'old',deletionID:'cleanup',requestID:'request',expectedRevision:1,
-    deleteManagedSessions:false,objective:'Nettoyage vérifié',createdAt:1,removed:0,retained:1,
-    pending:0,reasons:['children'],documentPending:oldPending,
+    deleteManagedSessions:false,objective:'Nettoyage vérifié',createdAt:1,removed:0,retained:0,
+    pending:0,reasons:[],documentPending:oldPending,
   })
   const alphaCleanupRow=()=>JSON.stringify({
     missionID:'alpha',deletionID:'del-alpha',requestID:alphaDeleteRequest.requestId,
     expectedRevision:alphaDeleteRequest.expectedRevision,
     deleteManagedSessions:alphaDeleteRequest.deleteManagedSessions,
-    objective:'Alpha à jour 🦀',createdAt:2,removed:1,retained:0,pending:alphaDeleted?0:1,
-    reasons:[],documentPending:false,
+    objective:'Alpha à jour 🦀',createdAt:2,removed:alphaDeleted?1:0,retained:1,pending:alphaDeleted?0:1,
+    reasons:['children'],documentPending:false,
   })
   return {
     cleanups:()=>alphaDeleteRequest?[cleanupRow(),alphaCleanupRow()]:[cleanupRow()],
@@ -176,8 +176,8 @@ async function setDeleteSessionsPreference(page,messages,expected){
 export async function checkCleanupRetry(page,messages,counts,releaseCleanups){
   const pendingRegion=page.getByRole('region',{name:messages['missions.cleanup.title'],exact:true})
   await pendingRegion.waitFor()
-  await pendingRegion.getByText(messages['missions.cleanup.reason.children'],{exact:true}).waitFor()
   await pendingRegion.getByText(messages['missions.cleanup.preserved'],{exact:true}).waitFor()
+  await pendingRegion.getByText(messages['missions.cleanup.documentPending'],{exact:true}).waitFor()
   const retryButton=pendingRegion.getByRole('button',{name:messages['missions.control.retry'],exact:true})
   await retryButton.waitFor()
   const del=page.waitForResponse(r=>r.url().endsWith('/missions/old')&&r.request().method()==='DELETE')
@@ -237,6 +237,8 @@ export async function checkRecoveryAndDelete(page,messages,counts,filter){
   await page.keyboard.press('Enter')
   assert.equal((await secondDel).status(),200)
   await delGroup.waitFor({state:'detached'})
+  const historyRegion=page.getByRole('region',{name:messages['missions.progress.cleanupHistory'],exact:true})
+  await historyRegion.getByText(messages['missions.cleanup.reason.children'],{exact:true}).waitFor()
   assert.equal(counts().alphaDeleteCalls,2)
   assert.deepEqual(counts().deleteSessionPatches,[true,false])
   await filter('')

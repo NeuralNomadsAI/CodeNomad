@@ -501,4 +501,71 @@ mod tests {
             .await;
         });
     }
+
+    #[test]
+    fn refused_mission_delete_sessions_patch_retains_confirmed_saved_value_for_delete() {
+        platform::block_on(async {
+            let http = Http::new().await;
+            let mut prefs = Preferences::default();
+            prefs.bind(Some(http.backend.clone()));
+
+            let (mut got_config, mut got_state) = (false, false);
+            while !(got_config && got_state) {
+                prefs.poll();
+                let req = http.accept().await;
+                if req.header.contains("/api/storage/config/ui") {
+                    req.reply(200, json!({"settings": {"missionDeleteSessions": false}}))
+                        .await;
+                    got_config = true;
+                } else {
+                    req.reply(200, json!({})).await;
+                    got_state = true;
+                }
+            }
+            wait_until(|| {
+                prefs.poll();
+                prefs.mission_delete_sessions() == Some(false)
+            })
+            .await;
+
+            // User toggles to true; PATCH is refused (500) and automatic readback confirms false.
+            prefs.set_mission_delete_sessions(true);
+            assert_eq!(
+                prefs.mission_delete_sessions(),
+                None,
+                "preference must be withheld while PATCH/readback is in flight"
+            );
+            prefs.poll();
+            let patch = http.accept().await;
+            assert!(patch.header.starts_with("PATCH /api/storage/config/ui "));
+            patch.reply(500, json!({"error": "refused"})).await;
+            let readback = http.accept().await;
+            assert!(
+                readback.header.starts_with("GET /api/storage/config/ui"),
+                "unexpected readback header: {}",
+                readback.header
+            );
+            readback
+                .reply(200, json!({"settings": {"missionDeleteSessions": false}}))
+                .await;
+
+            wait_until(|| {
+                prefs.poll();
+                prefs.mission_delete_sessions_failed()
+            })
+            .await;
+            assert_eq!(
+                prefs.mission_delete_sessions(),
+                Some(false),
+                "once readback confirms saved false after a refused PATCH, Delete must remain available with false"
+            );
+            assert_eq!(prefs.mission_delete_sessions_display(), Some(false));
+            assert_eq!(
+                prefs.mission_delete_sessions_error(),
+                Some("settings.preferenceSaveFailed")
+            );
+            // No automatic PATCH replay may occur.
+            http.quiet().await;
+        });
+    }
 }

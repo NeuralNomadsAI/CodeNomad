@@ -38,6 +38,17 @@ impl std::fmt::Display for DirectoryChanged {
 
 impl std::error::Error for DirectoryChanged {}
 
+#[derive(Debug)]
+pub struct DirectoryAuthExpired;
+
+impl std::fmt::Display for DirectoryAuthExpired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Mission directory authentication expired")
+    }
+}
+
+impl std::error::Error for DirectoryAuthExpired {}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Envelope {
@@ -331,6 +342,11 @@ impl PageRead {
             .await?;
         // Known unavailable envelopes can use a non-success HTTP status.
         let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED
+            && self.backend.authentication_status().await.ok() == Some(false)
+        {
+            return Err(DirectoryAuthExpired.into());
+        }
         let budget = RESPONSE.min(TRANSFERS - self.bytes);
         let mut bytes = Vec::new();
         let mut chunks = response.bytes_stream();

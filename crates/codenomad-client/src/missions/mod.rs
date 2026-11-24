@@ -14,11 +14,12 @@ pub use activity::{Activity, Actor, ActorState, Coverage, ObservedQuestion};
 pub use attention::Attention;
 pub use cleanup::{
     DeletionCode, DeletionError, DeletionOutcome, DeletionRequest, MissionSnapshotRead,
+    ReconciliationOutcome,
 };
 pub use codec::RevisionChanged;
 pub use control_fields::{ControlPage, ControlPart, ControlRow, ReceiptContent};
 pub use detail::{DetailRead, Header, MapHeader, Task, TaskPage, TaskStatus, TaskWindow};
-pub use directory::{DirectoryChanged, DirectoryRead};
+pub use directory::{DirectoryAuthExpired, DirectoryChanged, DirectoryRead};
 pub use lifecycle::{
     ControlReceipt, LifecycleAction, LifecycleOutcome, LifecycleRequest, LifecycleTarget,
 };

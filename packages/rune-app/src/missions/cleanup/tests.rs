@@ -2525,13 +2525,27 @@ fn cleanup_pagination_stays_within_2000_row_display_and_seen_cap() {
             total,
             vec![last_doc.clone()]
         ));
-        assert_eq!(panel.cleanups.len(), 2_000);
-        assert!(panel.cleanup_seen_count() <= 2_000);
+        assert_eq!(panel.cleanups.len(), 2_001);
+        assert_eq!(panel.cleanup_seen_count(), 2_001);
         assert!(!panel.has_more(super::super::directory::Kind::Cleanups));
         assert!(
-            panel.cleanups.iter().any(|r| r.deletion_id == "del-2000"),
-            "2,001st document-only cleanup must be reachable in the sliding window"
+            panel.cleanups.iter().any(|r| r.deletion_id == "del-0")
+                && panel.cleanups.iter().any(|r| r.deletion_id == "del-2000"),
+            "both the first and 2,001st pending cleanups must remain loaded and reachable"
         );
+        // Adopting a separate settled receipt while 2,001 pending rows are loaded must
+        // display the new receipt immediately without evicting it or any pending row.
+        let mut separate_settled = cleanup_row(0, false);
+        separate_settled.mission_id = "msn-separate".into();
+        separate_settled.deletion_id = "del-separate".into();
+        panel.adopt_settled_cleanup(separate_settled);
+        assert_eq!(
+            panel.cleanups[0].deletion_id, "del-separate",
+            "newly adopted settled receipt must not evict itself at the 2,000+ display count"
+        );
+        assert!(panel.cleanups.iter().any(|r| r.deletion_id == "del-0"));
+        assert!(panel.cleanups.iter().any(|r| r.deletion_id == "del-2000"));
+
         let mut lifecycle = super::super::Lifecycle::default();
         let sc = panel.cleanup_scope().unwrap();
         while done.try_recv().is_ok() {}
@@ -2557,6 +2571,38 @@ fn cleanup_pagination_stays_within_2000_row_display_and_seen_cap() {
         assert_eq!(
             settled.cleanup.settled_cleanups[0].1.deletion_id,
             "del-2000"
+        );
+        // First row (del-0) is also still retryable.
+        let first_row = panel
+            .cleanups
+            .iter()
+            .find(|r| r.deletion_id == "del-0")
+            .unwrap()
+            .clone();
+        while done.try_recv().is_ok() {}
+        panel.retry_cleanup(&mut lifecycle, &sc, first_row);
+        let pre_first = http.accept().await;
+        assert!(pre_first.header.contains("/missions/msn-0"));
+        pre_first
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                    "cleanups": [{
+                        "missionID": "msn-0", "deletionID": "del-0", "requestID": "req-1",
+                        "expectedRevision": 3, "deleteManagedSessions": false,
+                        "objective": "Old", "createdAt": 1, "removed": 1, "retained": 0,
+                        "pending": 0, "reasons": [], "documentPending": false
+                    }]
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        let settled_first = lifecycle.poll_after_deletes();
+        assert_eq!(settled_first.cleanup.settled_cleanups.len(), 1);
+        assert_eq!(
+            settled_first.cleanup.settled_cleanups[0].1.deletion_id,
+            "del-0"
         );
     });
 }
@@ -3068,16 +3114,16 @@ fn cleanup_pagination_continues_after_order_change_refresh_at_2000_cap() {
         let mut page1: Vec<Cleanup> = vec![make_row("new", 0)];
         page1.extend((0..49).map(|i| make_row("old", i)));
         assert!(panel.accept_more_cleanups_for_test("order-new", 0, 2_000, page1));
-        assert_eq!(panel.cleanups.len(), 2_000);
+        assert_eq!(panel.cleanups.len(), 2_001);
         assert_eq!(panel.cleanup_seen_count(), 50);
         assert!(
             panel.has_more(super::super::directory::Kind::Cleanups),
             "Load more must stay available for the new order"
         );
-        // Page 2 (offset 50) of the new order must be accepted while staying within the 2000 cap.
+        // Page 2 (offset 50) of the new order must be accepted without dropping loaded rows.
         let page2: Vec<Cleanup> = (49..99).map(|i| make_row("old", i)).collect();
         assert!(panel.accept_more_cleanups_for_test("order-new", 50, 2_000, page2));
-        assert!(panel.cleanups.len() <= 2_000);
+        assert_eq!(panel.cleanups.len(), 2_001);
         assert_eq!(panel.cleanup_seen_count(), 100);
     });
 }
@@ -3127,6 +3173,90 @@ fn remembered_document_pending_overflow_never_marks_journal_only_receipt_pending
         panel.adopt_settled_cleanup(journal_only);
         assert_eq!(panel.cleanups[0].document_pending, None);
         assert!(!panel.cleanups[0].is_pending());
+    });
+}
+
+#[test]
+fn cleanup_retry_blocks_settlement_after_direct_delete_learned_document_pending() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-doc-cross");
+        let sc = src.workspace_scope();
+        let mut owner = CleanupOwner::default();
+
+        // Direct delete fails with 503; reconciliation learns documentPending: true.
+        owner.start_delete(
+            &src,
+            "Cross".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let del_req = http.accept().await;
+        let request_id = del_req.body["requestId"].as_str().unwrap().to_owned();
+        del_req.reply(503, json!({"code": "cleanup-pending"})).await;
+        let rec_req = http.accept().await;
+        rec_req
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                    "cleanups": [{
+                        "missionID": "msn-doc-cross", "deletionID": "del-cross", "requestID": request_id,
+                        "expectedRevision": 7, "deleteManagedSessions": false,
+                        "objective": "Cross", "createdAt": 10, "removed": 0, "retained": 0,
+                        "pending": 1, "reasons": [], "documentPending": true
+                    }]
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        let polled = owner.poll_deletes();
+        assert!(!polled.document_pending_rows.is_empty());
+
+        // Lagging directory publishes the matching row WITHOUT documentPending.
+        let lagging_row: Cleanup = serde_json::from_value(json!({
+            "missionID": "msn-doc-cross", "deletionID": "del-cross", "requestID": request_id,
+            "expectedRevision": 7, "deleteManagedSessions": false,
+            "objective": "Cross", "createdAt": 10, "removed": 0, "retained": 0,
+            "pending": 1, "reasons": []
+        }))
+        .unwrap();
+        assert_eq!(lagging_row.document_pending, None);
+
+        // Retry Cleanup receives a preflight GET with pending: 0 and omitted documentPending.
+        // Because direct delete already learned documentPending: true, Retry must NOT settle.
+        owner.start_cleanup_retry(
+            sc.clone(),
+            lagging_row,
+            live_flag(),
+            live_flag(),
+            http.backend.clone(),
+            wake,
+        );
+        let pre = http.accept().await;
+        pre.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                "cleanups": [{
+                    "missionID": "msn-doc-cross", "deletionID": "del-cross", "requestID": request_id,
+                    "expectedRevision": 7, "deleteManagedSessions": false,
+                    "objective": "Cross", "createdAt": 10, "removed": 1, "retained": 0,
+                    "pending": 0, "reasons": []
+                }]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        let retry_polled = owner.poll_retries();
+        assert!(
+            retry_polled.settled_cleanups.is_empty(),
+            "cleanup retry must not publish settlement without explicit documentPending: false after direct delete learned true"
+        );
+        assert!(owner.delete_state(&src).is_some());
     });
 }
 

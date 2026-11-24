@@ -4,7 +4,7 @@ use codenomad_client::{
     Receiver, Wake,
     backend::Backend,
     bounded,
-    missions::{Cleanup, DeletionOutcome, DeletionRequest, LifecycleTarget},
+    missions::{Cleanup, DeletionOutcome, DeletionRequest, LifecycleTarget, ReconciliationOutcome},
 };
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -514,8 +514,9 @@ impl CleanupOwner {
         }
         self.retry_errors.remove(&scope);
         let key = CleanupKey::new(scope.clone(), &cleanup);
-        let require_document_settled =
-            cleanup.document_pending == Some(true) || self.document_cleanups.contains(&key);
+        let require_document_settled = cleanup.document_pending == Some(true)
+            || self.document_cleanups.contains(&key)
+            || self.has_document_cleanup_intent(&scope, &cleanup);
         let project = scope.project.clone();
         let (out, inbox) = bounded(1);
         self.retries.insert(
@@ -544,8 +545,27 @@ impl CleanupOwner {
         });
     }
 
+    fn has_document_cleanup_intent(&self, scope: &WorkspaceScope, cleanup: &Cleanup) -> bool {
+        self.deletes.values().any(|intent| {
+            intent.document_cleanup
+                && intent.scope == *scope
+                && intent.target.mission == cleanup.mission_id
+                && intent.request.request_id == cleanup.request_id
+                && intent.request.expected_revision == cleanup.expected_revision
+                && intent.request.delete_managed_sessions == cleanup.delete_managed_sessions
+                && intent
+                    .deletion_id
+                    .as_deref()
+                    .is_none_or(|id| id == cleanup.deletion_id)
+                && intent
+                    .created_at_bits
+                    .is_none_or(|bits| bits == cleanup.created_at.to_bits())
+        })
+    }
+
     pub fn poll_deletes(&mut self) -> CleanupPolled {
         let mut polled = CleanupPolled::default();
+        let mut learned_doc_cleanups = Vec::new();
         self.deletes.retain(|(_, mission), intent| {
             let Some(result) = intent
                 .flight
@@ -620,6 +640,20 @@ impl CleanupOwner {
                     if intent.created_at_bits.is_none() {
                         intent.created_at_bits = created_at_bits;
                     }
+                    if intent.document_cleanup
+                        && let (Some(del_id), Some(ts_bits)) =
+                            (intent.deletion_id.as_ref(), intent.created_at_bits)
+                    {
+                        learned_doc_cleanups.push(CleanupKey {
+                            scope: intent.scope.clone(),
+                            mission_id: intent.target.mission.clone(),
+                            deletion_id: del_id.clone(),
+                            request_id: intent.request.request_id.clone(),
+                            expected_revision: intent.request.expected_revision,
+                            delete_managed_sessions: intent.request.delete_managed_sessions,
+                            created_at_bits: ts_bits,
+                        });
+                    }
                     if tombstoned {
                         polled
                             .deleted_missions
@@ -650,6 +684,20 @@ impl CleanupOwner {
                     if intent.created_at_bits.is_none() {
                         intent.created_at_bits = created_at_bits;
                     }
+                    if intent.document_cleanup
+                        && let (Some(del_id), Some(ts_bits)) =
+                            (intent.deletion_id.as_ref(), intent.created_at_bits)
+                    {
+                        learned_doc_cleanups.push(CleanupKey {
+                            scope: intent.scope.clone(),
+                            mission_id: intent.target.mission.clone(),
+                            deletion_id: del_id.clone(),
+                            request_id: intent.request.request_id.clone(),
+                            expected_revision: intent.request.expected_revision,
+                            delete_managed_sessions: intent.request.delete_managed_sessions,
+                            created_at_bits: ts_bits,
+                        });
+                    }
                     if tombstoned {
                         polled
                             .deleted_missions
@@ -674,6 +722,20 @@ impl CleanupOwner {
                     if intent.created_at_bits.is_none() {
                         intent.created_at_bits = created_at_bits;
                     }
+                    if intent.document_cleanup
+                        && let (Some(del_id), Some(ts_bits)) =
+                            (intent.deletion_id.as_ref(), intent.created_at_bits)
+                    {
+                        learned_doc_cleanups.push(CleanupKey {
+                            scope: intent.scope.clone(),
+                            mission_id: intent.target.mission.clone(),
+                            deletion_id: del_id.clone(),
+                            request_id: intent.request.request_id.clone(),
+                            expected_revision: intent.request.expected_revision,
+                            delete_managed_sessions: intent.request.delete_managed_sessions,
+                            created_at_bits: ts_bits,
+                        });
+                    }
                     if polled.auth_expired.is_none() {
                         polled.auth_expired = Some(backend);
                     }
@@ -681,6 +743,20 @@ impl CleanupOwner {
                 }
             }
         });
+        for key in learned_doc_cleanups {
+            polled.document_pending_rows.push((
+                key.scope.clone(),
+                (
+                    key.mission_id.clone(),
+                    key.deletion_id.clone(),
+                    key.request_id.clone(),
+                    key.expected_revision,
+                    key.delete_managed_sessions,
+                    key.created_at_bits,
+                ),
+            ));
+            self.record_document_cleanup(key);
+        }
         polled
     }
 
@@ -722,8 +798,9 @@ impl CleanupOwner {
                     if !view_current && !mutated {
                         continue;
                     }
-                    let require_doc =
-                        document_cleanup || self.document_cleanups.contains(&retry_key);
+                    let require_doc = document_cleanup
+                        || self.document_cleanups.contains(&retry_key)
+                        || self.has_document_cleanup_intent(&scope, &receipt);
                     if require_doc && !cleanup_settled_for(true, &receipt) {
                         record_doc(self, &mut polled, &retry_key);
                         if view_current {
@@ -928,18 +1005,16 @@ async fn run_delete(
             .read_mission_reconciliation(&target.project, &target.mission)
             .await
         {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                if codenomad_client::http::authentication_expired(&error)
-                    && backend.authentication_status().await.ok() == Some(false)
-                {
-                    return DeleteResult::AuthExpired {
-                        backend,
-                        document_cleanup: require_document_settled,
-                        deletion_id: expected_deletion_id,
-                        created_at_bits: expected_created_at,
-                    };
-                }
+            Ok(ReconciliationOutcome::Snapshot(snapshot)) => snapshot,
+            Ok(ReconciliationOutcome::AuthenticationRequired) => {
+                return DeleteResult::AuthExpired {
+                    backend,
+                    document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
+                };
+            }
+            Err(_) => {
                 return if still_live() {
                     DeleteResult::Failed {
                         key: "missions.cleanup.error.unconfirmed",
@@ -1148,7 +1223,7 @@ async fn run_delete(
         .read_mission_reconciliation(&target.project, &target.mission)
         .await
     {
-        Ok(snapshot) if !snapshot.cleanup_unavailable => {
+        Ok(ReconciliationOutcome::Snapshot(snapshot)) if !snapshot.cleanup_unavailable => {
             match match_wire_cleanup(
                 &target.mission,
                 &request,
@@ -1189,10 +1264,7 @@ async fn run_delete(
                 WireCleanupMatch::None => {}
             }
         }
-        Err(error)
-            if codenomad_client::http::authentication_expired(&error)
-                && backend.authentication_status().await.ok() == Some(false) =>
-        {
+        Ok(ReconciliationOutcome::AuthenticationRequired) => {
             return DeleteResult::AuthExpired {
                 backend,
                 document_cleanup: require_document_settled,
@@ -1234,16 +1306,14 @@ async fn run_cleanup_retry(
         .read_mission_reconciliation(&project, &saved.mission_id)
         .await
     {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            if codenomad_client::http::authentication_expired(&error)
-                && backend.authentication_status().await.ok() == Some(false)
-            {
-                return CleanupRetryResult::AuthExpired {
-                    backend,
-                    document_cleanup: require_document_settled,
-                };
-            }
+        Ok(ReconciliationOutcome::Snapshot(snapshot)) => snapshot,
+        Ok(ReconciliationOutcome::AuthenticationRequired) => {
+            return CleanupRetryResult::AuthExpired {
+                backend,
+                document_cleanup: require_document_settled,
+            };
+        }
+        Err(_) => {
             return if still_live() {
                 CleanupRetryResult::Failed {
                     key: "missions.cleanup.error.unconfirmed",
@@ -1389,7 +1459,7 @@ async fn run_cleanup_retry(
             .read_mission_reconciliation(&project, &saved.mission_id)
             .await
         {
-            Ok(after) => {
+            Ok(ReconciliationOutcome::Snapshot(after)) => {
                 if !still_live() {
                     return CleanupRetryResult::Cancelled {
                         mutated: false,
@@ -1421,10 +1491,7 @@ async fn run_cleanup_retry(
                     }
                 }
             }
-            Err(error)
-                if codenomad_client::http::authentication_expired(&error)
-                    && backend.authentication_status().await.ok() == Some(false) =>
-            {
+            Ok(ReconciliationOutcome::AuthenticationRequired) => {
                 return CleanupRetryResult::AuthExpired {
                     backend,
                     document_cleanup: require_document_settled,

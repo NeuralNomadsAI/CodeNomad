@@ -133,11 +133,17 @@ impl DeletionOutcome {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MissionSnapshotRead {
     pub mission_revision: Option<u64>,
     pub cleanups: Vec<Cleanup>,
     pub cleanup_unavailable: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ReconciliationOutcome {
+    Snapshot(MissionSnapshotRead),
+    AuthenticationRequired,
 }
 
 impl Backend {
@@ -145,9 +151,16 @@ impl Backend {
         &self,
         project: &str,
         mission_id: &str,
-    ) -> Result<MissionSnapshotRead> {
+    ) -> Result<ReconciliationOutcome> {
         let url = mission_url(self, mission_id)?;
-        let response = self.client.get(url).send().await?.error_for_status()?;
+        let response = self.client.get(url).send().await?;
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED
+            && self.authentication_status().await.ok() == Some(false)
+        {
+            return Ok(ReconciliationOutcome::AuthenticationRequired);
+        }
+        let response = response.error_for_status()?;
         let body: serde_json::Value = read_filtered_json(
             response,
             RECONCILE_ROOT_KEYS,
@@ -155,7 +168,9 @@ impl Backend {
             4 * 1024 * 1024,
         )
         .await?;
-        parse_reconciliation(&body, project, mission_id)
+        Ok(ReconciliationOutcome::Snapshot(parse_reconciliation(
+            &body, project, mission_id,
+        )?))
     }
 
     pub async fn delete_mission(
@@ -669,13 +684,78 @@ mod tests {
 
                 let mut backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
                 backend.workspace = "owned".into();
-                let snapshot = backend
+                let outcome = backend
                     .read_mission_reconciliation("proj", "msn-big")
                     .await
                     .unwrap();
+                let ReconciliationOutcome::Snapshot(snapshot) = outcome else {
+                    panic!("expected Snapshot outcome");
+                };
                 assert_eq!(snapshot.mission_revision, Some(7));
                 assert!(snapshot.cleanups.is_empty());
                 assert!(!snapshot.cleanup_unavailable);
+                server.await.unwrap();
+            });
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn reconciliation_rejects_non_object_mission_and_probes_auth_on_401() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let addr = listener.local_addr().unwrap();
+                let server = tokio::spawn(async move {
+                    for (status, body) in [
+                        (
+                            "200 OK",
+                            r#"{"available":true,"version":1,"projectID":"proj","generatedAt":1,"mission":[],"cleanups":[]}"#,
+                        ),
+                        ("401 Unauthorized", r#"{"error":"unauthorized"}"#),
+                        ("200 OK", r#"{"authenticated":false}"#),
+                    ] {
+                        let (mut socket, _) = listener.accept().await.unwrap();
+                        let mut req = Vec::new();
+                        let mut buf = [0u8; 4096];
+                        while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                            let n = socket.read(&mut buf).await.unwrap();
+                            if n == 0 {
+                                break;
+                            }
+                            req.extend_from_slice(&buf[..n]);
+                        }
+                        let resp = format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        socket.write_all(resp.as_bytes()).await.unwrap();
+                    }
+                });
+
+                let mut backend = Backend::unauthenticated(&format!("http://{addr}/")).unwrap();
+                backend.workspace = "owned".into();
+                assert!(
+                    backend
+                        .read_mission_reconciliation("proj", "msn-bad")
+                        .await
+                        .is_err(),
+                    "non-object mission array must fail reconciliation"
+                );
+                assert_eq!(
+                    backend
+                        .read_mission_reconciliation("proj", "msn-401")
+                        .await
+                        .unwrap(),
+                    ReconciliationOutcome::AuthenticationRequired
+                );
                 server.await.unwrap();
             });
     }
