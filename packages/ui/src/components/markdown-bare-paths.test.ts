@@ -2,19 +2,24 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { serverApi } from "../lib/api-client"
-import { BARE_PATH_TTL_MS, clearBarePathCaches, fileNamesInDirectory } from "./markdown-bare-paths"
+import { BARE_PATH_LISTING_DEADLINE_MS, BARE_PATH_TTL_MS, clearBarePathCaches, fileNamesInDirectory } from "./markdown-bare-paths"
 
 type Entry = { name: string; type: string }
 
-const patchListing = (impl: (relativePath: string, directory: string | undefined) => Promise<Entry[]>) => {
+const patchListing = (impl: (relativePath: string, directory: string | undefined, signal?: AbortSignal) => Promise<Entry[]>) => {
   const original = serverApi.listWorkspaceFiles
   const calls: Array<{ relativePath: string; directory: string | undefined }> = []
-  serverApi.listWorkspaceFiles = (async (_id: string, relativePath = ".", directory?: string) => {
+  serverApi.listWorkspaceFiles = (async (_id: string, relativePath = ".", directory?: string, signal?: AbortSignal) => {
     calls.push({ relativePath, directory })
-    return await impl(relativePath, directory)
+    return await impl(relativePath, directory, signal)
   }) as typeof original
   return { calls, restore: () => { serverApi.listWorkspaceFiles = original } }
 }
+
+/** A listing that never settles on its own; it rejects when the signal aborts, like fetch. */
+const stalledListing = (signal?: AbortSignal) => new Promise<Entry[]>((_resolve, reject) => {
+  signal?.addEventListener("abort", () => reject(new Error("The operation was aborted")), { once: true })
+})
 
 describe("directory existence cache", () => {
   it("answers concurrent callers from one shared flight", async () => {
@@ -141,6 +146,59 @@ describe("directory existence cache", () => {
       await Promise.all(parents.map(parent => fileNamesInDirectory("inst", "/repo", parent)))
       assert.ok(peak <= 2, `peak concurrency ${peak} exceeded the background budget`)
     } finally { stub.restore() }
+  })
+
+  it("cancels a listing once its last consumer leaves", async () => {
+    clearBarePathCaches()
+    const consumer = new AbortController()
+    const stub = patchListing((_path, _directory, signal) => stalledListing(signal))
+    try {
+      const first = fileNamesInDirectory("inst", "/repo", "src", { signal: consumer.signal })
+      await new Promise(resolve => setImmediate(resolve))
+      consumer.abort()
+      assert.equal((await first).size, 0, "the leaving consumer converts nothing")
+      // The entry is revoked, not published: a later demand re-requests.
+      await new Promise(resolve => setTimeout(resolve, 10))
+    } finally { stub.restore() }
+    const healthy = patchListing(async () => [{ name: "app.ts", type: "file" }])
+    try {
+      const second = await fileNamesInDirectory("inst", "/repo", "src")
+      assert.deepEqual([...second], ["app.ts"])
+      assert.equal(healthy.calls.length, 1)
+    } finally { healthy.restore() }
+  })
+
+  it("keeps the shared read alive through a streaming rerender", async () => {
+    clearBarePathCaches()
+    let release!: (entries: Entry[]) => void
+    const consumerA = new AbortController(), consumerB = new AbortController()
+    const stub = patchListing((_path, _directory, signal) => new Promise<Entry[]>((resolve, reject) => {
+      release = resolve
+      signal?.addEventListener("abort", () => reject(new Error("The operation was aborted")), { once: true })
+    }))
+    try {
+      const first = fileNamesInDirectory("inst", "/repo", "src", { signal: consumerA.signal })
+      await new Promise(resolve => setImmediate(resolve))
+      // The successor pass registers before the superseded one's abort lands.
+      const second = fileNamesInDirectory("inst", "/repo", "src", { signal: consumerB.signal })
+      consumerA.abort()
+      await new Promise(resolve => setTimeout(resolve, 10))
+      release([{ name: "app.ts", type: "file" }])
+      assert.deepEqual([...(await second)], ["app.ts"], "the successor still receives the shared read")
+      await first.catch(() => undefined)
+      assert.equal(stub.calls.length, 1)
+    } finally { stub.restore() }
+  })
+
+  it("times a dispatched listing out at its deadline", async t => {
+    clearBarePathCaches()
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] })
+    const stub = patchListing((_path, _directory, signal) => stalledListing(signal))
+    try {
+      const first = fileNamesInDirectory("inst", "/repo", "src")
+      t.mock.timers.tick(BARE_PATH_LISTING_DEADLINE_MS + 1)
+      assert.equal((await first).size, 0, "a stalled listing fails closed at its deadline")
+    } finally { stub.restore(); t.mock.timers.reset() }
   })
 
   it("keys the cache by instance, directory and parent path", async () => {

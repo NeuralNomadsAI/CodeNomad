@@ -10,16 +10,30 @@ import { barePathCandidates, type BarePathCandidate } from "../lib/markdown-bare
 import { resolveProjectLinkPath } from "../lib/markdown-project-links"
 import type { SessionLinkBase } from "./markdown-session-links"
 
+interface FlightState {
+  controller: AbortController
+  consumers: Set<AbortSignal>
+  /** Callers without a signal never leave; they keep the flight alive. */
+  residents: number
+  deadline: ReturnType<typeof setTimeout>
+  revoked: boolean
+  settled: boolean
+}
+
 interface DirectoryCacheEntry {
   files: Set<string>
   at: number
   flight?: Promise<Set<string>>
+  state?: FlightState
 }
 
 const MAX_CACHE_ENTRIES = 64
 
 /** A stale entry revalidates on its next demand; no background polling. */
 export const BARE_PATH_TTL_MS = 30_000
+
+/** A dispatched listing never holds a background slot beyond this deadline. */
+export const BARE_PATH_LISTING_DEADLINE_MS = 15_000
 
 const cache = new Map<string, DirectoryCacheEntry>()
 
@@ -38,21 +52,59 @@ const evictOldestIdleEntry = () => {
   if (oldest !== undefined) cache.delete(oldest)
 }
 
+/** A consumer's leaving only counts once no successor holds the flight: a
+ * streaming rerender registers its replacement in the same flush, so the
+ * abandonment check waits one macrotask before revoking the read. */
+const trackConsumer = (signal: AbortSignal | undefined, state: FlightState, key: string) => {
+  if (!signal) {
+    state.residents += 1
+    return
+  }
+  state.consumers.add(signal)
+  signal.addEventListener("abort", () => {
+    state.consumers.delete(signal)
+    if (state.consumers.size > 0 || state.residents > 0 || state.settled || state.revoked) return
+    setTimeout(() => {
+      if (state.settled || state.revoked || state.consumers.size > 0 || state.residents > 0) return
+      // The last consumer left: revoke the entry (nothing publishes) and free
+      // the background slot for the next reader.
+      state.revoked = true
+      clearTimeout(state.deadline)
+      const entry = cache.get(key)
+      if (entry?.state === state) cache.delete(key)
+      state.controller.abort()
+    }, 0)
+  }, { once: true })
+}
+
 /** File names of one directory inside the worktree `directory`. Concurrent
- * and sequential callers share one flight whose lifetime belongs to the
- * cache, never to a single caller: a render pass that goes away must not
- * abort the listing its successor still reads. A failed read keeps the
- * last good set (or caches an empty set when none exists) so prose false
- * positives stay cheap. */
-export function fileNamesInDirectory(instanceId: string, directory: string, parentPath: string): Promise<Set<string>> {
+ * and sequential callers share one flight; a render pass may leave through
+ * its signal, and the listing is cancelled only when the last consumer has
+ * gone — a streaming rerender's successor keeps it alive. Every dispatched
+ * listing carries a deadline, and a failed read keeps the last good set (or
+ * caches an empty set when none exists) so prose false positives stay
+ * cheap. */
+export function fileNamesInDirectory(instanceId: string, directory: string, parentPath: string, options?: { signal?: AbortSignal }): Promise<Set<string>> {
   const key = `${instanceId}\u0000${directory}\u0000${parentPath}`
   const existing = cache.get(key)
-  if (existing?.flight) return existing.flight
+  if (existing?.flight) {
+    trackConsumer(options?.signal, existing.state!, key)
+    return existing.flight
+  }
   if (existing && Date.now() - existing.at < BARE_PATH_TTL_MS) return Promise.resolve(existing.files)
   // The flight's placeholder overwrites this slot; remember the completed
   // entry it replaces so a failed refresh can keep its last good set.
   const prior = existing !== undefined && existing.flight === undefined ? existing : undefined
 
+  const state: FlightState = {
+    controller: new AbortController(),
+    consumers: new Set(),
+    residents: 0,
+    deadline: setTimeout(() => state.controller.abort(), BARE_PATH_LISTING_DEADLINE_MS),
+    revoked: false,
+    settled: false,
+  }
+  trackConsumer(options?.signal, state, key)
   const flight = (async (): Promise<Set<string>> => {
     let fetched: Set<string> | undefined
     try {
@@ -60,15 +112,23 @@ export function fileNamesInDirectory(instanceId: string, directory: string, pare
       // a summary naming many directories queues behind visible reads and
       // never crowds out foreground connections. The flight's own signal is
       // never aborted — its lifetime belongs to the cache, not a caller.
-      const entries = (await backgroundReads.run(new AbortController().signal, async () =>
-        backendOf(instanceId).api.listWorkspaceFiles(instanceId, parentPath || ".", directory))) as Array<{ name: string; type?: string }>
+      const entries = (await backgroundReads.run(state.controller.signal, async () =>
+        backendOf(instanceId).api.listWorkspaceFiles(instanceId, parentPath || ".", directory, state.controller.signal))) as Array<{ name: string; type?: string }>
       fetched = new Set(entries.filter(entry => entry.type !== "directory").map(entry => entry.name))
     } catch {
       // A failed read verifies nothing; the caller converts no paths.
+    } finally {
+      state.settled = true
+      clearTimeout(state.deadline)
+    }
+    if (state.revoked) {
+      // The last consumer left before the read settled; nothing publishes.
+      return new Set<string>()
     }
     if (fetched === undefined) {
       // Preserve a last good set and its staleness, so the next demand
-      // retries; a first failure caches emptiness until the TTL revalidates.
+      // retries; a first failure (or a deadline) caches emptiness until the
+      // TTL revalidates it.
       const files = prior?.files ?? new Set<string>()
       cache.set(key, { files, at: prior?.at ?? Date.now() })
       return files
@@ -76,7 +136,7 @@ export function fileNamesInDirectory(instanceId: string, directory: string, pare
     cache.set(key, { files: fetched, at: Date.now() })
     return fetched
   })()
-  cache.set(key, { files: existing?.files ?? new Set<string>(), at: existing?.at ?? 0, flight })
+  cache.set(key, { files: existing?.files ?? new Set<string>(), at: existing?.at ?? 0, flight, state })
   evictOldestIdleEntry()
   return flight
 }
@@ -139,7 +199,7 @@ export function linkBarePaths(container: ParentNode, options: LinkBarePathsOptio
       if (!parents.size || options.signal.aborted || !container.isConnected) return
       const unique = [...parents]
       const nameSets = new Map(await Promise.all(unique.map(async parent =>
-        [parent, await fileNamesInDirectory(options.instanceId, options.base.directory, parent)] as const)))
+        [parent, await fileNamesInDirectory(options.instanceId, options.base.directory, parent, { signal: options.signal })] as const)))
       if (options.signal.aborted || !container.isConnected) return
 
       // Re-read the container: the markdown pipeline may have replaced its
