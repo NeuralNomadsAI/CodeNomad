@@ -3,10 +3,11 @@ import { captureBackendOperation } from "../lib/backend-operation"
 import { localFileUrlPath, projectLinkPath, resolveProjectLinkPath } from "../lib/markdown-project-links"
 import { showToastNotification } from "../lib/notifications"
 import { previewImageType } from "../lib/preview-image-types"
-import { canOpenLocalPaths, openLocalPath } from "../lib/workspace-open"
+import { canOpenLocalPaths, openLocalPath, type LocalPathKeep } from "../lib/workspace-open"
 import { showAlertDialog } from "../stores/alerts"
 import { activeInstanceId, instances } from "../stores/instances"
-import { getFilePreview, openFilePreview } from "../stores/files-preview"
+import { openFilePreview } from "../stores/files-preview"
+import { beginGesture, type SurfaceGesture } from "../stores/session-surface"
 import { getWorktreeForDirectory } from "../stores/worktrees"
 import { requestSessionPreview } from "../stores/session-previews"
 import { activeSessionId, sessions } from "../stores/session-state"
@@ -81,28 +82,23 @@ export interface SessionLinkTitles {
 }
 
 /** The absolute local path a link names, or undefined: a `file:` URL, an
- * absolute path, or a path the session's worktree contains. */
+ * absolute path, or a path relative to the session's directory. */
 export function localLinkPath(href: string, base: SessionLinkBase | undefined): string | undefined {
   const url = localFileUrlPath(href)
   if (url !== undefined) return url
-  const project = base && resolveProjectLinkPath(href, base.base)
-  if (project !== undefined) return `${base!.directory.replace(/[\\/]+$/, "")}/${project}`
   const path = projectLinkPath(href)
-  return path !== undefined && /^(?:\/|[A-Za-z]:\/)/.test(path) ? path : undefined
+  if (path === undefined || /^(?:\/|[A-Za-z]:\/)/.test(path)) return path
+  return base && `${base.directory.replace(/[\\/]+$/, "")}/${path}`
 }
 
-let latestLocalOpen = 0
-
-// Opens a local path with the system. With `preview`, a missing path or a text
-// file falls back to the file reader unless a later local link or preview
-// superseded this click while the host decided.
-const openLocal = (instanceId: string, path: string, preview?: () => void) => {
+// Opens a local path with the system. With `fallback`, the host opens nothing
+// for a missing path or a `keep` kind and the file reader shows the target
+// instead, unless a later surface gesture superseded this click meanwhile.
+const openLocal = (instanceId: string, path: string, keep: LocalPathKeep, fallback?: (gesture: SurfaceGesture) => void) => {
   const operation = captureBackendOperation(instanceId)
-  const open = ++latestLocalOpen
-  const shown = getFilePreview(instanceId)
-  void openLocalPath(path, preview !== undefined).then(opened => {
-    if (opened || !preview || !operation.current() || open !== latestLocalOpen || getFilePreview(instanceId) !== shown) return
-    preview()
+  const gesture = fallback && beginGesture({ instanceId, sessionId: null })
+  void openLocalPath(path, keep).then(opened => {
+    if (!opened && gesture && operation.current()) fallback!(gesture)
   }, error => {
     if (!operation.current()) return
     showToastNotification({ category: "files", variant: "error",
@@ -129,19 +125,19 @@ export function routeSessionLink(instanceId: string, sessionId: string, href: st
     return true
   }
   const resolution = resolveSessionProjectLink(instanceId, sessionId, href)
-  const preview = resolution && (() => openFilePreview(instanceId, { kind: "workspace", sessionId, ...resolution }))
+  const preview = resolution && ((gesture?: SurfaceGesture) =>
+    openFilePreview(instanceId, { kind: "workspace", sessionId, ...resolution }, gesture))
   const local = canOpenLocalPaths(instanceId) ? localLinkPath(href, sessionLinkBase(instanceId, sessionId)) : undefined
   if (local === undefined) {
     if (external || !preview) return false
     preview()
     return true
   }
-  if (external || !preview) openLocal(instanceId, local)
-  else if (previewImageType(resolution!.path)) preview()
-  else openLocal(instanceId, local, preview)
+  // Images stay in the reader unless the host finds a folder of that name.
+  if (external || !preview) openLocal(instanceId, local, "none")
+  else openLocal(instanceId, local, previewImageType(resolution!.path) ? "files" : "text", preview)
   return true
 }
-
 /** The titles decorated links carry, computed from the reactive availability
  * and locale signals: call this synchronously inside an effect so their
  * changes re-run the decoration pass. */

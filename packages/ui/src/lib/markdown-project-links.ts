@@ -5,30 +5,15 @@
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/
 const WINDOWS_DRIVE = /^[A-Za-z]:[\\/]/
 const WINDOWS_ROOT = /^[A-Za-z]:\//
-// A local `file:` URL (`file:/p`, `file:///p`, `file://localhost/p`), never a
-// remote share.
-const LOCAL_FILE_URL = /^file:(?:\/\/(?:localhost)?)?(?=\/)/i
-// An encoded separator is invalid inside a file URL path.
-const ENCODED_SEPARATOR = /%(?:2f|5c)/i
-
-/** The absolute local path a `file:` URL names, or undefined for any other href. */
-export function localFileUrlPath(href: string): string | undefined {
-  return LOCAL_FILE_URL.test(href.trim()) ? projectLinkPath(href) : undefined
-}
 
 /** A project-file link candidate's normalized path, or undefined when the href
- * cannot point at a workspace file (URL schemes other than local `file:`,
- * scheme-relative and UNC values, pure fragments, empty). */
+ * cannot point at a workspace file (URL schemes, scheme-relative and UNC
+ * values, pure fragments, empty). */
 export function projectLinkPath(href: string): string | undefined {
   const trimmed = href.trim()
   if (!trimmed || trimmed.startsWith("#")) return undefined
   const fragment = trimmed.indexOf("#")
-  let withoutFragment = fragment >= 0 ? trimmed.slice(0, fragment) : trimmed
-  if (LOCAL_FILE_URL.test(withoutFragment)) {
-    // `file:///C:/x` names `C:/x`; `file:///home/x?q` names `/home/x`.
-    withoutFragment = withoutFragment.replace(LOCAL_FILE_URL, "").replace(/\?.*$/, "").replace(/^\/(?=[A-Za-z]:\/)/, "")
-    if (ENCODED_SEPARATOR.test(withoutFragment)) return undefined
-  }
+  const withoutFragment = fragment >= 0 ? trimmed.slice(0, fragment) : trimmed
   // A Windows drive letter (`C:\…`, `C:/…`) is a path, not a scheme.
   if (!WINDOWS_DRIVE.test(withoutFragment) && SCHEME.test(withoutFragment)) return undefined
   let path = withoutFragment.replace(/\\/g, "/")
@@ -40,11 +25,36 @@ export function projectLinkPath(href: string): string | undefined {
     // A literal percent sign is a legal file name character; keep it.
   }
   // Decoding can reveal a scheme, a scheme-relative or a UNC value the literal
-  // form hid; such a value is a URL, not a workspace file path.
+  // form hid, including through encoded backslashes; such a value is a URL,
+  // not a workspace file path.
+  path = path.replace(/\\/g, "/")
   if (path.startsWith("//")) return undefined
   if (!WINDOWS_DRIVE.test(path) && SCHEME.test(path)) return undefined
-  path = path.replace(/^(?:\.\/)+/, "").replace(/\/+$/, "")
+  // Trailing separators go, except a filesystem root's (`/`, `C:/`).
+  path = path.replace(/^(?:\.\/)+/, "").replace(/([^/:])\/+$/, "$1")
   return path || undefined
+}
+
+// A local `file:` URL (`file:/p`, `file:///p`, `file://localhost/p`), never a
+// remote share.
+const LOCAL_FILE_URL = /^file:(?:\/\/(?:localhost)?)?(?=\/)/i
+
+/** The absolute local path a `file:` URL names (`file:///C:/x` → `C:/x`), or
+ * undefined for any other href or an encoded separator, which is invalid in a
+ * file URL path. */
+export function localFileUrlPath(href: string): string | undefined {
+  const trimmed = href.trim()
+  if (!LOCAL_FILE_URL.test(trimmed)) return undefined
+  const encoded = trimmed.replace(/[?#].*$/, "").replace(LOCAL_FILE_URL, "")
+  if (/%(?:2f|5c)|\\/i.test(encoded)) return undefined
+  let path: string
+  try {
+    path = decodeURIComponent(encoded)
+  } catch {
+    return undefined
+  }
+  path = path.replace(/^\/(?=[A-Za-z]:\/)/, "")
+  return /^(?:\/(?!\/)|[A-Za-z]:\/)/.test(path) ? path : undefined
 }
 
 const normalizeSegments = (path: string, rooted: boolean): string => {

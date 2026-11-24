@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import test from "node:test"
 import type { ChildProcess } from "node:child_process"
-import { defaultOpenMode, editorCandidates, looksLikeText, openLocalPath, openWorkspaceTarget } from "./workspace-open"
+import { defaultOpenMode, editorCandidates, isLocalDiskPath, looksLikeText, openLocalPath, openWorkspaceTarget } from "./workspace-open"
 
 test("selects only the requested editor", () => {
   assert.deepEqual(editorCandidates("zed", "linux", {}), [{ command: "zed", verifyStart: true }])
@@ -44,17 +44,28 @@ test("opens local paths, leaving text files to the caller when asked", async () 
   const dependencies = { openPath: async (path: string) => { opened.push(path); return "" }, revealPath: () => undefined }
   try {
     assert.equal(looksLikeText(join(root, "long.txt")), true)
-    assert.equal(await openLocalPath(join(root, "docs"), true, dependencies), true)
-    assert.equal(await openLocalPath(join(root, "clip.mp4"), true, dependencies), true)
-    assert.equal(await openLocalPath(join(root, "notes.txt"), true, dependencies), false)
-    assert.equal(await openLocalPath(join(root, "missing"), true, dependencies), false)
-    assert.equal(await openLocalPath(join(root, "notes.txt"), false, dependencies), true)
-    await assert.rejects(openLocalPath(join(root, "missing"), false, dependencies), /ENOENT/)
-    await assert.rejects(openLocalPath("docs", false, dependencies), /absolute/)
-    assert.deepEqual(opened.map(path => basename(path)), ["docs", "clip.mp4", "notes.txt"])
+    assert.equal(await openLocalPath(join(root, "docs"), "text", dependencies), true)
+    assert.equal(await openLocalPath(join(root, "clip.mp4"), "text", dependencies), true)
+    assert.equal(await openLocalPath(join(root, "notes.txt"), "text", dependencies), false)
+    assert.equal(await openLocalPath(join(root, "missing"), "text", dependencies), false)
+    assert.equal(await openLocalPath(join(root, "clip.mp4"), "files", dependencies), false)
+    assert.equal(await openLocalPath(join(root, "docs"), "files", dependencies), true)
+    assert.equal(await openLocalPath(join(root, "notes.txt"), "none", dependencies), true)
+    await assert.rejects(openLocalPath(join(root, "missing"), "none", dependencies), /ENOENT/)
+    await assert.rejects(openLocalPath("docs", "none", dependencies), /local disk/)
+    assert.deepEqual(opened.map(path => basename(path)), ["docs", "clip.mp4", "docs", "notes.txt"])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test("local paths exclude network shares and device namespaces", () => {
+  for (const path of ["C:\\x", "c:/x"]) assert.equal(isLocalDiskPath(path, "win32"), true, path)
+  for (const path of ["\\\\host\\share\\x", "/\\host\\share\\x", "//host/share", "\\\\?\\C:\\x", "\\\\.\\pipe\\x", "/x", "C:x"]) {
+    assert.equal(isLocalDiskPath(path, "win32"), false, path)
+  }
+  assert.equal(isLocalDiskPath("/home/x", "linux"), true)
+  assert.equal(isLocalDiskPath("//host/x", "linux"), false)
 })
 
 test("edits Windows scripts and rejects executable default-open targets", () => {

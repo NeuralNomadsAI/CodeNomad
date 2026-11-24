@@ -17,20 +17,26 @@ describe("project-file link paths", () => {
     assert.equal(projectLinkPath("javascript%3Aalert(1)"), undefined)
     assert.equal(projectLinkPath("data%3Atext/plain,x"), undefined)
     assert.equal(projectLinkPath("C%3A/Users/me/report.md"), "C:/Users/me/report.md")
-    assert.equal(projectLinkPath("file:///C:/Users/me/My%20reports"), "C:/Users/me/My reports")
-    assert.equal(projectLinkPath("file://localhost/home/me/repo/docs/"), "/home/me/repo/docs")
-    assert.equal(projectLinkPath("file:///home/me/repo/docs?view=tree"), "/home/me/repo/docs")
-    assert.equal(projectLinkPath("file:/home/me/repo/docs"), "/home/me/repo/docs")
-    assert.equal(projectLinkPath("file:///home/me/repo/docs%2Fchild"), undefined)
-    assert.equal(projectLinkPath("file:///home/me/repo/docs?view=%2F"), "/home/me/repo/docs")
-    assert.equal(localFileUrlPath("file:///C:/Users/me/bato%200.jpg"), "C:/Users/me/bato 0.jpg")
-    assert.equal(localFileUrlPath("C:/Users/me/bato.jpg"), undefined)
-    assert.equal(projectLinkPath("file://server/share/x.md"), undefined)
     for (const source of ["", "#", "#section", "https://example.com/x", "http://x", "mailto:a@b.c",
       "javascript:alert(1)", "data:text/plain,x", "//cdn.example.com/a.png", "\\\\server\\share\\x.png"]) {
       assert.equal(projectLinkPath(source), undefined, source)
     }
+    // Encoded backslashes cannot smuggle a UNC path past the `//` check.
+    assert.equal(projectLinkPath("/%5Cfixture.invalid%5Cshare%5Cnotes.txt"), undefined)
+    assert.equal(projectLinkPath("/"), "/")
+    assert.equal(projectLinkPath("C:/"), "C:/")
   })
+
+  it("reads local file URLs", () => {
+    assert.equal(localFileUrlPath("file:///C:/Users/me/My%20reports"), "C:/Users/me/My reports")
+    assert.equal(localFileUrlPath("file://localhost/home/me/repo/docs/?view=%2F#top"), "/home/me/repo/docs/")
+    assert.equal(localFileUrlPath("file:/home/me/repo/docs"), "/home/me/repo/docs")
+    assert.equal(localFileUrlPath("file:///"), "/")
+    assert.equal(localFileUrlPath("file:///C:/"), "C:/")
+    for (const source of ["C:/Users/me/bato.jpg", "file://server/share/x.md", "file:///home/me/docs%2Fchild",
+      "file:///%5C%5Cserver%5Cshare", "file:////server/share/x.md", "https://example.com/x"]) {
+      assert.equal(localFileUrlPath(source), undefined, source)
+    }  })
 
   it("resolves containment and rejects escapes", () => {
     const base = "/home/me/repo"

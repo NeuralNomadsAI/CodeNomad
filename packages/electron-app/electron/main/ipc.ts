@@ -186,11 +186,11 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return { ok: true }
   })
 
-  ipcMain.handle("workspace:openLocalPath", async (event, payload: { path?: unknown; unlessText?: unknown }): Promise<{ opened: boolean }> => {
+  ipcMain.handle("workspace:openLocalPath", async (event, payload: { path?: unknown; keep?: unknown }): Promise<{ opened: boolean }> => {
     local(event)
-    const { path, unlessText } = payload ?? {}
-    if (typeof path !== "string" || typeof unlessText !== "boolean") throw new Error("Invalid local path request")
-    return { opened: await openLocalPath(path, unlessText, {
+    const { path, keep } = payload ?? {}
+    if (typeof path !== "string" || (keep !== "none" && keep !== "text" && keep !== "files")) throw new Error("Invalid local path request")
+    return { opened: await openLocalPath(path, keep, {
       openPath: (target) => shell.openPath(target), revealPath: (target) => shell.showItemInFolder(target),
     }) }
   })

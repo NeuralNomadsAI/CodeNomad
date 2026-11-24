@@ -96,19 +96,22 @@ test("on the local desktop, local links open in the preview when it shows them, 
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   // A source string: the test transform would inject helpers a page cannot resolve.
-  // The stub host treats `.md` files as text and holds `notes.md` until released.
+  // The stub host knows `docs` and `album.png` as folders and `.md` files as
+  // text, and holds `README.md`'s answer while `holdReadme` is set.
   await page.addInitScript(`window.opened = []
     let release
-    window.releaseNotes = () => release?.()
-    window.electronAPI = { openLocalPath: async ({ path, unlessText }) => {
+    window.holdReadme = () => { window.held = new Promise(resolve => { release = resolve }) }
+    window.releaseReadme = () => release?.()
+    window.electronAPI = { openLocalPath: async ({ path, keep }) => {
       if (path.endsWith("/locked")) throw new Error("Access denied")
-      if (path.endsWith("/notes.md")) await new Promise(resolve => { release = resolve })
-      if (unlessText && path.endsWith(".md")) return { opened: false }
-      window.opened.push({ path, unlessText })
+      if (path.endsWith("/README.md") && keep !== "none") await window.held
+      const folder = /\\/(docs|album\\.png)$/.test(path)
+      if (!folder && (keep === "files" || (keep === "text" && path.endsWith(".md")))) return { opened: false }
+      window.opened.push({ path, keep })
       return { opened: true }
     } }`)
   const opened = () => page.evaluate(() => (window as any).opened)
-  const target = () => page.evaluate(() => (window as any).fixture.targetFull())
+  const target = () => page.evaluate(() => (window as any).fixture.target())
   try {
     await page.goto(url)
     await page.waitForFunction(() => (window as any).fixture?.rendered() > 0)
@@ -117,35 +120,43 @@ test("on the local desktop, local links open in the preview when it shows them, 
     await page.click('#main-root a[href="./docs"]')
     await page.click('#main-root a[href="./media/clip.mp4"]')
     await page.waitForFunction(() => (window as any).opened.length === 2)
-    assert.deepEqual(await opened(), [
-      { path: "/fixture-root/docs", unlessText: true }, { path: "/fixture-root/media/clip.mp4", unlessText: true }])
+    assert.deepEqual(await opened(), [{ path: "/fixture-root/docs", keep: "text" }, { path: "/fixture-root/media/clip.mp4", keep: "text" }])
     assert.equal(await target(), null)
 
-    // Text files and images stay in the preview; images never ask the host.
+    // Text files and images stay in the preview, unless an image name is a folder.
     await page.click('#main-root a[href="./README.md"]')
     await page.waitForFunction(() => (window as any).fixture.target() === "README.md")
     await page.click('#main-root a[href="./shot.png"]')
-    assert.equal(await page.evaluate(() => (window as any).fixture.target()), "shot.png")
+    await page.waitForFunction(() => (window as any).fixture.target() === "shot.png")
+    await page.click('#main-root a[href="./album.png"]')
+    await page.waitForFunction(() => (window as any).opened.length === 3)
+    assert.deepEqual((await opened())[2], { path: "/fixture-root/album.png", keep: "files" })
 
-    // Outside the worktree, and on Ctrl/⌘ or middle clicks, local paths go to the system.
+    // `file:` links, paths outside the worktree, Ctrl/⌘ and middle clicks go to the system.
+    await page.click('#main-root a[href="file:///fixture-root/notes.md"]')
     await page.click('#main-root a[href="file:///C:/Users/me/bato.jpg"]')
+    await page.click('#main-root a[href="../outside.md"]', { modifiers: ["Control"] })
     await page.click('#main-root a[href="./README.md"]', { modifiers: ["Control"] })
     await page.click('#main-root a[href="./docs"]', { button: "middle" })
-    await page.waitForFunction(() => (window as any).opened.length === 5)
-    assert.deepEqual((await opened()).slice(2), [{ path: "C:/Users/me/bato.jpg", unlessText: false },
-      { path: "/fixture-root/README.md", unlessText: false }, { path: "/fixture-root/docs", unlessText: false }])
+    await page.waitForFunction(() => (window as any).opened.length === 8)
+    assert.deepEqual((await opened()).slice(3), [{ path: "/fixture-root/notes.md", keep: "none" },
+      { path: "C:/Users/me/bato.jpg", keep: "none" }, { path: "/fixture-root/../outside.md", keep: "none" },
+      { path: "/fixture-root/README.md", keep: "none" }, { path: "/fixture-root/docs", keep: "none" }])
+    assert.equal(await target(), "shot.png")
 
     // A session the inventory does not know opens its own directory's paths.
     await page.click('#sub-root a[href="./docs"]')
-    await page.waitForFunction(() => (window as any).opened.length === 6)
-    assert.deepEqual((await opened())[5], { path: "/fixture-root/wt-a/docs", unlessText: true })
+    await page.waitForFunction(() => (window as any).opened.length === 9)
+    assert.deepEqual((await opened())[8], { path: "/fixture-root/wt-a/docs", keep: "text" })
 
-    // A text file's late fallback never replaces a preview opened meanwhile.
-    await page.click('#main-root a[href="file:///fixture-root/notes.md"]')
-    await page.click('#main-root a[href="./shot.png"]')
-    await page.evaluate(() => (window as any).releaseNotes())
+    // A text file's late fallback never replaces a surface opened meanwhile.
+    await page.evaluate(() => (window as any).holdReadme())
+    await page.click('#main-root a[href="./README.md"]')
+    await page.click('#main-root a[href="http://localhost:3000/x"]')
+    await page.waitForFunction(() => (window as any).fixture.surface().kind === "web")
+    await page.evaluate(() => (window as any).releaseReadme())
     await page.waitForTimeout(200)
-    assert.equal(await page.evaluate(() => (window as any).fixture.target()), "shot.png")
+    assert.equal((await page.evaluate(() => (window as any).fixture.surface())).kind, "web")
 
     await page.click('#main-root a[href="./locked"]')
     await page.waitForFunction(() => (window as any).fixture.errorToasts().length === 1)
@@ -157,7 +168,6 @@ test("on the local desktop, local links open in the preview when it shows them, 
   }
   assert.deepEqual(errors, [])
 })
-
 test("a populated but unmatched inventory never captures session links", async () => {
   const page = await browser.newPage()
   const errors: string[] = []

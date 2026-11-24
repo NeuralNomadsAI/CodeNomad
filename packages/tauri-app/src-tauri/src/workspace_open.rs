@@ -604,22 +604,38 @@ pub async fn open_workspace_target(
 
 /// Opens an absolute local `path` with the system: a folder in the file
 /// manager, a file with its default application under `default_open_mode`'s
-/// protections. With `unless_text`, `false` and nothing opened when `path` is
-/// missing or a text file, which the caller shows itself. Otherwise a missing
-/// path or a failed opening is an error.
+/// protections. `false`, opening nothing, when it leaves the path to the
+/// caller: unless `keep` is `none`, a missing path, and text files (`text`)
+/// or every file (`files`). Any other missing path, a path off the local
+/// disks or a failed opening is an error.
 #[tauri::command]
 pub async fn open_local_path(
     webview: tauri::Webview,
     state: State<'_, AppState>,
     path: String,
-    unless_text: bool,
+    keep: String,
 ) -> Result<bool, String> {
     require_local_window(&webview, &state)?;
-    tauri::async_runtime::spawn_blocking(move || open_local_path_impl(&path, unless_text))
+    tauri::async_runtime::spawn_blocking(move || open_local_path_impl(&path, &keep))
         .await
         .map_err(|error| error.to_string())?
 }
 
+/// An absolute path on a local disk: a drive path on Windows, never a UNC or
+/// device path, which reach the network or devices.
+fn is_local_disk_path(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        let mut components = path.components();
+        matches!(components.next(), Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_)))
+            && matches!(components.next(), Some(Component::RootDir))
+    }
+    #[cfg(not(windows))]
+    {
+        path.is_absolute() && !path.to_string_lossy().starts_with("//")
+    }
+}
 /// Whether a file's first bytes read as text, as the file preview decides: no
 /// NUL byte and valid UTF-8 (a character cut at a full sample's end still counts).
 fn looks_like_text(path: &Path) -> bool {
@@ -645,18 +661,21 @@ fn looks_like_text(path: &Path) -> bool {
         Err(error) => error.error_len().is_none() && length == sample.len(),
     }
 }
-fn open_local_path_impl(path: &str, unless_text: bool) -> Result<bool, String> {
+fn open_local_path_impl(path: &str, keep: &str) -> Result<bool, String> {
+    if !matches!(keep, "none" | "text" | "files") {
+        return Err("Invalid local path request".into());
+    }
     let path = Path::new(path);
-    if !path.is_absolute() {
-        return Err("Local path must be absolute".into());
+    if !is_local_disk_path(path) {
+        return Err("Only absolute paths on a local disk can be opened".into());
     }
     let selected = match path.canonicalize() {
         Ok(selected) => selected,
-        Err(_) if unless_text => return Ok(false),
+        Err(_) if keep != "none" => return Ok(false),
         Err(error) => return Err(error.to_string()),
     };
     let folder = selected.is_dir();
-    if unless_text && !folder && looks_like_text(&selected) {
+    if !folder && (keep == "files" || (keep == "text" && looks_like_text(&selected))) {
         return Ok(false);
     }
     let cwd = if folder {
@@ -671,7 +690,6 @@ fn open_local_path_impl(path: &str, unless_text: bool) -> Result<bool, String> {
     )?;
     Ok(true)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,16 +719,40 @@ mod tests {
         for name in ["notes.txt", "missing"] {
             let path = workspace.path().join(name);
             assert_eq!(
-                open_local_path_impl(path.to_str().unwrap(), true),
+                open_local_path_impl(path.to_str().unwrap(), "text"),
                 Ok(false),
                 "{name}"
             );
         }
         assert!(
-            open_local_path_impl(workspace.path().join("missing").to_str().unwrap(), false)
+            open_local_path_impl(workspace.path().join("missing").to_str().unwrap(), "none")
                 .is_err()
         );
-        assert!(open_local_path_impl("relative", false).is_err());
+        assert!(open_local_path_impl("relative", "none").is_err());
+    }
+    #[test]
+    fn local_paths_exclude_network_shares_and_devices() {
+        assert!(!is_local_disk_path(Path::new("relative")));
+        #[cfg(windows)]
+        {
+            assert!(is_local_disk_path(Path::new(r"C:\x")));
+            for path in [
+                r"\\host\share\x",
+                r"/\host\share\x",
+                "//host/share",
+                r"\\?\C:\x",
+                r"\\.\pipe\x",
+                r"\x",
+                "C:x",
+            ] {
+                assert!(!is_local_disk_path(Path::new(path)), "{path}");
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(is_local_disk_path(Path::new("/home/x")));
+            assert!(!is_local_disk_path(Path::new("//host/x")));
+        }
     }
     #[test]
     fn edits_windows_scripts_and_rejects_executable_default_open_targets() {

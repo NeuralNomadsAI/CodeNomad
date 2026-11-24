@@ -39,13 +39,17 @@ export function canOpenLocalPaths(instanceId?: string): boolean {
   return isTauriHost() ? window.__CODENOMAD_LOCAL_PATHS__ === true : typeof window.electronAPI?.openLocalPath === "function"
 }
 
+/** What the host leaves to the caller instead of opening: nothing, text files
+ * or every file. A missing path is left to the caller unless `none`. */
+export type LocalPathKeep = "none" | "text" | "files"
+
 /** Opens an absolute local path with the system: a folder in the file
- * manager, a file with its default application. With `unlessText`, resolves
- * false and opens nothing when the host finds a missing path or a text file. */
-export async function openLocalPath(path: string, unlessText: boolean): Promise<boolean> {
+ * manager, a file with its default application. Resolves false, opening
+ * nothing, when the host leaves the path to the caller (`keep`). */
+export async function openLocalPath(path: string, keep: LocalPathKeep): Promise<boolean> {
   if (!canOpenLocalPaths()) throw new Error("Native workspace actions are unavailable")
-  if (isTauriHost()) return (await window.__TAURI__!.core!.invoke("open_local_path", { path, unlessText })) === true
-  return (await window.electronAPI!.openLocalPath!({ path, unlessText })).opened === true
+  if (isTauriHost()) return (await window.__TAURI__!.core!.invoke("open_local_path", { path, keep })) === true
+  return (await window.electronAPI!.openLocalPath!({ path, keep })).opened === true
 }
 export async function setWorkspaceMenuEnabled(enabled: boolean, viewState?: ViewMenuState): Promise<void> {
   if (!isDesktopHost() || !isLocalWindow()) return

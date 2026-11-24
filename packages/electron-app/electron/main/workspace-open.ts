@@ -194,23 +194,32 @@ export function looksLikeText(path: string): boolean {
   }
 }
 
+export type LocalPathKeep = "none" | "text" | "files"
+
+/** Whether `path` is an absolute path on a local disk: a drive path on
+ * Windows, never a UNC or device path, which reach the network or devices. */
+export function isLocalDiskPath(path: string, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "win32" ? /^[A-Za-z]:[\\/]/.test(path) : path.startsWith("/") && !path.startsWith("//")
+}
+
 /** Opens an absolute local `path` with the system: a folder in the file
  * manager, a file with its default application under `defaultOpenMode`'s
- * protections. With `unlessText`, resolves false and opens nothing when
- * `path` is missing or a text file, which the caller shows itself. Rejects
- * for a missing path otherwise, or a failed opening. */
-export async function openLocalPath(path: string, unlessText: boolean, dependencies?: WorkspaceOpenDependencies): Promise<boolean> {
+ * protections. Resolves false and opens nothing when it leaves the path to
+ * the caller: unless `keep` is `none`, a missing path, and text files
+ * (`text`) or every file (`files`). Rejects for any other missing path, a
+ * path off the local disks, or a failed opening. */
+export async function openLocalPath(path: string, keep: LocalPathKeep, dependencies?: WorkspaceOpenDependencies): Promise<boolean> {
   if (!dependencies) throw new Error("Native workspace openers are unavailable")
-  if (!isAbsolute(path)) throw new Error("Local path must be absolute")
+  if (!isLocalDiskPath(path)) throw new Error("Only absolute paths on a local disk can be opened")
   let selectedPath: string
   try {
     selectedPath = realpathSync(path)
   } catch (error) {
-    if (unlessText) return false
+    if (keep !== "none") return false
     throw error
   }
   const folder = statSync(selectedPath).isDirectory()
-  if (unlessText && !folder && looksLikeText(selectedPath)) return false
+  if (!folder && (keep === "files" || (keep === "text" && looksLikeText(selectedPath)))) return false
   await openDefault(selectedPath, folder ? selectedPath : resolve(selectedPath, ".."), dependencies)
   return true
 }
