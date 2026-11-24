@@ -125,23 +125,11 @@ pub fn unconfirmed_drafts_full(s: &State) -> bool {
         .active_session_id
         .as_deref()
         .unwrap_or("__no_session_draft__");
-    let current_is_orphaned = !saved.drafts.contains_key(key)
-        && !saved.attachment_drafts.contains(key)
-        && item
-            .live_drafts
-            .get(key)
-            .is_none_or(|draft| draft.text.is_none() && draft.parts.is_none());
-    if !current_is_orphaned {
-        return false;
-    }
     item.live_drafts
         .iter()
         .filter(|(existing, draft)| {
             existing.as_str() != key
-                && draft.text.is_none()
-                && draft.parts.is_none()
-                && !saved.drafts.contains_key(existing.as_str())
-                && !saved.attachment_drafts.contains(existing.as_str())
+                && (draft.unconfirmed.is_some() || draft.command_unconfirmed.is_some())
         })
         .count()
         >= super::super::MAX_DRAFTS
@@ -354,9 +342,10 @@ mod tests {
         ));
         capture(&mut s);
 
-        // Cleared sessions with orphaned unconfirmed locks preserve every lock up to MAX_DRAFTS
-        // and then block leaving an additional unconfirmed session instead of evicting earlier locks.
-        for index in 0..crate::workspace::MAX_DRAFTS {
+        // Sessions with unconfirmed locks preserve every lock up to MAX_DRAFTS (including those
+        // with saved draft text) and then block leaving an additional unconfirmed session instead
+        // of evicting earlier locks.
+        for index in 0..(crate::workspace::MAX_DRAFTS - 1) {
             b.session = format!("ses-{index}");
             let _ = bound(&mut s, &b);
             s.draft = rune::edit::TextEdit::new("");
@@ -369,7 +358,7 @@ mod tests {
         }
         b.session = "ses-overflow".into();
         let _ = bound(&mut s, &b);
-        s.draft = rune::edit::TextEdit::new("");
+        s.draft = rune::edit::TextEdit::new("draft with unconfirmed lock");
         s.composer.command_unconfirmed = Some(crate::composer::UnconfirmedCommand::new(
             "compact",
             &"x".repeat(1024),

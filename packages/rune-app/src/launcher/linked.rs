@@ -158,15 +158,30 @@ pub(super) fn load(s: &mut State) {
                                 if err.is::<codenomad_client::catalog::LocationUnavailable>() {
                                     let mut workspace = backend.clone();
                                     workspace.workspace.clone_from(&project.id);
-                                    let is_git = workspace
+                                    let target_absent = workspace
                                         .git_worktrees(true)
                                         .await
                                         .ok()
                                         .is_some_and(|trees| {
                                             trees.repository
                                                 == codenomad_client::git::Repository::Git
+                                                && !trees.trees.iter().any(|tree| {
+                                                    !tree.missing
+                                                        && (codenomad_client::same_server_path(
+                                                            &tree.directory,
+                                                            &location.directory,
+                                                        ) || tree
+                                                            .service_directory
+                                                            .as_deref()
+                                                            .is_some_and(|service| {
+                                                                codenomad_client::same_server_path(
+                                                                    service,
+                                                                    &location.directory,
+                                                                )
+                                                            }))
+                                                })
                                         });
-                                    if is_git {
+                                    if target_absent {
                                         match backend
                                             .linked_session_page(
                                                 &project,

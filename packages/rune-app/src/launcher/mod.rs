@@ -71,6 +71,7 @@ pub struct Launcher {
     stopped_during_pending: HashSet<String>,
     stopped_during_pending_overflow: bool,
     detached_reconcile: Option<(u64, HashSet<String>, Receiver<Option<Vec<Project>>>)>,
+    detached_reconcile_trailing: bool,
     failed_detached_workspaces: HashSet<String>,
     pub(crate) rebind_after_send: Option<String>,
     selection_ticket: Option<u64>,
@@ -193,6 +194,7 @@ impl Launcher {
             stopped_during_pending: HashSet::new(),
             stopped_during_pending_overflow: false,
             detached_reconcile: None,
+            detached_reconcile_trailing: false,
             failed_detached_workspaces: HashSet::new(),
             rebind_after_send: None,
             selection_ticket: None,
@@ -239,6 +241,7 @@ fn spawn_detached_reconcile_with(l: &mut Launcher, generation: u64, opened_after
     };
     let (out, input) = bounded(1);
     l.detached_reconcile = Some((generation, opened_after, input));
+    l.detached_reconcile_trailing = false;
     l.failed_detached_workspaces.clear();
     let wake = l.wake.clone();
     crate::platform::spawn(async move {
@@ -367,10 +370,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
         let _ = disconnected;
         let mut start_reconcile = None;
+        let mut overflow_reconcile = false;
         if generation != previous {
             if generation > 0 && generation % 2 == 0 {
                 if let Some(l) = s.screen.launcher_mut() {
                     l.detached_reconcile = None;
+                    l.detached_reconcile_trailing = false;
                     l.failed_detached_workspaces.clear();
                 }
                 relayed |= crate::workspace::set_detached_online(s, false);
@@ -384,6 +389,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             relayed |= crate::workspace::set_detached_online(s, false);
             if crate::workspace::has_detached_panels(s) {
                 start_reconcile = Some(generation);
+                overflow_reconcile = true;
             }
         }
         if let Some(reconcile_generation) = start_reconcile
@@ -391,7 +397,15 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             && let Some(l) = s.screen.launcher_mut()
             && !l.authentication_required
         {
-            spawn_detached_reconcile(l, reconcile_generation);
+            if overflow_reconcile
+                && l.detached_reconcile
+                    .as_ref()
+                    .is_some_and(|(active_gen, _, _)| *active_gen == reconcile_generation)
+            {
+                l.detached_reconcile_trailing = true;
+            } else {
+                spawn_detached_reconcile(l, reconcile_generation);
+            }
         }
         if !other.is_empty() {
             relayed |= crate::workspace::deliver_detached_events(s, &other);
@@ -404,7 +418,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         let (_, opened_after, _) = l.detached_reconcile.as_ref()?;
         if l.authentication_required {
             Some(false)
-        } else if !crate::workspace::has_unopened_detached_panels(s, opened_after) {
+        } else if !l.detached_reconcile_trailing
+            && !crate::workspace::has_unopened_detached_panels(s, opened_after)
+        {
             Some(!opened_after.is_empty())
         } else {
             None
@@ -413,6 +429,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if let Some(bring_opened_online) = cancel_reconcile {
         if let Some(l) = s.screen.launcher_mut() {
             l.detached_reconcile = None;
+            l.detached_reconcile_trailing = false;
         }
         if bring_opened_online {
             relayed |= crate::workspace::set_detached_online(s, true);
@@ -423,29 +440,47 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         let result = rx.try_recv().ok()?;
         let current = l.workspace_stream_generation;
         let reconcile_generation = *reconcile_generation;
+        let trailing = std::mem::take(&mut l.detached_reconcile_trailing);
         let opened_after = l
             .detached_reconcile
             .take()
             .map(|(_, opened_after, _)| opened_after)?;
-        (reconcile_generation == current).then_some((opened_after, result))
+        (reconcile_generation == current).then_some((current, trailing, opened_after, result))
     });
-    if let Some((opened_after, result)) = reconciled {
-        match result {
-            Some(projects) => {
-                let live: HashSet<&str> = projects.iter().map(|p| p.id.as_str()).collect();
-                relayed |=
-                    crate::workspace::reconcile_detached_online(s, &opened_after, Some(&live));
-            }
-            None => {
-                let failed: HashSet<String> = crate::workspace::detached_workspace_ids(s)
-                    .into_iter()
-                    .filter(|id| !opened_after.contains(id))
-                    .collect();
-                if let Some(l) = s.screen.launcher_mut() {
-                    l.failed_detached_workspaces.extend(failed);
+    if let Some((current, trailing, opened_after, result)) = reconciled {
+        if trailing {
+            if let Some(projects) = &result {
+                let mut live: HashSet<&str> = projects.iter().map(|p| p.id.as_str()).collect();
+                for id in &opened_after {
+                    live.insert(id.as_str());
                 }
-                if !opened_after.is_empty() {
-                    relayed |= crate::workspace::reconcile_detached_online(s, &opened_after, None);
+                relayed |= crate::workspace::stop_unlisted_detached(s, &live);
+            }
+            if crate::workspace::has_detached_panels(s)
+                && let Some(l) = s.screen.launcher_mut()
+                && !l.authentication_required
+            {
+                spawn_detached_reconcile(l, current);
+            }
+        } else {
+            match result {
+                Some(projects) => {
+                    let live: HashSet<&str> = projects.iter().map(|p| p.id.as_str()).collect();
+                    relayed |=
+                        crate::workspace::reconcile_detached_online(s, &opened_after, Some(&live));
+                }
+                None => {
+                    let failed: HashSet<String> = crate::workspace::detached_workspace_ids(s)
+                        .into_iter()
+                        .filter(|id| !opened_after.contains(id))
+                        .collect();
+                    if let Some(l) = s.screen.launcher_mut() {
+                        l.failed_detached_workspaces.extend(failed);
+                    }
+                    if !opened_after.is_empty() {
+                        relayed |=
+                            crate::workspace::reconcile_detached_online(s, &opened_after, None);
+                    }
                 }
             }
         }
@@ -526,6 +561,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.catalogue_watch = None;
             l.workspace_stream_generation = 0;
             l.detached_reconcile = None;
+            l.detached_reconcile_trailing = false;
             l.failed_detached_workspaces.clear();
             l.rebind_after_send = None;
             l.connection = Some(b);
@@ -709,7 +745,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.title = TextEdit::new("");
                 l.show_title = false;
             }
-            if !l.sessions.iter().any(|row| row.id == session.id) {
+            let stopped_in_flight = l
+                .project
+                .as_ref()
+                .is_some_and(|p| stopped_during_pending.contains(&p.id));
+            if !stopped_in_flight && !l.sessions.iter().any(|row| row.id == session.id) {
                 l.sessions.insert(0, session);
             }
             l.error = Some("sessionList.reload.error");
@@ -815,6 +855,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
                 if !stopped_in_flight {
                     reopen::apply(s, opening, backend, title, &slug);
+                } else {
+                    s.phase = Phase::RestoreFailed;
                 }
                 if stopped_in_flight {
                     crate::workspace::deliver_detached_events(

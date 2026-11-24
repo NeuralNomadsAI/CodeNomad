@@ -9,6 +9,7 @@ pub(super) fn watch_catalogue(l: &mut Launcher) {
         l.catalogue_watch = Some(watch);
         l.workspace_stream_generation = 0;
         l.detached_reconcile = None;
+        l.detached_reconcile_trailing = false;
         l.failed_detached_workspaces.clear();
         crate::platform::spawn(task);
     }
