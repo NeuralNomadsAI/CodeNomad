@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlPart {
     Receipts,
     Pending,
@@ -167,4 +167,35 @@ fn receipt_read_preserves_nested_native_evidence_exactly() {
         .mission_control_page(&header, ControlPart::Receipts, 0, None)
         .unwrap();
     assert!(read.accept(modified).is_err());
+}
+
+#[cfg(test)]
+#[test]
+fn receipt_read_rejects_duplicate_receipt_ids() {
+    use super::codec::digest;
+    let mut backend = Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+    backend.workspace = "workspace".into();
+    let header = serde_json::from_value(json!({
+        "root":{"version":1,"id":"mission","projectID":"project","projectCanonical":"/fixture",
+            "excerpt":"Fixture","template":"custom","status":"active","coordinatorSessionId":"session",
+            "revision":8,"createdAt":1,"updatedAt":1,"historyTruncated":false,"bodies":{}},
+        "collections":{},"tasks":{"page":{"order":"","offset":0,"end":0,"total":0,"counts":{},"reports":0},
+            "pins":[],"reportPins":[],"version":""},
+        "control":{"id":"operation","requestID":"request","action":"pause","expectedRevision":7,
+            "pending":0,"receipts":2,"unconfirmedReceipts":2,"partialDescendants":0}
+    })).unwrap();
+    let first = r#"{"receiptID":"dup","sessionID":"actor-a","acknowledgementState":"unknown"}"#;
+    let second = r#"{"receiptID":"dup","sessionID":"actor-b","acknowledgementState":"unknown"}"#;
+    let digest = digest(&[first.into(), second.into()]);
+    let envelope = json!({"available":true,"version":1,"projectID":"project","source":"mission","missionID":"mission",
+    "revision":8,"field":"control","part":"receipts","discardedEvents":0,"controlUnavailable":false,
+    "notificationUnavailable":false,"cleanupUnavailable":false,"window":{"order":digest,"offset":0,"end":2,"total":2},
+    "page":{"digest":digest,"total":2,"pieces":[
+        {"index":0,"offset":0,"characters":first.encode_utf16().count(),"text":first},
+        {"index":1,"offset":0,"characters":second.encode_utf16().count(),"text":second}
+    ]}});
+    let mut read = backend
+        .mission_control_page(&header, ControlPart::Receipts, 0, None)
+        .unwrap();
+    assert!(read.accept(envelope).is_err());
 }

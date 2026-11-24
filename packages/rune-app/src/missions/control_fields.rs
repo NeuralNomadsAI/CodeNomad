@@ -1,6 +1,6 @@
-use super::{Gesture, Panel, Source, detail::read_window, lifecycle_view::Act};
+use super::{Gesture, Panel, Source, detail::read_window};
 use crate::{
-    State, platform,
+    platform,
     strings::{locale, t},
 };
 use codenomad_client::{
@@ -177,10 +177,16 @@ impl Panel {
     }
 }
 
-pub(super) fn view(fields: &Fields, control: &ControlReceipt, source: &Source, act: Act) -> El {
+pub(super) fn view<S: 'static>(
+    fields: &Fields,
+    control: &ControlReceipt,
+    ready: bool,
+    source: &Source,
+    act: fn(&mut S, &Source, Gesture),
+) -> El {
     let button = |label: String, part, offset, key| {
         let source = source.clone();
-        layout::button_tx(&label, false, move |state: &mut State, tx| {
+        layout::button_tx(&label, !ready, move |state: &mut S, tx| {
             act(state, &source, Gesture::ReadField(part, offset));
             tx.instant();
         })
@@ -233,32 +239,28 @@ pub(super) fn view(fields: &Fields, control: &ControlReceipt, source: &Source, a
                 if let Some(receipt) = &row.receipt {
                     let id = &receipt.id;
                     let open = fields.receipt.as_ref().filter(|open| &open.id == id);
-                    let detail = |label: &str, page, key: String| {
+                    let detail = |label: &str, disabled: bool, page, key: String| {
                         let (source, id, revision) = (source.clone(), id.clone(), fields.revision);
-                        layout::button_tx(
-                            label,
-                            fields.flight.is_some(),
-                            move |state: &mut State, tx| {
-                                act(
-                                    state,
-                                    &source,
-                                    Gesture::ReceiptDetails(id.clone(), revision, page),
-                                );
-                                tx.instant();
-                            },
-                        )
+                        layout::button_tx(label, disabled, move |state: &mut S, tx| {
+                            act(
+                                state,
+                                &source,
+                                Gesture::ReceiptDetails(id.clone(), revision, page),
+                            );
+                            tx.instant();
+                        })
                         .key(key)
                     };
+                    let busy = !ready || fields.flight.is_some();
                     out = out.child(
-                        detail(&label, None, format!("receipt-{id}")).expanded(open.is_some()),
+                        detail(&label, busy, None, format!("receipt-{id}"))
+                            .expanded(open.is_some()),
                     );
                     if let Some(open) = open {
-                        out = out.child(markdown::code(
-                            open.text(&receipt.json),
-                            "json",
-                            false,
-                            true,
-                        ));
+                        out = out.child(
+                            markdown::code(open.text(&receipt.json), "json", false, true)
+                                .key(format!("receipt-body-{id}")),
+                        );
                         if open.starts.len() > 1 {
                             let status = catalogue::format(
                                 locale(),
@@ -268,21 +270,29 @@ pub(super) fn view(fields: &Fields, control: &ControlReceipt, source: &Source, a
                                     ("total", &open.starts.len().to_string()),
                                 ],
                             );
-                            out = out.child(text(status).text_role(TextRole::Small).role("status"));
-                            if let Some(previous) = open.page.checked_sub(1) {
-                                out = out.child(detail(
-                                    t("missionsPanel.pages.previous"),
-                                    Some(previous),
-                                    format!("receipt-prev-{id}"),
-                                ));
-                            }
-                            if open.page + 1 < open.starts.len() {
-                                out = out.child(detail(
-                                    t("missionsPanel.pages.next"),
-                                    Some(open.page + 1),
-                                    format!("receipt-next-{id}"),
-                                ));
-                            }
+                            out = out
+                                .child(text(status).text_role(TextRole::Small).role("status"))
+                                .child(
+                                    layout::action_row()
+                                        .child(
+                                            detail(
+                                                t("missionsPanel.pages.previous"),
+                                                busy || open.page == 0,
+                                                Some(open.page.saturating_sub(1)),
+                                                format!("receipt-prev-{id}"),
+                                            )
+                                            .focusable(true),
+                                        )
+                                        .child(
+                                            detail(
+                                                t("missionsPanel.pages.next"),
+                                                busy || open.page + 1 >= open.starts.len(),
+                                                Some(open.page + 1),
+                                                format!("receipt-next-{id}"),
+                                            )
+                                            .focusable(true),
+                                        ),
+                                );
                         }
                     }
                 } else {
@@ -318,20 +328,4 @@ pub(super) fn view(fields: &Fields, control: &ControlReceipt, source: &Source, a
 }
 
 #[cfg(test)]
-#[test]
-fn receipt_display_pages_reassemble_the_original_without_splitting_unicode() {
-    let source = format!(
-        "{}🦀{}",
-        "a".repeat(RECEIPT_BYTES - 1),
-        "é".repeat(RECEIPT_BYTES)
-    );
-    let mut view = ReceiptView::new("receipt".into(), &source);
-    let mut restored = String::new();
-    for page in 0..view.starts.len() {
-        view.page = page;
-        let text = view.text(&source);
-        assert!(text.len() <= RECEIPT_BYTES);
-        restored.push_str(text);
-    }
-    assert_eq!(restored, source);
-}
+mod tests;

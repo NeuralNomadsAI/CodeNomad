@@ -130,6 +130,7 @@ pub(crate) fn controls(panel: &Panel, owner: &Lifecycle, occurrence: &str, act: 
         view = view.child(super::control_fields::view(
             &panel.control_fields,
             control,
+            ready,
             &source,
             act,
         ));
