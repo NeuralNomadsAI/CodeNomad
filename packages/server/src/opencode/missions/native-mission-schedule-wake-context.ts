@@ -21,14 +21,14 @@ export function nativeMissionScheduleWakeContext(ctx: Plugin.Context, event: Ses
   return Effect.scoped(invocation.capture(Effect.gen(function* () {
     const run = <A>(effect: Effect.Effect<A, unknown>) => invocation.check(run => run(effect))
     const ownership = yield* readNativeScheduleCarrierOwnership(ctx, event.sessionID), original = ownership?.document
-    if (!ownership?.verified || !original?.calendarOwner) throw new Error("schedule-context-owner")
+    if (!ownership?.verified || !ownership.legacyModel || !original?.calendarOwner) throw new Error("schedule-context-owner")
     const store = yield* acquireNativeMissionDocumentStore(ctx, run), reader = yield* acquireNativeMissionScheduleWakeReader(ctx, run)
     const abort = new AbortController()
     const timer = setTimeout(() => abort.abort(), 8000)
     yield* Effect.addFinalizer(() => Effect.sync(() => { clearTimeout(timer); abort.abort() }))
     const current = (): true => {
       abort.signal.throwIfAborted(); reader.current()
-      assertNativeScheduleCarrierArtifacts(original.calendarOwner!.installation)
+      assertNativeScheduleCarrierArtifacts(original.calendarOwner!.installation, { requireProvider: true })
       return assertMissionCalendarPlacement(original.calendarOwner!.placement, original.configuration.roots)
     }
     const fresh = async (): Promise<MissionDocument | undefined> => {

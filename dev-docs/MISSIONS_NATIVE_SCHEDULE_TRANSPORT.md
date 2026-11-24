@@ -79,9 +79,13 @@ distinct receiver guards.
 New calendars are Automation rows whose action is the fixed Code Mode program
 `MISSION_WAKE_CODE` (`native-mission-automation.ts`). It calls the
 `codenomad.mission_schedule_wake` tool (`native-mission-schedule-code-wake.ts`), so
-a due run needs no model, provider or carrier message. Rows created with the
-carrier prompt keep it, and the carrier hooks and local provider serve them, until
-they retire. The kind of a calendar is the action of its row; documents record none.
+a due run needs no model, provider or carrier message. New carriers are created
+without a model and with `MISSION_WAKE_PERMISSIONS`; Code Mode arming, listing,
+resuming, wakes, coverage and business checks require neither the local provider
+nor `provider.mjs`. Rows created with the carrier prompt keep the local noop
+model, carrier hooks and provider verification until they retire, and model-less
+carriers refuse prompt and LLM context hooks. The kind of a calendar is the action
+of its row; documents record none.
 
 OpenCode authorizes the program once at creation from the carrier session, which
 carries exactly `MISSION_WAKE_PERMISSIONS` (Code Mode and the tool's own permission);
@@ -162,13 +166,13 @@ the journal revision and write count unchanged.
 ## Local carrier primitives
 
 `nativeScheduleCarrierHooks` supplies public language/context/title/compaction and
-provider-HTTP hooks. Register them with the native plugin and an exact owned
-carrier lookup. Bundle `createNativeScheduleCarrierProvider` at the acquired
-`aisdk:file` path, create the carrier with its explicit technical title and the
-fixed local model, and reject missing provider/bundle/selection at admission.
-The language object is shared and stateless; title and compaction return local
-results even when auxiliary agent defaults point to remote models. Context
-validation clears technical tools; provider HTTP for an owned carrier throws.
+provider-HTTP hooks for legacy prompt carriers, registered with an exact owned
+carrier lookup. `createNativeScheduleCarrierProvider` is registered only when
+`provider.mjs` is present and serves legacy prompt rows; Code Mode carriers have no
+model and refuse prompt and LLM context hooks. The language object is shared and
+stateless; title and compaction return local results even when auxiliary agent
+defaults point to remote models. Context validation clears technical tools;
+provider HTTP for any owned carrier throws.
 
 `nativeScheduleCarrierWakes` follows the [context read contract](#context-read-authority-and-bounds).
 Same-carrier native compaction and exact reads own maintenance without changing

@@ -64,7 +64,7 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
   const placed = yield* Effect.serviceOption(locationTag), graph = yield* Effect.context<never>()
   if (Option.isNone(placed)) throw new Error("Scheduled actor Location unavailable")
   const location = structuredClone(ctx.location), manifest = { registrationFile: installation.registrationFile,
-    provider: { file: installation.provider.file, sha256: installation.provider.sha256 },
+    ...(installation.provider ? { provider: { file: installation.provider.file, sha256: installation.provider.sha256 } } : {}),
     runtime: { file: installation.runtime.file, sha256: installation.runtime.sha256 } }
   const identity = readNativeScheduleIncarnation(manifest.registrationFile)
   const incarnation = nativeScheduleIncarnationGuard(manifest.registrationFile, identity)

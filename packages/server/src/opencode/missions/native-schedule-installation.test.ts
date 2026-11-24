@@ -107,8 +107,13 @@ test("arming guards retain exact native graph, process identity, URLs and artifa
     f.register()
     assert.equal(assertCurrent(), true)
     writeFileSync(f.artifacts.provider.file, "corrupt")
+    assert.equal(assertCurrent(), true, "Code Mode installation does not depend on legacy provider.mjs")
+    writeFileSync(f.artifacts.runtime.file, "corrupt")
     assert.throws(assertCurrent)
+    writeFileSync(f.artifacts.runtime.file, "runtime.mjs")
   }))))
+  const withoutProvider = await Effect.runPromise(f.provide(Effect.scoped(acquireNativeScheduleInstallation({ runtime: f.artifacts.runtime }))))
+  assert.deepEqual(withoutProvider.installation, { registrationFile: f.registrationFile, runtime: f.artifacts.runtime })
 })
 
 test("arming bounds discovery and never exposes a guard after timeout", async t => {

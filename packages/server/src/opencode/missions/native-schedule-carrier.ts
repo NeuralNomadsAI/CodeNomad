@@ -5,6 +5,12 @@ import { assertNativeScheduleWake } from "./native-schedule-transport-contract"
 import { missionAutomationID, missionWakeMessageID, missionWakeMetadata, sameMissionAutomation } from "./native-mission-automation"
 
 export const NATIVE_SCHEDULE_CARRIER_MODEL = Object.freeze({ providerID: "codenomad-missions-local", id: "schedule-noop" })
+type CarrierModelRef = { providerID?: unknown; id?: unknown } | undefined
+export const isLegacyScheduleCarrierModel = (model: CarrierModelRef) =>
+  model?.providerID === NATIVE_SCHEDULE_CARRIER_MODEL.providerID && model.id === NATIVE_SCHEDULE_CARRIER_MODEL.id
+/** Code Mode carriers carry no model; legacy prompt carriers retain the local noop model. */
+export const isAllowedScheduleCarrierModel = (model: CarrierModelRef) =>
+  model === undefined || isLegacyScheduleCarrierModel(model)
 export const NATIVE_SCHEDULE_CARRIER_TITLE = "Mission schedule carrier"
 const summary = "Mission schedule carrier. Read exact wake messages and durable mappings for correlation."
 const finish = () => ({ finishReason: { unified: "stop", raw: "stop" } as const,

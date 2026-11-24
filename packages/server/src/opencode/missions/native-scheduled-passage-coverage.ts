@@ -3,7 +3,7 @@ import { Automation } from "@opencode/schema/automation"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import type { MissionCalendar, MissionDocument, MissionWake } from "../../missions/mission-document"
 import type { DocumentFanInWindow, DocumentPassageWake } from "../../missions/mission-document-passage-engine"
-import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
+import { isAllowedScheduleCarrierModel, isLegacyScheduleCarrierModel } from "./native-schedule-carrier"
 import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
 import type { MissionNativeRunner, MissionNativeService } from "./native-service-adapter"
 
@@ -30,15 +30,17 @@ export const acquireNativeScheduledPassageCoverage = Effect.fn("missions.acquire
     if (session.parentID || session.projectID !== doc.projectID || session.location.directory !== native.location.directory
       || session.location.workspaceID !== native.location.workspaceID || canonicalAuthority(session.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER])
         !== canonicalAuthority({ missionID: doc.id, timeGeneration: doc.timeGeneration, role: calendar.role, slot: calendar.slot })
-      || session.model?.providerID !== NATIVE_SCHEDULE_CARRIER_MODEL.providerID || session.model.id !== NATIVE_SCHEDULE_CARRIER_MODEL.id)
+      || !isAllowedScheduleCarrierModel(session.model))
       throw new Error("Native passage carrier differs")
     const nativeID = missionAutomationID(calendar.scheduleID)
     const enabled = schedules.enabled(native.location.directory), get = schedules.get(nativeID)
     if (!Effect.isEffect(enabled) || !Effect.isEffect(get) || await run(enabled) !== true) throw new Error("Native schedule coverage disabled")
     const info = await run(get.pipe(Effect.flatMap(readMissionAutomation)))
+    const code = missionCodeWake(info)
+    if (!code && !isLegacyScheduleCarrierModel(session.model)) throw new Error("Native passage carrier differs")
     if (info.id !== nativeID || !matchMissionAutomation(info, descriptor,
       { directory: native.location.directory, projectID: doc.projectID }, NATIVE_SCHEDULE_CARRIER_SIGNAL)
-      || !Number.isSafeInteger(info.runCount) || info.runCount < missionAutomationRunFloor(missionCodeWake(info), calendar.highWater))
+      || !Number.isSafeInteger(info.runCount) || info.runCount < missionAutomationRunFloor(code, calendar.highWater))
       throw new Error("Native passage calendar differs")
     current(); signal.throwIfAborted()
     return info

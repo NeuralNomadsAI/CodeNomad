@@ -19,7 +19,7 @@ import { registerScheduledChildInput } from "./native-scheduled-child-input"
 export const registerNativeMissionScheduleRuntime = Effect.fn("missions.registerScheduleRuntime")(function* (
   ctx: Plugin.Context, artifacts?: NativeScheduleArtifacts, invocation = nativeInvocation(),
 ) {
-  if (artifacts) yield* registerNativeScheduleProvider(ctx, artifacts)
+  if (artifacts?.provider) yield* registerNativeScheduleProvider(ctx, artifacts)
   const idle = yield* registerNativeMissionScheduleIdleHints(ctx)
   yield* registerNativeMissionScheduleCarrierHooks(ctx, idle.remember)
   yield* registerScheduledChildInput(ctx)

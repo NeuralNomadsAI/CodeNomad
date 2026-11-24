@@ -13,7 +13,7 @@ import type { NativeScheduleWake } from "./native-schedule-transport-contract"
 import { assertNativeScheduleWake, nativeScheduleWakeIdentity, nativeScheduleWakeKey } from "./native-schedule-transport-contract"
 import type { NativeScheduleIncarnation } from "./native-schedule-transport-identity"
 import { assertNativeScheduleIncarnation } from "./native-schedule-transport-identity"
-import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
+import { isAllowedScheduleCarrierModel, isLegacyScheduleCarrierModel } from "./native-schedule-carrier"
 import { nativeScheduleClaimAbandoned } from "./native-mission-schedule-wake-flight"
 import { z } from "zod"
 import { documentCounter, documentID, nativeDocumentID, MISSION_DOCUMENT_MAX_BYTES } from "../../missions/launch-policy"
@@ -22,7 +22,7 @@ export const NATIVE_SCHEDULE_CARRIER_MARKER = "codenomad.schedule-carrier"
 export const NATIVE_SCHEDULE_CARRIER_SIGNAL = "CODENOMAD_MISSION_SCHEDULE_WAKE"
 export type NativeScheduleCarrierArtifact = { file: string; sha256: string }
 export type NativeScheduleCarrierInstallation = {
-  registrationFile: string; provider: NativeScheduleCarrierArtifact; runtime: NativeScheduleCarrierArtifact
+  registrationFile: string; provider?: NativeScheduleCarrierArtifact; runtime: NativeScheduleCarrierArtifact
 }
 export type NativeScheduleCarrierBinding = { document: MissionDocument; calendar: MissionCalendar }
 type Context = Pick<Plugin.Context, "session" | "storage" | "location">
@@ -30,10 +30,12 @@ type Run = <A>(effect: Effect.Effect<A, unknown>) => Promise<A>
 type Claim = { version: 1; key: string; wake: NativeScheduleWake; incarnation: NativeScheduleIncarnation;
   settled?: { revision: number; highWater: number } }
 
-export function assertNativeScheduleCarrierArtifacts(installation: NativeScheduleCarrierInstallation): true {
+export function assertNativeScheduleCarrierArtifacts(installation: NativeScheduleCarrierInstallation,
+  options: { requireProvider?: boolean } = {}): true {
   if (!path.isAbsolute(installation.registrationFile)) throw new Error("schedule-registration-path")
-  for (const artifact of [installation.provider, installation.runtime]) {
-    if (!path.isAbsolute(artifact.file) || !/^[a-f0-9]{64}$/.test(artifact.sha256)) throw new Error("schedule-carrier-artifact")
+  const artifacts = options.requireProvider ? [installation.provider, installation.runtime] : [installation.runtime]
+  for (const artifact of artifacts) {
+    if (!artifact || !path.isAbsolute(artifact.file) || !/^[a-f0-9]{64}$/.test(artifact.sha256)) throw new Error("schedule-carrier-artifact")
     const fd = openSync(artifact.file, "r")
     try {
       const stat = fstatSync(fd), maximum = 8 * 1024 * 1024
@@ -66,7 +68,7 @@ export const nativeScheduleCarrierReferenceSchema = z.object({ missionID: docume
   role: z.enum(["principal", "reconciliation"]), slot: documentCounter.max(7),
 }).strict().refine(value => value.role !== "reconciliation" || value.slot === 0)
 export type NativeScheduleCarrierReference = z.infer<typeof nativeScheduleCarrierReferenceSchema>
-export type NativeScheduleCarrierOwnership = { reference: NativeScheduleCarrierReference; verified: boolean; document?: MissionDocument }
+export type NativeScheduleCarrierOwnership = { reference: NativeScheduleCarrierReference; verified: boolean; legacyModel?: boolean; document?: MissionDocument }
 const carrierMember = (doc: MissionDocument, sessionID: string, reference: NativeScheduleCarrierReference) =>
   [...doc.calendars, ...(doc.synchronization?.retiredCalendars ?? []), ...(doc.calendarOwner?.slots ?? []),
     ...(doc.calendarOwner?.retired.map(item => item.descriptor) ?? [])].some(item => item.sessionID === sessionID
@@ -88,12 +90,13 @@ export const readNativeScheduleCarrierOwnership = (ctx: Context, sessionID: stri
     id: reference.missionID, projectID: ctx.location.project.id, projectCanonical: ctx.location.project.canonical,
   }) } catch { return index ? { reference, verified: false } : undefined }
   if (!carrierMember(doc, sessionID, reference)) return index ? { reference, verified: false } : undefined
+  const legacyModel = isLegacyScheduleCarrierModel(session.model)
   const verified = !!index && marker.success && canonicalAuthority(marker.data) === canonicalAuthority(reference)
     && session.id === sessionID && !session.parentID && session.projectID === doc.projectID
     && session.location.directory === ctx.location.directory && session.location.workspaceID === ctx.location.workspaceID
     && doc.configuration.roots.some(root => root.directory === session.location.directory)
-    && session.model?.providerID === NATIVE_SCHEDULE_CARRIER_MODEL.providerID && session.model.id === NATIVE_SCHEDULE_CARRIER_MODEL.id
-  return { reference, document: doc, verified } satisfies NativeScheduleCarrierOwnership
+    && isAllowedScheduleCarrierModel(session.model)
+  return { reference, document: doc, verified, legacyModel } satisfies NativeScheduleCarrierOwnership
 })
 
 export async function registerNativeScheduleCarrierLookupLocked(ctx: Context, sessionID: string, reference: NativeScheduleCarrierReference,
@@ -157,7 +160,7 @@ export const readNativeScheduleCarrierBinding = (ctx: Context, sessionID: string
     || marker.timeGeneration !== document.timeGeneration || marker.role !== calendar.role || marker.slot !== calendar.slot
     || session.id !== sessionID || session.parentID || session.projectID !== document.projectID || session.location.directory !== ctx.location.directory
     || session.location.workspaceID !== ctx.location.workspaceID || !document.configuration.roots.some(root => root.directory === session.location.directory)
-    || session.model?.providerID !== NATIVE_SCHEDULE_CARRIER_MODEL.providerID || session.model.id !== NATIVE_SCHEDULE_CARRIER_MODEL.id)
+    || !isAllowedScheduleCarrierModel(session.model))
     throw new Error("schedule-carrier-ownership")
   return { document, calendar } satisfies NativeScheduleCarrierBinding
 })

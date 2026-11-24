@@ -248,9 +248,10 @@ inside each receiving RPC Scope.
 ### Production technical runtime
 
 `registerNativeMissionScheduleRuntime(ctx, artifacts?, invocation?)` in
-`native-mission-schedule-runtime.ts` contributes the local provider, broad exact
-technical ownership hooks, the wake/status and maintenance RPCs, native terminal
-hints and the scheduled business bridge.
+`native-mission-schedule-runtime.ts` contributes the legacy local provider when
+`artifacts.provider` is present, broad exact technical ownership hooks, the
+wake/status and maintenance RPCs, native terminal hints and the scheduled business
+bridge.
 It returns `NativeDocumentBusiness`; the bridge registration is shared once with
 the persistent plugin's routing. `native-mission-schedule-owner.ts` supplies the
 shared scoped owner/native/store factory for controls and autonomous receivers.
@@ -629,29 +630,30 @@ actor Resume, including equal timestamps. The bounded control history pins this
 first receipt while the original remains unconfirmed.
 
 `native-scheduled-passage-capability.ts` qualifies each new native mutation after
-lazy effect construction and pinned-root reads. Calendar-backed policies require the exact current
-provider/model contribution, immutable artifact bytes, the ready auxiliary's
-adopted mapping and active native row, its technical carrier identity, and a
-positive native schedule flag. The synchronous initial/business fence rechecks
-the fresh document's installation and artifact bytes. Observation authority uses
-the original passage identity and whole-family terminal proof, allowing controls
-and settlement while technical provider artifacts are unavailable. Human Check
-keeps an unadmitted original pending when mutation qualification fails.
+lazy effect construction and pinned-root reads. Calendar-backed policies require
+immutable runtime artifact bytes, the ready auxiliary's adopted mapping and active
+native row, its technical carrier identity, and a positive native schedule flag;
+legacy prompt auxiliaries also require the exact local provider/model contribution
+and `provider.mjs` bytes. The synchronous initial/business fence rechecks the fresh
+document's installation and runtime artifact bytes. Observation authority uses the
+original passage identity and whole-family terminal proof, allowing controls and
+settlement while technical artifacts are unavailable. Human Check keeps an
+unadmitted original pending when mutation qualification fails.
 
 A pure immediate policy uses its frozen `requiresMissionCalendar` result and an
 armless owner: empty current/owned/retired calendar slots and auxiliary readiness
 false. Its Session/Database/Location, profile, root, original admission and H11
-fences remain active; technical provider artifacts and Schedule services belong
-to calendar-backed policies. An unplayed scheduled object can keep its identity
-and explicit profiles when configured immediate, then first Play atomically
-records the armless owner and reserves origin `immediate`. The existing runtime
-`reconcile` admits that exact original pending once, under the one-launch limit.
+fences remain active; technical runtime artifacts and Schedule services belong to
+calendar-backed policies. An unplayed scheduled object can keep its identity and
+explicit profiles when configured immediate, then first Play atomically records the
+armless owner and reserves origin `immediate`. The existing runtime `reconcile`
+admits that exact original pending once, under the one-launch limit.
 
 The immediate configuration path performs only its guarded document CAS and
 physical-placement capture. `acquireNativeMissionServiceRegistration` supplies the
 own-process RPC registration proof independently of technical artifacts; calendar
-arming composes that proof with exact provider/runtime byte validation. The business
-bridge derives the calendar requirement from the pending's frozen launch policy
-and includes it in the captured source identity. Pure immediate selection and ENV
-use their native session/profile guards even when the technical provider file is
-unavailable.
+arming composes that proof with exact runtime byte validation (with `provider`
+retained optionally for legacy prompt rows). The business bridge derives the
+calendar requirement from the pending's frozen launch policy and includes it in the
+captured source identity. Pure immediate selection and ENV use their native
+session/profile guards even when the technical bundle file is unavailable.

@@ -13,7 +13,7 @@ import { Session } from "@opencode/schema/session"
 import { SessionInbox } from "@opencode/schema/session-inbox"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Automation } from "@opencode/schema/automation"
-import { missionAutomationID } from "./native-mission-automation"
+import { missionAutomationID, MISSION_WAKE_CODE } from "./native-mission-automation"
 import type { MissionConfiguration } from "../../missions/launch-policy"
 import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
 import { NativeMissionDocumentStore } from "../../missions/mission-document-store"
@@ -356,6 +356,26 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       await assert.rejects(immediate(runtime => runtime.runNow({ ...entry, missionID: converted.id,
         requestID: "second_immediate", expectedRevision: converted.revision })))
       assert.equal(sends, 2); assert.equal(sessions.size, beforeSessions + 1)
+    })
+    await t.test("Code Mode scheduled passage admits and runs business without local provider or provider.mjs", async () => {
+      enabled = true
+      const aux = infos.get("aut_reconciliation")!
+      infos.set(aux.id, { ...aux, action: { type: "code", code: MISSION_WAKE_CODE } })
+      const { model: _legacy, ...auxWithoutModel } = sessions.get("ses_reconciliation")!
+      let codeDoc = await owner!.create("code_no_provider", configuration, at, current)
+      codeDoc = await owner!.change(codeDoc.id, codeDoc.revision, current, next => {
+        next.calendarOwner = { ...doc.calendarOwner!, installation: { registrationFile: installation.registrationFile, runtime: installation.runtime } }
+        changes.play(next, "play_code", at, [])
+        changes.synchronized(next, "play_code", calendars)
+      })
+      const auxMeta = { [NATIVE_SCHEDULE_CARRIER_MARKER]: { missionID: codeDoc.id, timeGeneration: 1, role: "reconciliation", slot: 0 } }
+      sessions.set("ses_reconciliation", { ...auxWithoutModel, metadata: auxMeta } as Session.Info)
+      unlinkSync(installation.provider.file)
+      const bare = { storage: stored, location } as unknown as Plugin.Context
+      assert.equal(await invoke(runtime => runtime.runNow({ ...entry, missionID: codeDoc.id, requestID: "manual_code", expectedRevision: codeDoc.revision }), bare), "pending")
+      codeDoc = await owner!.read(codeDoc.id) as MissionDocument
+      assert.equal(codeDoc.launchedCount, 1)
+      assert.equal(await invoke(runtime => runtime.prepareBusiness(codeDoc.pending!.coordinatorSessionID, entry), bare), true)
     })
   } finally { await Effect.runPromise(Scope.close(providerScope, Exit.void)); db.close() }
 })

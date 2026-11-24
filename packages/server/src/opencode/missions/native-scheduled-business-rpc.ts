@@ -199,7 +199,7 @@ export async function executeNativeScheduledBusiness(runtime: Runtime, entry: En
 /** Only this HTTP receiver acquires B's full native runtime. The optional
  * acquirer is a typed test seam; no RPC input can select code or capabilities. */
 export const registerNativeScheduledBusinessRpc = Effect.fn("missions.registerScheduledBusinessRpc")(function* (
-  ctx: Plugin.Context, artifacts: NativeScheduleArtifacts | undefined, invocation: Invocation,
+  ctx: Plugin.Context, _artifacts: NativeScheduleArtifacts | undefined, invocation: Invocation,
   acquire: Acquire = run => acquireNativeScheduledPassageRuntime(ctx, run),
 ) {
   let active = true
@@ -214,10 +214,7 @@ export const registerNativeScheduledBusinessRpc = Effect.fn("missions.registerSc
       if (!found) return { selected: false }
       if (!isDeepStrictEqual(found.binding, input.binding))
         throw new Error("Business receiver binding differs")
-      if (found.requiresCalendar) {
-        if (artifacts && !isDeepStrictEqual(found.installation.provider, artifacts.provider)) throw new Error("Business receiver provider differs")
-        assertNativeScheduleCarrierArtifacts(found.installation)
-      }
+      if (found.requiresCalendar) assertNativeScheduleCarrierArtifacts(found.installation)
       const incarnation = nativeScheduleIncarnationGuard(found.installation.registrationFile, input.incarnation as NativeScheduleIncarnation)
       const live = (): true => { signal.throwIfAborted(); current(); return incarnation() }
       live()

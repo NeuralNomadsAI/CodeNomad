@@ -22,6 +22,7 @@ const sameDefinition = (actual: unknown, expected: unknown) => isDeepStrictEqual
 
 // Setup has static artifacts, before any service registration path is acquired.
 function assertArtifacts(artifacts: NativeScheduleArtifacts) {
+  if (!artifacts.provider) throw unavailable()
   for (const artifact of [artifacts.provider, artifacts.runtime]) {
     if (!path.isAbsolute(artifact.file) || /[\x00-\x1f\x7f]/.test(artifact.file) || !artifact.file.endsWith(".mjs")
       || !/^[a-f0-9]{64}$/.test(artifact.sha256)) throw unavailable()
@@ -45,6 +46,7 @@ function assertArtifacts(artifacts: NativeScheduleArtifacts) {
 /** Public, setup-scoped catalog contribution. Collisions and damaged payloads
  * leave ordinary provider definitions intact and technical scheduling disabled. */
 export const registerNativeScheduleProvider = Effect.fn("missions.registerNativeScheduleProvider")(function* (ctx: Context, artifacts: NativeScheduleArtifacts) {
+  if (!artifacts.provider) return
   const snapshot = Object.freeze({ provider: Object.freeze({ file: artifacts.provider.file, sha256: artifacts.provider.sha256 }),
     runtime: Object.freeze({ file: artifacts.runtime.file, sha256: artifacts.runtime.sha256 }) })
   const packageName = `aisdk:${pathToFileURL(snapshot.provider.file).href}`
@@ -74,7 +76,8 @@ export const registerNativeScheduleProvider = Effect.fn("missions.registerNative
  * catalog reads resolve current transforms; no credential or model invocation. */
 export const assertNativeScheduleProviderAvailable = Effect.fn("missions.assertNativeScheduleProviderAvailable")(function* (ctx: Context, artifacts: NativeScheduleArtifacts) {
   const state = states.get(ctx.provider)
-  if (!state?.active || state.artifacts.provider.file !== artifacts.provider.file
+  if (!artifacts.provider || !state?.active || !state.artifacts.provider
+    || state.artifacts.provider.file !== artifacts.provider.file
     || state.artifacts.provider.sha256 !== artifacts.provider.sha256) throw unavailable()
   // Stored calendars retain their runtime descriptor across content-addressed
   // bundle replacement. Both runtimes must remain intact; the provider is exact.

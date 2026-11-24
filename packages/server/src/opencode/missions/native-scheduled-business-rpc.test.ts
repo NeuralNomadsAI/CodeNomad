@@ -201,7 +201,7 @@ test("the derived calendar requirement is captured even when binding IDs and ins
   })
 })
 
-test("same exact provider accepts an intact saved runtime across upgrade; missing old bytes or a different provider stay blocked", async t => {
+test("intact saved runtime is accepted across upgrade even if provider changes; missing saved runtime stays blocked", async t => {
   const f = await fixture(t, false, true, true, true)
   assert.notEqual(f.artifacts.runtime.sha256, f.savedRuntime.sha256)
   await f.invoke(async () => {
@@ -210,11 +210,13 @@ test("same exact provider accepts an intact saved runtime across upgrade; missin
     assert.ok((await route.control.contextFor(route.readSessionID))!.instruction)
   })
   assert.deepEqual(f.calls.method, ["contextFor"])
-  const selected = f.calls.acquired
   f.artifacts.provider = { ...f.artifacts.provider, sha256: "c".repeat(64) }
-  await assert.rejects(f.invoke(() => f.bridge.select(f.rootID)))
-  assert.equal(f.calls.acquired, selected)
-  f.artifacts.provider = { ...f.artifacts.provider, sha256: createHash("sha256").update("provider").digest("hex") }
+  rmSync(f.artifacts.provider.file)
+  await f.invoke(async () => {
+    const route = await f.bridge.select(f.rootID)
+    assert.ok(route, "Code Mode scheduled business does not depend on provider.mjs")
+  })
+  const selected = f.calls.acquired
   rmSync(f.savedRuntime.file)
   await assert.rejects(f.invoke(() => f.bridge.select(f.rootID)))
   assert.equal(f.calls.acquired, selected, "missing saved bundle fails before native runtime acquisition")

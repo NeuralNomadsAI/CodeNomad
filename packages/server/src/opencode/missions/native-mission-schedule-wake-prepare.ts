@@ -19,7 +19,7 @@ export async function prepareNativeMissionSchedulePrincipalPrompt(ctx: Plugin.Co
   return store.withExclusion(async locked => {
     current(); locked.assertActive()
     const owned = await run(readNativeScheduleCarrierOwnership(ctx, sessionID)), doc = owned?.document
-    if (!owned?.verified || !doc?.calendarOwner || owned.reference.role !== "principal" || owned.reference.timeGeneration !== doc.timeGeneration)
+    if (!owned?.verified || !owned.legacyModel || !doc?.calendarOwner || owned.reference.role !== "principal" || owned.reference.timeGeneration !== doc.timeGeneration)
       throw new Error("schedule-prompt-current-principal")
     if (!metadata || text !== NATIVE_SCHEDULE_CARRIER_SIGNAL)
       throw new Error("schedule-prompt-correlation")

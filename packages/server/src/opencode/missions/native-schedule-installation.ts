@@ -65,10 +65,10 @@ export const acquireNativeMissionServiceRegistration = Effect.fn("missions.acqui
 
 /** Arming adds the immutable technical artifacts to the same registration proof. */
 export const acquireNativeScheduleInstallation = Effect.fn("missions.acquireNativeScheduleInstallation")(function* (artifacts: NativeScheduleArtifacts) {
-  const provider = Object.freeze({ file: artifacts.provider.file, sha256: artifacts.provider.sha256 })
+  const provider = artifacts.provider ? Object.freeze({ file: artifacts.provider.file, sha256: artifacts.provider.sha256 }) : undefined
   const runtime = Object.freeze({ file: artifacts.runtime.file, sha256: artifacts.runtime.sha256 })
   const registration = yield* acquireNativeMissionServiceRegistration()
-  const installation = Object.freeze({ registrationFile: registration.registrationFile, provider, runtime })
+  const installation = Object.freeze({ registrationFile: registration.registrationFile, ...(provider ? { provider } : {}), runtime })
   const assertCurrent = (): true => { registration.assertCurrent(); return assertNativeScheduleCarrierArtifacts(installation) }
   assertCurrent()
   return Object.freeze({ installation, assertCurrent })

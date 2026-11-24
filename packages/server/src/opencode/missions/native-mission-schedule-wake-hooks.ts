@@ -26,7 +26,7 @@ export const registerNativeMissionScheduleCarrierHooks = Effect.fn("missions.reg
     const ownership = yield* owns(event.sessionID)
     if (!ownership) return
     const value = missionWakeMetadata(event.metadata, event.messageID)
-    if (!value || event.prompt.text !== NATIVE_SCHEDULE_CARRIER_SIGNAL) throw new Error("schedule-carrier-prompt")
+    if (!ownership.legacyModel || !value || event.prompt.text !== NATIVE_SCHEDULE_CARRIER_SIGNAL) throw new Error("schedule-carrier-prompt")
     const owner = ownership.document!.calendarOwner
     const slots = [...owner?.slots ?? [], ...owner?.retired.map(item => item.descriptor) ?? []]
     if (!slots.some(slot => slot.sessionID === event.sessionID && (slot.scheduleID === null ? slot.creation === "attempted" : sameMissionAutomation(slot.scheduleID, value.id))))
@@ -36,6 +36,7 @@ export const registerNativeMissionScheduleCarrierHooks = Effect.fn("missions.reg
   yield* ctx.session.hook("context", event => Effect.gen(function* () {
     const ownership = yield* owns(event.sessionID)
     if (!ownership) return
+    if (!ownership.legacyModel) throw new Error("schedule-carrier-model")
     hooks.context(event)
     yield* nativeMissionScheduleWakeContext(ctx, event)
   }))

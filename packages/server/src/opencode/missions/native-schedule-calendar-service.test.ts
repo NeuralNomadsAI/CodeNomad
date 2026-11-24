@@ -4,6 +4,7 @@ import test from "node:test"
 import { Context, Effect, Exit, Schema, Scope } from "effect"
 import { Location } from "@opencode/schema/location"
 import { Automation } from "@opencode/schema/automation"
+import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import type { Plugin } from "@opencode/plugin/effect"
 import { acquireNativeScheduleCalendarService } from "./native-schedule-calendar-service"
@@ -12,9 +13,11 @@ import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
 import { matchMissionAutomation, MISSION_WAKE_CODE, MISSION_WAKE_PERMISSIONS, runningMissionCodeWake } from "./native-mission-automation"
 
-async function facade(t: test.TestContext, availability: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void>) {
+async function facade(t: test.TestContext, availability: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void, unknown>,
+  options: { model?: { providerID: string; id: string }; onSessionGet?: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void> } = { model: { ...NATIVE_SCHEDULE_CARRIER_MODEL } }) {
   const state: { enabled: boolean; closed: boolean; row?: string; duplicate?: boolean; runCount?: number; action?: Automation.Info["action"]
-    status?: Automation.Info["status"]; permissions?: unknown[] } = { enabled: true, closed: false }, created: any[] = []
+    status?: Automation.Info["status"]; permissions?: unknown[]; present?: boolean; model?: { providerID: string; id: string } } = {
+    enabled: true, closed: false, present: true, model: options.model }, created: any[] = [], createdSessions: any[] = []
   const directory = path.resolve("native-calendar-scope-unit-only")
   const location = Schema.decodeUnknownSync(Location.Info)({ directory, project: { id: "project", directory, canonical: directory } })
   const selected: NativeScheduleCalendarTarget = { missionID: "calendar_scope", descriptor: { role: "principal", slot: 0, timeGeneration: 1,
@@ -30,11 +33,23 @@ async function facade(t: test.TestContext, availability: (state: { enabled: bool
     get: () => state.runCount === undefined ? Effect.fail({ _tag: "Automation.NotFoundError" }) : Effect.succeed(info({
       sessionID: selected.descriptor.sessionID, name: selected.descriptor.name, when: selected.descriptor.when,
       action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount })), pause: () => Effect.die("unexpected pause"),
-    resume: () => Effect.die("unexpected resume"), remove: () => Effect.void, enabled: () => Effect.succeed(state.enabled) }
+    resume: () => Effect.succeed(info({ sessionID: selected.descriptor.sessionID, name: selected.descriptor.name,
+      when: selected.descriptor.when, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount ?? 0 })),
+    remove: () => Effect.void, enabled: () => Effect.succeed(state.enabled) }
   const carrierID = selected.descriptor.sessionID
-  const ctx = { location, session: { get: () => Effect.succeed({ id: carrierID, projectID: "project", location: { directory },
-    model: { ...NATIVE_SCHEDULE_CARRIER_MODEL }, permissions: structuredClone(state.permissions), metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: {
-      missionID: "calendar_scope", timeGeneration: 1, role: "principal", slot: 0 } } }),
+  const ctx = { location, session: {
+    get: () => Effect.gen(function* () {
+      if (options.onSessionGet) yield* options.onSessionGet(state)
+      if (!state.present) return yield* Effect.fail({ _tag: "Session.NotFoundError" })
+      return { id: carrierID, projectID: "project", location: { directory },
+        ...(state.model ? { model: { ...state.model } } : {}),
+        permissions: structuredClone(state.permissions), metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: {
+          missionID: "calendar_scope", timeGeneration: 1, role: "principal", slot: 0 } } }
+    }),
+    create: (input: any) => Effect.sync(() => {
+      createdSessions.push(structuredClone(input))
+      state.present = true; state.model = input.model; state.permissions = structuredClone(input.permissions)
+    }),
     update: (input: { permissions: unknown[] }) => Effect.sync(() => { state.permissions = structuredClone(input.permissions) }) } } as unknown as Plugin.Context
   const scope = await Effect.runPromise(Scope.make())
   t.after(() => Effect.runPromise(Scope.close(scope, Exit.void)))
@@ -50,13 +65,15 @@ async function facade(t: test.TestContext, availability: (state: { enabled: bool
         ...(state.duplicate ? [{ id: "msg_sch_scope_1", type: "user", data: null }] : [])]),
     }) } } }),
     Effect.provideService(Scope.Scope, scope)))
-  return { native, selected, state, created, scope }
+  return { native, selected, state, created, createdSessions, scope }
 }
 
-test("native facade pins caller descriptors across asynchronous provider checks and retires with its Scope", async t => {
-  let enter!: () => void, release!: () => void
+test("native facade pins caller descriptors across asynchronous carrier checks and retires with its Scope", async t => {
+  let enter!: () => void, release!: () => void, calls = 0
   const entered = new Promise<void>(resolve => { enter = resolve }), gate = new Promise<void>(resolve => { release = resolve })
-  const f = await facade(t, () => Effect.promise(async () => { enter(); await gate }))
+  const f = await facade(t, () => Effect.die("code create never needs local provider"), {
+    onSessionGet: () => ++calls === 1 ? Effect.promise(async () => { enter(); await gate }) : Effect.void,
+  })
   const original = structuredClone(f.selected), result = f.native.create(f.selected, () => true)
   await entered
   f.selected.descriptor.sessionID = "ses_foreign"; f.selected.descriptor.when = { type: "every", every: "1800000 millis", tz: "UTC" }
@@ -68,13 +85,35 @@ test("native facade pins caller descriptors across asynchronous provider checks 
   assert.equal(f.created.length, 1)
 })
 
-test("provider async completion cannot bypass a new effective OFF or a closed Location graph", async t => {
+test("legacy prompt resume checks provider availability and cannot bypass a new effective OFF or closed Location graph", async t => {
   const f = await facade(t, state => Effect.sync(() => { state.enabled = false }))
-  await assert.rejects(f.native.create(f.selected, () => true), /schedules disabled/)
-  assert.equal(f.created.length, 0)
+  f.state.runCount = 0; f.state.status = "paused"
+  await assert.rejects(f.native.resume(f.selected, "sch_scope", () => true), /schedules disabled/)
   f.state.enabled = true; f.state.closed = true
-  await assert.rejects(f.native.create(f.selected, () => true), /Location retired/)
-  assert.equal(f.created.length, 0)
+  await assert.rejects(f.native.resume(f.selected, "sch_scope", () => true), /Location retired/)
+})
+
+test("Code Mode carriers carry no model and work without local provider, while foreign models and prompt rows on them fail closed", async t => {
+  const f = await facade(t, () => Effect.fail(new Error("schedule-provider-unavailable")), { model: undefined })
+  const current = () => true as const
+  f.state.present = false
+  await f.native.ensureCarrier(f.selected, current)
+  assert.equal(f.createdSessions.length, 1)
+  assert.equal("model" in f.createdSessions[0], false)
+  assert.deepEqual(f.createdSessions[0].permissions, MISSION_WAKE_PERMISSIONS)
+  await f.native.create(f.selected, current)
+  f.state.runCount = 0; f.state.action = { type: "code", code: MISSION_WAKE_CODE }; f.state.status = "paused"
+  assert.equal((await f.native.list(f.selected, current))[0].code, true)
+  assert.equal((await f.native.resume(f.selected, "sch_scope", current)).code, true)
+  f.state.action = { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: Session.ID.make(f.selected.descriptor.sessionID) } }
+  await assert.rejects(f.native.list(f.selected, current), /carrier differs/)
+  await assert.rejects(f.native.get(f.selected, "sch_scope", current), /carrier differs/)
+  f.state.action = { type: "code", code: MISSION_WAKE_CODE }
+  f.state.model = { providerID: "remote", id: "paid" }
+  await assert.rejects(f.native.list(f.selected, current), /carrier differs/)
+  f.state.model = { ...NATIVE_SCHEDULE_CARRIER_MODEL }
+  f.state.action = { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: Session.ID.make(f.selected.descriptor.sessionID) } }
+  await assert.rejects(f.native.resume(f.selected, "sch_scope", current), /schedule-provider-unavailable/)
 })
 
 test("prepared wake ACK decodes encoded native SQL timestamps and keeps partial or absent proof closed", async t => {

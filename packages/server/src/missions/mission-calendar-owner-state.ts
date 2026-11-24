@@ -24,7 +24,7 @@ const operation = z.object({ requestID: z.string().min(1).max(128), expectedRevi
   textEdit: missionPassageTextIntentSchema.optional(),
 }).strict()
 export const missionCalendarOwnerSchema = z.object({ version: z.literal(1),
-  installation: z.object({ registrationFile: z.string().min(1).max(4096), provider: z.object({ file: z.string().min(1).max(4096), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+  installation: z.object({ registrationFile: z.string().min(1).max(4096), provider: z.object({ file: z.string().min(1).max(4096), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
     runtime: z.object({ file: z.string().min(1).max(4096), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict() }).strict(),
   profileSource: z.object({ profileID: nativeDocumentID, executionHost: nativeDocumentID, configYamlPath: z.string().min(1).max(4096) }).strict(),
   placement: missionCalendarPlacementSchema,

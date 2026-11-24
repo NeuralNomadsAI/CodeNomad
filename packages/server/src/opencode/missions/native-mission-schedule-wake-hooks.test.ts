@@ -35,6 +35,22 @@ test("production hooks keep paused, attempted and retiring title/compaction loca
   }
 })
 
+test("model-less Code Mode carriers refuse prompts and LLM context turns while blocking provider HTTP", async t => {
+  const f = await ownerFixture(t)
+  const doc = await f.control("play")
+  const sessionID = doc.calendarOwner!.slots.find(slot => slot.role === "reconciliation")!.sessionID
+  delete f.sessions.get(sessionID).model
+  const hooks = new Map<string, (event: any) => Effect.Effect<void>>()
+  const ctx = { ...f.ctx, aisdk: { hook: (name: string, use: (event: any) => Effect.Effect<void>) => Effect.sync(() => { hooks.set(`aisdk:${name}`, use) }) },
+    session: { ...f.ctx.session, hook: (name: string, use: (event: any) => Effect.Effect<void>) => Effect.sync(() => { hooks.set(name, use) }) } } as unknown as Plugin.Context
+  await Effect.runPromise(Effect.scoped(registerNativeMissionScheduleCarrierHooks(ctx)))
+  const scheduleID = doc.calendarOwner!.slots.find(slot => slot.sessionID === sessionID)!.scheduleID!
+  await assert.rejects(Effect.runPromise(hooks.get("prompt")!({ sessionID, messageID: `msg_${scheduleID}_1`,
+    prompt: { text: NATIVE_SCHEDULE_CARRIER_SIGNAL }, metadata: { automation: { id: scheduleID, run: 1, dueAt: 1000, late: false } } })), /carrier-prompt/)
+  await assert.rejects(Effect.runPromise(hooks.get("context")!({ sessionID, model: { providerID: "remote", id: "chat" }, messages: [], tools: {} })), /carrier-model/)
+  await assert.rejects(Effect.runPromise(hooks.get("http.request")!({ sessionID, model: { providerID: "remote", id: "chat" } })), /provider-http/)
+})
+
 test("wake reader accepts only the durable exact native user, bounds SQL and expires with its Scope", async t => {
   const directory = path.resolve("schedule-wake-reader-unit"), location = Schema.decodeUnknownSync(Location.Info)({ directory,
     project: { id: "project", directory, canonical: directory } })

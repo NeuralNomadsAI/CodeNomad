@@ -90,8 +90,12 @@ test("exact durable mapping and a persisted per-Mission claim survive a fresh ca
   assert.equal(await claim(), false)
 })
 
-test("wrong root, local model, calendar generation or forged marker cannot acquire a carrier binding", async () => {
+test("wrong root, foreign model, calendar generation or forged marker cannot acquire a carrier binding; model-less Code Mode carriers succeed", async () => {
   const f = await fixture()
+  const savedModel = f.session.model
+  f.session.model = undefined as never
+  assert.equal((await Effect.runPromise(readNativeScheduleCarrierBinding(f.ctx, f.wake.sessionID)))?.calendar.role, "reconciliation")
+  f.session.model = savedModel
   f.session.model.providerID = "remote"
   await assert.rejects(Effect.runPromise(readNativeScheduleCarrierBinding(f.ctx, f.wake.sessionID)), /ownership/)
   f.session.model.providerID = NATIVE_SCHEDULE_CARRIER_MODEL.providerID

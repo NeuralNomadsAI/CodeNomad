@@ -12,7 +12,7 @@ import type { MissionNativeService } from "./native-service-adapter"
 import { MISSION_WAKE_CODE } from "./native-mission-automation"
 
 const current = () => true as const, at = 1000, signal = new AbortController().signal
-async function fixture(count = 2) {
+async function fixture(count = 2, model: typeof NATIVE_SCHEDULE_CARRIER_MODEL | null = NATIVE_SCHEDULE_CARRIER_MODEL) {
   let enabled = true, effectCalls = 0, mutate: (() => void) | undefined
   const infos = new Map<string, Automation.Info>(), messages = new Map<string, typeof SessionMessage.Info.Type>()
   const calendars: MissionCalendar[] = Array.from({ length: count }, (_, slot) => ({ role: "principal", slot, timeGeneration: 1,
@@ -33,7 +33,7 @@ async function fixture(count = 2) {
   const native = { location: { directory: "/project" },
     get: async ({ sessionID }: { sessionID: string }) => {
       const calendar = calendars.find(item => item.sessionID === sessionID)!
-      return { id: sessionID, projectID: "project", location: { directory: "/project" }, model: NATIVE_SCHEDULE_CARRIER_MODEL,
+      return { id: sessionID, projectID: "project", location: { directory: "/project" }, ...(model ? { model } : {}),
         metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: { missionID: doc.id, timeGeneration: 1, role: calendar.role, slot: calendar.slot } } }
     },
     message: async ({ messageID }: { messageID: string }) => {
@@ -158,4 +158,13 @@ test("a code run is covered by its admission alone, while its program runs and o
   running.wakePreparing = null
   f.infos.set(info.id, { ...info, runCount: 1 })
   await assert.rejects(f.coverage.verifyWake(f.doc, wake, current, signal), /wake proof unavailable/)
+})
+
+test("model-less carriers cover Code Mode rows and refuse legacy prompt rows", async () => {
+  const f = await fixture(1, null), calendar = f.doc.calendars[0], info = f.infos.get(calendar.scheduleID)!
+  await assert.rejects(f.coverage.coverage(f.doc, f.window, current, signal), /carrier differs/)
+  f.infos.set(info.id, { ...info, action: { type: "code", code: MISSION_WAKE_CODE }, runCount: 0, nextDueAt: info.time.created })
+  calendar.wakePreparing = { scheduleID: calendar.scheduleID, run: 1, messageID: `msg_${calendar.scheduleID}_1`, dueAt: at }
+  const covered = await f.coverage.coverage(f.doc, f.window, current, signal)
+  assert.equal(covered.complete, true); assert.deepEqual(covered.wakes, [calendar.wakePreparing])
 })

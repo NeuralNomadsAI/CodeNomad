@@ -6,9 +6,9 @@ import type { MissionDocument } from "../../missions/mission-document"
 import { requiresMissionCalendar } from "../../missions/launch-policy"
 import { assertNativeScheduleProviderAvailable } from "./native-schedule-provider-registration"
 import { assertNativeScheduleCarrierArtifacts, NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
-import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
+import { isAllowedScheduleCarrierModel, isLegacyScheduleCarrierModel } from "./native-schedule-carrier"
 
-import { matchMissionAutomation, missionAutomationID, missionAutomationService, readMissionAutomation, type MissionAutomationReader } from "./native-mission-automation"
+import { matchMissionAutomation, missionAutomationID, missionAutomationService, missionCodeWake, readMissionAutomation, type MissionAutomationReader } from "./native-mission-automation"
 const sessionTag = Context.Service<never, unknown>("@opencode/Session")
 type NativeEffect = Effect.Effect<unknown, unknown>
 
@@ -55,16 +55,18 @@ export const acquireNativeScheduledPassageCapability = Effect.fn("missions.acqui
     const session = sessions.value as { get(id: string): NativeEffect }
     if (!Predicate.isFunction(schedule.get) || !Predicate.isFunction(schedule.enabled) || !Predicate.isFunction(session.get))
       throw new Error("Scheduled passage native capabilities unavailable")
-    yield* assertNativeScheduleProviderAvailable(ctx, proof.owner.installation)
     const id = missionAutomationID(proof.descriptor.scheduleID!)
     const info = yield* schedule.get(id).pipe(Effect.flatMap(readMissionAutomation))
     const carrier = yield* session.get(proof.descriptor.sessionID).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(Session.Info))))
+    const code = missionCodeWake(info)
+    if (!code) yield* assertNativeScheduleProviderAvailable(ctx, proof.owner.installation)
     if (info.id !== id || info.status !== "active" || info.nextDueAt === undefined || !matchMissionAutomation(info, proof.descriptor,
       { directory: ctx.location.directory, projectID: doc.projectID }, NATIVE_SCHEDULE_CARRIER_SIGNAL)
       || carrier.id !== proof.descriptor.sessionID || carrier.parentID
       || carrier.projectID !== doc.projectID || carrier.location.directory !== ctx.location.directory
-      || carrier.location.workspaceID !== ctx.location.workspaceID || carrier.model?.providerID !== NATIVE_SCHEDULE_CARRIER_MODEL.providerID
-      || carrier.model.id !== NATIVE_SCHEDULE_CARRIER_MODEL.id || canonicalAuthority(carrier.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER])
+      || carrier.location.workspaceID !== ctx.location.workspaceID
+      || !(code ? isAllowedScheduleCarrierModel(carrier.model) : isLegacyScheduleCarrierModel(carrier.model))
+      || canonicalAuthority(carrier.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER])
         !== canonicalAuthority({ missionID: doc.id, timeGeneration: doc.timeGeneration, role: "reconciliation", slot: 0 }))
       throw new Error("Scheduled passage auxiliary differs")
     const flag = schedule.enabled(ctx.location.directory)
