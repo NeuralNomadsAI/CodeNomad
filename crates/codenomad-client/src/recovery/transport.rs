@@ -603,8 +603,13 @@ pub(crate) async fn run_with_reading(
                                             .owed_tools
                                             .entry((id.into(), call.into()))
                                             .or_insert(0);
-                                    }
-                                    if !reader.dirty {
+                                        if !reader.dirty {
+                                            reader.dirty = true;
+                                            reader.quiet =
+                                                Instant::now() + Duration::from_millis(100);
+                                        }
+                                    } else if !reader.dirty && reader.repairs < 3 {
+                                        reader.repairs += 1;
                                         reader.dirty = true;
                                         reader.quiet = Instant::now() + Duration::from_millis(100);
                                     }

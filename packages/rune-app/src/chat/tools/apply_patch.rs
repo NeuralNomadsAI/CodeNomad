@@ -86,15 +86,18 @@ fn operation_code(status: &str) -> Option<&'static str> {
     }
 }
 
-fn file_change(s: Option<&State>, file: &Value) -> (&'static str, String) {
+fn file_change(s: Option<&State>, file: &Value, truncate_display: bool) -> (&'static str, String) {
     let path = string(file, &["relativePath", "filePath", "file", "path"]);
     let patch = patch(file);
     let display = |p: &str| {
-        s.and_then(|s| super::super::links::native_file(s, p))
-            .unwrap_or_else(|| p.replace('\\', "/"))
-            .chars()
-            .take(250)
-            .collect::<String>()
+        let normalized = s
+            .and_then(|s| super::super::links::native_file(s, p))
+            .unwrap_or_else(|| p.replace('\\', "/"));
+        if truncate_display {
+            normalized.chars().take(250).collect::<String>()
+        } else {
+            normalized
+        }
     };
     let mut target = if path.is_empty() {
         String::new()
@@ -149,16 +152,15 @@ fn file_change(s: Option<&State>, file: &Value) -> (&'static str, String) {
 }
 
 fn file_copy_text(s: Option<&State>, file: &Value) -> String {
-    let (status, target) = file_change(s, file);
     let diff = patch(file);
+    if !diff.trim().is_empty() {
+        return diff.to_owned();
+    }
+    let (status, target) = file_change(s, file, false);
     if let Some(code) = operation_code(status)
         && !target.is_empty()
     {
-        if diff.is_empty() {
-            format!("{code} {target}")
-        } else {
-            format!("{code} {target}\n{diff}")
-        }
+        format!("{code} {target}")
     } else {
         diff.to_owned()
     }
@@ -167,7 +169,7 @@ fn file_copy_text(s: Option<&State>, file: &Value) -> String {
 pub(super) fn has_patch(tool: &Tool) -> bool {
     let mut remaining = TOOL_LIMIT;
     for file in files(tool).iter().take(FILE_LIMIT) {
-        let (status, target) = file_change(None, file);
+        let (status, target) = file_change(None, file, true);
         if operation_code(status).is_some() && !target.is_empty() {
             return true;
         }
@@ -405,7 +407,7 @@ fn native_file_summaries_include_diff_less_changes_and_open_the_destination() {
 }
 
 fn label(s: &State, file: &Value, index: usize) -> String {
-    let (status, target) = file_change(Some(s), file);
+    let (status, target) = file_change(Some(s), file, true);
     let label = if target.is_empty() {
         catalogue::format(
             locale(),

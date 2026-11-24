@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-const MAX_ANCESTOR_HOPS: usize = 5;
+const MAX_ANCESTOR_HOPS: usize = 12;
 const MAX_OWED_CALLS: usize = 64;
 const MAX_LIVE_EVENTS: usize = 64;
 const MAX_EVENT_BYTES: usize = 256 * 1024;

@@ -82,7 +82,7 @@ pub(super) fn copy(
                                     s,
                                     crate::shell::notifications::Category::Sessions,
                                     None,
-                                    t("sessionList.reload.error"),
+                                    t("messageSection.quote.copyFailed"),
                                     true,
                                 );
                             }
@@ -131,7 +131,7 @@ pub(super) fn copy(
                                     s,
                                     crate::shell::notifications::Category::Sessions,
                                     None,
-                                    t("sessionList.reload.error"),
+                                    t("messageSection.quote.copyFailed"),
                                     true,
                                 );
                             }
@@ -141,7 +141,7 @@ pub(super) fn copy(
                         {
                             tx.copy(source);
                             None
-                        } else if tool.name == "apply_patch"
+                        } else if matches!(tool.name.as_str(), "apply_patch" | "patch")
                             && let Some(source) = apply_patch::copy_all(tool)
                         {
                             tx.copy(source);
@@ -164,9 +164,7 @@ pub(super) fn copy(
                 }
             };
             if let Some(target) = async_copy {
-                if let Some(ready) = s.transcript_display.children.take_ready_copy(&target) {
-                    tx.copy(ready);
-                } else {
+                if !Children::commit_ready_copy(s, &target, tx) {
                     match target {
                         CopyKey::Report(report_key) => Children::copy_report(s, report_key, tx),
                         CopyKey::ToolSection(tool_key) => {

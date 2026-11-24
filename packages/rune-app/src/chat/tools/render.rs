@@ -300,10 +300,13 @@ fn render_body(
         && crate::workspace::active_session(s) != Some(child_id)
     {
         let parent_ref = task::parent_child(message);
-        let unavailable = s
+        let unavailable = !s
             .transcript_display
             .children
-            .unavailable(parent_ref, child_id);
+            .has_open_tab_fallback(s, child_id)
+            && s.transcript_display
+                .children
+                .unavailable(parent_ref, child_id);
         let parent = parent_ref.map(str::to_owned);
         let target = child_id.to_owned();
         header = header.child(
@@ -363,7 +366,9 @@ fn render_body(
     if has_output
         || report_truncated
         || is_tool_truncated
-        || !pending && tool.name == "apply_patch" && apply_patch::has_patch(tool)
+        || !pending
+            && matches!(tool.name.as_str(), "apply_patch" | "patch")
+            && apply_patch::has_patch(tool)
         || tool.name == "todowrite"
             && tool.metadata["todos"]
                 .as_array()

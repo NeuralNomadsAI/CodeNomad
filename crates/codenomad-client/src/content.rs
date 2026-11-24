@@ -412,7 +412,12 @@ impl Tool {
         if self.retained_bytes() <= budget {
             return self.clone();
         }
-        let base_bytes = self.id.len() + self.name.len() + self.status.len() + size_of::<Tool>();
+        let status = if self.status.len() <= 64 {
+            self.status.clone()
+        } else {
+            "unknown".into()
+        };
+        let base_bytes = self.id.len() + self.name.len() + status.len() + size_of::<Tool>();
         let mut rem = budget.saturating_sub(base_bytes);
 
         let take_str = |src: &str, rem: &mut usize| -> String {
@@ -450,7 +455,7 @@ impl Tool {
             part_index: self.part_index,
             id: self.id.clone(),
             name: self.name.clone(),
-            status: self.status.clone(),
+            status,
             input,
             metadata,
             output_bytes: md_b + error.len() + output.len(),
@@ -537,7 +542,11 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 .filter(|s| s.len() <= 256)
                 .ok_or("invalid tool name")?;
             let state = &part["state"];
-            let status = state["status"].as_str().unwrap_or("streaming");
+            let status = match state["status"].as_str() {
+                None => "streaming",
+                Some(s) if s.len() <= 64 => s,
+                Some(_) => "unknown",
+            };
             let text_parts = state["content"]
                 .as_array()
                 .into_iter()

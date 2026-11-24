@@ -87,6 +87,22 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
             selected.push((candidate, entries));
         }
     }
+    if multi_file {
+        for (candidate, value, _) in &normalized_keys {
+            if selected.len() >= FILE_LIMIT {
+                break;
+            }
+            if let Some(entries) = value.as_array()
+                && entries
+                    .iter()
+                    .take(SCAN_LIMIT)
+                    .any(|entry| entry["message"].is_string())
+                && !selected.iter().any(|(existing, _)| *existing == *candidate)
+            {
+                selected.push((*candidate, entries));
+            }
+        }
+    }
     let mut truncated = false;
     let mut flat: Vec<(&str, &Value, &str)> = Vec::new();
     let mut scanned = 0usize;
@@ -187,7 +203,7 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
                                 s,
                                 crate::shell::notifications::Category::Sessions,
                                 None,
-                                t("sessionList.reload.error"),
+                                t("messageSection.quote.copyFailed"),
                                 true,
                             );
                         }

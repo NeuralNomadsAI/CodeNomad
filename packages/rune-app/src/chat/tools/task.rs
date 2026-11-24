@@ -17,7 +17,7 @@ use rune_theme_codenomad::{
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 pub(super) const PANE_LIMIT: usize = 20_000;
-pub(super) const MAX_DEPTH: usize = 4;
+pub(super) const MAX_DEPTH: usize = 12;
 const INITIAL_STEPS: usize = 30;
 const REVEAL: usize = 100;
 
@@ -447,11 +447,15 @@ pub(super) fn body(
                     );
                     result = result.child(status_row);
                     let copy_target = CopyKey::Report(copy_key.clone());
-                    if s.transcript_display.children.copy_failed(&copy_target)
-                        || s.transcript_display.children.expand_failed(&copy_key)
-                    {
+                    if s.transcript_display.children.copy_failed(&copy_target) {
+                        result =
+                            result.child(text(t("messageSection.quote.copyFailed")).role("status"));
+                    } else if s.transcript_display.children.expand_failed(&copy_key) {
                         result =
                             result.child(text(t("sessionList.loadError.retry")).role("status"));
+                    } else if s.transcript_display.children.copy_copied(&copy_target) {
+                        result =
+                            result.child(text(t("markdown.codeBlock.copy.copied")).role("status"));
                     } else if s.transcript_display.children.copy_ready(&copy_target) {
                         result =
                             result.child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
@@ -811,13 +815,9 @@ pub(super) fn body(
                 markdown::copy_button(
                     t("toolCall.io.copyOutputAriaLabel"),
                     screen::action_tx(&s.input_scope, move |s, tx| {
-                        if let Some(ready) = s
-                            .transcript_display
-                            .children
-                            .take_ready_copy(&action_target)
+                        if !Children::commit_ready_copy(s, &action_target, tx)
+                            && let CopyKey::Steps { key, parent, child } = &action_target
                         {
-                            tx.copy(ready);
-                        } else if let CopyKey::Steps { key, parent, child } = &action_target {
                             Children::copy_steps(s, key.clone(), parent.clone(), child.clone(), tx);
                         }
                     }),
@@ -825,7 +825,9 @@ pub(super) fn body(
                 .key(copy_id),
             );
             if s.transcript_display.children.copy_failed(&copy_target) {
-                row = row.child(text(t("sessionList.loadError.retry")).role("status"));
+                row = row.child(text(t("messageSection.quote.copyFailed")).role("status"));
+            } else if s.transcript_display.children.copy_copied(&copy_target) {
+                row = row.child(text(t("markdown.codeBlock.copy.copied")).role("status"));
             } else if s.transcript_display.children.copy_ready(&copy_target) {
                 row = row.child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
             }
@@ -839,9 +841,17 @@ pub(super) fn body(
                         s.transcript_display.children.cancel_copy();
                         if let Some(json) = super::format::bounded_json(
                             &serde_json::Value::Array(legacy_entries.clone()),
-                            8 * 1024 * 1024,
+                            super::children::MAX_COPY_BYTES,
                         ) {
                             tx.copy(json);
+                        } else {
+                            crate::shell::notifications::emit_outcome(
+                                s,
+                                crate::shell::notifications::Category::Sessions,
+                                None,
+                                t("messageSection.quote.copyFailed"),
+                                true,
+                            );
                         }
                     }),
                 )

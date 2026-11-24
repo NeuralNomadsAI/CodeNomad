@@ -42,7 +42,7 @@ const STEP_BYTES: usize = 2 << 20;
 const MAX_COPY_PAGES: usize = 64;
 pub(super) const MAX_COPY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_EXPANDED_REPORTS: usize = 8;
-const MAX_EXPANDED_REPORT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_EXPANDED_REPORT_BYTES: usize = MAX_COPY_BYTES;
 const COPY_BUDGET: Duration = Duration::from_secs(30);
 const MAX_PENDING_EVENTS: usize = 32;
 const MAX_PENDING_BYTES: usize = 256 * 1024;
@@ -155,17 +155,20 @@ enum ReportCopy {
         rx: Receiver<Option<String>>,
     },
     #[cfg(target_arch = "wasm32")]
-    Writing {
+    Confirming {
         key: CopyKey,
         epoch: u64,
-        text: String,
-        revocation: CopyRevocation,
         rx: Receiver<bool>,
     },
     #[allow(dead_code)]
     Ready {
         key: CopyKey,
         text: String,
+        revocation: CopyRevocation,
+    },
+    #[allow(dead_code)]
+    Copied {
+        key: CopyKey,
     },
     Failed {
         key: CopyKey,
@@ -191,6 +194,13 @@ impl ExpandKey {
             Self::ToolOutput(k) => &k.key,
         }
     }
+
+    fn touches_child(&self, id: &str) -> bool {
+        match self {
+            Self::Report(k) => k.parent == id || k.child == id,
+            Self::ToolOutput(k) => k.child == id || k.parent.as_deref() == Some(id),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -205,6 +215,7 @@ pub(crate) struct Children {
     expanded_report_bytes: usize,
     loading_report: Option<(
         ExpandKey,
+        CopyRevocation,
         codenomad_client::Sender<()>,
         Receiver<Option<String>>,
     )>,
@@ -265,6 +276,12 @@ impl Children {
         self.unavailable.contains(&child_key(parent, id))
     }
 
+    pub(super) fn has_open_tab_fallback(&self, s: &State, id: &str) -> bool {
+        self.backend.as_ref().is_some_and(|backend| {
+            crate::workspace::open_session_tab_target(s, backend, id).is_some()
+        })
+    }
+
     pub(super) fn is_waiting(&self, parent: Option<&str>, id: &str) -> bool {
         let ck = child_key(parent, id);
         self.waiting
@@ -284,25 +301,70 @@ impl Children {
         self.report_copy = ReportCopy::Idle;
     }
 
-    pub(super) fn take_ready_copy(&mut self, key: &CopyKey) -> Option<String> {
-        match &self.report_copy {
-            ReportCopy::Ready { key: current, .. } if current == key => {
-                note_clipboard_write();
-                match std::mem::take(&mut self.report_copy) {
+    pub(super) fn commit_ready_copy(s: &mut State, key: &CopyKey, tx: &mut rune::Tx) -> bool {
+        let ready = match &s.transcript_display.children.report_copy {
+            ReportCopy::Ready {
+                key: current,
+                revocation,
+                ..
+            } if current == key => {
+                if revocation.is_revoked() {
+                    s.transcript_display.children.report_copy = ReportCopy::Idle;
+                    return false;
+                }
+                match std::mem::take(&mut s.transcript_display.children.report_copy) {
                     ReportCopy::Ready { text, .. } => Some(text),
                     _ => None,
                 }
             }
             _ => None,
+        };
+        let Some(text) = ready else {
+            return false;
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            note_clipboard_write();
+            tx.copy(text);
+            s.transcript_display.children.report_copy = ReportCopy::Copied { key: key.clone() };
         }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = tx;
+            let epoch = next_clipboard_epoch();
+            let (out, rx) = bounded(1);
+            let wake = s.wake.clone();
+            crate::platform::diagnostics::copy(&text, move |copied| {
+                if out.try_send(copied).is_ok() {
+                    wake();
+                }
+            });
+            s.transcript_display.children.report_copy = ReportCopy::Confirming {
+                key: key.clone(),
+                epoch,
+                rx,
+            };
+        }
+        true
     }
 
     pub(super) fn copy_failed(&self, key: &CopyKey) -> bool {
         matches!(&self.report_copy, ReportCopy::Failed { key: current } if current == key)
     }
 
+    pub(super) fn copy_copied(&self, key: &CopyKey) -> bool {
+        matches!(&self.report_copy, ReportCopy::Copied { key: current } if current == key)
+    }
+
     pub(super) fn copy_ready(&self, key: &CopyKey) -> bool {
-        matches!(&self.report_copy, ReportCopy::Ready { key: current, .. } if current == key)
+        matches!(
+            &self.report_copy,
+            ReportCopy::Ready {
+                key: current,
+                revocation,
+                ..
+            } if current == key && !revocation.is_revoked()
+        )
     }
 
     pub(super) fn loaded_report(&self, key: &ReportCopyKey) -> Option<&str> {
@@ -355,13 +417,14 @@ impl Children {
         let clear_copy = match &children.report_copy {
             ReportCopy::Loading { key: current, .. }
             | ReportCopy::Ready { key: current, .. }
+            | ReportCopy::Copied { key: current }
             | ReportCopy::Failed { key: current } => match current {
                 CopyKey::Report(k) => matches_card(&k.key),
                 CopyKey::ToolSection(k) => matches_card(&k.key),
                 CopyKey::Steps { key: k, .. } => matches_card(k),
             },
             #[cfg(target_arch = "wasm32")]
-            ReportCopy::Writing { key: current, .. } => match current {
+            ReportCopy::Confirming { key: current, .. } => match current {
                 CopyKey::Report(k) => matches_card(&k.key),
                 CopyKey::ToolSection(k) => matches_card(&k.key),
                 CopyKey::Steps { key: k, .. } => matches_card(k),
@@ -382,7 +445,7 @@ impl Children {
         if children
             .loading_report
             .as_ref()
-            .is_some_and(|(current, _, _)| matches_card(current.ui_key()))
+            .is_some_and(|(current, _, _, _)| matches_card(current.ui_key()))
         {
             children.loading_report = None;
         }
@@ -565,7 +628,7 @@ impl Children {
                                 }
                             } else if tool.name == "todowrite" {
                                 super::todo::copy(tool)
-                            } else if tool.name == "apply_patch" {
+                            } else if matches!(tool.name.as_str(), "apply_patch" | "patch") {
                                 super::apply_patch::copy_all(tool)
                             } else {
                                 let mut parts = [""; 4];
@@ -618,7 +681,7 @@ impl Children {
         {
             let capture = baseline.clone();
             tx.read_clipboard(move |_: &mut State, content, _| {
-                capture.set(Some(fnv1a64(content.text().as_bytes())));
+                capture.set(Some(rune_theme_codenomad::clipboard::fingerprint(content)));
             });
         }
         #[cfg(target_arch = "wasm32")]
@@ -671,7 +734,7 @@ impl Children {
         {
             let capture = baseline.clone();
             tx.read_clipboard(move |_: &mut State, content, _| {
-                capture.set(Some(fnv1a64(content.text().as_bytes())));
+                capture.set(Some(rune_theme_codenomad::clipboard::fingerprint(content)));
             });
         }
         #[cfg(target_arch = "wasm32")]
@@ -729,7 +792,7 @@ impl Children {
         {
             let capture = baseline.clone();
             tx.read_clipboard(move |_: &mut State, content, _| {
-                capture.set(Some(fnv1a64(content.text().as_bytes())));
+                capture.set(Some(rune_theme_codenomad::clipboard::fingerprint(content)));
             });
         }
         #[cfg(target_arch = "wasm32")]
@@ -856,18 +919,36 @@ impl Children {
                 .children
                 .loading_report
                 .as_ref()
-                .is_some_and(|(current, _, _)| current == &expand_key)
+                .is_some_and(|(current, _, _, _)| current == &expand_key)
         {
             return;
         }
         if s.transcript_display.children.failed_report.as_ref() == Some(&expand_key) {
             s.transcript_display.children.failed_report = None;
         }
-        let Some((cancel, rx)) = Self::fetch_report(s, &key, None) else {
+        let Some((watch_rx, settlement)) = s
+            .transcript_display
+            .children
+            .backend
+            .as_ref()
+            .and_then(|b| b.watch_child(&key.parent))
+        else {
             s.transcript_display.children.failed_report = Some(expand_key);
             return;
         };
-        s.transcript_display.children.loading_report = Some((expand_key, cancel, rx));
+        let rev_before = settlement.revocation_gen();
+        let Some((cancel, rx)) =
+            Self::fetch_report(s, &key, Some((settlement.clone(), rev_before)))
+        else {
+            s.transcript_display.children.failed_report = Some(expand_key);
+            return;
+        };
+        let revocation = CopyRevocation {
+            _rx: watch_rx,
+            settlement,
+            rev_before,
+        };
+        s.transcript_display.children.loading_report = Some((expand_key, revocation, cancel, rx));
     }
 
     pub(super) fn expand_tool_output(s: &mut State, key: ToolCopyKey) {
@@ -881,18 +962,36 @@ impl Children {
                 .children
                 .loading_report
                 .as_ref()
-                .is_some_and(|(current, _, _)| current == &expand_key)
+                .is_some_and(|(current, _, _, _)| current == &expand_key)
         {
             return;
         }
         if s.transcript_display.children.failed_report.as_ref() == Some(&expand_key) {
             s.transcript_display.children.failed_report = None;
         }
-        let Some((cancel, rx)) = Self::fetch_tool_section(s, &key, None) else {
+        let Some((watch_rx, settlement)) = s
+            .transcript_display
+            .children
+            .backend
+            .as_ref()
+            .and_then(|b| b.watch_child(&key.child))
+        else {
             s.transcript_display.children.failed_report = Some(expand_key);
             return;
         };
-        s.transcript_display.children.loading_report = Some((expand_key, cancel, rx));
+        let rev_before = settlement.revocation_gen();
+        let Some((cancel, rx)) =
+            Self::fetch_tool_section(s, &key, Some((settlement.clone(), rev_before)))
+        else {
+            s.transcript_display.children.failed_report = Some(expand_key);
+            return;
+        };
+        let revocation = CopyRevocation {
+            _rx: watch_rx,
+            settlement,
+            rev_before,
+        };
+        s.transcript_display.children.loading_report = Some((expand_key, revocation, cancel, rx));
     }
 
     pub(crate) fn poll_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
@@ -986,14 +1085,9 @@ impl Children {
     fn poll_copy(s: &mut State, tx: &mut rune::Tx) -> bool {
         #[cfg(target_arch = "wasm32")]
         {
-            let write_outcome = match &s.transcript_display.children.report_copy {
-                ReportCopy::Writing {
-                    epoch,
-                    revocation,
-                    rx,
-                    ..
-                } => {
-                    if CLIPBOARD_EPOCH.load(Ordering::SeqCst) != *epoch || revocation.is_revoked() {
+            let confirm_outcome = match &s.transcript_display.children.report_copy {
+                ReportCopy::Confirming { epoch, rx, .. } => {
+                    if CLIPBOARD_EPOCH.load(Ordering::SeqCst) != *epoch {
                         s.transcript_display.children.report_copy = ReportCopy::Idle;
                         return false;
                     }
@@ -1005,22 +1099,25 @@ impl Children {
                 }
                 _ => None,
             };
-            if let Some(copied) = write_outcome {
-                if let ReportCopy::Writing {
-                    key,
-                    epoch,
-                    text,
-                    revocation,
-                    ..
-                } = std::mem::take(&mut s.transcript_display.children.report_copy)
+            if let Some(copied) = confirm_outcome {
+                if let ReportCopy::Confirming { key, epoch, .. } =
+                    std::mem::take(&mut s.transcript_display.children.report_copy)
                 {
-                    if CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch || revocation.is_revoked() {
+                    if CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch {
                         return false;
                     }
                     if copied {
                         note_clipboard_write();
+                        s.transcript_display.children.report_copy = ReportCopy::Copied { key };
                     } else {
-                        s.transcript_display.children.report_copy = ReportCopy::Ready { key, text };
+                        crate::shell::notifications::emit_outcome(
+                            s,
+                            crate::shell::notifications::Category::Sessions,
+                            None,
+                            crate::strings::t("messageSection.quote.copyFailed"),
+                            true,
+                        );
+                        s.transcript_display.children.report_copy = ReportCopy::Failed { key };
                     }
                     return true;
                 }
@@ -1086,30 +1183,24 @@ impl Children {
                             return;
                         }
                         if let Some(before) = expected
-                            && fnv1a64(current.text().as_bytes()) != before
+                            && rune_theme_codenomad::clipboard::fingerprint(current) != before
                         {
                             return;
                         }
                         note_clipboard_write();
                         tx.copy(text);
+                        s.transcript_display.children.report_copy = ReportCopy::Copied { key };
                     });
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
                     let _ = (tx, baseline);
-                    let (out, rx) = bounded(1);
-                    let wake = s.wake.clone();
-                    crate::platform::diagnostics::copy(&text, move |copied| {
-                        if out.try_send(copied).is_ok() {
-                            wake();
-                        }
-                    });
-                    s.transcript_display.children.report_copy = ReportCopy::Writing {
+                    // On the web, never write to the clipboard asynchronously after an HTTP
+                    // round trip: stage the payload so the user's next click writes it directly.
+                    s.transcript_display.children.report_copy = ReportCopy::Ready {
                         key,
-                        epoch,
                         text,
                         revocation,
-                        rx,
                     };
                 }
                 true
@@ -1120,7 +1211,7 @@ impl Children {
                         s,
                         crate::shell::notifications::Category::Sessions,
                         None,
-                        crate::strings::t("sessionList.reload.error"),
+                        crate::strings::t("messageSection.quote.copyFailed"),
                         true,
                     );
                 }
@@ -1915,17 +2006,46 @@ impl Children {
             let cancel_copy = match &self.report_copy {
                 ReportCopy::Loading { key, .. }
                 | ReportCopy::Ready { key, .. }
+                | ReportCopy::Copied { key }
                 | ReportCopy::Failed { key } => {
                     revoked_children.iter().any(|id| key.touches_child(id))
                 }
                 #[cfg(target_arch = "wasm32")]
-                ReportCopy::Writing { key, .. } => {
+                ReportCopy::Confirming { key, .. } => {
                     revoked_children.iter().any(|id| key.touches_child(id))
                 }
                 ReportCopy::Idle => false,
             };
             if cancel_copy {
                 self.report_copy = ReportCopy::Idle;
+                changed = true;
+            }
+            let before_expanded = self.expanded_reports.len();
+            self.expanded_reports.retain(|(current, text)| {
+                let drop = revoked_children.iter().any(|id| current.touches_child(id));
+                if drop {
+                    self.expanded_report_bytes =
+                        self.expanded_report_bytes.saturating_sub(text.len());
+                }
+                !drop
+            });
+            changed |= self.expanded_reports.len() != before_expanded;
+            if self
+                .loading_report
+                .as_ref()
+                .is_some_and(|(current, _, _, _)| {
+                    revoked_children.iter().any(|id| current.touches_child(id))
+                })
+            {
+                self.loading_report = None;
+                changed = true;
+            }
+            if self
+                .failed_report
+                .as_ref()
+                .is_some_and(|current| revoked_children.iter().any(|id| current.touches_child(id)))
+            {
+                self.failed_report = None;
                 changed = true;
             }
         }
@@ -1946,7 +2066,12 @@ impl Children {
             }
         }
         let expand_outcome = match self.loading_report.as_ref() {
-            Some((_, _, rx)) => match rx.try_recv() {
+            Some((_, revocation, _, _)) if revocation.is_revoked() => {
+                self.loading_report = None;
+                changed = true;
+                None
+            }
+            Some((_, _, _, rx)) => match rx.try_recv() {
                 Ok(body) => Some(body),
                 Err(error) if error.is_closed() => Some(None),
                 Err(_) => None,
@@ -1954,27 +2079,29 @@ impl Children {
             None => None,
         };
         if let Some(outcome) = expand_outcome
-            && let Some((key, _, _)) = self.loading_report.take()
+            && let Some((key, revocation, _, _)) = self.loading_report.take()
         {
-            match outcome {
-                Some(text) if text.len() <= MAX_EXPANDED_REPORT_BYTES => {
-                    while self.expanded_reports.len() >= MAX_EXPANDED_REPORTS
-                        || self.expanded_report_bytes.saturating_add(text.len())
-                            > MAX_EXPANDED_REPORT_BYTES
-                    {
-                        if let Some((_, dropped)) = self.expanded_reports.pop_front() {
-                            self.expanded_report_bytes =
-                                self.expanded_report_bytes.saturating_sub(dropped.len());
-                        } else {
-                            break;
+            if !revocation.is_revoked() {
+                match outcome {
+                    Some(text) if text.len() <= MAX_EXPANDED_REPORT_BYTES => {
+                        while self.expanded_reports.len() >= MAX_EXPANDED_REPORTS
+                            || self.expanded_report_bytes.saturating_add(text.len())
+                                > MAX_EXPANDED_REPORT_BYTES
+                        {
+                            if let Some((_, dropped)) = self.expanded_reports.pop_front() {
+                                self.expanded_report_bytes =
+                                    self.expanded_report_bytes.saturating_sub(dropped.len());
+                            } else {
+                                break;
+                            }
                         }
+                        self.expanded_report_bytes =
+                            self.expanded_report_bytes.saturating_add(text.len());
+                        self.expanded_reports.push_back((key, text));
                     }
-                    self.expanded_report_bytes =
-                        self.expanded_report_bytes.saturating_add(text.len());
-                    self.expanded_reports.push_back((key, text));
-                }
-                _ => {
-                    self.failed_report = Some(key);
+                    _ => {
+                        self.failed_report = Some(key);
+                    }
                 }
             }
             changed = true;
