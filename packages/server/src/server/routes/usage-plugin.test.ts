@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import http from "node:http"
 import Fastify from "fastify"
 import { OpenCode } from "@opencode/client"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
@@ -342,7 +343,7 @@ test("a session moved during the initial ownership check never reaches the plugi
   } finally { await app.close() }
 })
 
-test("absent plugin RPC falls back to Codex usage when a custom provider alias resolves to openai", async t => {
+function codexAliasApp() {
   const expires = Date.now() + 3_600_000
   const nativeCalls: string[] = []
   const app = Fastify()
@@ -378,12 +379,20 @@ test("absent plugin RPC falls back to Codex usage when a custom provider alias r
   const freeUsage = createOpenCodeFreeUsage()
   registerUsageRoutes(app, { workspaceManager: manager, freeUsage })
   app.addHook("onClose", async () => { freeUsage.dispose() })
+  const codexBody = () => ({ rate_limit: { primary_window: { used_percent: 20, limit_window_seconds: 18_000, reset_at: Math.floor(expires / 1000) } } })
+  return { app, nativeCalls, codexBody }
+}
+
+const codexAliasUrl = "/api/usage/my-codex?instanceId=instance&sessionId=session&modelId=gpt-5"
+
+test("absent plugin RPC falls back to Codex usage when a custom provider alias resolves to openai", async t => {
+  const { app, nativeCalls, codexBody } = codexAliasApp()
   t.mock.method(globalThis, "fetch", async (input: unknown) => {
     assert.equal(String(input), "https://chatgpt.com/backend-api/wham/usage")
-    return Response.json({ rate_limit: { primary_window: { used_percent: 20, limit_window_seconds: 18_000, reset_at: Math.floor(expires / 1000) } } })
+    return Response.json(codexBody())
   })
   try {
-    const response = await app.inject("/api/usage/my-codex?instanceId=instance&sessionId=session&modelId=gpt-5")
+    const response = await app.inject(codexAliasUrl)
     assert.equal(response.statusCode, 200, response.body)
     assert.equal(nativeCalls.includes("/api/rpc/provider-usage.my-codex/read"), true)
     assert.equal(nativeCalls.includes("/api/provider/my-codex"), true)
@@ -391,5 +400,42 @@ test("absent plugin RPC falls back to Codex usage when a custom provider alias r
     assert.equal(response.json().supported, true)
     assert.equal(response.json().ok, true)
     assert.equal(response.json().windows["5h"]?.usedPercent, 20)
+  } finally { await app.close() }
+})
+
+test("a client disconnect during the Codex fallback leaves the shared read to other clients", async t => {
+  const { app, codexBody } = codexAliasApp()
+  let release!: () => void
+  const released = new Promise<void>(resolve => { release = resolve })
+  let upstream!: () => void
+  const upstreamStarted = new Promise<void>(resolve => { upstream = resolve })
+  t.mock.method(globalThis, "fetch", async (_input: unknown, init?: RequestInit) => {
+    upstream()
+    await Promise.race([released, new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true }))])
+    return Response.json(codexBody())
+  })
+  try {
+    const address = new URL(await app.listen({ host: "127.0.0.1", port: 0 }))
+    const get = () => {
+      const request = http.get({ host: address.hostname, port: address.port, path: codexAliasUrl })
+      const body = new Promise<{ status?: number; text: string }>((resolve, reject) => {
+        request.on("response", response => {
+          let text = ""
+          response.setEncoding("utf8").on("data", chunk => { text += chunk }).on("end", () => resolve({ status: response.statusCode, text }))
+        }).on("error", reject)
+      })
+      return { request, body }
+    }
+    const first = get()
+    first.body.catch(() => {})
+    await upstreamStarted
+    const second = get()
+    await new Promise(resolve => setTimeout(resolve, 100))
+    first.request.destroy()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    release()
+    const result = await second.body
+    assert.equal(result.status, 200, result.text)
+    assert.equal(JSON.parse(result.text).ok, true)
   } finally { await app.close() }
 })

@@ -62,8 +62,10 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
         isOpenCodeFreeModel(params.data.providerId, modelId) ? new AbortController() : null
       const quotaTimeout = quotaController ? setTimeout(() => quotaController.abort(), 12_000) : undefined
       const quotaSignal = quotaController ? AbortSignal.any([signal, quotaController.signal]) : signal
-      // A plugin RPC runs plugin code: stop it (and its follow-up checks) once the client has gone.
-      const abortOnClose = () => { if (!reply.raw.writableFinished) controller.abort() }
+      // A plugin RPC runs plugin code: stop it once the client has gone. Only the RPC phase listens,
+      // since the Codex fallback shares one upstream read across clients.
+      const closed = new AbortController()
+      const abortOnClose = () => { if (!reply.raw.writableFinished) closed.abort() }
       if (!resolvedProvider && !isOpenCodeFreeModel(params.data.providerId, modelId)) reply.raw.once("close", abortOnClose)
       let consoleTimeout: ((publicationSignal: AbortSignal) => Promise<unknown>) | undefined
       try {
@@ -105,13 +107,15 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           let plugin: ProviderUsageResponse | null = null
           if (!free && !provider) {
             // Plugin code receives the Location: confirm the session did not move during the ownership check.
-            const current = readLocationRef((await connection.client.session.get({ sessionID: sessionId }, { signal })).location)
-            if (current.directory !== location.directory || current.workspaceID !== undefined || !assertCurrentWorkspace(signal)) {
+            const rpcSignal = AbortSignal.any([signal, closed.signal])
+            const current = readLocationRef((await connection.client.session.get({ sessionID: sessionId }, { signal: rpcSignal })).location)
+            if (current.directory !== location.directory || current.workspaceID !== undefined || !assertCurrentWorkspace(rpcSignal)) {
               return reply.code(403).send({ error: "Session does not belong to workspace" })
             }
             plugin = await readPluginProviderUsage(connection, {
               providerId: params.data.providerId, location, modelId,
-            }, signal, quotaSignal)
+            }, rpcSignal, AbortSignal.any([quotaSignal, closed.signal]))
+            reply.raw.off("close", abortOnClose)
             if (!plugin && (!await verifyOwned(signal) || !assertCurrentWorkspace(signal))) {
               return reply.code(403).send({ error: "Session does not belong to workspace" })
             }
