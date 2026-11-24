@@ -303,6 +303,49 @@ fn blocked(reason: &str) -> Response {
     Json(json!({"status":"blocked","reason":reason})).into_response()
 }
 
+fn project_history_response(
+    status: Status,
+    body: axum::body::Bytes,
+    action: &str,
+    id: &str,
+    session: &str,
+    reference: bool,
+    defer: bool,
+) -> Response {
+    let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return blocked("unavailable") };
+    let Some(raw) = envelope.output else { return blocked("unavailable") };
+    let Ok(mut output) = serde_json::from_str::<Value>(raw.get()) else { return blocked("unavailable") };
+    if reference && output["status"] == "window" && !user_files::validate_window(&mut output) {
+        return blocked("unavailable");
+    }
+    if !status.is_success()
+        || !crate::sessions::contracts::valid(crate::sessions::contracts::get(action, true), &output)
+    {
+        return blocked("unavailable");
+    }
+    if output["entries"].as_array().is_some_and(|items| {
+        items.iter().any(|item| {
+            item.get("omitted").is_some() != item["layout"].as_str().is_some_and(|layout| layout.contains('-'))
+        })
+    }) {
+        return blocked("unavailable");
+    }
+    let deferred = defer && output["status"] == "window" && media::defer(id, session, &mut output["messages"]);
+    let referenced = reference && output["status"] == "window";
+    if referenced || deferred {
+        if referenced {
+            output["userFiles"] = user_files::REFERENCE.into();
+        }
+        let Ok(projected) = serde_json::to_vec(&output) else { return blocked("unavailable") };
+        if referenced && projected.len() > 24 * 1024 * 1024 {
+            return blocked("unsupported_storage");
+        }
+        ([(header::CONTENT_TYPE, "application/json")], projected).into_response()
+    } else {
+        ([(header::CONTENT_TYPE, "application/json")], body.slice_ref(raw.get().as_bytes())).into_response()
+    }
+}
+
 pub async fn handle(
     State(app): State<Shared>,
     Extension(principal): Extension<Principal>,
@@ -342,6 +385,13 @@ pub async fn handle(
         // Reference: `desktopPluginsReady` for the session's own Location, which
         // may be a linked worktree the plugin has not served yet.
         let Some(directory) = placement.ready(&app, &id, session).await else { return blocked("unavailable") };
+        static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+        let slot = if defer {
+            let Ok(permit) = DEFER_SLOTS.acquire().await else { return blocked("unavailable") };
+            Some(permit)
+        } else {
+            None
+        };
         let rpc_limit = 24 * 1024 * 1024 + if defer { 64 * 1024 } else { 0 };
         let Ok((mut status, mut body)) =
             rpc_with_limit(&app, &placement.endpoint, directory, method, &input, Duration::from_secs(10), rpc_limit)
@@ -349,60 +399,46 @@ pub async fn handle(
         else {
             return blocked("unavailable");
         };
-        let Ok(mut envelope) = serde_json::from_slice::<Envelope>(&body) else { return blocked("unavailable") };
-        if action == "outline"
-            && status == Status::BAD_REQUEST
-            && envelope.tag.as_deref() == Some("RpcError")
-            && envelope.kind.as_deref() == Some("rpc.method_not_found")
-        {
-            if !placement.current(&app, &id, session).await {
-                return blocked("conflict");
+        if action == "outline" && status == Status::BAD_REQUEST {
+            let fallback = serde_json::from_slice::<Envelope>(&body).ok().is_some_and(|envelope| {
+                envelope.tag.as_deref() == Some("RpcError") && envelope.kind.as_deref() == Some("rpc.method_not_found")
+            });
+            if fallback {
+                if !placement.current(&app, &id, session).await {
+                    return blocked("conflict");
+                }
+                let Ok(fallback) = rpc(&app, &placement.endpoint, directory, "outline", &input).await else {
+                    return blocked("unavailable");
+                };
+                (status, body) = fallback;
             }
-            let Ok(fallback) = rpc(&app, &placement.endpoint, directory, "outline", &input).await else {
-                return blocked("unavailable");
-            };
-            drop(envelope);
-            (status, body) = fallback;
-            let Ok(fallback) = serde_json::from_slice::<Envelope>(&body) else { return blocked("unavailable") };
-            envelope = fallback;
         }
-        let Some(raw) = envelope.output else { return blocked("unavailable") };
-        let Ok(mut output) = serde_json::from_str::<Value>(raw.get()) else { return blocked("unavailable") };
-        if reference && output["status"] == "window" && !user_files::validate_window(&mut output) {
-            return blocked("unavailable");
-        }
-        if !status.is_success()
-            || !crate::sessions::contracts::valid(crate::sessions::contracts::get(&action, true), &output)
-        {
-            return blocked("unavailable");
-        }
-        if output["entries"].as_array().is_some_and(|items| {
-            items.iter().any(|item| {
-                item.get("omitted").is_some() != item["layout"].as_str().is_some_and(|layout| layout.contains('-'))
+        let response = if defer && body.len() > 32 * 1024 {
+            let (action, id, session) = (action.clone(), id.clone(), session.to_owned());
+            match tokio::task::spawn_blocking(move || {
+                let _slot = slot;
+                project_history_response(status, body, &action, &id, &session, reference, defer)
             })
-        }) {
-            return blocked("unavailable");
-        }
-        let deferred = defer && output["status"] == "window" && media::defer(&id, session, &mut output["messages"]);
-        let referenced = reference && output["status"] == "window";
-        let response = if referenced || deferred {
-            if referenced {
-                output["userFiles"] = user_files::REFERENCE.into();
+            .await
+            {
+                Ok(response) => response,
+                Err(_) => return blocked("unavailable"),
             }
-            let Ok(projected) = serde_json::to_vec(&output) else { return blocked("unavailable") };
-            if referenced && projected.len() > 24 * 1024 * 1024 {
-                return blocked("unsupported_storage");
-            }
-            ([(header::CONTENT_TYPE, "application/json")], projected).into_response()
         } else {
-            ([(header::CONTENT_TYPE, "application/json")], body.slice_ref(raw.get().as_bytes())).into_response()
+            let response = project_history_response(status, body, &action, &id, session, reference, defer);
+            drop(slot);
+            response
         };
         if !placement.current(&app, &id, session).await {
             return blocked("conflict");
         }
+        if principal.live().is_err() {
+            return crate::auth::unauthorized().into_response();
+        }
         response
     };
     tokio::select! {
+        biased;
         _ = principal.0.cancelled() => Err(crate::auth::unauthorized()),
         result = tokio::time::timeout(Duration::from_secs(15),request) => Ok(result.unwrap_or_else(|_| blocked("unavailable"))),
     }

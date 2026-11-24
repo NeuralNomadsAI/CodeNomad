@@ -150,12 +150,12 @@ fn extract_media(
         return Err(missing());
     }
     let prefix = format!("data:{mime};base64,");
-    let payload = uri.strip_prefix(&prefix).ok_or_else(missing)?;
+    let payload = uri.get(prefix.len()..).ok_or_else(missing)?;
     if payload.len() % 4 != 0 {
         return Err(missing());
     }
     let bytes = STANDARD.decode(payload).map_err(|_| missing())?;
-    let mime = raster(&bytes).filter(|&detected| detected == mime).ok_or_else(missing)?;
+    let mime = raster(&bytes).filter(|detected| detected.eq_ignore_ascii_case(mime)).ok_or_else(missing)?;
     Ok((mime, bytes))
 }
 
@@ -216,7 +216,7 @@ pub(super) async fn route(
             .map_err(|failure| if failure.0 == Status::CONFLICT { failure } else { unavailable() })?;
         let revert = newest["revert"]["messageID"].as_str().map(str::to_owned);
         let (mime, bytes) = if raw.len() > INLINE_LIMIT {
-            let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.clone());
+            let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.to_owned());
             tokio::task::spawn_blocking(move || {
                 let _slot = slot;
                 extract_media(&message_id, part, index, &digest, revert.as_deref(), &raw)
@@ -390,5 +390,26 @@ mod tests {
         let content = messages[0]["content"][0]["state"]["content"].as_array().unwrap();
         assert_eq!(content[0]["uri"].as_str().unwrap(), at_limit);
         assert!(content[1]["uri"].as_str().unwrap().starts_with("/api/workspaces/ws_1/session-media/"));
+    }
+
+    #[test]
+    fn extract_media_matches_mixed_case_mime_and_uri_prefix() {
+        let png = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 0];
+        let uri = format!("DATA:IMAGE/PNG;BASE64,{}", STANDARD.encode(png));
+        let digest = user_files::digest(uri.as_bytes());
+        let raw = serde_json::to_vec(&json!({
+            "data": {
+                "id": "msg_1",
+                "type": "assistant",
+                "content": [{
+                    "type": "tool",
+                    "state": { "content": [{ "type": "file", "mime": "IMAGE/PNG", "uri": uri }] }
+                }]
+            }
+        }))
+        .unwrap();
+        let (mime, bytes) = extract_media("msg_1", 0, 0, &digest, None, &raw).unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(bytes, png);
     }
 }

@@ -272,7 +272,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let identity = crate::files::host_identity(&path).ok()?;
         Some((path, identity))
     };
-    let initial_identity = send_input.then(&identity_now).flatten();
+    let allow_subfolder = send_input || defer_media.is_some();
+    let initial_identity = allow_subfolder.then(&identity_now).flatten();
     let input_checkout = match &initial_identity {
         Some((physical, _)) => {
             crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, physical, true).await
@@ -298,8 +299,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         },
         None => None,
     };
-    if (send_input && input_checkout.is_none())
-        || (!send_input && !crate::worktrees::owns(&app, &workspace, directory).await)
+    if (allow_subfolder && input_checkout.is_none())
+        || (!allow_subfolder && !crate::worktrees::owns(&app, &workspace, directory).await)
     {
         return Err(foreign());
     }
