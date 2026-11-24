@@ -85,11 +85,19 @@ pub(crate) fn mission_panel(s: &State) -> El {
         return rune::el();
     };
     let entry = &ui.entries[ui.active];
+    let delete_sessions = crate::settings::mission_delete_sessions(s);
     entry.missions.as_ref().map_or_else(rune::el, |panel| {
         missions::panel_body(
             panel,
             mission_edit,
-            missions::controls(panel, &ui.mission_lifecycle, &entry.key, control),
+            missions::controls(
+                panel,
+                &ui.mission_lifecycle,
+                &entry.key,
+                delete_sessions,
+                control,
+            ),
+            missions::cleanups(panel, &ui.mission_lifecycle, retry_cleanup),
         )
     })
 }
@@ -112,7 +120,26 @@ pub(crate) fn mission_confirmation(s: &State) -> Option<El> {
     missions::confirmation(&ui.mission_lifecycle, control)
 }
 
-fn control(s: &mut State, source: &missions::Source, gesture: missions::Gesture) {
+fn control(s: &mut State, source: &missions::Source, mut gesture: missions::Gesture) {
+    if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
+        return;
+    }
+    if let missions::Gesture::DeleteMission(_, delete_sessions) = &mut gesture {
+        let Some(current) = crate::settings::mission_delete_sessions(s) else {
+            return;
+        };
+        *delete_sessions = current;
+    }
+    let Some(ui) = &mut s.workspace else {
+        return;
+    };
+    let entry = &mut ui.entries[ui.active];
+    if let Some(panel) = &mut entry.missions {
+        panel.control(&entry.key, &mut ui.mission_lifecycle, source, gesture);
+    }
+}
+
+fn retry_cleanup(s: &mut State, cleanup: codenomad_client::missions::Cleanup) {
     if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
         return;
     }
@@ -121,7 +148,7 @@ fn control(s: &mut State, source: &missions::Source, gesture: missions::Gesture)
     };
     let entry = &mut ui.entries[ui.active];
     if let Some(panel) = &mut entry.missions {
-        panel.control(&entry.key, &mut ui.mission_lifecycle, source, gesture);
+        panel.retry_cleanup(&mut ui.mission_lifecycle, cleanup);
     }
 }
 
@@ -142,8 +169,8 @@ fn mission_edit(s: &mut State) -> (Option<&mut missions::Panel>, &mut TextEdit) 
 }
 
 pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
-    let finished = ui.mission_lifecycle.poll();
-    let mut changed = !finished.is_empty();
+    let finished = ui.mission_lifecycle.poll_all();
+    let mut changed = finished.changed();
     let mut selection_changed = false;
     let mounted = crate::shell::right_panel_visible(s);
     let current = &ui.entries[ui.active];

@@ -5,8 +5,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-const MAX_REVISION: u64 = (1 << 53) - 1;
-const CONTROL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+pub(super) const MAX_REVISION: u64 = (1 << 53) - 1;
+pub(super) const CONTROL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -51,11 +51,11 @@ impl LifecycleRequest {
     }
 }
 
-fn request_id_valid(id: &str) -> bool {
+pub(super) fn request_id_valid(id: &str) -> bool {
     !id.is_empty() && id == id.trim() && id.encode_utf16().count() <= 128
 }
 
-fn request_id() -> Result<String> {
+pub(super) fn request_id() -> Result<String> {
     let mut bytes = [0u8; 16];
     #[cfg(not(target_arch = "wasm32"))]
     getrandom::fill(&mut bytes).map_err(|_| "Mission request entropy unavailable")?;
@@ -132,7 +132,7 @@ pub struct LifecycleTarget {
 }
 
 impl LifecycleTarget {
-    fn matches(&self, value: &serde_json::Value) -> bool {
+    pub(super) fn matches(&self, value: &serde_json::Value) -> bool {
         value["id"] == self.mission
             && value["projectID"] == self.project
             && value["projectCanonical"] == self.canonical

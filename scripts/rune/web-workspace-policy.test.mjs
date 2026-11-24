@@ -121,3 +121,24 @@ test('Mission control is admitted only to the recorded lifecycle fixture target'
     assert(!p.allows('POST',path,{...intent,expectedRevision:0}))
   }
 })
+
+test('Mission recovery, reconciliation and deletion are admitted only to the fixture targets',()=>{
+  for(const missions of [false,true]){
+    const p=workspacePolicy({origin,project,missions}),input=creation('own')
+    p.allows('POST','/api/workspaces',input);p.admit(input,response('one','own'),origin)
+    const recover='/api/workspaces/one/missions/alpha/recover'
+    assert.equal(p.allows('POST',recover,{target:'coordinator',expectedRevision:5}),missions)
+    assert(!p.allows('POST',recover,{target:'report',expectedRevision:5,taskKey:'k'}))
+    assert(!p.allows('POST',recover.replace('/alpha/','/beta/'),{target:'coordinator',expectedRevision:5}))
+    for(const target of ['old','alpha']){
+      const path=`/api/workspaces/one/missions/${target}`
+      assert.equal(p.allows('GET',path),missions)
+      const del={expectedRevision:1,requestId:'request',deleteManagedSessions:false}
+      assert.equal(p.allows('DELETE',path,del),missions)
+      assert(!p.allows('DELETE',path,{...del,extra:true}))
+      assert(!p.allows('DELETE',path.replace('/one/','/outside/'),del))
+    }
+    assert(!p.allows('GET','/api/workspaces/one/missions/other'))
+    assert(!p.allows('DELETE','/api/workspaces/one/missions/other',{expectedRevision:1,requestId:'request',deleteManagedSessions:false}))
+  }
+})

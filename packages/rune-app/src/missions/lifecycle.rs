@@ -1,12 +1,16 @@
-use super::Panel;
+use super::{
+    Panel,
+    cleanup::{CleanupOwner, CleanupPolled, WorkspaceScope},
+    recovery::{self, Recovery, RecoveryPolled},
+};
 use crate::platform;
 use codenomad_client::{
     Receiver, Wake,
     backend::Backend,
     bounded,
     missions::{
-        ControlReceipt, LifecycleAction, LifecycleOutcome, LifecycleRequest, LifecycleTarget,
-        MapHeader, RunState, Status,
+        Cleanup, ControlReceipt, LifecycleAction, LifecycleOutcome, LifecycleRequest,
+        LifecycleTarget, MapHeader, RecoveryTarget, RunState, Status,
     },
 };
 use std::collections::HashMap;
@@ -15,16 +19,16 @@ const CAPACITY: usize = 64;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Source {
-    occurrence: String,
-    workspace: String,
-    mission: MissionKey,
-    target: LifecycleTarget,
+    pub(super) occurrence: String,
+    pub(super) workspace: String,
+    pub(super) mission: MissionKey,
+    pub(super) target: LifecycleTarget,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct MissionKey {
-    server: String,
-    id: String,
+    pub(super) server: String,
+    pub(super) id: String,
 }
 
 impl Source {
@@ -47,8 +51,24 @@ pub(crate) enum Gesture {
     Replay,
     StopDialog(u64),
     ConfirmStop(bool),
+    RecoverCoordinator(u64),
+    DeleteMission(u64, bool),
+    RetryDelete,
+    CancelDelete,
     ReadField(codenomad_client::missions::ControlPart, u64),
     ReceiptDetails(String, u64, Option<usize>),
+}
+
+pub(crate) struct Settled {
+    lifecycle: Vec<(MissionKey, LifecycleTarget, LifecycleOutcome)>,
+    recovery: RecoveryPolled,
+    cleanup: CleanupPolled,
+}
+
+impl Settled {
+    pub fn changed(&self) -> bool {
+        !self.lifecycle.is_empty() || self.recovery.changed || !self.cleanup.is_empty()
+    }
 }
 
 impl Panel {
@@ -56,6 +76,26 @@ impl Panel {
         let header = &self.detail.snapshot.as_ref()?.header;
         let source = Source::new(occurrence, &self.backend, header)?;
         Some((source, header))
+    }
+
+    pub(super) fn cleanup_scope(&self) -> Option<WorkspaceScope> {
+        Some(WorkspaceScope {
+            server: self.backend.client.server_identity()?.into(),
+            workspace: self.backend.workspace.clone(),
+            project: self.project()?.into(),
+        })
+    }
+
+    pub(crate) fn retry_cleanup(&mut self, owner: &mut Lifecycle, cleanup: Cleanup) {
+        let Some(scope) = self.cleanup_scope() else {
+            return;
+        };
+        if !self.cleanups.iter().any(|row| row.matches_saved(&cleanup)) {
+            return;
+        }
+        owner
+            .cleanup
+            .start_cleanup_retry(scope, cleanup, self.backend.clone(), self.wake.clone());
     }
 
     pub(crate) fn control(
@@ -75,8 +115,10 @@ impl Panel {
         let revision = header.root.revision;
         let ready = self.detail.authoritative();
         let working = self.observation.working();
+        let delete_busy = owner.cleanup.delete_busy(source);
         let allowed = |action, graceful| {
             ready
+                && !delete_busy
                 && (if action == LifecycleAction::Stop {
                     owner.can_stop(source, header)
                 } else {
@@ -145,6 +187,50 @@ impl Panel {
                 }
                 None
             }
+            Gesture::RecoverCoordinator(witnessed)
+                if ready
+                    && !delete_busy
+                    && witnessed == revision
+                    && !owner.unresolved(source, header)
+                    && !owner.busy(source)
+                    && (header.root.status == Status::Failed || owner.idle(source, header))
+                    && recovery::coordinator_eligible(header, &self.observation) =>
+            {
+                owner.recovery.start(
+                    source,
+                    revision,
+                    RecoveryTarget::Coordinator,
+                    self.backend.clone(),
+                    self.wake.clone(),
+                );
+                None
+            }
+            Gesture::DeleteMission(witnessed, delete_managed_sessions)
+                if ready
+                    && witnessed == revision
+                    && !owner.unresolved(source, header)
+                    && !owner.busy(source)
+                    && owner.cleanup.can_delete(source) =>
+            {
+                owner.cleanup.start_delete(
+                    source,
+                    revision,
+                    delete_managed_sessions,
+                    self.backend.clone(),
+                    self.wake.clone(),
+                );
+                None
+            }
+            Gesture::RetryDelete => {
+                owner
+                    .cleanup
+                    .retry_delete(source, self.backend.clone(), self.wake.clone());
+                None
+            }
+            Gesture::CancelDelete => {
+                owner.cleanup.cancel_delete(source);
+                None
+            }
             _ => None,
         };
         if let Some(request) = request {
@@ -162,20 +248,32 @@ impl Panel {
         &mut self,
         occurrence: &str,
         owner: &mut Lifecycle,
-        finished: &[(MissionKey, LifecycleTarget, LifecycleOutcome)],
+        settled: &Settled,
     ) {
+        let mut refreshed = false;
+        if let Some(scope) = self.cleanup_scope()
+            && settled.cleanup.refreshed_scopes.contains(&scope)
+        {
+            self.refresh();
+            (self.wake)();
+            refreshed = true;
+        }
         let Some((source, _)) = self.control_source(occurrence) else {
             return;
         };
-        if let Some((_, _, outcome)) = finished
+        if let Some((_, _, outcome)) = settled
+            .lifecycle
             .iter()
             .find(|(key, target, _)| *key == source.mission && *target == source.target)
         {
             if let LifecycleOutcome::Acknowledged(revision) = outcome {
                 self.detail.observe(&source.target.mission, *revision);
             }
-            self.refresh();
-            (self.wake)();
+            if !refreshed {
+                self.refresh();
+                (self.wake)();
+                refreshed = true;
+            }
         } else if !self.detail.busy()
             && let Some(request) = owner.readback(
                 &source,
@@ -193,6 +291,31 @@ impl Panel {
                 self.wake.clone(),
             );
         }
+        if let Some((_, _, revision)) = settled
+            .recovery
+            .admitted
+            .iter()
+            .find(|(key, target, _)| *key == source.mission && *target == source.target)
+        {
+            if let Some(revision) = revision {
+                self.detail.observe(&source.target.mission, *revision);
+            }
+            if !refreshed {
+                self.refresh();
+                (self.wake)();
+                refreshed = true;
+            }
+        }
+        if settled
+            .cleanup
+            .refreshed_missions
+            .iter()
+            .any(|(key, target)| *key == source.mission && *target == source.target)
+            && !refreshed
+        {
+            self.refresh();
+            (self.wake)();
+        }
     }
 }
 
@@ -202,6 +325,8 @@ pub(crate) struct Lifecycle {
     current: Option<Source>,
     pub confirmation: Option<(Source, u64)>,
     feedback: Option<(MissionKey, LifecycleTarget, &'static str)>,
+    pub(super) recovery: Recovery,
+    pub(super) cleanup: CleanupOwner,
 }
 
 struct Intent {
@@ -453,6 +578,14 @@ impl Lifecycle {
                 wake();
             }
         });
+    }
+
+    pub fn poll_all(&mut self) -> Settled {
+        Settled {
+            lifecycle: self.poll(),
+            recovery: self.recovery.poll(),
+            cleanup: self.cleanup.poll(),
+        }
     }
 
     pub fn poll(&mut self) -> Vec<(MissionKey, LifecycleTarget, LifecycleOutcome)> {

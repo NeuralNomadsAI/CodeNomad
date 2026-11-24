@@ -76,6 +76,10 @@ pub(crate) fn message_usage_visibility(s: &State) -> &'static str {
     s.settings.shared.borrow().usage_visibility(false)
 }
 
+pub(crate) fn mission_delete_sessions(s: &State) -> Option<bool> {
+    s.settings.shared.borrow().mission_delete_sessions()
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn fixture_message_usage(s: &mut State, mode: &str) {
     s.settings.shared.borrow_mut().fixture_usage(mode);

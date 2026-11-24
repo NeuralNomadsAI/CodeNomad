@@ -34,7 +34,7 @@ pub struct Summary {
     pub task_count: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Cleanup {
     #[serde(rename = "missionID")]
@@ -52,6 +52,20 @@ pub struct Cleanup {
     pub pending: u64,
     pub reasons: Vec<String>,
     pub document_pending: Option<bool>,
+}
+
+impl Cleanup {
+    pub fn is_pending(&self) -> bool {
+        self.pending > 0 || self.document_pending == Some(true)
+    }
+
+    pub fn matches_saved(&self, other: &Self) -> bool {
+        self.deletion_id == other.deletion_id
+            && self.mission_id == other.mission_id
+            && self.request_id == other.request_id
+            && self.expected_revision == other.expected_revision
+            && self.delete_managed_sessions == other.delete_managed_sessions
+    }
 }
 
 #[derive(Debug)]

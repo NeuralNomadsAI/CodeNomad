@@ -157,7 +157,7 @@ pub struct Header {
     #[serde(rename = "projectID")]
     pub(super) project: String,
     pub(super) project_canonical: String,
-    pub(super) coordinator_session_id: String,
+    pub coordinator_session_id: String,
     version: u8,
     #[serde(rename = "template")]
     _template: Template,
@@ -214,6 +214,12 @@ pub struct MapHeader {
     collections: HashMap<String, Collection>,
     pub(super) coordinator: Option<Value>,
     pub control: Option<ControlReceipt>,
+}
+
+impl MapHeader {
+    pub fn has_coordinator_actor(&self) -> bool {
+        self.coordinator.is_some()
+    }
 }
 
 pub struct DetailRead<T> {

@@ -200,6 +200,10 @@ impl Panel {
         self.supported == Some(true)
     }
 
+    pub(super) fn project(&self) -> Option<&str> {
+        self.project.as_deref()
+    }
+
     pub(crate) fn probe(&mut self) {
         if self.supported.is_some() || self.probe_attempted {
             return;

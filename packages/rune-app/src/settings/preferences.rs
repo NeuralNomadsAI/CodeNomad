@@ -493,6 +493,18 @@ impl Preferences {
             && !self.config.read_failed()
     }
 
+    pub fn mission_delete_sessions(&self) -> Option<bool> {
+        if !self.locale_ready() {
+            return None;
+        }
+        let doc = self.saved(Owner::Config)?;
+        Some(
+            doc["settings"]["missionDeleteSessions"]
+                .as_bool()
+                .unwrap_or(false),
+        )
+    }
+
     pub fn set_locale(&mut self, locale: &'static str) {
         if self.locale_ready() && self.backend.is_some() && Some(locale) != self.locale_display() {
             self.config.stage(Choice::Locale, locale);

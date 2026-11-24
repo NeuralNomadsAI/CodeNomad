@@ -55,6 +55,62 @@ export function lifecycleFixture(){
   }
 }
 
+export async function pressControl(page,target){
+  const viewport=page.viewportSize()
+  const locate=async()=>{
+    let previous=null
+    for(const until=Date.now()+20000;;){
+      const box=await target.evaluateAll(nodes=>{
+        if(nodes.length!==1)return null
+        const el=nodes[0]
+        if(!el.isConnected||el.disabled||el.getAttribute('aria-disabled')==='true')return null
+        const rect=el.getBoundingClientRect()
+        return {x:rect.x,y:rect.y,width:rect.width,height:rect.height}
+      }).catch(()=>null)
+      if(box&&box.width>0&&box.height>0){
+        if(previous&&previous.x===box.x&&previous.y===box.y&&previous.width===box.width&&previous.height===box.height)return box
+        previous=box
+      }else previous=null
+      assert(Date.now()<until,'Mission control remained unavailable or disabled')
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)))
+    }
+  }
+  const visible=box=>!viewport||(box.x>=-1&&box.y>=120&&box.x+box.width<=viewport.width+1&&box.y+box.height<=viewport.height-24)
+  let box=await locate()
+  if(viewport&&!visible(box)){
+    const anchorX=Math.min(Math.max(box.x+box.width/2,16),viewport.width-16)
+    const anchorY=viewport.height/2
+    await page.mouse.move(anchorX,anchorY)
+    for(let step=0;step<24&&!visible(box);step++){
+      const delta=box.y+box.height>viewport.height-24?360:-360
+      await page.mouse.wheel(0,delta)
+      // Rune throttles scroll-only a11y mirror sync to 150 ms; wait past it before reading rect.
+      await page.waitForTimeout(200)
+      box=await locate()
+    }
+    await page.waitForTimeout(200)
+    box=await locate()
+  }
+  if(viewport){
+    assert(box.x>=-1&&box.y>=-1&&box.x+box.width<=viewport.width+1&&box.y+box.height<=viewport.height+1,'Mission control outside viewport')
+  }
+  for(const until=Date.now()+20000;;){
+    const ready=await target.evaluateAll(nodes=>{
+      if(nodes.length!==1)return false
+      const el=nodes[0]
+      if(!el.isConnected||el.disabled||el.getAttribute('aria-disabled')==='true')return false
+      const rect=el.getBoundingClientRect()
+      if(rect.width<=0||rect.height<=0)return false
+      const hit=document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)
+      return hit===el||el.contains(hit)||hit?.tagName==='CANVAS'
+    }).catch(()=>false)
+    if(ready)break
+    assert(Date.now()<until,'Mission control failed hit-test readiness')
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)))
+  }
+  await target.click({force:true})
+}
+
 export async function checkLifecycle(page,messages,calls){
   const viewport=page.viewportSize()
   const button=(key,scope=page)=>scope.getByRole('button',{name:messages[key],exact:true})

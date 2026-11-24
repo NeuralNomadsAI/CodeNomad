@@ -37,10 +37,10 @@ impl<S> Scoped<S> {
 /// Panel content only. The Shell owns its occurrence, visibility and mounting.
 #[cfg(test)]
 pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
-    panel_body(ui, owner, rune::el())
+    panel_body(ui, owner, rune::el(), default_cleanups::<S>(ui))
 }
 
-pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El) -> El {
+pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El, cleanups: El) -> El {
     let heading = t("missions.control.mapLabel");
     let search = t("missionsPanel.picker.search");
     let partial = ui.has_more(Kind::Summaries);
@@ -87,42 +87,7 @@ pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El) -
         }
         body = body.child(actions).child(detail(ui, scoped.clone()));
     }
-    if !ui.cleanups.is_empty() {
-        body = body.child(
-            text(t("missions.progress.cleanupHistory"))
-                .text_role(TextRole::Small)
-                .pad(Space::Sm)
-                .role("heading"),
-        );
-        for cleanup in &ui.cleanups {
-            let counts = catalogue::format(
-                locale(),
-                "missions.cleanup.counts",
-                &[
-                    ("removed", &cleanup.removed.to_string()),
-                    ("retained", &cleanup.retained.to_string()),
-                    ("pending", &cleanup.pending.to_string()),
-                ],
-            );
-            let mut row = col()
-                .full_width()
-                .pad(Space::Sm)
-                .key(format!(
-                    "mission-cleanup-{}-{}",
-                    cleanup.mission_id, cleanup.deletion_id
-                ))
-                .child(
-                    text(&cleanup.objective)
-                        .text_role(TextRole::Small)
-                        .wrap_anywhere(),
-                )
-                .child(text(counts).text_role(TextRole::Small).wrap_anywhere());
-            if cleanup.document_pending == Some(true) {
-                row = row.child(theme::note(t("missions.cleanup.documentPending"), "status"));
-            }
-            body = body.child(row);
-        }
-    }
+    body = body.child(cleanups);
     body = body.child(page_footer(ui, scoped.clone(), Kind::Cleanups));
     let refresh = scoped.clone();
     let mut field = layout::hinted_field(&ui.filter, search).label(search);
@@ -162,6 +127,12 @@ pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El) -
                 .child(field),
         )
         .child(body)
+}
+
+#[cfg(test)]
+fn default_cleanups<S: 'static>(ui: &Panel) -> El {
+    let owner = super::cleanup::CleanupOwner::default();
+    super::cleanup::cleanup_view::<S>(ui, &owner, |_, _| {})
 }
 
 fn page_footer<S: 'static>(ui: &Panel, owner: Scoped<S>, kind: Kind) -> El {

@@ -8,7 +8,7 @@ use codenomad_client::{
     backend::Backend,
     bounded,
     history::Result,
-    missions::{Activity, ActorState, Coverage, DirectoryChanged},
+    missions::{Activity, ActorState, Coverage, DirectoryChanged, MapHeader, RunState, Status},
     runtime::timeout,
 };
 use rune::{El, col, text};
@@ -48,6 +48,36 @@ impl Observation {
                             | ActorState::Permission
                     )
             })
+    }
+
+    pub fn actor_state(&self, session_id: &str) -> Option<ActorState> {
+        self.pages.iter().find_map(|page| {
+            let actor = page
+                .actors
+                .iter()
+                .find(|actor| actor.session_id == session_id)?;
+            Some(if !self.current(page) {
+                ActorState::Unknown
+            } else {
+                actor.request.unwrap_or(actor.state)
+            })
+        })
+    }
+
+    pub fn has_actor(&self, session_id: &str) -> bool {
+        self.pages.iter().any(|page| {
+            page.actors
+                .iter()
+                .any(|actor| actor.session_id == session_id)
+        })
+    }
+
+    pub fn interrupted(&self, header: &MapHeader) -> bool {
+        header.root.status == Status::Active
+            && header.root.run_state.unwrap_or(RunState::Running) == RunState::Running
+            && !self.working()
+            && self.actor_state(&header.root.coordinator_session_id)
+                == Some(ActorState::IdleWithoutReport)
     }
 
     pub fn refresh(&mut self) {
@@ -185,6 +215,11 @@ impl Observation {
             }
         });
         true
+    }
+
+    #[cfg(test)]
+    pub(super) fn adopt_page(&mut self, offset: u64, page: Activity) -> bool {
+        self.adopt(offset, page)
     }
 
     fn adopt(&mut self, offset: u64, page: Activity) -> bool {

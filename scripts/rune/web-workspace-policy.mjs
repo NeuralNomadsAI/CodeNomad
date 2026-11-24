@@ -60,6 +60,13 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
         Number.isSafeInteger(body.expectedRevision)&&body.expectedRevision>0&&typeof body.requestId==='string'&&/^[a-f0-9-]{36}$/.test(body.requestId)&&
         Object.keys(body).every(key=>['action','expectedRevision','requestId','graceful'].includes(key))&&
         (body.graceful===undefined||body.action==='pause'&&body.graceful===true)
+      if(missions&&method==='POST'&&owned[2]==='missions/alpha/recover')return body?.target==='coordinator'&&
+        Number.isSafeInteger(body.expectedRevision)&&body.expectedRevision>0&&
+        Object.keys(body).every(key=>['target','expectedRevision'].includes(key))
+      if(missions&&method==='GET'&&(owned[2]==='missions/old'||owned[2]==='missions/alpha'))return true
+      if(missions&&method==='DELETE'&&(owned[2]==='missions/old'||owned[2]==='missions/alpha'))return Number.isSafeInteger(body?.expectedRevision)&&
+        body.expectedRevision>0&&claim(body)&&typeof body.deleteManagedSessions==='boolean'&&
+        Object.keys(body).every(key=>['expectedRevision','requestId','deleteManagedSessions'].includes(key))
       if(missions&&method==='POST'&&owned[2]==='missions/panel-page'){
         if(body?.source==='mission')return body.header===true&&['alpha','beta','gamma'].includes(body.missionID)||
           body.missionID==='gamma'&&body.field==='control'&&['receipts','pending'].includes(body.part)&&[0,50].includes(body.window?.offset)
