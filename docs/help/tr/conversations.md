@@ -49,6 +49,8 @@ Bunlar daha önceki yanıtlara yönelik düzenlemeler değil, sonraki gönderiml
 
 ## Taslaklar ve ekler {#drafts-attachments}
 
+Rune'da ekli bir görseli önizlemek için üzerine gelin veya **Görseli büyüt** seçeneğini kullanın.
+
 1. Seçili konuşmada yazın. Konuşma değiştirmek taslağı göndermez, korur.
 2. Bu cihazdaki dosyalar için ileti düzenleyicisinin **Diğer eylemler** menüsünde **Dosya ekle…** öğesini seçin ya da dosyaları bırakın veya yapıştırın; proje dosyalarını, aracıları veya becerileri seçmek için `@` yazın.
 3. Ek çiplerini inceleyin ve bir sonraki gönderimde kullanılması amaçlanmayan her şeyi kaldırın.
@@ -116,6 +118,8 @@ Kapatmak ana oturumu kesmeden bekleyen yan isteği iptal eder. Etkin konuşmadan
 Bir hedef kendi görüşmesine aittir: alt oturumlar ve çatallar hedefsiz başlar. OpenCode; oturumu durdurduğunuzda, bir çalıştırma başarısız olduğunda, ilerleme durduğunda, tur sınırına ulaşıldığında veya hizmet yeniden başladığında hedefi kendisi de duraklatır; devam etmek için sürdürün. Duraklatmak veya temizlemek, yapılmış işi geri almaz. Hedef yoksa veya hedef desteği olmayan bir OpenCode hizmetinde satır görünmez.
 
 ## Başarısız bir çalıştırmayı çatallayın, geri alın ve kurtarın {#fork-errors}
+
+Rune'da geri alma, boş yazma alanına özgün metni yerleştirir. Geçmişi geri yüklemek için konuşmanın üzerindeki **Son Mesajı Yinele** düğmesini kullanın. Geri alma ve araçları ve akıl yürütmeyi kaldırma, sunucu desteği gerektirir.
 
 1. Bir mesajda, bu noktadan sonra orijinali değiştirmeden bir konuşma oluşturmak için **Bu mesajdan sonra fork'la** öğesini seçin.
 2. Geri almak için **Buraya kadarki değişiklikleri geri al (mesajları siler)** öğesini dikkatlice inceleyin. Palet, aşamalı geri alma için **Son Mesajı Geri Al** ve **Son Mesajı Yinele** öğesini sunuyor. Geri alınabilecek kullanıcı mesajı yoksa geri alma, hazırlanmış geri alma yoksa yineleme devre dışıdır.

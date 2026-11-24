@@ -1,13 +1,15 @@
 //! Owned process containment for the native desktop host.
 //!
 //! Mirrors the desktop host's kill-on-close Windows job / POSIX process group.
-//! A Windows child is suspended until it belongs to its job. No process lookup
+//! Windows assigns the job as part of process creation. No process lookup
 //! by name or PID enumeration participates in ownership.
 #![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(unix)]
+use std::process::{Child, Stdio};
 use std::{
     io,
-    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus},
+    process::{Command, ExitStatus},
 };
 #[cfg(windows)]
 mod date;
@@ -22,20 +24,76 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use date::local_month_day;
+pub use date::{local_clock, local_month_day};
 pub use date::{local_date_time, local_time_zone};
 #[cfg(unix)]
 use unix::Family;
 #[cfg(windows)]
 use windows::Family;
 
+#[cfg(unix)]
+pub fn local_clock(seconds: i64) -> Option<(i32, i32, i32, i32, i32)> {
+    let time = libc::time_t::try_from(seconds).ok()?;
+    let mut out = std::mem::MaybeUninit::<libc::tm>::uninit();
+    // localtime_r writes the caller's buffer on success without sharing mutable calendar state.
+    let local = unsafe {
+        if libc::localtime_r(&time, out.as_mut_ptr()).is_null() {
+            return None;
+        }
+        out.assume_init()
+    };
+    Some((
+        local.tm_year + 1900,
+        local.tm_mon + 1,
+        local.tm_mday,
+        local.tm_hour,
+        local.tm_min,
+    ))
+}
+
 pub struct OwnedProcess {
+    #[cfg(unix)]
     child: Child,
+    #[cfg(windows)]
+    child: windows::Process,
     family: Family,
 }
 impl OwnedProcess {
-    /// Spawn only after configuring this child's containment boundary.
+    /// Start a managed backend with piped stdio and only the environment on `command`.
     pub fn spawn(command: &mut Command) -> io::Result<Self> {
+        #[cfg(windows)]
+        return windows::launch(command, None);
+        #[cfg(unix)]
+        {
+            let envs: Vec<_> = command
+                .get_envs()
+                .filter_map(|(key, value)| Some((key.to_os_string(), value?.to_os_string())))
+                .collect();
+            Self::spawn_unix(
+                command
+                    .env_clear()
+                    .envs(envs)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped()),
+            )
+        }
+    }
+
+    /// Start a fixture in the launcher's working directory, environment and stdio.
+    pub fn spawn_inherited(command: &mut Command, started: impl FnOnce(u32)) -> io::Result<Self> {
+        #[cfg(windows)]
+        return windows::launch(command, Some(Box::new(started)));
+        #[cfg(unix)]
+        {
+            let process = Self::spawn_unix(command)?;
+            started(process.id());
+            Ok(process)
+        }
+    }
+
+    #[cfg(unix)]
+    fn spawn_unix(command: &mut Command) -> io::Result<Self> {
         Family::prepare(command);
         let mut child = command.spawn()?;
         match Family::adopt(&mut child) {
@@ -50,13 +108,13 @@ impl OwnedProcess {
     pub fn id(&self) -> u32 {
         self.child.id()
     }
-    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
+    pub fn take_stdin(&mut self) -> Option<impl io::Write + Send + use<>> {
         self.child.stdin.take()
     }
-    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
+    pub fn take_stdout(&mut self) -> Option<impl io::Read + Send + use<>> {
         self.child.stdout.take()
     }
-    pub fn take_stderr(&mut self) -> Option<ChildStderr> {
+    pub fn take_stderr(&mut self) -> Option<impl io::Read + Send + use<>> {
         self.child.stderr.take()
     }
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {

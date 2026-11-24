@@ -10,6 +10,14 @@ pub(crate) enum Bookmark {
 pub(crate) struct Reading {
     following: bool,
     top: Option<(String, f32)>,
+    passage: Option<Passage>,
+}
+
+struct Passage {
+    message: String,
+    key: String,
+    offset: f32,
+    mode: Option<crate::settings::TranscriptRow>,
 }
 
 impl Default for Reading {
@@ -17,11 +25,16 @@ impl Default for Reading {
         Self {
             following: true,
             top: None,
+            passage: None,
         }
     }
 }
 
 impl Reading {
+    pub(super) fn hold(&mut self, message: String) {
+        self.following = false;
+        self.top = Some((message, 0.0));
+    }
     pub(super) fn settle(&mut self, attempted: &str, confirmed: Option<&str>) {
         if let Some((id, offset)) = &self.top
             && id == attempted
@@ -44,6 +57,7 @@ impl Reading {
     }
 
     pub(crate) fn restore(bookmark: &Bookmark, tx: &mut Tx) {
+        tx.instant();
         match bookmark {
             Bookmark::Latest => tx.scroll_to_bottom_instant("history"),
             Bookmark::Message { id, offset } => tx.scroll_key_to(id, *offset),
@@ -54,6 +68,66 @@ impl Reading {
         if height > 0.0 && y <= top && y + height > top {
             self.top = Some((id.into(), y - top));
         }
+    }
+}
+
+pub(crate) fn keep_passage(s: &State, tx: &mut Tx) {
+    let reading = s.transcript_display.reading();
+    if !reading.following
+        && let (Some((message, _)), Some(passage)) = (&reading.top, &reading.passage)
+        && *message == passage.message
+        && passage
+            .mode
+            .is_none_or(|row| crate::settings::transcript_mode(s, row) != "hidden")
+    {
+        let group = matches!(passage.mode, Some(crate::settings::TranscriptRow::Tool(_)))
+            .then(|| {
+                super::tool_groups::Groups::project(s).collapsed_anchor(s, message, &passage.key)
+            })
+            .flatten();
+        tx.scroll_key_to(
+            group.unwrap_or_else(|| format!("{message}/{}", passage.key)),
+            passage.offset,
+        );
+    }
+}
+
+pub(super) fn passage(
+    s: &State,
+    body: El,
+    message: &str,
+    key: String,
+    mode: Option<crate::settings::TranscriptRow>,
+    marker: Option<codenomad_client::timeline::Marker<'_>>,
+) -> El {
+    let scope = s.input_scope.clone();
+    let message = message.to_owned();
+    let body = body.key(key.clone());
+    let observe = move |s: &mut State, [_, y, _, height]: [f32; 4], tx: &mut Tx| {
+        if s.current_scope(&scope) {
+            let [_, top, _, viewport] = s.tool_diff_preferences.history_bounds.get();
+            let reading = s.transcript_display.reading_mut();
+            if viewport > 0.0 && y <= top && y + height > top {
+                reading.passage = Some(Passage {
+                    message: message.clone(),
+                    key: key.clone(),
+                    offset: y - top,
+                    mode,
+                });
+            } else if reading
+                .passage
+                .as_ref()
+                .is_some_and(|old| old.message == message && old.key == key)
+            {
+                reading.passage = None;
+            }
+        }
+        tx.live_only();
+    };
+    if let Some(marker) = marker {
+        crate::timeline::watch_block(s, marker, body, observe)
+    } else {
+        body.on_drawn_layout_tx(observe)
     }
 }
 
@@ -89,13 +163,23 @@ pub(crate) fn restore_position(s: &mut State, tx: &mut Tx) {
 
 pub(super) fn row(s: &State, id: String, view: El) -> El {
     let scope = s.input_scope.clone();
-    view.on_drawn_layout_tx(move |s: &mut State, rect, tx| {
-        if s.current_scope(&scope) {
-            let top = s.tool_diff_preferences.history_bounds.get()[1];
-            s.transcript_display.reading_mut().record(&id, top, rect);
-        }
-        tx.live_only();
-    })
+    let lease = super::receipts::Receipts::lease(s, &id);
+    let receipt = super::receipts::for_message(s, &id);
+    view.children(receipt)
+        .on_drawn_layout_tx(move |s: &mut State, rect, tx| {
+            if s.current_scope(&scope) {
+                let [_, top, _, height] = s.tool_diff_preferences.history_bounds.get();
+                s.transcript_display.reading_mut().record(&id, top, rect);
+                let visible = height > 0.0
+                    && rect[3] > 0.0
+                    && rect[1] < top + height
+                    && rect[1] + rect[3] > top;
+                if super::receipts::Receipts::demand(s, &id, visible, &lease) {
+                    tx.wake_after(std::time::Duration::ZERO);
+                }
+            }
+            tx.live_only();
+        })
 }
 
 #[cfg(test)]

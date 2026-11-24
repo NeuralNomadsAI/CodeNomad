@@ -42,9 +42,9 @@ struct Completion {
 }
 
 pub(crate) struct Panel {
-    backend: Backend,
-    reads: Reads,
-    wake: Wake,
+    pub(super) backend: Backend,
+    pub(super) reads: Reads,
+    pub(super) wake: Wake,
     out: Sender<Completion>,
     incoming: Receiver<Completion>,
     project: Option<String>,
@@ -63,6 +63,7 @@ pub(crate) struct Panel {
     pub(super) filter: TextEdit,
     pub(crate) selected: Option<String>,
     pub(super) detail: Detail,
+    pub(super) control_fields: super::control_fields::Fields,
     pub(super) observation: Observation,
 }
 
@@ -97,6 +98,7 @@ impl Panel {
             filter: TextEdit::new(""),
             selected: None,
             detail: Detail::default(),
+            control_fields: Default::default(),
             observation: Observation::default(),
         }
     }
@@ -111,6 +113,7 @@ impl Panel {
         } else {
             self.refresh_due = None;
             self.detail.cancel();
+            self.control_fields.cancel();
             self.observation.cancel();
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
@@ -376,7 +379,8 @@ impl Panel {
                 .iter()
                 .find(|row| row.id == *id)
                 .map(|row| row.revision);
-            changed |= self.observation.settle(revision, self.now, &self.wake);
+            let floor = self.detail.revision_floor(id, revision);
+            changed |= self.observation.settle(floor, self.now, &self.wake);
             changed |= self.detail.poll(
                 &self.backend,
                 project,
@@ -399,7 +403,7 @@ impl Panel {
             self.detail.clear();
             self.observation = Observation::default();
         }
-        changed
+        changed | self.poll_control_fields()
     }
 
     fn accept(&mut self, kind: Kind, read: Read, page: DirectoryPage) -> bool {
@@ -470,6 +474,7 @@ impl Panel {
 
     pub(super) fn select(&mut self, id: &str) {
         if self.selected.as_deref() != Some(id) && self.summaries.iter().any(|row| row.id == id) {
+            self.control_fields.cancel();
             self.detail.clear();
             self.observation = Observation::default();
             self.selected = Some(id.into());

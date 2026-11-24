@@ -107,12 +107,12 @@ fn outline_requires_an_explicit_end_and_limits_resident_structure() {
 #[cfg(not(target_arch = "wasm32"))]
 fn http_scan(steps: Vec<(&'static str, Option<Value>, Value, bool)>) -> Result<Outline> {
     http_probe(steps, async |backend, revision| {
-        backend.outline(&revision).await
+        backend.read_outline(&revision).await
     })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn http_probe<T>(
+pub(crate) fn http_probe<T>(
     steps: Vec<(&'static str, Option<Value>, Value, bool)>,
     run: impl AsyncFnOnce(Backend, std::sync::Arc<OutlineRevision>) -> T,
 ) -> T {
@@ -211,6 +211,167 @@ const OUTLINE: &str = "POST /api/workspaces/workspace/session-history/outline HT
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn saved_outline_revalidates_sparse_ranges_and_refuses_a_different_undo_boundary() {
+    const ROOT: &str = "/owned/project";
+    let session =
+        json!({"data":{"id":"session","projectID":"project","location":{"directory":ROOT}}});
+    let mut reverted = session.clone();
+    reverted["data"]["revert"] = json!({"messageID":"new"});
+    let cold = json!({"sessionID":"session"});
+    let first = page(-1, 40, Some(2000), vec![entry("old", 1)]);
+    let tail = page(40, 2000, None, vec![entry("gone", 1801)]);
+    let known = json!([
+        {"after":-1,"through":40,"digest":"a".repeat(64)},
+        {"after":40,"through":2000,"digest":"a".repeat(64)},
+    ]);
+    let mut unchanged = first.clone();
+    unchanged["entries"] = json!([]);
+    unchanged["checkpoints"][0]["changed"] = false.into();
+    let mut changed = page(40, 2000, None, vec![entry("new", 1802)]);
+    changed["checkpoints"][0]["digest"] = "b".repeat(64).into();
+    let cursor = json!({"after":40,"through":2000});
+    let mut after_undo = page(-1, 40, None, vec![entry("old", 1)]);
+    after_undo["total"] = 1.into();
+    let upgraded = after_undo.clone();
+    http_probe(
+        vec![
+            (RECORD, None, session.clone(), false),
+            (OUTLINE, Some(cold.clone()), first, false),
+            (RECORD, None, session.clone(), false),
+            (
+                OUTLINE,
+                Some(json!({"sessionID":"session","cursor":cursor})),
+                tail,
+                false,
+            ),
+            (RECORD, None, session.clone(), false),
+            (RECORD, None, session.clone(), false),
+            (
+                OUTLINE,
+                Some(json!({"sessionID":"session","known":known})),
+                unchanged,
+                false,
+            ),
+            (RECORD, None, session.clone(), false),
+            (
+                OUTLINE,
+                Some(json!({"sessionID":"session","cursor":cursor,"known":known})),
+                changed,
+                false,
+            ),
+            (RECORD, None, session, false),
+            (RECORD, None, reverted.clone(), false),
+            (OUTLINE, Some(cold.clone()), after_undo, false),
+            (RECORD, None, reverted.clone(), false),
+            (RECORD, None, reverted.clone(), false),
+            (OUTLINE, Some(cold), upgraded, false),
+            (RECORD, None, reverted, false),
+        ],
+        async |mut backend, revision| {
+            assert!(backend.client.attest("installation", vec![]));
+            backend.session_directory = Some(ROOT.into());
+            let first = backend
+                .read_outline_cached(&revision, Some(ROOT), None, |_| panic!("cold seed"))
+                .await
+                .unwrap();
+            let bytes = encode_saved_outlines(&[Arc::new(first)]);
+            let mut corrupted: Value = serde_json::from_slice(&bytes).unwrap();
+            corrupted[0][0] = "0".repeat(64).into();
+            assert!(decode_saved_outlines(&serde_json::to_vec(&corrupted).unwrap()).is_empty());
+            let saved = decode_saved_outlines(&bytes).pop().unwrap();
+            let current = backend
+                .read_outline_cached(&revision, Some(ROOT), Some(saved.clone()), |seed| {
+                    let seed = seed.unwrap();
+                    assert!(Arc::ptr_eq(&seed, &saved));
+                    assert_eq!(seed.entries[1].id, "gone");
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                current
+                    .entries
+                    .iter()
+                    .map(|e| e.id.as_str())
+                    .collect::<Vec<_>>(),
+                ["old", "new"]
+            );
+            let reverted = backend
+                .read_outline_cached(&revision, Some(ROOT), Some(Arc::new(current)), |seed| {
+                    assert!(seed.is_none(), "the previous undo boundary cannot be shown");
+                })
+                .await
+                .unwrap();
+            assert_eq!(reverted.entries.len(), 1);
+            let mut legacy = reverted;
+            legacy.entries[0].layout = None;
+            legacy.entries[0].omitted = None;
+            let current = backend
+                .read_outline_cached(&revision, Some(ROOT), Some(Arc::new(legacy)), |seed| {
+                    assert!(seed.unwrap().entries[0].layout.is_none());
+                })
+                .await
+                .unwrap();
+            assert!(current.entries[0].layout.is_some());
+        },
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_proposed_anchor_commits_only_with_a_current_admission() {
+    use crate::{bounded, stream, transport::Event};
+    use std::sync::{Arc, atomic::Ordering::SeqCst};
+    for (invalidate, superseded) in [(false, false), (true, false), (false, true)] {
+        let target = json!({"kind":"around","messageID":"target"});
+        http_probe(
+            vec![(
+                "POST /api/workspaces/workspace/session-history/window HTTP/1.1",
+                Some(json!({"sessionID":"session","target":target})),
+                json!({"status":"window","messages":[{"id":"target","type":"user","text":"Here","time":{"created":1}}],
+                "older":null,"newer":null,"latest":true,"resume":target}),
+                false,
+            )],
+            async |backend, _| {
+                let wire = Arc::new(stream::State::default());
+                wire.alive.store(true, SeqCst);
+                wire.upstream.store(true, SeqCst);
+                let (out, events) = bounded(1);
+                let (cancel, cancelled) = bounded(1);
+                let offer = Jump {
+                    ticket: 1,
+                    message: "target".into(),
+                    cancelled,
+                };
+                let (read, ()) = futures_lite::future::zip(
+                    offer.offer(&backend, &[], &wire, async |event| {
+                        out.send(event).await.is_ok()
+                    }),
+                    async {
+                        let Event::Anchor { ticket, admit, .. } = events.recv().await.unwrap()
+                        else {
+                            panic!("expected an anchor proposal");
+                        };
+                        assert_eq!(ticket, 1);
+                        if invalidate {
+                            wire.history_revision.fetch_add(1, SeqCst);
+                        }
+                        if superseded {
+                            drop(cancel);
+                            drop(admit);
+                        } else {
+                            assert_eq!(admit.accept(), !invalidate);
+                        }
+                    },
+                )
+                .await;
+                assert_eq!(read.is_some(), !invalidate && !superseded);
+            },
+        );
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn outline_http_uses_the_owned_scope_and_returned_cursor_only() {
     let record = json!({"data":{"id":"session"}});
     let result = http_scan(vec![
@@ -256,10 +417,14 @@ fn undo_between_pages_discards_the_entire_outline() {
             (RECORD, None, next_record, invalidate),
         ])
         .unwrap_err();
-        assert!(matches!(
-            error.downcast_ref::<Blocked>(),
-            Some(Blocked::Conflict)
-        ));
+        if invalidate {
+            assert!(matches!(
+                error.downcast_ref::<Blocked>(),
+                Some(Blocked::Conflict)
+            ));
+        } else {
+            assert!(error.is::<OutlineIdentityChanged>());
+        }
     }
 }
 

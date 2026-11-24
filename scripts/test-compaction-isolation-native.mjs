@@ -1,6 +1,7 @@
 // Explicit CLI only: no discovery, shared service, user database or external provider.
 import assert from "node:assert/strict"
-import { execFileSync, spawn } from "node:child_process"
+import { execFileSync } from "node:child_process"
+import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { createHash } from "node:crypto"
 import { createServer } from "node:http"
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises"
@@ -123,7 +124,7 @@ child.stdout.on("data", data => { output += data })
 child.stderr.on("data", data => { output += data })
 const streams = new AbortController(), events = [], measurements = []
 let phase = "setup"
-const report = { runtimeVersion, root, pid: child.pid, contextMiB, skipOutline, measurements, requests, outline: undefined,
+const report = { runtimeVersion, root, pid: await fixtureChildPid(child), contextMiB, skipOutline, measurements, requests, outline: undefined,
   pruningBundleSha256: createHash("sha256").update(bundle.outputFiles[0].contents).digest("hex") }
 let observer, client, releaseA, releaseB
 const options = () => ({ signal: AbortSignal.timeout(15_000) })
@@ -157,7 +158,7 @@ try {
   client = OpenCode.make({ baseUrl, headers: { Authorization: `Basic ${Buffer.from("opencode:private-compaction-fixture").toString("base64")}` } })
   const info = await client.server.info(options())
   assert.equal(info.version, runtimeVersion)
-  assert.equal(info.pid, child.pid, "The endpoint must belong to the child we created")
+  assert.equal(info.pid, report.pid, "The endpoint must belong to the child we created")
   observer = (async () => {
     for await (const event of client.event.subscribe({ signal: streams.signal })) {
       events.push({ phase, type: event.type, sessionID: event.data?.sessionID, created: event.created, received: Date.now() })

@@ -1,4 +1,5 @@
 export const markdownMessages = {
+  "markdown.link.loopbackOnHost": "サーバーではなくこの端末で開きます",
   "markdown.mermaid.diagram": "Mermaid 図",
   "markdown.mermaid.preview": "図を表示",
   "markdown.mermaid.source": "ソースを表示",

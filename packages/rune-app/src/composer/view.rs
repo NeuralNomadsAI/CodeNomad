@@ -49,6 +49,14 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
                 )
             }),
         )
+        .children((!s.messages.is_empty()).then(|| {
+            crate::components::button_tx(
+                "oldest",
+                t("messageSection.scroll.toFirstAriaLabel"),
+                s.paging || s.phase == Phase::Reconnecting || s.phase == Phase::Failed,
+                screen::action_tx(&scope, crate::chat::reader::oldest),
+            )
+        }))
         .child(crate::components::button_tx(
             "latest",
             t("rune.latest"),
@@ -84,6 +92,7 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
         .full_width()
         .pad(Space::Md)
         .separate(Space::Sm)
+        .children(crate::shell::status_permissions::confirmation(s))
         .child(col().content_direction().child(editor));
     let pasted = std::cell::OnceCell::new();
     let mut attachments = s

@@ -35,7 +35,12 @@ impl<S> Scoped<S> {
 }
 
 /// Panel content only. The Shell owns its occurrence, visibility and mounting.
+#[cfg(test)]
 pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
+    panel_body(ui, owner, rune::el())
+}
+
+pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El) -> El {
     let heading = t("missions.control.mapLabel");
     let search = t("missionsPanel.picker.search");
     let partial = ui.has_more(Kind::Summaries);
@@ -80,7 +85,7 @@ pub(crate) fn panel<S: 'static>(ui: &Panel, owner: Owner<S>) -> El {
                 }
             }));
         }
-        body = body.child(detail(ui, scoped.clone()));
+        body = body.child(actions).child(detail(ui, scoped.clone()));
     }
     if !ui.cleanups.is_empty() {
         body = body.child(
@@ -215,19 +220,23 @@ fn detail<S: 'static>(ui: &Panel, owner: Scoped<S>) -> El {
             .child(text(status(header.status, header.run_state)).text_role(TextRole::Small))
             .child(text(&header.excerpt).wrap_anywhere());
         if let Some(attention) = &snapshot.header.tasks.page.attention {
-            let remaining = snapshot.attention_remaining();
+            let (remaining, exact) = snapshot.attention_remaining();
             let counts = &attention.counts;
             if remaining > 0 {
                 let count = remaining.to_string();
-                let label = catalogue::format(
-                    locale(),
-                    if remaining == 1 {
-                        "missionsPanel.tasks.attention.one"
-                    } else {
-                        "missionsPanel.tasks.attention.other"
-                    },
-                    &[("count", &count)],
-                );
+                let label = if exact {
+                    catalogue::format(
+                        locale(),
+                        if remaining == 1 {
+                            "missionsPanel.tasks.attention.one"
+                        } else {
+                            "missionsPanel.tasks.attention.other"
+                        },
+                        &[("count", &count)],
+                    )
+                } else {
+                    t("missionsPanel.tasks.attention.show").into()
+                };
                 let help = catalogue::format(
                     locale(),
                     "missionsPanel.tasks.attention.counts",

@@ -10,6 +10,7 @@ pub(crate) mod login_start;
 mod prompt;
 pub mod proxy;
 mod proxy_body;
+mod proxy_write;
 pub mod scope;
 mod session_environment;
 pub mod update;
@@ -34,6 +35,8 @@ pub use daemon::Endpoint;
 
 /// A working connection is rediscovered after this interval; only a different daemon replaces it.
 const RECHECK: Duration = Duration::from_secs(30);
+// Default headers/body inactivity limit of the reference's Undici transport.
+const PROXY_IDLE: Duration = Duration::from_secs(300);
 
 pub struct Native {
     pub client: Client,
@@ -50,12 +53,30 @@ pub struct Native {
 static UNCONNECTED: std::sync::LazyLock<Url> = std::sync::LazyLock::new(|| Url::parse("http://127.0.0.1:0/").unwrap());
 
 impl Native {
+    #[cfg(test)]
+    pub(crate) fn test_connection(address: std::net::SocketAddr) -> Self {
+        let url = Url::parse(&format!("http://{address}")).unwrap();
+        Self {
+            client: Client::builder().no_proxy().build().unwrap(),
+            endpoint: RwLock::new(Some(Arc::new(Endpoint {
+                url,
+                password: "synthetic".into(),
+                version: String::new(),
+                pid: 0,
+            }))),
+            lifecycle: None,
+            validated: Mutex::new(Some(Instant::now())),
+            acquiring: Default::default(),
+        }
+    }
+
     /// The bench's fixture daemon when the positional launch injects it, else the CLI lifecycle of `binary`.
     pub fn connect(binary: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let client = Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(3))
+            .read_timeout(PROXY_IDLE)
             // The reference's fetch idle keep-alive (undici 4 s): hyper's 90 s default reused
             // sockets the daemon had already closed (ConnectionReset, a 502 in the UI).
             .pool_idle_timeout(Duration::from_secs(4))

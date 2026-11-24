@@ -32,14 +32,36 @@ pub(super) async fn relay(
         {
             out.send(Input::Workspace(epoch, event)).await?;
         }
+        let root = match native["type"].as_str() {
+            Some("server.connected") => Some(None),
+            Some("session.permissions") => native["data"]["sessionID"]
+                .as_str()
+                .filter(|id| crate::history::valid_id(id))
+                .map(|id| Some(id.to_owned())),
+            _ => None,
+        };
+        if let Some(root) = root {
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::PermissionModeChanged { root },
+            ))
+            .await?;
+        }
     } else if own && value["type"] == "instance.eventStatus" && value["status"] == "connected" {
         b.client.children().invalidate(b, None);
     }
     // A conversation move revokes its reader before any send and relays SessionMoved itself.
     if !(own && native["type"] == "session.moved" && native["data"]["sessionID"] == b.session)
-        && let Some(event) = mission_events::decode(&b.workspace, value)
+        && let Some(event) = mission_events::decode(&b.workspace, b.session.is_empty(), value)
     {
         out.send(Input::Workspace(epoch, event)).await?;
+    }
+    if own
+        && value["type"] == "instance.event"
+        && native["data"]["sessionID"] != b.session
+        && crate::content::FamilyChange::tracks(native)
+    {
+        return Ok(out.send(Input::Native(epoch, 0, native.clone())).await?);
     }
     let catalogues = (own && value["type"] == "instance.event")
         .then(|| match native["type"].as_str() {
@@ -72,6 +94,9 @@ pub(super) async fn relay(
     } else if own && value["type"] == "instance.eventStatus" {
         let ready = value["status"] == "connected";
         let was_ready = state.upstream.swap(ready, SeqCst);
+        if ready != was_ready {
+            state.history_revision.fetch_add(1, SeqCst);
+        }
         if ready && !was_ready {
             out.send(Input::Workspace(
                 epoch,
@@ -126,6 +151,12 @@ pub(super) async fn relay(
             out.send(Input::Workspace(epoch, event)).await?;
         }
         let version = state.version.fetch_add(1, SeqCst) + 1;
+        if matches!(
+            native["type"].as_str(),
+            Some("session.moved" | "session.deleted" | "session.revert.committed")
+        ) {
+            state.history_revision.fetch_add(1, SeqCst);
+        }
         if native["type"] == "session.moved"
             && native["data"]["sessionID"] == b.session
             && let Some((cancel, _)) = &state.placement

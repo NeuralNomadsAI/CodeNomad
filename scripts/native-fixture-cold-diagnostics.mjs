@@ -4,7 +4,7 @@ import { openSync, closeSync, fstatSync, readSync, realpathSync, opendirSync, wr
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, stopFixtureHandle } from "./native-fixture-guards.mjs"
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 
 const REGISTRATION = 32 * 1024, LOGS = 256 * 1024, OUTPUT = 512 * 1024
@@ -39,7 +39,8 @@ export function fixtureRedactor(values) {
 // A killable owned process also interrupts synchronous SQLite/native filesystem work.
 // Credentials travel only over private IPC, never argv or inherited environment.
 async function runWorker(input, child, onSecrets) {
-  const owned = () => validExpected(input.expected) && alive(child) && child.pid === input.expected.pid
+  const pid = child && await fixtureChildPid(child)
+  const owned = () => validExpected(input.expected) && alive(child) && pid === input.expected.pid
   input.ownerAvailable = owned()
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(SystemRoot|WINDIR)$/i.test(key)))
   const worker = spawn(process.execPath, ["--max-old-space-size=64", fileURLToPath(import.meta.url), "--cold-diagnostic-child"],
@@ -65,7 +66,7 @@ async function runWorker(input, child, onSecrets) {
     })
   } finally {
     clearTimeout(timer)
-    try { if (!exited) await stopFixtureChild(worker, closed) }
+    try { if (!exited) await stopFixtureHandle(worker, closed) }
     catch { worker.disconnect?.(); result = failure("collector-stop-unconfirmed") }
   }
   if (input.ownerAvailable && !owned()) return failure("owned-child-changed")

@@ -1,6 +1,6 @@
 // node --import tsx scripts/test-mission-event-readers-native.mjs <isolated-cli> <fresh-approved-scratch>
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, writeFile } from "node:fs/promises"
@@ -11,7 +11,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { build } from "esbuild"
 import { OpenCode } from "@opencode/client"
 import { nativePluginBuild } from "../packages/server/scripts/native-plugin-build.mjs"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const [cli, root] = process.argv.slice(2), approved = path.resolve(process.env.LOCALAPPDATA, "codenomad-agent-scratch/issue-926/impl")
 assert(cli && root && path.isAbsolute(cli) && path.isAbsolute(root) && !existsSync(root))
@@ -62,7 +62,7 @@ async function start() {
   receipt.serviceStarts++; generation++
   return async () => {
     await stopFixtureChild(child, closed)
-    receipt.stopped.push({ pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode })
+    receipt.stopped.push({ pid: await fixtureChildPid(child), exitCode: child.exitCode, signalCode: child.signalCode })
     await writeFile(path.join(root, `daemon-${generation}.log`), output)
   }
 }

@@ -1,0 +1,237 @@
+//! Background offer for the Preview feed, separate from the desktop installer.
+use std::{
+    cmp::Ordering,
+    sync::{LazyLock, Mutex},
+    time::Duration,
+};
+
+use reqwest::{Client, Url};
+use serde_json::{Value, json};
+use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
+
+use crate::{
+    Shared,
+    config::VERSION,
+    settings::{Kind, Settings},
+};
+
+const REPO: &str = "NeuralNomadsAI/CodeNomad";
+const INTERVAL: Duration = Duration::from_secs(15 * 60);
+
+struct State {
+    feed: &'static str,
+    update: Option<Value>,
+    generation: u64,
+}
+
+pub(crate) struct Monitor {
+    state: Mutex<State>,
+    changed: Notify,
+}
+
+impl Monitor {
+    pub(crate) fn new(settings: &Settings) -> Self {
+        let feed = read_feed(settings);
+        Self {
+            state: Mutex::new(State { feed, update: (feed == "stable").then_some(Value::Null), generation: 0 }),
+            changed: Notify::new(),
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> (&'static str, Option<Value>) {
+        let state = self.state.lock().unwrap();
+        (state.feed, state.update.clone())
+    }
+
+    pub(crate) fn update_feed(&self, settings: &Settings) {
+        let mut state = self.state.lock().unwrap();
+        let feed = read_feed(settings);
+        if state.feed != feed {
+            state.feed = feed;
+            state.generation = state.generation.wrapping_add(1);
+            if feed == "stable" {
+                state.update = Some(Value::Null);
+            }
+            self.changed.notify_one();
+        }
+    }
+}
+
+fn read_feed(settings: &Settings) -> &'static str {
+    super::update_feed(&settings.owner(Kind::Config, "server"))
+}
+
+pub(crate) async fn run(app: Shared, shutdown: CancellationToken) {
+    let monitor = &app.releases;
+    let url = crate::bench::releases_fixture().unwrap_or_else(|| Url::parse("https://api.github.com/").unwrap());
+    let repo = std::env::var("CODENOMAD_GITHUB_REPO").unwrap_or_else(|_| REPO.into());
+    let repo = repo.trim();
+    let parts: Vec<_> = repo.split('/').collect();
+    if parts.len() != 2 || parts.iter().any(|p| p.is_empty() || p.chars().any(char::is_whitespace)) {
+        return;
+    }
+    let mut client = Client::builder().user_agent("CodeNomad-CLI").timeout(Duration::from_secs(15));
+    if url.scheme() == "http" {
+        client = client.no_proxy().redirect(reqwest::redirect::Policy::none());
+    }
+    let Ok(client) = client.build() else { return };
+    loop {
+        let (feed, generation) = {
+            let state = monitor.state.lock().unwrap();
+            (state.feed, state.generation)
+        };
+        if feed == "preview" {
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => return,
+                _ = monitor.changed.notified() => continue,
+                result = latest(&client, url.clone(), repo, VERSION) => {
+                    if let Ok(update) = result {
+                        let mut state = monitor.state.lock().unwrap();
+                        if state.generation == generation && state.feed == "preview" {
+                            state.update = Some(update.unwrap_or(Value::Null));
+                        }
+                    }
+                }
+            }
+        }
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = monitor.changed.notified() => (),
+            _ = tokio::time::sleep(INTERVAL) => (),
+        }
+    }
+}
+
+fn tag(value: &Value) -> &str {
+    value["tag_name"].as_str().filter(|s| !s.is_empty()).or(value["name"].as_str()).unwrap_or_default()
+}
+fn version(tag: &str) -> &str {
+    let tag = crate::shared::js_trim(tag);
+    tag.strip_prefix(['v', 'V']).unwrap_or(tag)
+}
+fn timestamp(release: &Value) -> i64 {
+    release["published_at"]
+        .as_str()
+        .or(release["created_at"].as_str())
+        .and_then(|date| chrono::DateTime::parse_from_rfc3339(date).ok())
+        .map_or(0, |value| value.timestamp_millis())
+}
+fn listed(release: &Value) -> bool {
+    release["draft"] != true && !version(tag(release)).is_empty()
+}
+
+fn compare_versions(a: &str, b: &str) -> Ordering {
+    fn parse(input: &str) -> ([i64; 3], Option<&str>) {
+        let version = version(input);
+        let (core, suffix) = version.split_once('-').map_or((version, None), |(core, suffix)| (core, Some(suffix)));
+        let mut parts = core.split('.');
+        let numbers = std::array::from_fn(|_| {
+            let part = parts.next().unwrap_or_default().trim_start();
+            let start = usize::from(part.starts_with(['+', '-']));
+            let count = part.as_bytes()[start..].iter().take_while(|c| c.is_ascii_digit()).count();
+            part[..start + count].parse().unwrap_or(0)
+        });
+        (numbers, suffix.filter(|s| !s.is_empty()))
+    }
+    let (a, a_suffix) = parse(a);
+    let (b, b_suffix) = parse(b);
+    a.cmp(&b).then_with(|| match (a_suffix, b_suffix) {
+        (Some(a), Some(b)) => collation().compare(a, b),
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (None, None) => Ordering::Equal,
+    })
+}
+
+fn collation() -> &'static icu_collator::CollatorBorrowed<'static> {
+    static COLLATOR: LazyLock<icu_collator::CollatorBorrowed<'static>> = LazyLock::new(|| {
+        let locale = sys_locale::get_locale().and_then(|locale| locale.parse::<icu_locale_core::Locale>().ok());
+        icu_collator::Collator::try_new(locale.map(Into::into).unwrap_or_default(), Default::default()).unwrap_or_else(
+            |_| {
+                icu_collator::Collator::try_new(Default::default(), Default::default())
+                    .expect("the compiled root collation is available")
+            },
+        )
+    });
+    &COLLATOR
+}
+
+async fn get(client: &Client, url: Url, bytes: usize) -> Result<Value, ()> {
+    let response = client
+        .get(url)
+        .header("accept", "application/vnd.github+json")
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|_| ())?;
+    crate::opencode::read_json(response, bytes).await
+}
+
+async fn latest(client: &Client, mut base: Url, repo: &str, installed: &str) -> Result<Option<Value>, ()> {
+    base.path_segments_mut().map_err(|_| ())?.clear().push("repos").extend(repo.split('/')).push("releases");
+    let mut list_url = base.clone();
+    list_url.query_pairs_mut().append_pair("per_page", "30");
+    let page = get(client, list_url, 16 << 20).await?;
+    let list = page.as_array().map(Vec::as_slice).unwrap_or_default();
+    let Some(latest) = list
+        .iter()
+        .filter(|r| {
+            listed(r)
+                && r["assets"]
+                    .as_array()
+                    .is_some_and(|assets| assets.iter().any(|asset| asset["name"] == "latest.json"))
+        })
+        .reduce(|best, r| if timestamp(r) > timestamp(best) { r } else { best })
+    else {
+        return Ok(None);
+    };
+    let current = version(installed);
+    let newest_tag = tag(latest);
+    let newest = version(newest_tag);
+    if current.is_empty() || newest == current {
+        return Ok(None);
+    }
+    let known = if let Some(known) = list.iter().find(|r| listed(r) && version(tag(r)) == current) {
+        Some(timestamp(known))
+    } else {
+        base.path_segments_mut().map_err(|_| ())?.extend(["tags", &format!("v{current}")]);
+        get(client, base, 2 << 20)
+            .await
+            .ok()
+            .filter(|r| listed(r) && version(tag(r)) == current && timestamp(r) != 0)
+            .map(|r| timestamp(&r))
+    };
+    if !known.map_or_else(|| compare_versions(newest, installed).is_gt(), |known| timestamp(latest) > known) {
+        return Ok(None);
+    }
+    let fallback = || {
+        let mut url = Url::parse("https://github.com/").unwrap();
+        url.path_segments_mut().unwrap().clear().extend(repo.split('/')).extend(["releases", "tag", newest_tag]);
+        url.to_string()
+    };
+    let mut offer = json!({"version": newest, "tag": newest_tag,
+        "url": latest.get("html_url").filter(|v| !v.is_null()).cloned().unwrap_or_else(|| json!(fallback())),
+        "channel": if latest["prerelease"] == true { "preview" } else { "stable" }});
+    if let Some(date) = latest.get("published_at").filter(|v| !v.is_null()).or_else(|| latest.get("created_at")) {
+        offer["publishedAt"] = date.clone();
+    }
+    if let Some(notes) = latest.get("body") {
+        offer["notes"] = notes.clone();
+    }
+    Ok(Some(offer))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fallback_version_order_matches_collated_prereleases() {
+        use super::compare_versions;
+        assert!(compare_versions("v1.2.3-dev-éclair", "1.2.3-dev-z").is_lt());
+        assert!(compare_versions("1.2.3-dev-1-next", "1.2.3-dev-1+local").is_lt());
+        assert!(compare_versions("1.2.3-dev-10", "1.2.3-dev-2").is_lt());
+        assert!(compare_versions("1.2.3", "1.2.3-dev-local").is_gt());
+        assert!(compare_versions("1.2.4-dev-local", "1.2.3").is_gt());
+    }
+}

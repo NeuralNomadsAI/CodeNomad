@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.filter.includeSubsessions": "サブセッション",
   "session.pruning.maintenance_required": "現在の処理が完了してから、クリーンアップを再試行してください。",
   "session.pruning.unavailable": "CodeNomadを開き直して再試行してください。",
+  "session.messageActions.serverUnavailable": "このサーバーではこの操作はサポートされていません。",
   "session.pruning.conflict": "メッセージを再読み込みして内容を選択し直してください。",
   "session.pruning.not_deletable": "このセッションの完了済みのツールと推論のみ削除できます。",
   "session.pruning.unsupported_storage": "クリーンアッププラグインがこのセッションのストレージを検証できませんでした。クリーンアップは拒否されました。",

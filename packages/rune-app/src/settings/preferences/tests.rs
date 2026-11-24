@@ -2,6 +2,7 @@ use super::*;
 mod advanced;
 mod appearance;
 mod behavior;
+mod conversation;
 mod events;
 mod info;
 mod memory;
@@ -10,6 +11,7 @@ mod opencode;
 mod providers;
 mod shortcuts;
 mod tab_shortcuts;
+mod transcript;
 use codenomad_client::bounded;
 use std::time::Duration;
 use tokio::{
@@ -17,46 +19,6 @@ use tokio::{
     net::TcpListener,
     time::timeout,
 };
-mod conversation;
-
-#[test]
-fn fresh_profile_can_enable_usage_from_conversation_preferences() {
-    platform::block_on(async {
-        let (listener, mut prefs) = fixture().await;
-        assert_eq!(prefs.usage_visibility(false), "hidden");
-        prefs.set_usage_visibility("expanded");
-        assert_eq!(prefs.usage_visibility(true), "expanded");
-        assert_eq!(prefs.usage_visibility(false), "hidden");
-        prefs.poll();
-        let patch = request(&listener).await;
-        assert_eq!(patch.first, "PATCH /api/storage/config/ui HTTP/1.1");
-        assert_eq!(
-            patch.body,
-            json!({"settings":{"showUsageMetrics":true,"usageMetricsExpansion":"expanded"}})
-        );
-        patch.reply(200, json!({"settings":{"locale":"en","showUsageMetrics":true,"usageMetricsExpansion":"expanded"}})).await;
-        wait_until(|| {
-            prefs.poll();
-            prefs.usage_visibility(false) == "expanded"
-        })
-        .await;
-        prefs.set_usage_visibility("hidden");
-        prefs.poll();
-        let patch = request(&listener).await;
-        assert_eq!(patch.body, json!({"settings":{"showUsageMetrics":false}}));
-        patch
-            .reply(
-                200,
-                json!({"settings":{"showUsageMetrics":false,"usageMetricsExpansion":"expanded"}}),
-            )
-            .await;
-        wait_until(|| {
-            prefs.poll();
-            prefs.usage_visibility(false) == "hidden"
-        })
-        .await;
-    });
-}
 
 #[test]
 fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
@@ -75,7 +37,7 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
                 .is_ok()
         );
         assert!(crate::poll_chat(&mut root, 4));
-        super::super::poll(&mut root);
+        super::super::poll(&mut root, &mut rune::Tx::default());
         let (mut config, mut state) = (false, false);
         for _ in 0..5 {
             let read = request(&listener).await;
@@ -104,7 +66,7 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
         }
         assert!(config && state);
         wait_until(|| {
-            super::super::poll(&mut root);
+            super::super::poll(&mut root, &mut rune::Tx::default());
             let prefs = root.settings.shared.borrow();
             prefs.locale_ready() && prefs.palette_ready()
         })
@@ -130,13 +92,13 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
         };
         assert!(has_label(&runtime, "he"));
         runtime.update(|s, _| s.settings.shared.borrow_mut().set_locale("en"));
-        super::super::poll(&mut runtime.state);
+        super::super::poll(&mut runtime.state, &mut rune::Tx::default());
         let write = request(&listener).await;
         assert_eq!(write.first, "PATCH /api/storage/config/ui HTTP/1.1");
         assert_eq!(write.body, json!({"settings":{"locale":"en"}}));
         write.reply(200, json!({"settings":{"locale":"en"}})).await;
         wait_until(|| {
-            runtime.update_if(|s, _| super::super::poll(s));
+            runtime.update_if(super::super::poll);
             runtime.frame(0.02);
             has_label(&runtime, "en")
         })

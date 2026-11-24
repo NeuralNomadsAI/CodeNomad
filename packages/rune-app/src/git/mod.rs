@@ -12,10 +12,10 @@ mod view;
 pub(crate) use binding::poll_notices;
 pub(crate) use binding::{
     Binding, PlacementHold, SessionDirectory, can_place, close_preview, connected,
-    connected_placed, detach_session, diff_preferences, event, files_checkout, has_preview,
-    hold_placement, is_composing, mode, online, overlay_open, placeable, placement, placement_hold,
-    placement_unconfirmed, poll, project_opened, release_placement, session_directory,
-    set_diff_preferences, set_mode, show,
+    connected_placed, detach_session, diff_preferences, event, file_link_scope, files_checkout,
+    has_preview, hold_placement, is_composing, mode, online, overlay_open, placeable, placement,
+    placement_hold, placement_unconfirmed, poll, project_opened, release_placement,
+    session_directory, set_diff_preferences, set_mode, show,
 };
 #[cfg(test)]
 pub(crate) use binding::{
@@ -24,6 +24,23 @@ pub(crate) use binding::{
 };
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader, session_worktree};
+
+pub(crate) fn history_worktree<'a>(s: &'a crate::State, slug: &str) -> Option<&'a str> {
+    let inventory = s.git.owner.as_ref()?.inventory.as_ref()?;
+    if inventory.repository != Repository::Git {
+        return None;
+    }
+    let tree = inventory
+        .trees
+        .iter()
+        .find(|tree| tree.slug == slug && !tree.missing)?;
+    Some(
+        tree.label
+            .as_deref()
+            .or(tree.branch.as_deref())
+            .unwrap_or(&tree.slug),
+    )
+}
 
 use crate::platform::{collation::Collation, reads::Reads};
 use changes::{Changes, Id};
@@ -217,10 +234,16 @@ impl Ui {
             self.invalidate_index();
         }
         if self.backend.session != backend.session
+            || self.backend.session_directory != backend.session_directory
             || placement.is_some_and(|slug| self.session_slug != slug)
         {
             self.backend.session.clone_from(&backend.session);
-            self.session_slug = placement.unwrap_or("root").into();
+            self.backend
+                .session_directory
+                .clone_from(&backend.session_directory);
+            if let Some(slug) = placement {
+                self.session_slug = slug.into();
+            }
             self.close_preview();
             if self.slug != self.session_slug {
                 self.slug.clone_from(&self.session_slug);

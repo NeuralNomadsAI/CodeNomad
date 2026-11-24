@@ -10,11 +10,15 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     settings as chrome,
 };
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {
     General,
+    Conversation,
     OpenCode,
     Notifications,
     Shortcuts,
@@ -30,6 +34,7 @@ impl Section {
     fn label(self) -> &'static str {
         t(match self {
             Self::General => "settings.nav.general",
+            Self::Conversation => "settings.nav.chat",
             Self::OpenCode => "settings.nav.opencode",
             Self::Notifications => "settings.nav.notifications",
             Self::Shortcuts => "settings.nav.hotkeys",
@@ -53,10 +58,11 @@ impl Default for Section {
 pub(super) struct Panel {
     shown: bool,
     section: Section,
-    contrast_help: bool,
-    permissions: super::behavior::Permissions,
+    general: super::general::Controls,
+    behavior: super::behavior::General,
     memory_help_failed: bool,
     memory_editor: super::memory::editor::Editor,
+    transcript_picker: Option<super::TranscriptRow>,
     catalog: Catalog,
     scope: super::host_support::HostSupport,
     config_files: super::config_files::Editor,
@@ -89,6 +95,19 @@ impl Default for PermissionRequest {
 }
 
 impl Panel {
+    pub(super) fn commit_palette(
+        &self,
+        shared: &RefCell<Preferences>,
+        system_dark: bool,
+        paired: bool,
+    ) {
+        if self.shown && self.section == Section::General && paired {
+            self.general.commit_palette(shared, system_dark);
+        } else {
+            self.general.discard_palette();
+        }
+    }
+
     pub(super) fn poll_window_actions(&mut self, prefs: &Preferences, tx: &mut rune::Tx) -> bool {
         if self.shown && self.section == Section::Info {
             self.info.announce(prefs, tx);
@@ -200,17 +219,35 @@ impl Panel {
 
 pub(super) fn entry(touch: bool) -> El {
     rune_theme_codenomad::tabs::BarAction::Settings
-        .button(touch, t("settings.title"), |s: &mut State| {
-            let target = Target::capture(s);
-            let mut prefs = s.settings.shared.borrow_mut();
-            prefs.provider_target = target;
-            prefs
-                .memory
-                .show(s.settings.web.section == Section::General);
-            s.settings.web.shown = true;
-            (s.wake)();
-        })
+        .button(touch, t("settings.title"), open)
         .key("open-preferences")
+}
+
+fn open(s: &mut State) {
+    let target = Target::capture(s);
+    let mut prefs = s.settings.shared.borrow_mut();
+    prefs.provider_target = target;
+    prefs
+        .memory
+        .show(s.settings.web.section == Section::General);
+    s.settings.web.shown = true;
+    (s.wake)();
+}
+
+pub(super) fn open_providers(s: &mut State) {
+    let panel = &mut s.settings.web;
+    if panel.config_files.busy() {
+        return;
+    }
+    panel.section = Section::Providers;
+    panel.general.close();
+    panel.behavior.close();
+    panel.transcript_picker = None;
+    panel.advanced_help = None;
+    panel.recording_shortcut = false;
+    panel.shortcut_capture = Default::default();
+    panel.memory_help_failed = false;
+    open(s);
 }
 
 fn close(s: &mut State) {
@@ -223,9 +260,9 @@ fn close(s: &mut State) {
         return;
     }
     panel.shown = false;
-    panel.contrast_help = false;
+    panel.general.close();
     panel.advanced_help = None;
-    panel.permissions.close();
+    panel.behavior.close();
     panel.catalog.suspend();
     panel.stats.suspend();
     let mut prefs = s.settings.shared.borrow_mut();
@@ -252,6 +289,7 @@ fn close(s: &mut State) {
     prefs.provider_target = None;
     prefs.memory.show(false);
     panel.memory_help_failed = false;
+    panel.transcript_picker = None;
 }
 
 fn request_notification_permission(s: &mut State) {
@@ -291,6 +329,7 @@ pub(super) fn view(
     let local = panel.local(prefs);
     let sections: Vec<_> = [
         Section::General,
+        Section::Conversation,
         Section::OpenCode,
         Section::Notifications,
         Section::Shortcuts,
@@ -332,6 +371,7 @@ pub(super) fn view(
                 return;
             }
             panel.section = section;
+            panel.transcript_picker = None;
             panel.recording_shortcut = false;
             panel.shortcut_capture = Default::default();
             if section != Section::OpenCode {
@@ -348,37 +388,59 @@ pub(super) fn view(
             if panel.section != Section::Info {
                 panel.info.close();
             }
-            panel.contrast_help = false;
+            panel.general.close();
             panel.advanced_help = None;
-            panel.permissions.close();
+            panel.behavior.close();
             panel.memory_help_failed = false;
             prefs.memory.show(panel.section == Section::General);
         },
     );
     let mut layers = Vec::new();
     let body = match panel.section {
-        Section::General => col()
-            .full_width()
-            .child(general(panel, prefs, system_more))
-            .child(super::memory::view(
-                prefs,
-                panel.memory_help_failed,
-                |s: &mut State, desired| {
-                    super::memory::action(&mut s.settings.shared.borrow_mut(), desired)
-                },
-                |s: &mut State, failed| s.settings.web.memory_help_failed = failed,
-                |s: &mut State, edit| s.settings.web.memory_editor.open(edit),
-                |s: &mut State, action| {
-                    super::memory::review_action(&mut s.settings.shared.borrow_mut(), action);
-                },
-            ))
-            .child(
-                panel
-                    .permissions
-                    .view(&s.settings.shared, &mut layers, |s: &mut State| {
-                        &mut s.settings.web.permissions
-                    }),
-            ),
+        Section::General => {
+            let system_dark = cx.system_dark();
+            panel
+                .general
+                .close_palette_on_slot_change(prefs.dark(system_dark));
+            col()
+                .full_width()
+                .children(prefs.general_error().map(|error| {
+                    layout::action_row()
+                        .child(text(t(error)).wrap().role("alert"))
+                        .child(layout::button(
+                            t("sessionList.loadError.retry"),
+                            !prefs.can_retry(),
+                            |s: &mut State| {
+                                s.settings.shared.borrow_mut().retry_general();
+                            },
+                        ))
+                }))
+                .child(panel.general.view(
+                    &s.settings.shared,
+                    system_dark,
+                    system_more,
+                    &mut layers,
+                    |s: &mut State| &mut s.settings.web.general,
+                ))
+                .child(super::memory::view(
+                    prefs,
+                    panel.memory_help_failed,
+                    |s: &mut State, desired| {
+                        super::memory::action(&mut s.settings.shared.borrow_mut(), desired)
+                    },
+                    |s: &mut State, failed| s.settings.web.memory_help_failed = failed,
+                    |s: &mut State, edit| s.settings.web.memory_editor.open(edit),
+                    |s: &mut State, action| {
+                        super::memory::review_action(&mut s.settings.shared.borrow_mut(), action);
+                    },
+                ))
+                .child(panel.behavior.view(
+                    &s.settings.shared,
+                    false,
+                    &mut layers,
+                    |s: &mut State| &mut s.settings.web.behavior,
+                ))
+        }
         Section::Providers => {
             let available =
                 prefs.can_retry() && prefs.provider_target.as_ref().is_some_and(Target::online);
@@ -386,6 +448,27 @@ pub(super) fn view(
                 s.settings.web.catalog.toggle()
             })
         }
+        Section::Conversation => col()
+            .full_width()
+            .separate(Space::Sm)
+            .children(prefs.transcript_error().map(|error| {
+                layout::action_row()
+                    .child(text(t(error)).wrap().role("alert"))
+                    .child(layout::button(
+                        t("sessionList.loadError.retry"),
+                        !prefs.can_retry(),
+                        |s: &mut State| {
+                            s.settings.shared.borrow_mut().retry_transcript();
+                        },
+                    ))
+            }))
+            .child(super::conversation::content(
+                prefs,
+                panel.transcript_picker,
+                &mut layers,
+                |s: &mut State, row| s.settings.web.transcript_picker = row,
+                |s: &mut State, row, mode| s.settings.shared.borrow_mut().set_transcript(row, mode),
+            )),
         Section::Shortcuts => super::shortcuts::editor::view(
             &s.settings.shared,
             &panel.shortcut_filter,
@@ -548,31 +631,4 @@ fn open_remote(s: &mut State) {
         panel.info.close();
         panel.section = Section::Remote;
     }
-}
-
-fn general(panel: &Panel, prefs: &Preferences, system_more: bool) -> El {
-    chrome::card(
-        col()
-            .full_width()
-            .separate(Space::Sm)
-            .child(text(t("settings.appearance.colorScheme.title")).role("heading"))
-            .child(super::contrast::view(
-                prefs,
-                system_more,
-                panel.contrast_help,
-                |s: &mut State| s.settings.web.contrast_help = !s.settings.web.contrast_help,
-                |s: &mut State, choice| s.settings.shared.borrow_mut().set_contrast(choice),
-            ))
-            .children(prefs.general_error().map(|error| {
-                layout::action_row()
-                    .child(text(t(error)).wrap().role("alert"))
-                    .child(layout::button(
-                        t("sessionList.loadError.retry"),
-                        !prefs.can_retry(),
-                        |s: &mut State| {
-                            s.settings.shared.borrow_mut().retry_general();
-                        },
-                    ))
-            })),
-    )
 }

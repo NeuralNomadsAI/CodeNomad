@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { fixturePaginationGuard, stopFixtureChild, clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
-import { execFileSync } from "node:child_process"
+import { fixtureChildPid, fixturePaginationGuard, spawnFixtureChild, stopFixtureChild, clearFixtureGitEnvironment } from "./native-fixture-guards.mjs"
+import { execFileSync, spawn } from "node:child_process"
+import { once } from "node:events"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -22,6 +23,131 @@ test("fixture cleanup accepts an owned child closing after forced termination", 
   const child = { kill: signal => { signals.push(signal ?? "SIGTERM"); if (signal === "SIGKILL") closed() } }
   await stopFixtureChild(child, stopped, 5, 5)
   assert.deepEqual(signals, ["SIGTERM", "SIGKILL"])
+})
+
+test("Windows fixture cleanup refuses an unowned process instead of enumerating descendants", { skip: process.platform !== "win32" }, async () => {
+  const child = { spawnfile: "not-owned", pid: 123, kill: () => assert.fail("unowned process") }
+  await assert.rejects(stopFixtureChild(child, Promise.resolve()), /owned Job Object/)
+})
+
+const windows = { skip: process.platform !== "win32", timeout: 30_000 }
+const isolated = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(path|systemroot|windir)$/i.test(key)))
+const own = (source, ...args) => spawnFixtureChild(process.execPath, ["-e", source, ...args], {
+  env: isolated, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+})
+const alive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
+
+test("Windows job still owns a grandchild after both ancestors exit", windows, async () => {
+  const middleScript = `
+    const {spawn} = require("node:child_process")
+    const leaf = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {detached:true,windowsHide:true,stdio:"ignore"})
+    leaf.once("spawn", () => process.stdout.write(JSON.stringify([process.pid,leaf.pid]), () => process.exit(0)))
+  `
+  const root = own(`
+    const {spawn} = require("node:child_process")
+    const middle = spawn(process.execPath, ["-e", ${JSON.stringify(middleScript)}], {windowsHide:true,stdio:["ignore","pipe","inherit"]})
+    let result = ""
+    middle.stdout.on("data", data => result += data)
+    middle.once("close", code => {
+      if (code !== 0) return process.exit(2)
+      process.stdout.write(result)
+      process.stdin.resume()
+      process.stdin.once("end", () => process.exit(0))
+    })
+  `)
+  const stopped = once(root, "close")
+  try {
+    const [data] = await once(root.stdout, "data")
+    const [middle, leaf] = JSON.parse(data.toString())
+    const inner = await fixtureChildPid(root)
+    assert.equal(alive(middle), false)
+    assert.equal(alive(leaf), true)
+    root.stdin.end()
+    await stopped
+    assert.equal(root.exitCode, 0)
+    assert.equal(alive(inner), false)
+    assert.equal(alive(leaf), false)
+  } finally { await stopFixtureChild(root, stopped) }
+})
+
+test("Windows job teardown leaves a foreign PID alone even when the fixture advertises it as a descendant", windows, async () => {
+  const foreign = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    env: isolated, windowsHide: true, stdio: "ignore",
+  })
+  const foreignStopped = once(foreign, "close")
+  try {
+    const root = own(`console.log(process.argv[1]); setInterval(() => {}, 1000)`, String(foreign.pid))
+    const stopped = once(root, "close")
+    try {
+      const [data] = await once(root.stdout, "data")
+      assert.equal(Number(String(data).trim()), foreign.pid)
+      await stopFixtureChild(root, stopped)
+      assert.equal(alive(foreign.pid), true)
+    } finally { await stopFixtureChild(root, stopped) }
+  } finally {
+    foreign.kill()
+    await foreignStopped
+  }
+})
+
+test("Windows job permits immediate graceful shutdown over stdin", windows, async () => {
+  const root = own(`process.stdin.resume(); process.stdin.once("end", () => process.exit(0))`)
+  const stopped = once(root, "close")
+  await stopFixtureChild(root, stopped, 5000, 2000, { close: () => root.stdin.end() })
+  assert.equal(root.exitCode, 0)
+})
+
+test("Windows enclosing bench job keeps its daemon across backend exits but kills it on close", windows, async () => {
+  const root = own(`
+    const {spawn} = require("node:child_process")
+    const service = spawn(process.execPath, ["-e", "console.log('ready');setInterval(() => {}, 1000)"], {windowsHide:true,stdio:["ignore","pipe","ignore"]})
+    service.stdout.once("data", () => {
+      service.stdout.destroy()
+      const backend = spawn(process.execPath, ["-e", ""], {windowsHide:true,stdio:"ignore"})
+      backend.once("exit", code => {
+        console.log(JSON.stringify([code,service.pid]))
+        process.stdin.resume()
+      })
+    })
+  `)
+  const stopped = once(root, "close")
+  try {
+    const [data] = await once(root.stdout, "data")
+    const [backendExit, daemon] = JSON.parse(String(data))
+    assert.equal(backendExit, 0)
+    assert.equal(alive(daemon), true)
+    await stopFixtureChild(root, stopped)
+    assert.equal(alive(daemon), false)
+  } finally { await stopFixtureChild(root, stopped) }
+})
+
+test("Windows mobile enclosing job kills detached browser descendants when the IPC client times out", windows, async () => {
+  const launcherSource = fs.readFileSync(new URL("../packages/rune-app/fixtures/launcher-fixture.mjs", import.meta.url), "utf8")
+  assert.match(launcherSource, /--owned-mobile-worker/, "launcher-fixture wraps mobile IPC runs in an enclosing Windows job")
+  assert.match(launcherSource, /spawnFixtureChild\(process\.execPath,\[\.\.\.process\.execArgv,\.\.\.process\.argv\.slice\(1\),'--owned-mobile-worker'\]/)
+  const ipcClient = `
+    const {spawn} = require("node:child_process")
+    const browser = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {detached:true,windowsHide:true,stdio:"ignore"})
+    browser.once("spawn", () => process.send({browserPid: browser.pid}))
+    setInterval(() => {}, 1000)
+  `
+  const worker = own(`
+    const {spawn} = require("node:child_process")
+    const client = spawn(process.execPath, ["-e", ${JSON.stringify(ipcClient)}], {windowsHide:true,stdio:["ignore","ignore","ignore","ipc"]})
+    client.once("message", ({browserPid}) => {
+      console.log(JSON.stringify([client.pid, browserPid]))
+      setTimeout(() => { client.kill(); process.exit(1) }, 50)
+    })
+  `)
+  const stopped = once(worker, "close")
+  try {
+    const [data] = await once(worker.stdout, "data")
+    const [clientPid, browserPid] = JSON.parse(String(data))
+    const [code] = await stopped
+    assert.equal(code, 1)
+    assert.equal(alive(clientPid), false)
+    assert.equal(alive(browserPid), false)
+  } finally { await stopFixtureChild(worker, stopped) }
 })
 
 test("Missions native fixtures stop their owned serve with bounded escalation", () => {

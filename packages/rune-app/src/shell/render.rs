@@ -2,7 +2,9 @@
 use crate::platform;
 use crate::{State, chat, composer, settings, shell};
 use rune::{Cx, El};
-use rune_theme_codenomad::layout::{self, Layout};
+use rune_theme_codenomad::layout;
+#[cfg(target_arch = "wasm32")]
+use rune_theme_codenomad::layout::Layout;
 
 pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
     settings::render(s, cx, |cx| {
@@ -15,29 +17,29 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         if !s.screen.is_launcher() {
             composer::view::overlays(s, &mut layer);
         }
+        layer.extend(crate::workspace::mission_confirmation(s));
         shell::notifications::app_layers(s, &mut layer);
+        #[cfg(not(target_arch = "wasm32"))]
+        layer.extend(chat::authentication::dialog(s));
         let body = layout::with_overlays(base, layer);
         #[cfg(target_arch = "wasm32")]
-        if platform::pairing::required(s) {
-            return rune::col()
+        {
+            rune::col()
                 .full_width()
                 .full_height()
-                .child(platform::pairing::view(s))
-                .child(body.remaining());
+                .children(platform::pairing::required(s).then(|| platform::pairing::view(s)))
+                .child(body.remaining())
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(dialog) = chat::authentication::dialog(s) {
-            return rune::col()
-                .full_width()
-                .full_height()
-                .child(body)
-                .child(dialog);
-        }
         body
     })
     .on_window_focus(shell::notifications::focus_changed)
-    .on_layout_tx(|s, bounds, tx| {
-        chat::ToolDiffPreferences::layout(s, bounds, tx);
-        shell::notifications::measure_notices(s, bounds, tx);
+    .on_layout_tx(|s, bounds @ [_, _, w, h], tx| {
+        let changed = chat::ToolDiffPreferences::layout(s, w)
+            | crate::timeline::preview_window_layout(s, [w, h])
+            | shell::notifications::measure_notices(s, bounds, tx);
+        if !changed {
+            tx.live_only();
+        }
     })
 }

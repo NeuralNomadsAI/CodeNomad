@@ -74,16 +74,18 @@ pub struct Sessions {
 }
 
 impl Backend {
-    pub async fn server_id(&self) -> Result<String> {
-        let meta = read_json(
+    async fn server_meta(&self) -> Result<Value> {
+        read_json(
             self.client
                 .get(format!("{}api/meta", self.base))
                 .send()
                 .await?
                 .error_for_status()?,
         )
-        .await?;
-        let id = server_id(&meta)?;
+        .await
+    }
+
+    fn observe_service_usage(&self, meta: &Value, id: &str) {
         if self
             .client
             .server_identity()
@@ -93,12 +95,27 @@ impl Backend {
             self.client
                 .observe_service_usage(capabilities.iter().any(|cap| cap == "service-usage"));
         }
+    }
+
+    pub async fn server_id(&self) -> Result<String> {
+        let meta = self.server_meta().await?;
+        let id = server_id(&meta)?;
+        self.observe_service_usage(&meta, &id);
         Ok(id)
     }
 
     pub async fn attest_server(&self) -> Result<String> {
-        let id = self.server_id().await?;
-        if self.client.verify_server_identity(&id) {
+        let meta = self.server_meta().await?;
+        let id = server_id(&meta)?;
+        let capabilities = meta["capabilities"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        if self.client.attest(&id, capabilities) {
+            self.observe_service_usage(&meta, &id);
             Ok(id)
         } else {
             Err("Server identity changed".into())

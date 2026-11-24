@@ -32,14 +32,14 @@ impl DirectoryProof {
     }
 
     pub(crate) fn live(&self, physical: &Path) -> bool {
-        self.live_at(physical, None)
+        self.live_at(physical, None, false)
     }
 
     pub(crate) fn history_live(&self, workspace: &Path, physical: &Path) -> bool {
-        self.live_at(physical, Some(workspace))
+        self.live_at(physical, Some(workspace), false)
     }
 
-    fn live_at(&self, physical: &Path, history_root: Option<&Path>) -> bool {
+    fn live_at(&self, physical: &Path, history_root: Option<&Path>, receipt: bool) -> bool {
         let no_nested_git = |path: &Path, root: &Path| {
             let absent = |path: &Path| {
                 std::fs::symlink_metadata(path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
@@ -48,8 +48,8 @@ impl DirectoryProof {
                 (absent(&path.join("commondir")) && (absent(&path.join("objects")) || absent(&path.join("refs"))))
                     || head_cannot_name_repository(&path.join("HEAD"))
             };
-            path.starts_with(root)
-                && path.ancestors().take_while(|ancestor| *ancestor != root).all(|ancestor| {
+            within(root, path)
+                && path.ancestors().take_while(|ancestor| !within(ancestor, root)).all(|ancestor| {
                     let marker = ancestor.join(".git");
                     let marker_clear = match std::fs::symlink_metadata(&marker) {
                         Err(error) => error.kind() == std::io::ErrorKind::NotFound,
@@ -66,12 +66,93 @@ impl DirectoryProof {
             .is_none_or(|source| source.contains_live(&source.path) && no_nested_git(&source.path, source.registered()))
             && match &self.tree {
                 Some(tree) => {
-                    tree.contains_live(physical)
+                    (if receipt { tree.contains_receipt_location(physical) } else { tree.contains_live(physical) })
                         && (!(self.external || history_root.is_some()) || no_nested_git(physical, tree.registered()))
                 }
                 None => history_root.is_none_or(|root| no_nested_git(physical, root)),
             }
     }
+}
+
+pub(crate) struct ReceiptLocation {
+    proof: DirectoryProof,
+    directory: String,
+    path: PathBuf,
+    anchor: PathBuf,
+    identity: same_file::Handle,
+    inventory: Option<(u64, String)>,
+}
+
+impl ReceiptLocation {
+    pub(crate) fn live(&self, app: &App, workspace: &Workspace) -> bool {
+        resolve_directory(&self.directory).as_ref() == Some(&self.path)
+            && existing_directory(&self.path) == Some(self.anchor.as_path())
+            && same_file::Handle::from_path(&self.anchor).is_ok_and(|handle| handle == self.identity)
+            && self.proof.live_at(&self.path, self.proof.external.then_some(workspace.path.as_path()), true)
+            && self
+                .inventory
+                .as_ref()
+                .is_none_or(|(at, project)| app.linked_events.lock().unwrap().valid(*at, Some(project)))
+    }
+}
+
+pub(crate) async fn receipt_location(
+    app: &crate::Shared,
+    w: &Workspace,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    directory: &str,
+) -> Option<ReceiptLocation> {
+    if !crate::files::paths::local_absolute(directory) {
+        return None;
+    }
+    let path = resolve_directory(directory)?;
+    let anchor = existing_directory(&path)?.to_owned();
+    let identity = same_file::Handle::from_path(&anchor).ok()?;
+    let external = !within(&w.path, &path);
+    let mut revision = None;
+    let proof = if path == w.path {
+        DirectoryProof { tree: None, source: None, external }
+    } else {
+        let stamp = app.linked_events.lock().unwrap().stamp();
+        match super::inventory::receipt_catalogue(app, w, endpoint).await {
+            Some(inventory) => {
+                revision = Some((stamp, inventory.project.clone()));
+                registered_proof(&inventory, &path, external)?
+            }
+            None if !external && matches!(super::root_only(w).await, Ok(Some(true))) => {
+                DirectoryProof { tree: None, source: None, external }
+            }
+            None => return None,
+        }
+    };
+    let result = ReceiptLocation { proof, directory: directory.into(), path, anchor, identity, inventory: revision };
+    result.live(app, w).then_some(result)
+}
+
+pub(super) fn registered_proof(
+    inventory: &super::inventory::Catalogue,
+    path: &Path,
+    external: bool,
+) -> Option<DirectoryProof> {
+    let root = inventory.get("root").ok()?;
+    let tree = inventory
+        .trees
+        .iter()
+        .filter(|tree| tree.contains_receipt_location(path))
+        .max_by_key(|tree| tree.path.as_os_str().len())?;
+    let source = (tree.registered() != root.registered()).then(|| root.clone());
+    Some(DirectoryProof { tree: Some(tree.clone()), source, external })
+}
+
+pub(super) fn existing_directory(path: &Path) -> Option<&Path> {
+    for ancestor in path.ancestors() {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(metadata) => return metadata.is_dir().then_some(ancestor),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 fn head_cannot_name_repository(path: &Path) -> bool {
@@ -132,6 +213,74 @@ fn catalogue_proof(catalogue: &super::inventory::Catalogue, path: &Path, externa
         .max_by_key(|tree| tree.path.as_os_str().len())?;
     let source = (external || tree.registered() != root.registered()).then(|| root.clone());
     Some(DirectoryProof { tree: Some(tree.clone()), source, external })
+}
+
+pub(crate) struct LoadedOwnership {
+    inventory: Option<std::sync::Arc<super::inventory::Catalogue>>,
+    directory_only: bool,
+    revision: u64,
+}
+
+impl LoadedOwnership {
+    pub(crate) async fn load(
+        app: &crate::Shared,
+        w: &Workspace,
+        endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    ) -> Self {
+        let revision = app.linked_events.lock().unwrap().stamp();
+        let inventory = super::inventory::receipt_catalogue(app, w, endpoint).await;
+        let directory_only = inventory.is_none() && matches!(super::root_only(w).await, Ok(Some(true)));
+        Self { inventory, directory_only, revision }
+    }
+
+    pub(crate) fn opened_only(app: &App) -> Self {
+        Self { inventory: None, directory_only: false, revision: app.linked_events.lock().unwrap().stamp() }
+    }
+
+    pub(crate) fn cached(
+        app: &App,
+        workspace: &Workspace,
+        endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    ) -> Self {
+        let cache = app.linked_events.lock().unwrap();
+        Self { inventory: cache.cached(workspace.id, endpoint), directory_only: false, revision: cache.stamp() }
+    }
+
+    pub(crate) fn complete(&self) -> bool {
+        self.inventory.is_some() || self.directory_only
+    }
+
+    pub(crate) fn valid(&self, app: &App) -> bool {
+        app.linked_events.lock().unwrap().valid(self.revision, self.inventory.as_ref().map(|c| c.project.as_str()))
+    }
+
+    pub(crate) fn owns(&self, app: &App, w: &Workspace, directory: &str) -> bool {
+        if !crate::files::paths::local_absolute(directory) {
+            return false;
+        }
+        let Some(path) = resolve_directory(directory) else { return false };
+        if existing_directory(&path).is_none() {
+            return false;
+        }
+        let external = !within(&w.path, &path);
+        if path == w.path || !external && self.directory_only {
+            return true;
+        }
+        self.inventory
+            .as_ref()
+            .and_then(|inventory| registered_proof(inventory, &path, external))
+            .is_some_and(|proof| proof.live_at(&path, None, true))
+            && self.valid(app)
+    }
+}
+
+pub(crate) async fn owns_loaded(
+    app: &crate::Shared,
+    w: &Workspace,
+    endpoint: &std::sync::Arc<crate::opencode::Endpoint>,
+    directory: &str,
+) -> bool {
+    LoadedOwnership::load(app, w, endpoint).await.owns(app, w, directory) && app.native.current(endpoint)
 }
 
 /// Request-local validated checkout inventory for history fan-out and provenance.

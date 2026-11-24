@@ -4,6 +4,8 @@ pub(crate) mod render;
 mod right_panel;
 mod shortcuts;
 mod sidebar;
+pub(crate) mod status_permissions;
+pub(crate) mod status_usage;
 
 use crate::{Phase, Screen, State, components::button_tx, launcher_view, strings::t, workspace};
 use rune::{Cx, El, Tx, col, text};
@@ -120,6 +122,12 @@ pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> 
     use rune::{Key, Mods};
     if shortcuts::modal_open(s) {
         return false;
+    }
+    if crate::timeline::search::keys(s, event, tx) {
+        return true;
+    }
+    if event.key == Key::Escape && crate::timeline::dismiss_preview(s) {
+        return true;
     }
     if event.key == Key::Tab && !event.mods.ctrl && !event.mods.cmd && !event.mods.alt {
         return s.shell.wrap_floating_focus(event.mods.shift, tx);

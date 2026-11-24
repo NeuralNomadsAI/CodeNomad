@@ -165,6 +165,7 @@ impl Backend {
         let mut backend = self.clone();
         backend.workspace = project.id.clone();
         backend.session = id.into();
+        backend.session_directory = Some(directory.into());
         backend.fresh_mode = fresh;
         backend.client_id = crate::http::client_id()?;
         Ok((backend, info, placement.unwrap_or("root").into()))

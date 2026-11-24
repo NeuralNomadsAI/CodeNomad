@@ -87,6 +87,7 @@ impl Policy {
                 "Chord",
                 "ChordKey",
                 "ChordMod",
+                "TouchPhase",
                 "PhysicalInput",
                 "PhysicalKeyCode",
                 "Mods",

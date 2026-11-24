@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.control.reader.loading": "Lecture du contenu…",
   "missions.control.form.loading": "Chargement du formulaire…",
   "missions.control.run.checking": "Vérification de l’action…",
+  "missions.control.run.superseded": "Une action plus récente a remplacé celle-ci.",
   "missions.control.run.pending.start": "Démarrage de la mission…",
   "missions.control.run.pending.pause": "Mise en pause de la mission…",
   "missions.control.run.pending.interrupt": "Interruption de la mission…",

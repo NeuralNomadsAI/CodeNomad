@@ -1,6 +1,6 @@
 // Explicit interactive qualification against installed OpenCode. Only owned session copies mutate.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
+import {fixtureChildPid,spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import {mkdir,writeFile} from 'node:fs/promises'
 import {randomUUID,createHash} from 'node:crypto'
 import path from 'node:path'
@@ -78,6 +78,6 @@ try{
   await save();await writeFile(path.join(profile,'session.json'),JSON.stringify({profile,directory,sourceID:source.id,longID:fork.id,longTitle,newTitle}))
   child=spawn(clientBinary,[],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...await privateEnvironment(profile),RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'interactive-rune-owned-backend',RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
   child.stdout.on('data',d=>log+=d);child.stderr.on('data',d=>{log+=d;console.error(String(d).trim())})
-  console.log(JSON.stringify({type:'INTERACTIVE_READY',profile,directory,longTitle,newTitle,pid:child.pid}))
+  console.log(JSON.stringify({type:'INTERACTIVE_READY',profile,directory,longTitle,newTitle,pid:await fixtureChildPid(child)}))
   await new Promise(r=>child.on('exit',r));clearInterval(guard)
 }finally{stopped=true;observer?.abort();if(child?.exitCode===null)child.kill();server.stdin.end();await Promise.race([new Promise(r=>server.on('exit',r)),new Promise(r=>setTimeout(r,3000))]);if(server.exitCode===null)server.kill();await save();await writeFile(path.join(profile,'rust.log'),log)}

@@ -1,6 +1,6 @@
 // Explicit isolated CLI + local deterministic provider. Never discovers the shared service.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { createServer } from "node:http"
 import { mkdtemp, mkdir, writeFile, readFile, realpath } from "node:fs/promises"
 import path from "node:path"
@@ -12,7 +12,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { tsImport } from "tsx/esm/api"
 import Fastify from "fastify"
 import pino from "pino"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 import { fixtureChildState, observeFixtureReload } from "./native-fixture-diagnostics.mjs"
 import { performance } from "node:perf_hooks"
 

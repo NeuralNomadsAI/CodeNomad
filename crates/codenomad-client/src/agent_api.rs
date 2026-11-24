@@ -18,16 +18,49 @@ pub struct Permission {
     pub resources: Vec<String>,
     pub message: String,
     pub supported: bool,
+    pub tool: Option<ToolSource>,
 }
 #[derive(Clone)]
 pub struct Form {
     pub id: String,
     pub title: String,
     pub fields: Vec<Value>,
+    pub tool: Option<ToolSource>,
+    pub infer_websearch: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ToolSource {
+    pub message: String,
+    pub call: String,
+}
+
+fn target(message: &Value, call: &Value) -> Option<ToolSource> {
+    let id = |value: &Value| value.as_str().filter(|id| valid_id(id)).map(str::to_owned);
+    Some(ToolSource {
+        message: id(message)?,
+        call: id(call)?,
+    })
+}
+
+fn tool_source(row: &Value) -> Option<ToolSource> {
+    let source = &row["source"];
+    if source["type"] != "tool" {
+        return None;
+    }
+    let (message, call) = (source["messageID"].as_str()?, source["id"].as_str()?);
+    if !valid_id(message) || call.is_empty() || call.len() > 512 {
+        return None;
+    }
+    Some(ToolSource {
+        message: message.into(),
+        call: call.into(),
+    })
 }
 pub struct Snapshot {
     pub models: Option<Vec<Model>>,
     pub current: Option<Value>,
+    pub directory: Option<String>,
     pub session_known: bool,
     pub usage: Option<crate::content::Usage>,
     pub running: bool,
@@ -182,16 +215,16 @@ impl Backend {
             .ok()
             .map(|v| v["data"]["model"].clone())
             .filter(|v| !v.is_null());
+        let directory = session
+            .as_ref()
+            .ok()
+            .and_then(|v| v["data"]["location"]["directory"].as_str());
         let running = session.as_ref().ok().is_some_and(|v| {
             v["data"]["time"]["busy"].as_f64().unwrap_or(0.0)
                 > v["data"]["time"]["idle"].as_f64().unwrap_or(0.0)
         });
         let models = if catalog {
-            if let Some(directory) = session
-                .as_ref()
-                .ok()
-                .and_then(|v| v["data"]["location"]["directory"].as_str())
-            {
+            if let Some(directory) = directory {
                 let response = self
                     .client
                     .get(self.control_url("model"))
@@ -222,6 +255,9 @@ impl Backend {
         Snapshot {
             models,
             current,
+            directory: directory
+                .filter(|directory| crate::absolute_server_path(directory))
+                .map(str::to_owned),
             session_known: session.is_ok(),
             usage: session
                 .as_ref()
@@ -392,6 +428,15 @@ pub fn permissions(value: &Value, session: &str) -> Result<Vec<Permission>> {
                 .take(4096)
                 .collect(),
             supported: resources.len() <= 64,
+            tool: target(
+                &row["source"]["messageID"],
+                row.get("partID")
+                    .or_else(|| row.get("partId"))
+                    .or_else(|| row["metadata"].get("partID"))
+                    .or_else(|| row["metadata"].get("partId"))
+                    .unwrap_or(&row["source"]["id"]),
+            )
+            .or_else(|| tool_source(row)),
         });
     }
     Ok(out)
@@ -412,10 +457,33 @@ pub fn forms(value: &Value, session: &str) -> Result<Vec<Form>> {
             .filter(|v| !v.is_empty() && v.len() <= 32)
             .ok_or("invalid question fields")?
             .clone();
+        let metadata = &row["metadata"];
+        let source = metadata
+            .get("tool")
+            .filter(|v| v.is_object())
+            .or_else(|| metadata.get("source").filter(|v| v.is_object()))
+            .unwrap_or(&Value::Null);
+        let explicit = |keys: &[&str]| {
+            keys.iter()
+                .find_map(|key| source.get(*key))
+                .or_else(|| {
+                    keys.iter()
+                        .filter(|key| **key != "id")
+                        .find_map(|key| metadata.get(*key))
+                })
+                .unwrap_or(&Value::Null)
+        };
+        let tool = target(
+            explicit(&["messageID", "messageId"]),
+            explicit(&["id", "callID", "callId"]),
+        )
+        .or_else(|| tool_source(row));
         out.push(Form {
             id,
             title: string(&row["title"], 4096)?,
             fields,
+            infer_websearch: tool.is_none() && metadata["kind"] == "websearch.provider",
+            tool,
         });
     }
     Ok(out)

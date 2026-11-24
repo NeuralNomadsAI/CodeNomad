@@ -2,7 +2,6 @@
 // node --import tsx scripts/test-native-mission-schedule-product.mjs <cli> <fresh-scratch> --parent-ready --kinds=at,in
 // --kinds=every --natural-every uses the real >=15-minute product interval.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
@@ -12,7 +11,7 @@ import { DatabaseSync } from "node:sqlite"
 import { setTimeout as delay } from "node:timers/promises"
 import { parseArgs } from "node:util"
 import { fileURLToPath } from "node:url"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 import { fixtureCliVersion } from "./native-fixture-cli-version.mjs"
 import { collectColdFailure } from "./native-fixture-cold-diagnostics.mjs"
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
@@ -115,7 +114,7 @@ async function journey(kind) {
       let raw = ""; for await (const bytes of request) { raw += bytes; if (raw.length > 32768) throw Error("barrier-input-bound") }
       const input = JSON.parse(raw)
       assert.equal(input.document?.missionID, result.documentID)
-      assert.equal(input.request?.registrationFile, registrationFile); assert.equal(input.request?.incarnation?.pid, child.pid)
+      assert.equal(input.request?.registrationFile, registrationFile); assert.equal(input.request?.incarnation?.pid, await fixtureChildPid(child))
       assert.equal(input.request?.wake?.missionID, result.documentID)
       assert(!input.sessionID.startsWith("ses_cn_schedule_"), "Only the original business admission may be held")
       if (request.url === "/pending") { pendingHandoff = { ...input, enteredAt: Date.now() }; return response.writeHead(200, { "content-type": "application/json" }).end('{"observed":true}') }
@@ -244,7 +243,7 @@ async function journey(kind) {
       nativeErrorLength = Math.min(nativeErrorLength, 32000)
     })
     const publicInfo = await until(async () => {
-      try { const info = readNativeScheduleIncarnation(registrationFile); return info.pid === child.pid ? info : false } catch { return false }
+      try { const info = readNativeScheduleIncarnation(registrationFile); return info.pid === await fixtureChildPid(child) ? info : false } catch { return false }
     }, 40000)
     assert.notEqual(new URL(publicInfo.url).port, "28894")
     result.serviceStarts.push({ ...publicInfo, cold, at: Date.now() })
@@ -256,14 +255,14 @@ async function journey(kind) {
     // process; native mutations and the cold no-client window keep their gates.
     endpoint = await until(async () => {
       signal?.throwIfAborted()
-      assert.equal(readNativeScheduleIncarnation(registrationFile).pid, child.pid)
+      assert.equal(readNativeScheduleIncarnation(registrationFile).pid, await fixtureChildPid(child))
       return Service.discover({ file: registrationFile })
     }, 40000)
     signal?.throwIfAborted()
     assert(endpoint && endpoint.url === readNativeScheduleIncarnation(registrationFile).url)
     client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
     if (endpoint.auth?.password) { secrets.add(endpoint.auth.password); secrets.add(Buffer.from(`${endpoint.auth.username}:${endpoint.auth.password}`).toString("base64")) }
-    const info = await client.server.info({ signal }); assert.equal(info.version, cliVersion); assert.equal(info.pid, child.pid)
+    const info = await client.server.info({ signal }); assert.equal(info.version, cliVersion); assert.equal(info.pid, await fixtureChildPid(child))
     if (endpoint.auth?.password) credentialsChild = child
     rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   }
@@ -618,7 +617,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     await until(() => calls.some(call => call.sessionID === positive.document.pending.coordinatorSessionID))
     assert(positive.schedules.some(item => item.role === "reconciliation" && item.status === "active"), "Last pending passage requires its live auxiliary")
     for (const guardID of [pausedID, stoppedID]) { const guard = snapshot(guardID); assert.equal(guard.document.launchedCount, 0); assert.equal(guard.sessions.length, 0) }
-    if (values.live) { assert.equal(result.serviceStarts.length, 1); assert.equal(child.pid, result.serviceStarts[0].pid); result.naturalLivePositiveAt = Date.now() }
+    if (values.live) { assert.equal(result.serviceStarts.length, 1); assert.equal(await fixtureChildPid(child), result.serviceStarts[0].pid); result.naturalLivePositiveAt = Date.now() }
     else result.naturalColdPositiveAt = Date.now()
     result.admittedPositiveBeforeAnyExternalClient = !values["first-admission-race"]
     await save(values.live ? "natural-live-positive" : "natural-cold-positive", positive)
@@ -634,7 +633,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       })
       assert(!reportedInputs.has(pending.messageID)); assert(holdBusiness)
       await save("before-pending-crash", beforeCrash)
-      const killedPID = child.pid, owned = children.find(entry => entry.child === child)
+      const killedPID = await fixtureChildPid(child), owned = children.find(entry => entry.child === child)
       child.kill("SIGKILL"); await owned.closed; client = undefined; endpoint = undefined
       for (const deadline = Date.now() + 5000; providerOpen.size > 0;) { assert(Date.now() < deadline, "Killed provider connection did not close"); await delay(10) }
       assert(!reportedInputs.has(pending.messageID), "The disconnected original HTTP handler must not emit a report")

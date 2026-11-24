@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.control.reader.loading": "正在读取内容…",
   "missions.control.form.loading": "正在加载表单…",
   "missions.control.run.checking": "正在检查操作状态…",
+  "missions.control.run.superseded": "此操作已被更新的操作取代。",
   "missions.control.run.pending.start": "正在启动任务…",
   "missions.control.run.pending.pause": "正在暂停任务…",
   "missions.control.run.pending.interrupt": "正在中断任务…",

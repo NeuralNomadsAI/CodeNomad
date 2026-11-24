@@ -1,6 +1,6 @@
 // Exercise default artifacts before the qualification feature overwrites their paths.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../native-fixture-guards.mjs'
 import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'

@@ -10,11 +10,10 @@ use super::{
     providers, remote, render_with,
 };
 use crate::strings::t;
-use general::Picker;
 use rune::{Cx, El, col, text};
 use rune_theme_codenomad::{
     layout::{self, Layout},
-    palettes, settings as chrome,
+    settings as chrome,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -28,10 +27,9 @@ pub(super) struct Window {
     close_request: Option<Rc<CloseRequest>>,
     confirm_close: bool,
     closing: bool,
-    picker: Cell<Option<Picker>>,
-    palette_choice: Cell<Option<&'static palettes::Palette>>,
-    contrast_help: bool,
-    permissions: super::behavior::Permissions,
+    general: super::general::Controls,
+    transcript_picker: Cell<Option<super::TranscriptRow>>,
+    behavior: super::behavior::General,
     memory_help_failed: bool,
     memory_editor: super::memory::editor::Editor,
     seen_revision: u64,
@@ -188,6 +186,7 @@ impl Window {
             prefs.show_environment(false);
             prefs.memory.show(false);
             prefs.provider_target = None;
+            prefs.open_providers = false;
         }
         if !self.token.take().is_some_and(|token| token.get()) {
             super::settle_close(&self.shared, warn);
@@ -196,23 +195,15 @@ impl Window {
 }
 
 pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
-    if let Some(palette) = s.palette_choice.take() {
-        let mut prefs = s.shared.borrow_mut();
-        // Pointer actions can be queued on the previous tree when the system appearance changes.
-        if palette.dark == prefs.dark(cx.system_dark()) {
-            prefs.set_palette(palette);
-            if let Some(wake) = &prefs.window_wake {
-                wake();
-            }
-        }
-    }
+    s.general.commit_palette(&s.shared, cx.system_dark());
     let prefs = s.shared.borrow();
     if prefs.awaiting_appearance() {
         return rune::el().key("preferences-bootstrap");
     }
     let system_dark = cx.system_dark();
     let system_more = cx.system_increased_contrast();
-    s.close_palette_on_slot_change(prefs.dark(system_dark));
+    s.general
+        .close_palette_on_slot_change(prefs.dark(system_dark));
     render_with(cx, &prefs, system_more, |cx| {
         let general_label = t("settings.nav.general");
         let opencode_label = t("settings.nav.opencode");
@@ -301,12 +292,12 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 if s.config_files.busy() {
                     return;
                 }
-                s.picker.set(None);
-                s.contrast_help = false;
+                s.general.close();
+                s.transcript_picker.set(None);
                 s.advanced_help = None;
                 s.recording_shortcut = false;
                 s.shortcut_capture = Default::default();
-                s.permissions.close();
+                s.behavior.close();
                 s.section = match key {
                     "settings-opencode" => Section::OpenCode,
                     "settings-conversation" => Section::Conversation,
@@ -344,20 +335,23 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             },
         );
         let mut layers = Vec::new();
-        let status = if let Some(error) = (s.section == Section::General)
-            .then(|| prefs.general_error())
-            .flatten()
-            .or_else(|| {
-                (prefs.backend.is_none() && prefs.saved(Owner::Config).is_none())
-                    .then_some("rune.connect_error")
-            }) {
+        let status = if let Some(error) = match s.section {
+            Section::General => prefs.general_error(),
+            Section::Conversation => prefs.transcript_error(),
+            _ => None,
+        }
+        .or_else(|| {
+            (prefs.backend.is_none() && prefs.saved(Owner::Config).is_none())
+                .then_some("rune.connect_error")
+        }) {
             layout::action_row()
                 .child(text(t(error)).role("alert"))
                 .child(layout::button(
                     t("sessionList.loadError.retry"),
                     !prefs.can_retry(),
-                    |s: &mut Window| {
-                        s.shared.borrow_mut().retry_general();
+                    |s: &mut Window| match s.section {
+                        Section::Conversation => s.shared.borrow_mut().retry_transcript(),
+                        _ => s.shared.borrow_mut().retry_general(),
                     },
                 ))
         } else if prefs.saved(Owner::Config).is_none() {
@@ -398,12 +392,12 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             ),
             Section::Conversation => (
                 "conversation",
-                super::conversation::row(
+                super::conversation::content(
                     &prefs,
-                    s.picker.get() == Some(Picker::Usage),
+                    s.transcript_picker.get(),
                     &mut layers,
-                    |s: &mut Window, open| s.picker.set(open.then_some(Picker::Usage)),
-                    |s: &mut Window, mode| s.shared.borrow_mut().set_usage_visibility(mode),
+                    |s: &mut Window, row| s.transcript_picker.set(row),
+                    |s: &mut Window, row, mode| s.shared.borrow_mut().set_transcript(row, mode),
                 ),
             ),
             Section::General => (

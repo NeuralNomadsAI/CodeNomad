@@ -1,6 +1,6 @@
 // Explicit isolated CLI, private database and local provider: never shared services.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
@@ -11,7 +11,7 @@ import Fastify from "fastify"
 import pino from "pino"
 import { OpenCode } from "@opencode/client"
 import { tsImport } from "tsx/esm/api"
-import { clearFixtureGitEnvironment, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { clearFixtureGitEnvironment, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const cli = process.argv[2]
 assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
