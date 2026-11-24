@@ -1,5 +1,6 @@
 // Own backend and private OpenCode, with every tool denied.
 import assert from 'node:assert/strict'
+import {randomUUID} from 'node:crypto'
 import {writeFile} from 'node:fs/promises'
 import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
@@ -17,10 +18,11 @@ const {profile,project,sessionID}=live
 const current=(await live.read(`/api/session/${sessionID}`)).data
 assert.equal(current.location.directory,project)
 assert.deepEqual(current.permissions,[{action:'*',resource:'*',effect:'deny'}])
+const rustPassword=randomUUID()
 const env={...live.runtimeEnv,CNRS_FIXTURE_URL:live.relay,CNRS_FIXTURE_PASSWORD:live.relayPassword,
-  CNRS_SERVER_PASSWORD:'rune-live-private-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
+  CNRS_SERVER_PASSWORD:rustPassword,CNRS_FIXTURE_STDIN_STOP:'1'}
 const server=launchFixture(serverBinary,
-  [path.dirname(project),path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[live.password,'rune-live-private-backend']})
+  [path.dirname(project),path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[live.password,rustPassword]})
 live.allowRelayClient(server.pid(),server.closed)
 let child
 let observed,stream,observeTask,rustFetch,rustRelay
@@ -28,8 +30,8 @@ try {
   const origin=await server.ready(rustOrigin)
   const rustPid=await server.pid()
   rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
-  rustRelay=await createAttestedRelay(origin,rustPid)
-  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'rune-live-private-backend'}),signal:AbortSignal.timeout(15000)})
+  rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true})
+  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:rustPassword}),signal:AbortSignal.timeout(15000)})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const call=(route,init={})=>rustFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
@@ -70,9 +72,10 @@ try {
   }
   observeTask=observe().catch(error=>{if(!abort.signal.aborted&&error.name!=='AbortError')console.error(`Live observer: ${error.message}`)})
   console.log(JSON.stringify({type:'RUNE_LIVE_READY',profile,project,sessionID,workspace:workspace.id,tools:'deny-all'}))
-  child=launchFixture(clientBinary,[],{cwd:profile,redact:[live.password,'rune-live-private-backend'],
+  child=launchFixture(clientBinary,[],{cwd:profile,redact:[live.password,rustPassword],
     env:{...live.runtimeEnv,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:sessionID,
-      RUNE_PASSWORD:'rune-live-private-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:'1',RUNE_LIVE_TITLE:'1'}})
+      RUNE_PASSWORD:rustPassword,RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:'1',RUNE_LIVE_TITLE:'1'}})
+  rustRelay.allowClientPid(child.pid(),child.closed)
   console.log(JSON.stringify({type:'RUNE_LIVE_WINDOW',pid:await child.pid()}))
   assert.equal(await child.closed,0,child.output())
 } finally {

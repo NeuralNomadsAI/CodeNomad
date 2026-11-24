@@ -304,7 +304,10 @@ try {
   assert.equal((await qa("snapshot")).revision, second.revision)
   // Disable auto-start while leaving this explicitly launched isolated daemon alive.
   writeFileSync(path.join(configRoot, "service.json"), JSON.stringify({ hostname: "127.0.0.1", port, disabled: true }))
-  assert(await Service.discover({ file: registrationFile }))
+  const disabledReg = JSON.parse(readFileSync(registrationFile, "utf8"))
+  assert.equal(disabledReg.pid, cold.pid)
+  await verifyLoopbackListenerOwner(port, cold.pid)
+  assert.equal((await client.server.info()).pid, cold.pid)
   save("disabled-live", { discovered: true, supervision: "absent", pid: cold.pid })
   // Artifact checks also fence an already cached local model.
   renameSync(artifacts.provider.file, `${artifacts.provider.file}.held`)

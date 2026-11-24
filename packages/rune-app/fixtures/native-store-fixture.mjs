@@ -152,7 +152,7 @@ try{
   nativeProxy.allowClientPid(fixtureChildPid(server.child),server.stopped)
   const backend=await origin(server)
   const rustPid=await fixtureChildPid(server.child)
-  const appProxy=await auditedProxy(backend,'rune-rust',rustPid)
+  const appProxy=await auditedProxy(backend,'rune-rust',rustPid,{requireClientAttestation:true})
   rustFetch=createAttestedFetch(backend,Number(new URL(backend).port),rustPid)
   const login=await rustFetch(`${backend}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},
     body:JSON.stringify({username:'codenomad',password:rustEnv.CNRS_SERVER_PASSWORD}),signal:AbortSignal.timeout(15000)})
@@ -167,6 +167,7 @@ try{
     client=launch(`rune-${stage}`,rune,['--probe-native-store'],{...baseEnv,RUNE_BACKEND:`${appProxy.origin}/`,RUNE_PASSWORD:rustEnv.CNRS_SERVER_PASSWORD,
       RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(root,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,
       RUNE_STORE_LONG_SESSION:long.id,RUNE_STORE_EMPTY_SESSION:empty.id,RUNE_STORE_SEED_FILE:seedFile},root,[opencodePassword,rustPassword])
+    appProxy.allowClientPid(fixtureChildPid(client.child),client.stopped)
     let timeout
     try{await Promise.race([client.stopped,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error(`Rune ${stage} exceeded 120s`)),120000)})])}
     finally{clearTimeout(timeout)}

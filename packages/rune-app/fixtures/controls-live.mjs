@@ -1,5 +1,6 @@
 // Explicit real OpenCode test. Own empty project/session; deny all model tools.
 import assert from 'node:assert/strict'
+import {randomUUID} from 'node:crypto'
 import {writeFile} from 'node:fs/promises'
 import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
@@ -18,16 +19,17 @@ const session=(await native.read('/api/session',{method:'POST',body:JSON.stringi
 await writeFile(path.join(profile,'session.json'),JSON.stringify({session:session.id,project,title},null,2))
 assert(session?.id&&session.location.directory===project)
 assert.deepEqual(session.permissions,permissions,'session must enforce deny-all before launching Rune')
-const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,CNRS_SERVER_PASSWORD:'fixture-controls-live',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile}
-const server=launchFixture(serverBinary,[project,path.join(profile,'identity.json'),'0','owned-real-controls'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,'fixture-controls-live']})
+const rustPassword=randomUUID()
+const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,CNRS_SERVER_PASSWORD:rustPassword,CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile}
+const server=launchFixture(serverBinary,[project,path.join(profile,'identity.json'),'0','owned-real-controls'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,rustPassword]})
 native.allowRelayClient(server.pid(),server.closed)
 let client,result=1,observer,stream,watch,watchError=null,events=[],cleaned=false,rustFetch,rustRelay
 try{
   const origin=await server.ready(rustOrigin)
   const rustPid=await server.pid()
   rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
-  rustRelay=await createAttestedRelay(origin,rustPid)
-  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'fixture-controls-live'}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200)
+  rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true})
+  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:rustPassword}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const response=await rustFetch(`${origin}/api/workspaces`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({path:project}),signal:AbortSignal.timeout(15000)})
   assert.equal(response.status,201)
@@ -45,7 +47,8 @@ try{
       const value=JSON.parse(raw);if(value.type==='instance.event'&&value.event?.data?.sessionID===session.id)events.push(value.event.type)
     }
   }})().catch(error=>{if(!observer.signal.aborted)watchError??=error})
-  client=launchFixture(clientBinary,['--probe-real-controls'],{cwd:profile,env:{...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:'fixture-controls-live',RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_TEST_MODEL:JSON.stringify(target),RUNE_LOCALE:'fr'},redact:[native.password,'fixture-controls-live']})
+  client=launchFixture(clientBinary,['--probe-real-controls'],{cwd:profile,env:{...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:rustPassword,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_TEST_MODEL:JSON.stringify(target),RUNE_LOCALE:'fr'},redact:[native.password,rustPassword]})
+  rustRelay.allowClientPid(client.pid(),client.closed)
   result=await Promise.race([client.closed,delay(120000,124,{ref:false})])
   if(result===124)await client.stop()
   process.stdout.write(client.output())

@@ -495,8 +495,22 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
       checkActive()
       if(pruning){
         pruningActive=true
-        try{const {preparePruning}=await import('../../../scripts/perf/pruning.mjs');plugin=await preparePruning(profile,config,runtimeEnv)}
-        finally{pruningActive=false}
+        try{
+          const {preparePruning}=await import('../../../scripts/perf/pruning.mjs')
+          plugin=await preparePruning(profile,config,runtimeEnv,{
+            onBuilderSpawn({supervisorPid,childPid,closed}){
+              if(supervisorPid){trackedSupervisorPid=supervisorPid;void lock.setSupervisorPid(supervisorPid)}
+              void Promise.resolve(childPid).then(pid=>{
+                if(pruningActive&&Number.isSafeInteger(pid)&&pid>0){trackedDaemonPid=pid;void lock.setDaemonPid(pid)}
+              },()=>{})
+              void closed.finally(()=>{
+                if(trackedSupervisorPid===supervisorPid)trackedSupervisorPid=null
+              })
+            },
+          })
+          trackedSupervisorPid=null;trackedDaemonPid=null
+          await lock.setSupervisorPid(null);await lock.setDaemonPid(null)
+        }finally{pruningActive=false}
       }
       checkActive()
       daemon=launchFixture(executable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env,redact:[password]})

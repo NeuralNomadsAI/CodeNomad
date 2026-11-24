@@ -41,13 +41,14 @@ async function journeyDesktop({origin,rustPid,password,project,profile,env},repo
   requireTestSupport(clientBinary,{probe,env:assertPrivateChild(env),cwd:profile,output:profile})
   const state=path.join(profile,'rune-state')
   const session=path.join(profile,'session.txt')
-  const rustRelay=await createAttestedRelay(origin,rustPid)
+  const rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true})
   try{
   for(const phase of ['start','reopen']){
     const child=launchFixture(clientBinary,[probe],{cwd:profile,redact:[password],env:assertPrivateChild({
       ...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:password,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'en',
       RUNE_STATE_DIR:state,RUNE_JOURNEY_OUTPUT:report.output,RUNE_JOURNEY_PHASE:phase,RUNE_JOURNEY_SESSION_FILE:session,
     },{RUNE_PASSWORD:password})})
+    rustRelay.allowClientPid(child.pid(),child.closed)
     let windowClosed=false,result
     try{
       result=await Promise.race([child.closed,delay(220000,124,{ref:false})])

@@ -51,13 +51,14 @@ try{
   observer=new AbortController();watch=(async()=>{try{for await(const event of client.event.subscribe({signal:observer.signal})){proof.events.push({type:event.type,sessionID:event.data?.sessionID,id:event.data?.id});assert(proof.events.length<256)}}catch(error){if(!observer.signal.aborted&&error?.name!=='AbortError')watchError??=error}})()
   await until(()=>proof.events.some(e=>e.type==='server.connected'),'native SSE')
   session=await client.session.create({location:{directory:project},title:'Rune private native pending UI',permissions:[{action:'*',resource:'*',effect:'deny'},{action:'rune_fixture',resource:'*',effect:'ask'}]});assert.equal(path.resolve(session.location.directory),project);proof.session=session.id
-  rust=launchFixture(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{cwd:root,shutdown:'shutdown\n',redact:[password,'fixture-rune-native-pending'],env:{...env,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,CNRS_SERVER_PASSWORD:'fixture-rune-native-pending',CNRS_FIXTURE_STDIN_STOP:'1'}})
+  const rustPassword=randomUUID()
+  rust=launchFixture(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{cwd:root,shutdown:'shutdown\n',redact:[password,rustPassword],env:{...env,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,CNRS_SERVER_PASSWORD:rustPassword,CNRS_FIXTURE_STDIN_STOP:'1'}})
   native.allowRelayClient(rust.pid(),rust.closed)
   origin=await rust.ready(rustOrigin)
   const rustPid=await rust.pid()
   rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
-  rustRelay=await createAttestedRelay(origin,rustPid)
-  const login=await rustFetch(`${origin}/api/auth/login`,{...post({username:'codenomad',password:'fixture-rune-native-pending'}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
+  rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true})
+  const login=await rustFetch(`${origin}/api/auth/login`,{...post({username:'codenomad',password:rustPassword}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await relay('/api/workspaces',post({path:project,requestId:`rune-native-ui-${randomUUID()}`}));assert.equal(opened.status,201);assert.equal(path.resolve(opened.body.path),project);proof.workspace=opened.body.id
   await until(async remaining=>{
     const window=await relay(`/api/workspaces/${proof.workspace}/session-history/window`,{
@@ -67,7 +68,8 @@ try{
     proof.historyStatus={status:window.status,kind:window.body?.status,reason:window.body?.reason}
     return window.body?.status==='window'
   },'native history window ready')
-  ui=launchFixture(clientBinary,['--probe-real-pending'],{cwd:root,redact:[password,'fixture-rune-native-pending'],env:{...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:'fixture-rune-native-pending',RUNE_WORKSPACE:proof.workspace,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_PENDING_OUT:root,RUNE_PENDING_IDS:JSON.stringify(ids),RUNE_LOCALE:'fr'}})
+  ui=launchFixture(clientBinary,['--probe-real-pending'],{cwd:root,redact:[password,rustPassword],env:{...env,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:rustPassword,RUNE_WORKSPACE:proof.workspace,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_PENDING_OUT:root,RUNE_PENDING_IDS:JSON.stringify(ids),RUNE_LOCALE:'fr'}})
+  rustRelay.allowClientPid(ui.pid(),ui.closed)
   ui.child.stdout.on('data',b=>{
     uiLines+=b
     if(uiLines.length>=65536){protocolError??=Error('Pending probe stdout exceeded 64 KiB');ui.child.kill();return}

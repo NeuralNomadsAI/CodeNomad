@@ -173,19 +173,27 @@ export async function stopFixtureChild(child, stopped, graceMs = 1_000, forceMs 
     try { await stopOwnedTree(child, stopped, graceMs, options) } catch (error) { treeError = error }
   }
   const handleGrace = isJob && process.platform !== "win32" ? Math.max(graceMs, 5_500) : graceMs
-  await stopFixtureHandle(child, stopped, handleGrace, forceMs)
-  if (isJob && process.platform !== "win32" && child.signalCode === "SIGKILL") {
+  let handleError
+  try {
+    await stopFixtureHandle(child, stopped, handleGrace, forceMs)
+  } catch (error) {
+    handleError = error
+  }
+  if (isJob && process.platform !== "win32" && (child.signalCode === "SIGKILL" || handleError)) {
     const innerPid = await fixtureChildPid(child, 200).catch(() => undefined)
     if (Number.isSafeInteger(innerPid) && innerPid > 0) {
-      let alive = false
-      try { process.kill(innerPid, 0); alive = true } catch (e) { alive = e.code === "EPERM" }
-      if (alive) {
+      let groupAlive = false
+      let leaderAlive = false
+      try { process.kill(-innerPid, 0); groupAlive = true } catch (e) { groupAlive = e.code === "EPERM" }
+      try { process.kill(innerPid, 0); leaderAlive = true } catch (e) { leaderAlive = e.code === "EPERM" }
+      if (groupAlive || leaderAlive) {
         try { process.kill(-innerPid, "SIGKILL") } catch {}
         try { process.kill(innerPid, "SIGKILL") } catch {}
-        throw new Error(`Fixture supervisor was force-killed while child PID ${innerPid} remained alive`)
+        throw new Error(`Fixture supervisor was force-killed while child group ${innerPid} remained alive`)
       }
     }
   }
+  if (handleError) throw handleError
   if (treeError) throw treeError
 }
 

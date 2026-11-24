@@ -1,7 +1,7 @@
 // Interactive qualification against a seeded, private OpenCode database.
 import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
-import {createHash} from 'node:crypto'
+import {createHash,randomUUID} from 'node:crypto'
 import {setTimeout as delay} from 'node:timers/promises'
 import path from 'node:path'
 import {args,requirePrivateCli,withNative} from './live-access.mjs'
@@ -25,8 +25,9 @@ const suffix=path.basename(profile).slice(-8),longTitle=`Rune · reprise réelle
 await native.read(`/api/session/${fork.id}`,{method:'PATCH',body:JSON.stringify({title:longTitle,permissions:deny})})
 const verified=(await native.read(`/api/session/${fork.id}`)).data;assert.deepEqual(verified.permissions,deny)
 const copied=await native.read(`/api/session/${fork.id}/message?limit=200`);assert.equal(copied.data.length,200);assert(copied.cursor?.next)
-const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,CNRS_SERVER_PASSWORD:'interactive-rune-owned-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
-const server=launchFixture(serverBinary,[directory,path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,'interactive-rune-owned-backend']})
+const rustPassword=randomUUID()
+const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,CNRS_SERVER_PASSWORD:rustPassword,CNRS_FIXTURE_STDIN_STOP:'1'}
+const server=launchFixture(serverBinary,[directory,path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,rustPassword]})
 native.allowRelayClient(server.pid(),server.closed)
 let child,observer,stream,watchTask,guardTask,rustFetch,rustRelay,stopped=false,newID,guardError=null
 const guarded=new Set([source.id,fork.id])
@@ -36,8 +37,8 @@ try{
   const origin=await server.ready(rustOrigin)
   const rustPid=await server.pid()
   rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),rustPid)
-  rustRelay=await createAttestedRelay(origin,rustPid)
-  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'interactive-rune-owned-backend'}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200)
+  rustRelay=await createAttestedRelay(origin,rustPid,{requireClientAttestation:true})
+  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:rustPassword}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const call=(route,init={})=>rustFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
   observer=new AbortController()
@@ -84,7 +85,8 @@ try{
     }
   })()
   await save();await writeFile(path.join(profile,'session.json'),JSON.stringify({profile,directory,sourceID:source.id,longID:fork.id,longTitle,newTitle}))
-  child=launchFixture(clientBinary,[],{cwd:profile,redact:[native.password,'interactive-rune-owned-backend'],env:{...native.runtimeEnv,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:'interactive-rune-owned-backend',RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
+  child=launchFixture(clientBinary,[],{cwd:profile,redact:[native.password,rustPassword],env:{...native.runtimeEnv,RUNE_BACKEND:`${rustRelay.origin}/`,RUNE_PASSWORD:rustPassword,RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
+  rustRelay.allowClientPid(child.pid(),child.closed)
   let stderrBuffer=''
   child.child.stderr.on('data',d=>{
     stderrBuffer+=d

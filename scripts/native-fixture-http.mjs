@@ -59,12 +59,30 @@ export function assertWorktreeModuleResolution(specifier,fromFile,nodeModulesDir
   const cjsResolved=realpathSync(scopedRequire.resolve(specifier))
   assert(isWithin(nodeModulesReal,cjsResolved)&&cjsResolved!==nodeModulesReal,
     `Dependency ${specifier} (CJS) from ${fromFile} resolved outside worktree node_modules: ${cjsResolved}`)
-  const esmUrl=import.meta.resolve(specifier,pathToFileURL(fromFile).href)
-  assert(esmUrl.startsWith('file://'),`Dependency ${specifier} (ESM) from ${fromFile} must resolve to a local file`)
-  const esmResolved=realpathSync(fileURLToPath(esmUrl))
-  assert(isWithin(nodeModulesReal,esmResolved)&&esmResolved!==nodeModulesReal,
-    `Dependency ${specifier} (ESM) from ${fromFile} resolved outside worktree node_modules: ${esmResolved}`)
-  return pathToFileURL(esmResolved).href
+  const pkg=packageNameOf(specifier)
+  const pkgJsonPath=realpathSync(scopedRequire.resolve(`${pkg}/package.json`))
+  assert(isWithin(nodeModulesReal,pkgJsonPath)&&pkgJsonPath!==nodeModulesReal,
+    `Package metadata for ${specifier} from ${fromFile} resolved outside worktree node_modules: ${pkgJsonPath}`)
+  const pkgDir=path.dirname(pkgJsonPath)
+  const manifest=JSON.parse(readFileSync(pkgJsonPath,'utf8'))
+  const collectTargets=(value,out=[])=>{
+    if(typeof value==='string'){out.push(value);return out}
+    if(value&&typeof value==='object')for(const child of Object.values(value))collectTargets(child,out)
+    return out
+  }
+  const subpath=specifier===pkg?'.':`./${specifier.slice(pkg.length+1)}`
+  const exportEntry=manifest.exports&&typeof manifest.exports==='object'
+    ?(Object.hasOwn(manifest.exports,subpath)?manifest.exports[subpath]:manifest.exports['.'])
+    :manifest.exports
+  const candidateTargets=[...collectTargets(exportEntry),manifest.module,manifest.main].filter(t=>typeof t==='string'&&!t.includes('*'))
+  for(const target of candidateTargets){
+    const abs=path.resolve(pkgDir,target)
+    if(!existsSync(abs))continue
+    const real=realpathSync(abs)
+    assert(isWithin(nodeModulesReal,real)&&real!==nodeModulesReal,
+      `Dependency ${specifier} entry ${target} from ${fromFile} resolved outside worktree node_modules: ${real}`)
+  }
+  return pathToFileURL(cjsResolved).href
 }
 
 export function resolveWorktreePackage(specifier,nodeModulesDir=worktreeNodeModules){
@@ -280,13 +298,122 @@ async function attestPeerWithRetry(localPort,remotePort,pid,checkPeer,isClosed){
   throw lastError
 }
 
-export async function originGuardProxy(localOrigin,targetPid){
+function pidAlive(pid){
+  if(!Number.isSafeInteger(pid)||pid<=0)return false
+  try{process.kill(pid,0);return true}catch(error){return error.code==='EPERM'}
+}
+
+const psSystemBin=()=>['/bin/ps','/usr/bin/ps'].find(candidate=>existsSync(candidate))
+
+async function parentPidOf(pid){
+  if(!Number.isSafeInteger(pid)||pid<=0)return null
+  if(process.platform==='linux'){
+    try{
+      const statText=await readFile(`/proc/${pid}/stat`,'utf8')
+      const closeParen=statText.lastIndexOf(')')
+      if(closeParen<0)return null
+      const fields=statText.slice(closeParen+2).trim().split(/\s+/)
+      const ppid=Number(fields[1])
+      return Number.isSafeInteger(ppid)&&ppid>0?ppid:null
+    }catch{return null}
+  }
+  if(process.platform==='win32'){
+    const systemRoot=process.env.SystemRoot||process.env.WINDIR||'C:\\Windows'
+    const powershell=path.win32.join(systemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe')
+    if(!existsSync(powershell)||lstatSync(powershell).isSymbolicLink())return null
+    try{
+      const {stdout}=await execFileAsync(powershell,['-NoProfile','-NonInteractive','-Command',`(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').ParentProcessId`],{timeout:5000,windowsHide:true})
+      const ppid=Number(stdout.trim())
+      return Number.isSafeInteger(ppid)&&ppid>0?ppid:null
+    }catch{return null}
+  }
+  const psBin=psSystemBin()
+  if(!psBin)return null
+  try{
+    const {stdout}=await execFileAsync(psBin,['-o','ppid=','-p',String(pid)],{timeout:5000})
+    const ppid=Number(stdout.trim())
+    return Number.isSafeInteger(ppid)&&ppid>0?ppid:null
+  }catch{return null}
+}
+
+async function isPidInOwnedTree(peerPid,rootPid){
+  if(peerPid===rootPid)return true
+  let current=peerPid
+  for(let depth=0;depth<8&&current>1;depth++){
+    const ppid=await parentPidOf(current)
+    if(!ppid||ppid===current)return false
+    if(ppid===rootPid)return true
+    current=ppid
+  }
+  return false
+}
+
+async function resolveLoopbackPeerPid(localPort,remotePort){
+  if(process.platform==='win32'){
+    const {stdout}=await execFileAsync(netstatBin(),['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
+    const owners=new Set()
+    for(const line of stdout.split(/\r?\n/)){
+      const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+127\.0\.0\.1:(\d+)\s+ESTABLISHED\s+(\d+)\s*$/i.exec(line)
+      if(match&&Number(match[1])===remotePort&&Number(match[2])===localPort)owners.add(Number(match[3]))
+    }
+    return owners.size===1?[...owners][0]:null
+  }
+  if(process.platform==='linux'){
+    const peerAddr=`0100007F:${remotePort.toString(16).toUpperCase().padStart(4,'0')}`
+    const localAddr=`0100007F:${localPort.toString(16).toUpperCase().padStart(4,'0')}`
+    const table=await readFile('/proc/net/tcp','utf8')
+    const inodes=new Set()
+    for(const line of table.split('\n').slice(1)){
+      const cols=line.trim().split(/\s+/)
+      if(cols.length>=10&&cols[1]===peerAddr&&cols[2]===localAddr&&cols[3]==='01')inodes.add(`socket:[${cols[9]}]`)
+    }
+    if(inodes.size!==1)return null
+    const [inode]=inodes
+    const entries=await readdir('/proc').catch(()=>[])
+    for(const entry of entries){
+      if(!/^\d+$/.test(entry))continue
+      const fds=await readdir(`/proc/${entry}/fd`).catch(()=>[])
+      for(const fd of fds){
+        try{if(await readlink(`/proc/${entry}/fd/${fd}`)===inode)return Number(entry)}catch{}
+      }
+    }
+    return null
+  }
+  const {stdout}=await execFileAsync(lsofBin(),['-nP',`-iTCP:${remotePort}`,'-sTCP:ESTABLISHED','-Fpn'],{timeout:10000})
+  const owners=new Set()
+  let currentPid=null
+  const expected=`127.0.0.1:${remotePort}->127.0.0.1:${localPort}`
+  for(const line of stdout.split(/\r?\n/)){
+    if(line.startsWith('p'))currentPid=Number(line.slice(1))
+    else if(line.startsWith('n')&&line.slice(1)===expected&&Number.isSafeInteger(currentPid))owners.add(currentPid)
+  }
+  return owners.size===1?[...owners][0]:null
+}
+
+export async function originGuardProxy(localOrigin,targetPid,options={}){
+  const {requireClientAttestation=false,allowDescendants=false,allowedClientPids=[]}=options
   const base=new URL(localOrigin)
   const agent=targetPid?createAttestedHttpAgent(Number(base.port),targetPid):fixtureHttpAgent
-  const server=createServer((req,res)=>{
+  let proxyPort=0
+  const clientGate=createClientPidGate(()=>proxyPort,verifyLoopbackConnectionPeer,{allowDescendants})
+  for(const clientPid of allowedClientPids)clientGate.allow(clientPid)
+  const detachedSockets=new Set()
+  const rejectDetached=(_req,socket)=>{
+    detachedSockets.add(socket)
+    socket.once('close',()=>detachedSockets.delete(socket))
+    socket.once('error',()=>{})
+    socket.end('HTTP/1.1 403 Forbidden\r\n\r\n',()=>{try{socket.destroy()}catch{}})
+  }
+  const server=createServer(async(req,res)=>{
     let target
     try{target=new URL(req.url,localOrigin)}catch{res.writeHead(403);res.end();return}
     if(target.origin!==localOrigin){res.writeHead(403);res.end('Foreign browser origin forbidden');return}
+    if(requireClientAttestation){
+      req.pause()
+      const ok=await clientGate.verify(req.socket)
+      if(res.destroyed||req.destroyed)return
+      if(!ok){res.writeHead(403);res.end('Attested browser client PID required');return}
+    }
     const headers={...req.headers}
     delete headers['proxy-connection']
     const upstream=httpRequest(target,{agent,method:req.method,headers:{...headers,host:target.host}},response=>{
@@ -310,12 +437,21 @@ export async function originGuardProxy(localOrigin,targetPid){
     res.on('close',()=>upstream.destroy())
     req.pipe(upstream)
   })
-  server.on('connect',(_req,socket)=>socket.end('HTTP/1.1 403 Forbidden\r\n\r\n'))
-  server.on('upgrade',(_req,socket)=>socket.end('HTTP/1.1 403 Forbidden\r\n\r\n'))
+  server.on('connect',rejectDetached)
+  server.on('upgrade',rejectDetached)
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
+  proxyPort=server.address().port
   return {
-    port:server.address().port,
-    close:()=>{if(targetPid)agent.destroy();server.closeAllConnections();return new Promise(resolve=>server.close(resolve))},
+    port:proxyPort,
+    allowClientPid:clientGate.allow,
+    close:()=>{
+      clientGate.close()
+      for(const socket of [...detachedSockets]){try{socket.destroy()}catch{}}
+      detachedSockets.clear()
+      if(targetPid)agent.destroy()
+      server.closeAllConnections()
+      return new Promise(resolve=>server.close(resolve))
+    },
   }
 }
 
@@ -444,12 +580,14 @@ export function createAttestedHttpAgent(port,pid,verifyOwner=verifyLoopbackListe
   return agent
 }
 
-export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionPeer){
+export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionPeer,options={}){
+  const {allowDescendants=false}=options
   const allowedTokens=new Map()
   const pendingPids=new Set()
   const attestedSockets=new WeakMap()
   const socketsByPid=new Map()
-  const isAllowed=pid=>allowedTokens.has(pid)&&allowedTokens.get(pid).size>0
+  const attestedDescendants=new Map()
+  const isAllowed=pid=>allowedTokens.has(pid)&&allowedTokens.get(pid).size>0&&pidAlive(pid)
   const trackSocket=(pid,socket)=>{
     let set=socketsByPid.get(pid)
     if(!set){set=new Set();socketsByPid.set(pid,set)}
@@ -477,6 +615,7 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
           tokens.delete(token)
           if(tokens.size===0){
             allowedTokens.delete(resolvedPid)
+            attestedDescendants.delete(resolvedPid)
             destroyPidSockets(resolvedPid)
           }
         }
@@ -496,9 +635,10 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
   }
   const verify=async socket=>{
     if(socket.destroyed)return false
-    const knownPid=attestedSockets.get(socket)
-    if(knownPid!==undefined){
-      if(isAllowed(knownPid))return true
+    const known=attestedSockets.get(socket)
+    if(known!==undefined){
+      if(isAllowed(known.rootPid)&&pidAlive(known.peerPid))return true
+      destroyPidSockets(known.rootPid)
       socket.destroy()
       return false
     }
@@ -510,14 +650,31 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
       if(socket.destroyed)return false
       const candidates=[...allowedTokens.keys()].filter(isAllowed)
       if(!candidates.length)return false
-      try{
-        const matchedPid=await Promise.any(candidates.map(clientPid=>
-          verifyPeer(localPort,remotePort,clientPid).then(()=>clientPid)))
-        if(socket.destroyed||!isAllowed(matchedPid))return false
-        attestedSockets.set(socket,matchedPid)
-        trackSocket(matchedPid,socket)
-        return true
-      }catch{}
+      if(allowDescendants&&verifyPeer===verifyLoopbackConnectionPeer){
+        const peerPid=await resolveLoopbackPeerPid(localPort,remotePort).catch(()=>null)
+        if(peerPid&&pidAlive(peerPid)){
+          for(const rootPid of candidates){
+            let verifiedSet=attestedDescendants.get(rootPid)
+            const matched=peerPid===rootPid||verifiedSet?.has(peerPid)||await isPidInOwnedTree(peerPid,rootPid)
+            if(matched&&isAllowed(rootPid)&&!socket.destroyed){
+              if(!verifiedSet){verifiedSet=new Set();attestedDescendants.set(rootPid,verifiedSet)}
+              verifiedSet.add(peerPid)
+              attestedSockets.set(socket,{rootPid,peerPid})
+              trackSocket(rootPid,socket)
+              return true
+            }
+          }
+        }
+      }else{
+        try{
+          const matchedPid=await Promise.any(candidates.map(clientPid=>
+            verifyPeer(localPort,remotePort,clientPid).then(()=>clientPid)))
+          if(socket.destroyed||!isAllowed(matchedPid))return false
+          attestedSockets.set(socket,{rootPid:matchedPid,peerPid:matchedPid})
+          trackSocket(matchedPid,socket)
+          return true
+        }catch{}
+      }
       if(attempt<5&&!socket.destroyed)await new Promise(resolve=>setTimeout(resolve,20))
     }
     return false
@@ -525,6 +682,7 @@ export function createClientPidGate(getPort,verifyPeer=verifyLoopbackConnectionP
   const close=()=>{
     for(const pid of [...allowedTokens.keys()]){
       allowedTokens.delete(pid)
+      attestedDescendants.delete(pid)
       destroyPidSockets(pid)
     }
   }

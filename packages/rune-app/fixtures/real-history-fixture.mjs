@@ -1,5 +1,6 @@
 // Real Rust backend and private OpenCode; fault injection affects only this client's SSE.
 import assert from 'node:assert/strict'
+import {randomUUID} from 'node:crypto'
 import {writeFile} from 'node:fs/promises'
 import {createServer,request} from 'node:http'
 import {setTimeout as delay} from 'node:timers/promises'
@@ -17,11 +18,12 @@ const current=(await native.read(`/api/session/${manifest.sessionID}`)).data
 assert.deepEqual(current.permissions,[{action:'*',resource:'*',effect:'deny'}])
 const info=await native.read('/api/info')
 const stats={nativeVersion:info.version??info.data?.version,prompts:0,cuts:0,nativeFragments:0,tools:0,terminals:0,sseConnections:0,lastOutcome:null}
+const rustPassword=randomUUID()
 const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:native.relayPassword,
-  CNRS_SERVER_PASSWORD:'real-history-private-backend',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:manifest.profile}
+  CNRS_SERVER_PASSWORD:rustPassword,CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:manifest.profile}
 const server=launchFixture(serverBinary,
   [path.dirname(manifest.project),path.join(manifest.profile,'real-backend.json'),'0','existing-opencode'],
-  {cwd:manifest.profile,env,shutdown:'shutdown\n',redact:[native.password,'real-history-private-backend']})
+  {cwd:manifest.profile,env,shutdown:'shutdown\n',redact:[native.password,rustPassword]})
 native.allowRelayClient(server.pid(),server.closed)
 let child,proxy,clientGate,observer,stream,watchTask,proxyError=null,rustFetch,rustAgent
 let result=1
@@ -31,7 +33,7 @@ try{
   const rustPid=await server.pid()
   rustFetch=createAttestedFetch(origin,rustPort,rustPid)
   rustAgent=createAttestedHttpAgent(rustPort,rustPid)
-  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'real-history-private-backend'}),signal:AbortSignal.timeout(15000)})
+  const login=await rustFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:rustPassword}),signal:AbortSignal.timeout(15000)})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const call=(route,init={})=>rustFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
@@ -73,7 +75,7 @@ try{
       }
       if(target.pathname.startsWith('/__real__/')){
         req.resume()
-        if(req.method!=='GET'){res.writeHead(405);res.end('GET required');return}
+        if(req.method!=='GET'&&req.method!=='POST'){res.writeHead(405);res.end('GET or POST required');return}
         const action=target.pathname.slice('/__real__/'.length)
         let value=stats
         if(action==='expected'){
@@ -121,8 +123,8 @@ try{
   const base=`http://127.0.0.1:${proxy.address().port}/`
   child=launchFixture(clientBinary,['--probe-real-history'],
     {cwd:manifest.profile,env:{...native.runtimeEnv,RUNE_BACKEND:base,
-      RUNE_WORKSPACE:workspace.id,RUNE_SESSION:manifest.sessionID,RUNE_PASSWORD:'real-history-private-backend',RUNE_TEST_CONTROL:`${base}__real__/`},
-      redact:[native.password,'real-history-private-backend']})
+      RUNE_WORKSPACE:workspace.id,RUNE_SESSION:manifest.sessionID,RUNE_PASSWORD:rustPassword,RUNE_TEST_CONTROL:`${base}__real__/`},
+      redact:[native.password,rustPassword]})
   clientGate.allow(child.pid(),child.closed)
   result=await Promise.race([child.closed,delay(120000,124,{ref:false})])
   if(result===124)await child.stop()

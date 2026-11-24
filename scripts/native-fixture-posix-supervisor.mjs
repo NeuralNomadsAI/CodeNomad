@@ -114,18 +114,26 @@ function shutdown(code, graceMs = graceBudgetMs) {
 }
 
 child.once("spawn", () => {
+  if (parentPid && process.ppid !== parentPid) {
+    shutdown(1)
+    return
+  }
   const line = `CODENOMAD_FIXTURE_PID=${child.pid}\n`
-  if (pidFile) {
-    const tmp = `${pidFile}.tmp`
-    writeFileSync(tmp, line, { mode: 0o600, flag: "wx" })
-    renameSync(tmp, pidFile)
-    return
+  try {
+    if (pidFile) {
+      const tmp = `${pidFile}.tmp`
+      writeFileSync(tmp, line, { mode: 0o600, flag: "wx" })
+      renameSync(tmp, pidFile)
+      return
+    }
+    if (pidFd !== null) {
+      try { writeSync(pidFd, line) } finally { try { closeSync(pidFd) } catch {} }
+      return
+    }
+    process.stderr.write(line)
+  } catch {
+    shutdown(1)
   }
-  if (pidFd !== null) {
-    try { writeSync(pidFd, line) } finally { try { closeSync(pidFd) } catch {} }
-    return
-  }
-  process.stderr.write(line)
 })
 child.once("error", error => {
   console.error(`Fixture supervisor: ${error.message}`)

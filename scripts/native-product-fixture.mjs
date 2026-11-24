@@ -184,12 +184,12 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     child.stdout.on("data", data => appendOut(outRedactor.push(data)))
     child.stderr.on("data", data => appendErr(errRedactor.push(data)))
     const deadline = Date.now() + 30_000
-    while (!/http:\/\/127\.0\.0\.1:\d+/.test(currentStdout())) {
+    let announcedUrl
+    while (!(announcedUrl = currentStdout().match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m)?.[1])) {
       if (spawnError) throw spawnError
       if (child.exitCode !== null || Date.now() > deadline) throw new Error(redactSecrets(currentOutput().slice(-3000), [password]))
       await delay(25)
     }
-    const announcedUrl = currentStdout().match(/http:\/\/127\.0\.0\.1:\d+/)[0]
     let endpoint
     const pid = await fixtureChildPid(child)
     assert(Number.isSafeInteger(pid) && pid > 0, "Private OpenCode did not report its PID")

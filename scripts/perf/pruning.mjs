@@ -4,13 +4,13 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {createHash} from 'node:crypto'
-import {spawnFixtureChild, stopFixtureChild} from '../native-fixture-guards.mjs'
+import {fixtureChildPid, spawnFixtureChild, stopFixtureChild} from '../native-fixture-guards.mjs'
 import {assertWorktreeModuleResolution,fixtureFetch,fixtureTarget,resolveWorktreePackage,withoutFixtureProxy,worktreeDependencyRoots} from '../native-fixture-http.mjs'
 import {registerFixtureChild} from '../../packages/rune-app/fixtures/fixture-host.mjs'
 import {fixtureSystemEnvironment} from '../../packages/rune-app/fixtures/private-profile.mjs'
 import {privatePath} from './isolation.mjs'
 
-export async function preparePruning(root, config, buildEnv) {
+export async function preparePruning(root, config, buildEnv, { onBuilderSpawn } = {}) {
   const {repoRootReal,nodeModulesReal}=worktreeDependencyRoots()
   const esbuildUrl = resolveWorktreePackage('esbuild')
   const esbuildBinSpec = process.platform === 'win32'
@@ -76,6 +76,7 @@ export async function preparePruning(root, config, buildEnv) {
     builder.once('close', code => resolve(code))
     builder.once('error', () => resolve(1))
   })
+  onBuilderSpawn?.({ supervisorPid: builder.pid, childPid: fixtureChildPid(builder), closed: buildClosed })
   const untrackBuilder = registerFixtureChild(() => stopFixtureChild(builder, buildClosed, 1000, 2000, { group, startedBy }))
   void buildClosed.finally(untrackBuilder)
   const buildCode = await Promise.race([

@@ -13,7 +13,7 @@ export function launchChromium(executablePath,env){
 
 export async function launchOwnedChromium({executablePath=chromium.executablePath(),profile,env,origin,targetPid}){
   const data=path.join(profile,'chromium')
-  const guard=origin?await originGuardProxy(new URL(origin).origin,targetPid):null
+  const guard=origin?await originGuardProxy(new URL(origin).origin,targetPid,{requireClientAttestation:true,allowDescendants:true}):null
   const networkArgs=guard?[
     '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',
     `--proxy-server=http://127.0.0.1:${guard.port}`,
@@ -28,6 +28,7 @@ export async function launchOwnedChromium({executablePath=chromium.executablePat
       '--remote-debugging-port=0','--remote-debugging-address=127.0.0.1',`--user-data-dir=${data}`,
       'about:blank',
     ],{cwd:profile,env})
+    guard?.allowClientPid(host.pid(),host.closed)
     const port=await host.ready(()=>host.output().match(/DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//)?.[1])
     const id=await until(async()=>{
       try{

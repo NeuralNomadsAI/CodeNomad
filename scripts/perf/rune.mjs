@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {spawnFixtureChild,stopFixtureChild} from '../native-fixture-guards.mjs'
+import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../native-fixture-guards.mjs'
 import {createAttestedRelay,createStreamRedactor,redactSecrets,resolveLocalExecutable,withoutFixtureProxy} from '../native-fixture-http.mjs'
 import {registerFixtureChild} from '../../packages/rune-app/fixtures/fixture-host.mjs'
 import {MARKER, now, sleep} from './lib.mjs'
@@ -46,7 +46,7 @@ export async function withRune(binary, rustBinary, daemon, session, root, run) {
     await writeFile(path.join(root,'history-capability.json'),JSON.stringify({nativeWindowProven:true,httpStatus:history.status,
       status:historyBody.status??'invalid',reason:historyBody.reason,messages:Array.isArray(historyBody.messages)?historyBody.messages.length:undefined},null,2))
     assert(history.ok&&historyBody.status==='window','Rust history capability unavailable; inspect history-capability.json and native pruning-proof.json')
-    const rustRelay = await createAttestedRelay(origin, backendPid)
+    const rustRelay = await createAttestedRelay(origin, backendPid, {requireClientAttestation: true})
     try {
     const group = process.platform !== 'win32'
     const child = spawnFixtureChild(binary, ['--probe-latency','--tree',path.join(root,'unexpected-product-tree.json'),'--at','0'], {cwd: root, detached: group, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
@@ -58,6 +58,7 @@ export async function withRune(binary, rustBinary, daemon, session, root, run) {
     const appendStderr = chunk => { if (chunk) stderr = (stderr + chunk).slice(-64 * 1024) }
     const rejectAll = error => {failure ??= error; for (const task of pending.values()) task.reject(error); pending.clear()}
     const stopped = new Promise(resolve => {child.once('error', error => {rejectAll(error); resolve()}); child.once('close', code => {appendStderr(errRedactor.flush()); rejectAll(Error(`Rune latency probe exited (${code})`)); resolve(code)})})
+    rustRelay.allowClientPid(fixtureChildPid(child), stopped)
     const untrack = registerFixtureChild(() => stopFixtureChild(child, stopped, 1_000, 2_000, {group, startedBy}))
     void stopped.finally(untrack)
     child.stderr.on('data', chunk => {appendStderr(errRedactor.push(chunk))})
