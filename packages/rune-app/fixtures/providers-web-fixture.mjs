@@ -51,6 +51,7 @@ let configContent = '{\r\n  // comment\r\n}\r\n', configWrites = 0, hideWhitespa
 let environmentVariables = {}, secureEnvVars = []
 let contrast = 'on', permissions = 'autonomous', locale = 'en'
 let showMessageTimeline, scrollControlsInTimelineCorner, diffViewMode, autoExpandActiveSubsessions, followUpBehavior
+let transcriptSettings = {}, failEverythingOnce = false, failConfigReadOnce = false
 let appearancePreferences = {mode:'light',light:{scheme:{id:'light'}}}
 const stateWrites = []
 let notificationRouting, notifyFocused
@@ -87,7 +88,7 @@ const server = createServer(async (req,res) => {
   try {
     if (p === '/api/meta') {
       const meta = {apiContract:1,serverId:'fixture-settings',
-        capabilities:['integrations',...(configFiles?['config-files']:[]),...(stats?['service-usage']:[])],localRequest:local}
+        capabilities:['integrations','settings-atomic-patches',...(configFiles?['config-files']:[]),...(stats?['service-usage']:[])],localRequest:local}
       if (!about) return json(meta)
       infoReads++
       return json({...meta,updateFeed,serverVersion:'9.0.1',ui:{version:'9.0.2',source:'fixture'},
@@ -224,6 +225,10 @@ const server = createServer(async (req,res) => {
       return
     }
     if (p === '/api/storage/config/ui') {
+      if (req.method === 'GET' && failConfigReadOnce) {
+        failConfigReadOnce = false
+        return res.writeHead(503).end()
+      }
       if (req.method === 'PATCH') {
         let body = ''
         for await (const chunk of req) body += chunk
@@ -239,12 +244,69 @@ const server = createServer(async (req,res) => {
         showMessageTimeline = patch.settings.showMessageTimeline ?? showMessageTimeline
         scrollControlsInTimelineCorner = patch.settings.scrollControlsInTimelineCorner ?? scrollControlsInTimelineCorner
         diffViewMode = patch.settings.diffViewMode ?? diffViewMode
+        if (failEverythingOnce && patch.settings.toolCallExpansionDefaults?.preset === 'everything') {
+          failEverythingOnce = false
+          return res.writeHead(503).end()
+        }
         autoExpandActiveSubsessions = patch.settings.autoExpandActiveSubsessions ?? autoExpandActiveSubsessions
         followUpBehavior = patch.settings.followUpBehavior ?? followUpBehavior
+        for (const key of [
+          'toolGroupVisibility',
+          'systemMessagesVisibility',
+          'showThinkingBlocks',
+          'diagnosticsExpansion',
+          'toolInputsVisibility',
+          'showUsageMetrics',
+          'usageMetricsExpansion',
+          'thinkingBlocksExpansion',
+          'toolOutputExpansion',
+        ]) {
+          if (key in patch.settings) transcriptSettings[key] = patch.settings[key]
+        }
+        if (patch.settings.toolCallExpansionDefaults && typeof patch.settings.toolCallExpansionDefaults === 'object') {
+          const prev = transcriptSettings.toolCallExpansionDefaults ?? {}
+          const next = patch.settings.toolCallExpansionDefaults
+          const prevTools = prev.tools ?? {}
+          const p = prev.preset ?? 'balanced'
+          const transitioning = next.preset === 'custom' && prev.preset !== 'custom'
+          const baseTools = transitioning
+            ? Object.fromEntries([
+                'bash','read','write','edit','patch','webfetch','websearch','glob','grep','task','execute','skill','question','invalid','other',
+              ].map((tool) => {
+                const def = p === 'nothing' ? 'hidden'
+                  : p === 'everything' ? 'expanded'
+                  : p === 'minimal' ? 'collapsed'
+                  : p === 'detailed' ? (['read','skill','invalid'].includes(tool) ? 'collapsed' : 'expanded')
+                  : (['bash','write','edit','patch','task','execute','question'].includes(tool) ? 'expanded' : 'collapsed')
+                return [tool, prevTools[tool] ?? def]
+              }))
+            : prevTools
+          if (transitioning && !('usageMetricsExpansion' in patch.settings) && transcriptSettings.usageMetricsExpansion === undefined) {
+            transcriptSettings.usageMetricsExpansion = (p === 'everything' || p === 'detailed') ? 'expanded' : 'collapsed'
+          }
+          transcriptSettings.toolCallExpansionDefaults = {
+            ...prev,
+            ...(transitioning && !('thinking' in next) && prev.thinking === undefined
+              ? {thinking: (p === 'everything' || p === 'detailed') ? 'expanded' : 'collapsed'}
+              : {}),
+            ...next,
+            ...(next.tools || Object.keys(baseTools).length ? {tools:{...baseTools, ...(next.tools ?? {})}} : {}),
+          }
+        }
         if (patch.settings.notificationRouting) {
-          notificationRouting ??= {}
+          if (!notificationRouting) {
+            const sysCats = new Set(['needsInput','sessionDone','updates'])
+            const histCats = new Set(['updates','files','projects','opencode'])
+            notificationRouting = Object.fromEntries(
+              ['needsInput','sessionDone','updates','files','projects','sessions','opencode','copy','settings'].map((cat) => [
+                cat,
+                {screen:cat!=='needsInput'&&cat!=='sessionDone',history:histCats.has(cat),system:sysCats.has(cat)},
+              ]),
+            )
+          }
           for (const [category, row] of Object.entries(patch.settings.notificationRouting)) {
-            notificationRouting[category] = {...notificationRouting[category],...row}
+            if (row === null) delete notificationRouting[category]
+            else notificationRouting[category] = {...notificationRouting[category],...row}
           }
         }
         notifyFocused = patch.settings.osNotificationsAllowWhenVisible ?? notifyFocused
@@ -253,6 +315,20 @@ const server = createServer(async (req,res) => {
           if (binding === null) delete hotkeyOverrides[id]
           else hotkeyOverrides[id] = binding
         }
+        const payload = {settings:{locale,highContrast:contrast,newConversationPermissions:permissions,
+          ...(showMessageTimeline !== undefined && {showMessageTimeline}),
+          ...(scrollControlsInTimelineCorner !== undefined && {scrollControlsInTimelineCorner}),
+          ...(diffViewMode !== undefined && {diffViewMode}),
+          ...(autoExpandActiveSubsessions !== undefined && {autoExpandActiveSubsessions}),
+          ...(followUpBehavior !== undefined && {followUpBehavior}),
+          ...transcriptSettings,
+          notificationRouting,osNotificationsAllowWhenVisible:notifyFocused,hotkeyOverrides,
+          hideDiffWhitespaceChanges:hideWhitespace,holdLongAssistantReplies:true}}
+        // Mirror real server-rs: broadcast storage.configChanged after a successful PATCH.
+        for (const stream of streams.values()) {
+          stream.write(`data: ${JSON.stringify({type:'storage.configChanged',owner:'ui',value:payload})}\n\n`)
+        }
+        return json(payload)
       }
       return json({settings:{locale,highContrast:contrast,newConversationPermissions:permissions,
         ...(showMessageTimeline !== undefined && {showMessageTimeline}),
@@ -260,6 +336,7 @@ const server = createServer(async (req,res) => {
         ...(diffViewMode !== undefined && {diffViewMode}),
         ...(autoExpandActiveSubsessions !== undefined && {autoExpandActiveSubsessions}),
         ...(followUpBehavior !== undefined && {followUpBehavior}),
+        ...transcriptSettings,
         notificationRouting,osNotificationsAllowWhenVisible:notifyFocused,hotkeyOverrides,
         hideDiffWhitespaceChanges:hideWhitespace,holdLongAssistantReplies:true}})
     }
@@ -318,9 +395,12 @@ const server = createServer(async (req,res) => {
           let body = ''
           for await (const chunk of req) body += chunk
           const patch = JSON.parse(body)
-          assert.deepEqual(patch,{environmentVariables:{CN_FIXTURE:'fixture'},secureEnvVars:['CN_FIXTURE']})
+          assert.deepEqual(patch,{environmentVariables:{CN_FIXTURE:'fixture'},secureEnvVarsMask:{CN_FIXTURE:true}})
           environmentVariables = {...environmentVariables,...patch.environmentVariables}
-          secureEnvVars = patch.secureEnvVars
+          for (const [name,masked] of Object.entries(patch.secureEnvVarsMask ?? {})) {
+            secureEnvVars = secureEnvVars.filter(k => k.toLowerCase() !== name.toLowerCase())
+            if (masked) secureEnvVars.push(name)
+          }
         }
         return json({environmentVariables,secureEnvVars})
       }
@@ -1052,7 +1132,153 @@ try {
     assert.deepEqual(writes.at(-1),{settings:expectedPatch})
     await page.getByRole('checkbox',{name:label,checked:!initial,exact:true}).waitFor({state:'attached'})
   }
-  assert.equal(reads.length,0,'General does not load the provider catalogue')
+  await radio('Chat').click({force:true})
+  await visible('Transcript detail presets')
+  const presetGroup = page.getByRole('group',{name:'Transcript detail presets',exact:true})
+  await presetGroup.waitFor({state:'attached'})
+  const presetButton = name => presetGroup.getByRole('button',{name,exact:true})
+  for (const name of ['Nothing','Minimal','Balanced','Everything']) {
+    await presetButton(name).waitFor({state:'attached'})
+  }
+  assert.equal(await presetButton('Balanced').getAttribute('aria-description'),'Active')
+  assert.equal(await presetButton('Nothing').getAttribute('aria-description'),null)
+  await afterPaint()
+  // At 390px mobile viewport (< 672px / 42rem), preset buttons fold into a 2×2 grid;
+  // at 1100px desktop viewport, all 4 presets stay on one row.
+  const b0Narrow = await presetButton('Nothing').boundingBox()
+  const b2Narrow = await presetButton('Balanced').boundingBox()
+  assert(b0Narrow && b2Narrow && b2Narrow.y > b0Narrow.y + b0Narrow.height * 0.5, 'mobile viewport must fold presets into 2x2')
+  // Narrow table header and row columns stay aligned side-by-side without row wrapping.
+  const itemHeaderBox = await page.getByRole('columnheader',{name:'Item',exact:true}).boundingBox()
+  const stateHeaderBox = await page.getByRole('columnheader',{name:'Default state',exact:true}).boundingBox()
+  const groupsRowBox = await page.getByRole('rowheader',{name:'Tool groups',exact:true}).boundingBox()
+  const groupsBtnBox = await page.getByRole('button',{name:'Default state for Tool groups — Collapsed',exact:true}).boundingBox()
+  assert(itemHeaderBox && stateHeaderBox && groupsRowBox && groupsBtnBox)
+  assert(Math.abs(stateHeaderBox.x - groupsBtnBox.x) < 4, 'narrow table state column must align with row picker')
+  assert(Math.abs(groupsRowBox.y - groupsBtnBox.y) < groupsBtnBox.height, 'narrow table row must not wrap picker below label')
+  await page.setViewportSize({width:1100,height:760})
+  await afterPaint()
+  await afterPaint()
+  const b0Wide = await presetButton('Nothing').boundingBox()
+  const b2Wide = await presetButton('Balanced').boundingBox()
+  assert(b0Wide && b2Wide && Math.abs(b2Wide.y - b0Wide.y) < 2, 'wide viewport must place all 4 presets on one row')
+  await page.setViewportSize({width:390,height:844})
+  await afterPaint()
+  await afterPaint()
+  // Tab into the first preset button via Rune's real keyboard focus, assert ArrowRight does NOT
+  // save a preset (matches Solid buttons), then activate Nothing with Enter.
+  const focusedName = () => page.evaluate(() => {
+    const root = document.activeElement
+    const id = root?.getAttribute('aria-activedescendant')
+    return (id ? document.getElementById(id) : root)?.getAttribute('aria-label')
+      ?? (id ? document.getElementById(id) : root)?.textContent
+  })
+  const writesBeforeArrow = writes.length
+  for (let i = 0; i < 30 && await focusedName() !== 'Nothing'; i++) await page.keyboard.press('Tab')
+  assert.equal(await focusedName(),'Nothing','Tab must reach the first Chat preset button in Rune focus')
+  await page.keyboard.press('ArrowRight')
+  await afterPaint()
+  await afterPaint()
+  assert.equal(writes.length,writesBeforeArrow,'ArrowRight on preset buttons must not trigger a write')
+  assert.equal(await presetButton('Balanced').getAttribute('aria-description'),'Active','ArrowRight must leave Balanced active')
+  assert.equal(await presetButton('Nothing').getAttribute('aria-description'),null,'ArrowRight must not activate Nothing')
+  assert.equal(await page.getByRole('columnheader',{name:'Item',exact:true}).count(),1)
+  assert.equal(await page.getByRole('columnheader',{name:'Default state',exact:true}).count(),1)
+  assert.equal(await page.getByRole('rowheader').count(),21,'Chat renders all 21 expansion rows')
+  const savedNothing = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
+  await page.keyboard.press('Enter')
+  await savedNothing
+  assert.equal(writes.length,writesBeforeArrow + 1,'only Enter triggered a PATCH after ArrowRight')
+  assert.equal(writes.at(-1).settings.toolCallExpansionDefaults.preset,'nothing')
+  assert.equal(writes.at(-1).settings.diagnosticsExpansion,'hidden')
+  await page.waitForFunction(() => {
+    const group = document.querySelector('[role="group"][aria-label="Transcript detail presets"]')
+    const btn = group && Array.from(group.querySelectorAll('button')).find(b => b.textContent === 'Nothing')
+    return btn?.getAttribute('aria-description') === 'Active'
+  })
+  assert.equal(await presetButton('Balanced').getAttribute('aria-description'),null)
+  // Pinned Rune mirrors Select combobox triggers as HTML buttons in the browser mirror
+  // (native AccessKit exposes combobox, covered in view::tests).
+  const groupsTrigger = page.getByRole('button',{name:'Default state for Tool groups — Collapsed',exact:true})
+  await groupsTrigger.waitFor({state:'attached'})
+  await groupsTrigger.click({force:true})
+  const savedGroups = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
+  const echoGroups = page.waitForResponse(async response => {
+    if (new URL(response.url()).pathname !== '/api/storage/config/ui' || response.request().method() !== 'GET') return false
+    const body = await response.json().catch(() => null)
+    return body?.settings?.toolGroupVisibility === 'hidden'
+  })
+  await page.getByRole('option',{name:'Disabled',exact:true}).click({force:true})
+  await savedGroups
+  await echoGroups
+  assert.deepEqual(writes.at(-1),{settings:{toolGroupVisibility:'hidden'}})
+  await page.getByRole('button',{name:'Default state for Tool groups — Disabled',exact:true}).waitFor({state:'attached'})
+  // Concurrent edits on the server before a manual read edit must survive its merge patch.
+  transcriptSettings.toolCallExpansionDefaults.tools.skill = 'expanded'
+  transcriptSettings.showThinkingBlocks = true
+  const readTrigger = page.getByRole('button',{name:'Default state for read — Hidden',exact:true})
+  await readTrigger.waitFor({state:'attached'})
+  await readTrigger.click({force:true})
+  const savedRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
+  const echoRead = page.waitForResponse(async response => {
+    if (new URL(response.url()).pathname !== '/api/storage/config/ui' || response.request().method() !== 'GET') return false
+    const body = await response.json().catch(() => null)
+    return body?.settings?.toolCallExpansionDefaults?.tools?.read === 'expanded'
+  })
+  await page.getByRole('option',{name:'Expanded',exact:true}).click({force:true})
+  await savedRead
+  await echoRead
+  assert.deepEqual(writes.at(-1),{settings:{toolCallExpansionDefaults:{preset:'custom',tools:{read:'expanded'}}}})
+  assert.equal(transcriptSettings.toolCallExpansionDefaults.tools.skill,'expanded','concurrent skill edit survived')
+  assert.equal(transcriptSettings.showThinkingBlocks,true,'concurrent thinking edit survived')
+  const readExpanded = page.getByRole('button',{name:'Default state for read — Expanded',exact:true})
+  await readExpanded.waitFor({state:'attached'})
+  // Wait for the client to finish settling echoRead before opening the picker and arming 503.
+  await afterPaint()
+  await readExpanded.click({force:true})
+  await page.getByRole('option',{name:'Hidden',exact:true}).waitFor({state:'attached'})
+  const prefStream = Array.from(streams).find(([client])=>client.endsWith('-preferences'))?.[1]
+  assert(prefStream,'Preferences EventSource must be connected')
+  failConfigReadOnce = true
+  const failedRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'GET' && response.status() === 503)
+  prefStream.write(`data: ${JSON.stringify({type:'storage.configChanged',owner:'ui'})}\n\n`)
+  assert.equal((await failedRead).status(),503)
+  await page.getByRole('option',{name:'Hidden',exact:true}).waitFor({state:'detached'})
+  const settingsDialog = page.getByRole('dialog',{name:'Settings',exact:true})
+  await settingsDialog.getByRole('button',{name:'Retry',exact:true}).waitFor({state:'attached'})
+  await page.locator('[aria-live="assertive"]').filter({hasText:'Connection failed'}).waitFor({state:'attached'})
+  assert.equal(await presetButton('Nothing').getAttribute('aria-description'),'Disabled')
+  const writesDuringOutage = writes.length
+  await presetButton('Nothing').click({force:true})
+  await afterPaint()
+  const disabledReadBtn = page.getByRole('button',{name:'Default state for read — Expanded',exact:true})
+  assert.equal(await disabledReadBtn.getAttribute('aria-description'),'Disabled')
+  await disabledReadBtn.click({force:true})
+  await afterPaint()
+  const recoveredRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'GET')
+  await settingsDialog.getByRole('button',{name:'Retry',exact:true}).click({force:true})
+  assert.equal((await recoveredRead).status(),200)
+  await settingsDialog.getByRole('button',{name:'Retry',exact:true}).waitFor({state:'detached'})
+  await afterPaint()
+  assert.equal(writes.length,writesDuringOutage,'Disabled preset and row picker stayed inert through recovery')
+  failEverythingOnce = true
+  const failedEverything = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
+  await presetButton('Everything').click({force:true})
+  assert.equal((await failedEverything).status(),503)
+  await settingsDialog.getByText('Could not save the preference.',{exact:true}).waitFor({state:'attached'})
+  await settingsDialog.getByRole('button',{name:'Retry',exact:true}).waitFor({state:'attached'})
+  await page.locator('[aria-live="polite"]').filter({hasText:'Could not save the preference.'}).waitFor({state:'attached'})
+  await afterPaint()
+  const retriedEverything = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
+  await settingsDialog.getByRole('button',{name:'Retry',exact:true}).click({force:true})
+  assert.equal((await retriedEverything).status(),200)
+  assert.equal(writes.at(-1).settings.toolCallExpansionDefaults.preset,'everything')
+  assert.equal(writes.at(-1).settings.showThinkingBlocks,true)
+  assert.equal(writes.at(-1).settings.showUsageMetrics,true)
+  await page.getByRole('button',{name:'Default state for Tool groups — Expanded',exact:true}).waitFor({state:'attached'})
+  await settingsDialog.getByRole('button',{name:'Retry',exact:true}).waitFor({state:'detached'})
+  await radio('General').click({force:true})
+  assert.equal(reads.length,0,'General and Chat do not load the provider catalogue')
   await radio('Providers').click({force:true})
   await visible(account)
   const nonConversation = () => Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1]

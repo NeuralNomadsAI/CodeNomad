@@ -767,3 +767,227 @@ fn general_behavior_renders_six_checkboxes_natively_and_hides_keep_awake_on_web(
             .contains("Keep the computer awake while CodeNomad is running")
     );
 }
+
+#[test]
+fn conversation_preferences_render_presets_headers_and_all_21_rows_in_solid_order() {
+    let state = Window::default();
+    {
+        let mut prefs = state.shared.borrow_mut();
+        prefs.fixture();
+        prefs.backend =
+            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
+    }
+    let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+    rt.frame(0.0);
+    let (x, y) = rt.find("settings-conversation").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    for _ in 0..8 {
+        rt.frame(0.02);
+    }
+    let tree = rt.accessibility_json();
+    let mut headings = Vec::new();
+    let mut columns = Vec::new();
+    let mut rowheaders = Vec::new();
+    let mut presets = Vec::new();
+    fn collect(
+        node: &serde_json::Value,
+        headings: &mut Vec<String>,
+        columns: &mut Vec<String>,
+        rowheaders: &mut Vec<String>,
+        presets: &mut Vec<(String, bool)>,
+    ) {
+        let role = node["role"].as_str().unwrap_or_default();
+        let name = node["name"].as_str().unwrap_or_default();
+        match role {
+            "heading" if !name.is_empty() => headings.push(name.to_owned()),
+            "column-header" => columns.push(name.to_owned()),
+            "row-header" => rowheaders.push(name.to_owned()),
+            "button" if matches!(name, "Nothing" | "Minimal" | "Balanced" | "Everything") => {
+                let checked = node["states"]
+                    .as_array()
+                    .is_some_and(|states| states.iter().any(|s| s == "checked"));
+                presets.push((name.to_owned(), checked));
+            }
+            _ => {}
+        }
+        if let Some(children) = node["children"].as_array() {
+            for child in children {
+                collect(child, headings, columns, rowheaders, presets);
+            }
+        }
+    }
+    collect(
+        &tree,
+        &mut headings,
+        &mut columns,
+        &mut rowheaders,
+        &mut presets,
+    );
+    assert!(
+        headings.iter().any(|h| h == "Transcript detail presets"),
+        "missing presets card heading: {headings:?}"
+    );
+    assert_eq!(columns, vec!["Item", "Default state"]);
+    assert_eq!(
+        presets,
+        vec![
+            ("Nothing".to_owned(), false),
+            ("Minimal".to_owned(), false),
+            ("Balanced".to_owned(), true),
+            ("Everything".to_owned(), false),
+        ]
+    );
+    let expected_rows = vec![
+        "thinking",
+        "Diagnostic",
+        "Input",
+        "Tokens",
+        "System",
+        "Tool groups",
+        "shell",
+        "read",
+        "write",
+        "edit",
+        "patch",
+        "webfetch",
+        "websearch",
+        "glob",
+        "grep",
+        "subagent",
+        "execute",
+        "skill",
+        "question",
+        "invalid",
+        "Other",
+    ];
+    assert_eq!(rowheaders, expected_rows);
+    let groups_key = "transcript-toolGroupVisibility-trigger";
+    let groups_node = node(&tree, groups_key).unwrap();
+    assert_eq!(groups_node["role"], "combo-box");
+    let groups_row = groups_node.to_string();
+    assert!(
+        groups_row.contains("Tool groups") && groups_row.contains("Collapsed"),
+        "{groups_row}"
+    );
+    assert_eq!(
+        node(&tree, "transcript-read-trigger").unwrap()["role"],
+        "combo-box"
+    );
+    // Enter opens the focused row picker and Tool groups offers Disabled.
+    rt.update(|_, tx| tx.focus(groups_key, true));
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Enter,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert_eq!(
+        rt.state.transcript_picker.get(),
+        Some(super::super::TranscriptRow::Groups)
+    );
+    let open_tree = rt.accessibility_json().to_string();
+    assert!(
+        open_tree.contains("Disabled"),
+        "Tool groups must offer Disabled"
+    );
+    // A failed authoritative config read dismisses the open picker modal so Retry stays unobstructed.
+    rt.update(|s, _| {
+        s.shared.borrow_mut().fixture_config_read_failed(true);
+    });
+    rt.frame(0.02);
+    assert_eq!(rt.state.transcript_picker.get(), None);
+    rt.update(|s, _| {
+        s.shared.borrow_mut().fixture_config_read_failed(false);
+    });
+    rt.frame(0.02);
+    assert_eq!(rt.state.transcript_picker.get(), None);
+
+    // ArrowRight on focused Balanced preset button must NOT activate or stage a preset change,
+    // while Enter on focused Minimal preset button DOES activate Minimal.
+    rt.update(|_, tx| tx.focus("transcript-preset-2", true));
+    rt.frame(0.02);
+    let balanced_rev = rt.state.shared.borrow().revision;
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Right,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert_eq!(rt.state.shared.borrow().revision, balanced_rev);
+    assert_eq!(rt.state.shared.borrow().transcript_preset(), "balanced");
+
+    rt.update(|_, tx| tx.focus("transcript-preset-1", true));
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Enter,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(rt.state.shared.borrow().revision > balanced_rev);
+    assert_eq!(
+        rt.state
+            .shared
+            .borrow()
+            .transcript_mode(super::super::TranscriptRow::Diagnostics, true),
+        "collapsed"
+    );
+
+    // Reopen, then ConnectionLost (mark_transport_lost) clears the open picker and disables controls
+    // until a post-outage config read revalidates authority.
+    rt.update(|_, tx| tx.focus(groups_key, true));
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Enter,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert_eq!(
+        rt.state.transcript_picker.get(),
+        Some(super::super::TranscriptRow::Groups)
+    );
+    rt.update(|s, _| {
+        s.shared.borrow_mut().mark_transport_lost();
+    });
+    rt.frame(0.02);
+    assert_eq!(rt.state.transcript_picker.get(), None);
+    assert!(!rt.state.shared.borrow().transcript_ready());
+    assert_eq!(
+        rt.state.shared.borrow().transcript_error(),
+        Some("rune.connect_error")
+    );
+    let offline_tree = rt.accessibility_json().to_string();
+    assert!(
+        offline_tree.contains("\"role\":\"alert\"") && offline_tree.contains("Connection failed"),
+        "transport_lost must render the connection error alert in Chat: {offline_tree}"
+    );
+    assert!(
+        offline_tree.contains("\"name\":\"Retry\",\"role\":\"button\""),
+        "transport_lost must render the Retry button in Chat: {offline_tree}"
+    );
+
+    // Preset grid reflows from 4 columns on wide Chat container (1100px window) to 2×2 on narrow
+    // Chat container (760px window, where sidebar shrinks Chat below 42rem / 672px).
+    let preset_rect = |rt: &rune::Runtime<Window>, key: &str| {
+        rt.elements()
+            .iter()
+            .find(|node| node.key.as_deref() == Some(key))
+            .unwrap()
+            .rect
+    };
+    let b0_wide = preset_rect(&rt, "transcript-preset-0");
+    let b2_wide = preset_rect(&rt, "transcript-preset-2");
+    assert!(
+        (b0_wide[1] - b2_wide[1]).abs() < 1.0,
+        "wide Chat container must place all 4 presets on one row: {b0_wide:?} vs {b2_wide:?}"
+    );
+    rt.set_viewport((760.0, 560.0), 1.0);
+    for _ in 0..3 {
+        rt.frame(0.02);
+    }
+    let b0_narrow = preset_rect(&rt, "transcript-preset-0");
+    let b2_narrow = preset_rect(&rt, "transcript-preset-2");
+    assert!(
+        b2_narrow[1] > b0_narrow[1] + b0_narrow[3] * 0.5,
+        "narrow Chat container (<672px) must fold presets into a 2×2 grid: {b0_narrow:?} vs {b2_narrow:?}"
+    );
+}

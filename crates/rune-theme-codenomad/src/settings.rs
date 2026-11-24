@@ -153,6 +153,68 @@ pub fn nav<S: 'static>(
     sidebar.build(kit)
 }
 
+const PRESET_NARROW_BREAKPOINT: f32 = 672.0;
+
+pub fn preset_columns(viewport_width: f32) -> usize {
+    if viewport_width > 0.0 && viewport_width < PRESET_NARROW_BREAKPOINT {
+        2
+    } else {
+        4
+    }
+}
+
+pub fn preset_buttons<S: 'static>(
+    label: &str,
+    options: &[&str],
+    selected: Option<usize>,
+    active_tag: &str,
+    disabled_tag: &str,
+    disabled: bool,
+    columns: usize,
+    choose: impl Fn(&mut S, usize) + Clone + 'static,
+) -> El {
+    let dark = layout::dark();
+    let kit = crate::kit(dark);
+    col()
+        .key("transcript-presets")
+        .role("group")
+        .label(label)
+        .full_width()
+        .equal_columns(columns.max(1))
+        .separate(Space::Sm)
+        .children(options.iter().enumerate().map(|(index, &option)| {
+            let active = selected == Some(index);
+            let choose = choose.clone();
+            let action = std::rc::Rc::new(move |s: &mut S, _: &mut rune::Tx| choose(s, index));
+            let press = action.clone();
+            let mut button = rune_kit::Button::new(option)
+                .disabled(disabled)
+                .on_press_tx(move |s: &mut S, tx| press(s, tx));
+            if active {
+                button = button.variant(rune_kit::ButtonVariant::Submit);
+            }
+            let button = button
+                .build(kit)
+                .min_h(44.0)
+                .key(format!("transcript-preset-{index}"))
+                .checked(active);
+            #[cfg(target_arch = "wasm32")]
+            let button = match (active, disabled) {
+                (true, true) => button.description(format!("{active_tag}, {disabled_tag}")),
+                (true, false) => button.description(active_tag),
+                (false, true) => button.description(disabled_tag),
+                (false, false) => button,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let _ = (active_tag, disabled_tag);
+            if disabled {
+                button
+            } else {
+                button.on_key(layout::enter_action(action))
+            }
+        }))
+}
+
 pub fn segments<S: 'static>(
     label: &str,
     options: &[&str],
@@ -172,10 +234,25 @@ pub fn segments<S: 'static>(
     control.build(crate::kit(layout::dark()))
 }
 
+const PICKER_WIDTH: f32 = 180.0;
+const COMPACT_PICKER_WIDTH: f32 = 136.0;
+
+fn table_width(compact: bool) -> f32 {
+    if compact {
+        COMPACT_PICKER_WIDTH
+    } else {
+        PICKER_WIDTH
+    }
+}
+
 pub fn picker(key: &str, label: &str, options: &[&str]) -> Select {
+    table_picker(key, label, options, false)
+}
+
+pub fn table_picker(key: &str, label: &str, options: &[&str], compact: bool) -> Select {
     Select::new(key, options)
         .label(label)
-        .width(180.0)
+        .width(table_width(compact))
         .appearance(SelectAppearance::Field)
 }
 
@@ -185,6 +262,27 @@ pub fn build_picker(control: Select, layers: &mut Vec<El>) -> El {
     kit.c.bg_base = tokens(dark).color("surface-control");
     kit.c.layer_01 = tokens(dark).color("surface-overlay");
     control.build(&kit, layers)
+}
+
+pub fn build_picker_accessible(
+    control: Select,
+    name: &str,
+    disabled: bool,
+    disabled_tag: &str,
+    layers: &mut Vec<El>,
+) -> El {
+    let built = build_picker(control, layers);
+    #[cfg(target_arch = "wasm32")]
+    if disabled {
+        return el()
+            .role("button")
+            .disabled(true)
+            .label(name.to_owned())
+            .description(disabled_tag)
+            .child(built);
+    }
+    let _ = (name, disabled, disabled_tag);
+    built
 }
 
 pub fn transcript_popup<S: 'static>(
@@ -260,6 +358,7 @@ pub fn transcript_filter_row<S: 'static>(
     visibility: (&str, bool, impl Fn(&mut S, &mut rune::Tx) + 'static),
     expansion: (&str, bool, impl Fn(&mut S, &mut rune::Tx) + 'static),
     disabled: bool,
+    disabled_tag: &str,
     decorate: impl Fn(El, bool) -> El,
 ) -> El {
     use crate::git_panel::{CHEVRON_DOWN, CHEVRON_RIGHT, EYE};
@@ -267,6 +366,7 @@ pub fn transcript_filter_row<S: 'static>(
         glyph: &'static rune::Icon,
         label: &str,
         disabled: bool,
+        disabled_tag: &str,
         active: bool,
         press: impl Fn(&mut S, &mut rune::Tx) + 'static,
     ) -> El {
@@ -276,6 +376,14 @@ pub fn transcript_filter_row<S: 'static>(
             crate::git_panel::icon_button(glyph, label, disabled, Some(active), move |s, tx| {
                 by_pointer(s, tx)
             });
+        #[cfg(target_arch = "wasm32")]
+        let button = if disabled {
+            button.description(disabled_tag)
+        } else {
+            button
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = disabled_tag;
         if disabled {
             button
         } else {
@@ -304,8 +412,15 @@ pub fn transcript_filter_row<S: 'static>(
                 .truncate(),
         )
         .child(decorate(
-            filter_button(&EYE, visibility_name, disabled, visible, set_visibility)
-                .key("visibility"),
+            filter_button(
+                &EYE,
+                visibility_name,
+                disabled,
+                disabled_tag,
+                visible,
+                set_visibility,
+            )
+            .key("visibility"),
             false,
         ))
         .child(decorate(
@@ -317,6 +432,7 @@ pub fn transcript_filter_row<S: 'static>(
                 },
                 expansion_name,
                 disabled || !visible,
+                disabled_tag,
                 expanded,
                 set_expansion,
             )
@@ -403,6 +519,32 @@ pub fn card(child: El) -> El {
 
 pub fn setting_row(label: &str, control: El) -> El {
     setting_row_with_info(label, None, control)
+}
+
+pub fn setting_table_header(item: &str, state: &str, compact: bool) -> El {
+    let t = tokens(layout::dark());
+    row()
+        .role("row")
+        .full_width()
+        .center_y()
+        .separate(Space::Sm)
+        .py(t.space(Space::Xs).px())
+        .border_sides([0.0, 0.0, 1.0, 0.0], t.color("border-divider"))
+        .child(table_header(item, "columnheader").grow(1.0))
+        .child(table_header(state, "columnheader").w(table_width(compact)))
+}
+
+pub fn setting_table_row(label: &str, control: El, compact: bool) -> El {
+    let t = tokens(layout::dark());
+    row()
+        .role("row")
+        .full_width()
+        .center_y()
+        .separate(Space::Sm)
+        .py(t.space(Space::Xs).px())
+        .border_sides([0.0, 0.0, 1.0, 0.0], t.color("border-divider"))
+        .child(table_header(label, "rowheader").grow(1.0))
+        .child(el().role("cell").w(table_width(compact)).child(control))
 }
 
 fn table_header(label: &str, role: &'static str) -> El {

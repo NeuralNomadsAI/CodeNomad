@@ -43,7 +43,7 @@ use appearance::render_with;
 pub(crate) use appearance::{app_locale, render};
 pub(crate) use connection::{
     bound_backend, connected, connection_event, conversation_authentication, invalidate,
-    stop_before_conversation,
+    stop_before_conversation, tab_activated,
 };
 #[cfg(test)]
 use connection::{provider_changed, provider_stopped};
@@ -74,7 +74,7 @@ pub(crate) struct Host {
     contrast: Option<web_contrast::Watch>,
     #[cfg(target_arch = "wasm32")]
     last_contrast: bool,
-    last_display: Option<([&'static str; 5], bool)>,
+    last_display: Option<([&'static str; 5], bool, bool, bool)>,
     last_transcript: Option<[&'static str; transcript_preset::ROW_COUNT]>,
     transcript_filters: transcript_filters::Filters,
     memory_cleanup: Option<memory::cleanup::Run>,
@@ -104,9 +104,11 @@ pub(crate) fn poll_window_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
     let changed = memory::cleanup::poll(s, tx);
     #[cfg(target_arch = "wasm32")]
     return changed
-        | s.settings
-            .web
-            .poll_window_actions(&s.settings.shared.borrow(), tx);
+        | s.settings.web.poll_window_actions(
+            &s.settings.shared.borrow(),
+            s.settings.transcript_filters.is_open(&s.input_scope),
+            tx,
+        );
     #[cfg(not(target_arch = "wasm32"))]
     changed
 }
@@ -198,7 +200,10 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             }
         }
     }
-    if crate::workspace::has_conversation_stream(s)
+    let active_stream = crate::workspace::has_conversation_stream(s);
+    let stream_clients = crate::workspace::conversation_stream_clients(s);
+    shared.observe_conversation_clients(&stream_clients);
+    if active_stream
         || s.screen
             .launcher()
             .is_some_and(|launcher| launcher.authentication_required)
@@ -220,6 +225,8 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             shared.contrast(),
         ],
         awaiting_appearance(s, &shared),
+        shared.show_timeline(),
+        shared.transcript_ready(),
     ));
     let mut rows = TranscriptRow::all();
     let transcript = Some(std::array::from_fn(|_| {

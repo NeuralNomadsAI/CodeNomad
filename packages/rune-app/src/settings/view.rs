@@ -389,16 +389,25 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             .view(&s.shared, &mut layers, |s: &mut Window| &mut s.logging),
                     ),
             ),
-            Section::Conversation => (
-                "conversation",
-                super::conversation::content(
-                    &prefs,
-                    s.transcript_picker.get(),
-                    &mut layers,
-                    |s: &mut Window, row| s.transcript_picker.set(row),
-                    |s: &mut Window, row, mode| s.shared.borrow_mut().set_transcript(row, mode),
-                ),
-            ),
+            Section::Conversation => {
+                if !prefs.transcript_ready() {
+                    s.transcript_picker.set(None);
+                }
+                (
+                    "conversation",
+                    super::conversation::content(
+                        &prefs,
+                        s.transcript_picker.get(),
+                        cx.window_layout_with("transcript-presets", |rect| {
+                            chrome::preset_columns(rect[2])
+                        })
+                        .unwrap_or(4),
+                        &mut layers,
+                        |s: &mut Window, row| s.transcript_picker.set(row),
+                        |s: &mut Window, row, mode| s.shared.borrow_mut().set_transcript(row, mode),
+                    ),
+                )
+            }
             Section::General => (
                 "general",
                 general::view(s, &prefs, system_dark, system_more, &mut layers),

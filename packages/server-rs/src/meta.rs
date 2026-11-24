@@ -51,6 +51,7 @@ pub fn document(
         "sidecars",
         "service-usage",
         "provider-usage",
+        "settings-atomic-patches",
     ];
     if bench::missions_run() {
         capabilities.push("missions");

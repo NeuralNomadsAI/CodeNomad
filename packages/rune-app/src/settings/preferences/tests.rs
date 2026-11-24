@@ -20,6 +20,20 @@ use tokio::{
     time::timeout,
 };
 
+async fn poll_next_request(prefs: &mut Preferences, listener: &TcpListener) -> Request {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            prefs.poll();
+            if let Ok(accepted) = timeout(Duration::from_millis(20), listener.accept()).await {
+                let (socket, _) = accepted.unwrap();
+                return read_request(socket, Duration::from_secs(3)).await;
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for expected preferences HTTP request")
+}
+
 #[test]
 fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
     platform::block_on(async {
@@ -426,6 +440,17 @@ async fn fixture() -> (TcpListener, Preferences) {
     (listener, prefs)
 }
 
+async fn fixture_atomic() -> (TcpListener, Preferences) {
+    let (listener, prefs) = fixture().await;
+    prefs
+        .backend
+        .as_ref()
+        .unwrap()
+        .client
+        .observe_atomic_settings_patches(true);
+    (listener, prefs)
+}
+
 #[test]
 fn settings_a_read_started_before_a_gesture_cannot_consume_its_queued_write() {
     let (listener, mut prefs) = platform::block_on(fixture());
@@ -736,8 +761,12 @@ async fn request(listener: &TcpListener) -> Request {
 }
 
 async fn request_with_timeout(listener: &TcpListener, deadline: Duration) -> Request {
+    let (socket, _) = timeout(deadline, listener.accept()).await.unwrap().unwrap();
+    read_request(socket, deadline).await
+}
+
+async fn read_request(mut socket: tokio::net::TcpStream, deadline: Duration) -> Request {
     timeout(deadline, async {
-        let (mut socket, _) = listener.accept().await.unwrap();
         let mut header = Vec::new();
         while !header.ends_with(b"\r\n\r\n") {
             header.push(socket.read_u8().await.unwrap());
