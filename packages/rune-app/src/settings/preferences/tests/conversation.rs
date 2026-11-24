@@ -537,6 +537,16 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
         runtime.frame(0.02);
         assert!(runtime.state.draft.text.is_empty());
         if let Some(reconnect) = reconnect {
+            let prompt = request(&listener).await;
+            assert_eq!(
+                prompt.first,
+                "POST /workspaces/project/instance/api/session/session/prompt HTTP/1.1"
+            );
+            assert_eq!(prompt.body["text"], "refused prompt");
+            prompt.reply(401, json!({})).await;
+            let status = request(&listener).await;
+            assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
+            status.reply(200, json!({"authenticated":false})).await;
             reconnect.reply(401, json!({})).await;
         } else {
             let prompt = request(&listener).await;
@@ -583,7 +593,7 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
                         .is_err_and(|error| error.kind() == std::io::ErrorKind::ConnectionReset)
             );
         }
-        if prompt_reply != Some(401) {
+        if prompt_reply == Some(409) {
             let status = request(&listener).await;
             assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
             status.reply(200, json!({"authenticated":false})).await;
