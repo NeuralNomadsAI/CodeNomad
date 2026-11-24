@@ -154,18 +154,18 @@ fn is_json_content_type(headers: &axum::http::HeaderMap) -> bool {
         let rest = ct.as_bytes();
         rest.len() >= 16
             && rest[..16].eq_ignore_ascii_case(b"application/json")
-            && rest.get(16).is_none_or(|b| matches!(b, b';' | b' ' | b'\t'))
+            && rest[16..].trim_ascii_start().first().is_none_or(|&b| b == b';')
     })
 }
 
-fn defer_message_list(id: &str, session: &str, bytes: Vec<u8>) -> Body {
+fn defer_message_list(id: &str, session: &str, bytes: Vec<u8>) -> (Body, bool) {
     if let Ok(mut native) = serde_json::from_slice::<Value>(&bytes)
         && native.get_mut("data").is_some_and(|data| crate::sessions::media::defer(id, session, data))
     {
         drop(bytes);
-        return Body::from(native.to_string());
+        return (Body::from(native.to_string()), true);
     }
-    Body::from(bytes)
+    (Body::from(bytes), false)
 }
 
 fn one_location(location: &Value, directory: &str) -> Result<(), Error> {
@@ -258,7 +258,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
         });
     let defer_media =
-        (message_list && crate::sessions::media::wants_deferred(&head.headers)).then(|| session).flatten();
+        (message_list && crate::sessions::media::wants_deferred(&head.headers)).then_some(session).flatten();
     let actual = if let Some(session) = session {
         Some(super::session_record_at(&app, &endpoint, session).await?)
     } else {
@@ -268,26 +268,41 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let directory = requested.as_deref().or(native_directory).unwrap_or(opened);
     let identity_now = || {
         let raw = native_directory?;
-        let path = if message_list {
+        let (resolved, anchor) = if message_list {
+            if !crate::files::paths::local_absolute(raw) {
+                return None;
+            }
+            let normalized = crate::files::node_path::Style::host().normalize(raw);
+            if !crate::files::paths::under(&app.scope, std::path::Path::new(&normalized)) {
+                return None;
+            }
             let resolved = crate::worktrees::ownership::resolve_directory(raw).filter(|p| p.starts_with(&app.scope))?;
             let mut cur = resolved.as_path();
-            loop {
+            let anchor = loop {
                 match std::fs::symlink_metadata(cur) {
                     Ok(meta) => break meta.is_dir().then(|| cur.to_path_buf())?,
                     Err(err) if err.kind() == std::io::ErrorKind::NotFound => cur = cur.parent()?,
                     Err(_) => return None,
                 }
-            }
+            };
+            (resolved, anchor)
         } else {
-            crate::files::paths::canonical(&app.scope, raw)?
+            let path = crate::files::paths::canonical(&app.scope, raw)?;
+            (path.clone(), path)
         };
-        let identity = crate::files::host_identity(&path).ok()?;
-        Some((path, identity))
+        let identity = crate::files::host_identity(&anchor).ok()?;
+        Some((resolved, anchor, identity))
     };
     let allow_subfolder = send_input || message_list;
     let initial_identity = allow_subfolder.then(&identity_now).flatten();
     let input_checkout = match &initial_identity {
-        Some((physical, _)) => {
+        Some((resolved, anchor, _)) if message_list => {
+            crate::worktrees::ownership::media_directory(&app, &endpoint, &workspace, resolved, anchor)
+                .await
+                .ok()
+                .flatten()
+        }
+        Some((_, physical, _)) => {
             crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, physical, true).await
         }
         None => None,
@@ -529,11 +544,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             && initial_identity
                 .as_ref()
                 .zip(input_checkout.as_ref())
-                .is_some_and(|((path, _), checkout)| checkout.live(path))
+                .is_some_and(|((resolved, _, _), checkout)| checkout.live(resolved))
             && crate::sessions::permission_mode::workspace_current(&app, &workspace)
     };
     let recheck_input = || async {
-        let (physical, _) = initial_identity.as_ref().ok_or_else(foreign)?;
+        let (_, physical, _) = initial_identity.as_ref().ok_or_else(foreign)?;
         let admitted = input_checkout.as_ref().ok_or_else(foreign)?;
         if !crate::worktrees::ownership::capture_directory(&app, &workspace, physical)
             .await
@@ -752,7 +767,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         && is_json_content_type(response.headers())
     {
         static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
-        let builder = relayed(&response);
+        let status = response.status();
+        let headers: Vec<(&'static str, axum::http::HeaderValue)> =
+            ["content-type", "cache-control", "etag", "last-modified"]
+                .into_iter()
+                .filter_map(|name| response.headers().get(name).cloned().map(|value| (name, value)))
+                .collect();
         let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         let slot = tokio::select! {
@@ -769,7 +789,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 read.map_err(|_| interrupted())?.map_err(|_| interrupted())?
             }
         };
-        let body = if bytes.len() > 32 * 1024 {
+        let (body, changed) = if bytes.len() > 32 * 1024 {
             let (id, session) = (id.to_owned(), session.to_owned());
             tokio::select! {
                 biased;
@@ -786,13 +806,30 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             }
         } else {
             drop(slot);
-            Body::from(bytes)
+            (Body::from(bytes), false)
         };
         if !app.native.current(&endpoint) {
             return Err(upstream_error());
         }
         app.workspace(id)?;
+        let fresh = tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            record = tokio::time::timeout_at(deadline, super::session_record_at(&app, &endpoint, session)) => {
+                record.map_err(|_| interrupted())??
+            }
+        };
+        if !actual.as_ref().is_some_and(|initial| same_target(initial, &fresh))
+            || fresh["location"]["directory"] != directory
+            || !input_location_live()
+        {
+            return Err(foreign());
+        }
         principal.live()?;
+        let builder = headers
+            .into_iter()
+            .filter(|(name, _)| !(changed && *name == "etag"))
+            .fold(Response::builder().status(status), |builder, (name, value)| builder.header(name, value));
         return builder.extension(NativeBody).body(body).map_err(|_| upstream_error());
     }
     let builder = relayed(&response);
@@ -817,6 +854,9 @@ async fn deferred_message_list_preserves_non_object_and_unchanged_json() {
     for (ct, expected) in [
         ("application/json", true),
         ("Application/JSON; charset=utf-8", true),
+        ("application/json ; charset=utf-8", true),
+        ("application/json foo", false),
+        ("application/json-patch+json", false),
         ("application/jsonp", false),
         ("text/plain", false),
     ] {
@@ -824,13 +864,16 @@ async fn deferred_message_list_preserves_non_object_and_unchanged_json() {
         assert_eq!(is_json_content_type(&headers), expected, "{ct}");
     }
     for raw in [b"[]".as_slice(), b"{}", b"null", b"not json", b"{\"data\":[]}"] {
-        let out = to_bytes(defer_message_list("ws_1", "ses_1", raw.to_vec()), 1024).await.unwrap();
+        let (body, changed) = defer_message_list("ws_1", "ses_1", raw.to_vec());
+        assert!(!changed);
+        let out = to_bytes(body, 1024).await.unwrap();
         assert_eq!(out.as_ref(), raw);
     }
     let large = format!("data:image/png;base64,{}", "A".repeat(32 * 1024));
     let payload = json!({"data":[{"id":"msg_1","type":"assistant","content":[{"type":"tool","state":{"content":[{"type":"file","mime":"image/png","uri":large}]}}]}]});
-    let out =
-        to_bytes(defer_message_list("ws_1", "ses_1", payload.to_string().into_bytes()), 1024 * 1024).await.unwrap();
+    let (body, changed) = defer_message_list("ws_1", "ses_1", payload.to_string().into_bytes());
+    assert!(changed);
+    let out = to_bytes(body, 1024 * 1024).await.unwrap();
     let rewritten: Value = serde_json::from_slice(&out).unwrap();
     let uri = rewritten["data"][0]["content"][0]["state"]["content"][0]["uri"].as_str().unwrap();
     assert!(uri.starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_1/0/0/"), "{uri}");
