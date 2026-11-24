@@ -687,6 +687,7 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
     assert!(launcher.creation_uncertain);
     assert!(launcher.creation_uncertain_linked.is_some());
     // An authoritative root-only fallback (includes_linked = false) must not unlock a linked creation.
+    launcher.error = Some("rune.create_error");
     launcher.apply_passive_listing(
         Sessions {
             rows: vec![row("root")],
@@ -698,17 +699,23 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
     );
     assert!(launcher.creation_uncertain);
     assert!(launcher.creation_uncertain_linked.is_some());
+    assert_eq!(launcher.error, Some("rune.create_error"));
+    // A direct linked target page (authoritative = false, includes_linked = true) merges
+    // additively (retaining existing root sessions) and unlocks creation_uncertain_linked.
     launcher.apply_passive_listing(
         Sessions {
-            rows: vec![row("root"), row("linked-new")],
+            rows: vec![row("linked-new")],
             next: None,
         },
         None,
-        true,
+        false,
         true,
     );
     assert!(!launcher.creation_uncertain);
     assert!(launcher.creation_uncertain_linked.is_none());
+    assert_eq!(launcher.error, None);
+    assert!(launcher.sessions.iter().any(|r| r.id == "root"));
+    assert!(launcher.sessions.iter().any(|r| r.id == "linked-new"));
 }
 
 #[test]
@@ -993,6 +1000,45 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
             .unwrap()
             .1
             .contains("proj-d")
+    );
+
+    // Reply::Created whose workspace stopped while creation was in flight must not bind or list it.
+    let (created_out, created_in) = bounded(1);
+    let mut created_backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    created_backend.workspace = "proj-stopped".into();
+    created_backend.session = "ses-stopped".into();
+    {
+        let l = rt.state.screen.launcher_mut().unwrap();
+        l.sessions.clear();
+        l.stopped_during_pending.insert("proj-stopped".into());
+        l.result = Some(created_in);
+        l.pending = true;
+    }
+    assert!(
+        created_out
+            .try_send(Ok(Reply::Created(
+                created_backend,
+                "New".into(),
+                "root".into(),
+                String::new(),
+                None,
+                None,
+            )))
+            .is_ok()
+    );
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(rt.state.screen.is_launcher());
+    assert!(
+        rt.state
+            .screen
+            .launcher()
+            .unwrap()
+            .sessions
+            .iter()
+            .all(|row| row.id != "ses-stopped"),
+        "Reply::Created for a project stopped in flight must not list or bind the session"
     );
 }
 

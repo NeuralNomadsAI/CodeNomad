@@ -333,6 +333,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 other.push(event);
             }
         }
+        if overflow
+            && let Some(l) = s.screen.launcher_mut()
+            && l.pending
+        {
+            l.stopped_during_pending_overflow = true;
+        }
         if !stopped.is_empty() {
             if let Some(l) = s.screen.launcher_mut() {
                 for event in &stopped {
@@ -680,14 +686,17 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.show_title = false;
             }
             let superseded = ticket.is_some_and(|t| t != s.notifications.navigation_ticket());
-            if blocked || superseded {
-                l.sessions.insert(
-                    0,
-                    Session {
-                        id: b.session,
-                        title,
-                    },
-                );
+            let stopped_in_flight = stopped_during_pending.contains(&b.workspace);
+            if blocked || superseded || l.authentication_required || stopped_in_flight {
+                if !stopped_in_flight {
+                    l.sessions.insert(
+                        0,
+                        Session {
+                            id: b.session,
+                            title,
+                        },
+                    );
+                }
             } else {
                 dismiss_origin_panel(s, dismiss, tx);
                 bind(s, b, title, None, &slug, tx);

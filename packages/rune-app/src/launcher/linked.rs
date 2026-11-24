@@ -82,7 +82,6 @@ pub(super) fn load(s: &mut State) {
                 return;
             };
             let result = async {
-                let fresh = resume.is_none();
                 let mut pages = match resume {
                     Some(pages) => pages,
                     None => {
@@ -95,14 +94,20 @@ pub(super) fn load(s: &mut State) {
                                 ..Default::default()
                             })
                             .collect();
-                        if let Some(target_dir) = target.as_deref()
-                            && let Some(pos) = remaining.iter().position(|loc| {
+                        if let Some(target_dir) = target.as_deref() {
+                            if let Some(pos) = remaining.iter().position(|loc| {
                                 codenomad_client::same_server_path(&loc.directory, target_dir)
-                            })
-                            && pos > 0
-                        {
-                            if let Some(priority) = remaining.remove(pos) {
-                                remaining.push_front(priority);
+                            }) {
+                                if pos > 0
+                                    && let Some(priority) = remaining.remove(pos)
+                                {
+                                    remaining.push_front(priority);
+                                }
+                            } else {
+                                remaining.push_front(Location {
+                                    directory: target_dir.to_owned(),
+                                    ..Default::default()
+                                });
                             }
                         }
                         Pages {
@@ -112,22 +117,10 @@ pub(super) fn load(s: &mut State) {
                     }
                 };
                 let mut ids = pages.rows.iter().map(|row| row.id.clone()).collect();
-                let target_matched = target.as_deref().is_some_and(|target_dir| {
-                    pages
-                        .remaining
-                        .iter()
-                        .any(|loc| codenomad_client::same_server_path(&loc.directory, target_dir))
-                });
-                let mut unverified_first_pages = if fresh && target.is_some() && !target_matched {
-                    pages.remaining.len()
-                } else {
-                    0
-                };
-                let mut target_verified =
-                    fresh && target.is_some() && !target_matched && unverified_first_pages == 0;
+                let mut target_verified = false;
                 for _ in 0..1000 {
                     let Some(mut location) = pages.remaining.pop_front() else {
-                        return Ok((pages, true, true));
+                        return Ok((pages, true, target.is_none() || target_verified));
                     };
                     let first_page = location.cursor.is_none();
                     let matches_target = target.as_deref().is_some_and(|target_dir| {
@@ -145,15 +138,8 @@ pub(super) fn load(s: &mut State) {
                         break;
                     };
                     let kept_all = pages.keep(page.rows, &mut ids);
-                    if first_page && kept_all {
-                        if matches_target {
-                            target_verified = true;
-                        } else if !target_matched && unverified_first_pages > 0 {
-                            unverified_first_pages -= 1;
-                            if unverified_first_pages == 0 {
-                                target_verified = true;
-                            }
-                        }
+                    if first_page && kept_all && matches_target {
+                        target_verified = true;
                     }
                     if !kept_all {
                         pages.remaining.push_front(location);
@@ -223,6 +209,9 @@ pub(super) fn poll(s: &mut State) -> bool {
             if target_verified && l.creation_uncertain_linked.is_some() {
                 l.creation_uncertain = false;
                 l.creation_uncertain_linked = None;
+                if l.error == Some("rune.create_error") {
+                    l.error = None;
+                }
             }
         }
         Err(_) => l.linked.failed = true,
@@ -287,6 +276,7 @@ mod tests {
             let l = s.screen.launcher_mut().unwrap();
             l.creation_uncertain = true;
             l.creation_uncertain_linked = Some("/wt-target".into());
+            l.error = Some("rune.create_error");
             l.linked.force_reload = false;
             l.linked.job = Some((cancel, input));
         }
@@ -328,6 +318,7 @@ mod tests {
         let l = s.screen.launcher().unwrap();
         assert!(!l.creation_uncertain);
         assert!(l.creation_uncertain_linked.is_none());
+        assert_eq!(l.error, None);
         assert!(l.linked.failed);
 
         // Completing the resumed pagination replaces the display snapshot, purging deleted rows.

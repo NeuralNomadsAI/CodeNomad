@@ -120,6 +120,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                 super::Tab::Workspace(w) => w.active_session_id.clone(),
                 _ => None,
             };
+            let uncertain_linked = l.creation_uncertain_linked.clone();
             refresh.due = None;
             refresh.request = Some((l.catalogue_generation, input));
             crate::platform::spawn(async move {
@@ -137,6 +138,15 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                         Ok(None) => true,
                         Err(_) => false,
                     };
+                    if let Some(target_dir) = uncertain_linked.as_deref() {
+                        let _permit = reads.background(&cancelled).await?;
+                        if let Ok(target_page) = backend
+                            .linked_session_page(&project, target_dir, None)
+                            .await
+                        {
+                            return Some((target_page, false, true));
+                        }
+                    }
                     let _permit = reads.background(&cancelled).await?;
                     backend
                         .sessions(&project, None)

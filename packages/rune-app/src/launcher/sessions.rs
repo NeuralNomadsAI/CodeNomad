@@ -42,9 +42,12 @@ impl Launcher {
         authoritative: bool,
         includes_linked: bool,
     ) {
-        if authoritative && (includes_linked || self.creation_uncertain_linked.is_none()) {
+        if includes_linked || (authoritative && self.creation_uncertain_linked.is_none()) {
             self.creation_uncertain = false;
             self.creation_uncertain_linked = None;
+            if self.error == Some("rune.create_error") {
+                self.error = None;
+            }
         }
         let complete = page.next.is_none() && authoritative;
         let listed: HashSet<_> = page.rows.iter().map(|row| row.id.clone()).collect();

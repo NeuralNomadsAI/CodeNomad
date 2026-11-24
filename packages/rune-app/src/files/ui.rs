@@ -226,6 +226,14 @@ impl Ui {
             } if workspace_id == self.backend.workspace && session_id == self.backend.session => {
                 self.close_reader();
             }
+            WorkspaceEvent::NativeFilesystemChanged { workspace_id }
+                if workspace_id == self.backend.workspace && !self.stopped =>
+            {
+                let due = self
+                    .last_passive
+                    .map_or(self.clock + 0.1, |last| (last + 5.0).max(self.clock + 0.1));
+                self.pending = Some((due, None));
+            }
             WorkspaceEvent::FilesChanged {
                 workspace_id,
                 changes,

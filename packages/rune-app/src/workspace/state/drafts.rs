@@ -128,23 +128,28 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
                 if !too_long
                     && !has_device_parts
                     && !item.live_drafts.contains_key(key)
+                    && !saved.drafts.contains_key(key)
+                    && !saved.attachment_drafts.contains(key)
                     && item
                         .live_drafts
-                        .values()
-                        .filter(|draft| draft.text.is_none() && draft.parts.is_none())
+                        .iter()
+                        .filter(|(existing, draft)| {
+                            draft.text.is_none()
+                                && draft.parts.is_none()
+                                && !saved.drafts.contains_key(existing.as_str())
+                                && !saved.attachment_drafts.contains(existing.as_str())
+                        })
                         .count()
                         >= super::super::MAX_DRAFTS
                     && let Some(evict) = item.live_drafts.iter().find_map(|(existing, draft)| {
-                        (draft.text.is_none() && draft.parts.is_none()).then(|| existing.clone())
+                        (draft.text.is_none()
+                            && draft.parts.is_none()
+                            && !saved.drafts.contains_key(existing.as_str())
+                            && !saved.attachment_drafts.contains(existing.as_str()))
+                        .then(|| existing.clone())
                     })
                 {
                     item.live_drafts.remove(&evict);
-                    if saved.drafts.remove(&evict).is_some() {
-                        item.cleared.insert(evict.clone());
-                        changed = true;
-                    }
-                    changed |= saved.attachment_drafts.remove(&evict);
-                    changed |= saved.attachment_parts.remove(&evict).is_some();
                 }
                 let live = item.live_drafts.entry(key.into()).or_default();
                 live.text = too_long.then(|| text.clone());
@@ -325,10 +330,22 @@ mod tests {
         s.workspace = Some(ui);
         let mut b = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
         b.workspace = "ws".into();
+        // A session with an edited saved draft must never lose its draft when other sessions
+        // accumulate unconfirmed locks.
+        b.session = "kept-edited".into();
+        let _ = bound(&mut s, &b);
+        s.draft = rune::edit::TextEdit::new("edited user draft");
+        s.composer.command_unconfirmed = Some(crate::composer::UnconfirmedCommand::new(
+            "compact",
+            &"x".repeat(1024),
+        ));
+        capture(&mut s);
+
+        // Cleared sessions with orphaned unconfirmed locks stay bounded to MAX_DRAFTS.
         for index in 0..(crate::workspace::MAX_DRAFTS + 5) {
             b.session = format!("ses-{index}");
             let _ = bound(&mut s, &b);
-            s.draft = rune::edit::TextEdit::new("/compact payload");
+            s.draft = rune::edit::TextEdit::new("");
             s.composer.command_unconfirmed = Some(crate::composer::UnconfirmedCommand::new(
                 "compact",
                 &"x".repeat(1024),
@@ -336,17 +353,14 @@ mod tests {
             capture(&mut s);
         }
         let ui = s.workspace.as_ref().unwrap();
-        assert!(ui.entries[0].live_drafts.len() <= crate::workspace::MAX_DRAFTS);
-        let evicted = (0..(crate::workspace::MAX_DRAFTS + 5))
-            .map(|i| format!("ses-{i}"))
-            .find(|id| !ui.entries[0].live_drafts.contains_key(id))
-            .expect("at least one pure-unconfirmed entry evicted");
-        b.session = evicted;
-        assert_eq!(
-            bound(&mut s, &b),
-            "",
-            "evicting an unconfirmed lock must also clear its saved draft text"
-        );
-        assert!(s.composer.command_unconfirmed.is_none());
+        let orphaned = ui.entries[0]
+            .live_drafts
+            .keys()
+            .filter(|id| id.as_str() != "kept-edited")
+            .count();
+        assert!(orphaned <= crate::workspace::MAX_DRAFTS);
+        b.session = "kept-edited".into();
+        assert_eq!(bound(&mut s, &b), "edited user draft");
+        assert!(s.composer.command_unconfirmed.is_some());
     }
 }
