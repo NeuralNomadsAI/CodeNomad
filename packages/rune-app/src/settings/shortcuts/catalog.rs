@@ -25,16 +25,74 @@ fn definitions() -> &'static [Value] {
 }
 
 pub(in crate::settings) fn active(id: &str) -> bool {
-    matches!(id, "new-instance" | "close-instance" | FILE_SAVE)
+    matches!(
+        id,
+        "new-instance"
+            | "close-instance"
+            | "instance-prev"
+            | "instance-next"
+            | "app-tab-1"
+            | "app-tab-2"
+            | "app-tab-3"
+            | "app-tab-4"
+            | "app-tab-5"
+            | "app-tab-6"
+            | "app-tab-7"
+            | "app-tab-8"
+            | "app-tab-9"
+            | "session-new"
+            | "session-prev"
+            | "session-next"
+            | "close-session"
+            | "session-tab-1"
+            | "session-tab-2"
+            | "session-tab-3"
+            | "session-tab-4"
+            | "session-tab-5"
+            | "session-tab-6"
+            | "session-tab-7"
+            | "session-tab-8"
+            | "session-tab-9"
+            | FILE_SAVE
+    ) || id == "browse-folder" && crate::platform::folder_picker_available()
+}
+
+fn default_index(prefs: &Preferences, platform: KeyPlatform) -> usize {
+    let no_enter = prefs
+        .saved(super::super::preferences::Owner::Config)
+        .is_some_and(|doc| doc["settings"]["promptSubmitOnEnter"] == false);
+    2 * usize::from(platform == KeyPlatform::Mac) + usize::from(no_enter)
+}
+
+fn resolve_def(overrides: Option<&[Value]>, def: &Value, index: usize) -> Vec<Chord> {
+    overrides
+        .filter(|rules| rules.len() <= 8)
+        .and_then(|rules| rules.iter().map(decode).collect())
+        .unwrap_or_else(|| {
+            def["defaults"][index]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(decode)
+                .collect()
+        })
+}
+
+pub(super) fn resolve(prefs: &Preferences, id: &str) -> Vec<Chord> {
+    let Some(def) = definitions()
+        .iter()
+        .find(|def| def["id"].as_str() == Some(id))
+    else {
+        return Vec::new();
+    };
+    let index = default_index(prefs, KeyPlatform::current());
+    resolve_def(prefs.shortcut(id), def, index)
 }
 
 pub(in crate::settings) fn rows(prefs: &Preferences, filter: &str) -> Vec<Row> {
     let locale = crate::strings::locale();
     let platform = KeyPlatform::current();
-    let no_enter = prefs
-        .saved(super::super::preferences::Owner::Config)
-        .is_some_and(|doc| doc["settings"]["promptSubmitOnEnter"] == false);
-    let index = 2 * usize::from(platform == KeyPlatform::Mac) + usize::from(no_enter);
+    let index = default_index(prefs, platform);
     let mut rows: Vec<_> = definitions()
         .iter()
         .filter_map(|def| {
@@ -51,17 +109,7 @@ pub(in crate::settings) fn rows(prefs: &Preferences, filter: &str) -> Vec<Row> {
                 ],
             );
             let overrides = prefs.shortcut(id);
-            let chords: Vec<Chord> = overrides
-                .filter(|rules| rules.len() <= 8)
-                .and_then(|rules| rules.iter().map(decode).collect())
-                .unwrap_or_else(|| {
-                    def["defaults"][index]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(decode)
-                        .collect()
-                });
+            let chords = resolve_def(overrides, def, index);
             Some(Row {
                 id,
                 label,
@@ -129,7 +177,10 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
     let keys: std::collections::BTreeSet<_> =
         defs.iter().filter_map(|def| def["id"].as_str()).collect();
     assert_eq!(keys.len(), 75);
-    assert_eq!(keys.iter().filter(|id| active(id)).count(), 3);
+    assert_eq!(
+        keys.iter().filter(|id| active(id)).count(),
+        27 + usize::from(crate::platform::folder_picker_available())
+    );
     for def in defs {
         for defaults in def["defaults"].as_array().unwrap() {
             for binding in defaults.as_array().unwrap() {

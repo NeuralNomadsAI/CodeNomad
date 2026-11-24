@@ -51,6 +51,13 @@ pub(crate) fn diff_preferences(s: &State) -> DiffPreferences {
     s.git.preferences.get()
 }
 
+pub(crate) fn overlay_open(s: &State) -> bool {
+    s.git
+        .owner
+        .as_ref()
+        .is_some_and(|ui| ui.open_menu.is_some() || ui.picker || ui.placement_picker.is_some())
+}
+
 pub(crate) fn set_diff_preferences(s: &mut State, preference: DiffPreferences) {
     s.git.preferences.set(preference);
     if let Some(owner) = &mut s.git.owner {

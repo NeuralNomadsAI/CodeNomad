@@ -111,6 +111,38 @@ pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
     select_destination(s, id, tx);
 }
 
+pub fn select_relative(s: &mut State, next: bool, tx: &mut Tx) {
+    let Some(key) = s.workspace.as_ref().and_then(|ui| {
+        let len = ui.entries.len();
+        if len <= 1 {
+            return None;
+        }
+        let target = if next {
+            (ui.active + 1) % len
+        } else if ui.active == 0 {
+            len - 1
+        } else {
+            ui.active - 1
+        };
+        ui.entries.get(target).map(|entry| entry.key.clone())
+    }) else {
+        return;
+    };
+    select(s, &key, tx);
+}
+
+pub fn select_index(s: &mut State, index: usize, tx: &mut Tx) {
+    let Some(key) = s
+        .workspace
+        .as_ref()
+        .and_then(|ui| ui.entries.get(index))
+        .map(|entry| entry.key.clone())
+    else {
+        return;
+    };
+    select(s, &key, tx);
+}
+
 pub(super) fn select_destination(s: &mut State, id: &str, tx: &mut Tx) {
     let Some(index) = s
         .workspace

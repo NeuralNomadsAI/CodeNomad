@@ -113,6 +113,10 @@ impl Inbox {
         std::mem::take(&mut self.dirty)
     }
 
+    pub(super) fn is_open(&self) -> bool {
+        self.opened.is_some()
+    }
+
     pub(super) fn forget_tab(&mut self, tab: &str) {
         let keep = |record: &Record| {
             record

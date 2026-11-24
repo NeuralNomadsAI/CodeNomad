@@ -1,6 +1,6 @@
 mod tabs;
 use tabs::{activate, close_blocked};
-pub use tabs::{can_new, close, new_tab, select};
+pub use tabs::{can_new, close, new_tab, select, select_index, select_relative};
 
 mod drafts;
 mod notification;
@@ -100,6 +100,18 @@ pub struct Ui {
 impl Ui {
     pub(crate) fn active_key(&self) -> &str {
         &self.entries[self.active].key
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture_ready(&mut self) {
+        self.ready = true;
+    }
+    #[cfg(test)]
+    pub(crate) fn active_index(&self) -> usize {
+        self.active
+    }
+    #[cfg(test)]
+    pub(crate) fn tab_count(&self) -> usize {
+        self.entries.len()
     }
     pub fn new() -> Self {
         Self {

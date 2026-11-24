@@ -6,6 +6,7 @@ pub(crate) const FILE_SAVE: &str = "file-save";
 pub(super) mod catalog;
 pub(super) mod editor;
 mod reserved;
+#[cfg(test)]
 const fn primary(key: char) -> Chord {
     Chord::new(ChordKey::Char(key)).with(ChordMod::Primary)
 }
@@ -53,23 +54,25 @@ fn decode(rule: &Value) -> Option<Chord> {
     Some(chord)
 }
 
+pub(crate) fn save_label(s: &State) -> String {
+    format_chords(&catalog::resolve(&s.settings.shared.borrow(), FILE_SAVE))
+}
+
+pub(crate) fn with_shortcut_label(s: &State, label: &str, action: &str) -> String {
+    let shortcut = format_chords(&catalog::resolve(&s.settings.shared.borrow(), action));
+    if shortcut.is_empty() {
+        label.to_owned()
+    } else {
+        format!("{label} ({shortcut})")
+    }
+}
+
+#[cfg(test)]
 fn bindings(overrides: Option<&[Value]>, default: char) -> Vec<Chord> {
     overrides
         .filter(|rules| rules.len() <= 8)
         .and_then(|rules| rules.iter().map(decode).collect())
         .unwrap_or_else(|| vec![primary(default)])
-}
-
-pub(crate) fn save_label(s: &State) -> String {
-    binding_label(s.settings.shared.borrow().shortcut(FILE_SAVE))
-}
-
-pub(super) fn binding_label(overrides: Option<&[Value]>) -> String {
-    label_for(overrides, 's')
-}
-
-pub(super) fn label_for(overrides: Option<&[Value]>, default: char) -> String {
-    format_chords(&bindings(overrides, default))
 }
 
 fn format_chords(bindings: &[Chord]) -> String {
@@ -136,20 +139,22 @@ pub(super) fn record(event: &KeyEvent, tx: &Tx) -> Option<Value> {
 }
 
 pub(crate) fn matches_save(s: &State, event: &KeyEvent, tx: &Tx) -> bool {
-    matches_shortcut(s, FILE_SAVE, event, tx, 's')
+    matches_shortcut(s, FILE_SAVE, event, tx)
 }
 
-pub(crate) fn matches_shortcut(
-    s: &State,
-    action: &str,
-    event: &KeyEvent,
-    tx: &Tx,
-    default: char,
-) -> bool {
+pub(crate) fn matches_shortcut(s: &State, action: &str, event: &KeyEvent, tx: &Tx) -> bool {
     let preferences = s.settings.shared.borrow();
-    bindings(preferences.shortcut(action), default)
+    catalog::resolve(&preferences, action)
         .iter()
         .any(|chord| matches(*chord, event, physical_slot(tx), tx.key_base()))
+}
+
+fn canonical_char(c: char) -> char {
+    match c {
+        '{' => '[',
+        '}' => ']',
+        c => c,
+    }
 }
 
 fn logical_command(typed: char, event: &KeyEvent, base: Option<char>) -> char {
@@ -171,8 +176,12 @@ fn matches(chord: Chord, event: &KeyEvent, physical: Option<char>, base: Option<
     // Unlike Rune's menu chords, Solid uses the typed character outside digit/bracket slots.
     if let ChordKey::Char(expected) = chord.key() {
         let char = physical.or_else(|| match &event.key {
-            Key::Command(c) => Some(logical_command(*c, event, base)),
-            Key::Text(text) => text.chars().next().filter(|c| c.len_utf8() == text.len()),
+            Key::Command(c) => Some(canonical_char(logical_command(*c, event, base))),
+            Key::Text(text) => text
+                .chars()
+                .next()
+                .filter(|c| c.len_utf8() == text.len())
+                .map(canonical_char),
             _ => None,
         });
         let Some(key) = char.filter(|actual| actual.to_lowercase().eq(expected.to_lowercase()))
@@ -315,5 +324,63 @@ fn localized_ctrl_letter_uses_the_key_rune_reports_before_us_fallback() {
         &alt_gr,
         None,
         Some('q')
+    ));
+}
+
+#[cfg(test)]
+#[test]
+fn bracket_and_digit_slots_match_physical_and_shifted_logical_keys() {
+    let shift_ctrl = rune::Mods {
+        ctrl: !cfg!(target_os = "macos"),
+        cmd: true,
+        logo: cfg!(target_os = "macos"),
+        shift: true,
+        alt: false,
+    };
+    let ctrl = rune::Mods {
+        shift: false,
+        ..shift_ctrl
+    };
+    let mut prefs = Preferences::default();
+    prefs.fixture_shortcuts(serde_json::json!({}));
+    let session_prev = catalog::resolve(&prefs, "session-prev");
+    let session_next = catalog::resolve(&prefs, "session-next");
+    let app_tab_2 = catalog::resolve(&prefs, "app-tab-2");
+    let session_tab_2 = catalog::resolve(&prefs, "session-tab-2");
+    assert!(matches(
+        session_prev[0],
+        &KeyEvent {
+            key: Key::Command('{'),
+            mods: shift_ctrl,
+        },
+        None,
+        None
+    ));
+    assert!(matches(
+        session_next[0],
+        &KeyEvent {
+            key: Key::Command('}'),
+            mods: shift_ctrl,
+        },
+        None,
+        None
+    ));
+    assert!(matches(
+        app_tab_2[0],
+        &KeyEvent {
+            key: Key::Command('é'),
+            mods: ctrl,
+        },
+        Some('2'),
+        None
+    ));
+    assert!(matches(
+        session_tab_2[0],
+        &KeyEvent {
+            key: Key::Command('@'),
+            mods: shift_ctrl,
+        },
+        Some('2'),
+        None
     ));
 }

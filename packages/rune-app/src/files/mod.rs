@@ -16,6 +16,12 @@ pub(crate) fn has_preview(s: &crate::State) -> bool {
         .is_some_and(|ui| ui.reader.target().is_some())
 }
 
+pub(crate) fn modal_open(s: &crate::State) -> bool {
+    s.files
+        .as_ref()
+        .is_some_and(|ui| ui.document.confirmation().is_some() || ui.actions.is_menu_open())
+}
+
 pub(crate) fn poll_notices(s: &mut crate::State) -> bool {
     let saved = s.files.as_mut().is_some_and(Ui::observe_document_write);
     if saved {

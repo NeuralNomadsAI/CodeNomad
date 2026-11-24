@@ -31,7 +31,7 @@ use sessions::attach;
 pub use sessions::back;
 pub(crate) use sessions::choose_destination;
 use sessions::{bind, dismiss_origin_panel, retire_session};
-pub use sessions::{can_change_session, can_visit, choose, create, list, visit};
+pub use sessions::{can_change_session, can_visit, choose, close_session, create, list, visit};
 use std::{collections::HashSet, future::Future};
 pub(crate) use visits::Visits;
 

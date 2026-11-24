@@ -42,11 +42,13 @@ fn unsupported_advanced_switch_is_disabled_with_keyboard_help() {
 
 #[test]
 fn keyboard_shortcuts_records_the_focused_save_binding() {
-    let state = Window {
+    let mut state = Window {
         section: Section::Shortcuts,
         ..Window::default()
     };
+    state.shortcut_filter.replace_text("Save file");
     state.shared.borrow_mut().fixture();
+    state.shared.borrow_mut().fixture_locale("en");
     state.shared.borrow_mut().backend =
         Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
     let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
@@ -72,6 +74,23 @@ fn keyboard_shortcuts_records_the_focused_save_binding() {
     rt.window_focus(true);
     rt.frame(0.02);
     assert!(!rt.state.recording_shortcut);
+    // Newly wired shell shortcuts have unique edit keys and can record bindings too.
+    rt.update(|s, _| s.shortcut_filter.replace_text("Previous app tab"));
+    rt.frame(0.02);
+    let (x, y) = rt.find("settings-instance-prev-edit").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(rt.state.recording_shortcut);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Escape,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert!(!rt.state.recording_shortcut);
+    rt.update(|s, _| s.shortcut_filter.replace_text("Save file"));
+    rt.frame(0.02);
+
     click_edit(&mut rt);
     rt.key(rune::KeyEvent {
         key: rune::Key::Function(8),

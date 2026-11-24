@@ -274,6 +274,50 @@ pub(super) fn dismiss_origin_panel(s: &mut State, origin: Option<u64>, tx: &mut 
     }
 }
 
+pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
+    if s.screen.is_launcher()
+        || !can_change_session(s)
+        || s.screen
+            .launcher()
+            .is_none_or(|l| l.project.is_none() || l.pending)
+    {
+        return false;
+    }
+    let active = crate::workspace::active_session(s).map(str::to_owned);
+    if s.workspace.is_some() {
+        let Some(id) = active else {
+            return false;
+        };
+        crate::workspace::unselect_missing(s, &id);
+    } else if !s.draft.text.is_empty() {
+        return false;
+    }
+    s.notifications.supersede_navigation();
+    s.attachments.cancel();
+    s.composer.picker.reset();
+    s.composer.device.cancel();
+    s.commands = None;
+    s.incoming = None;
+    s.reader = None;
+    s.agent = None;
+    s.files = None;
+    s.attachments = Default::default();
+    s.composer = Default::default();
+    s.history_detached = false;
+    s.messages.clear();
+    s.chat_title.clear();
+    s.draft = TextEdit::new("");
+    s.phase = Phase::Ready;
+    if let Some(git) = &mut s.git.owner {
+        git.online(false);
+        git.close_preview();
+    }
+    s.show_launcher();
+    list(s, false);
+    tx.instant();
+    true
+}
+
 pub(super) fn retire_session(s: &mut State, id: &str) {
     if !crate::workspace::unselect_missing(s, id) {
         return;

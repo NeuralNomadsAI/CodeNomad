@@ -2,6 +2,7 @@ pub(crate) mod notifications;
 mod panels;
 pub(crate) mod render;
 mod right_panel;
+mod shortcuts;
 mod sidebar;
 
 use crate::{Phase, Screen, State, components::button_tx, launcher_view, strings::t, workspace};
@@ -115,20 +116,36 @@ fn connection(s: &State) -> &'static str {
     })
 }
 
-pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
+pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     use rune::{Key, Mods};
+    if shortcuts::modal_open(s) {
+        return false;
+    }
     if event.key == Key::Tab && !event.mods.ctrl && !event.mods.cmd && !event.mods.alt {
         return s.shell.wrap_floating_focus(event.mods.shift, tx);
     }
     if event.key == Key::Function(6) && s.shell.has_floating() {
         return !event.mods.ctrl && !event.mods.cmd && !event.mods.alt;
     }
+    !tx.key_repeat()
+        && event.mods == Mods::default()
+        && event.key == Key::Escape
+        && s.shell.close_floating(tx)
+}
+
+pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
+    use rune::{Key, Mods};
+    if shortcuts::modal_open(s) {
+        return false;
+    }
+    if panel_keys(s, event, tx) {
+        return true;
+    }
     if tx.key_repeat() {
         return false;
     }
     if event.mods == Mods::default() {
         let handled = match event.key {
-            Key::Escape if s.shell.close_floating(tx) => true,
             Key::Escape if crate::git::has_preview(s) => {
                 crate::git::close_preview(s);
                 tx.instant();
@@ -136,9 +153,6 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
             }
             Key::Escape if crate::files::has_preview(s) && !s.screen.is_launcher() => {
                 if let Some(files) = &mut s.files {
-                    if files.document.confirmation().is_some() {
-                        return false;
-                    }
                     files.close_reader();
                 }
                 crate::chat::reading::restore_position(s, tx);
@@ -154,19 +168,10 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
     }
-    if crate::settings::matches_shortcut(s, "new-instance", event, tx, 'n') && workspace::can_new(s)
-    {
-        workspace::new_tab(s, tx);
-    } else if crate::settings::matches_shortcut(s, "close-instance", event, tx, 'w') {
-        let Some(key) = s.workspace.as_ref().map(|ui| ui.active_key().to_owned()) else {
-            return false;
-        };
-        workspace::close(s, &key, tx);
-    } else {
-        return false;
-    }
-    true
+    shortcuts::dispatch(s, event, tx)
 }
 
+#[cfg(test)]
+mod shortcuts_tests;
 #[cfg(test)]
 mod tests;
