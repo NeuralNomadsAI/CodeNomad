@@ -696,6 +696,7 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
         None,
         true,
         false,
+        false,
     );
     assert!(launcher.creation_uncertain);
     assert!(launcher.creation_uncertain_linked.is_some());
@@ -703,7 +704,7 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
     // A direct linked target page (authoritative = false, includes_linked = true) merges
     // additively (retaining existing root sessions), never leaks its cursor into Launcher.next,
     // and unlocks creation_uncertain_linked.
-    launcher.next = None;
+    launcher.next = Some("root-p2".into());
     launcher.apply_passive_listing(
         Sessions {
             rows: vec![row("linked-new")],
@@ -712,13 +713,41 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
         None,
         false,
         true,
+        true,
     );
     assert!(!launcher.creation_uncertain);
     assert!(launcher.creation_uncertain_linked.is_none());
     assert_eq!(launcher.error, None);
-    assert_eq!(launcher.next, None);
+    assert_eq!(launcher.next.as_deref(), Some("root-p2"));
     assert!(launcher.sessions.iter().any(|r| r.id == "root"));
     assert!(launcher.sessions.iter().any(|r| r.id == "linked-new"));
+    // A root passive refresh with reset_cursor = true renews Launcher.next (e.g. after close_session),
+    // and a complete authoritative listing with includes_linked retires stale linked display rows.
+    launcher.linked.rows = vec![row("deleted-linked")];
+    launcher.apply_passive_listing(
+        Sessions {
+            rows: vec![row("root")],
+            next: Some("root-fresh".into()),
+        },
+        None,
+        false,
+        false,
+        true,
+    );
+    assert_eq!(launcher.next.as_deref(), Some("root-fresh"));
+    assert_eq!(launcher.linked.rows.len(), 1);
+    launcher.apply_passive_listing(
+        Sessions {
+            rows: vec![row("root")],
+            next: None,
+        },
+        None,
+        true,
+        true,
+        false,
+    );
+    assert_eq!(launcher.next, None);
+    assert!(launcher.linked.rows.is_empty());
 }
 
 #[test]

@@ -131,10 +131,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                     s,
                     t("sessionList.actions.newSession.title"),
                     "session-new",
-                    if !s.screen.is_launcher()
-                        && !crate::files::has_preview(s)
-                        && !crate::git::has_preview(s)
-                    {
+                    if crate::timeline::search::available(s) {
                         &["session-search"]
                     } else {
                         &[]

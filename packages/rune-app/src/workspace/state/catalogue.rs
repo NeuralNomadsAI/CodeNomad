@@ -5,11 +5,56 @@ mod inventory;
 use crate::catalog::Sessions;
 use codenomad_client::{Receiver, bounded, stream::CatalogueChanges};
 use rune::Tx;
+use std::collections::HashSet;
+
+enum LinkedCheck {
+    Page(Sessions),
+    Removed,
+    Unverified,
+}
+
+async fn verify_uncertain_linked(
+    backend: &crate::backend::Backend,
+    project: &crate::catalog::Project,
+    target_dir: &str,
+    reads: &crate::platform::reads::Reads,
+    cancelled: &Receiver<()>,
+) -> Option<LinkedCheck> {
+    let target_page = {
+        let _permit = reads.background(cancelled).await?;
+        backend.linked_session_page(project, target_dir, None).await
+    };
+    if let Ok(target_page) = target_page {
+        return Some(LinkedCheck::Page(target_page));
+    }
+    let trees = {
+        let _permit = reads.background(cancelled).await?;
+        let mut workspace = backend.clone();
+        workspace.workspace.clone_from(&project.id);
+        workspace.git_worktrees(true).await
+    };
+    let removed = trees.ok().is_some_and(|trees| {
+        trees.repository == codenomad_client::git::Repository::Git
+            && !trees.trees.iter().any(|tree| {
+                !tree.missing
+                    && (codenomad_client::same_server_path(&tree.directory, target_dir)
+                        || tree.service_directory.as_deref().is_some_and(|service| {
+                            codenomad_client::same_server_path(service, target_dir)
+                        }))
+            })
+    });
+    Some(if removed {
+        LinkedCheck::Removed
+    } else {
+        LinkedCheck::Unverified
+    })
+}
 
 #[derive(Default)]
 pub(super) struct Refresh {
     due: Option<f64>,
     urgent: bool,
+    reset_cursor: bool,
     request: Option<(u64, Receiver<Option<(Sessions, bool, bool)>>)>,
 }
 
@@ -20,6 +65,7 @@ impl Refresh {
 
     pub(super) fn schedule_urgent(&mut self, now: f64) {
         self.urgent = true;
+        self.reset_cursor = true;
         self.schedule(now);
     }
 
@@ -97,7 +143,17 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                 {
                     s.chat_title.clone_from(&row.title);
                 }
-                l.apply_passive_listing(page, selected, authoritative, includes_linked);
+                let reset_cursor = refresh.reset_cursor;
+                if authoritative || !includes_linked {
+                    refresh.reset_cursor = false;
+                }
+                l.apply_passive_listing(
+                    page,
+                    selected,
+                    authoritative,
+                    includes_linked,
+                    reset_cursor,
+                );
                 changed = true;
             }
         }
@@ -134,44 +190,51 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                     )
                     .await
                     {
-                        Ok(Some(projected)) => return Some((projected, true, true)),
+                        Ok(Some(mut projected)) => {
+                            let Some(target_dir) = uncertain_linked.as_deref() else {
+                                return Some((projected, true, true));
+                            };
+                            let verified = match verify_uncertain_linked(
+                                &backend, &project, target_dir, &reads, &cancelled,
+                            )
+                            .await?
+                            {
+                                LinkedCheck::Page(target_page) => {
+                                    let existing: HashSet<_> =
+                                        projected.rows.iter().map(|row| row.id.clone()).collect();
+                                    let mut missing: Vec<_> = target_page
+                                        .rows
+                                        .into_iter()
+                                        .filter(|row| !existing.contains(&row.id))
+                                        .collect();
+                                    if !missing.is_empty() {
+                                        missing.extend(projected.rows);
+                                        projected.rows = missing;
+                                    }
+                                    true
+                                }
+                                LinkedCheck::Removed => true,
+                                LinkedCheck::Unverified => false,
+                            };
+                            return Some((projected, true, verified));
+                        }
                         Ok(None) => true,
                         Err(_) => false,
                     };
                     let mut target_removed = false;
                     if let Some(target_dir) = uncertain_linked.as_deref() {
-                        let target_page = {
-                            let _permit = reads.background(&cancelled).await?;
-                            backend
-                                .linked_session_page(&project, target_dir, None)
-                                .await
-                        };
-                        if let Ok(mut target_page) = target_page {
-                            target_page.next = None;
-                            return Some((target_page, false, true));
+                        match verify_uncertain_linked(
+                            &backend, &project, target_dir, &reads, &cancelled,
+                        )
+                        .await?
+                        {
+                            LinkedCheck::Page(mut target_page) => {
+                                target_page.next = None;
+                                return Some((target_page, false, true));
+                            }
+                            LinkedCheck::Removed => target_removed = true,
+                            LinkedCheck::Unverified => {}
                         }
-                        let trees = {
-                            let _permit = reads.background(&cancelled).await?;
-                            let mut workspace = backend.clone();
-                            workspace.workspace.clone_from(&project.id);
-                            workspace.git_worktrees(true).await
-                        };
-                        target_removed = trees.ok().is_some_and(|trees| {
-                            trees.repository != codenomad_client::git::Repository::Unknown
-                                && !trees.trees.iter().any(|tree| {
-                                    !tree.missing
-                                        && (codenomad_client::same_server_path(
-                                            &tree.directory,
-                                            target_dir,
-                                        ) || tree.service_directory.as_deref().is_some_and(
-                                            |service| {
-                                                codenomad_client::same_server_path(
-                                                    service, target_dir,
-                                                )
-                                            },
-                                        ))
-                                })
-                        });
                     }
                     let _permit = reads.background(&cancelled).await?;
                     backend

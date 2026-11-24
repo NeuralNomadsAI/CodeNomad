@@ -68,6 +68,10 @@ fn state(s: &mut State) -> &mut Search {
     &mut super::owner(s).search
 }
 
+pub(crate) fn available(s: &State) -> bool {
+    visible(s)
+}
+
 fn visible(s: &State) -> bool {
     !s.screen.is_launcher()
         && !crate::files::has_preview(s)

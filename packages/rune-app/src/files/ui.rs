@@ -227,12 +227,14 @@ impl Ui {
                 self.close_reader();
             }
             WorkspaceEvent::NativeFilesystemChanged { workspace_id }
+            | WorkspaceEvent::WorktreesChanged { workspace_id }
                 if workspace_id == self.backend.workspace && !self.stopped =>
             {
                 let due = self
                     .last_passive
                     .map_or(self.clock + 0.1, |last| (last + 5.0).max(self.clock + 0.1));
-                self.pending = Some((due, None));
+                let (_, pending) = self.pending.get_or_insert_with(|| (due, None));
+                *pending = None;
             }
             WorkspaceEvent::FilesChanged {
                 workspace_id,

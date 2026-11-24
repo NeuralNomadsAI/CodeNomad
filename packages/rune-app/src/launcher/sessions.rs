@@ -21,7 +21,7 @@ impl Launcher {
         self.next = None;
         self.consumed_cursors.clear();
         // The first folder page cannot decide which linked sessions disappeared.
-        self.apply_passive_listing(page, selected, false, false);
+        self.apply_passive_listing(page, selected, false, false, false);
     }
 
     pub(super) fn consume_cursor(&mut self, cursor: &str) {
@@ -41,6 +41,7 @@ impl Launcher {
         selected: Option<&str>,
         authoritative: bool,
         includes_linked: bool,
+        reset_cursor: bool,
     ) {
         if includes_linked || (authoritative && self.creation_uncertain_linked.is_none()) {
             self.creation_uncertain = false;
@@ -61,10 +62,13 @@ impl Launcher {
         self.sessions = page.rows;
         self.visits.observe_listing(&listed);
         let root_page = authoritative || !includes_linked;
-        if root_page && (self.next.is_none() && page.next.is_some() || complete) {
+        if root_page && (reset_cursor || self.next.is_none() && page.next.is_some() || complete) {
             self.listed_sessions = listed;
             self.next = page.next;
             self.consumed_cursors.clear();
+        }
+        if complete && includes_linked {
+            self.linked.replace_with_authoritative();
         }
         if complete {
             self.check_omitted_visits();
@@ -437,10 +441,6 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
             crate::git::online(s, true);
         }
     }
-    if let Some(l) = s.screen.launcher_mut() {
-        l.next = None;
-        l.consumed_cursors.clear();
-    }
     crate::workspace::schedule_catalogue_refresh(s);
     tx.instant();
     true
@@ -525,6 +525,8 @@ fn bind_at(
             agent.online = false;
             agent.pending_known = false;
         }
+    } else if s.files.as_ref().is_none_or(|ui| !ui.uses_connection(&b)) {
+        crate::files::bind(s, &b);
     }
     s.draft = TextEdit::new(draft);
     crate::composer::literal::restore(&mut s.draft, &s.composer.draft.literal_spans);

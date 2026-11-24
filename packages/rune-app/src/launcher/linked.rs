@@ -59,6 +59,13 @@ impl Linked {
         self.pages = None;
         self.force_reload = true;
     }
+    pub(crate) fn replace_with_authoritative(&mut self) {
+        self.job = None;
+        self.rows.clear();
+        self.pages = Some(Pages::default());
+        self.failed = false;
+        self.force_reload = false;
+    }
 }
 
 pub(super) fn load(s: &mut State) {
@@ -71,7 +78,7 @@ pub(super) fn load(s: &mut State) {
     };
     let force = std::mem::take(&mut l.linked.force_reload);
     let target = l.creation_uncertain_linked.clone();
-    let resume = (!force)
+    let resume = (!force && target.is_none())
         .then(|| {
             l.linked
                 .pages
@@ -154,8 +161,7 @@ pub(super) fn load(s: &mut State) {
                                     .await
                                     .ok()
                                     .is_some_and(|trees| {
-                                        trees.repository
-                                            != codenomad_client::git::Repository::Unknown
+                                        trees.repository == codenomad_client::git::Repository::Git
                                             && !trees.trees.iter().any(|tree| {
                                                 !tree.missing
                                                     && (codenomad_client::same_server_path(

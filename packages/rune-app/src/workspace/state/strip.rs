@@ -42,8 +42,7 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
         .chain(std::iter::once(crate::shell::notifications::history_entry(
             s, touch,
         )));
-    let search_visible =
-        !s.screen.is_launcher() && !crate::files::has_preview(s) && !crate::git::has_preview(s);
+    let search_visible = crate::timeline::search::available(s);
     let (new_shadowed, close_shadowed): (&[&str], &[&str]) =
         if !crate::shell::launcher_replaces_project(s)
             && s.screen.launcher().is_some_and(|l| l.project.is_some())
