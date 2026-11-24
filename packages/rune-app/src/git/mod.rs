@@ -11,10 +11,15 @@ mod view;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use binding::poll_notices;
 pub(crate) use binding::{
-    Binding, PlacementHold, can_place, close_preview, connected, connected_placed,
-    diff_preferences, event, file_link_scope, files_checkout, has_preview, hold_placement, mode,
-    online, placeable, placement, placement_hold, placement_unconfirmed, poll, project_opened,
-    release_placement, set_diff_preferences, set_mode, show,
+    Binding, PlacementHold, SessionDirectory, can_place, close_preview, connected,
+    connected_placed, detach_session, diff_preferences, event, file_link_scope, files_checkout,
+    has_preview, hold_placement, is_composing, mode, online, overlay_open, placeable, placement,
+    placement_hold, placement_unconfirmed, poll, project_opened, release_placement,
+    session_directory, set_diff_preferences, set_mode, show,
+};
+#[cfg(test)]
+pub(crate) use binding::{
+    fixture_commit_draft, fixture_commit_preedit, fixture_online, fixture_open_picker,
 };
 pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader, session_worktree};
@@ -207,6 +212,10 @@ impl Ui {
         }
     }
 
+    pub(crate) fn workspace_id(&self) -> &str {
+        &self.backend.workspace
+    }
+
     pub(crate) fn bind(&mut self, backend: &Backend) -> bool {
         self.bind_placed(backend, None)
     }
@@ -239,12 +248,20 @@ impl Ui {
                 self.session_slug = slug.into();
             }
             self.close_preview();
-            if self.slug != self.session_slug {
+            if self.slug != self.session_slug && self.changes.draft.text.is_empty() {
                 self.slug.clone_from(&self.session_slug);
                 self.reset_tree();
             }
         }
         true
+    }
+
+    pub(crate) fn detach_session(&mut self) {
+        self.backend.session.clear();
+        self.backend.session_directory = None;
+        self.session_slug = "root".into();
+        self.placement_picker = None;
+        self.close_preview();
     }
 
     pub(crate) fn online(&mut self, online: bool) {
@@ -283,6 +300,7 @@ impl Ui {
         if self.shown != shown {
             if !shown {
                 self.keep_scroll();
+                self.picker = false;
             }
             self.shown = shown;
             if shown {
