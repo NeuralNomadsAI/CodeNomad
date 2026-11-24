@@ -5,6 +5,12 @@ use crate::{State, strings};
 use rune::{Cx, El};
 
 pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<State>) -> El) -> El {
+    #[cfg(target_arch = "wasm32")]
+    s.settings.web.commit_palette(
+        &s.settings.shared,
+        cx.system_dark(),
+        !crate::platform::pairing::required(s),
+    );
     let prefs = s.settings.shared.borrow();
     if awaiting_appearance(s, &prefs) {
         return rune::el().key("preferences-bootstrap");

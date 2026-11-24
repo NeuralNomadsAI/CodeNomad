@@ -10,6 +10,7 @@ pub(super) enum Choice {
     Contrast,
     Shortcut(&'static str),
     ShortcutReset,
+    GeneralBehavior(crate::settings::preferences::behavior::GeneralToggle),
     NewConversationPermissions,
     UsageVisible,
     UsageExpansion,
@@ -65,6 +66,9 @@ impl Choice {
             }
             Self::NotificationsFocused => {
                 patch["settings"]["osNotificationsAllowWhenVisible"] = json!(value == "true");
+            }
+            Self::GeneralBehavior(toggle) => {
+                patch["settings"][toggle.key()] = toggle.json_value(value == "true");
             }
             Self::NewConversationPermissions => {
                 patch["settings"]["newConversationPermissions"] = json!(value)
@@ -124,6 +128,9 @@ impl Choice {
             }
             Self::NotificationsFocused => {
                 snapshot["settings"]["osNotificationsAllowWhenVisible"] == (value == "true")
+            }
+            Self::GeneralBehavior(toggle) => {
+                snapshot["settings"][toggle.key()] == toggle.json_value(value == "true")
             }
             Self::NewConversationPermissions => {
                 snapshot["settings"]["newConversationPermissions"] == value
@@ -338,6 +345,7 @@ impl Document {
         if matches!(
             choice,
             Choice::Contrast
+                | Choice::GeneralBehavior(_)
                 | Choice::NewConversationPermissions
                 | Choice::UsageVisible
                 | Choice::UsageExpansion
@@ -365,6 +373,18 @@ impl Document {
 
     pub(super) fn choice_failed(&self, choice: Choice) -> bool {
         self.write.failed.contains(&choice)
+    }
+
+    pub(super) fn choice_pending(&self, choice: Choice) -> bool {
+        let in_flight = |flight: &Option<Flight>| match flight.as_ref().map(|f| &f.operation) {
+            Some(Operation::Write(sent)) => sent.contains_key(&choice),
+            Some(Operation::Read { retry }) => retry.contains(&choice),
+            None => false,
+        };
+        self.write.pending.contains(&choice)
+            || self.write.retry.contains(&choice)
+            || in_flight(&self.flight)
+            || in_flight(&self.barrier)
     }
 
     pub(super) fn unsettled(&self) -> bool {

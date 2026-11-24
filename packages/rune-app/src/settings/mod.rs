@@ -4,6 +4,7 @@ mod behavior;
 mod config_files;
 mod contrast;
 mod conversation;
+mod general;
 mod host_support;
 mod info;
 mod memory;
