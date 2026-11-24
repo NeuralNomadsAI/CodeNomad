@@ -30,7 +30,7 @@ import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { instances } from "../stores/instances"
 import { createRequestLocation, requestLocationOptions, toRequestLocation } from "../stores/request-locations"
-import type { MissionEditorAction, MissionEditorDraft } from "../stores/mission-editor-state"
+import { recordMissionDraftBaseline, registerMissionDraftBaseline, type MissionEditorAction, type MissionEditorDraft } from "../stores/mission-editor-state"
 import { MissionBodyPending } from "./mission-reader-body"
 import { missionTargetState, retryMissionTarget, useTargetBody } from "./mission-target-bodies"
 import { missionScheduleEditorHold } from "../stores/mission-schedule-editor-holds"
@@ -133,8 +133,33 @@ export function MissionEditor(props: {
   const creationReady = () => defaultsReady() && (kind !== "create" || Boolean(held || recurrenceHold) || config.isUiConfigLoaded())
   const effectiveProfiles = () => freezeCompareProfiles(template(), profiles())
   const compareError = () => template() === "compare" ? compareModelError(profiles()) : undefined
-  const [selectedModel, setSelectedModel] = createSignal<Pick<UserMissionModel, "id" | "name"> | undefined>(held ? submittedMissionModel(held.requestId)
+  const [selectedModel, setSelectedModel] = createSignal<UserMissionModel | undefined>(held ? submittedMissionModel(held.requestId)
     : recurrenceHold ? submittedMissionModel(recurrenceHold.requestID) : draft?.selectedModel)
+  let draftId = held || recurrenceHold ? generateUUID() : draft?.draftId ?? generateUUID()
+  const [savedBaselines, setSavedBaselines] = createSignal<UserMissionModel[]>(
+    held || recurrenceHold ? (selectedModel() ? [selectedModel()!] : [])
+      : draft?.savedBaselines ? [...draft.savedBaselines] : selectedModel() ? [selectedModel()!] : [],
+  )
+  const applySavedBaseline = (saved: UserMissionModel) => {
+    setSavedBaselines(current => [...current.filter(item => item.id !== saved.id), saved])
+    if (selectedModel()?.id === saved.id) setSelectedModel(saved)
+  }
+  let unregisterDraftBaseline = registerMissionDraftBaseline(draftId, applySavedBaseline)
+  onCleanup(() => unregisterDraftBaseline())
+  const resetDraftBaselines = (model?: UserMissionModel) => {
+    unregisterDraftBaseline()
+    draftId = generateUUID()
+    unregisterDraftBaseline = registerMissionDraftBaseline(draftId, applySavedBaseline)
+    setSavedBaselines(model ? [model] : [])
+  }
+  const captureDraftCommit = () => {
+    const originatingDraftId = draftId
+    return (saved: UserMissionModel) => recordMissionDraftBaseline(originatingDraftId, saved)
+  }
+  const initialConfigurationName = () => {
+    const loaded = selectedModel(), current = submittedTitle()
+    return loaded && missionConfigurationTitle(loaded.name) === current ? loaded.name : current
+  }
   // One creation-time snapshot only, after the owned preference document loads.
   // Refreshes and other windows' preference edits never replace this draft.
   createEffect(() => {
@@ -274,7 +299,7 @@ export function MissionEditor(props: {
   const captureDraft = (): MissionEditorDraft => ({ mode: mode(), titleOverride: titleOverride(), time: time(), zone: zone(),
     watched: watched(), objective: objective(), notes: notes(), template: template(), profiles: copyMissionProfiles(profiles()),
     customProfiles: customProfiles(), taskMode: taskMode(), customTaskMode: customTaskMode(), defaults: defaults(),
-    defaultsReady: defaultsReady(), selectedModel: selectedModel(), optionsOpen: true, profileDetailsOpen: profilesFold?.open ?? profilesOpen(),
+    defaultsReady: defaultsReady(), draftId, selectedModel: selectedModel(), savedBaselines: savedBaselines(), optionsOpen: true, profileDetailsOpen: profilesFold?.open ?? profilesOpen(),
     requestId, lastPayload, deleteManagedSessions: deleteManagedSessions(), deleteAttempted: deleteAttempted(), startOnCreation: startOnCreation(),
     ...(coordinatorSessionID() !== undefined ? { coordinatorSessionID: coordinatorSessionID() } : {}),
     deleteAutoSubmitted: kind === "delete" && !autoSubmit(), deleteError: kind === "delete" ? error() : undefined,
@@ -370,7 +395,8 @@ export function MissionEditor(props: {
         setObjective(existingHold.objective); setTitleOverride(existingHold.title); setNotes(existingHold.notes); setTemplate(existingHold.template)
         setProfiles(copyMissionProfiles(existingHold.profiles)); setCustomProfiles(true)
         setTaskMode(existingHold.taskMode); setCustomTaskMode(true)
-        setSelectedModel(submittedMissionModel(existingHold.requestId))
+        const heldModel = submittedMissionModel(existingHold.requestId)
+        setSelectedModel(heldModel); resetDraftBaselines(heldModel)
         setStartOnCreation(!!existingHold.startOnCreation)
         setWatched([...(existingHold.watchedConversationIDs ?? [])])
         setShownRequestId(existingHold.requestId)
@@ -462,10 +488,11 @@ export function MissionEditor(props: {
 
   const createBody = () => <>
     <Show when={kind === "create"}><MissionBriefPicker instanceId={props.instanceId} disabled={locked() || !isActive()} active={isActive} value={selectedModel()?.id}
+      onClear={() => { setSelectedModel(undefined); resetDraftBaselines() }}
       onUse={model => {
         requestId = generateUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
         const configurationTitle = missionConfigurationTitle(model.name)
-        setObjective(model.objective); setTitleOverride(configurationTitle); setNotes(model.notes); setTemplate(model.template); setSelectedModel({ id: model.id, name: model.name })
+        setObjective(model.objective); setTitleOverride(configurationTitle); setNotes(model.notes); setTemplate(model.template); setSelectedModel(model); resetDraftBaselines(model)
         setCustomProfiles(model.profiles !== undefined)
         setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
         setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
@@ -633,7 +660,7 @@ export function MissionEditor(props: {
       <Show when={kind === "create"}>
         {/* An unsent draft beside another request's hold may still be kept as a brief. */}
         <MissionBriefSave instanceId={props.instanceId} buttonClass="button-secondary" disabled={(otherUncertain() ? !creationReady() || defaultsRefreshing() : locked()) || !isActive()} active={isActive}
-          initialName={submittedTitle}
+          initialName={initialConfigurationName} baselines={savedBaselines()} captureCommit={captureDraftCommit}
           draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })} />
       </Show>
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>

@@ -28,6 +28,8 @@ Agenten können Konfigurationen lesen, speichern, ersetzen oder umbenennen, entf
 
 **Konfiguration speichern** unten neben Abbrechen und Erstellen speichert eine wiederverwendbare Konfiguration, ohne eine Mission zu erstellen oder zu starten. Zeitplanung und automatischer Start werden separat gewählt. Das Zahnrad öffnet die Einstellungen und die Bibliothek; das Entfernen einer Konfiguration erhält Missionen und Unterhaltungen.
 
+Um eine gespeicherte Konfiguration zu ersetzen, verwenden Sie ihren Namen und wählen **Ersetzen**. Tragen mehrere Konfigurationen diesen Namen, laden Sie zuerst die gewünschte. Mit einem neuen Namen speichern Sie eine Kopie, solange in der Bibliothek Platz ist.
+
 ### Ziel, Titel und Notizen {#mission-instructions}
 
 Bei einmaligen Missions können Agenten starten, fortsetzen, sanft pausieren, sofort unterbrechen, stoppen, bearbeiten, löschen, die Koordination nach einem Fehler fortsetzen, einen fehlenden Bericht oder einen Zwischenstand anfordern. Das gilt auch für Ihre Missions, mit denselben Zulassungs- und Revisionsprüfungen wie im Panel. Beim Löschen gilt Ihre Einstellung für verwaltete Sitzungen, sofern Sie nichts anderes angeben. Unbestätigte Aktionen und Bereinigungen behalten ihre ursprüngliche Identität; vor dem ausdrücklichen Fortsetzen einer bestätigten Teilaktion lesen Agenten den gespeicherten Status.
