@@ -6,8 +6,14 @@ import type { ServiceConnection } from "../../workspaces/opencode-service"
 import { registerUsageRoutes, type UsageRouteDeps } from "./usage"
 import { createOpenCodeFreeUsage } from "../../usage/opencode-free-usage"
 
-function harness(rpcHandler: (url: URL, body: unknown, init?: RequestInit) => Promise<Response>) {
-  const state = { nativeCalls: [] as string[], directory: "/repo", stale: false }
+function harness(
+  rpcHandler: (url: URL, body: unknown, init?: RequestInit) => Promise<Response>,
+  hooks?: {
+    onProviderGet?: () => Promise<void> | void
+    onOwnsLocation?: (callIndex: number) => Promise<void> | void
+  },
+) {
+  const state = { nativeCalls: [] as string[], directory: "/repo", stale: false, evicted: false, ownsCalls: 0 }
   const logs: string[] = []
   const app = Fastify({ logger: { stream: { write: (text: string) => { logs.push(text) } } } })
   const workspace = {} as NonNullable<ReturnType<UsageRouteDeps["workspaceManager"]["get"]>>
@@ -18,6 +24,7 @@ function harness(rpcHandler: (url: URL, body: unknown, init?: RequestInit) => Pr
       state.nativeCalls.push(url.pathname)
       if (url.pathname === "/api/session/session") return Response.json({ data: { id: "session", location: { directory: state.directory } } })
       if (url.pathname.startsWith("/api/provider/")) {
+        await hooks?.onProviderGet?.()
         const id = decodeURIComponent(url.pathname.split("/")[3])
         return Response.json({ location: { directory: state.directory }, data: { id, name: id, activation: "auto", package: id } })
       }
@@ -30,9 +37,13 @@ function harness(rpcHandler: (url: URL, body: unknown, init?: RequestInit) => Pr
   })
   const connection = { client, assertCurrent: () => { if (state.stale) throw new Error("stale connection") } } as ServiceConnection
   const manager: UsageRouteDeps["workspaceManager"] = {
-    get: id => id === "instance" ? workspace : undefined,
+    get: id => id === "instance" && !state.evicted ? workspace : undefined,
     getSharedServiceConnection: async () => connection,
-    ownsLocation: async (_id, location) => location.directory === "/repo",
+    ownsLocation: async (_id, location) => {
+      const index = ++state.ownsCalls
+      await hooks?.onOwnsLocation?.(index)
+      return location.directory === "/repo"
+    },
     getSessionEnvironment: async () => ({}),
     getServiceWslDistro: () => undefined,
     getHostPathForServicePath: async () => undefined,
@@ -145,5 +156,68 @@ test("session movement and reconnect fence publication of plugin provider usage"
       release()
       await app.close()
     }
+  }
+})
+
+test("workspace eviction during alias probe blocks plugin dispatch and eviction during final ownership check blocks publication", async () => {
+  // Eviction during the Codex-alias probe must prevent any plugin RPC call and return 403.
+  {
+    let rpcCalls = 0
+    const { app, state } = harness(
+      async () => {
+        rpcCalls++
+        return Response.json({ output: { configured: true, ok: true, windows: { "5h": { usedPercent: 10 } } } })
+      },
+      { onProviderGet: () => { state.evicted = true } },
+    )
+    try {
+      const response = await app.inject(url)
+      assert.equal(response.statusCode, 403)
+      assert.equal(rpcCalls, 0)
+    } finally { await app.close() }
+  }
+
+  // Eviction during the final ownsLocation await must still reject publication with 403.
+  {
+    const { app, state } = harness(
+      async () => Response.json({
+        output: { configured: true, ok: true, windows: { "5h": { usedPercent: 10, remainingPercent: 90 } } },
+      }),
+      {
+        onOwnsLocation: (index) => {
+          if (index === 2) state.evicted = true
+        },
+      },
+    )
+    try {
+      const response = await app.inject(url)
+      assert.equal(response.statusCode, 403)
+    } finally { await app.close() }
+  }
+})
+
+test("route degrades 404 JSON not_found to supported=false and fails transport errors with 503", async () => {
+  {
+    const { app } = harness(async () =>
+      Response.json({ type: "not_found", message: "Not found" }, { status: 404 }),
+    )
+    try {
+      const response = await app.inject(url)
+      assert.equal(response.statusCode, 200, response.body)
+      assert.equal(response.json().supported, false)
+      assert.equal(response.json().ok, false)
+    } finally { await app.close() }
+  }
+
+  {
+    const { app, logs } = harness(async () => {
+      throw new TypeError("fetch failed: secret-upstream-host")
+    })
+    try {
+      const response = await app.inject(url)
+      assert.equal(response.statusCode, 503)
+      assert.equal(response.body.includes("secret-upstream-host"), false)
+      assert.equal(logs.join("\n").includes("secret-upstream-host"), false)
+    } finally { await app.close() }
   }
 })

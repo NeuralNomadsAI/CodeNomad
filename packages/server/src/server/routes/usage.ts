@@ -72,9 +72,10 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           signal.throwIfAborted()
           const session = await connection.client.session.get({ sessionID: sessionId }, { signal })
           const location = readLocationRef(session.location)
-          const owned = location.workspaceID === undefined && await manager.ownsLocation(instanceId, location, connection.client)
+          const owned = manager.get(instanceId) === workspace && location.workspaceID === undefined
+            && await manager.ownsLocation(instanceId, location, connection.client)
           signal.throwIfAborted()
-          if (!owned) {
+          if (!owned || manager.get(instanceId) !== workspace) {
             return reply.code(403).send({ error: "Session does not belong to workspace" })
           }
           signal.throwIfAborted()
@@ -86,11 +87,17 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             ? await nativeCodexUsage(connection, { instanceId, sessionId, directory: location.directory,
               providerId: params.data.providerId, modelId }, signal)
             : null
-          const plugin = !native && !provider
-            ? await readPluginProviderUsage(connection, {
+          let plugin: ProviderUsageResponse | null = null
+          if (!native && !provider) {
+            signal.throwIfAborted()
+            connection.assertCurrent()
+            if (manager.get(instanceId) !== workspace) {
+              return reply.code(403).send({ error: "Session does not belong to workspace" })
+            }
+            plugin = await readPluginProviderUsage(connection, {
               providerId: params.data.providerId, location, modelId,
             }, signal, quotaSignal)
-            : null
+          }
           const auth = !native && !plugin && provider ? await readUsageCredentials(connection, signal) : {}
           const settings = !native && !plugin && provider && provider.id !== "google" && provider.id !== "opencode-console"
             ? await readUsageProviderSettings(connection, params.data.providerId, location.directory, signal) : undefined
@@ -118,7 +125,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             const stillOwned = manager.get(instanceId) === workspace && currentLocation.directory === location.directory
               && currentLocation.workspaceID === undefined && await manager.ownsLocation(instanceId, currentLocation, connection.client)
             signal.throwIfAborted()
-            if (!stillOwned) {
+            if (!stillOwned || manager.get(instanceId) !== workspace) {
               return reply.code(403).send({ error: "Session does not belong to workspace" })
             }
             signal.throwIfAborted()
