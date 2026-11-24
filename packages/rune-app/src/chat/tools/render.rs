@@ -733,35 +733,46 @@ fn render_body(
                             fallback()
                         });
                     }
-                    if let Some(expand_key) = tool_expand_key
-                        && expanded_tool_output.is_none()
-                    {
-                        let failed = s
-                            .transcript_display
-                            .children
-                            .expand_tool_failed(&expand_key);
-                        let reveal_key = output_key;
-                        block = block.child(
-                            layout::action_row()
-                                .child(text(t("toolCall.output.tooLarge")).role("status"))
-                                .child(
-                                    layout::button(
-                                        t("messageBlock.hiddenText.showAll"),
-                                        false,
-                                        screen::action(&s.input_scope, move |s| {
-                                            super::children::Children::expand_tool_output(
-                                                s,
-                                                expand_key.clone(),
-                                            );
-                                            Display::reveal_next(s, &reveal_key);
-                                        }),
-                                    )
-                                    .key(format!("expand-{key}-output")),
-                                ),
-                        );
-                        if failed {
-                            block =
-                                block.child(text(t("sessionList.loadError.retry")).role("status"));
+                    if let Some(expand_key) = tool_expand_key {
+                        let copy_target = super::children::CopyKey::ToolSection(expand_key.clone());
+                        if expanded_tool_output.is_none() {
+                            let failed = s
+                                .transcript_display
+                                .children
+                                .expand_tool_failed(&expand_key);
+                            let reveal_key = output_key;
+                            block = block.child(
+                                layout::action_row()
+                                    .child(text(t("toolCall.output.tooLarge")).role("status"))
+                                    .child(
+                                        layout::button(
+                                            t("messageBlock.hiddenText.showAll"),
+                                            false,
+                                            screen::action(&s.input_scope, move |s| {
+                                                super::children::Children::expand_tool_output(
+                                                    s,
+                                                    expand_key.clone(),
+                                                );
+                                                Display::reveal_next(s, &reveal_key);
+                                            }),
+                                        )
+                                        .key(format!("expand-{key}-output")),
+                                    ),
+                            );
+                            if failed {
+                                block = block
+                                    .child(text(t("sessionList.loadError.retry")).role("status"));
+                            }
+                        }
+                        if s.transcript_display.children.copy_failed(&copy_target) {
+                            block = block
+                                .child(text(t("messageSection.quote.copyFailed")).role("status"));
+                        } else if s.transcript_display.children.copy_copied(&copy_target) {
+                            block = block
+                                .child(text(t("markdown.codeBlock.copy.copied")).role("status"));
+                        } else if s.transcript_display.children.copy_ready(&copy_target) {
+                            block = block
+                                .child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
                         }
                     }
                 }

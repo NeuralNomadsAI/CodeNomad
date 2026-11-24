@@ -593,11 +593,23 @@ pub(crate) async fn run_with_reading(
                             content::ToolFit::Drop => {}
                             content::ToolFit::Repair => {
                                 if matches!(kind, "session.tool.success" | "session.tool.failed") {
-                                    if reader.known.contains(id)
+                                    let known_call = native["data"]["id"]
+                                        .as_str()
+                                        .filter(|c| !c.is_empty() && c.len() <= 256)
+                                        .filter(|call| {
+                                            reader.resident.iter().any(|row| {
+                                                row.id == id
+                                                    && row.parts.iter().any(|part| {
+                                                        matches!(
+                                                            part,
+                                                            crate::content::Part::Tool(t)
+                                                                if t.id == *call
+                                                        )
+                                                    })
+                                            })
+                                        });
+                                    if let Some(call) = known_call
                                         && reader.owed_tools.len() < 64
-                                        && let Some(call) = native["data"]["id"]
-                                            .as_str()
-                                            .filter(|c| !c.is_empty() && c.len() <= 256)
                                     {
                                         reader
                                             .owed_tools

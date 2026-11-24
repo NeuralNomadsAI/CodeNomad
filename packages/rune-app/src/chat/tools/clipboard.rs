@@ -142,7 +142,7 @@ pub(super) fn copy(
                             tx.copy(source);
                             None
                         } else if matches!(tool.name.as_str(), "apply_patch" | "patch")
-                            && let Some(source) = apply_patch::copy_all(tool)
+                            && let Some(source) = apply_patch::copy_all(Some(s), tool)
                         {
                             tx.copy(source);
                             None

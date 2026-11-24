@@ -87,25 +87,39 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
             selected.push((candidate, entries));
         }
     }
+    let mut truncated = false;
+    let mut scanned = 0usize;
     if multi_file {
         for (candidate, value, _) in &normalized_keys {
-            if selected.len() >= FILE_LIMIT {
+            if selected.len() >= FILE_LIMIT || scanned >= SCAN_LIMIT {
+                if scanned >= SCAN_LIMIT {
+                    truncated = true;
+                }
                 break;
             }
-            if let Some(entries) = value.as_array()
-                && entries
-                    .iter()
-                    .take(SCAN_LIMIT)
-                    .any(|entry| entry["message"].is_string())
-                && !selected.iter().any(|(existing, _)| *existing == *candidate)
-            {
-                selected.push((*candidate, entries));
+            if selected.iter().any(|(existing, _)| *existing == *candidate) {
+                continue;
+            }
+            if let Some(entries) = value.as_array() {
+                let mut has_message = false;
+                for entry in entries {
+                    if scanned >= SCAN_LIMIT {
+                        truncated = true;
+                        break;
+                    }
+                    scanned += 1;
+                    if entry["message"].is_string() {
+                        has_message = true;
+                        break;
+                    }
+                }
+                if has_message {
+                    selected.push((*candidate, entries));
+                }
             }
         }
     }
-    let mut truncated = false;
     let mut flat: Vec<(&str, &Value, &str)> = Vec::new();
-    let mut scanned = 0usize;
     for (path, entries) in &selected {
         for entry in entries.iter() {
             if scanned >= SCAN_LIMIT {
@@ -211,49 +225,131 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
                 )
                 .key(format!("copy-{key}")),
             );
-        let rendered = (0..3)
-            .flat_map(|rank| {
-                flat.iter()
-                    .copied()
-                    .filter(move |(_, entry, _)| severity(entry) == rank)
-            })
-            .take(ENTRY_LIMIT)
-            .enumerate()
-            .map(|(i, (path, entry, message))| {
-                let kind = t(match severity(entry) {
-                    0 => "toolCall.diagnostics.severity.error.short",
-                    1 => "toolCall.diagnostics.severity.warning.short",
-                    _ => "toolCall.diagnostics.severity.info.short",
-                });
-                let start = &entry["range"]["start"];
-                let line = start["line"].as_u64().map_or(0, |n| n.saturating_add(1));
-                let column = start["character"]
-                    .as_u64()
-                    .map_or(0, |n| n.saturating_add(1));
-                let header = format!("{kind} {path}:{line}:{column}");
-                col()
-                    .full_width()
-                    .child(text(header).wrap().content_direction())
-                    .child(window(
-                        s,
-                        format!("{key}-{i}"),
-                        &[message],
-                        TOOL_LIMIT,
-                        |shown, _| {
-                            text(shown)
-                                .full_width()
-                                .wrap()
-                                .content_direction()
-                                .selectable(true)
-                        },
-                    ))
-            });
-        pane = pane.child(copy_row).child(markdown::tool_pane(
-            col().full_width().separate(Space::Sm).children(rendered),
-            false,
-        ));
+        pane = pane
+            .child(copy_row)
+            .child(render_entries(s, &key, &flat, ENTRY_LIMIT));
     }
     Some(pane)
+}
+
+pub(super) fn inline_for_file(
+    s: &State,
+    key: &str,
+    tool: &Tool,
+    candidates: &[&str],
+    remaining_entries: &mut usize,
+    scanned: &mut usize,
+    matched_keys: &mut Vec<String>,
+) -> Option<El> {
+    if transcript_mode(s, TranscriptRow::Diagnostics) == "hidden"
+        || *remaining_entries == 0
+        || *scanned >= SCAN_LIMIT
+    {
+        return None;
+    }
+    let files = tool.metadata["diagnostics"].as_object()?;
+    let mut matched: Option<(&String, &Vec<Value>)> = None;
+    for raw in candidates {
+        if raw.is_empty() || raw.len() > 4096 {
+            continue;
+        }
+        let norm = raw.replace('\\', "/");
+        if let Some((candidate, value)) = files.get_key_value(*raw)
+            && !matched_keys.iter().any(|used| used == candidate)
+            && let Some(entries) = value.as_array()
+        {
+            matched = Some((candidate, entries));
+            break;
+        }
+        let mut found = None;
+        for (candidate, value) in files.iter() {
+            if *scanned >= SCAN_LIMIT {
+                break;
+            }
+            *scanned += 1;
+            if candidate.len() > 4096 || matched_keys.iter().any(|used| used == candidate) {
+                continue;
+            }
+            let cand_norm = candidate.replace('\\', "/");
+            let same = cand_norm == norm
+                || cand_norm
+                    .strip_suffix(&norm)
+                    .is_some_and(|base| base.ends_with('/'))
+                || norm
+                    .strip_suffix(&cand_norm)
+                    .is_some_and(|base| base.ends_with('/'));
+            if same && let Some(entries) = value.as_array() {
+                found = Some((candidate, entries));
+                break;
+            }
+        }
+        if found.is_some() {
+            matched = found;
+            break;
+        }
+    }
+    let (diag_key, entries) = matched?;
+    matched_keys.push(diag_key.clone());
+    let mut flat: Vec<(&str, &Value, &str)> = Vec::new();
+    for entry in entries {
+        if *scanned >= SCAN_LIMIT {
+            break;
+        }
+        *scanned += 1;
+        if let Some(message) = entry["message"].as_str() {
+            flat.push((diag_key.as_str(), entry, message));
+        }
+    }
+    if flat.is_empty() {
+        return None;
+    }
+    let take = (*remaining_entries).min(flat.len());
+    *remaining_entries = remaining_entries.saturating_sub(take);
+    Some(render_entries(s, &format!("{key}-diag"), &flat, take))
+}
+
+fn render_entries(s: &State, key: &str, flat: &[(&str, &Value, &str)], limit: usize) -> El {
+    let rendered = (0..3)
+        .flat_map(|rank| {
+            flat.iter()
+                .copied()
+                .filter(move |(_, entry, _)| severity(entry) == rank)
+        })
+        .take(limit)
+        .enumerate()
+        .map(|(i, (path, entry, message))| {
+            let kind = t(match severity(entry) {
+                0 => "toolCall.diagnostics.severity.error.short",
+                1 => "toolCall.diagnostics.severity.warning.short",
+                _ => "toolCall.diagnostics.severity.info.short",
+            });
+            let start = &entry["range"]["start"];
+            let line = start["line"].as_u64().map_or(0, |n| n.saturating_add(1));
+            let column = start["character"]
+                .as_u64()
+                .map_or(0, |n| n.saturating_add(1));
+            let header = format!("{kind} {path}:{line}:{column}");
+            col()
+                .full_width()
+                .child(text(header).wrap().content_direction())
+                .child(window(
+                    s,
+                    format!("{key}-{i}"),
+                    &[message],
+                    TOOL_LIMIT,
+                    |shown, _| {
+                        text(shown)
+                            .full_width()
+                            .wrap()
+                            .content_direction()
+                            .selectable(true)
+                    },
+                ))
+        });
+    markdown::tool_pane(
+        col().full_width().separate(Space::Sm).children(rendered),
+        false,
+    )
 }
 
 fn severity(entry: &Value) -> u8 {

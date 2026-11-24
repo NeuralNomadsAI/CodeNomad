@@ -35,14 +35,14 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 }
 
 pub(super) const STEP_LIMIT: usize = 200;
-const CHILD_LIMIT: usize = 4;
-const RETAINED_LIMIT: usize = 16;
+const CHILD_LIMIT: usize = 12;
+const RETAINED_LIMIT: usize = 24;
 const WAITING_LIMIT: usize = 32;
 const STEP_BYTES: usize = 2 << 20;
 const MAX_COPY_PAGES: usize = 64;
 pub(super) const MAX_COPY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_EXPANDED_REPORTS: usize = 8;
-const MAX_EXPANDED_REPORT_BYTES: usize = MAX_COPY_BYTES;
+const MAX_EXPANDED_REPORT_BYTES: usize = codenomad_client::history::MESSAGE_BYTES;
 const COPY_BUDGET: Duration = Duration::from_secs(30);
 const MAX_PENDING_EVENTS: usize = 32;
 const MAX_PENDING_BYTES: usize = 256 * 1024;
@@ -629,7 +629,12 @@ impl Children {
                             } else if tool.name == "todowrite" {
                                 super::todo::copy(tool)
                             } else if matches!(tool.name.as_str(), "apply_patch" | "patch") {
-                                super::apply_patch::copy_all(tool)
+                                super::apply_patch::copy_all(None, tool).or_else(|| {
+                                    let mut parts = [""; 4];
+                                    super::output(tool, &mut parts);
+                                    let joined = parts.concat();
+                                    (!joined.is_empty()).then_some(joined)
+                                })
                             } else {
                                 let mut parts = [""; 4];
                                 super::output(tool, &mut parts);
@@ -883,7 +888,7 @@ impl Children {
                     .await
                 {
                     Ok(Some(_)) => NavOutcome::Verified(child),
-                    Ok(None) => {
+                    first @ (Ok(None) | Err(_)) => {
                         if let Some((tab_key, mut tab_backend)) = fallback_tab {
                             tab_backend.session = expected_parent.clone();
                             match tab_backend
@@ -891,14 +896,15 @@ impl Children {
                                 .await
                             {
                                 Ok(Some(_)) => NavOutcome::VerifiedInTab(tab_key, child),
-                                Ok(None) => NavOutcome::Missing,
-                                Err(_) => NavOutcome::Error,
+                                Ok(None) if first.is_ok() => NavOutcome::Missing,
+                                Ok(None) | Err(_) => NavOutcome::Error,
                             }
-                        } else {
+                        } else if first.is_ok() {
                             NavOutcome::Missing
+                        } else {
+                            NavOutcome::Error
                         }
                     }
-                    Err(_) => NavOutcome::Error,
                 };
                 if out.send(outcome).await.is_ok() {
                     wake();
@@ -1257,6 +1263,9 @@ impl Children {
                     removed = true;
                 }
             }
+            if removed {
+                children.evict_unwatched_cache(std::slice::from_ref(&ck.1));
+            }
             children
                 .waiting
                 .retain(|(wck, wkey, _)| !(*wck == ck && wkey == key));
@@ -1464,6 +1473,7 @@ impl Children {
                     break;
                 };
                 children.entries.remove(&evict);
+                children.evict_unwatched_cache(std::slice::from_ref(&evict.1));
             }
             children.entries.insert(
                 ck,
@@ -1923,6 +1933,7 @@ impl Children {
                             } => {
                                 if unavailable {
                                     mark_unavailable.push(ck.clone());
+                                    revoked_children.push(ck.1.clone());
                                 } else {
                                     clear_unavailable.push(ck.clone());
                                 }
@@ -2081,7 +2092,8 @@ impl Children {
         if let Some(outcome) = expand_outcome
             && let Some((key, revocation, _, _)) = self.loading_report.take()
         {
-            if !revocation.is_revoked() {
+            let unavailable = self.unavailable.iter().any(|(_, id)| key.touches_child(id));
+            if !revocation.is_revoked() && !unavailable {
                 match outcome {
                     Some(text) if text.len() <= MAX_EXPANDED_REPORT_BYTES => {
                         while self.expanded_reports.len() >= MAX_EXPANDED_REPORTS
@@ -2109,13 +2121,53 @@ impl Children {
         changed
     }
 
+    fn evict_unwatched_cache(&mut self, removed_children: &[String]) {
+        let unwatched: Vec<&str> = removed_children
+            .iter()
+            .map(String::as_str)
+            .filter(|id| !self.entries.keys().any(|(_, active)| active == *id))
+            .collect();
+        if unwatched.is_empty() {
+            return;
+        }
+        self.expanded_reports.retain(|(current, text)| {
+            let drop = unwatched.iter().any(|id| current.touches_child(id));
+            if drop {
+                self.expanded_report_bytes = self.expanded_report_bytes.saturating_sub(text.len());
+            }
+            !drop
+        });
+        if self
+            .loading_report
+            .as_ref()
+            .is_some_and(|(current, _, _, _)| unwatched.iter().any(|id| current.touches_child(id)))
+        {
+            self.loading_report = None;
+        }
+        if self
+            .failed_report
+            .as_ref()
+            .is_some_and(|current| unwatched.iter().any(|id| current.touches_child(id)))
+        {
+            self.failed_report = None;
+        }
+    }
+
     fn prune(&mut self) -> bool {
         // Rune drops the visibility handler on unmount without a final `false` callback.
         let before = self.entries.len();
-        self.entries.retain(|_, entry| {
+        let mut removed = Vec::new();
+        self.entries.retain(|ck, entry| {
             entry.cards.retain(|_, lease| lease.strong_count() > 0);
-            !entry.cards.is_empty()
+            let keep = !entry.cards.is_empty();
+            if !keep {
+                removed.push(ck.1.clone());
+            }
+            keep
         });
+        if !removed.is_empty() {
+            self.evict_unwatched_cache(&removed);
+        }
         before != self.entries.len()
     }
 

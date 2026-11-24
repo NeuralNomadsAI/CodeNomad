@@ -60,6 +60,11 @@ fn copy_feedback(
 #[cfg(target_arch = "wasm32")]
 mod web;
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn copy_fallback(window: &web_sys::Window, text: &str) -> bool {
+    web::fallback(window, text)
+}
+
 pub fn windows_default_mode(path: &str) -> DefaultMode {
     let extension = path
         .rsplit(['/', '\\'])

@@ -29,7 +29,7 @@ pub(super) fn copy_path(
     });
 }
 
-fn fallback(window: &web_sys::Window, path: &str) -> bool {
+pub(super) fn fallback(window: &web_sys::Window, path: &str) -> bool {
     let run = || -> Option<bool> {
         let document = window.document()?;
         let prior = document
