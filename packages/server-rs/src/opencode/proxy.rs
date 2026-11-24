@@ -254,6 +254,23 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         None
     };
     let native_directory = actual.as_ref().and_then(|r| r["location"]["directory"].as_str());
+    if send_input && let Some(raw_bound) = head.headers.get("x-codenomad-session-directory") {
+        let bound = raw_bound
+            .to_str()
+            .ok()
+            .filter(|v| v.len() <= 16_384)
+            .and_then(crate::shared::decode_component)
+            .ok_or_else(|| error(Status::BAD_REQUEST, "Invalid session directory header"))?;
+        let matches_native = native_directory.is_some_and(|native| {
+            native == bound
+                || crate::files::paths::canonical(&app.scope, native)
+                    .zip(crate::files::paths::canonical(&app.scope, &bound))
+                    .is_some_and(|(a, b)| a == b)
+        });
+        if !matches_native {
+            return Err(foreign());
+        }
+    }
     let directory =
         if send_input { native_directory.or(requested.as_deref()) } else { requested.as_deref().or(native_directory) }
             .unwrap_or(opened);

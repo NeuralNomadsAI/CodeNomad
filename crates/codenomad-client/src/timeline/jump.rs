@@ -111,7 +111,12 @@ impl Jump {
                 None
             },
             futures_lite::future::or(request, async {
-                wire.placement_changed().await;
+                futures_lite::future::race(wire.placement_changed(), async {
+                    while wire.valid(stamp) {
+                        crate::runtime::sleep(std::time::Duration::from_millis(25)).await;
+                    }
+                })
+                .await;
                 None
             }),
         )

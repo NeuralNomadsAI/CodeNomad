@@ -57,8 +57,15 @@ impl Cache {
         }
     }
 
-    pub(super) fn clear_unconfirmed_matching(&mut self, attempt_id: &str) {
-        self.composer.clear_unconfirmed_matching(attempt_id);
+    pub(super) fn has_user_message(&self, id: &str) -> bool {
+        self.messages
+            .iter()
+            .any(|row| row.id == id && row.role == "user")
+    }
+
+    pub(super) fn clear_unconfirmed_matching(&mut self, attempt_id: &str) -> bool {
+        self.composer
+            .confirm_unconfirmed_matching(&mut self.draft, attempt_id)
     }
 
     pub(super) fn sending_inline_usage(&self) -> (usize, usize) {

@@ -300,8 +300,16 @@ pub(crate) fn step(s: &mut State, older: bool, forced: bool, tx: &mut Tx) -> boo
         }
         edit.set_caret(edit.text.len());
         replace_edit(s, edit);
+        let had_inline = draft.inline_usage().0 > 0;
         s.composer.draft = draft;
         s.composer.attachments_missing = false;
+        if had_inline && !workspace::attachment_draft_admissible(s) {
+            s.composer
+                .draft
+                .attachments
+                .retain(|part| !matches!(part, Attachment::Device { .. }));
+            s.composer.attachments_missing = true;
+        }
     } else if !older && current.is_some() {
         restore(s);
         s.draft.set_caret(s.draft.text.len());

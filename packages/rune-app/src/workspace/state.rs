@@ -118,21 +118,19 @@ const MAX_UNCONFIRMED_LOCKS: usize = 64;
 struct ClosedUnconfirmed {
     backend_id: Option<String>,
     server_id: Option<String>,
-    folder: String,
     session_id: String,
     attempt_id: String,
 }
 impl ClosedUnconfirmed {
     fn matches(&self, workspace: &Workspace, session_id: &str) -> bool {
         self.session_id == session_id
-            && same_folder(&self.folder, &workspace.folder)
             && self.backend_id == workspace.backend_id
             && (self.backend_id.is_none() || self.server_id == workspace.server_id)
     }
 }
 impl Ui {
-    pub(super) fn unconfirmed_locks_full(&self) -> bool {
-        self.closed_unconfirmed.len() >= MAX_UNCONFIRMED_LOCKS
+    pub(super) fn unconfirmed_locks_len(&self) -> usize {
+        self.closed_unconfirmed.len()
     }
     pub(super) fn remember_closed_unconfirmed(
         &mut self,
@@ -145,7 +143,6 @@ impl Ui {
         self.closed_unconfirmed.push(ClosedUnconfirmed {
             backend_id: workspace.backend_id.clone(),
             server_id: workspace.server_id.clone(),
-            folder: workspace.folder.clone(),
             session_id,
             attempt_id,
         });
@@ -296,10 +293,11 @@ impl Ui {
         self.staged_revision = Some(self.revision);
     }
 }
+fn same_backend(a: &Workspace, b: &Workspace) -> bool {
+    a.backend_id == b.backend_id && (a.backend_id.is_none() || a.server_id == b.server_id)
+}
 fn same_project(a: &Workspace, b: &Workspace) -> bool {
-    same_folder(&a.folder, &b.folder)
-        && a.backend_id == b.backend_id
-        && (a.backend_id.is_none() || a.server_id == b.server_id)
+    same_folder(&a.folder, &b.folder) && same_backend(a, b)
 }
 fn entry(key: String, mut saved: Tab) -> Entry {
     let mut cleared = HashSet::new();

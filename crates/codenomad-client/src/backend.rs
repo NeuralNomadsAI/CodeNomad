@@ -18,6 +18,19 @@ impl std::fmt::Debug for Backend {
         f.write_str("CodeNomadConnection")
     }
 }
+fn percent_encode_header(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            use std::fmt::Write;
+            let _ = write!(&mut out, "%{byte:02X}");
+        }
+    }
+    out
+}
+
 pub(crate) fn send_transport_error(error: &reqwest::Error) -> crate::prompt::PromptError {
     #[cfg(not(target_arch = "wasm32"))]
     if error.is_connect() || error.is_builder() {
@@ -53,7 +66,12 @@ pub(crate) async fn classify_http_error(
             if let Ok(body) = crate::prompt_receipt::read(response).await
                 && matches!(
                     body["error"].as_str(),
-                    Some("session_environment_failed" | "opencode_unavailable_before_send")
+                    Some(
+                        "session_environment_failed"
+                            | "opencode_unavailable_before_send"
+                            | "OpenCode service is not ready"
+                            | "PROVIDER_ACCOUNT_SELECTION_FAILED"
+                    )
                 )
             {
                 return crate::prompt::PromptError::Rejected;
@@ -66,6 +84,7 @@ pub(crate) async fn classify_http_error(
                     Some(
                         "Mission schedule carrier ownership could not be verified"
                             | "Conversation permissions unavailable"
+                            | "Git ownership could not be verified"
                     )
                 )
             {
@@ -192,7 +211,10 @@ impl Backend {
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(body);
         if let Some(directory) = &self.session_directory {
-            request = request.query(&[("directory", directory.as_str())]);
+            request = request.query(&[("directory", directory.as_str())]).header(
+                "x-codenomad-session-directory",
+                percent_encode_header(directory),
+            );
         }
         let response = request
             .send()

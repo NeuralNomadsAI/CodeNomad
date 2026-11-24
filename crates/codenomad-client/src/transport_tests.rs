@@ -797,7 +797,7 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
             let (mut saw_connected, mut saw_agent_hint, mut prefs) = (false, false, 0usize);
             while !(saw_connected && saw_agent_hint && prefs >= 2) {
                 match events.recv().await.unwrap() {
-                    Event::Connected => saw_connected = true,
+                    Event::Connected(_) => saw_connected = true,
                     Event::AgentHint(true) => saw_agent_hint = true,
                     Event::Preferences(_) => prefs += 1,
                     Event::PromptAcknowledged { .. } => {
@@ -806,11 +806,12 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
                     _ => {}
                 }
             }
-            // memory.changed fills bounded(1) `out`, holding run_backend open while session.moved closes placement and ping proves order.
+            // Two memory.changed frames fill bounded(1) `out` and block run_backend before it reads session.moved,
+            // guaranteeing commands stays open until we enqueue Prompt after /pong confirms placement_closed.
             stream
                 .get_mut()
                 .write_all(
-                    b"data: {\"type\":\"memory.changed\"}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"session\"}}}\n\nevent: codenomad.client.ping\ndata: {}\n\n",
+                    b"data: {\"type\":\"memory.changed\"}\n\ndata: {\"type\":\"memory.changed\"}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"session\"}}}\n\nevent: codenomad.client.ping\ndata: {}\n\n",
                 )
                 .await
                 .unwrap();
@@ -1012,7 +1013,7 @@ fn session_deleted_rejects_queued_prompt_without_http_post() {
             let (mut saw_connected, mut saw_agent_hint, mut prefs) = (false, false, 0usize);
             while !(saw_connected && saw_agent_hint && prefs >= 2) {
                 match events.recv().await.unwrap() {
-                    Event::Connected => saw_connected = true,
+                    Event::Connected(_) => saw_connected = true,
                     Event::AgentHint(true) => saw_agent_hint = true,
                     Event::Preferences(_) => prefs += 1,
                     Event::PromptAcknowledged { .. } => {
@@ -1024,7 +1025,7 @@ fn session_deleted_rejects_queued_prompt_without_http_post() {
             stream
                 .get_mut()
                 .write_all(
-                    b"data: {\"type\":\"memory.changed\"}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.deleted\",\"data\":{\"sessionID\":\"session\"}}}\n\nevent: codenomad.client.ping\ndata: {}\n\n",
+                    b"data: {\"type\":\"memory.changed\"}\n\ndata: {\"type\":\"memory.changed\"}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.deleted\",\"data\":{\"sessionID\":\"session\"}}}\n\nevent: codenomad.client.ping\ndata: {}\n\n",
                 )
                 .await
                 .unwrap();

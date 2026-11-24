@@ -46,10 +46,27 @@ impl Owner {
     pub(crate) fn restore_unconfirmed(&mut self, pending: PendingSend) {
         self.unconfirmed = Some(pending);
     }
-    pub(crate) fn clear_unconfirmed_matching(&mut self, attempt_id: &str) {
-        if self.unconfirmed_id() == Some(attempt_id) {
-            self.unconfirmed = None;
+    pub(crate) fn confirm_unconfirmed_matching(
+        &mut self,
+        draft_edit: &mut TextEdit,
+        attempt_id: &str,
+    ) -> bool {
+        if self.unconfirmed_id() != Some(attempt_id) {
+            return false;
         }
+        let Some(send) = self.unconfirmed.take() else {
+            return false;
+        };
+        if !send.edited
+            && self.recall.is_none()
+            && draft_edit.text == send.edit.text
+            && self.draft.attachments == send.draft.attachments
+        {
+            draft_edit.clear();
+            self.draft = Draft::default();
+            return true;
+        }
+        false
     }
     pub(crate) fn mark_edited(&mut self) {
         if let Some(send) = &mut self.sending {
@@ -118,6 +135,11 @@ impl PendingSend {
                 }
                 _ => (count, total),
             })
+    }
+    pub(crate) fn matches_restored_draft(&self, text: Option<&str>, draft: Option<&Draft>) -> bool {
+        !self.edited
+            && text.is_none_or(|t| t == self.edit.text)
+            && draft.is_none_or(|d| d.attachments == self.draft.attachments)
     }
     pub(crate) fn clear_retained(&mut self) {
         self.edited = true;
@@ -394,6 +416,8 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
     }
     let row = s.messages.iter().position(|row| row.id == attempted);
     if let PromptOutcome::Confirmed(confirmed) = outcome {
+        s.composer.send_error = false;
+        s.composer.announce_send_error = false;
         if confirmed != attempted {
             crate::chat::reader::settle_bookmark(s, attempted, Some(&confirmed));
         }
