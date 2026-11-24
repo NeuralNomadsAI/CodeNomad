@@ -93,29 +93,34 @@ export interface SessionLinkTitles {
  * mapped onto the host directory), another absolute path, or a path relative
  * to the session's directory. */
 export function localLinkPath(href: string, base: SessionLinkBase | undefined): string | undefined {
-  const url = localFileUrlPath(href)
-  if (url !== undefined) return url
   const directory = base?.directory.replace(/[\\/]+$/, "")
+  // A service-namespace path (WSL) at or under the worktree names the host directory.
+  const onHost = (path: string) => {
+    const service = base?.base.replace(/\/+$/, "")
+    if (!service || service === directory || (path !== service && !path.startsWith(`${service}/`))) return path
+    return `${directory}${path.slice(service.length)}`
+  }
+  const url = localFileUrlPath(href)
+  if (url !== undefined) return onHost(url)
   const project = base && worktreeLinkPath(href, base)
   if (project !== undefined) return `${directory}/${project}`
   const path = projectLinkPath(href)
-  if (path === undefined || /^(?:\/|[A-Za-z]:\/)/.test(path)) return path
+  if (path === undefined || /^(?:\/|[A-Za-z]:\/)/.test(path)) return path && onHost(path)
   return directory && `${directory}/${path}`
 }
 
 /** A local path as its platform writes it: backslashes after a drive letter. */
 const displayPath = (path: string) => /^[A-Za-z]:/.test(path) ? path.replace(/\//g, "\\") : path
 
-// Opens a local path with the system. With `fallback`, the host opens nothing
-// for a missing path or a `keep` kind and the file reader shows the target
-// instead, unless a later surface gesture superseded this click meanwhile;
-// without it, a missing path shows a notice.
+// Opens a local path with the system. With `fallback`, the file reader shows
+// what the host keeps (`keep`) unless a later surface gesture superseded this
+// click meanwhile; a missing path shows a notice.
 const openLocal = (instanceId: string, path: string, keep: LocalPathKeep, fallback?: (gesture: SurfaceGesture) => void) => {
   const operation = captureBackendOperation(instanceId)
   const gesture = fallback && beginGesture({ instanceId, sessionId: null })
-  void openLocalPath(path, keep).then(opened => {
-    if (opened || !operation.current()) return
-    if (gesture) fallback!(gesture)
+  void openLocalPath(path, keep).then(result => {
+    if (result === "opened" || !operation.current()) return
+    if (result === "kept" && gesture) fallback!(gesture)
     else showToastNotification({ category: "files", variant: "error", message: tGlobal("markdown.link.openMissing", { path: displayPath(path) }) })
   }, error => {
     if (!operation.current()) return

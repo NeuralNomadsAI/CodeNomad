@@ -44,16 +44,16 @@ test("opens local paths, leaving text files to the caller when asked", async () 
   const dependencies = { openPath: async (path: string) => { opened.push(path); return "" }, revealPath: () => undefined }
   try {
     assert.equal(await looksLikeText(join(root, "long.txt")), true)
-    assert.equal(await openLocalPath(join(root, "docs"), "text", dependencies), true)
-    assert.equal(await openLocalPath(join(root, "clip.mp4"), "text", dependencies), true)
-    assert.equal(await openLocalPath(join(root, "notes.txt"), "text", dependencies), false)
-    assert.equal(await openLocalPath(join(root, "missing"), "text", dependencies), false)
-    assert.equal(await openLocalPath(join(root, "clip.mp4"), "files", dependencies), false)
-    assert.equal(await openLocalPath(join(root, "docs"), "files", dependencies), true)
-    assert.equal(await openLocalPath(join(root, "notes.txt"), "none", dependencies), true)
-    assert.equal(await openLocalPath(join(root, "missing"), "none", dependencies), false)
+    assert.equal(await openLocalPath(join(root, "docs"), "text", dependencies), "opened")
+    assert.equal(await openLocalPath(join(root, "clip.mp4"), "text", dependencies), "opened")
+    assert.equal(await openLocalPath(join(root, "notes.txt"), "text", dependencies), "kept")
+    assert.equal(await openLocalPath(join(root, "missing"), "text", dependencies), "missing")
+    assert.equal(await openLocalPath(join(root, "clip.mp4"), "files", dependencies), "kept")
+    assert.equal(await openLocalPath(join(root, "docs"), "files", dependencies), "opened")
+    assert.equal(await openLocalPath(join(root, "notes.txt"), "none", dependencies), "opened")
+    assert.equal(await openLocalPath(join(root, "missing"), "none", dependencies), "missing")
     // Off the local disks, the caller keeps the path unless it asked for the system.
-    assert.equal(await openLocalPath("docs", "text", dependencies), false)
+    assert.equal(await openLocalPath("docs", "text", dependencies), "kept")
     await assert.rejects(openLocalPath("docs", "none", dependencies), /local disk/)
     assert.deepEqual(opened.map(path => basename(path)), ["docs", "clip.mp4", "docs", "notes.txt"])
   } finally {
@@ -67,7 +67,7 @@ test("special files are never read or opened", { skip: process.platform === "win
   execFileSync("mkfifo", [fifo])
   const dependencies = { openPath: async () => { throw new Error("opened") }, revealPath: () => undefined }
   try {
-    assert.equal(await openLocalPath(fifo, "text", dependencies), false)
+    assert.equal(await openLocalPath(fifo, "text", dependencies), "kept")
     await assert.rejects(openLocalPath(fifo, "none", dependencies), /files and folders/)
   } finally {
     rmSync(root, { recursive: true, force: true })

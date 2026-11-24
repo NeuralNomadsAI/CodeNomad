@@ -104,12 +104,12 @@ test("on the local desktop, local links open in the preview when it shows them, 
     window.releaseReadme = () => release?.()
     window.electronAPI = { openLocalPath: async ({ path, keep }) => {
       if (path.endsWith("/locked")) throw new Error("Access denied")
-      if (path.endsWith("/gone.md")) return { opened: false }
+      if (path.endsWith("/gone.md")) return { result: "missing" }
       if (path.endsWith("/README.md") && keep !== "none") await window.held
       const folder = /\\/(docs|album\\.png)$/.test(path)
-      if (!folder && (keep === "files" || (keep === "text" && path.endsWith(".md")))) return { opened: false }
+      if (!folder && (keep === "files" || (keep === "text" && path.endsWith(".md")))) return { result: "kept" }
       window.opened.push({ path, keep })
-      return { opened: true }
+      return { result: "opened" }
     } }`)
   const opened = () => page.evaluate(() => (window as any).opened)
   const target = () => page.evaluate(() => (window as any).fixture.target())
@@ -161,15 +161,15 @@ test("on the local desktop, local links open in the preview when it shows them, 
 
     // A worktree served from another namespace (WSL) maps its service paths onto the host directory.
     const wsl = { slug: "root", directory: "C:/repo", serviceDirectory: "/mnt/c/repo", base: "/mnt/c/repo" }
-    assert.deepEqual(await page.evaluate(base => ["/mnt/c/repo/clip.mp4", "./clip.mp4", "file:C:/x/y.txt"]
-      .map(href => (window as any).fixture.localLinkPath(href, base)), wsl), ["C:/repo/clip.mp4", "C:/repo/clip.mp4", "C:/x/y.txt"])
+    assert.deepEqual(await page.evaluate(base => ["/mnt/c/repo/clip.mp4", "./clip.mp4", "file:C:/x/y.txt", "file:///mnt/c/repo/notes.md", "/mnt/c/repo"]
+      .map(href => (window as any).fixture.localLinkPath(href, base)), wsl), ["C:/repo/clip.mp4", "C:/repo/clip.mp4", "C:/x/y.txt", "C:/repo/notes.md", "C:/repo"])
     // Host-side paths stay worktree paths, so their text files keep the preview; `./` names the directory.
     assert.deepEqual(await page.evaluate(base => ["C:/repo/README.md", "/mnt/c/repo/README.md"]
       .map(href => (window as any).fixture.worktreeLinkPath(href, base)), wsl), ["README.md", "README.md"])
     assert.equal(await page.evaluate(base => (window as any).fixture.localLinkPath("./", base), wsl), "C:/repo/.")
     // Failures and missing targets explain themselves.
     await page.click('#main-root a[href="./locked"]')
-    await page.click('#main-root a[href="./gone.md"]', { modifiers: ["Control"] })
+    await page.click('#main-root a[href="./gone.md"]')
     await page.waitForFunction(() => (window as any).fixture.errorToasts().length === 2)
     const toasts: string[] = await page.evaluate(() => (window as any).fixture.errorToasts())
     assert.ok(toasts.some(message => /Access denied/.test(message)), toasts.join(" | "))

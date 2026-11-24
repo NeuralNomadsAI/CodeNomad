@@ -48,8 +48,10 @@ const LOCAL_FILE_URL = /^file:(?:\/\/(?:localhost)?)?(?=\/|[A-Za-z]:\/)/i
 export function localFileUrlPath(href: string): string | undefined {
   const trimmed = href.trim()
   if (!LOCAL_FILE_URL.test(trimmed)) return undefined
-  const encoded = trimmed.replace(/[?#].*$/, "").replace(LOCAL_FILE_URL, "")
-  if (/%(?:2f|5c)|\\/i.test(encoded)) return undefined
+  // Literal backslashes are separators (`file:///C:\x`); a UNC form they could
+  // spell (`///host`) fails the final shape check.
+  const encoded = trimmed.replace(/[?#].*$/, "").replace(LOCAL_FILE_URL, "").replace(/\\/g, "/")
+  if (/%(?:2f|5c)/i.test(encoded)) return undefined
   let path: string
   try {
     path = decodeURIComponent(encoded)

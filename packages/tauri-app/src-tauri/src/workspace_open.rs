@@ -608,17 +608,18 @@ pub async fn open_workspace_target(
 
 /// Opens an absolute local `path` with the system: a folder in the file
 /// manager, a file with its default application under `default_open_mode`'s
-/// protections. `false`, opening nothing, for a missing path or when it
-/// leaves the path to the caller (`keep`): text files (`text`), every file
-/// (`files`), and paths off the local disks or naming special files. Under
-/// `none` those are errors, as are inaccessible paths and failed openings.
+/// protections. `missing` for a missing path, and `kept`, opening nothing,
+/// when it leaves the path to the caller (`keep`): text files (`text`), every
+/// file (`files`), and paths off the local disks or naming special files.
+/// Under `none` those are errors, as are inaccessible paths and failed
+/// openings; otherwise `opened`.
 #[tauri::command]
 pub async fn open_local_path(
     webview: tauri::Webview,
     state: State<'_, AppState>,
     path: String,
     keep: String,
-) -> Result<bool, String> {
+) -> Result<&'static str, String> {
     require_local_window(&webview, &state)?;
     tauri::async_runtime::spawn_blocking(move || open_local_path_impl(&path, &keep))
         .await
@@ -664,7 +665,7 @@ fn looks_like_text(path: &Path) -> std::io::Result<bool> {
     })
 }
 
-fn open_local_path_impl(path: &str, keep: &str) -> Result<bool, String> {
+fn open_local_path_impl(path: &str, keep: &str) -> Result<&'static str, String> {
     if !matches!(keep, "none" | "text" | "files") {
         return Err("Invalid local path request".into());
     }
@@ -672,13 +673,13 @@ fn open_local_path_impl(path: &str, keep: &str) -> Result<bool, String> {
     // Checked before any filesystem access: a UNC path would reach the network.
     if !is_local_disk_path(path) {
         if keep != "none" {
-            return Ok(false);
+            return Ok("kept");
         }
         return Err("Only absolute paths on a local disk can be opened".into());
     }
     let selected = match path.canonicalize() {
         Ok(selected) => selected,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok("missing"),
         Err(error) => return Err(error.to_string()),
     };
     let metadata = std::fs::metadata(&selected).map_err(|error| error.to_string())?;
@@ -686,7 +687,7 @@ fn open_local_path_impl(path: &str, keep: &str) -> Result<bool, String> {
     // A FIFO or device is neither shown nor read: reading one can block forever.
     if !folder && !metadata.is_file() {
         if keep != "none" {
-            return Ok(false);
+            return Ok("kept");
         }
         return Err("Only files and folders can be opened".into());
     }
@@ -694,7 +695,7 @@ fn open_local_path_impl(path: &str, keep: &str) -> Result<bool, String> {
         && keep == "text"
         && looks_like_text(&selected).map_err(|error| error.to_string())?;
     if !folder && (keep == "files" || text) {
-        return Ok(false);
+        return Ok("kept");
     }
     let cwd = if folder {
         selected.clone()
@@ -706,7 +707,7 @@ fn open_local_path_impl(path: &str, keep: &str) -> Result<bool, String> {
         &platform_launch_path(&selected),
         &platform_launch_path(&cwd),
     )?;
-    Ok(true)
+    Ok("opened")
 }
 
 #[cfg(test)]
@@ -736,19 +737,19 @@ mod tests {
         assert!(looks_like_text(&workspace.path().join("long.txt")).unwrap());
         assert!(!looks_like_text(&workspace.path().join("clip.mp4")).unwrap());
         assert!(looks_like_text(&workspace.path().join("missing")).is_err());
-        for name in ["notes.txt", "missing"] {
+        for (name, result) in [("notes.txt", "kept"), ("missing", "missing")] {
             let path = workspace.path().join(name);
             assert_eq!(
                 open_local_path_impl(path.to_str().unwrap(), "text"),
-                Ok(false),
+                Ok(result),
                 "{name}"
             );
         }
         assert_eq!(
             open_local_path_impl(workspace.path().join("missing").to_str().unwrap(), "none"),
-            Ok(false)
+            Ok("missing")
         );
-        assert_eq!(open_local_path_impl(r"\\host\share\x", "text"), Ok(false));
+        assert_eq!(open_local_path_impl(r"\\host\share\x", "text"), Ok("kept"));
         assert!(open_local_path_impl("relative", "none").is_err());
     }
 
@@ -763,7 +764,7 @@ mod tests {
             .unwrap()
             .success());
         let fifo = fifo.to_str().unwrap();
-        assert_eq!(open_local_path_impl(fifo, "text"), Ok(false));
+        assert_eq!(open_local_path_impl(fifo, "text"), Ok("kept"));
         assert!(open_local_path_impl(fifo, "none").is_err());
     }
 
