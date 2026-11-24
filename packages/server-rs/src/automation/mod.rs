@@ -49,7 +49,7 @@ pub fn published() -> bool {
 
 /// Binds the private IPv4 loopback listener and writes its registration before the plugins are
 /// provisioned, as `publishAutomationBridge` does; serves until `stop`, then removes it.
-pub async fn publish(app: &Shared, stop: CancellationToken) -> Option<tokio::task::JoinHandle<()>> {
+pub async fn publish(app: &Shared, stop: CancellationToken) -> Option<tokio::task::JoinHandle<std::io::Result<()>>> {
     let token = app.bridge_token.clone()?;
     let opened = async {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
@@ -72,7 +72,7 @@ pub async fn publish(app: &Shared, stop: CancellationToken) -> Option<tokio::tas
         Router::new().route(PATH, post(handle)).layer(from_fn(crate::panic_guard::catch)).with_state(app.clone());
     Some(tokio::spawn(async move {
         let _record = record;
-        let _ = axum::serve(listener, router).with_graceful_shutdown(stop.cancelled_owned()).await;
+        crate::shared::serve_local(listener, router, stop, || {}).await
     }))
 }
 

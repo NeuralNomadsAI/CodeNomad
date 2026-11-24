@@ -8,10 +8,6 @@
 //! Rust bounds a single raw message item (`ITEM_LIMIT`, 128 MiB) and the projected response buffer
 //! (`OUTPUT_LIMIT`, 256 MiB, aligned with `ResponsePool::List`) to prevent OOM on malformed or
 //! oversized upstream payloads.
-use std::collections::BTreeMap;
-
-use serde_json::value::RawValue;
-
 use super::media;
 
 /// Cap on the projected (or unprojected fallback) output buffer, aligned with `ResponsePool::List`.
@@ -19,6 +15,8 @@ pub(crate) const OUTPUT_LIMIT: usize = 256 * 1024 * 1024;
 /// Cap on a single raw message item before projection.
 const ITEM_LIMIT: usize = 128 * 1024 * 1024;
 const INLINE_THRESHOLD: usize = 32 * 1024;
+const RESERVE_STEP: usize = crate::shared::RESPONSE_CHUNK;
+const MAX_SYNTAX_DEPTH: usize = 1024;
 
 #[derive(Debug)]
 enum State {
@@ -34,11 +32,302 @@ enum State {
     Passthrough,
 }
 
+#[derive(Clone, Copy)]
+enum Esc {
+    None,
+    Slash,
+    Hex(u8),
+}
+
+#[derive(Clone, Copy)]
+enum NumState {
+    Sign,
+    Zero,
+    Int,
+    DotStart,
+    Frac,
+    ExpSign,
+    ExpStart,
+    Exp,
+}
+
+#[derive(Clone, Copy)]
+enum SyntaxState {
+    ExpectValue,
+    AfterValue,
+    ObjKeyOrEnd,
+    ObjKey,
+    ObjColon,
+    ArrValueOrEnd,
+    String { in_key: bool, esc: Esc },
+    Number(NumState),
+    Keyword(&'static [u8], usize),
+    Invalid,
+}
+
+/// Streaming RFC 8259 JSON syntax validator with bounded stack (`<= 1 KiB`) so `finish()`
+/// restores the unmodified upstream bytes whenever the full document is not valid JSON
+/// (matching TS `proxy.ts:91` `JSON.parse` fallback).
+struct JsonSyntax {
+    state: SyntaxState,
+    stack: Vec<u8>,
+}
+
+impl JsonSyntax {
+    fn new() -> Self {
+        Self { state: SyntaxState::ExpectValue, stack: Vec::new() }
+    }
+
+    fn feed(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            if matches!(self.state, SyntaxState::Invalid) {
+                return;
+            }
+            self.step(b);
+        }
+    }
+
+    fn step(&mut self, b: u8) {
+        let current = b;
+        loop {
+            match self.state {
+                SyntaxState::Invalid => return,
+                SyntaxState::String { in_key, esc } => {
+                    match esc {
+                        Esc::None => match current {
+                            b'"' => {
+                                self.state = if in_key { SyntaxState::ObjColon } else { SyntaxState::AfterValue };
+                            }
+                            b'\\' => self.state = SyntaxState::String { in_key, esc: Esc::Slash },
+                            0x00..=0x1F => self.state = SyntaxState::Invalid,
+                            _ => {}
+                        },
+                        Esc::Slash => match current {
+                            b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => {
+                                self.state = SyntaxState::String { in_key, esc: Esc::None };
+                            }
+                            b'u' => self.state = SyntaxState::String { in_key, esc: Esc::Hex(4) },
+                            _ => self.state = SyntaxState::Invalid,
+                        },
+                        Esc::Hex(rem) => {
+                            if current.is_ascii_hexdigit() {
+                                self.state = SyntaxState::String {
+                                    in_key,
+                                    esc: if rem <= 1 { Esc::None } else { Esc::Hex(rem - 1) },
+                                };
+                            } else {
+                                self.state = SyntaxState::Invalid;
+                            }
+                        }
+                    }
+                    return;
+                }
+                SyntaxState::Keyword(expected, idx) => {
+                    if current == expected[idx] {
+                        if idx + 1 == expected.len() {
+                            self.state = SyntaxState::AfterValue;
+                        } else {
+                            self.state = SyntaxState::Keyword(expected, idx + 1);
+                        }
+                    } else {
+                        self.state = SyntaxState::Invalid;
+                    }
+                    return;
+                }
+                SyntaxState::Number(num) => {
+                    match num {
+                        NumState::Sign => match current {
+                            b'0' => self.state = SyntaxState::Number(NumState::Zero),
+                            b'1'..=b'9' => self.state = SyntaxState::Number(NumState::Int),
+                            _ => self.state = SyntaxState::Invalid,
+                        },
+                        NumState::Zero => match current {
+                            b'.' => self.state = SyntaxState::Number(NumState::DotStart),
+                            b'e' | b'E' => self.state = SyntaxState::Number(NumState::ExpSign),
+                            b'0'..=b'9' => self.state = SyntaxState::Invalid,
+                            _ => {
+                                self.state = SyntaxState::AfterValue;
+                                continue;
+                            }
+                        },
+                        NumState::Int => match current {
+                            b'0'..=b'9' => {}
+                            b'.' => self.state = SyntaxState::Number(NumState::DotStart),
+                            b'e' | b'E' => self.state = SyntaxState::Number(NumState::ExpSign),
+                            _ => {
+                                self.state = SyntaxState::AfterValue;
+                                continue;
+                            }
+                        },
+                        NumState::DotStart => match current {
+                            b'0'..=b'9' => self.state = SyntaxState::Number(NumState::Frac),
+                            _ => self.state = SyntaxState::Invalid,
+                        },
+                        NumState::Frac => match current {
+                            b'0'..=b'9' => {}
+                            b'e' | b'E' => self.state = SyntaxState::Number(NumState::ExpSign),
+                            _ => {
+                                self.state = SyntaxState::AfterValue;
+                                continue;
+                            }
+                        },
+                        NumState::ExpSign => match current {
+                            b'+' | b'-' => self.state = SyntaxState::Number(NumState::ExpStart),
+                            b'0'..=b'9' => self.state = SyntaxState::Number(NumState::Exp),
+                            _ => self.state = SyntaxState::Invalid,
+                        },
+                        NumState::ExpStart => match current {
+                            b'0'..=b'9' => self.state = SyntaxState::Number(NumState::Exp),
+                            _ => self.state = SyntaxState::Invalid,
+                        },
+                        NumState::Exp => match current {
+                            b'0'..=b'9' => {}
+                            _ => {
+                                self.state = SyntaxState::AfterValue;
+                                continue;
+                            }
+                        },
+                    }
+                    return;
+                }
+                SyntaxState::ExpectValue | SyntaxState::ArrValueOrEnd => {
+                    if matches!(current, b' ' | b'\t' | b'\r' | b'\n') {
+                        return;
+                    }
+                    if matches!(self.state, SyntaxState::ArrValueOrEnd) && current == b']' {
+                        if self.stack.pop() == Some(b'[') {
+                            self.state = SyntaxState::AfterValue;
+                        } else {
+                            self.state = SyntaxState::Invalid;
+                        }
+                        return;
+                    }
+                    match current {
+                        b'{' => {
+                            if self.stack.len() >= MAX_SYNTAX_DEPTH {
+                                self.state = SyntaxState::Invalid;
+                            } else {
+                                self.stack.push(b'{');
+                                self.state = SyntaxState::ObjKeyOrEnd;
+                            }
+                        }
+                        b'[' => {
+                            if self.stack.len() >= MAX_SYNTAX_DEPTH {
+                                self.state = SyntaxState::Invalid;
+                            } else {
+                                self.stack.push(b'[');
+                                self.state = SyntaxState::ArrValueOrEnd;
+                            }
+                        }
+                        b'"' => self.state = SyntaxState::String { in_key: false, esc: Esc::None },
+                        b'-' => self.state = SyntaxState::Number(NumState::Sign),
+                        b'0' => self.state = SyntaxState::Number(NumState::Zero),
+                        b'1'..=b'9' => self.state = SyntaxState::Number(NumState::Int),
+                        b't' => self.state = SyntaxState::Keyword(b"rue", 0),
+                        b'f' => self.state = SyntaxState::Keyword(b"alse", 0),
+                        b'n' => self.state = SyntaxState::Keyword(b"ull", 0),
+                        _ => self.state = SyntaxState::Invalid,
+                    }
+                    return;
+                }
+                SyntaxState::ObjKeyOrEnd => {
+                    if matches!(current, b' ' | b'\t' | b'\r' | b'\n') {
+                        return;
+                    }
+                    match current {
+                        b'}' => {
+                            if self.stack.pop() == Some(b'{') {
+                                self.state = SyntaxState::AfterValue;
+                            } else {
+                                self.state = SyntaxState::Invalid;
+                            }
+                        }
+                        b'"' => self.state = SyntaxState::String { in_key: true, esc: Esc::None },
+                        _ => self.state = SyntaxState::Invalid,
+                    }
+                    return;
+                }
+                SyntaxState::ObjKey => {
+                    if matches!(current, b' ' | b'\t' | b'\r' | b'\n') {
+                        return;
+                    }
+                    if current == b'"' {
+                        self.state = SyntaxState::String { in_key: true, esc: Esc::None };
+                    } else {
+                        self.state = SyntaxState::Invalid;
+                    }
+                    return;
+                }
+                SyntaxState::ObjColon => {
+                    if matches!(current, b' ' | b'\t' | b'\r' | b'\n') {
+                        return;
+                    }
+                    if current == b':' {
+                        self.state = SyntaxState::ExpectValue;
+                    } else {
+                        self.state = SyntaxState::Invalid;
+                    }
+                    return;
+                }
+                SyntaxState::AfterValue => {
+                    if matches!(current, b' ' | b'\t' | b'\r' | b'\n') {
+                        return;
+                    }
+                    match current {
+                        b',' => match self.stack.last().copied() {
+                            Some(b'{') => self.state = SyntaxState::ObjKey,
+                            Some(b'[') => self.state = SyntaxState::ExpectValue,
+                            _ => self.state = SyntaxState::Invalid,
+                        },
+                        b'}' => {
+                            if self.stack.pop() == Some(b'{') {
+                                self.state = SyntaxState::AfterValue;
+                            } else {
+                                self.state = SyntaxState::Invalid;
+                            }
+                        }
+                        b']' => {
+                            if self.stack.pop() == Some(b'[') {
+                                self.state = SyntaxState::AfterValue;
+                            } else {
+                                self.state = SyntaxState::Invalid;
+                            }
+                        }
+                        _ => self.state = SyntaxState::Invalid,
+                    }
+                    return;
+                }
+            }
+            #[allow(unreachable_code)]
+            {
+                current = b;
+            }
+        }
+    }
+
+    fn is_valid_eof(&self) -> bool {
+        self.stack.is_empty()
+            && matches!(
+                self.state,
+                SyntaxState::AfterValue
+                    | SyntaxState::Number(NumState::Zero | NumState::Int | NumState::Frac | NumState::Exp)
+            )
+    }
+}
+
+pub(crate) struct UndoPatch {
+    range: std::ops::Range<usize>,
+    original: Box<[u8]>,
+}
+
 pub(crate) struct MessageListStream {
     state: State,
+    syntax: JsonSyntax,
     key_buf: Vec<u8>,
     segments: std::collections::VecDeque<axum::body::Bytes>,
     segments_bytes: usize,
+    undo: Vec<(usize, Vec<UndoPatch>)>,
+    undo_bytes: usize,
     out: Vec<u8>,
     item: Vec<u8>,
     changed: bool,
@@ -62,9 +351,12 @@ impl MessageListStream {
         let state = if workspace_enc.is_some() { State::Start } else { State::Passthrough };
         Self {
             state,
+            syntax: JsonSyntax::new(),
             key_buf: Vec::new(),
             segments: std::collections::VecDeque::new(),
             segments_bytes: 0,
+            undo: Vec::new(),
+            undo_bytes: 0,
             out: Vec::new(),
             item: Vec::new(),
             changed: false,
@@ -78,11 +370,17 @@ impl MessageListStream {
     }
 
     pub(crate) fn retained_bytes(&self) -> usize {
-        self.segments_bytes.saturating_add(self.out.capacity()).saturating_add(self.item.capacity())
+        self.segments_bytes
+            .saturating_add(self.undo_bytes)
+            .saturating_add(self.out.capacity())
+            .saturating_add(self.item.capacity())
     }
 
     fn total_len(&self) -> usize {
-        self.segments_bytes.saturating_add(self.out.len()).saturating_add(self.item.len())
+        self.segments_bytes
+            .saturating_add(self.undo_bytes)
+            .saturating_add(self.out.len())
+            .saturating_add(self.item.len())
     }
 
     fn push_out(&mut self, byte: u8) -> Result<(), ()> {
@@ -90,8 +388,8 @@ impl MessageListStream {
         if total >= OUTPUT_LIMIT {
             return Err(());
         }
-        if self.out.len() == self.out.capacity() && self.out.len() >= 1024 * 1024 {
-            let step = (OUTPUT_LIMIT - total).min(4 * 1024 * 1024).max(1);
+        if self.out.len() == self.out.capacity() && self.out.len() >= RESERVE_STEP {
+            let step = (OUTPUT_LIMIT - total).min(RESERVE_STEP).max(1);
             self.out.reserve_exact(step);
         }
         self.out.push(byte);
@@ -103,7 +401,7 @@ impl MessageListStream {
         if total > OUTPUT_LIMIT {
             return Err(());
         }
-        if self.out.len() + bytes.len() > self.out.capacity() && self.out.len() + bytes.len() >= 1024 * 1024 {
+        if self.out.len() + bytes.len() > self.out.capacity() && self.out.len() + bytes.len() >= RESERVE_STEP {
             self.out.reserve_exact(bytes.len());
         }
         self.out.extend_from_slice(bytes);
@@ -115,15 +413,15 @@ impl MessageListStream {
         if self.item.len() >= ITEM_LIMIT || total >= OUTPUT_LIMIT {
             return Err(());
         }
-        if self.item.len() == self.item.capacity() && self.item.len() >= 1024 * 1024 {
+        if self.item.len() == self.item.capacity() && self.item.len() >= RESERVE_STEP {
             let rem = (ITEM_LIMIT - self.item.len()).min(OUTPUT_LIMIT - total);
-            self.item.reserve_exact(rem.min(4 * 1024 * 1024).max(1));
+            self.item.reserve_exact(rem.min(RESERVE_STEP).max(1));
         }
         self.item.push(byte);
         Ok(())
     }
 
-    fn push_segment(&mut self, mut bytes: Vec<u8>) -> Result<(), ()> {
+    fn push_segment(&mut self, mut bytes: Vec<u8>) -> Result<Option<usize>, ()> {
         if self.total_len().saturating_add(bytes.len()) > OUTPUT_LIMIT {
             return Err(());
         }
@@ -137,14 +435,22 @@ impl MessageListStream {
             bytes.shrink_to_fit();
             self.segments_bytes += bytes.len();
             self.segments.push_back(axum::body::Bytes::from(bytes));
+            return Ok(Some(self.segments.len() - 1));
         }
-        Ok(())
+        Ok(None)
     }
 
     /// Consumes bytes from `chunk` starting at `*pos`. Returns `Ok(Some(item))` whenever a
     /// `> 32 KiB` message item finishes so the caller can project it off the async executor
     /// and call `commit_item` before resuming the same chunk.
     pub(crate) fn feed(&mut self, chunk: &[u8], pos: &mut usize) -> Result<Option<PendingItem>, ()> {
+        let start = *pos;
+        let result = self.feed_inner(chunk, pos);
+        self.syntax.feed(&chunk[start..*pos]);
+        result
+    }
+
+    fn feed_inner(&mut self, chunk: &[u8], pos: &mut usize) -> Result<Option<PendingItem>, ()> {
         while *pos < chunk.len() {
             let b = chunk[*pos];
             match self.state {
@@ -311,9 +617,23 @@ impl MessageListStream {
         Ok(None)
     }
 
-    pub(crate) fn commit_item(&mut self, projected: Vec<u8>, changed: bool, delimiter: u8) -> Result<(), ()> {
+    pub(crate) fn commit_item(
+        &mut self,
+        projected: Vec<u8>,
+        undo_patches: Vec<UndoPatch>,
+        delimiter: u8,
+    ) -> Result<(), ()> {
+        let undo_len: usize = undo_patches.iter().map(|p| p.original.len()).sum();
+        if self.total_len().saturating_add(projected.len()).saturating_add(undo_len) > OUTPUT_LIMIT {
+            return Err(());
+        }
+        let changed = !undo_patches.is_empty();
         self.changed |= changed;
-        self.push_segment(projected)?;
+        let seg_idx = self.push_segment(projected)?;
+        if changed && let Some(idx) = seg_idx {
+            self.undo_bytes += undo_len;
+            self.undo.push((idx, undo_patches));
+        }
         self.push_out(delimiter)?;
         self.state = if delimiter == b',' { State::DataArrayNext } else { State::Passthrough };
         Ok(())
@@ -330,7 +650,30 @@ impl MessageListStream {
             self.segments_bytes += tail.len();
             self.segments.push_back(axum::body::Bytes::from(tail));
         }
-        Ok((self.segments, self.segments_bytes, self.changed))
+        if self.syntax.is_valid_eof() {
+            drop(self.undo);
+            return Ok((self.segments, self.segments_bytes, self.changed));
+        }
+        // Invalid JSON anywhere in the document: restore all deferred URIs verbatim to match
+        // TS `proxy.ts:91` (`try { JSON.parse(text) } catch { return reply.send(text) }`).
+        for (idx, patches) in self.undo {
+            if let Some(seg) = self.segments.get_mut(idx) {
+                let delta: isize =
+                    patches.iter().map(|p| p.original.len() as isize - (p.range.end - p.range.start) as isize).sum();
+                let restored_len = (seg.len() as isize + delta) as usize;
+                let mut restored = Vec::with_capacity(restored_len);
+                let mut cursor = 0usize;
+                for patch in patches {
+                    restored.extend_from_slice(&seg[cursor..patch.range.start]);
+                    restored.extend_from_slice(&patch.original);
+                    cursor = patch.range.end;
+                }
+                restored.extend_from_slice(&seg[cursor..]);
+                self.segments_bytes = self.segments_bytes - seg.len() + restored.len();
+                *seg = axum::body::Bytes::from(restored);
+            }
+        }
+        Ok((self.segments, self.segments_bytes, false))
     }
 }
 
@@ -342,8 +685,146 @@ fn may_contain_image_uri(haystack: &[u8]) -> bool {
     haystack.windows(NEEDLE.len()).any(|w| w.eq_ignore_ascii_case(NEEDLE)) || haystack.windows(2).any(|w| w == b"\\u")
 }
 
-fn parse_string(raw: &RawValue) -> Option<String> {
-    serde_json::from_str::<String>(raw.get()).ok()
+fn parse_string(raw: &str) -> Option<String> {
+    serde_json::from_str::<String>(raw).ok()
+}
+
+/// Streams through a JSON object's top-level `"key": value` entries with zero intermediate
+/// `BTreeMap` or `String` allocations. Only short keys (`<= 64` bytes, matching the target
+/// field names) are decoded and forwarded to `visit`. Duplicate keys naturally follow last-wins
+/// order matching JS `JSON.parse`.
+fn for_each_json_object_field<'a>(raw: &'a str, mut visit: impl FnMut(&str, &'a str)) -> Option<()> {
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if bytes.get(i) != Some(&b'{') {
+        return None;
+    }
+    i += 1;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if bytes.get(i) == Some(&b'}') {
+        i += 1;
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        return (i == bytes.len()).then_some(());
+    }
+    loop {
+        if bytes.get(i) != Some(&b'"') {
+            return None;
+        }
+        let key_start = i;
+        let key_end = skip_json_value(bytes, key_start)?;
+        let key_tok = &raw[key_start..key_end];
+        i = key_end;
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if bytes.get(i) != Some(&b':') {
+            return None;
+        }
+        i += 1;
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let val_start = i;
+        let val_end = skip_json_value(bytes, val_start)?;
+        let val_tok = &raw[val_start..val_end];
+        if key_tok.len() <= 16 && !key_tok.as_bytes().contains(&b'\\') {
+            visit(&key_tok[1..key_tok.len() - 1], val_tok);
+        } else if key_tok.len() <= 64
+            && let Some(decoded) = parse_string(key_tok)
+        {
+            visit(&decoded, val_tok);
+        }
+        i = val_end;
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        match bytes.get(i) {
+            Some(&b',') => {
+                i += 1;
+                while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+            }
+            Some(&b'}') => {
+                i += 1;
+                while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                return (i == bytes.len()).then_some(());
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Advances past one complete JSON value starting at `start` (string, object, array, number,
+/// boolean, or null) and returns its exclusive end byte offset.
+fn skip_json_value(bytes: &[u8], start: usize) -> Option<usize> {
+    let first = *bytes.get(start)?;
+    match first {
+        b'"' => {
+            let mut i = start + 1;
+            let mut escaped = false;
+            while i < bytes.len() {
+                let b = bytes[i];
+                if escaped {
+                    escaped = false;
+                } else if b == b'\\' {
+                    escaped = true;
+                } else if b == b'"' {
+                    return Some(i + 1);
+                }
+                i += 1;
+            }
+            None
+        }
+        b'{' | b'[' => {
+            let mut i = start + 1;
+            let mut depth = 1usize;
+            let mut in_string = false;
+            let mut escaped = false;
+            while i < bytes.len() {
+                let b = bytes[i];
+                if in_string {
+                    if escaped {
+                        escaped = false;
+                    } else if b == b'\\' {
+                        escaped = true;
+                    } else if b == b'"' {
+                        in_string = false;
+                    }
+                } else {
+                    match b {
+                        b'"' => in_string = true,
+                        b'{' | b'[' => depth += 1,
+                        b'}' | b']' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                return Some(i + 1);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                i += 1;
+            }
+            None
+        }
+        _ => {
+            let mut i = start;
+            while i < bytes.len() && !matches!(bytes[i], b',' | b'}' | b']' | b' ' | b'\t' | b'\r' | b'\n') {
+                i += 1;
+            }
+            (i > start).then_some(i)
+        }
+    }
 }
 
 const MAX_SCANNED_ITEMS: usize = 100_001;
@@ -416,70 +897,101 @@ fn for_each_json_array_item<'a>(raw: &'a str, limit: usize, mut visit: impl FnMu
 }
 
 /// Projects a single message JSON item by streaming through up to `MAX_SCANNED_ITEMS` parts
-/// and tool content items with zero intermediate array/node allocations, recording only the
+/// and tool content items with zero intermediate array/map allocations, recording only the
 /// byte ranges of replaced `"uri"` JSON string tokens and splicing them in one single pass.
-pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, mut raw: Vec<u8>) -> (Vec<u8>, bool) {
+/// Returns the projected bytes and the `UndoPatch` list needed to restore the original bytes if
+/// a subsequent chunk renders the full document invalid JSON.
+pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, mut raw: Vec<u8>) -> (Vec<u8>, Vec<UndoPatch>) {
     if !may_contain_image_uri(&raw) {
-        return (raw, false);
+        return (raw, Vec::new());
     }
     let patches = (|| -> Option<Vec<(usize, usize, String)>> {
+        let text = std::str::from_utf8(&raw).ok()?;
         let base = raw.as_ptr() as usize;
-        let raw_fields = serde_json::from_slice::<BTreeMap<String, &RawValue>>(&raw).ok()?;
-        if parse_string(raw_fields.get("type")?)?.as_str() != "assistant" {
+        let (mut msg_type, mut msg_id, mut content_raw) = (None, None, None);
+        for_each_json_object_field(text, |k, v| match k {
+            "type" => msg_type = Some(v),
+            "id" => msg_id = Some(v),
+            "content" => content_raw = Some(v),
+            _ => {}
+        })?;
+        if parse_string(msg_type?)?.as_str() != "assistant" {
             return None;
         }
-        let id_raw = parse_string(raw_fields.get("id")?)?;
+        let id_raw = parse_string(msg_id?)?;
         if !media::valid_id(&id_raw) {
             return None;
         }
-        let content_raw = raw_fields.get("content")?;
-        if !may_contain_image_uri(content_raw.get().as_bytes()) {
+        let content_raw = content_raw?;
+        if !may_contain_image_uri(content_raw.as_bytes()) {
             return None;
         }
         let id_enc = media::encode(&id_raw);
         let mut patches = Vec::new();
-        for_each_json_array_item(content_raw.get(), MAX_SCANNED_ITEMS, |part_idx, part_raw| {
+        for_each_json_array_item(content_raw, MAX_SCANNED_ITEMS, |part_idx, part_raw| {
             if !may_contain_image_uri(part_raw.as_bytes()) {
                 return;
             }
-            let Ok(raw_part_fields) = serde_json::from_str::<BTreeMap<String, &RawValue>>(part_raw) else {
-                return;
-            };
-            if raw_part_fields.get("type").and_then(|v| parse_string(v)).as_deref() != Some("tool") {
-                return;
-            }
-            let Some(state_raw) = raw_part_fields.get("state") else {
-                return;
-            };
-            if !may_contain_image_uri(state_raw.get().as_bytes()) {
+            let (mut part_type, mut state_raw) = (None, None);
+            if for_each_json_object_field(part_raw, |k, v| match k {
+                "type" => part_type = Some(v),
+                "state" => state_raw = Some(v),
+                _ => {}
+            })
+            .is_none()
+            {
                 return;
             }
-            let Ok(raw_state_fields) = serde_json::from_str::<BTreeMap<String, &RawValue>>(state_raw.get()) else {
-                return;
-            };
-            let Some(items_raw) = raw_state_fields.get("content") else {
-                return;
-            };
-            if !may_contain_image_uri(items_raw.get().as_bytes()) {
+            if part_type.and_then(parse_string).as_deref() != Some("tool") {
                 return;
             }
-            let _ = for_each_json_array_item(items_raw.get(), MAX_SCANNED_ITEMS, |item_idx, item_raw| {
+            let Some(state_raw) = state_raw else {
+                return;
+            };
+            if !may_contain_image_uri(state_raw.as_bytes()) {
+                return;
+            }
+            let mut items_raw = None;
+            if for_each_json_object_field(state_raw, |k, v| {
+                if k == "content" {
+                    items_raw = Some(v);
+                }
+            })
+            .is_none()
+            {
+                return;
+            }
+            let Some(items_raw) = items_raw else {
+                return;
+            };
+            if !may_contain_image_uri(items_raw.as_bytes()) {
+                return;
+            }
+            let _ = for_each_json_array_item(items_raw, MAX_SCANNED_ITEMS, |item_idx, item_raw| {
                 if item_raw.len() <= INLINE_THRESHOLD || !may_contain_image_uri(item_raw.as_bytes()) {
                     return;
                 }
-                let Ok(raw_file_fields) = serde_json::from_str::<BTreeMap<String, &RawValue>>(item_raw) else {
+                let (mut file_type, mut mime, mut uri_raw) = (None, None, None);
+                if for_each_json_object_field(item_raw, |k, v| match k {
+                    "type" => file_type = Some(v),
+                    "mime" => mime = Some(v),
+                    "uri" => uri_raw = Some(v),
+                    _ => {}
+                })
+                .is_none()
+                {
+                    return;
+                }
+                let Some(file_type) = file_type.and_then(parse_string) else {
                     return;
                 };
-                let Some(file_type) = raw_file_fields.get("type").and_then(|v| parse_string(v)) else {
+                let Some(mime) = mime.and_then(parse_string) else {
                     return;
                 };
-                let Some(mime) = raw_file_fields.get("mime").and_then(|v| parse_string(v)) else {
+                let Some(uri_raw) = uri_raw else {
                     return;
                 };
-                let Some(uri_raw) = raw_file_fields.get("uri") else {
-                    return;
-                };
-                if uri_raw.get().len() <= INLINE_THRESHOLD {
+                if uri_raw.len() <= INLINE_THRESHOLD {
                     return;
                 }
                 let Some(uri) = parse_string(uri_raw) else {
@@ -489,8 +1001,8 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, mut raw: Vec<
                     media::defer_uri(workspace_enc, session_enc, &id_enc, part_idx, item_idx, &file_type, &mime, &uri)
                     && let Ok(encoded) = serde_json::to_string(&reference)
                 {
-                    let start = uri_raw.get().as_ptr() as usize - base;
-                    let end = start + uri_raw.get().len();
+                    let start = uri_raw.as_ptr() as usize - base;
+                    let end = start + uri_raw.len();
                     patches.push((start, end, encoded));
                 }
             });
@@ -498,34 +1010,38 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, mut raw: Vec<
         (!patches.is_empty()).then_some(patches)
     })();
     let Some(mut patches) = patches else {
-        return (raw, false);
+        return (raw, Vec::new());
     };
     patches.sort_unstable_by_key(|(start, _, _)| *start);
     let mut cursor = 0usize;
     let mut fits_in_place = true;
     for (start, end, replacement) in &patches {
         if *start < cursor || *end > raw.len() {
-            return (raw, false);
+            return (raw, Vec::new());
         }
         if replacement.len() > end - start {
             fits_in_place = false;
         }
         cursor = *end;
     }
+    let mut undo = Vec::with_capacity(patches.len());
     if fits_in_place {
         // Every deferred `/api/workspaces/.../session-media/...` URI is strictly shorter than the
         // `> 32 KiB` data URI it replaces, so splicing in-place avoids allocating a second `Vec`.
         let mut read_pos = 0usize;
         let mut write_pos = 0usize;
         for (start, end, replacement) in patches {
+            let original: Box<[u8]> = raw[start..end].into();
             let prefix_len = start - read_pos;
             if write_pos != read_pos && prefix_len > 0 {
                 raw.copy_within(read_pos..start, write_pos);
             }
             write_pos += prefix_len;
             let rep = replacement.as_bytes();
+            let new_start = write_pos;
             raw[write_pos..write_pos + rep.len()].copy_from_slice(rep);
             write_pos += rep.len();
+            undo.push(UndoPatch { range: new_start..write_pos, original });
             read_pos = end;
         }
         let tail_len = raw.len() - read_pos;
@@ -535,18 +1051,21 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, mut raw: Vec<
         write_pos += tail_len;
         raw.truncate(write_pos);
         raw.shrink_to_fit();
-        return (raw, true);
+        return (raw, undo);
     }
     let mut out = Vec::new();
     let mut cursor = 0usize;
     for (start, end, replacement) in patches {
         out.extend_from_slice(&raw[cursor..start]);
+        let new_start = out.len();
         out.extend_from_slice(replacement.as_bytes());
+        let new_end = out.len();
+        undo.push(UndoPatch { range: new_start..new_end, original: raw[start..end].into() });
         cursor = end;
     }
     out.extend_from_slice(&raw[cursor..]);
     out.shrink_to_fit();
-    (out, true)
+    (out, undo)
 }
 
 #[cfg(test)]
@@ -560,8 +1079,8 @@ mod tests {
             let mut pos = 0;
             while let Some(pending) = stream.feed(chunk, &mut pos).unwrap() {
                 let (ws, ses) = stream.ids().unwrap();
-                let (out, changed) = project_item(ws, ses, pending.bytes);
-                stream.commit_item(out, changed, pending.delimiter).unwrap();
+                let (out, undo) = project_item(ws, ses, pending.bytes);
+                stream.commit_item(out, undo, pending.delimiter).unwrap();
             }
         }
         let (segments, total, changed) = stream.finish().unwrap();
@@ -575,11 +1094,34 @@ mod tests {
 
     #[test]
     fn preserves_non_object_invalid_and_small_json_byte_for_byte() {
-        for raw in [b"[]".as_slice(), b"{}", b"null", b"not json", b"{\"data\":[]}", b"{\"other\":[1],\"data\":null}"] {
+        for raw in
+            [b"".as_slice(), b"[]", b"{}", b"null", b"not json", b"{\"data\":[]}", b"{\"other\":[1],\"data\":null}"]
+        {
             for chunk in [1, 7, 1024] {
                 let (out, changed) = run_stream("ws_1", "ses_1", raw, chunk);
                 assert!(!changed);
                 assert_eq!(out.as_ref(), raw);
+            }
+        }
+    }
+
+    #[test]
+    fn restores_original_bytes_when_document_tail_is_invalid_json() {
+        let large = format!("data:image/png;base64,{}", "A".repeat(40 * 1024));
+        let valid_prefix = json!({
+            "data": [
+                {"id": "msg_big", "type": "assistant", "content": [{"type": "tool", "state": {"content": [{"type": "file", "mime": "image/png", "uri": large}]}}]}
+            ]
+        })
+        .to_string();
+        let trailing_garbage = format!("{valid_prefix} trailing");
+        let truncated = valid_prefix[..valid_prefix.len() - 1].to_owned();
+        let bad_tail = format!("{},\"tail\": [1,]}}", &valid_prefix[..valid_prefix.len() - 1]);
+        for bad in [&trailing_garbage, &truncated, &bad_tail] {
+            for chunk in [97, 4096, bad.len()] {
+                let (out, changed) = run_stream("ws_1", "ses_1", bad.as_bytes(), chunk);
+                assert!(!changed, "invalid JSON must not report changed");
+                assert_eq!(out.as_ref(), bad.as_bytes());
             }
         }
     }
@@ -612,8 +1154,8 @@ mod tests {
     #[test]
     fn skips_dense_numeric_items_and_preserves_unknown_fields_without_value_tree() {
         let dense = format!("{{\"id\":\"msg_n\",\"type\":\"assistant\",\"nums\":[{}]}}", vec!["1"; 20_000].join(","));
-        let (out, changed) = project_item("ws_1", "ses_1", dense.clone().into_bytes());
-        assert!(!changed);
+        let (out, undo) = project_item("ws_1", "ses_1", dense.clone().into_bytes());
+        assert!(undo.is_empty());
         assert_eq!(out, dense.as_bytes());
 
         let large = format!("data:image/png;base64,{}", "A".repeat(40 * 1024));
@@ -623,8 +1165,8 @@ mod tests {
             "extra": [1, 2, 3, 4, 5],
             "content": [{"type": "tool", "state": {"content": [{"type": "file", "mime": "image/png", "uri": large}]}}]
         });
-        let (out, changed) = project_item("ws_1", "ses_1", with_nums.to_string().into_bytes());
-        assert!(changed);
+        let (out, undo) = project_item("ws_1", "ses_1", with_nums.to_string().into_bytes());
+        assert!(!undo.is_empty());
         let parsed: Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(parsed["extra"], json!([1, 2, 3, 4, 5]));
         assert!(
@@ -638,8 +1180,8 @@ mod tests {
             "{{\"id\":\"msg_esc\",\"type\":\"assistant\",\"content\":[{{\"type\":\"tool\",\"state\":{{\"content\":[{{\"type\":\"file\",\"mime\":\"image/png\",\"uri\":\"data:image\\/png;base64,{}\"}}]}}}}]}}",
             "A".repeat(40 * 1024)
         );
-        let (out, changed) = project_item("ws_1", "ses_1", escaped_slash.into_bytes());
-        assert!(changed);
+        let (out, undo) = project_item("ws_1", "ses_1", escaped_slash.into_bytes());
+        assert!(!undo.is_empty());
         let parsed: Value = serde_json::from_slice(&out).unwrap();
         assert!(
             parsed["content"][0]["state"]["content"][0]["uri"]
@@ -652,8 +1194,8 @@ mod tests {
             "{{\"id\":\"msg_uni\",\"type\":\"assistant\",\"content\":[{{\"type\":\"tool\",\"state\":{{\"content\":[{{\"type\":\"file\",\"mime\":\"image/png\",\"uri\":\"\\u0064ata:image/png;base64,{}\"}}]}}}}]}}",
             "A".repeat(40 * 1024)
         );
-        let (out, changed) = project_item("ws_1", "ses_1", escaped_unicode.into_bytes());
-        assert!(changed);
+        let (out, undo) = project_item("ws_1", "ses_1", escaped_unicode.into_bytes());
+        assert!(!undo.is_empty());
         let parsed: Value = serde_json::from_slice(&out).unwrap();
         assert!(
             parsed["content"][0]["state"]["content"][0]["uri"]
@@ -671,8 +1213,8 @@ mod tests {
             big_parts.push_str(",1");
         }
         big_parts.push_str("]}");
-        let (out, changed) = project_item("ws_1", "ses_1", big_parts.into_bytes());
-        assert!(changed);
+        let (out, undo) = project_item("ws_1", "ses_1", big_parts.into_bytes());
+        assert!(!undo.is_empty());
         let parsed: Value = serde_json::from_slice(&out).unwrap();
         let parts = parsed["content"].as_array().unwrap();
         assert_eq!(parts.len(), 100_006);

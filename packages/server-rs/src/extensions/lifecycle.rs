@@ -530,22 +530,6 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
     })))
 }
 
-/// `DesktopPluginLifecycle.ready(target)` after the native catalogue wait: a fresh
-/// presence challenge for this exact Location through the current connection's
-/// pruning lease. When this backend does not provision, the presence (and its
-/// proof) belongs to whoever installed the plugin, and the catalogue wait stands.
-pub async fn ready(directory: &str, deadline: tokio::time::Instant) -> Result<(), String> {
-    let owner = {
-        let state = STATE.lock().unwrap();
-        if !state.active {
-            return Ok(());
-        }
-        state.current.and_then(|i| state.installations[i].readiness.clone())
-    };
-    let owner = owner.ok_or("Pruning presence unavailable for captured connection")?;
-    owner.prepare(directory, deadline).await.map(|_| ())
-}
-
 /// Ensures bundled plugins are provisioned for this exact captured endpoint, then runs a
 /// fresh presence challenge against that endpoint's installation under the same deadline.
 pub async fn ready_at(

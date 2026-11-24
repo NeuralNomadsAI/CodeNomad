@@ -206,7 +206,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .layer(from_fn(panic_guard::catch))
         .with_state(state.clone());
     tokio::spawn(auth::Auth::sweep(state.clone()));
-    tokio::spawn(events::bridge(state.clone()));
+    tokio::spawn(events::bridge(state.clone(), shutdown.clone()));
     tokio::spawn(meta::releases::run(state.clone(), shutdown.clone()));
     let local_url = format!("http://127.0.0.1:{port}");
     if launch.serve {
@@ -244,8 +244,8 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         async {
             match bridge {
                 Some(mut task) => match tokio::time::timeout_at(drain_deadline, &mut task).await {
-                    Ok(Ok(())) => true,
-                    Ok(Err(_)) => false,
+                    Ok(Ok(Ok(()))) => true,
+                    Ok(Ok(Err(_))) | Ok(Err(_)) => false,
                     Err(_) => {
                         task.abort();
                         false

@@ -71,6 +71,9 @@ impl DirectoryProof {
             .is_none_or(|source| source.contains_live(&source.path) && no_nested_git(&source.path, source.registered()))
             && match &self.tree {
                 Some(tree) => {
+                    // A checkout of another repository nested inside the opened folder (`!external`)
+                    // is intentionally owned under the root's identity per TS `manager.test.ts:225`.
+                    // `no_nested_git` applies to external targets and history provenance.
                     (if receipt {
                         tree.contains_receipt_location(physical)
                     } else if self.media {
@@ -514,11 +517,7 @@ impl HistoryInventory {
     }
 
     pub(crate) fn directories(&self) -> impl Iterator<Item = &str> {
-        self.0
-            .iter()
-            .flat_map(|inventory| &inventory.trees)
-            .filter(|tree| !tree.nested_missing)
-            .map(|tree| tree.service.as_str())
+        self.0.iter().flat_map(|inventory| &inventory.trees).map(|tree| tree.service.as_str())
     }
 
     pub(crate) fn prove(&self, workspace: &Path, path: &Path) -> Option<DirectoryProof> {

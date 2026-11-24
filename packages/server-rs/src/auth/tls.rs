@@ -319,7 +319,7 @@ impl Listener {
                         connection.as_mut().graceful_shutdown();
                         tokio::select! {
                             _ = lifetime.cancelled() => {}
-                            _ = tokio::time::timeout(DRAIN, connection) => {}
+                            _ = connection => {}
                         }
                     }
                 }

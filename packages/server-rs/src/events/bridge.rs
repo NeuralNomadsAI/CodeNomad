@@ -104,6 +104,10 @@ impl Routes {
         Self::cache(&mut self.locations.lock().unwrap(), session, dir, Instant::now());
     }
 
+    fn clear(&self) {
+        self.locations.lock().unwrap().clear();
+    }
+
     fn cache(cache: &mut HashMap<String, (Instant, String)>, session: &str, dir: &str, now: Instant) {
         if cache.len() >= SESSION_RECIPIENT_LIMIT && !cache.contains_key(session) {
             cache.retain(|_, (until, _)| *until > now);
@@ -187,31 +191,58 @@ impl Lanes {
     }
 }
 
-pub async fn bridge(app: Shared) {
+pub async fn bridge(app: Shared, shutdown: CancellationToken) {
     let daemon = Uuid::new_v4().simple().to_string();
     let routes = Arc::new(Routes::default());
     loop {
+        if shutdown.is_cancelled() {
+            return;
+        }
+        // Clear cached session directories before every subscription so a reconnect
+        // cannot route a location-less event to a session's previous workspace
+        // (TS `instance-events.ts:143-147`).
+        routes.clear();
         while {
             let store = app.inner.lock().unwrap();
             store.workspaces.is_empty() && store.generation == 0
         } {
-            app.opened.notified().await;
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => return,
+                _ = app.opened.notified() => {}
+            }
         }
         status(&app, "connecting", None);
         // Reacquire the shared daemon on every subscription and prepare its bundled plugins.
         let deadline = tokio::time::Instant::now() + crate::opencode::daemon::TIMEOUT;
-        let endpoint = match app.native.acquire(deadline).await {
-            Ok(endpoint) => endpoint,
-            Err(refusal) => {
-                eprintln!("Shared OpenCode event stream disconnected: {refusal}");
-                status(&app, "error", Some(&refusal.to_string()));
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                continue;
-            }
+        let endpoint = tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => return,
+            acquired = app.native.acquire(deadline) => match acquired {
+                Ok(endpoint) => endpoint,
+                Err(refusal) => {
+                    eprintln!("Shared OpenCode event stream disconnected: {refusal}");
+                    status(&app, "error", Some(&refusal.to_string()));
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.cancelled() => return,
+                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    }
+                    continue;
+                }
+            },
         };
-        crate::extensions::lifecycle::prepare(&app, &endpoint).await;
+        tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => return,
+            _ = crate::extensions::lifecycle::prepare(&app, &endpoint) => {}
+        }
         let mut local_backpressure = false;
-        let response = app.native.get("/api/event").header("accept", "text/event-stream").send().await;
+        let response = tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => return,
+            res = app.native.get("/api/event").header("accept", "text/event-stream").send() => res,
+        };
         if let Ok(response) = response
             && response.status().is_success()
             && response.headers().get("content-type").is_some_and(|v| v.as_bytes().starts_with(b"text/event-stream"))
@@ -230,6 +261,7 @@ pub async fn bridge(app: Shared) {
             loop {
                 let next = tokio::select! {
                     biased;
+                    _ = shutdown.cancelled() => break,
                     _ = lanes.failed.cancelled() => {
                         local_backpressure = true;
                         break;
@@ -314,6 +346,9 @@ pub async fn bridge(app: Shared) {
             }
             lanes.failed.cancel();
         }
+        if shutdown.is_cancelled() {
+            return;
+        }
         // Only invalidate the shared daemon connection on transport disconnect/timeout, not on
         // local SSE lane backpressure (TS `instance-events.ts:150-157`, `opencode-service.ts:306-325`).
         if !local_backpressure {
@@ -321,7 +356,11 @@ pub async fn bridge(app: Shared) {
         }
         eprintln!("Shared OpenCode event stream disconnected: Shared OpenCode event stream ended");
         status(&app, "error", Some("Shared OpenCode event stream ended"));
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+        }
     }
 }
 

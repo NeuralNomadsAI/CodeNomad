@@ -265,6 +265,7 @@ impl Tree {
     fn owns_path(&self, dir: &Path) -> bool {
         self.path == dir
             && !self.nested_missing
+            && self.projected_link.is_none()
             && self.layout.live()
             && self.link_live()
             && identity(dir).ok() == self.identity
@@ -274,6 +275,7 @@ impl Tree {
     pub fn contains_live(&self, dir: &Path) -> bool {
         dir.starts_with(&self.path)
             && !self.nested_missing
+            && self.projected_link.is_none()
             && self.layout.live()
             && self.link_live()
             && identity(&self.path).ok() == self.identity
@@ -621,7 +623,7 @@ async fn catalogue_in_at(
             service,
             slug,
             identity: id.clone(),
-            nested_missing: id.is_none(),
+            nested_missing: id.is_none() && projected_link.is_none(),
             service_root: service_root.into(),
             removable: !opened && check.admin != check.common,
             layout: check,

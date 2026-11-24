@@ -24,7 +24,7 @@ use tokio::{sync::OnceCell, time::Instant};
 
 use super::{contracts, history};
 use crate::{
-    App, Error, Shared, Workspace,
+    Error, Shared, Workspace,
     auth::Principal,
     error,
     opencode::Endpoint,
@@ -121,7 +121,7 @@ fn display(path: &Path) -> Arc<AtomicBool> {
 }
 
 struct Scope<'a> {
-    app: &'a App,
+    app: &'a Shared,
     workspace: Workspace,
     endpoint: Arc<Endpoint>,
     root: Arc<AtomicBool>,
@@ -186,7 +186,7 @@ impl Scope<'_> {
     }
     async fn call(&self, owned: &Owned, method: &str, input: &Value, source: Option<(&str, &Value)>) -> Option<Call> {
         let ready = self.deadline.min(Instant::now() + Duration::from_secs(5));
-        history::prepare(self.app, &owned.directory, ready).await?;
+        history::prepare(self.app, &self.endpoint, &owned.directory, ready).await?;
         if !self.session_current(source).await || !owned.current(self) {
             return None;
         }

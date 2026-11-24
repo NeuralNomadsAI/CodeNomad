@@ -406,7 +406,20 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             Some(if message_list {
                 static LIST_ADMISSION_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
                 let _admission_slot = LIST_ADMISSION_SLOTS.acquire().await.map_err(|_| upstream_error())?;
-                super::session_record_list_at(&app, &endpoint, session).await?
+                // Drop the full up-to-16 MiB session record before releasing the admission slot;
+                // `message.list` only inspects `id` and `location.{directory,workspaceID}`.
+                let record = super::session_record_list_at(&app, &endpoint, session).await?;
+                let mut location = serde_json::Map::new();
+                if let Some(dir) = record["location"]["directory"].as_str() {
+                    location.insert("directory".into(), Value::String(dir.to_owned()));
+                }
+                if let Some(ws) = record["location"].get("workspaceID").filter(|v| !v.is_null()) {
+                    location.insert("workspaceID".into(), ws.clone());
+                }
+                json!({
+                    "id": record["id"].as_str().unwrap_or_default(),
+                    "location": Value::Object(location),
+                })
             } else {
                 super::session_record_at(&app, &endpoint, session).await?
             })
@@ -940,37 +953,22 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
         // Acquire the projection slot right before upstream dispatch so admission checks
         // and `session.get` never occupy slots while waiting or after principal revocation.
-        let (slot, waited_for_slot) = match DEFER_SLOTS.try_acquire() {
-            Ok(permit) => (permit, false),
-            Err(_) => {
-                let permit = tokio::select! {
-                    biased;
-                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    _ = workspace_closed() => return Err(not_found()),
-                    permit = tokio::time::timeout_at(list_deadline, DEFER_SLOTS.acquire()) => {
-                        permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
-                    }
-                };
-                (permit, true)
-            }
-        };
-        if waited_for_slot {
-            // Re-verify session placement before dispatching upstream if this request waited
-            // behind other projections, so a moved session's transcript is never fetched.
-            let latest = tokio::select! {
+        let slot = match DEFER_SLOTS.try_acquire() {
+            Ok(permit) => permit,
+            Err(_) => tokio::select! {
                 biased;
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                 _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
                 _ = workspace_closed() => return Err(not_found()),
-                record = tokio::time::timeout_at(list_deadline, super::session_record_list_at(&app, &endpoint, session)) => {
-                    record.map_err(|_| interrupted())??
+                permit = tokio::time::timeout_at(list_deadline, DEFER_SLOTS.acquire()) => {
+                    permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                 }
-            };
-            if actual.as_ref().is_none_or(|orig| latest["id"] != orig["id"] || latest["location"] != orig["location"]) {
-                return Err(foreign());
-            }
+            },
+        };
+        if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
+            return Err(upstream_error());
         }
+        principal.live()?;
         let mut response = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
@@ -1011,7 +1009,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 };
                 let pre_needed = crate::shared::response_memory_units(
                     crate::shared::ResponsePool::List,
-                    stream.retained_bytes().saturating_add(chunk.len()),
+                    stream
+                        .retained_bytes()
+                        .saturating_add(chunk.len())
+                        .saturating_add(2 * crate::shared::RESPONSE_CHUNK),
                 );
                 if pre_needed > held_units {
                     let extra = tokio::select! {
@@ -1074,8 +1075,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                             list_deadline,
                             tokio::task::spawn_blocking(move || {
                                 let mut s = moved_stream;
-                                let (out, changed) = crate::sessions::media_stream::project_item(&ws, &ses, raw);
-                                let commit_res = s.commit_item(out, changed, delimiter);
+                                let (out, undo) = crate::sessions::media_stream::project_item(&ws, &ses, raw);
+                                let commit_res = s.commit_item(out, undo, delimiter);
                                 (s, commit_res, held)
                             }),
                         ) => res.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
@@ -1108,7 +1109,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 }
             }
             let (payload, payload_len, changed) = stream.finish().map_err(|_| interrupted())?;
-            let final_units = crate::shared::response_memory_units(crate::shared::ResponsePool::List, payload_len);
+            let final_units = if payload_len == 0 {
+                0
+            } else {
+                crate::shared::response_memory_units(crate::shared::ResponsePool::List, payload_len)
+            };
             if final_units > held_units {
                 let extra = tokio::select! {
                     biased;
@@ -1132,65 +1137,17 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             {
                 let _ = existing.split((held_units - final_units) as usize);
             }
-            let mem = mem.ok_or_else(interrupted)?;
+            if final_units == 0 {
+                mem = None;
+            } else if mem.is_none() {
+                return Err(interrupted());
+            }
             drop(slot);
-            if !app.native.current(&endpoint) {
+            if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
+            {
                 return Err(upstream_error());
             }
             app.workspace(id)?;
-            // Re-verify the session still belongs to the same location before releasing any
-            // buffered transcript bytes, closing TOCTOU moves during slot wait or page read.
-            let latest = tokio::select! {
-                biased;
-                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                _ = workspace_closed() => return Err(not_found()),
-                record = tokio::time::timeout_at(list_deadline, super::session_record_list_at(&app, &endpoint, session)) => {
-                    record.map_err(|_| interrupted())??
-                }
-            };
-            if actual.as_ref().is_none_or(|orig| latest["id"] != orig["id"] || latest["location"] != orig["location"]) {
-                return Err(foreign());
-            }
-            let live_ok = if let (Some((resolved, anchor, expected_id)), Some(checkout), Some(raw)) =
-                (&initial_identity, &input_checkout, native_directory)
-            {
-                let (scope, raw, resolved, anchor, expected_id, checkout) = (
-                    app.scope.clone(),
-                    raw.to_owned(),
-                    resolved.clone(),
-                    anchor.clone(),
-                    expected_id.clone(),
-                    checkout.clone(),
-                );
-                tokio::select! {
-                    biased;
-                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    _ = workspace_closed() => return Err(not_found()),
-                    res = tokio::time::timeout_at(
-                        list_deadline,
-                        tokio::task::spawn_blocking(move || {
-                            crate::worktrees::ownership::resolve_media_path(&scope, &raw).is_some_and(
-                                |(cur_res, cur_anc)| {
-                                    cur_res == resolved
-                                        && cur_anc == anchor
-                                        && crate::files::directory_identity(&cur_anc).ok() == Some(expected_id)
-                                        && checkout.live(&cur_res)
-                                },
-                            )
-                        }),
-                    ) => res.map_err(|_| interrupted())?.unwrap_or(false),
-                }
-            } else {
-                false
-            };
-            if !live_ok || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
-                return Err(foreign());
-            }
-            if !app.native.current(&endpoint) {
-                return Err(upstream_error());
-            }
             principal.live()?;
             // Drop the upstream strong ETag only when the JSON body was actually rewritten
             // (RFC 9110: never reuse the original validator for a modified representation).
@@ -1218,7 +1175,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return builder
                 .extension(NativeBody)
                 .extension(crate::shared::CancelWrite::new(write_abort))
-                .body(crate::shared::permit_body_chunks(payload, Some(mem), abort))
+                .body(crate::shared::permit_body_chunks(payload, mem, abort))
                 .map_err(|_| upstream_error());
         }
         drop(slot);
@@ -1247,57 +1204,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 .into_response());
         }
         if status.is_success() {
-            // Re-verify session placement and physical checkout identity on non-JSON 2xx fallback
-            // responses too, matching both deferred JSON and inline `message.list`.
-            let latest = tokio::select! {
-                biased;
-                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                _ = workspace_closed() => return Err(not_found()),
-                record = tokio::time::timeout_at(list_deadline, super::session_record_list_at(&app, &endpoint, session)) => {
-                    record.map_err(|_| interrupted())??
-                }
-            };
-            if actual.as_ref().is_none_or(|orig| latest["id"] != orig["id"] || latest["location"] != orig["location"]) {
-                return Err(foreign());
-            }
-            let live_ok = if let (Some((resolved, anchor, expected_id)), Some(checkout), Some(raw)) =
-                (&initial_identity, &input_checkout, native_directory)
+            if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
             {
-                let (scope, raw, resolved, anchor, expected_id, checkout) = (
-                    app.scope.clone(),
-                    raw.to_owned(),
-                    resolved.clone(),
-                    anchor.clone(),
-                    expected_id.clone(),
-                    checkout.clone(),
-                );
-                tokio::select! {
-                    biased;
-                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    _ = workspace_closed() => return Err(not_found()),
-                    res = tokio::time::timeout_at(
-                        list_deadline,
-                        tokio::task::spawn_blocking(move || {
-                            crate::worktrees::ownership::resolve_media_path(&scope, &raw).is_some_and(
-                                |(cur_res, cur_anc)| {
-                                    cur_res == resolved
-                                        && cur_anc == anchor
-                                        && crate::files::directory_identity(&cur_anc).ok() == Some(expected_id)
-                                        && checkout.live(&cur_res)
-                                },
-                            )
-                        }),
-                    ) => res.map_err(|_| interrupted())?.unwrap_or(false),
-                }
-            } else {
-                false
-            };
-            if !live_ok || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
-                return Err(foreign());
-            }
-            if !app.native.current(&endpoint) {
                 return Err(upstream_error());
             }
             principal.live()?;
@@ -1398,9 +1306,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             .map_err(|_| upstream_error());
     }
     let (route, opened, directory, id) = (route.to_owned(), opened.to_owned(), directory.to_owned(), id.to_owned());
-    let list_session = message_list.then_some(session).flatten().map(str::to_owned);
-    let inline_live_check =
-        message_list.then(|| (initial_identity.clone(), input_checkout.clone(), native_directory.map(str::to_owned)));
     let dispatched_mutation = mutation.is_some();
     let observer = principal.0.clone();
     let dispatch = move |detached: tokio_util::sync::CancellationToken| async move {
@@ -1462,59 +1367,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             )
                 .into_response());
         }
-        if let Some(list_session) = &list_session
-            && response.status().is_success()
-        {
-            // Intentional server-rs security hardening (TS `http-server.ts:1670-1707` omits this
-            // recheck; tracked in `solid-backlog.md`): re-verify both native session placement and
-            // physical checkout identity before streaming inline `message.list` bytes so a session
-            // moved out of the workspace or retargeted via symlink after admission cannot leak.
-            let latest = tokio::select! {
-                biased;
-                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                record = tokio::time::timeout_at(list_deadline, super::session_record_list_at(&app, &endpoint, list_session)) => {
-                    record.map_err(|_| upstream_error())??
-                }
-            };
-            if actual.as_ref().is_none_or(|orig| latest["id"] != orig["id"] || latest["location"] != orig["location"]) {
-                return Err(foreign());
-            }
-            let live_ok =
-                if let Some((Some((resolved, anchor, expected_id)), Some(checkout), Some(raw))) = &inline_live_check {
-                    let (scope, raw, resolved, anchor, expected_id, checkout) = (
-                        app.scope.clone(),
-                        raw.clone(),
-                        resolved.clone(),
-                        anchor.clone(),
-                        expected_id.clone(),
-                        checkout.clone(),
-                    );
-                    tokio::select! {
-                        biased;
-                        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                        _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                        res = tokio::time::timeout_at(
-                            list_deadline,
-                            tokio::task::spawn_blocking(move || {
-                                crate::worktrees::ownership::resolve_media_path(&scope, &raw).is_some_and(
-                                    |(cur_res, cur_anc)| {
-                                        cur_res == resolved
-                                            && cur_anc == anchor
-                                            && crate::files::directory_identity(&cur_anc).ok() == Some(expected_id)
-                                            && checkout.live(&cur_res)
-                                    },
-                                )
-                            }),
-                        ) => res.map_err(|_| upstream_error())?.unwrap_or(false),
-                    }
-                } else {
-                    false
-                };
-            if !live_ok || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
-                return Err(foreign());
-            }
-            if !app.native.current(&endpoint) {
+        if message_list && response.status().is_success() {
+            if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
+            {
                 return Err(upstream_error());
             }
             principal.live()?;

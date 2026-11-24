@@ -501,7 +501,7 @@ pub async fn serve_local(
                         _ = &mut conn => {}
                         _ = stop.cancelled() => {
                             conn.as_mut().graceful_shutdown();
-                            let _ = tokio::time::timeout(DRAIN, conn).await;
+                            let _ = conn.await;
                         }
                     }
                 });

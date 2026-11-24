@@ -392,11 +392,27 @@ async fn same_identity_async(path: std::path::PathBuf, expected: Option<DirIdent
         .unwrap_or(false)
 }
 
-pub(super) async fn prepare(app: &App, directory: &str, deadline: tokio::time::Instant) -> Option<()> {
-    crate::sessions::pending::await_plugin(app, crate::sessions::pending::SESSION_PRUNING_PLUGIN, directory, deadline)
-        .await
-        .ok()?;
-    crate::extensions::lifecycle::ready(directory, deadline).await.ok()
+pub(super) async fn prepare(
+    app: &Shared,
+    endpoint: &Arc<crate::opencode::Endpoint>,
+    directory: &str,
+    deadline: tokio::time::Instant,
+) -> Option<()> {
+    let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(app, endpoint)).await;
+    let url = endpoint.url.join("/api/plugin").ok()?;
+    crate::sessions::pending::await_plugin_with(
+        crate::sessions::pending::SESSION_PRUNING_PLUGIN,
+        directory,
+        deadline,
+        || {
+            app.native
+                .current(endpoint)
+                .then(|| app.native.client.get(url.clone()).basic_auth("opencode", Some(&endpoint.password)))
+        },
+    )
+    .await
+    .ok()?;
+    crate::extensions::lifecycle::ready_at(app, endpoint, directory, deadline).await.ok()
 }
 
 pub(super) async fn rpc(
@@ -417,7 +433,9 @@ pub(super) async fn rpc_with_timeout(
     input: &Value,
     timeout: Duration,
 ) -> Result<(Status, Bytes), ()> {
-    rpc_with_limit(app, endpoint, directory, method, input, timeout, 24 * 1024 * 1024).await
+    let (status, mut body) = rpc_with_limit(app, endpoint, directory, method, input, timeout, 24 * 1024 * 1024).await?;
+    body.shrink_to_fit();
+    Ok((status, body.into()))
 }
 
 async fn rpc_with_limit(
@@ -428,7 +446,7 @@ async fn rpc_with_limit(
     input: &Value,
     timeout: Duration,
     limit: usize,
-) -> Result<(Status, Bytes), ()> {
+) -> Result<(Status, Vec<u8>), ()> {
     let response = app
         .native
         .client
@@ -441,7 +459,7 @@ async fn rpc_with_limit(
         .await
         .map_err(|_| ())?;
     let status = response.status();
-    Ok((status, crate::opencode::read_bytes(response, limit).await?.into()))
+    Ok((status, crate::opencode::read_bytes(response, limit).await?))
 }
 
 #[derive(serde::Deserialize)]
@@ -465,11 +483,9 @@ struct ValidatedHistory {
     user_files_marker: Option<Value>,
 }
 
-fn parse_and_validate_history(
-    status: Status,
-    body: axum::body::Bytes,
-    action: &str,
-) -> Result<ValidatedHistory, Response> {
+fn parse_and_validate_history(status: Status, mut body: Vec<u8>, action: &str) -> Result<ValidatedHistory, Response> {
+    body.shrink_to_fit();
+    let body: Bytes = body.into();
     let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return Err(blocked("unavailable")) };
     let Some(raw) = envelope.output else { return Err(blocked("unavailable")) };
     let raw_bytes = raw.get().as_bytes();
@@ -562,36 +578,30 @@ pub async fn handle(
     };
     let defer = action == "window" && media::wants_deferred(req.headers());
     let invalid = || error(Status::BAD_REQUEST, "Invalid history navigation request");
-    let content_type = req
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|ct| ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase());
-    let missing_ct = match content_type.as_deref() {
-        Some("application/json") => false,
-        Some("text/plain") => {
-            // Fastify enforces the 8 KiB body limit on `text/plain` before schema validation (`413` vs `400`).
-            let _ = to_bytes(req.into_body(), limit)
-                .await
-                .map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request body is too large"))?;
-            return Err(invalid());
+    let (parts, body) = req.into_parts();
+    if let Some(kind) = parts.headers.get(header::CONTENT_TYPE) {
+        let essence = kind.to_str().unwrap_or("").split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        if !matches!(essence.as_str(), "application/json" | "text/plain") {
+            return Err(crate::shared::fastify::error(
+                Status::UNSUPPORTED_MEDIA_TYPE,
+                "FST_ERR_CTP_INVALID_MEDIA_TYPE",
+                "Unsupported Media Type",
+            ));
         }
-        None => true,
-        Some(_) => return Err(error(Status::UNSUPPORTED_MEDIA_TYPE, "Unsupported Media Type")),
-    };
-    let bytes = to_bytes(req.into_body(), limit)
-        .await
-        .map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request body is too large"))?;
-    if missing_ct {
-        return Err(if bytes.is_empty() {
-            invalid()
-        } else {
-            error(Status::UNSUPPORTED_MEDIA_TYPE, "Unsupported Media Type")
-        });
     }
+    let bytes = to_bytes(body, limit).await.map_err(|_| {
+        crate::shared::fastify::error(
+            Status::PAYLOAD_TOO_LARGE,
+            "FST_ERR_CTP_BODY_TOO_LARGE",
+            "Request body is too large",
+        )
+    })?;
+    let parsed = match crate::shared::fastify::body(&parts.headers, &bytes)? {
+        Some(crate::shared::fastify::Body::Json(value)) => Some(value),
+        Some(crate::shared::fastify::Body::Text(_)) | None => None,
+    };
     let schema = crate::sessions::contracts::get(&action, false);
-    let input: Option<Value> = serde_json::from_slice(&bytes).ok();
-    let input = input.filter(|i| crate::sessions::contracts::valid(schema, i)).ok_or_else(invalid)?;
+    let input = parsed.filter(|i| crate::sessions::contracts::valid(schema, i)).ok_or_else(invalid)?;
     let session = input["sessionID"].as_str().ok_or_else(invalid)?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let request = async {
@@ -601,32 +611,29 @@ pub async fn handle(
             Err((Status::FORBIDDEN, body)) => return (Status::FORBIDDEN, body).into_response(),
             Err(_) => return blocked("unavailable"),
         };
-        static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+        // Bound concurrent 24 MiB RPC reads and `spawn_blocking` parses across all three
+        // navigation actions (`window`, `outline`, `outlinePreview`).
+        static HISTORY_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
         let work = async {
-            let slot = if action == "window" {
-                let workspace_closed = async {
-                    loop {
-                        let notified = app.workspace_closed.notified();
-                        if !placement.operation_current_fast(&app, &id) {
-                            return;
-                        }
-                        notified.await;
+            let workspace_closed = async {
+                loop {
+                    let notified = app.workspace_closed.notified();
+                    if !placement.operation_current_fast(&app, &id) {
+                        return;
                     }
-                };
-                let permit = tokio::select! {
-                    biased;
-                    _ = workspace_closed => return blocked("unavailable"),
-                    permit = DEFER_SLOTS.acquire() => match permit {
-                        Ok(permit) => permit,
-                        Err(_) => return blocked("unavailable"),
-                    }
-                };
-                Some(permit)
-            } else {
-                None
+                    notified.await;
+                }
             };
-            // Acquire the deferred permit before final revalidation so a closed project or
-            // retired daemon cannot dispatch an RPC after waiting for a slot.
+            let slot = tokio::select! {
+                biased;
+                _ = workspace_closed => return blocked("unavailable"),
+                permit = HISTORY_SLOTS.acquire() => match permit {
+                    Ok(permit) => permit,
+                    Err(_) => return blocked("unavailable"),
+                }
+            };
+            // Acquire the slot before final revalidation so a closed project or retired daemon
+            // cannot dispatch an RPC after waiting for a slot.
             let directory = match placement.ready(&app, &id, session).await {
                 Ok(directory) => directory,
                 Err(Recheck::Conflict) => return blocked("conflict"),
@@ -657,9 +664,16 @@ pub async fn handle(
                         Recheck::Unavailable => return blocked("unavailable"),
                     }
                     let fallback_timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
-                    let Ok(fallback) =
-                        rpc_with_timeout(&app, &placement.endpoint, directory, "outline", &input, fallback_timeout)
-                            .await
+                    let Ok(fallback) = rpc_with_limit(
+                        &app,
+                        &placement.endpoint,
+                        directory,
+                        "outline",
+                        &input,
+                        fallback_timeout,
+                        24 * 1024 * 1024,
+                    )
+                    .await
                     else {
                         return blocked("unavailable");
                     };
