@@ -14,8 +14,8 @@ import {
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { scheduleDeferredHighlight } from "../lib/markdown-highlight-schedule"
 import { HiddenTextNotice, createTextWindow } from "./hidden-text"
-import { decorateSessionLinks, nativeFolderSlug, routeSessionLink, sessionLinkBase, sessionLinkTitles } from "./markdown-session-links"
-import { isProjectFolderLink, linkBarePaths } from "./markdown-bare-paths"
+import { decorateSessionLinks, routeSessionLink, sessionLinkBase, sessionLinkTitles } from "./markdown-session-links"
+import { linkBarePaths } from "./markdown-bare-paths"
 import { matchLocalImage, messageImageCandidates, resolveLocalImages } from "../lib/markdown-local-images"
 import { createMediaSource } from "../lib/media-source"
 import { messageStoreBus } from "../stores/message-v2/bus"
@@ -446,12 +446,11 @@ export function Markdown(props: MarkdownProps) {
     const titles = sessionLinkTitles(instanceId, sessionId, loopbackLinksOpenPreview())
     const base = sessionLinkBase(instanceId, sessionId)
     if (!base) return
-    const folders = nativeFolderSlug(instanceId, base) !== undefined
     const controller = new AbortController()
     onCleanup(() => controller.abort())
     Promise.resolve().then(() => {
       if (!controller.signal.aborted && !disposed && containerRef) {
-        linkBarePaths(containerRef, { instanceId, sessionId, base, titles, folders, signal: controller.signal })
+        linkBarePaths(containerRef, { instanceId, sessionId, base, titles, signal: controller.signal })
       }
     })
   })
@@ -493,15 +492,21 @@ export function Markdown(props: MarkdownProps) {
         // Firefox fires `click` for the middle button too; only a primary
         // left click without modifiers routes to an app surface.
         const plainClick = mouseEvent.button === 0 && !mouseEvent.ctrlKey && !mouseEvent.metaKey && !mouseEvent.shiftKey && !mouseEvent.altKey
+        // Ctrl/⌘ clicks and middle clicks (taken from `auxclick` only) are
+        // external: a local path then opens with the system; other links
+        // keep browser defaults.
+        const externalClick = !mouseEvent.shiftKey && !mouseEvent.altKey && (event.type === "auxclick"
+          ? mouseEvent.button === 1 : mouseEvent.button === 0 && (mouseEvent.ctrlKey || mouseEvent.metaKey))
         // A plain click on a loopback URL opens the session preview, and one
-        // on a path inside the session's worktree opens the file reader;
-        // modified clicks keep browser defaults (see markdown-session-links).
-        if (plainClick && routeSessionLink(props.instanceId, props.sessionId, href, loopbackLinksOpenPreview(),
-          isProjectFolderLink(anchor))) {
+        // on a path inside the session's worktree opens the file reader or,
+        // on the local desktop, the system (see markdown-session-links).
+        if ((plainClick || externalClick)
+          && routeSessionLink(props.instanceId, props.sessionId, href, loopbackLinksOpenPreview(), externalClick)) {
           event.preventDefault()
           return
         }
       }
+      if (event.type === "auxclick") return
       const wrapButton = target.closest(".code-block-wrap") as HTMLButtonElement
       if (wrapButton) {
         event.preventDefault()
@@ -547,6 +552,7 @@ export function Markdown(props: MarkdownProps) {
     }
 
     containerRef?.addEventListener("click", handleClick)
+    containerRef?.addEventListener("auxclick", handleClick)
 
     void loadMarkdownModule()
       .then((markdown) => {
@@ -572,6 +578,7 @@ export function Markdown(props: MarkdownProps) {
 
     onCleanup(() => {
       containerRef?.removeEventListener("click", handleClick)
+      containerRef?.removeEventListener("auxclick", handleClick)
       cleanupLanguageListener?.()
       cleanupLanguageListener = undefined
     })

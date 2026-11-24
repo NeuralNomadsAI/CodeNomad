@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process"
-import { existsSync, realpathSync, statSync } from "node:fs"
+import { closeSync, existsSync, openSync, readSync, realpathSync, statSync } from "node:fs"
 import { extname, isAbsolute, join, relative, resolve } from "node:path"
 
 export type WorkspaceOpenTarget = "default" | "reveal" | "terminal" | "editor"
@@ -176,6 +176,72 @@ async function launchFirst(candidates: LaunchCandidate[], selectedPath: string, 
   throw lastError instanceof Error ? lastError : new Error("No supported application was found")
 }
 
+/** Whether a file's first bytes read as text, as the file preview decides: no
+ * NUL byte and valid UTF-8 (a character cut at the sample's end still counts). */
+export function looksLikeText(path: string): boolean {
+  const sample = Buffer.alloc(8192)
+  const descriptor = openSync(path, "r")
+  let length: number
+  try { length = readSync(descriptor, sample, 0, sample.length, 0) } finally { closeSync(descriptor) }
+  const bytes = sample.subarray(0, length)
+  if (bytes.includes(0)) return false
+  try {
+    // Streaming leaves a character cut at a full sample's end undecided.
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: length === sample.length })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Opens an absolute local `path` with the system: a folder in the file
+ * manager, a file with its default application under `defaultOpenMode`'s
+ * protections. With `unlessText`, resolves false and opens nothing when
+ * `path` is missing or a text file, which the caller shows itself. Rejects
+ * for a missing path otherwise, or a failed opening. */
+export async function openLocalPath(path: string, unlessText: boolean, dependencies?: WorkspaceOpenDependencies): Promise<boolean> {
+  if (!dependencies) throw new Error("Native workspace openers are unavailable")
+  if (!isAbsolute(path)) throw new Error("Local path must be absolute")
+  let selectedPath: string
+  try {
+    selectedPath = realpathSync(path)
+  } catch (error) {
+    if (unlessText) return false
+    throw error
+  }
+  const folder = statSync(selectedPath).isDirectory()
+  if (unlessText && !folder && looksLikeText(selectedPath)) return false
+  await openDefault(selectedPath, folder ? selectedPath : resolve(selectedPath, ".."), dependencies)
+  return true
+}
+async function openDefault(selectedPath: string, cwd: string, dependencies: WorkspaceOpenDependencies): Promise<void> {
+  const mode = defaultOpenMode(selectedPath, process.platform)
+  if (mode === "edit" || mode === "choose") {
+    const systemRoot = process.env.SystemRoot?.trim() || "C:\\Windows"
+    const powershell = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    const rundll32 = join(systemRoot, "System32", "rundll32.exe")
+    const script = `$ErrorActionPreference='Stop'; Start-Process -FilePath '${selectedPath.replace(/'/g, "''")}' -Verb Edit`
+    const encoded = Buffer.from(script, "utf16le").toString("base64")
+    const candidates: LaunchCandidate[] = [
+      ...(mode === "edit" ? [{
+        command: powershell,
+        args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        passPath: false,
+        waitForExit: true,
+      }] : []),
+      {
+        command: rundll32,
+        args: ["shell32.dll,OpenAs_RunDLL"],
+        verifyStart: true,
+      },
+    ]
+    await launchFirst(candidates, selectedPath, cwd, dependencies.spawnProcess ?? spawn)
+    return
+  }
+  const error = await dependencies.openPath(selectedPath)
+  if (error) throw new Error(error)
+}
+
 export async function openWorkspaceTarget(
   target: WorkspaceOpenTarget,
   workspaceFolder: string,
@@ -191,35 +257,10 @@ export async function openWorkspaceTarget(
   const relativePath = relative(root, selectedPath)
   if (relativePath === ".." || relativePath.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(relativePath)) {
     throw new Error("Selected path is outside the workspace")
-  }
-  const cwd = statSync(selectedPath).isDirectory() ? selectedPath : resolve(selectedPath, "..")
+  }  const cwd = statSync(selectedPath).isDirectory() ? selectedPath : resolve(selectedPath, "..")
 
   if (target === "default") {
-    const mode = defaultOpenMode(selectedPath, process.platform)
-    if (mode === "edit" || mode === "choose") {
-      const systemRoot = process.env.SystemRoot?.trim() || "C:\\Windows"
-      const powershell = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-      const rundll32 = join(systemRoot, "System32", "rundll32.exe")
-      const script = `$ErrorActionPreference='Stop'; Start-Process -FilePath '${selectedPath.replace(/'/g, "''")}' -Verb Edit`
-      const encoded = Buffer.from(script, "utf16le").toString("base64")
-      const candidates: LaunchCandidate[] = [
-        ...(mode === "edit" ? [{
-          command: powershell,
-          args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-          passPath: false,
-          waitForExit: true,
-        }] : []),
-        {
-          command: rundll32,
-          args: ["shell32.dll,OpenAs_RunDLL"],
-          verifyStart: true,
-        },
-      ]
-      await launchFirst(candidates, selectedPath, cwd, spawnProcess)
-      return
-    }
-    const error = await dependencies.openPath(selectedPath)
-    if (error) throw new Error(error)
+    await openDefault(selectedPath, cwd, dependencies)
     return
   }
 

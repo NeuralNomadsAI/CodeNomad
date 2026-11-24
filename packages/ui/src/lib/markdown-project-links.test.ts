@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { projectLinkPath, resolveProjectLinkPath } from "./markdown-project-links"
+import { localFileUrlPath, projectLinkPath, resolveProjectLinkPath } from "./markdown-project-links"
 
 describe("project-file link paths", () => {
   it("classifies project-file link candidates", () => {
@@ -22,6 +22,9 @@ describe("project-file link paths", () => {
     assert.equal(projectLinkPath("file:///home/me/repo/docs?view=tree"), "/home/me/repo/docs")
     assert.equal(projectLinkPath("file:/home/me/repo/docs"), "/home/me/repo/docs")
     assert.equal(projectLinkPath("file:///home/me/repo/docs%2Fchild"), undefined)
+    assert.equal(projectLinkPath("file:///home/me/repo/docs?view=%2F"), "/home/me/repo/docs")
+    assert.equal(localFileUrlPath("file:///C:/Users/me/bato%200.jpg"), "C:/Users/me/bato 0.jpg")
+    assert.equal(localFileUrlPath("C:/Users/me/bato.jpg"), undefined)
     assert.equal(projectLinkPath("file://server/share/x.md"), undefined)
     for (const source of ["", "#", "#section", "https://example.com/x", "http://x", "mailto:a@b.c",
       "javascript:alert(1)", "data:text/plain,x", "//cdn.example.com/a.png", "\\\\server\\share\\x.png"]) {

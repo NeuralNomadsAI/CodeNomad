@@ -1,11 +1,12 @@
 import { tGlobal } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
+import { localFileUrlPath, projectLinkPath, resolveProjectLinkPath } from "../lib/markdown-project-links"
 import { showToastNotification } from "../lib/notifications"
-import { canOpenWorkspacePaths, openWorkspacePath } from "../lib/workspace-open"
-import { resolveProjectLinkPath } from "../lib/markdown-project-links"
+import { previewImageType } from "../lib/preview-image-types"
+import { canOpenLocalPaths, openLocalPath } from "../lib/workspace-open"
 import { showAlertDialog } from "../stores/alerts"
 import { activeInstanceId, instances } from "../stores/instances"
-import { openFilePreview } from "../stores/files-preview"
+import { getFilePreview, openFilePreview } from "../stores/files-preview"
 import { getWorktreeForDirectory } from "../stores/worktrees"
 import { requestSessionPreview } from "../stores/session-previews"
 import { activeSessionId, sessions } from "../stores/session-state"
@@ -45,9 +46,6 @@ export interface SessionLinkBase {
   /** The root hrefs resolve against: the service namespace path when the
    * worktree is known (notably WSL), else the directory itself. */
   base: string
-  /** The slug native workspace actions resolve to `directory`; undefined
-   * while the inventory has not identified it. */
-  nativeSlug?: string
 }
 
 export function sessionLinkBase(instanceId: string, sessionId: string): SessionLinkBase | undefined {
@@ -62,8 +60,7 @@ export function sessionLinkBase(instanceId: string, sessionId: string): SessionL
     ?? sessionDirectory
     ?? instances().get(instanceId)?.folder
   if (!directory) return undefined
-  const nativeSlug = worktree?.slug ?? (directory === instances().get(instanceId)?.folder ? "root" : undefined)
-  return { slug: worktree?.slug ?? "root", directory, serviceDirectory: worktree?.serviceDirectory, base: worktree?.serviceDirectory ?? directory, nativeSlug }
+  return { slug: worktree?.slug ?? "root", directory, serviceDirectory: worktree?.serviceDirectory, base: worktree?.serviceDirectory ?? directory }
 }
 
 /** The file-reader target a link href resolves to inside the session's
@@ -76,69 +73,102 @@ export function resolveSessionProjectLink(instanceId: string, sessionId: string,
   return { slug: root.slug, directory: root.directory, serviceDirectory: root.serviceDirectory, path }
 }
 
-/** The plain-click dispatch for session-bound markdown links: a loopback URL
- * opens the session preview on the instance owning the session (browser-accessed
- * frontends cannot reach the backend host's localhost), a link the decoration
- * pass marked as a folder opens in the system file manager, and any other path
- * inside the session's worktree opens the file reader. Returns whether the
- * click was handled; modified clicks never reach this. Availability comes from
- * the mounted owner's createProjectServerMeta reader. */
-export function routeSessionLink(instanceId: string, sessionId: string, href: string, loopbackLinksOpenPreview: boolean, folder = false): boolean {
-  const instance = instances().get(instanceId)
-  if (!instance || !captureBackendOperation(instanceId).current()) return false
-  if (loopbackLinksOpenPreview && isLoopbackHttpUrl(href)) {
-    openLoopbackPreview(instanceId, sessionId, href)
-    return true
-  }
-  const resolution = resolveSessionProjectLink(instanceId, sessionId, href)
-  if (!resolution) return false
-  const worktreeSlug = folder ? nativeFolderSlug(instanceId, sessionLinkBase(instanceId, sessionId)) : undefined
-  if (worktreeSlug === undefined) {
-    openFilePreview(instanceId, { kind: "workspace", sessionId, ...resolution })
-    return true
-  }
+export interface SessionLinkTitles {
+  preview: string
+  file: string
+  /** Local paths open with the system on this host (`canOpenLocalPaths`). */
+  local: boolean
+}
+
+/** The absolute local path a link names, or undefined: a `file:` URL, an
+ * absolute path, or a path the session's worktree contains. */
+export function localLinkPath(href: string, base: SessionLinkBase | undefined): string | undefined {
+  const url = localFileUrlPath(href)
+  if (url !== undefined) return url
+  const project = base && resolveProjectLinkPath(href, base.base)
+  if (project !== undefined) return `${base!.directory.replace(/[\\/]+$/, "")}/${project}`
+  const path = projectLinkPath(href)
+  return path !== undefined && /^(?:\/|[A-Za-z]:\/)/.test(path) ? path : undefined
+}
+
+let latestLocalOpen = 0
+
+// Opens a local path with the system. With `preview`, a missing path or a text
+// file falls back to the file reader unless a later local link or preview
+// superseded this click while the host decided.
+const openLocal = (instanceId: string, path: string, preview?: () => void) => {
   const operation = captureBackendOperation(instanceId)
-  void openWorkspacePath({ target: "default", instanceId, worktreeSlug, path: resolution.path }).catch(error => {
+  const open = ++latestLocalOpen
+  const shown = getFilePreview(instanceId)
+  void openLocalPath(path, preview !== undefined).then(opened => {
+    if (opened || !preview || !operation.current() || open !== latestLocalOpen || getFilePreview(instanceId) !== shown) return
+    preview()
+  }, error => {
     if (!operation.current()) return
     showToastNotification({ category: "files", variant: "error",
       message: tGlobal("instanceShell.filesShell.toast.openError", { message: error instanceof Error ? error.message : String(error) }) })
   })
-  return true
 }
 
-/** The slug a folder link opens through in the system file manager, or
- * undefined where folders cannot open natively (remote, web, unidentified
- * worktree). */
-export function nativeFolderSlug(instanceId: string, base: SessionLinkBase | undefined): string | undefined {
-  return canOpenWorkspacePaths(instanceId) ? base?.nativeSlug : undefined
+/** The click dispatch for session-bound markdown links. A plain click on a
+ * loopback URL opens the session preview on the instance owning the session
+ * (browser-accessed frontends cannot reach the backend host's localhost); on
+ * a path inside the session's worktree it opens the file reader. Where local
+ * paths open with the system, a plain click keeps the file reader only for a
+ * worktree image or text file and hands any other local path (folders, other
+ * files, paths outside the worktree, `file:` URLs) to the system, as an
+ * `external` (Ctrl/⌘ or middle) click always does. Returns whether the click
+ * was handled; unhandled clicks keep browser defaults. Availability comes
+ * from the mounted owner's createProjectServerMeta reader. */
+export function routeSessionLink(instanceId: string, sessionId: string, href: string, loopbackLinksOpenPreview: boolean,
+  external = false): boolean {
+  const instance = instances().get(instanceId)
+  if (!instance || !captureBackendOperation(instanceId).current()) return false
+  if (!external && loopbackLinksOpenPreview && isLoopbackHttpUrl(href)) {
+    openLoopbackPreview(instanceId, sessionId, href)
+    return true
+  }
+  const resolution = resolveSessionProjectLink(instanceId, sessionId, href)
+  const preview = resolution && (() => openFilePreview(instanceId, { kind: "workspace", sessionId, ...resolution }))
+  const local = canOpenLocalPaths(instanceId) ? localLinkPath(href, sessionLinkBase(instanceId, sessionId)) : undefined
+  if (local === undefined) {
+    if (external || !preview) return false
+    preview()
+    return true
+  }
+  if (external || !preview) openLocal(instanceId, local)
+  else if (previewImageType(resolution!.path)) preview()
+  else openLocal(instanceId, local, preview)
+  return true
 }
 
 /** The titles decorated links carry, computed from the reactive availability
  * and locale signals: call this synchronously inside an effect so their
  * changes re-run the decoration pass. */
 export function sessionLinkTitles(instanceId: string | undefined, sessionId: string | undefined,
-  loopbackLinksOpenPreview: boolean): { preview: string; file: string } {
+  loopbackLinksOpenPreview: boolean): SessionLinkTitles {
   const sessionBound = Boolean(instanceId && sessionId && captureBackendOperation(instanceId).current())
+  const local = sessionBound && canOpenLocalPaths(instanceId)
   return {
     preview: sessionBound && loopbackLinksOpenPreview ? tGlobal("markdown.link.previewOpens") : "",
-    file: !sessionBound ? "" : tGlobal(nativeFolderSlug(instanceId!, sessionLinkBase(instanceId!, sessionId!)) !== undefined
-      ? "markdown.link.pathOpens" : "markdown.link.fileOpens"),
+    file: sessionBound ? tGlobal(local ? "markdown.link.pathOpens" : "markdown.link.fileOpens") : "",
+    local,
   }
 }
-
 /** Decorates exactly the links that intercept: loopback links while previews
- * are known available, and links resolving inside the session's worktree;
+ * are known available, links resolving inside the session's worktree and,
+ * where they open with the system, every local path link;
  * never over an author's own title attribute. Pure DOM pass: the caller
  * computes `titles` and `base` inside its reactive effect, so availability,
  * locale and inventory changes re-run it. */
-export function decorateSessionLinks(container: ParentNode, titles: { preview: string; file: string },
+export function decorateSessionLinks(container: ParentNode, titles: SessionLinkTitles,
   base: SessionLinkBase | undefined): void {
   const previewTitle = titles.preview
   const fileTitle = Boolean(base) && titles.file
   for (const anchor of container.querySelectorAll<HTMLAnchorElement>("a[href]")) {
     const href = anchor.getAttribute("href") ?? ""
     const loopback = Boolean(previewTitle) && isLoopbackHttpUrl(href)
-    const file = Boolean(fileTitle) && resolveProjectLinkPath(href, base!.base) !== undefined
+    const file = Boolean(fileTitle) && (titles.local ? localLinkPath(href, base) : resolveProjectLinkPath(href, base!.base)) !== undefined
     const title = loopback ? previewTitle : file ? titles.file : ""
     if (title) {
       if (anchor.getAttribute("data-preview-link-title") === "true") {

@@ -11,6 +11,11 @@ const LOCAL_FILE_URL = /^file:(?:\/\/(?:localhost)?)?(?=\/)/i
 // An encoded separator is invalid inside a file URL path.
 const ENCODED_SEPARATOR = /%(?:2f|5c)/i
 
+/** The absolute local path a `file:` URL names, or undefined for any other href. */
+export function localFileUrlPath(href: string): string | undefined {
+  return LOCAL_FILE_URL.test(href.trim()) ? projectLinkPath(href) : undefined
+}
+
 /** A project-file link candidate's normalized path, or undefined when the href
  * cannot point at a workspace file (URL schemes other than local `file:`,
  * scheme-relative and UNC values, pure fragments, empty). */
@@ -20,9 +25,9 @@ export function projectLinkPath(href: string): string | undefined {
   const fragment = trimmed.indexOf("#")
   let withoutFragment = fragment >= 0 ? trimmed.slice(0, fragment) : trimmed
   if (LOCAL_FILE_URL.test(withoutFragment)) {
-    if (ENCODED_SEPARATOR.test(withoutFragment)) return undefined
     // `file:///C:/x` names `C:/x`; `file:///home/x?q` names `/home/x`.
     withoutFragment = withoutFragment.replace(LOCAL_FILE_URL, "").replace(/\?.*$/, "").replace(/^\/(?=[A-Za-z]:\/)/, "")
+    if (ENCODED_SEPARATOR.test(withoutFragment)) return undefined
   }
   // A Windows drive letter (`C:\…`, `C:/…`) is a path, not a scheme.
   if (!WINDOWS_DRIVE.test(withoutFragment) && SCHEME.test(withoutFragment)) return undefined

@@ -2302,6 +2302,7 @@ fn main() {
             desktop_updater::install_desktop_update,
             desktop_updater::take_desktop_update_failure,
             workspace_open::open_workspace_target,
+            workspace_open::open_local_path,
             set_workspace_menu_enabled,
             browser_target_register,
             browser_target_update,

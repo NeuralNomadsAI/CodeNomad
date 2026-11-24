@@ -11,11 +11,11 @@ const MAX_LOCAL_WINDOWS: usize = 16;
 const SHUTDOWN_IN_PROGRESS: &str = "Application shutdown is in progress";
 const MAX_FOLDER_ATTEMPTS: u8 = 3;
 #[cfg(target_os = "windows")]
-const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true,ownership:true});";
+const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_LOCAL_PATHS__ = true; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true,ownership:true});";
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true,ownership:true,reason:'webkit'});";
+const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_LOCAL_PATHS__ = true; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true,ownership:true,reason:'webkit'});";
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:false,history:false,emulation:false,automation:false,reason:'unsupported-platform'});";
+const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_LOCAL_PATHS__ = true; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:false,history:false,emulation:false,automation:false,reason:'unsupported-platform'});";
 
 /// Static boot splash injected into the initial `about:blank` document, before
 /// any navigation can be gated on proxy/PAC resolution. See `boot_splash.js`.

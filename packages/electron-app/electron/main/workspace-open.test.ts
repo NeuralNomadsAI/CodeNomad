@@ -2,10 +2,10 @@ import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import test from "node:test"
 import type { ChildProcess } from "node:child_process"
-import { defaultOpenMode, editorCandidates, openWorkspaceTarget } from "./workspace-open"
+import { defaultOpenMode, editorCandidates, looksLikeText, openLocalPath, openWorkspaceTarget } from "./workspace-open"
 
 test("selects only the requested editor", () => {
   assert.deepEqual(editorCandidates("zed", "linux", {}), [{ command: "zed", verifyStart: true }])
@@ -30,6 +30,30 @@ test("opens only paths inside the workspace", async () => {
   } finally {
     rmSync(root, { recursive: true, force: true })
     rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test("opens local paths, leaving text files to the caller when asked", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codenomad-local-"))
+  mkdirSync(join(root, "docs"))
+  writeFileSync(join(root, "notes.txt"), "héllo")
+  writeFileSync(join(root, "clip.mp4"), Buffer.from([0, 0, 0, 24, 102, 116, 121, 112]))
+  // A multi-byte character cut by the 8 KiB sample is still text.
+  writeFileSync(join(root, "long.txt"), "a".repeat(8191) + "é")
+  const opened: string[] = []
+  const dependencies = { openPath: async (path: string) => { opened.push(path); return "" }, revealPath: () => undefined }
+  try {
+    assert.equal(looksLikeText(join(root, "long.txt")), true)
+    assert.equal(await openLocalPath(join(root, "docs"), true, dependencies), true)
+    assert.equal(await openLocalPath(join(root, "clip.mp4"), true, dependencies), true)
+    assert.equal(await openLocalPath(join(root, "notes.txt"), true, dependencies), false)
+    assert.equal(await openLocalPath(join(root, "missing"), true, dependencies), false)
+    assert.equal(await openLocalPath(join(root, "notes.txt"), false, dependencies), true)
+    await assert.rejects(openLocalPath(join(root, "missing"), false, dependencies), /ENOENT/)
+    await assert.rejects(openLocalPath("docs", false, dependencies), /absolute/)
+    assert.deepEqual(opened.map(path => basename(path)), ["docs", "clip.mp4", "notes.txt"])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
 

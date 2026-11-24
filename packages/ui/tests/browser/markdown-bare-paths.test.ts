@@ -59,7 +59,7 @@ test("on the local desktop, bare folder paths link too", { timeout: 60_000 }, as
   const page = await browser.newPage()
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
-  await page.addInitScript("window.electronAPI = {}")
+  await page.addInitScript("window.electronAPI = { openLocalPath: async () => ({ opened: true }) }")
   try {
     await page.goto(url)
     await page.waitForFunction(() => (window as any).fixture?.count("src/inner") === 1)

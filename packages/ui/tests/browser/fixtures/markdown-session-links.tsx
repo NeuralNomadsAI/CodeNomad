@@ -21,7 +21,6 @@ import { backendEvents } from "../../../src/lib/backend-events"
 import { getSessionPreview } from "../../../src/stores/session-previews"
 import { alertDialogState } from "../../../src/stores/alerts"
 import { getToastHistory } from "../../../src/lib/notifications"
-import { isProjectFolderLink } from "../../../src/components/markdown-bare-paths"
 
 const id = "markdown-session-links", scope = "/fixture-root"
 const client = sdkManager.createClient(id, `/workspaces/${id}/instance`, () => true)
@@ -31,14 +30,6 @@ serverApi.createPreview = async (input: { sessionId: string; url: string }) => {
   return { sessionId: input.sessionId, token: "t", targetUrl: input.url, proxyUrl: "/preview" } as never
 }
 serverApi.fetchServerMeta = async () => ({ previewsUnavailable: false }) as never
-// `?holdSrc` keeps the `src` listing pending, so other links must not wait on it.
-const holdSrc = new URLSearchParams(location.search).has("holdSrc")
-serverApi.listWorkspaceFiles = (async (_id: string, relativePath = ".") => {
-  if (holdSrc && relativePath === "src") await new Promise(() => {})
-  return relativePath === "."
-    ? [{ name: "README.md", type: "file" }, { name: "docs", type: "directory" }, { name: "locked", type: "directory" }]
-    : []
-}) as never
 addInstance({ id, folder: scope, port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client,
   metadata: { project: { id: "project", directory: scope, canonical: scope } } })
 const session = { id: "ses_link", instanceId: id, parentId: null, title: "Links", agent: "build",
@@ -97,7 +88,7 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
   <div>
     <div id="main-root">
       <Markdown part={{ id: "part", type: "text", version: 0,
-          text: "See [readme](./README.md), the [guide](docs/guide.md#intro), [app](/fixture-root/src/app.ts), [escape](../outside.md), [web](https://example.com/x) and [local](http://localhost:3000/x). Local: [docs](file:///fixture-root/docs/), [readme url](file:///fixture-root/README.md), [locked](./locked)." }}
+          text: "See [readme](./README.md), the [guide](docs/guide.md#intro), [app](/fixture-root/src/app.ts), [escape](../outside.md), [web](https://example.com/x) and [local](http://localhost:3000/x). Local: [docs](./docs), [clip](./media/clip.mp4), [shot](./shot.png), [photo](file:///C:/Users/me/bato.jpg), [notes](file:///fixture-root/notes.md), [locked](./locked)." }}
         instanceId={id} sessionId="ses_link" onRendered={() => { renderCount++ }} />
     </div>
     <div id="sub-root">
@@ -142,6 +133,5 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
   pending: () => Boolean(rejectPending),
   rejectPending: () => rejectPending?.(),
   alert: () => alertDialogState(),
-  isFolder: (selector: string) => { const anchor = document.querySelector(selector); return Boolean(anchor && isProjectFolderLink(anchor)) },
   errorToasts: () => getToastHistory().filter(item => item.variant === "error").map(item => item.message),
 }

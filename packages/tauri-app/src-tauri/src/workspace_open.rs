@@ -419,6 +419,79 @@ fn platform_launch_path(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+fn open_default(selected: &Path, launch_path: &Path, launch_cwd: &Path) -> Result<(), String> {
+    let mode = default_open_mode(selected)?;
+    #[cfg(windows)]
+    if mode != DefaultOpenMode::Open {
+        let system_root = std::env::var_os("SystemRoot")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| r"C:\Windows".into());
+        let powershell = system_root.join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let rundll32 = system_root.join("System32/rundll32.exe");
+        let escaped = launch_path.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "$ErrorActionPreference='Stop'; Start-Process -FilePath '{escaped}' -Verb Edit"
+        );
+        let mut candidates = Vec::new();
+        if mode == DefaultOpenMode::Edit {
+            candidates.push(LaunchCandidate {
+                command: powershell,
+                args: vec![
+                    "-NoProfile".into(),
+                    "-NonInteractive".into(),
+                    "-EncodedCommand".into(),
+                    encode_powershell_script(&script),
+                ],
+                pass_path: false,
+                wait_for_exit: true,
+                verify_start: false,
+            });
+        }
+        candidates.push(LaunchCandidate {
+            command: rundll32,
+            args: vec!["shell32.dll,OpenAs_RunDLL".into()],
+            pass_path: true,
+            wait_for_exit: false,
+            verify_start: true,
+        });
+        return launch_first(candidates, launch_path, launch_cwd);
+    }
+    #[cfg(target_os = "macos")]
+    let candidates = vec![LaunchCandidate {
+        command: "/usr/bin/open".into(),
+        args: Vec::new(),
+        pass_path: true,
+        wait_for_exit: true,
+        verify_start: false,
+    }];
+    #[cfg(windows)]
+    let candidates = vec![LaunchCandidate {
+        command: "explorer.exe".into(),
+        args: Vec::new(),
+        pass_path: true,
+        wait_for_exit: false,
+        verify_start: false,
+    }];
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    let candidates = vec![
+        LaunchCandidate {
+            command: "xdg-open".into(),
+            args: Vec::new(),
+            pass_path: true,
+            wait_for_exit: false,
+            verify_start: true,
+        },
+        LaunchCandidate {
+            command: "gio".into(),
+            args: vec!["open".into()],
+            pass_path: true,
+            wait_for_exit: false,
+            verify_start: true,
+        },
+    ];
+    launch_first(candidates, launch_path, launch_cwd)
+}
+
 fn open_workspace_target_impl(
     manager: &CliProcessManager,
     target: String,
@@ -439,78 +512,7 @@ fn open_workspace_target_impl(
     let launch_cwd = platform_launch_path(&cwd);
 
     match target.as_str() {
-        "default" => {
-            let mode = default_open_mode(&selected)?;
-            #[cfg(windows)]
-            if mode != DefaultOpenMode::Open {
-                let system_root = std::env::var_os("SystemRoot")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| r"C:\Windows".into());
-                let powershell = system_root.join("System32/WindowsPowerShell/v1.0/powershell.exe");
-                let rundll32 = system_root.join("System32/rundll32.exe");
-                let escaped = launch_path.to_string_lossy().replace('\'', "''");
-                let script = format!(
-                    "$ErrorActionPreference='Stop'; Start-Process -FilePath '{escaped}' -Verb Edit"
-                );
-                let mut candidates = Vec::new();
-                if mode == DefaultOpenMode::Edit {
-                    candidates.push(LaunchCandidate {
-                        command: powershell,
-                        args: vec![
-                            "-NoProfile".into(),
-                            "-NonInteractive".into(),
-                            "-EncodedCommand".into(),
-                            encode_powershell_script(&script),
-                        ],
-                        pass_path: false,
-                        wait_for_exit: true,
-                        verify_start: false,
-                    });
-                }
-                candidates.push(LaunchCandidate {
-                    command: rundll32,
-                    args: vec!["shell32.dll,OpenAs_RunDLL".into()],
-                    pass_path: true,
-                    wait_for_exit: false,
-                    verify_start: true,
-                });
-                return launch_first(candidates, &launch_path, &launch_cwd);
-            }
-            #[cfg(target_os = "macos")]
-            let candidates = vec![LaunchCandidate {
-                command: "/usr/bin/open".into(),
-                args: Vec::new(),
-                pass_path: true,
-                wait_for_exit: true,
-                verify_start: false,
-            }];
-            #[cfg(windows)]
-            let candidates = vec![LaunchCandidate {
-                command: "explorer.exe".into(),
-                args: Vec::new(),
-                pass_path: true,
-                wait_for_exit: false,
-                verify_start: false,
-            }];
-            #[cfg(all(not(windows), not(target_os = "macos")))]
-            let candidates = vec![
-                LaunchCandidate {
-                    command: "xdg-open".into(),
-                    args: Vec::new(),
-                    pass_path: true,
-                    wait_for_exit: false,
-                    verify_start: true,
-                },
-                LaunchCandidate {
-                    command: "gio".into(),
-                    args: vec!["open".into()],
-                    pass_path: true,
-                    wait_for_exit: false,
-                    verify_start: true,
-                },
-            ];
-            launch_first(candidates, &launch_path, &launch_cwd)
-        }
+        "default" => open_default(&selected, &launch_path, &launch_cwd),
         "reveal" => {
             #[cfg(target_os = "macos")]
             let candidates = vec![LaunchCandidate {
@@ -567,16 +569,7 @@ fn open_workspace_target_impl(
     }
 }
 
-#[tauri::command]
-pub async fn open_workspace_target(
-    webview: tauri::Webview,
-    state: State<'_, AppState>,
-    target: String,
-    instance_id: String,
-    worktree_slug: String,
-    path: Option<String>,
-    editor: Option<String>,
-) -> Result<(), String> {
+fn require_local_window(webview: &tauri::Webview, state: &AppState) -> Result<(), String> {
     crate::identity::local_window_id(webview.label())?;
     let config = state
         .manager
@@ -587,13 +580,96 @@ pub async fn open_workspace_target(
     if current.origin() != expected.origin() {
         return Err("Workspace open requests require the local CodeNomad origin".into());
     }
+    Ok(())
+}
 
+#[tauri::command]
+pub async fn open_workspace_target(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    target: String,
+    instance_id: String,
+    worktree_slug: String,
+    path: Option<String>,
+    editor: Option<String>,
+) -> Result<(), String> {
+    require_local_window(&webview, &state)?;
     let manager = state.manager.clone();
     tauri::async_runtime::spawn_blocking(move || {
         open_workspace_target_impl(&manager, target, instance_id, worktree_slug, path, editor)
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Opens an absolute local `path` with the system: a folder in the file
+/// manager, a file with its default application under `default_open_mode`'s
+/// protections. With `unless_text`, `false` and nothing opened when `path` is
+/// missing or a text file, which the caller shows itself. Otherwise a missing
+/// path or a failed opening is an error.
+#[tauri::command]
+pub async fn open_local_path(
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+    path: String,
+    unless_text: bool,
+) -> Result<bool, String> {
+    require_local_window(&webview, &state)?;
+    tauri::async_runtime::spawn_blocking(move || open_local_path_impl(&path, unless_text))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// Whether a file's first bytes read as text, as the file preview decides: no
+/// NUL byte and valid UTF-8 (a character cut at a full sample's end still counts).
+fn looks_like_text(path: &Path) -> bool {
+    use std::io::Read;
+    let mut sample = [0u8; 8192];
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut length = 0;
+    while length < sample.len() {
+        match file.read(&mut sample[length..]) {
+            Ok(0) => break,
+            Ok(read) => length += read,
+            Err(_) => return false,
+        }
+    }
+    let bytes = &sample[..length];
+    if bytes.contains(&0) {
+        return false;
+    }
+    match std::str::from_utf8(bytes) {
+        Ok(_) => true,
+        Err(error) => error.error_len().is_none() && length == sample.len(),
+    }
+}
+fn open_local_path_impl(path: &str, unless_text: bool) -> Result<bool, String> {
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        return Err("Local path must be absolute".into());
+    }
+    let selected = match path.canonicalize() {
+        Ok(selected) => selected,
+        Err(_) if unless_text => return Ok(false),
+        Err(error) => return Err(error.to_string()),
+    };
+    let folder = selected.is_dir();
+    if unless_text && !folder && looks_like_text(&selected) {
+        return Ok(false);
+    }
+    let cwd = if folder {
+        selected.clone()
+    } else {
+        selected.parent().unwrap_or(&selected).to_path_buf()
+    };
+    open_default(
+        &selected,
+        &platform_launch_path(&selected),
+        &platform_launch_path(&cwd),
+    )?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -611,6 +687,31 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn unless_text_leaves_text_and_missing_paths_to_the_caller() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("notes.txt"), "héllo").unwrap();
+        let mut long = "a".repeat(8191).into_bytes();
+        long.extend_from_slice("é".as_bytes());
+        std::fs::write(workspace.path().join("long.txt"), long).unwrap();
+        std::fs::write(workspace.path().join("clip.mp4"), [0, 0, 0, 24, 102, 116]).unwrap();
+        assert!(looks_like_text(&workspace.path().join("notes.txt")));
+        assert!(looks_like_text(&workspace.path().join("long.txt")));
+        assert!(!looks_like_text(&workspace.path().join("clip.mp4")));
+        for name in ["notes.txt", "missing"] {
+            let path = workspace.path().join(name);
+            assert_eq!(
+                open_local_path_impl(path.to_str().unwrap(), true),
+                Ok(false),
+                "{name}"
+            );
+        }
+        assert!(
+            open_local_path_impl(workspace.path().join("missing").to_str().unwrap(), false)
+                .is_err()
+        );
+        assert!(open_local_path_impl("relative", false).is_err());
+    }
     #[test]
     fn edits_windows_scripts_and_rejects_executable_default_open_targets() {
         let workspace = tempfile::tempdir().unwrap();

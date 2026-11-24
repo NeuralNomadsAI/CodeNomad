@@ -73,8 +73,8 @@ Taslaklar paylaşılan OpenCode mesajları değil, istemci çalışma durumudur.
 1. Aracı yanıtları proje dosyalarına göreli ve mutlak yollarla bağlantı verir.
 2. Düz metin olarak yazılan bir yol da, sohbetin worktree'sinin dosyayı içerdiği bilindiğinde bağlantı olur; var olmayan yollar düz metin olarak kalır.
 3. Düz bir tıklama, bağlantılı dosyayı sohbetin worktree'sinden okuyarak dosya önizlemesinde açar.
-4. Masaüstü uygulamasında, bu bilgisayardaki bir proje için worktree'deki bir klasöre giden bağlantı veya düz metin yol onu dosya yöneticinizde açar; açılamazsa bir hata görünür.
-5. Değiştirici tıklamalar (Ctrl/⌘, Shift, orta tıklama) ve oturumun worktree'si dışındaki bağlantılar normal bağlantı davranışını korur.
+4. Masaüstü uygulamasında, bu bilgisayardaki bir proje için dosya önizlemesi gösterebildiği metin dosyalarını ve görselleri açar. Klasörler, diğer dosyalar (videolar, PDF'ler…), worktree dışındaki yollar ve `file:` bağlantıları, Ctrl/⌘ tıklama ve orta tıklamada her zaman olduğu gibi sisteminizle açılır; açılamazlarsa bir hata görünür.
+5. Diğer durumlarda değiştirici tıklamalar (Ctrl/⌘, Shift, orta tıklama) ve oturumun worktree'si dışındaki bağlantılar normal bağlantı davranışını korur.
 
 ## Komutlar ve Shell modu {#commands-shell}
 

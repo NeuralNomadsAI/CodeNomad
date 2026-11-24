@@ -59,6 +59,7 @@
     "allow-check-desktop-update",
     "allow-take-desktop-update-failure",
     "allow-open-workspace-target",
+    "allow-open-local-path",
     "allow-set-workspace-menu-enabled",
     "allow-browser-target-register",
     "allow-browser-target-ownership",
