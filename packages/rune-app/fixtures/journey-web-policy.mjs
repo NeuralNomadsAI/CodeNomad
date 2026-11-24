@@ -41,6 +41,8 @@ export async function guardJourney(context,{origin,project,web,refused}){
         if(req.method()==='POST'&&/^\/workspaces\/[^/]+\/instance\/api\/session$/.test(url.pathname)){
           const response=await route.fetch({maxRedirects:0,timeout:20000})
           assert.equal(new URL(response.url()).origin,origin)
+          const loc=response.headers()['location']
+          if(loc)assert.equal(new URL(loc,origin).origin,origin,'Cross-origin redirect forbidden')
           if(response.ok()){
             const bytes=await response.body()
             assert(bytes.length<64*1024,'Bounded session creation response required')
@@ -55,6 +57,8 @@ export async function guardJourney(context,{origin,project,web,refused}){
         if(req.method()==='GET'&&url.pathname.endsWith('/files/preview')){
           const response=await route.fetch({maxRedirects:0,timeout:15000})
           assert.equal(new URL(response.url()).origin,origin)
+          const loc=response.headers()['location']
+          if(loc)assert.equal(new URL(loc,origin).origin,origin,'Cross-origin redirect forbidden')
           const bytes=await response.body()
           assert(bytes.length<64*1024,'Bounded fixture file preview required')
           preview={status:response.status(),file:JSON.parse(bytes)}

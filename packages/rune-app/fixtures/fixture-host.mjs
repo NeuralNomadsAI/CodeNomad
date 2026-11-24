@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import {setTimeout as delay} from 'node:timers/promises'
-import {request} from 'playwright'
 import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {redactSecrets,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {redactSecrets,resolveWorktreePackage,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+
+const {request}=await import(resolveWorktreePackage('playwright'))
 
 const activeChildren=new Set()
 const signalAborts=new Set()

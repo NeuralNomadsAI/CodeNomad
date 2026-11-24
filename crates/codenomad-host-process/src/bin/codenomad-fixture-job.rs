@@ -52,9 +52,42 @@ impl Drop for ParentWatch {
     }
 }
 
+#[cfg(unix)]
+struct ParentWatch(u32);
+
+#[cfg(unix)]
+impl ParentWatch {
+    fn open() -> io::Result<Option<Self>> {
+        let Some(raw) = std::env::var_os("CODENOMAD_FIXTURE_PARENT_PID") else {
+            return Ok(None);
+        };
+        let pid: u32 = raw
+            .to_string_lossy()
+            .parse()
+            .map_err(|_| io::Error::other("Invalid CODENOMAD_FIXTURE_PARENT_PID"))?;
+        if pid == 0 {
+            return Err(io::Error::other("Invalid CODENOMAD_FIXTURE_PARENT_PID"));
+        }
+        let watch = Self(pid);
+        if watch.exited() {
+            return Err(io::Error::other(
+                "Fixture parent process exited before job launch",
+            ));
+        }
+        Ok(Some(watch))
+    }
+
+    fn exited(&self) -> bool {
+        // SAFETY: getppid and kill(pid, 0) only query process liveness.
+        unsafe { libc::getppid() as u32 != self.0 || libc::kill(self.0 as libc::pid_t, 0) != 0 }
+    }
+}
+
 fn run() -> io::Result<i32> {
-    #[cfg(windows)]
     let parent = ParentWatch::open()?;
+    // SAFETY: single-threaded process before spawning the child; clears the internal
+    // supervisor variable so inherited Windows/Unix child environments never receive it.
+    unsafe { std::env::remove_var("CODENOMAD_FIXTURE_PARENT_PID") };
     let mut args = std::env::args_os().skip(1);
     let program = args
         .next()
@@ -74,7 +107,6 @@ fn run() -> io::Result<i32> {
         if let Some(status) = child.try_wait()? {
             break Some(status);
         }
-        #[cfg(windows)]
         if parent.as_ref().is_some_and(ParentWatch::exited) {
             break None;
         }

@@ -7,27 +7,33 @@ import { promisify } from "node:util"
 import { isLocalAbsolutePath, resolveLocalExecutable } from "./native-fixture-http.mjs"
 
 const jobs = new WeakMap()
+
+export function fixtureJobExecutable() {
+  const root = fileURLToPath(new URL("../", import.meta.url))
+  const suffix = process.platform === "win32" ? ".exe" : ""
+  const rawExe = process.env.CODENOMAD_FIXTURE_JOB_EXE
+    || path.resolve(root, process.env.CARGO_TARGET_DIR || "target", "debug", `codenomad-fixture-job${suffix}`)
+  try {
+    if (!isLocalAbsolutePath(rawExe)) throw new Error("Expected an absolute local path")
+    const exe = resolveLocalExecutable(rawExe, "fixture job launcher")
+    accessSync(exe, constants.X_OK)
+    return exe
+  } catch (cause) {
+    throw new Error("Build `cargo build -p codenomad-host-process --bin codenomad-fixture-job` or set CODENOMAD_FIXTURE_JOB_EXE", { cause })
+  }
+}
+
 export function spawnFixtureChild(command, args, options) {
   if (typeof command === "string" && (path.isAbsolute(command) || /^[\\/]{2}/.test(command))) {
     command = resolveLocalExecutable(command, "fixture executable")
   }
-  if (process.platform !== "win32") return spawn(command, args, options)
-  const root = fileURLToPath(new URL("../", import.meta.url))
-  const rawExe = process.env.CODENOMAD_FIXTURE_JOB_EXE
-    || path.resolve(root, process.env.CARGO_TARGET_DIR || "target", "debug", "codenomad-fixture-job.exe")
-  let exe
-  try {
-    if (!isLocalAbsolutePath(rawExe)) throw new Error("Expected an absolute local path")
-    exe = resolveLocalExecutable(rawExe, "fixture job launcher")
-    accessSync(exe, constants.X_OK)
-  } catch (cause) {
-    throw new Error("Build `cargo build -p codenomad-host-process --bin codenomad-fixture-job` or set CODENOMAD_FIXTURE_JOB_EXE", { cause })
-  }
+  const exe = fixtureJobExecutable()
   if (options?.shell || options?.windowsVerbatimArguments || options?.stdio?.includes("ipc")) {
-    throw new Error("The Windows fixture launcher accepts executable arguments and standard streams only")
+    throw new Error("The fixture launcher accepts executable arguments and standard streams only")
   }
   const env = { ...(options?.env ?? process.env), CODENOMAD_FIXTURE_PARENT_PID: String(process.pid) }
-  const child = spawn(exe, [command, ...args], { ...options, env, windowsHide: true })
+  const { detached: _detached, ...restOptions } = options ?? {}
+  const child = spawn(exe, [command, ...args], { ...restOptions, detached: false, env, windowsHide: true })
   if (!child.stderr) {
     jobs.set(child, Promise.resolve(undefined))
     return child
@@ -39,9 +45,10 @@ export function spawnFixtureChild(command, args, options) {
       resolve(pid)
     }
     const accept = chunk => {
-      line = (line + chunk).slice(-16384)
-      const match = /^CODENOMAD_FIXTURE_PID=(\d+)\r?\n/m.exec(line)
-      if (match) finish(Number(match[1]))
+      const candidate = line + chunk
+      const match = /^CODENOMAD_FIXTURE_PID=(\d+)\r?\n/m.exec(candidate)
+      if (match) { finish(Number(match[1])); return }
+      line = candidate.slice(-16384)
     }
     child.stderr.on("data", accept)
     child.once("close", () => finish(undefined))

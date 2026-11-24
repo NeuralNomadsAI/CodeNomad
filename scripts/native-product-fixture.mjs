@@ -5,9 +5,11 @@ import { createServer } from "node:http"
 import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { OpenCode } from "@opencode/client"
-import { Service } from "@opencode/client/service"
+import { resolveWorktreePackage } from "./native-fixture-http.mjs"
 import { fixtureChildPid, spawnFixtureChild, stopFixtureChild } from "./native-fixture-guards.mjs"
+
+const { OpenCode } = await import(resolveWorktreePackage("@opencode/client"))
+const { Service } = await import(resolveWorktreePackage("@opencode/client/service"))
 
 /** The resolved `opencode` folder fixtures are created in. With `projectConfig` the daemon reads
  * every ancestor's `.opencode/`, so outside CI it must lie outside the user's home. */

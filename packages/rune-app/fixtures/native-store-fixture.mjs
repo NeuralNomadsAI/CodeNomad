@@ -10,7 +10,7 @@ import {clientBinary,serverBinary,requireTestSupport} from './fixture-binaries.m
 import {preparePruning} from '../../../scripts/perf/pruning.mjs'
 import {privatePath} from '../../../scripts/perf/isolation.mjs'
 import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {assertNoSystemOpenCodeConfig,attestNative} from './live-access.mjs'
+import {assertNoSystemOpenCodeConfig,attestNative,ensurePrivateGitRepo} from './live-access.mjs'
 import {fixtureFetch,fixtureHttpAgent,redactSecrets,relayTarget,resolveLocalExecutable,resolveWorktreePackage,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {registerFixtureChild,rustOrigin} from './fixture-host.mjs'
 
@@ -92,6 +92,7 @@ async function assertExport(id,messages){
   return stored
 }
 try{
+  await ensurePrivateGitRepo(project,root,env)
   pruning=await preparePruning(root,config)
   const daemon=launch('opencode',opencodeExecutable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],env)
   const endpoint=await origin(daemon)
@@ -187,7 +188,7 @@ finally{
     if(!proof.rustGraceful)errors.push(Error('Owned Rust server did not exit cleanly after shutdown'))
   }
   try{await pruning?.close()}catch(error){errors.push(error)}
-  for(const entry of children.slice().reverse())if(entry.child.exitCode===null&&entry.child.signalCode===null)
+  for(const entry of children.slice().reverse())if(group||entry.child.exitCode===null&&entry.child.signalCode===null)
     try{await stopFixtureChild(entry.child,entry.stopped,1_000,2_000,{group,startedBy:entry.startedBy})}catch(error){errors.push(error)}
   for(const proxy of proxies){proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve))}
   const secrets=[env.OPENCODE_SERVER_PASSWORD,rustPassword].filter(Boolean)

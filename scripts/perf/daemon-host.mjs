@@ -26,11 +26,14 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
     OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
     OPENCODE_DISABLE_AUTOUPDATE: "true", OPENCODE_SERVER_PASSWORD: password,
-    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: path.join(root, "empty.gitconfig"), GIT_TEMPLATE_DIR: "",
-    GIT_CEILING_DIRECTORIES: root,
   })
   await mkdir(env.OPENCODE_CONFIG_DIR)
-  const git = (...args) => execFileSync("git", ["-c", "core.hooksPath=", ...args], { cwd: project, env, windowsHide: true, timeout: 30_000 })
+  const gitEnv = {
+    ...env,
+    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: path.join(root, "empty.gitconfig"),
+    GIT_TEMPLATE_DIR: "", GIT_CEILING_DIRECTORIES: root,
+  }
+  const git = (...args) => execFileSync("git", ["-c", "core.hooksPath=", ...args], { cwd: project, env: gitEnv, windowsHide: true, timeout: 30_000 })
   git("init", "-q", "--template=")
   git("add", ".")
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@invalid", "commit", "-qm", "fixture")

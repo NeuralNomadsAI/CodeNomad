@@ -119,6 +119,7 @@ export async function stopWindowsProcessTree(rootPid: number, rootStartedBy: Dat
   if (listing === undefined) return 0
   const targets = windowsTreeStopTargets(rootPid, parseWindowsProcessRows(listing), rootStartedBy)
   if (targets.length === 0 || deadline - Date.now() <= 0) return 0
-  await powershell(windowsStopScript([...targets].reverse()), deadline - Date.now())
+  const stopped = await powershell(windowsStopScript([...targets].reverse()), deadline - Date.now())
+  if (stopped === undefined) return 0
   return targets.length
 }

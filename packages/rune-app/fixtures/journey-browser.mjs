@@ -18,7 +18,7 @@ export async function journeyBrowser(host, web, report, executablePath){
   try{
     storageState=await http.storageState()
   }finally{await http.dispose()}
-  const owned=await launchOwnedChromium({executablePath,profile,env:assertPrivateChild(env)})
+  const owned=await launchOwnedChromium({executablePath,profile,env:assertPrivateChild(env),origin})
   const {browser}=owned
   report.chromiumPID=owned.pid
   try{

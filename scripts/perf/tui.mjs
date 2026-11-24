@@ -1,4 +1,5 @@
 import { createRequire } from "node:module"
+import { fixtureJobExecutable } from "../native-fixture-guards.mjs"
 import { withoutFixtureProxy } from "../native-fixture-http.mjs"
 import { registerFixtureChild } from "../../packages/rune-app/fixtures/fixture-host.mjs"
 import { MARKER, now } from "./lib.mjs"
@@ -9,9 +10,14 @@ export async function withTui(cli, daemon, session, run) {
   const pty = require("./tools/node_modules/@lydell/node-pty")
   const { Terminal } = require("./tools/node_modules/@xterm/headless")
   const cols = 200, rows = 60
-  const p = pty.spawn(cli, ["--server", daemon.url, "--session", session, daemon.project], {
+  const p = pty.spawn(fixtureJobExecutable(), [cli, "--server", daemon.url, "--session", session, daemon.project], {
     name: "xterm-256color", cols, rows, cwd: daemon.project,
-    env: withoutFixtureProxy({ ...daemon.env, TERM: "xterm-256color", COLORTERM: "truecolor" }),
+    env: withoutFixtureProxy({
+      ...daemon.env,
+      CODENOMAD_FIXTURE_PARENT_PID: String(process.pid),
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+    }),
   })
   const exited = new Promise(resolve => p.onExit(resolve))
   const untrack = registerFixtureChild(() => {

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import {execFile} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
-import {copyFile, lstat, mkdir, open, readdir, readFile, readlink, realpath, rm, unlink, writeFile} from 'node:fs/promises'
+import {existsSync} from 'node:fs'
+import {copyFile, lstat, mkdir, open, readdir, readFile, realpath, rm, unlink, writeFile} from 'node:fs/promises'
 import {createServer} from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -10,8 +11,8 @@ import {promisify} from 'node:util'
 import {privatePath, runDirectory} from '../../../scripts/perf/isolation.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {launchFixture,onFixtureSignal} from './fixture-host.mjs'
-import {fixtureFetch,fixtureTarget,isLocalAbsolutePath,redactSecrets,resolveLocalExecutable} from '../../../scripts/native-fixture-http.mjs'
-export {fixtureTarget,isLocalAbsolutePath}
+import {createAttestedFetch,fixtureFetch,fixtureTarget,isLocalAbsolutePath,redactSecrets,resolveLocalExecutable,verifyLoopbackListenerOwner} from '../../../scripts/native-fixture-http.mjs'
+export {fixtureTarget,isLocalAbsolutePath,verifyLoopbackListenerOwner}
 
 export const args=process.argv.slice(2).filter((arg,i,all)=>arg!=='--opencode'&&all[i-1]!=='--opencode')
 const marker='.rune-private-opencode'
@@ -25,43 +26,12 @@ export function requirePrivateCli(argv=process.argv.slice(2)){
   return cli
 }
 
-export async function verifyLoopbackListenerOwner(port,pid){
-  assert(Number.isSafeInteger(port)&&port>0&&port<=65535,'Invalid loopback port')
-  assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID')
-  if(process.platform==='win32'){
-    const {stdout}=await execFileAsync('netstat.exe',['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
-    const owners=new Set()
-    for(const line of stdout.split(/\r?\n/)){
-      const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+0\.0\.0\.0:0\s+\S+\s+(\d+)\s*$/i.exec(line)
-      if(match&&Number(match[1])===port)owners.add(Number(match[2]))
-    }
-    assert(owners.size===1&&owners.has(pid),`Loopback port 127.0.0.1:${port} is not owned by fixture PID ${pid}; ${forbidden}`)
-    return
-  }
-  if(process.platform==='linux'){
-    const target=`0100007F:${port.toString(16).toUpperCase().padStart(4,'0')}`
-    const table=await readFile('/proc/net/tcp','utf8')
-    const inodes=new Set()
-    for(const line of table.split('\n').slice(1)){
-      const cols=line.trim().split(/\s+/)
-      if(cols[1]===target&&cols[3]==='0A'&&cols[9])inodes.add(`socket:[${cols[9]}]`)
-    }
-    assert.equal(inodes.size,1,`Loopback port 127.0.0.1:${port} must have a single listening socket; ${forbidden}`)
-    const [inode]=inodes
-    const fds=await readdir(`/proc/${pid}/fd`)
-    for(const fd of fds){
-      try{if(await readlink(`/proc/${pid}/fd/${fd}`)===inode)return}catch{}
-    }
-    throw Error(`Loopback port 127.0.0.1:${port} is not owned by fixture PID ${pid}; ${forbidden}`)
-  }
-  const {stdout}=await execFileAsync('lsof',['-nP',`-iTCP:${port}`,'-sTCP:LISTEN','-Fpn'],{timeout:10000})
-  const owners=new Set()
-  let currentPid=null
-  for(const line of stdout.split(/\r?\n/)){
-    if(line.startsWith('p'))currentPid=Number(line.slice(1))
-    else if(line.startsWith('n')&&line.slice(1)===`127.0.0.1:${port}`&&Number.isSafeInteger(currentPid))owners.add(currentPid)
-  }
-  assert(owners.size===1&&owners.has(pid),`Loopback port 127.0.0.1:${port} is not owned by fixture PID ${pid}; ${forbidden}`)
+export async function ensurePrivateGitRepo(project,profile,env){
+  if(existsSync(path.join(project,'.git')))return
+  await execFileAsync('git',['-c','core.hooksPath=','init','--quiet','--template=',project],{
+    windowsHide:true,timeout:30000,
+    env:{...env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig'),GIT_TEMPLATE_DIR:'',GIT_CEILING_DIRECTORIES:profile},
+  })
 }
 
 export async function assertNoSystemOpenCodeConfig(){
@@ -90,9 +60,16 @@ export async function attestNative(origin,child,authorization,request=fixtureFet
   assert(endpoint.protocol==='http:'&&endpoint.hostname==='127.0.0.1'&&endpoint.pathname==='/'&&
     !endpoint.search&&!endpoint.hash&&!endpoint.username&&!endpoint.password&&endpoint.port&&endpoint.port!=='0',
     `Expected the fixture child's loopback listener; ${forbidden}`)
-  const alive=()=>assert(child.pid&&child.exitCode===null&&child.signalCode===null,'Private OpenCode has exited')
+  const liveTransport=request===fixtureFetch
+  const alive=()=>{
+    assert(child.pid&&child.exitCode===null&&child.signalCode===null,'Private OpenCode has exited')
+    if(liveTransport){
+      try{process.kill(pid,0)}catch{throw Error('Private OpenCode process is no longer alive')}
+    }
+  }
   assert(Number.isSafeInteger(pid)&&pid>0,`Fixture child did not report its PID; ${forbidden}`)
   alive()
+  const transport=liveTransport?createAttestedFetch(endpoint.origin,Number(endpoint.port),pid,verifyOwner):request
   const send=async(route,init={})=>{
     const url=fixtureTarget(route instanceof Request?route.url:route,endpoint)
     assert(url,`Fixture cannot address another OpenCode endpoint; ${forbidden}`)
@@ -101,7 +78,7 @@ export async function attestNative(origin,child,authorization,request=fixtureFet
     headers.set('authorization',authorization)
     const signal=init.signal??(route instanceof Request?route.signal:null)
     const timeout=AbortSignal.timeout(30000)
-    return request(route instanceof Request?route:url,{...init,headers,redirect:'error',
+    return transport(route instanceof Request?route:url,{...init,headers,redirect:'error',
       signal:url.pathname==='/api/event'&&signal?signal:signal?AbortSignal.any([signal,timeout]):timeout})
   }
   const read=async(route,init={})=>{
@@ -118,13 +95,48 @@ export async function attestNative(origin,child,authorization,request=fixtureFet
     assert.equal(info.pid,pid,'OpenCode PID differs from the fixture child')
     await verifyOwner(Number(endpoint.port),pid)
     alive()
-  }catch(cause){throw Error(`Could not attest the private OpenCode process; ${forbidden}: ${cause.message}`,{cause})}
-  return {read,send}
+  }catch(cause){
+    await transport.close?.()
+    throw Error(`Could not attest the private OpenCode process; ${forbidden}: ${cause.message}`,{cause})
+  }
+  return {read,send,close:()=>transport.close?.()??Promise.resolve()}
 }
 
 const forbiddenProfileEntries=new Set(['.opencode','opencode.json','opencode.jsonc','.claude','.agents','programdata'])
 const forbiddenGitEntries=new Set(['commondir','gitdir','alternates','config.worktree','worktrees'])
-const dangerousGitConfig=/^\s*(?:hooksPath|fsmonitor|sshCommand|templateDir|credential|filter|diff|merge|alias|pager|editor|uploadpack|receivepack|worktree|bare)\s*=|^\s*\[(?:include|includeIf|url\b|credential\b|filter\b|alias\b|extensions\b)/im
+const allowedGitSections=new Set(['core','user','init'])
+const allowedGitKeys=new Map([
+  ['core',new Set(['repositoryformatversion','filemode','bare','logallrefupdates','symlinks','ignorecase','precomposeunicode','autocrlf','safecrlf','eol','quotepath'])],
+  ['user',new Set(['name','email'])],
+  ['init',new Set(['defaultbranch'])],
+])
+
+function assertSafeGitConfig(text){
+  let section=null
+  for(const rawLine of text.split(/\r?\n/)){
+    const line=rawLine.trim()
+    if(!line||line.startsWith('#')||line.startsWith(';'))continue
+    if(line.startsWith('[')){
+      const end=line.indexOf(']')
+      assert(end>1,'Private fixture Git config contains a malformed section header')
+      const header=line.slice(1,end).trim().toLowerCase()
+      const trailing=line.slice(end+1).trim()
+      assert(!trailing||trailing.startsWith('#')||trailing.startsWith(';'),
+        'Private fixture Git config contains an inline directive after section header')
+      assert(allowedGitSections.has(header),`Private fixture Git config contains a forbidden section: [${header}]`)
+      section=header
+      continue
+    }
+    const eq=line.indexOf('=')
+    assert(section&&eq>0,'Private fixture Git config contains a forbidden directive')
+    const key=line.slice(0,eq).trim().toLowerCase()
+    const value=line.slice(eq+1).split(/[;#]/)[0].trim().toLowerCase()
+    assert(allowedGitKeys.get(section)?.has(key),`Private fixture Git config contains a forbidden key: ${section}.${key}`)
+    if(section==='core'&&key==='bare'){
+      assert.equal(value,'false','Private fixture Git config cannot enable core.bare')
+    }
+  }
+}
 
 export async function validatePrivateTree(profile){
   let count=0
@@ -148,7 +160,7 @@ export async function validatePrivateTree(profile){
         throw Error(`Private fixture profile contains a forbidden Git pointer: ${rel}`)
       }
       if(parts[0]==='project'&&parts[1]==='.git'){
-        if(parts.length>=3&&forbiddenGitEntries.has(parts[2])){
+        if(parts.length>=3&&parts.slice(2).some(part=>forbiddenGitEntries.has(part))){
           throw Error(`Private fixture profile contains a forbidden Git redirection: ${rel}`)
         }
         if(parts[2]==='hooks'&&parts.length===4&&!base.endsWith('.sample')){
@@ -160,7 +172,7 @@ export async function validatePrivateTree(profile){
       for(const name of await readdir(file))await visit(path.join(file,name),depth+1)
     }else if(rel.toLowerCase().startsWith(path.join('project','.git','config').toLowerCase())){
       const text=await readFile(file,'utf8')
-      assert(!dangerousGitConfig.test(text),'Private fixture Git config contains a forbidden directive')
+      assertSafeGitConfig(text)
     }
   }
   await visit(profile,0)
@@ -243,7 +255,7 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
   assert.equal(await readFile(path.join(profile,marker),'utf8'),'Rune private OpenCode v1\n')
   const lease=path.join(profile,'running.lock')
   const lock=await open(lease,'wx')
-  let daemon,model,plugin,password,executable,config,runtime,aborted=false
+  let daemon,model,plugin,password,executable,config,runtime,attested,aborted=false,executionFinished=false
   const checkActive=()=>{if(aborted)throw Error('Private fixture interrupted during startup')}
   const owned=name=>{
     const expected=path.join(profile,name)
@@ -253,7 +265,11 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
   let cleaned
   const cleanup=()=>{
     cleaned??=(async()=>{
-      try{try{await plugin?.close()}finally{await daemon?.stop()}}finally{
+      try{
+        try{await attested?.close()}finally{
+          try{await plugin?.close()}finally{await daemon?.stop()}
+        }
+      }finally{
         model?.closeAllConnections()
         if(model)await new Promise(resolve=>model.close(resolve))
         try{
@@ -268,7 +284,8 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
           }
         } finally {
           await lock.close()
-          if(!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null)await unlink(lease)
+          const daemonStopped=!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null
+          if(executionFinished&&daemonStopped)await unlink(lease)
         }
       }
     })()
@@ -309,24 +326,31 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
         OPENCODE_CONFIG_CONTENT:JSON.stringify(configContent),
       }
       await mkdir(programData,{recursive:true})
+      await ensurePrivateGitRepo(project,profile,runtimeEnv)
       checkActive()
       if(pruning){const {preparePruning}=await import('../../../scripts/perf/pruning.mjs');plugin=await preparePruning(profile,config)}
       checkActive()
       daemon=launchFixture(executable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env,redact:[password]})
       const origin=await daemon.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1])
       checkActive()
-      const pid=await daemon.pid()
-      const {read,send}=await attestNative(origin,daemon.child,authorization,fixtureFetch,pid)
+      const pid=await Promise.race([
+        daemon.pid(),
+        delay(10000,undefined,{ref:false}).then(()=>{throw Error('Timed out reading fixture child PID')}),
+      ])
+      attested=await attestNative(origin,daemon.child,authorization,fixtureFetch,pid)
+      const {read,send}=attested
       checkActive()
       await plugin?.activate({project,url:origin,authorization,send},()=>assert.equal(daemon.child.exitCode,null))
       checkActive()
       return await run({profile,project,origin:`${origin}/`,password,read,send,env,runtimeEnv,pid})
     } finally {
+      executionFinished=true
       await cleanup()
     }
   })()
   const untrackSignal=onFixtureSignal(async()=>{
-    await Promise.race([execution.catch(()=>{}),delay(3000,undefined,{ref:false})])
+    await daemon?.stop().catch(()=>{})
+    await Promise.race([execution.catch(()=>{}),delay(8000,undefined,{ref:false})])
     await cleanup()
   },()=>{aborted=true})
   try{return await execution}finally{untrackSignal()}

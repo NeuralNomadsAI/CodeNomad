@@ -79,13 +79,19 @@ test('sseReader bounds silent opens and cancels an idle open SSE body cleanly',{
   const sendSilent=(route,init)=>fixtureFetch(new URL(route,silent.origin),init)
   await assert.rejects(sseReader(sendSilent,()=>{},250),/AbortError|SSE open timed out/)
 
-  let received=0
-  const idle=await listen(t,(_req,res)=>{
+  let received=0,gotFrame,serverClosed
+  const firstFrame=new Promise(resolve=>{gotFrame=resolve})
+  const closed=new Promise(resolve=>{serverClosed=resolve})
+  const idle=await listen(t,(req,res)=>{
+    req.on('close',serverClosed)
+    res.on('close',serverClosed)
     res.writeHead(200,{'content-type':'text/event-stream'})
     res.write('data: {"type":"server.connected"}\n\n')
   })
   const sendIdle=(route,init)=>fixtureFetch(new URL(route,idle.origin),init)
-  const stop=await sseReader(sendIdle,()=>{received++},5000)
+  const stop=await sseReader(sendIdle,()=>{received++;gotFrame()},5000)
+  await Promise.race([firstFrame,new Promise((_,reject)=>setTimeout(()=>reject(Error('missing SSE frame')),3000))])
+  assert.equal(received,1)
   await stop()
-  assert(received<=1)
+  await Promise.race([closed,new Promise((_,reject)=>setTimeout(()=>reject(Error('SSE socket did not close on server')),3000))])
 })

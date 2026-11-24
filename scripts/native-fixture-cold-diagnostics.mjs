@@ -5,6 +5,7 @@ import path from "node:path"
 import { createHash } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import { fixtureChildPid, stopFixtureHandle } from "./native-fixture-guards.mjs"
+import { verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 
 const REGISTRATION = 32 * 1024, LOGS = 256 * 1024, OUTPUT = 512 * 1024
@@ -59,7 +60,18 @@ async function runWorker(input, child, onSecrets) {
           try { onSecrets?.(message.credentials); worker.send({ credentialsAccepted: true }, () => {}) }
           catch { resolve(failure("collector-credentials-unavailable")) }
         }
-        else if (message.checkOwner) { if (worker.connected) worker.send({ owned: owned() }, () => {}) }
+        else if (message.checkOwner) {
+          void (async () => {
+            let ok = owned()
+            if (ok) {
+              try {
+                const port = Number(new URL(input.expected.url).port)
+                await verifyLoopbackListenerOwner(port, pid)
+              } catch { ok = false }
+            }
+            if (worker.connected) worker.send({ owned: ok }, () => {})
+          })()
+        }
         else resolve(message)
       })
       worker.send(input, error => { if (error) resolve(failure("collector-unavailable")) })

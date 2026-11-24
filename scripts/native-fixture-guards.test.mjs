@@ -150,6 +150,55 @@ test("Windows mobile enclosing job kills detached browser descendants when the I
   } finally { await stopFixtureChild(worker, stopped) }
 })
 
+test("fixture job terminates child and grandchild when parent dies and hides CODENOMAD_FIXTURE_PARENT_PID", { timeout: 30_000 }, async () => {
+  const guardsUrl = new URL("./native-fixture-guards.mjs", import.meta.url).href
+  const parentScript = `
+    import { spawnFixtureChild, fixtureChildPid } from ${JSON.stringify(guardsUrl)}
+    const child = spawnFixtureChild(process.execPath, ["-e", \`
+      const { spawn } = require("node:child_process")
+      const leaf = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, windowsHide: true, stdio: "ignore" })
+      leaf.once("spawn", () => {
+        console.log(JSON.stringify({ childPid: process.pid, leafPid: leaf.pid, leaked: Boolean(process.env.CODENOMAD_FIXTURE_PARENT_PID) }))
+      })
+      setInterval(() => {}, 1000)
+    \`], { env: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(path|systemroot|windir|cargo_target_dir|codenomad_fixture_job_exe)$/i.test(k))), windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
+    child.stdout.once("data", chunk => {
+      process.stdout.write(chunk)
+    })
+    await fixtureChildPid(child)
+    setInterval(() => {}, 1000)
+  `
+  const parentEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(path|systemroot|windir|cargo_target_dir|codenomad_fixture_job_exe)$/i.test(k)))
+  const parent = spawn(process.execPath, ["--input-type=module", "-e", parentScript], { env: parentEnv, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
+  const parentStopped = once(parent, "close")
+  let childPid, leafPid
+  try {
+    const [data] = await once(parent.stdout, "data", { signal: AbortSignal.timeout(10_000) })
+    const info = JSON.parse(String(data))
+    childPid = info.childPid
+    leafPid = info.leafPid
+    assert.equal(info.leaked, false, "CODENOMAD_FIXTURE_PARENT_PID must not leak to the fixture child")
+    assert.equal(alive(childPid), true)
+    assert.equal(alive(leafPid), true)
+    process.kill(parent.pid, "SIGKILL")
+    await parentStopped
+    const deadline = Date.now() + 5_000
+    while ((alive(childPid) || alive(leafPid)) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    assert.equal(alive(childPid), false, "child must terminate after abrupt parent death")
+    assert.equal(alive(leafPid), false, "grandchild must terminate after abrupt parent death")
+  } finally {
+    if (parent.exitCode === null && parent.signalCode === null) {
+      try { process.kill(parent.pid, "SIGKILL") } catch {}
+      await parentStopped
+    }
+    for (const pid of [leafPid, childPid]) {
+      if (pid && alive(pid)) try { process.kill(pid, "SIGKILL") } catch {}
+    }
+  }
+})
+
 test("Missions native fixtures stop their owned serve with bounded escalation", () => {
   for (const script of ["test-missions-native.mjs", "test-missions-native-family-control.mjs"]) {
     const source = fs.readFileSync(new URL(script, import.meta.url), "utf8")

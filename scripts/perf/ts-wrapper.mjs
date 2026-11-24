@@ -1,5 +1,6 @@
 // Attach the real backend to the owned fixture daemon; never start or stop a service.
 import assert from "node:assert/strict"
+import net from "node:net"
 import { register } from "node:module"
 import { pathToFileURL, fileURLToPath } from "node:url"
 import { privatePath } from "./isolation.mjs"
@@ -26,19 +27,37 @@ OpenCodeCliService.prototype.discover = async () => endpoint
 for (const action of ["ensure", "restart"]) OpenCodeCliService.prototype[action] = async () => { throw Error(`Bench forbids service ${action}`) }
 const entry = new URL("index.js", dist)
 const allowedOrigin = url.origin
+const allowedPort = Number(url.port)
+const originalConnect = net.Socket.prototype.connect
+net.Socket.prototype.connect = function guardedConnect(...args) {
+  let host, port, ipcPath
+  if (Array.isArray(args[0])) args = args[0]
+  if (typeof args[0] === "object" && args[0] !== null) {
+    host = args[0].host ?? args[0].hostname
+    port = Number(args[0].port)
+    ipcPath = args[0].path
+  } else if (typeof args[0] === "string" && Number.isNaN(Number(args[0]))) {
+    ipcPath = args[0]
+  } else {
+    port = Number(args[0])
+    host = typeof args[1] === "string" ? args[1] : undefined
+  }
+  if (ipcPath || port !== allowedPort || (host && host !== "127.0.0.1")) {
+    throw Error(`Benchmark server cannot connect outside ${allowedOrigin}: ${ipcPath ?? `${host ?? "127.0.0.1"}:${port}`}`)
+  }
+  return originalConnect.apply(this, args)
+}
+const originalAgentDispatch = Agent.prototype.dispatch
+Agent.prototype.dispatch = function guardedDispatch(opts, handler) {
+  const origin = typeof opts.origin === "string" ? opts.origin : opts.origin?.origin
+  if (origin !== allowedOrigin) {
+    handler.onError?.(Error(`Benchmark server cannot contact external origin: ${origin}`))
+    return false
+  }
+  return originalAgentDispatch.call(this, opts, handler)
+}
 const innerDispatcher = new Agent()
-setGlobalDispatcher({
-  dispatch(opts, handler) {
-    const origin = typeof opts.origin === "string" ? opts.origin : opts.origin?.origin
-    if (origin !== allowedOrigin) {
-      handler.onError?.(Error(`Benchmark server cannot contact external origin: ${origin}`))
-      return false
-    }
-    return innerDispatcher.dispatch(opts, handler)
-  },
-  close: () => innerDispatcher.close(),
-  destroy: err => innerDispatcher.destroy(err),
-})
+setGlobalDispatcher(innerDispatcher)
 const baseFetch = globalThis.fetch
 globalThis.fetch = (input, init = {}) => {
   const target = new URL(input instanceof Request ? input.url : String(input))

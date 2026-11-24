@@ -5,8 +5,8 @@ import {mkdir, mkdtemp, realpath, rm, writeFile} from 'node:fs/promises'
 import {createServer} from 'node:http'
 import path from 'node:path'
 import {privatePath, runDirectory} from '../../../scripts/perf/isolation.mjs'
-import {redactSecrets} from '../../../scripts/native-fixture-http.mjs'
-import {assertNoSystemOpenCodeConfig} from './live-access.mjs'
+import {fixtureFetch, redactSecrets} from '../../../scripts/native-fixture-http.mjs'
+import {assertNoSystemOpenCodeConfig, attestNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
 
@@ -24,7 +24,7 @@ async function modelServer(project, marker) {
     try {
       assert.equal(req.method,'POST')
       assert.equal(req.url,'/v1/chat/completions')
-      assert.equal(req.headers.authorization,`Bearer ${marker}`)
+      assert(req.headers.authorization===`Bearer ${marker}`,'Unexpected model authorization header')
       let raw=''
       for await(const chunk of req){raw+=chunk;assert(raw.length<4*1024*1024)}
       const {stream,model,messages,tools}=JSON.parse(raw)
@@ -60,7 +60,8 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
   const profile=await mkdtemp(privatePath(path.join(runDirectory,'trial-rune-journey-')))
   const project=path.join(profile,'project')
   const privatePassword=randomUUID(), password=randomUUID(), marker=randomUUID()
-  let native, server, pruning, model
+  let native, server, pruning, model, attested
+  const secrets=[privatePassword,password,marker]
   try{
     await mkdir(project)
     const env=await privateEnvironment(profile)
@@ -99,22 +100,14 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
       npm_config_cache:path.join(profile,'npm-cache'),
       ...ownedNative,
     },ownedNative)})
-    const daemon=await native.ready(stdout=>stdout.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0])
+    const daemon=await native.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1])
     assert.notEqual(new URL(daemon).port,'4096','Default OpenCode port is forbidden')
     const authorization=`Basic ${Buffer.from(`opencode:${privatePassword}`).toString('base64')}`
-    async function read(route) {
-      const url=new URL(route,daemon)
-      assert.equal(url.origin,daemon)
-      assert.equal(native.child.exitCode,null,'The private OpenCode child exited')
-      const res=await fetch(url,{headers:{authorization},redirect:'error',signal:AbortSignal.timeout(10000)})
-      assert(res.ok,`Private OpenCode ${url.pathname}: HTTP ${res.status}`)
-      return res.json()
-    }
     const pid=await native.pid()
     assert(Number.isSafeInteger(pid)&&pid>0,'Private OpenCode child PID unavailable')
-    assert.equal((await read('/api/info')).pid,pid,'Refusing an OpenCode endpoint that is not the owned child')
+    attested=await attestNative(daemon,native.child,authorization,fixtureFetch,pid)
     report.openCodePID=pid
-    await pruning.activate({project,url:daemon,authorization},()=>assert.equal(native.child.exitCode,null))
+    await pruning.activate({project,url:daemon,authorization,send:attested.send},()=>assert.equal(native.child.exitCode,null))
     const ownedRust={CNRS_FIXTURE_PASSWORD:privatePassword,CNRS_SERVER_PASSWORD:password}
     server=launchFixture(rust,[profile,path.join(profile,'backend.json'),'0','fixture-only'],{cwd:profile,shutdown:'shutdown\n',redact:[privatePassword,password,marker],env:assertPrivateChild({
       ...env,...ownedRust,CNRS_FIXTURE_URL:daemon,CNRS_FIXTURE_STDIN_STOP:'1',
@@ -129,17 +122,21 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
     assert.notEqual(report.commitSHA,before)
     assert.equal(git('show',`HEAD:${filename}`),edited.trimEnd())
     assert.equal(git('status','--porcelain'),'')
+  }catch(error){
+    const safe=redactSecrets(error?.message??String(error),secrets)
+    throw safe===error?.message?error:Error(safe)
   }finally{
     const errors=[]
     const settle=async run=>{try{await run()}catch(error){errors.push(error)}}
     try{
       await settle(()=>server?.stop())
+      await settle(()=>attested?.close())
       await settle(()=>pruning?.close())
       await settle(()=>native?.stop())
       await settle(()=>model?.close())
       for(const [name,process] of [['rust',server],['opencode',native]]){
         if(process)await settle(()=>writeFile(path.join(report.output,`${name}.log`),
-          redactSecrets(process.output(),[privatePassword,password,marker])))
+          redactSecrets(process.output(),secrets)))
       }
     }finally{
       await settle(async()=>{
@@ -148,7 +145,7 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
       })
       if(errors.length){
         report.stage='private-host-cleanup'
-        throw new AggregateError(errors,`Fixture cleanup failed: ${errors.map(error=>error.message).join('; ')}`)
+        throw new AggregateError(errors,redactSecrets(`Fixture cleanup failed: ${errors.map(error=>error.message).join('; ')}`,secrets))
       }
     }
   }
