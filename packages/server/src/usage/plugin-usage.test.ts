@@ -356,6 +356,25 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     ),
   )
 
+  // An outer abort independent of the quota deadline stops dispatch and a stalled RPC.
+  let outerDispatched = 0
+  await assert.rejects(readPluginProviderUsage(
+    makeConnection(async () => { outerDispatched++; return Response.json({ output: {} }) }),
+    { providerId: "agy-agent", location: { directory: "/repo" } },
+    outer.signal,
+    new AbortController().signal,
+  ))
+  assert.equal(outerDispatched, 0)
+  const stalledOuter = new AbortController()
+  const stalled = readPluginProviderUsage(
+    makeConnection(() => new Promise<Response>(() => {})),
+    { providerId: "agy-agent", location: { directory: "/repo" } },
+    stalledOuter.signal,
+    new AbortController().signal,
+  )
+  stalledOuter.abort()
+  await assert.rejects(stalled)
+
   // Through the real createRuntimeTransport adapter, non-`application/json` error bodies stay replaced by a
   // generic contract error (a 404 then reads as an absent RPC; the route re-verifies ownership before any
   // fallback), and a plain-text 502 with a never-settling body cancel rejects immediately rather than timing out.

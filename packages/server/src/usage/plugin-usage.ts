@@ -244,8 +244,10 @@ export async function readPluginProviderUsage(
   connection: Pick<ServiceConnection, "endpoint" | "fetch">,
   target: { providerId: string; location: { directory: string; workspaceID?: string }; modelId?: string },
   signal: AbortSignal,
-  quotaSignal: AbortSignal = signal,
+  quotaDeadline: AbortSignal = signal,
 ): Promise<ProviderUsageResponse | null> {
+  // The quota deadline never outlives the caller's own signal.
+  const quotaSignal = AbortSignal.any([signal, quotaDeadline])
   const rpcID = pluginUsageRpcId(target.providerId)
   if (!rpcID) return null
   if (target.location.workspaceID !== undefined) throw new Error("Unsupported workspace selector")
