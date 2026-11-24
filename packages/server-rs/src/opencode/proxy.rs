@@ -342,11 +342,18 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     };
     let mut subpath = None;
     let mut seen_directory = false;
+    let canonical_directory = crate::files::paths::canonical(&app.scope, directory);
+    let matches_directory = |candidate: &str| {
+        candidate == directory
+            || canonical_directory.as_ref().is_some_and(|expected| {
+                crate::files::paths::canonical(&app.scope, candidate).as_ref() == Some(expected)
+            })
+    };
     for (key, value) in target.query_pairs() {
         match key.as_ref() {
             "directory" | "location[directory]" => {
                 if seen_directory
-                    || prompt_query.as_deref().map_or(value != directory, |translated| translated != directory)
+                    || !prompt_query.as_deref().map_or_else(|| matches_directory(&value), matches_directory)
                 {
                     return Err(foreign());
                 }
@@ -368,12 +375,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
     }
     if let Some(translated) = prompt_query {
+        let forwarded_directory = native_directory.unwrap_or(&translated);
         let query: Vec<_> = target
             .query_pairs()
             .into_owned()
             .map(|(key, value)| {
                 let value = if matches!(key.as_str(), "directory" | "location[directory]") {
-                    translated.clone()
+                    forwarded_directory.to_owned()
                 } else {
                     value
                 };
@@ -405,7 +413,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
                 return Ok(unavailable());
             }
-            verify_mutation_at(&app, &endpoint, session, directory, record).await?;
+            verify_mutation_at(&app, &endpoint, session, directory, record).await.map_err(|e| {
+                if send_input && e.0 == Status::BAD_GATEWAY { super::pre_dispatch_unavailable() } else { e }
+            })?;
         } else if route.strip_prefix("/api/session/").is_some_and(|rest| !rest.contains('/'))
             && head.headers.get(SESSION_PLACEMENT_HEADER).is_some_and(|v| v == "1")
         {
@@ -615,7 +625,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         {
             return Err(foreign());
         }
-        let fresh = super::session_record_at(&app, &endpoint, session.ok_or_else(upstream_error)?).await?;
+        let fresh = super::session_record_at(&app, &endpoint, session.ok_or_else(super::pre_dispatch_unavailable)?)
+            .await
+            .map_err(|e| if e.0 == Status::BAD_GATEWAY { super::pre_dispatch_unavailable() } else { e })?;
         if !actual.as_ref().is_some_and(|initial| same_target(initial, &fresh))
             || fresh["location"]["directory"] != directory
             || !input_location_live()

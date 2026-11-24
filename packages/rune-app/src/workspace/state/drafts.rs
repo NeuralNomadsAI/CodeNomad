@@ -18,6 +18,12 @@ impl LiveDraft {
     pub(super) fn unconfirmed_id(&self) -> Option<&str> {
         self.unconfirmed.as_ref().map(|send| send.id())
     }
+
+    pub(super) fn clear_unconfirmed_matching(&mut self, attempt_id: &str) {
+        if self.unconfirmed_id() == Some(attempt_id) {
+            self.unconfirmed = None;
+        }
+    }
 }
 
 impl Ui {
@@ -142,6 +148,64 @@ pub fn attachment_draft_admissible(s: &State) -> bool {
     super::super::encode(&snapshot).is_ok()
 }
 
+pub fn note_unconfirmed(s: &mut State, attempt_id: &str) {
+    let Some(ui) = &mut s.workspace else {
+        return;
+    };
+    let Some(item) = ui.entries.get(ui.active) else {
+        return;
+    };
+    let Tab::Workspace(saved) = &item.saved else {
+        return;
+    };
+    let Some(key) = saved.active_session_id.as_deref() else {
+        return;
+    };
+    let owns = item.binding.as_ref().is_some_and(|b| b.session == key);
+    if !owns {
+        return;
+    }
+    let saved = saved.clone();
+    let key = key.to_owned();
+    ui.remember_closed_unconfirmed(&saved, key.clone(), attempt_id.to_owned());
+    for (index, entry) in ui.entries.iter_mut().enumerate() {
+        if index == ui.active {
+            continue;
+        }
+        if matches!(&entry.saved, Tab::Workspace(current) if same_project(current, &saved)) {
+            if matches!(&entry.saved, Tab::Workspace(current) if current.active_session_id.as_deref() == Some(key.as_str()))
+                && let Some(cache) = &mut entry.cache
+            {
+                cache.restore_unconfirmed(crate::composer::PendingSend::locked(
+                    attempt_id.to_owned(),
+                ));
+            }
+            if let Some(live) = entry.live_drafts.get_mut(&key)
+                && live.unconfirmed.is_none()
+            {
+                live.unconfirmed =
+                    Some(crate::composer::PendingSend::locked(attempt_id.to_owned()));
+            }
+        }
+    }
+}
+
+pub fn has_unconfirmed(s: &State) -> bool {
+    let Some(ui) = &s.workspace else {
+        return false;
+    };
+    let Some(item) = ui.entries.get(ui.active) else {
+        return false;
+    };
+    let Tab::Workspace(saved) = &item.saved else {
+        return false;
+    };
+    let Some(key) = saved.active_session_id.as_deref() else {
+        return false;
+    };
+    ui.closed_unconfirmed_id(saved, key).is_some()
+}
+
 pub fn confirm_unconfirmed(s: &mut State, attempt_id: &str) {
     let Some(ui) = &mut s.workspace else {
         return;
@@ -160,6 +224,18 @@ pub fn confirm_unconfirmed(s: &mut State, attempt_id: &str) {
         let saved = saved.clone();
         let key = key.to_owned();
         ui.forget_closed_unconfirmed(&saved, &key, attempt_id);
+        for entry in &mut ui.entries {
+            if matches!(&entry.saved, Tab::Workspace(current) if same_project(current, &saved)) {
+                if matches!(&entry.saved, Tab::Workspace(current) if current.active_session_id.as_deref() == Some(key.as_str()))
+                    && let Some(cache) = &mut entry.cache
+                {
+                    cache.clear_unconfirmed_matching(attempt_id);
+                }
+                if let Some(live) = entry.live_drafts.get_mut(&key) {
+                    live.clear_unconfirmed_matching(attempt_id);
+                }
+            }
+        }
     }
 }
 

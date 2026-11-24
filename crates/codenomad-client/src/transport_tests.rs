@@ -340,7 +340,10 @@ fn prompt_during_stream_gap(with_reading: bool) {
 
             let id = "msg_00000000000000000000000000000001";
             commands.send(Command::Prompt(crate::prompt::Prompt {
-                id: Some(id.into()), text: "queued prompt".into(), ..Default::default()
+                id: Some(id.into()),
+                text: "queued prompt".into(),
+                delivery: with_reading.then_some(crate::prompt::Delivery::Queue),
+                ..Default::default()
             })).await.unwrap();
             let (socket, _) = listener.accept().await.unwrap();
             let mut prompt = BufReader::new(socket);
@@ -352,7 +355,11 @@ fn prompt_during_stream_gap(with_reading: bool) {
                 assert!(prompt.read_line(&mut header).await.unwrap() > 0);
                 if header == "\r\n" { break; }
             }
-            let expected = format!(r#"{{"id":"{id}","text":"queued prompt"}}"#);
+            let expected = if with_reading {
+                format!(r#"{{"id":"{id}","text":"queued prompt","delivery":"queue"}}"#)
+            } else {
+                format!(r#"{{"id":"{id}","text":"queued prompt"}}"#)
+            };
             let mut body = vec![0; expected.len()];
             prompt.read_exact(&mut body).await.unwrap();
             assert_eq!(body, expected.as_bytes());
@@ -788,11 +795,22 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
                 )
                 .await
                 .unwrap();
-            // Consume Connected and Opened's AgentHint(true) so permission.updated fills out (cap 1).
-            assert!(matches!(events.recv().await.unwrap(), Event::Connected(_)));
-            assert!(matches!(events.recv().await.unwrap(), Event::AgentHint(true)));
-            // Await the /pong request emitted after session.moved to prove the stream relay closed placement.
-            let (pong_socket, _) = listener.accept().await.unwrap();
+            // Drain startup events (Connected, AgentHint(true), Preferences) until /pong proves session.moved closed placement.
+            let mut saw_moved = false;
+            let pong_fut = listener.accept();
+            tokio::pin!(pong_fut);
+            let pong_socket = loop {
+                tokio::select! {
+                    accepted = &mut pong_fut => break accepted.unwrap().0,
+                    ev = events.recv() => match ev.unwrap() {
+                        Event::SessionMoved => saw_moved = true,
+                        Event::PromptAcknowledged { .. } => {
+                            panic!("unexpected PromptAcknowledged before prompt was queued")
+                        }
+                        _ => {}
+                    }
+                }
+            };
             let mut pong = BufReader::new(pong_socket);
             let mut first_line = String::new();
             assert!(pong.read_line(&mut first_line).await.unwrap() > 0);
@@ -808,9 +826,6 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
                 .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
                 .await
                 .unwrap();
-            while events.is_empty() {
-                tokio::task::yield_now().await;
-            }
             let id = "msg_00000000000000000000000000000007";
             commands
                 .send(Command::Prompt(crate::prompt::Prompt {
@@ -821,7 +836,6 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
                 .await
                 .unwrap();
             let mut saw_rejected = false;
-            let mut saw_moved = false;
             while let Ok(event) = events.recv().await {
                 match event {
                     Event::PromptAcknowledged {
@@ -990,9 +1004,21 @@ fn session_deleted_rejects_queued_prompt_without_http_post() {
                 )
                 .await
                 .unwrap();
-            assert!(matches!(events.recv().await.unwrap(), Event::Connected(_)));
-            assert!(matches!(events.recv().await.unwrap(), Event::AgentHint(true)));
-            let (pong_socket, _) = listener.accept().await.unwrap();
+            let mut saw_invalidated = false;
+            let pong_fut = listener.accept();
+            tokio::pin!(pong_fut);
+            let pong_socket = loop {
+                tokio::select! {
+                    accepted = &mut pong_fut => break accepted.unwrap().0,
+                    ev = events.recv() => match ev.unwrap() {
+                        Event::HistoryInvalidated => saw_invalidated = true,
+                        Event::PromptAcknowledged { .. } => {
+                            panic!("unexpected PromptAcknowledged before prompt was queued")
+                        }
+                        _ => {}
+                    }
+                }
+            };
             let mut pong = BufReader::new(pong_socket);
             let mut first_line = String::new();
             assert!(pong.read_line(&mut first_line).await.unwrap() > 0);
@@ -1008,9 +1034,6 @@ fn session_deleted_rejects_queued_prompt_without_http_post() {
                 .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
                 .await
                 .unwrap();
-            while events.is_empty() {
-                tokio::task::yield_now().await;
-            }
             let id = "msg_00000000000000000000000000000009";
             commands
                 .send(Command::Prompt(crate::prompt::Prompt {
@@ -1021,7 +1044,6 @@ fn session_deleted_rejects_queued_prompt_without_http_post() {
                 .await
                 .unwrap();
             let mut saw_rejected = false;
-            let mut saw_invalidated = false;
             while let Ok(event) = events.recv().await {
                 match event {
                     Event::PromptAcknowledged {

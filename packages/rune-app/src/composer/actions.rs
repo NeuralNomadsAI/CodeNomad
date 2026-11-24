@@ -41,6 +41,11 @@ impl Owner {
     pub(crate) fn restore_unconfirmed(&mut self, pending: PendingSend) {
         self.unconfirmed = Some(pending);
     }
+    pub(crate) fn clear_unconfirmed_matching(&mut self, attempt_id: &str) {
+        if self.unconfirmed_id() == Some(attempt_id) {
+            self.unconfirmed = None;
+        }
+    }
     pub(crate) fn mark_edited(&mut self) {
         if let Some(send) = &mut self.sending {
             send.clear_retained();
@@ -85,11 +90,29 @@ impl PendingSend {
         self.draft.inline_usage()
     }
     pub(crate) fn unique_inline_usage(&self, active_draft: &Draft) -> (usize, usize) {
-        if self.restored_to_draft && self.draft.attachments == active_draft.attachments {
-            (0, 0)
-        } else {
-            self.draft.inline_usage()
+        if !self.restored_to_draft {
+            return self.draft.inline_usage();
         }
+        let mut matched = vec![false; active_draft.attachments.len()];
+        self.draft
+            .attachments
+            .iter()
+            .fold((0, 0), |(count, total), item| match item {
+                crate::composer::draft::Attachment::Device { bytes, .. } => {
+                    if let Some(pos) = active_draft
+                        .attachments
+                        .iter()
+                        .enumerate()
+                        .find_map(|(i, active)| (!matched[i] && active == item).then_some(i))
+                    {
+                        matched[pos] = true;
+                        (count, total)
+                    } else {
+                        (count + 1, total + bytes.len())
+                    }
+                }
+                _ => (count, total),
+            })
     }
     pub(crate) fn clear_retained(&mut self) {
         self.edited = true;
@@ -128,6 +151,7 @@ pub fn can_send(s: &State) -> bool {
         && (s.composer.picker.attachments_supported()
             || !s.composer.draft.requires_attachment_support())
         && s.composer.unconfirmed.is_none()
+        && !workspace::has_unconfirmed(s)
         && !command_held(s)
         && s.composer.draft.can_send(&s.draft)
         && s.commands.as_ref().is_some_and(|tx| !tx.is_closed())
@@ -358,6 +382,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         s.composer.unconfirmed = Some(send);
         s.composer.restored = true;
         s.composer.announce_unconfirmed = true;
+        workspace::note_unconfirmed(s, attempted);
         return;
     }
     let row = s.messages.iter().position(|row| row.id == attempted);
@@ -605,6 +630,23 @@ mod tests {
             (0, 0),
             "restored shared attachment bytes must not be double-counted against the window budget"
         );
+        // Adding another device attachment to the restored draft still must not double-count the restored copy.
+        let mut with_extra = rt.state.composer.draft.clone();
+        with_extra.attachments.push(Attachment::Device {
+            name: "extra.png".into(),
+            mime: "image/png".into(),
+            bytes: std::sync::Arc::from(vec![9u8; 2048]),
+            token: None,
+        });
+        assert_eq!(
+            rt.state
+                .composer
+                .unconfirmed_state()
+                .unwrap()
+                .unique_inline_usage(&with_extra),
+            (0, 0),
+            "adding a new file to a restored draft must not double-count restored bytes"
+        );
         workspace::capture(&mut rt.state);
         workspace::bound(&mut rt.state, &second);
         assert!(rt.state.composer.unconfirmed_id().is_none());
@@ -623,6 +665,7 @@ mod tests {
         workspace::opened(&mut rt.state, &project);
         let reopened_draft = workspace::bound(&mut rt.state, &first);
         rt.state.draft = TextEdit::new(reopened_draft);
+        rt.state.composer.attachments_missing = false;
         rt.state.phase = Phase::Ready;
         rt.state.commands = Some(sender.clone());
         assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
@@ -634,6 +677,10 @@ mod tests {
                 .inline_usage(),
             (0, 0),
             "closing a tab must drop retained inline attachment bytes from the lock"
+        );
+        assert!(
+            !rt.state.composer.attachments_missing,
+            "reopen assertion must isolate the unconfirmed lock rather than missing attachments"
         );
         assert!(
             !can_send(&rt.state),
@@ -654,6 +701,62 @@ mod tests {
         workspace::bound(&mut rt.state, &second);
         workspace::bound(&mut rt.state, &first);
         assert!(rt.state.composer.unconfirmed_id().is_none());
+    }
+
+    #[test]
+    fn unconfirmed_lock_blocks_sibling_tab_and_clears_globally_on_reconcile() {
+        let (sender, receiver) = codenomad_client::bounded(2);
+        let mut s = crate::init();
+        crate::gallery::shell::fixture(&mut s);
+        let mut ui = workspace::Ui::new();
+        ui.set_ready_for_test();
+        s.workspace = Some(ui);
+        let mut first = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+        first.workspace = "ws".into();
+        first.session = "ses-1".into();
+        let project = crate::catalog::Project {
+            id: "ws".into(),
+            path: "/tmp/ws".into(),
+        };
+        s.screen.launcher_mut().unwrap().project = Some(project.clone());
+        workspace::opened(&mut s, &project);
+        workspace::bound(&mut s, &first);
+        s.phase = Phase::Ready;
+        s.commands = Some(sender.clone());
+        s.draft = TextEdit::new("tab A attempt");
+        let mut rt = Runtime::new(s, crate::view, (600.0, 600.0), Env::new(false, 1.0));
+        let tab_a = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+        // Open sibling Tab B on the exact same project and session.
+        rt.update(|s, tx| workspace::new_tab(s, tx));
+        let tab_b = rt.state.workspace.as_ref().unwrap().active_key().to_owned();
+        workspace::opened(&mut rt.state, &project);
+        workspace::bound(&mut rt.state, &first);
+        rt.state.phase = Phase::Ready;
+        rt.state.commands = Some(sender.clone());
+        rt.state.draft = TextEdit::new("tab B draft");
+        // Switch back to Tab A and send -> Unconfirmed.
+        rt.update(|s, tx| workspace::select(s, &tab_a, tx));
+        rt.update(|s, tx| send(s, tx, false));
+        let Command::Prompt(prompt) = receiver.try_recv().unwrap() else {
+            panic!("expected prompt")
+        };
+        let id = prompt.id.unwrap();
+        let row = rt.state.messages.pop().unwrap();
+        acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
+        // Switching to already-open sibling Tab B must block sending while Tab A is still open.
+        rt.update(|s, tx| workspace::select(s, &tab_b, tx));
+        assert_eq!(rt.state.composer.unconfirmed_id(), Some(id.as_str()));
+        assert!(!can_send(&rt.state));
+        // Reconciling in Tab A must clear the lock globally, including Tab B's cache.
+        rt.update(|s, tx| workspace::select(s, &tab_a, tx));
+        rt.state.messages.push(row);
+        reconcile(&mut rt.state);
+        assert!(rt.state.composer.unconfirmed_id().is_none());
+        // Closing sibling Tab B afterwards must not reintroduce the reconciled lock.
+        rt.update(|s, tx| workspace::close(s, &tab_b, tx));
+        assert!(rt.state.composer.unconfirmed_id().is_none());
+        assert!(!workspace::has_unconfirmed(&rt.state));
+        assert!(can_send(&rt.state));
     }
 
     #[test]

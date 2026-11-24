@@ -26,9 +26,9 @@ pub(crate) use state::{
 pub(crate) use state::{
     Ui, active_session, attachment_draft_admissible, bound, can_new, capture, capture_files_mode,
     close, confirm_unconfirmed, connected, draft_changed, file_wrap, files_tab,
-    has_conversation_stream, input_ready, new_tab, opened, panel_width, poll, prepare_open,
-    renew_connection, restore_files_mode, resume, retry, schedule_catalogue, select, status, strip,
-    toggle_file_wrap, unselect_missing,
+    has_conversation_stream, has_unconfirmed, input_ready, new_tab, note_unconfirmed, opened,
+    panel_width, poll, prepare_open, renew_connection, restore_files_mode, resume, retry,
+    schedule_catalogue, select, status, strip, toggle_file_wrap, unselect_missing,
 };
 pub(crate) use state::{
     mission_confirmation, mission_event, mission_observation_project, mission_panel,

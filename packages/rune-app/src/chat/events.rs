@@ -445,7 +445,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
-                if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
+                if !platform::pairing::required(s) {
                     platform::pairing::observe(s);
                 }
                 if let Event::AuthenticationRequired(auth) = event {

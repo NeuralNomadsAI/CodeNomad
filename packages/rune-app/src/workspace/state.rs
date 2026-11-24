@@ -9,7 +9,10 @@ mod panel_state;
 mod polling;
 mod strip;
 
-pub use drafts::{attachment_draft_admissible, bound, capture, confirm_unconfirmed, draft_changed};
+pub use drafts::{
+    attachment_draft_admissible, bound, capture, confirm_unconfirmed, draft_changed,
+    has_unconfirmed, note_unconfirmed,
+};
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
     observes_notification, open_notification, owns_notification, workspace_notification,
@@ -108,8 +111,10 @@ pub struct Ui {
     touched: bool,
     staged_revision: Option<u64>,
     closed: Vec<Workspace>,
+    // Bounded in-memory lock registry across tabs (kept out of Snapshot to preserve the v1 client-state-codec schema).
     closed_unconfirmed: Vec<ClosedUnconfirmed>,
 }
+const MAX_UNCONFIRMED_LOCKS: usize = 64;
 struct ClosedUnconfirmed {
     backend_id: Option<String>,
     server_id: Option<String>,
@@ -141,6 +146,10 @@ impl Ui {
             session_id,
             attempt_id,
         });
+        if self.closed_unconfirmed.len() > MAX_UNCONFIRMED_LOCKS {
+            let overflow = self.closed_unconfirmed.len() - MAX_UNCONFIRMED_LOCKS;
+            self.closed_unconfirmed.drain(..overflow);
+        }
     }
     pub(super) fn closed_unconfirmed_id(
         &self,

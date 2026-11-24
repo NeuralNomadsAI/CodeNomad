@@ -199,8 +199,9 @@ pub(crate) async fn run_with_reading(
                 if !stream_gap {
                     if attempts <= 6 {
                         publish(&out, &wake, Event::Reconnecting).await;
-                    } else if attempts == 7 && reading.is_none() {
-                        // Keep the same subscription owner after showing the outage.
+                    } else if attempts == 7 && reading.is_none() && !ever_opened {
+                        // Only fail an unestablished direct transport; once established, SSE outages
+                        // must not revoke HTTP send authority.
                         publish(&out, &wake, Event::Failed).await;
                     }
                 }

@@ -53,6 +53,10 @@ impl Cache {
         }
     }
 
+    pub(super) fn clear_unconfirmed_matching(&mut self, attempt_id: &str) {
+        self.composer.clear_unconfirmed_matching(attempt_id);
+    }
+
     pub(super) fn sending_inline_usage(&self) -> (usize, usize) {
         self.composer
             .sending_state()

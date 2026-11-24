@@ -59,6 +59,7 @@ pub(super) async fn slash(
     SlashReceipt::Settled
 }
 
+#[cfg(test)]
 pub(crate) async fn prompt(
     backend: &Backend,
     out: &Sender<Event>,
