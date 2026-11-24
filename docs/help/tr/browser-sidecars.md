@@ -34,7 +34,7 @@ Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamında
 
 Her oturumun tek bir yerel önizlemesi vardır. Yinelenen sekmede **Önizleme başka bir sekmede açık** görünürse **Sekmeye git** seçeneğini kullanın veya aynı pencere içinde taşımak için **Burada aç** seçeneğini seçin. Önceki sekme aynı mesajı gösterir. Önizlemenin bulunduğu sekmeyi kapattığınızda önizlemeyi başka bir sekmede açabilirsiniz.
 
-Bir masaüstü penceresi bir konuşmayı gösterdiği sürece, konuşmanın ajanları önizlemesini OpenCode'un tarayıcı araçlarıyla kontrol edebilir; sayfada betik çalıştırma reddedilir. Ajan önizlemeyi bulunduğu sekmede, açık değilse oturum için en son kullanılan sekmede açar. Sayfa eylemleri görünür yerel önizlemeye uygulanır.
+Bir masaüstü penceresi bir konuşmayı gösterdiği sürece, konuşmanın ajanları önizlemesini OpenCode'un tarayıcı araçlarıyla (OpenCode 2.4 veya üzeri) kontrol edebilir; sayfada betik çalıştırma reddedilir ve macOS ile Linux'ta geri, ileri gidemez veya yeniden yükleyemezler. Ajan önizlemeyi bulunduğu sekmede, açık değilse oturum için en son kullanılan sekmede açar. Sayfa eylemleri görünür yerel önizlemeye uygulanır.
 
 Ajan önizlemede işlem yapmadan veya ekran görüntüsü almadan önce bir anlık görüntü alır. Önizleme değişirse komut başka bir önizlemeyi kullanmak yerine durur.
 

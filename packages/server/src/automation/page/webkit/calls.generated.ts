@@ -77,6 +77,49 @@ export const readCalls = {
   const select = control instanceof HTMLSelectElement ? control : control && control.closest("select");
   if (!select) throw new Error("codenomad:not-select");
   return choose(select, args[0], args[1]); },
+"select-values": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const label = option => (option.label || option.textContent || "").replace(/\s+/g, " ").trim();
+  const apply = (select, picked, options, guard) => {
+    const validate = () => {
+      if (select.matches(":disabled")) throw new Error("codenomad:disabled");
+      for (const option of picked) if (option.matches(":disabled")) throw new Error("codenomad:option-disabled:" + label(option));
+      if (!select.multiple && picked.length !== 1) throw new Error("codenomad:single");
+    };
+    validate();
+    select.focus();
+    guard?.();
+    const current = select.options;
+    if (!select.isConnected || current.length !== options.length || options.some((option, index) => current[index] !== option))
+      throw new Error("codenomad:options-changed");
+    validate();
+    if (options.some(option => option.selected !== picked.includes(option))) {
+      for (const option of options) option.selected = picked.includes(option);
+      select.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    return Array.from(select.selectedOptions).map(label);
+  };
+  const choose = (select, wanted, guard) => {
+    if (select.matches(":disabled")) throw new Error("codenomad:disabled");
+    const options = Array.from(select.options), picked = [];
+    for (const raw of wanted) {
+      const target = String(raw).replace(/\s+/g, " ").trim();
+      const option = options.find(item => label(item) === target) || options.find(item => item.value === String(raw));
+      if (!option) throw new Error("codenomad:no-option:" + target);
+      if (!picked.includes(option)) picked.push(option);
+    }
+    return apply(select, picked, options, guard);
+  };
+  const control = element instanceof HTMLLabelElement ? element.control : element;
+  const select = control instanceof HTMLSelectElement ? control : control && control.closest("select");
+  if (!select) throw new Error("codenomad:not-select");
+  if (select.matches(":disabled")) throw new Error("codenomad:disabled");
+  const options = Array.from(select.options), picked = [];
+  for (const raw of args[0]) {
+    const option = options.find(item => item.value === String(raw));
+    if (!option) throw new Error("codenomad:no-option:" + String(raw));
+    if (!picked.includes(option)) picked.push(option);
+  }
+  return apply(select, picked, options); },
 "focus": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); if (element.matches(":disabled")) throw new Error("codenomad:disabled");
   if (element instanceof HTMLElement || element instanceof SVGElement) element.focus();
   if (element.getRootNode().activeElement !== element) throw new Error("codenomad:unfocusable");

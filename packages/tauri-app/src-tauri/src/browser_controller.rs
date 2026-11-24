@@ -133,6 +133,8 @@ struct Inner {
     navigation_versions: HashMap<String, u64>,
     page_load_sequence: u64,
     page_load_expectations: HashMap<String, PageLoadExpectation>,
+    /// The main-frame navigation each registration is loading, from its start to its completion.
+    page_loading: HashMap<String, u64>,
     open_claims: HashMap<String, OpenClaim>,
     preview_owners: preview_owners::BrowserPreviewOwners,
 }
@@ -682,6 +684,7 @@ impl BrowserController {
             .retain(|_, lease| lease.registration.registration_id != registration_id);
         inner.navigation_versions.remove(registration_id);
         inner.page_load_expectations.remove(registration_id);
+        inner.page_loading.remove(registration_id);
         drop(inner);
         ready.notify_all();
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -767,6 +770,7 @@ impl BrowserController {
                     .retain(|_, lease| lease.registration.registration_id != id);
                 inner.navigation_versions.remove(&id);
                 inner.page_load_expectations.remove(&id);
+                inner.page_loading.remove(&id);
                 inner.registrations.remove(&id);
                 inner.emulation_profiles.remove(&id);
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -872,7 +876,14 @@ impl BrowserController {
         }
         self.check_witness_state(app, &registration, document)?;
         fence.check()?;
-        Ok(json!({ "available": true, "target": target }))
+        let loading = self
+            .inner
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .page_loading
+            .contains_key(&registration.registration_id);
+        Ok(json!({ "available": true, "target": target, "loading": loading }))
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -987,40 +998,15 @@ impl BrowserController {
                         open_navigation::NavigationDispatch::HistoryEntry(entry_id),
                     )?
                 };
+                #[cfg(windows)]
+                return Ok(json!({ "url": url }));
+                // WebKit previews do not report a load receipt for history traversal or reload.
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
-                let url = if action == "reload" {
-                    self.check_capture(app, &registration, document, nav_deadline, fence)?;
-                    webview.reload().map_err(|error| error.to_string())?;
-                    webview.url().map_err(|error| error.to_string())?.to_string()
-                } else {
-                    let history = webkit_history::action(self, &webview, &registration, None)?;
-                    let index = history["index"]
-                        .as_i64()
-                        .ok_or("Browser history is unavailable")?;
-                    let target_index = if action == "back" { index - 1 } else { index + 1 };
-                    let entry = usize::try_from(target_index)
-                        .ok()
-                        .and_then(|idx| history["entries"].as_array().and_then(|e| e.get(idx)))
-                        .ok_or_else(|| {
-                            if action == "back" {
-                                "No previous page in browser history"
-                            } else {
-                                "No next page in browser history"
-                            }
-                        })?;
-                    let entry_id = entry["id"]
-                        .as_i64()
-                        .ok_or("Invalid browser history entry")?;
-                    let entry_url = allowed_url(
-                        entry["url"]
-                            .as_str()
-                            .ok_or("Invalid browser history URL")?,
-                    )?;
-                    self.check_capture(app, &registration, document, nav_deadline, fence)?;
-                    webkit_history::action(self, &webview, &registration, Some(entry_id))?;
-                    entry_url.to_string()
-                };
-                Ok(json!({ "url": url }))
+                {
+                    let _ = (nav_deadline, document, token);
+                    Err("Browser history and reload are unavailable in WebKit previews; use navigate"
+                        .into())
+                }
             }
             "screenshot" => {
                 #[cfg(windows)]
@@ -1425,6 +1411,9 @@ impl BrowserController {
                 .map(|item| item.generation)
                 == Some(generation)
             {
+                inner
+                    .page_loading
+                    .insert(registration_id.to_string(), navigation_id);
                 if url != "about:blank" {
                     open::retire_open_for_navigation(
                         &mut inner,
@@ -1481,6 +1470,9 @@ impl BrowserController {
                 != Some(generation)
             {
                 return;
+            }
+            if inner.page_loading.get(registration_id) == Some(&navigation_id) {
+                inner.page_loading.remove(registration_id);
             }
             if let Some(expectation) = inner.page_load_expectations.get_mut(registration_id) {
                 if expectation.navigation_id == Some(navigation_id) && expectation.result.is_none()

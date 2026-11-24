@@ -198,7 +198,7 @@ test("WSL translates the exact Unicode LOCALAPPDATA reported by cmd.exe", { skip
   syncBuiltinESMExports()
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
   assert.deepEqual(await discoverAutomationBridgeDirectories(undefined, {
-    platform: "linux", strict: "browser", env: { SystemRoot: process.env.SystemRoot,
+    platform: "linux", strict: true, env: { SystemRoot: process.env.SystemRoot,
       WSL_DISTRO_NAME: "fixture-unicode", LOCALAPPDATA: windowsPath, LOCALAPPDATA_OTHER: "not the profile",
       XDG_RUNTIME_DIR: "/fixture-linux" },
   }), ["/fixture-linux/codenomad/automation-bridges", `${translated}/CodeNomad/automation-bridges`])

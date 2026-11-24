@@ -173,15 +173,19 @@ await tools.browser.drag({ tabID, from: ${at("Drag source")}, to: ${at("Drop tar
 await tools.browser.scroll({ tabID, deltaY: 150 });
 for (const text of ["Plan Pro", "Hovered", "Dragged"]) waits.push((await tools.browser.wait({ tabID, text, timeout: 5000 })).met);
 const found = (await tools.browser.find({ tabID, text: "Native parity" })).content.includes("Native parity");
-let refused;
+let refused, copyRefused;
 try { await tools.browser.evaluate({ tabID, script: "document.title" }) } catch (error) { refused = String(error?.message ?? error) }
+try { await tools.browser.press({ tabID, key: "Control+C" }) } catch (error) { copyRefused = String(error?.message ?? error) }
+const loaded = (await tools.browser.wait({ tabID, timeout: 5000 })).met;
 await tools.browser.click({ tabID, ref: ${at("OAuth popup")} });
 const oauth = (await tools.browser.wait({ tabID, text: "OAuth complete", timeout: 10000 })).met;
 await tools.browser.click({ tabID, ref: ${at("Download fixture")} });
-return { waits, found, refused, oauth }`)
+return { waits, found, refused, copyRefused, loaded, oauth }`)
   assert.deepEqual(act.waits, [true, true, true, true, true])
   assert.equal(act.found, true)
   assert.match(act.refused ?? "", /not available in the CodeNomad browser/)
+  assert.match(act.copyRefused ?? "", /clipboard or context-menu shortcuts/)
+  assert.equal(act.loaded, true, "wait for load")
   assert.equal(act.oauth, true, "OAuth opener/postMessage")
   const downloads = process.platform === "linux"
     ? execFileSync("xdg-user-dir", ["DOWNLOAD"], { encoding: "utf8" }).trim()

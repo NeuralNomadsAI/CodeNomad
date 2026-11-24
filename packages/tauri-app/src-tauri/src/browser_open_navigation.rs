@@ -1,6 +1,7 @@
 use super::*;
 
 #[cfg(windows)]
+#[derive(Clone, Copy)]
 pub(super) enum NavigationDispatch {
     Navigate,
     HistoryEntry(i64),
@@ -108,6 +109,9 @@ impl BrowserController {
             Ok(sequence)
         };
 
+        // A history entry of the same document (fragment or pushState) raises no NavigationStarting.
+        #[cfg(windows)]
+        let previous = view.url().map_err(|error| error.to_string())?;
         #[cfg(windows)]
         let dispatch = {
             let (method, params, label) = match dispatch_kind {
@@ -138,8 +142,12 @@ impl BrowserController {
                 {
                     return Err(format!("Browser navigation failed: {error}"));
                 }
-                Ok(matches!(dispatch_kind, NavigationDispatch::Navigate)
-                    && result["loaderId"].as_str().is_none())
+                Ok(match dispatch_kind {
+                    NavigationDispatch::Navigate => result["loaderId"].as_str().is_none(),
+                    // Decided once the traversal shows whether a new document started.
+                    NavigationDispatch::HistoryEntry(_) => true,
+                    NavigationDispatch::Reload => false,
+                })
             })
             .map_err(|error| preview_error(label, error))
         };
@@ -184,6 +192,8 @@ impl BrowserController {
             .map(|_| fragment_only)
         };
         let sequence = *dispatched.lock().map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        let dispatched_at = Instant::now();
 
         let result = dispatch.and_then(|same_document| {
             let sequence = sequence.ok_or("Missing native browser navigation sequence")?;
@@ -191,7 +201,16 @@ impl BrowserController {
                 check()?;
                 if same_document {
                     let current = view.url().map_err(|error| error.to_string())?;
-                    if current == *url {
+                    // A cross-document entry starts its navigation before its address commits;
+                    // an entry at the same address gets a short grace for that start.
+                    #[cfg(windows)]
+                    let settled = !matches!(dispatch_kind, NavigationDispatch::HistoryEntry(_))
+                        || (!self.navigation_started(registration, sequence)
+                            && (current != previous
+                                || dispatched_at.elapsed() >= Duration::from_millis(1_500)));
+                    #[cfg(not(windows))]
+                    let settled = true;
+                    if current == *url && settled {
                         self.complete_same_document_navigation(
                             registration,
                             sequence,
@@ -294,6 +313,15 @@ impl BrowserController {
         };
         update(load);
         true
+    }
+
+    #[cfg(windows)]
+    fn navigation_started(&self, registration: &Registration, sequence: u64) -> bool {
+        let mut started = false;
+        self.with_navigation_load(registration, sequence, |load| {
+            started = load.navigation_id.is_some();
+        });
+        started
     }
 
     pub(super) fn take_navigation_stop(&self, registration: &Registration, sequence: u64) -> bool {

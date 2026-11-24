@@ -388,7 +388,7 @@ export class BrowserController {
     for (const [requestID, claim] of this.openClaims) if (claim.owner === owner) this.releaseOpen(owner, requestID)
   }
 
-  async probe(sessionID: string, deadline = Number.POSITIVE_INFINITY, checkAdmission: () => void = () => {}): Promise<{ available: true; target: string }> {
+  async probe(sessionID: string, deadline = Number.POSITIVE_INFINITY, checkAdmission: () => void = () => {}): Promise<{ available: true; target: string; loading: boolean }> {
     ensureDeadline(deadline)
     checkAdmission()
     const registration = this.resolve(sessionID)
@@ -421,7 +421,7 @@ export class BrowserController {
     ensureDeadline(deadline)
     checkAdmission()
     this.resolveWitness(sessionID, target)
-    return { available: true, target }
+    return { available: true, target, loading: guest.isLoading() }
   }
 
   async execute(sessionID: string, command: Exclude<BrowserCommand, { action: "open" }>, deadline = Number.POSITIVE_INFINITY, target?: unknown, checkAdmission: () => void = () => {}): Promise<unknown> {

@@ -61,7 +61,7 @@ export interface PageSession {
 export class Handle { constructor(readonly objectId: string) {} }
 export function gone(ref: string): Error { return new Error(`${ref} is no longer in the page; inspect again`) }
 const MUTATIONS: Partial<Record<PageFunctionId, string>> = {
-  "programmatic-click": "click", "option-click": "option selection", select: "selection",
+  "programmatic-click": "click", "option-click": "option selection", select: "selection", "select-values": "selection",
   "set-value": "field update", "delete-selection": "text deletion", focus: "focus change", prepare: "field preparation",
 }
 
@@ -102,7 +102,7 @@ export async function releaseObjects(session: PageSession): Promise<void> { awai
 function isMutationResult(id: PageFunctionId, value: unknown): boolean {
   if (id === "prepare") return value === "insert" || value === "value" || value === "append"
   if (id === "option-click" && value === null) return true
-  if (id === "select" || id === "option-click") return Array.isArray(value) && value.every(item => typeof item === "string")
+  if (id === "select" || id === "select-values" || id === "option-click") return Array.isArray(value) && value.every(item => typeof item === "string")
   return value === null
 }
 

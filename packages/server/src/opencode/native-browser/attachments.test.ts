@@ -73,4 +73,12 @@ test("NativeBrowserAttachments holds owned sessions, publishes state before resu
   assert.ok(methods.lastIndexOf("state") < methods.lastIndexOf("result"), "state is published before every result")
   const resultCall = rpcCalls.find(c => c.method === "result")
   assert.deepEqual((resultCall?.input.outcome as any)?.result?.value, { tabs: [], focusedTabID: null })
+
+  // The relay delivers a control event once per owning workspace: the command runs once.
+  eventBus.publish({ type: "instance.event", instanceId: "ws-2", event: { type: BROWSER_CONTROL_EVENT, data: { type: "command", connectionID, requestID: "req-1" } } as any })
+  // A second workspace showing the same session shares its single attachment.
+  attachments.hold("hold-other", "ws-2", "ses-owned")
+  await new Promise(resolve => setTimeout(resolve, 200))
+  assert.equal(rpcCalls.filter(c => c.method === "command").length, 1)
+  assert.equal(rpcCalls.filter(c => c.method === "attach").length, 1)
 })

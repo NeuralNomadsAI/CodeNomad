@@ -9,7 +9,7 @@ interface Target { ref: string; backendNodeId: number }
 export type PageAction =
   | Target & { kind: "click"; button?: MouseButton }
   | Target & { kind: "type"; text: string; clear: boolean }
-  | Target & { kind: "select"; values: string[] }
+  | Target & { kind: "select"; values: string[]; byValue?: true }
   | Target & { kind: "hover" }
   | Target & { kind: "drag"; to: Target }
   | { kind: "scroll"; target?: Target; direction: "up" | "down" | "left" | "right"; amount: number }
@@ -22,7 +22,7 @@ export function bindRefs(action: RefAction, resolve: (ref: string) => number): P
   switch (action.action) {
     case "click": return { kind: "click", ...target(action.ref), ...(action.button ? { button: action.button } : {}) }
     case "type": return { kind: "type", ...target(action.ref), text: action.text, clear: action.clear }
-    case "select": return { kind: "select", ...target(action.ref), values: action.values }
+    case "select": return { kind: "select", ...target(action.ref), values: action.values, ...(action.byValue ? { byValue: true as const } : {}) }
     case "hover": return { kind: "hover", ...target(action.ref) }
     case "drag": return { kind: "drag", ...target(action.ref), to: target(action.to) }
     case "scroll": return { kind: "scroll", direction: action.direction, amount: action.amount, ...(action.ref ? { target: target(action.ref) } : {}) }
@@ -46,7 +46,7 @@ export async function performAction(session: PageSession, action: PageAction): P
       case "type": return await type(session, action)
       case "select": {
         const element = await resolveElement(session, action.ref, action.backendNodeId)
-        return { selected: (await callOn(session, action.ref, element, "select", [action.values]) as unknown[]).map(String) }
+        return { selected: (await callOn(session, action.ref, element, action.byValue ? "select-values" : "select", [action.values]) as unknown[]).map(String) }
       }
       case "hover": {
         const point = await aim(session, action.ref, action.backendNodeId)

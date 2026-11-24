@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
 import { execFile, spawn } from "node:child_process"
-import { mkdir, open, opendir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
+import { mkdir, open, opendir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
@@ -92,7 +92,7 @@ type BridgeDirectoryOptions = {
   env?: NodeJS.ProcessEnv
   home?: string
   windowsLocalAppData?: WindowsDiscovery
-  strict?: boolean | "browser"
+  strict?: boolean
 }
 
 export function automationBridgeDirectory(options: BridgeDirectoryOptions = {}): string {
@@ -114,7 +114,7 @@ export async function automationBridgeDirectories(options: BridgeDirectoryOption
   if (platform !== "linux" || !env.WSL_DISTRO_NAME) return [primary]
   const windowsLocalAppData = options.windowsLocalAppData !== undefined ? options.windowsLocalAppData : await resolveWslWindowsLocalAppData(env, { strict: options.strict })
   if (options.strict && !windowsLocalAppData && windowsLocalAppData !== false) {
-    throw new Error(`Windows ${options.strict === "browser" ? "browser" : "mission"} backend discovery is unavailable`)
+    throw new Error("Windows mission backend discovery is unavailable")
   }
   return windowsLocalAppData
     ? [...new Set([primary, path.posix.join(windowsLocalAppData, "CodeNomad", "automation-bridges")])]
@@ -141,7 +141,7 @@ function resolveWslWindowsLocalAppData(env: NodeJS.ProcessEnv, { strict = false,
   strict?: BridgeDirectoryOptions["strict"]; signal?: AbortSignal; cacheFailures?: boolean
 } = {}): Promise<WindowsDiscovery> {
   const key = `${env.WSL_DISTRO_NAME}\0${env.PATH}`
-  const rememberFailures = cacheFailures && strict !== "browser"
+  const rememberFailures = cacheFailures
   if (cachedWslWindowsLocalAppData?.key === key && (typeof cachedWslWindowsLocalAppData.value === "string"
     || rememberFailures && (!strict || cachedWslWindowsLocalAppData.expiresAt > Date.now()))) return Promise.resolve(cachedWslWindowsLocalAppData.value)
   if (rememberFailures && !signal && pendingWslWindowsLocalAppData?.key === key) return pendingWslWindowsLocalAppData.promise
@@ -156,7 +156,6 @@ function resolveWslWindowsLocalAppData(env: NodeJS.ProcessEnv, { strict = false,
       return path.posix.isAbsolute(translated) ? translated : null
     } catch (error) {
       signal?.throwIfAborted()
-      if (strict === "browser") return null
       return ["ENOENT", "ENOEXEC"].includes((error as NodeJS.ErrnoException).code ?? "") ? false : null
     }
   })().then(value => {
@@ -344,10 +343,10 @@ export async function verifyHumanAnswerBridge(body: import("../missions/human-an
   return false
 }
 
-async function registrations({ pruneStale = true, strict }: { pruneStale?: boolean; strict?: "browser" | "mission" } = {},
+async function registrations({ pruneStale = true, strict }: { pruneStale?: boolean; strict?: "mission" } = {},
   signal?: AbortSignal, checkCurrent = () => signal?.throwIfAborted()): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
-  const options: BridgeDirectoryOptions = { strict: strict === "browser" ? "browser" : Boolean(strict) }
+  const options: BridgeDirectoryOptions = { strict: Boolean(strict) }
   const directories = signal ? await discoverAutomationBridgeDirectories(signal, options) : await automationBridgeDirectories(options)
   for (const [directoryIndex, directory] of directories.entries()) {
     checkCurrent()
@@ -372,10 +371,6 @@ async function registrations({ pruneStale = true, strict }: { pruneStale?: boole
     } catch (error) {
       checkCurrent()
       if (strict && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-      if (strict === "browser" && directoryIndex > 0) {
-        // An absent registry is meaningful only on a readable Windows profile mount.
-        if (entries.length || !(await stat(path.dirname(path.dirname(directory)))).isDirectory()) throw error
-      }
       continue
     }
     entries.sort((left, right) => right.startedAt - left.startedAt)
@@ -392,7 +387,6 @@ async function registrations({ pruneStale = true, strict }: { pruneStale?: boole
       if (registration === null) continue
       if (!registration) {
         // Mission discovery treats malformed foreign advertisements as unsupported.
-        if (strict === "browser") throw new Error("Browser backend registration is unreadable")
         if (strict === "mission" && directoryIndex === 0) throw new Error("Mission backend registration is unreadable")
         continue
       }

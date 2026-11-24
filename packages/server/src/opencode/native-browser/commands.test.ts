@@ -1,34 +1,37 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { PreviewTab, type PreviewHost } from "./commands"
+import { checkState, keyRefusal, PreviewTab, type PreviewHost } from "./commands"
 
 function fixture() {
-  const calls: unknown[] = []
-  let target: string | undefined, document = 0, checkboxChecked = false
+  const calls: Record<string, unknown>[] = []
+  const state = { target: undefined as string | undefined, document: 0, checked: false, loading: 0, onPage: undefined as undefined | (() => void) }
   const host: PreviewHost = {
-    probe: async () => target,
-    open: async (_session, url) => { target = `doc-${++document}`; return { url } },
-    navigate: async (_session, url) => { target = `doc-${++document}`; return { url } },
-    back: async () => { target = `doc-${++document}`; return { url: "http://127.0.0.1/page" } },
-    forward: async () => { target = `doc-${++document}`; return { url: "http://127.0.0.1/next" } },
-    reload: async () => { target = `doc-${++document}`; return { url: "http://127.0.0.1/next" } },
+    probe: async () => {
+      if (!state.target) return undefined
+      return { target: state.target, loading: state.loading > 0 && state.loading-- > 0 }
+    },
+    open: async url => { state.target = `doc-${++state.document}`; return { url } },
+    navigate: async url => { state.target = `doc-${++state.document}`; return { url } },
+    back: async () => { state.target = `doc-${++state.document}`; return { url: "http://127.0.0.1/page" } },
+    forward: async () => { state.target = `doc-${++state.document}`; return { url: "http://127.0.0.1/next" } },
+    reload: async () => { state.target = `doc-${++state.document}`; return { url: "http://127.0.0.1/next" } },
     screenshot: async () => ({ image: { mime: "image/png", data: "iVBORw0KGgo=" } }),
-    page: async (_session, action, at) => {
+    page: async (action, at) => {
       calls.push({ ...action, at })
+      state.onPage?.()
       if (action.action === "location") return { url: "http://127.0.0.1/page" }
       if (action.action === "snapshot") {
-        if (action.ref === "e2") return { url: "", snapshot: `- checkbox "Terms" [e2] ${checkboxChecked ? "checked" : "unchecked"}`, collapsed: false }
+        if (action.ref === "e2") return { url: "", snapshot: `- checkbox "Keep this checked" [e2] ${state.checked ? "checked" : "unchecked"}`, collapsed: false }
         if (action.ref === "e3") return { url: "", snapshot: '- radio "Pro" [e3] checked', collapsed: false }
-        if (action.ref === "e1") return { url: "", snapshot: '- button "Go" [e1]', collapsed: false }
         return { url: "", snapshot: '- button "Go" [e1]', collapsed: false }
       }
-      if (action.action === "click" && action.ref === "e2") { checkboxChecked = !checkboxChecked; return { url: "" } }
+      if (action.action === "click" && action.ref === "e2") { state.checked = !state.checked; return { url: "" } }
       if (action.action === "wait") throw new Error('"Saved" did not appear within 0 ms')
       if (action.action === "click" && action.ref === "e9") throw new Error("Unknown or stale ref e9; take a new snapshot")
       return { url: "" }
     },
   }
-  return { tab: new PreviewTab(host, "ses_1"), calls }
+  return { tab: new PreviewTab(host), calls, state }
 }
 const signal = new AbortController().signal
 
@@ -47,6 +50,16 @@ test("one preview tab: absent until opened, then a stable ID whose generation fo
     "a command selected for the previous document is refused")
 })
 
+test("every step of one command stays on the document it started on", async () => {
+  const { tab, calls, state } = fixture()
+  await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
+  // A concurrent command refreshes the tab onto another document between the two scroll steps.
+  state.onPage = () => { state.onPage = undefined; state.target = `doc-${++state.document}`; void tab.run({ type: "tabs.list" }, undefined, signal) }
+  calls.length = 0
+  await tab.run({ type: "scroll", tabID: tab.id, deltaY: 100, deltaX: 50 }, undefined, signal)
+  assert.deepEqual(calls.filter(call => call.action === "scroll").map(call => call.at), ["doc-1", "doc-1"])
+})
+
 test("snapshots, failures and the operations the CodeNomad preview does not offer", async () => {
   const { tab } = fixture()
   await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
@@ -62,7 +75,30 @@ test("snapshots, failures and the operations the CodeNomad preview does not offe
   assert.equal((await tab.run({ type: "tabs.open", url: "file:///etc/passwd" }, undefined, signal) as any).code, "unsupported")
 })
 
-test("back, forward, reload, check and fill_form", async () => {
+test("wait for load follows the native loading state, and the tab reports it", async () => {
+  const { tab, state } = fixture()
+  await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
+  state.loading = 3
+  assert.equal((await tab.run({ type: "tabs.list" }, undefined, signal) as any).result.value.tabs[0].loading, true)
+  const waited = await tab.run({ type: "wait", tabID: tab.id, condition: "load", timeoutMs: 5_000 }, undefined, signal) as any
+  assert.equal(waited.type, "success")
+  assert.equal(waited.result.value.loading, false)
+  assert.equal(state.loading, 0, "waited until the host stopped reporting a load")
+  state.loading = 1_000
+  assert.equal((await tab.run({ type: "wait", tabID: tab.id, condition: "load", timeoutMs: 150 }, undefined, signal) as any).code, "condition_unmet")
+})
+
+test("press refuses clipboard and context-menu shortcuts before any input", async () => {
+  const { tab, calls } = fixture()
+  await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
+  calls.length = 0
+  for (const key of ["Control+C", "Meta+v", "Control+X", "Shift+Insert", "Control+Insert", "Shift+Delete", "Shift+F10", "ContextMenu"])
+    assert.equal((await tab.run({ type: "press", tabID: tab.id, key }, undefined, signal) as any).code, "operation_failed", key)
+  assert.equal(calls.length, 0)
+  for (const key of ["Enter", "Control+A", "Shift+Tab", "c", "Delete"]) assert.equal(keyRefusal(key), undefined, key)
+})
+
+test("back, forward, reload, check by state attribute, select by value and fill_form", async () => {
   const { tab, calls } = fixture()
   await tab.run({ type: "tabs.open", url: "http://127.0.0.1/page" }, undefined, signal)
   const back = await tab.run({ type: "back", tabID: tab.id }, undefined, signal) as any
@@ -73,25 +109,34 @@ test("back, forward, reload, check and fill_form", async () => {
   const reload = await tab.run({ type: "reload", tabID: tab.id }, undefined, signal) as any
   assert.equal(reload.type, "success")
   calls.length = 0
-  // Unchecked -> checked: clicks once.
+  // "Keep this checked" is the label: the control is unchecked and is clicked once.
   assert.equal((await tab.run({ type: "check", tabID: tab.id, ref: "e2", checked: true }, undefined, signal)).type, "success")
-  assert.equal(calls.filter((c: any) => c.action === "click").length, 1)
-  // Already checked -> no extra click.
+  assert.equal(calls.filter(c => c.action === "click").length, 1)
   assert.equal((await tab.run({ type: "check", tabID: tab.id, ref: "e2", checked: true }, undefined, signal)).type, "success")
-  assert.equal(calls.filter((c: any) => c.action === "click").length, 1)
-  // Non-checkable control and unchecking a radio are refused.
+  assert.equal(calls.filter(c => c.action === "click").length, 1)
   assert.equal((await tab.run({ type: "check", tabID: tab.id, ref: "e1", checked: true }, undefined, signal) as any).code, "operation_failed")
   assert.equal((await tab.run({ type: "check", tabID: tab.id, ref: "e3", checked: false }, undefined, signal) as any).code, "operation_failed")
-  // fill_form runs text, select and check in order.
+  calls.length = 0
+  await tab.run({ type: "select", tabID: tab.id, ref: "e5", values: ["pro"] }, undefined, signal)
+  assert.equal(calls[0].byValue, true, "OpenCode selects options by value")
   calls.length = 0
   const filled = await tab.run({
     type: "fill_form", tabID: tab.id,
     fields: [
       { ref: "e4", type: "text", value: "Ada" },
-      { ref: "e5", type: "select", values: ["Pro"] },
+      { ref: "e5", type: "select", values: ["pro"] },
       { ref: "e2", type: "check", checked: false },
     ],
   }, undefined, signal)
   assert.equal(filled.type, "success")
-  assert.deepEqual(calls.map((c: any) => c.action), ["type", "select", "snapshot", "click"])
+  assert.deepEqual(calls.map(c => c.action), ["type", "select", "snapshot", "click"])
+  assert.equal(calls[1].byValue, true)
+})
+
+test("checked state comes from the attributes after the ref only", () => {
+  assert.equal(checkState('- checkbox "Keep this checked by default" [e5] unchecked', "e5"), "unchecked")
+  assert.equal(checkState('- checkbox "Terms" [e5] checked', "e5"), "checked")
+  assert.equal(checkState('- checkbox "Terms" [e5] value="checked"', "e5"), undefined)
+  assert.equal(checkState('- checkbox "Mixed" [e5] checked=mixed', "e5"), "checked=mixed")
+  assert.equal(checkState('- button "checked" [e1]', "e1"), undefined)
 })

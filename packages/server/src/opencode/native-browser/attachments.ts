@@ -29,7 +29,8 @@ type Control = { type: "attached" | "command" | "cancel"; connectionID: string; 
  * and dispatches their calls here, where the guarded native preview channel runs them.
  */
 export class NativeBrowserAttachments {
-  private readonly holds = new Map<string, { key: string; expires: number }>()
+  private readonly holds = new Map<string, { workspaceID: string; sessionID: string; expires: number }>()
+  /** One attachment per session: OpenCode keeps a single desktop attachment and replaces older ones. */
   private readonly sessions = new Map<string, SessionAttachment>()
   private readonly attachClients = new WeakMap<ServiceConnection, OpenCodeClient>()
   private readonly attachAgent = new Agent({ headersTimeout: 0, bodyTimeout: 0 })
@@ -58,19 +59,26 @@ export class NativeBrowserAttachments {
   /** Creates or renews one view's hold on a session. */
   hold(holdID: string, workspaceID: string, sessionID: string): void {
     if (this.closed || !this.available) throw new Error("Browser automation is unavailable in this host")
-    const key = `${workspaceID}\0${sessionID}`
-    this.holds.set(holdID, { key, expires: Date.now() + HOLD_MS })
-    if (this.sessions.has(key)) return
-    if (this.sessions.size >= MAX_SESSIONS) throw new Error("Too many attached browser sessions")
-    const session = new SessionAttachment(workspaceID, sessionID, this.host(workspaceID),
-      connection => this.attachClient(connection), this.deps.workspaceManager, this.deps.logger)
-    this.sessions.set(key, session)
-    session.start()
+    if (!this.sessions.has(sessionID) && this.sessions.size >= MAX_SESSIONS) throw new Error("Too many attached browser sessions")
+    this.holds.set(holdID, { workspaceID, sessionID, expires: Date.now() + HOLD_MS })
+    if (!this.sessions.has(sessionID)) this.attach(workspaceID, sessionID)
   }
 
   release(holdID: string): void {
     this.holds.delete(holdID)
     this.expire()
+  }
+
+  private attach(workspaceID: string, sessionID: string): void {
+    const session = new SessionAttachment(workspaceID, sessionID, this.host(workspaceID, sessionID),
+      connection => this.attachClient(connection), this.deps.workspaceManager, this.deps.logger)
+    this.sessions.set(sessionID, session)
+    session.start()
+  }
+
+  /** The workspaces whose views hold a session, most recent hold last. */
+  private holders(sessionID: string): string[] {
+    return [...new Set([...this.holds.values()].filter(hold => hold.sessionID === sessionID).map(hold => hold.workspaceID))]
   }
 
   close(): void {
@@ -84,15 +92,15 @@ export class NativeBrowserAttachments {
   }
 
   private expire(): void {
-    const now = Date.now(), held = new Set<string>()
-    for (const [id, hold] of this.holds) {
-      if (hold.expires <= now) this.holds.delete(id)
-      else held.add(hold.key)
-    }
-    for (const [key, session] of this.sessions) {
-      if (held.has(key)) continue
+    const now = Date.now()
+    for (const [id, hold] of this.holds) if (hold.expires <= now) this.holds.delete(id)
+    for (const [sessionID, session] of this.sessions) {
+      const holders = this.holders(sessionID)
+      if (holders.includes(session.workspaceID)) continue
       session.stop()
-      this.sessions.delete(key)
+      this.sessions.delete(sessionID)
+      // Another workspace's view still shows the session: it takes the attachment over.
+      if (holders.length && !this.closed) this.attach(holders.at(-1)!, sessionID)
     }
   }
 
@@ -117,21 +125,32 @@ export class NativeBrowserAttachments {
     return client
   }
 
-  private host(workspaceID: string): PreviewHost {
-    const native = this.deps.nativeParent
+  private host(workspaceID: string, sessionID: string): PreviewHost {
+    // A sent native request cannot be recalled: a cancelled command never sends one and stops waiting for it.
+    const native = <T>(method: string, params: Record<string, unknown>, deadline: number, signal: AbortSignal): Promise<T> => {
+      signal.throwIfAborted()
+      return new Promise<T>((resolve, reject) => {
+        const aborted = () => reject(signal.reason)
+        signal.addEventListener("abort", aborted, { once: true })
+        this.deps.nativeParent.request<T>(method, { sessionID, ...params }, { deadline })
+          .then(resolve, reject).finally(() => signal.removeEventListener("abort", aborted))
+      })
+    }
+    const execute = (command: Record<string, unknown>, target: string, deadline: number, signal: AbortSignal) =>
+      native<{ url: string }>("browser.execute", { command, target }, deadline, signal)
     return {
-      probe: async (sessionID, deadline) => {
-        const result = await native.request<{ available?: boolean; target?: string }>("browser.probe", { sessionID }, { deadline })
-        return result?.available === true && typeof result.target === "string" ? result.target : undefined
+      probe: async (deadline, signal) => {
+        const result = await native<{ available?: boolean; target?: string; loading?: boolean }>("browser.probe", {}, deadline, signal)
+        return result?.available === true && typeof result.target === "string" ? { target: result.target, loading: result.loading === true } : undefined
       },
-      // The view that holds the session is in this workspace's project tab.
-      open: (sessionID, url, deadline) => native.request("browser.execute", { sessionID, command: { action: "open", url }, workspaceIDs: [workspaceID] }, { deadline }),
-      navigate: (sessionID, url, target, deadline) => native.request("browser.execute", { sessionID, command: { action: "navigate", url }, target }, { deadline }),
-      back: (sessionID, target, deadline) => native.request("browser.execute", { sessionID, command: { action: "back" }, target }, { deadline }),
-      forward: (sessionID, target, deadline) => native.request("browser.execute", { sessionID, command: { action: "forward" }, target }, { deadline }),
-      reload: (sessionID, target, deadline) => native.request("browser.execute", { sessionID, command: { action: "reload" }, target }, { deadline }),
-      screenshot: (sessionID, target, deadline) => native.request("browser.execute", { sessionID, command: { action: "screenshot" }, target }, { deadline }),
-      page: (sessionID, action, target, deadline, signal) => this.page.execute(sessionID, action, signal, target, deadline),
+      // The views that show the session are in these workspaces' project tabs.
+      open: (url, deadline, signal) => native("browser.execute", { command: { action: "open", url }, workspaceIDs: this.holders(sessionID).length ? this.holders(sessionID) : [workspaceID] }, deadline, signal),
+      navigate: (url, target, deadline, signal) => execute({ action: "navigate", url }, target, deadline, signal),
+      back: (target, deadline, signal) => execute({ action: "back" }, target, deadline, signal),
+      forward: (target, deadline, signal) => execute({ action: "forward" }, target, deadline, signal),
+      reload: (target, deadline, signal) => execute({ action: "reload" }, target, deadline, signal),
+      screenshot: (target, deadline, signal) => native("browser.execute", { command: { action: "screenshot" }, target }, deadline, signal),
+      page: (action, target, deadline, signal) => this.page.execute(sessionID, action, signal, target, deadline),
     }
   }
 }
@@ -140,28 +159,39 @@ class SessionAttachment {
   connectionID: string | undefined
   private readonly stopping = new AbortController()
   private readonly requests = new Map<string, AbortController>()
+  /** Request IDs already taken: the relay can deliver one control event once per owning workspace. */
+  private readonly taken = new Set<string>()
   private readonly tab: PreviewTab
   private connection: ServiceConnection | undefined
   private location: Location | undefined
 
-  constructor(private readonly workspaceID: string, private readonly sessionID: string, host: PreviewHost,
+  constructor(readonly workspaceID: string, private readonly sessionID: string, host: PreviewHost,
     private readonly attachClient: (connection: ServiceConnection) => OpenCodeClient,
     private readonly workspaceManager: WorkspaceManager, private readonly logger: Logger) {
-    this.tab = new PreviewTab(host, sessionID)
+    this.tab = new PreviewTab(host)
   }
 
   start(): void { void this.loop() }
 
   stop(): void {
     this.stopping.abort()
-    for (const request of this.requests.values()) request.abort()
-    this.requests.clear()
+    this.cancelRequests()
   }
 
   control(control: Control): void {
     if (control.type === "attached") void this.publish().catch(error => this.warn("Browser state publication failed", error))
-    else if (control.type === "command" && control.requestID) void this.command(control.requestID)
-    else if (control.type === "cancel" && control.requestID) this.requests.get(control.requestID)?.abort()
+    else if (control.type === "command" && control.requestID) {
+      if (this.taken.has(control.requestID)) return
+      this.taken.add(control.requestID)
+      if (this.taken.size > 256) this.taken.delete(this.taken.values().next().value!)
+      void this.command(control.requestID)
+    } else if (control.type === "cancel" && control.requestID) this.requests.get(control.requestID)?.abort()
+  }
+
+  /** OpenCode settles an ended attachment's requests itself; their work stops here too. */
+  private cancelRequests(): void {
+    for (const request of this.requests.values()) request.abort()
+    this.requests.clear()
   }
 
   private async loop(): Promise<void> {
@@ -179,13 +209,15 @@ class SessionAttachment {
         this.location = location
         this.connectionID = randomUUID()
         const outcome = await this.rpc("attach", { version: VERSION }, signal, this.attachClient(connection))
-        if (outcome === "replaced") return
+        // Another desktop took the session over: this one attaches again once every view has released it.
+        if (outcome === "replaced") { this.connectionID = undefined; this.cancelRequests(); return }
       } catch (error) {
         // A runtime with `-opencode.browser` or a Location still loading its plugins answers rpc.unavailable.
         if ((error as { type?: unknown })?.type === "rpc.unavailable") { if (++unavailable > 5) wait = UNAVAILABLE_RETRY_MS }
         else if (!signal.aborted) this.warn("OpenCode browser attachment ended", error)
       }
       this.connectionID = undefined
+      this.cancelRequests()
       await new Promise(resolve => setTimeout(resolve, wait))
     }
   }

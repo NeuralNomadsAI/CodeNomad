@@ -5,7 +5,8 @@ import { keyChord } from "./keys"
 export type RefAction =
   | { action: "click"; ref: string; button?: "left" | "right" }
   | { action: "type"; ref: string; text: string; clear: boolean }
-  | { action: "select"; ref: string; values: string[] }
+  /** `byValue` matches option values only, as OpenCode's browser contract requires. */
+  | { action: "select"; ref: string; values: string[]; byValue?: true }
   | { action: "hover"; ref: string }
   | { action: "drag"; ref: string; to: string }
   | { action: "scroll"; ref?: string; direction: "up" | "down" | "left" | "right"; amount: number }
