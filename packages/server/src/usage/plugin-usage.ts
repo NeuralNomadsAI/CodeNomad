@@ -78,9 +78,11 @@ const absentRpcErrorSchema = z.object({
   message: z.string().min(1).max(4096),
 }).strict()
 
+// OpenCode reserves `rpc.`; plugin failures are its other system codes or custom unprefixed types.
+const PLUGIN_SYSTEM_RPC_ERRORS = new Set(["rpc.invalid_input", "rpc.invalid_output", "rpc.internal"])
 const registeredRpcErrorSchema = z.object({
   _tag: z.literal("RpcError"),
-  type: z.string().min(1).refine(type => type !== "rpc.unavailable" && type !== "rpc.method_not_found"),
+  type: z.string().min(1).refine(type => !type.startsWith("rpc.") || PLUGIN_SYSTEM_RPC_ERRORS.has(type)),
   message: z.string(),
   data: z.unknown().optional(),
 }).strict()

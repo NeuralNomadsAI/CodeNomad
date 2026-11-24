@@ -202,6 +202,7 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     ["whitespace-only JSON 404", async () => new Response("   ", { status: 404, headers: { "content-type": "application/json" } })],
     ["SessionNotFoundError 404", async () => Response.json({ _tag: "SessionNotFoundError", message: "gone" }, { status: 404 })],
     ["incomplete RpcInternalError 500", async () => Response.json({ _tag: "RpcInternalError" }, { status: 500 })],
+    ["unknown reserved RpcError type 400", async () => Response.json({ _tag: "RpcError", type: "rpc.unknown", message: "unexpected" }, { status: 400 })],
     ["unknown RpcInternalError type 500", async () => Response.json({ _tag: "RpcInternalError", type: "quota.unknown", message: "x" }, { status: 500 })],
     ["contract error 500", async () => Response.json({ _tag: "OpenCodeContractError", status: 500 }, { status: 500 })],
     ["bad gateway 502", async () => new Response("Bad Gateway", { status: 502 })],

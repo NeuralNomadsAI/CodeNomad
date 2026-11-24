@@ -397,7 +397,7 @@ test("a client disconnect aborts the plugin RPC without follow-up ownership chec
 
 test("a client that disconnected before the handler started never reaches the plugin RPC", async () => {
   let dispatched = 0
-  const { app } = harness(async () => { dispatched++; return Response.json({ output: { configured: true, ok: true, windows: {} } }) })
+  const { app, state } = harness(async () => { dispatched++; return Response.json({ output: { configured: true, ok: true, windows: {} } }) })
   let entered!: () => void
   const preHandlerEntered = new Promise<void>(resolve => { entered = resolve })
   let release!: () => void
@@ -405,7 +405,8 @@ test("a client that disconnected before the handler started never reaches the pl
   let handled!: () => void
   const handlerDone = new Promise<void>(resolve => { handled = resolve })
   app.addHook("preHandler", async () => { entered(); await released })
-  app.addHook("onResponse", async () => { handled() })
+  // onSend runs once the handler has produced its reply, even for a gone client.
+  app.addHook("onSend", async () => { handled() })
   try {
     const address = await app.listen({ host: "127.0.0.1", port: 0 })
     const client = new AbortController()
@@ -417,8 +418,9 @@ test("a client that disconnected before the handler started never reaches the pl
     release()
     let watchdog: ReturnType<typeof setTimeout> | undefined
     try {
-      await Promise.race([handlerDone, new Promise(resolve => { watchdog = setTimeout(resolve, 2_000) })])
+      await Promise.race([handlerDone, new Promise((_resolve, reject) => { watchdog = setTimeout(() => reject(new Error("handler never replied")), 2_000) })])
     } finally { clearTimeout(watchdog) }
+    assert.equal(state.sessionGets >= 1, true, "the handler ran")
     assert.equal(dispatched, 0)
   } finally { await app.close() }
 })
