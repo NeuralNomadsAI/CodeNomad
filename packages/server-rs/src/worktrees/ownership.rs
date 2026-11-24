@@ -244,7 +244,7 @@ fn catalogue_proof(
         .trees
         .iter()
         .filter(|tree| if media { tree.contains_media(path) } else { tree.contains_live(path) })
-        .max_by_key(|tree| tree.path.as_os_str().len())?;
+        .max_by_key(|tree| if media { tree.media_path_len() } else { tree.path.as_os_str().len() })?;
     let source = (external || tree.registered() != root.registered()).then(|| root.clone());
     Some(DirectoryProof { tree: Some(tree.clone()), source, root: None, external, media })
 }

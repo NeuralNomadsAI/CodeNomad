@@ -258,12 +258,20 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let list_deadline = tokio::time::Instant::now() + super::PROXY_IDLE;
     let endpoint = if message_list {
         let deadline = list_deadline.min(tokio::time::Instant::now() + Duration::from_secs(30));
-        tokio::select! {
+        let endpoint = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
             _ = workspace_closed() => return Err(not_found()),
             acquired = app.native.acquire(deadline) => acquired.map_err(|_| upstream_error())?,
+        };
+        tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+            _ = workspace_closed() => return Err(not_found()),
+            _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(&app, &endpoint)) => {}
         }
+        endpoint
     } else {
         app.native.endpoint().ok_or_else(upstream_error)?
     };
@@ -1280,6 +1288,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     let (route, opened, directory, id) = (route.to_owned(), opened.to_owned(), directory.to_owned(), id.to_owned());
     let list_session = message_list.then_some(session).flatten().map(str::to_owned);
+    let inline_live_check =
+        message_list.then(|| (initial_identity.clone(), input_checkout.clone(), native_directory.map(str::to_owned)));
     let dispatched_mutation = mutation.is_some();
     let observer = principal.0.clone();
     let dispatch = move |detached: tokio_util::sync::CancellationToken| async move {
@@ -1304,11 +1314,38 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 Err(_) => return Err(upstream_error()),
             },
         };
+        if message_list
+            && !response.status().is_success()
+            && response.status() != Status::NOT_MODIFIED
+            && !is_json_content_type(response.headers())
+        {
+            let status = response.status();
+            let unauthorized = status == Status::UNAUTHORIZED;
+            drop(response);
+            if unauthorized {
+                app.native.invalidate(&endpoint);
+            }
+            let version = if endpoint.version.is_empty() { "v2" } else { endpoint.version.as_str() };
+            return Ok((
+                status,
+                Json(json!({
+                    "_tag": "OpenCodeContractError",
+                    "message": format!("OpenCode {version}: GET {route} returned HTTP {}", status.as_u16()),
+                    "status": status.as_u16(),
+                    "profile": "modern",
+                    "method": "GET",
+                    "path": route,
+                })),
+            )
+                .into_response());
+        }
         if let Some(list_session) = &list_session
             && response.status().is_success()
         {
-            // Re-verify session placement before streaming inline `message.list` bytes so a
-            // session moved out of the workspace after admission cannot have its transcript relayed.
+            // Intentional server-rs security hardening (TS `http-server.ts:1670-1707` omits this
+            // recheck; tracked in `solid-backlog.md`): re-verify both native session placement and
+            // physical checkout identity before streaming inline `message.list` bytes so a session
+            // moved out of the workspace or retargeted via symlink after admission cannot leak.
             let latest = tokio::select! {
                 biased;
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
@@ -1320,10 +1357,44 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             if actual.as_ref().is_none_or(|orig| latest["id"] != orig["id"] || latest["location"] != orig["location"]) {
                 return Err(foreign());
             }
-            if !crate::sessions::permission_mode::workspace_current(&app, &workspace) || !app.native.current(&endpoint)
-            {
+            let live_ok =
+                if let Some((Some((resolved, anchor, expected_id)), Some(checkout), Some(raw))) = &inline_live_check {
+                    let (scope, raw, resolved, anchor, expected_id, checkout) = (
+                        app.scope.clone(),
+                        raw.clone(),
+                        resolved.clone(),
+                        anchor.clone(),
+                        expected_id.clone(),
+                        checkout.clone(),
+                    );
+                    tokio::select! {
+                        biased;
+                        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                        _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                        res = tokio::time::timeout_at(
+                            list_deadline,
+                            tokio::task::spawn_blocking(move || {
+                                crate::worktrees::ownership::resolve_media_path(&scope, &raw).is_some_and(
+                                    |(cur_res, cur_anc)| {
+                                        cur_res == resolved
+                                            && cur_anc == anchor
+                                            && crate::files::directory_identity(&cur_anc).ok() == Some(expected_id)
+                                            && checkout.live(&cur_res)
+                                    },
+                                )
+                            }),
+                        ) => res.map_err(|_| upstream_error())?.unwrap_or(false),
+                    }
+                } else {
+                    false
+                };
+            if !live_ok || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
+                return Err(foreign());
+            }
+            if !app.native.current(&endpoint) {
                 return Err(upstream_error());
             }
+            principal.live()?;
         }
         if response.status().is_success() {
             if let Some(receipt) = receipt {

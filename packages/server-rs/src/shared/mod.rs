@@ -163,6 +163,7 @@ pub fn stream_abort(
 
 pub const RESPONSE_CHUNK: usize = 64 * 1024;
 const MEDIA_MEM_UNITS: usize = 1024;
+const HISTORY_MEM_UNITS: usize = 1024;
 const LIST_MEM_UNITS: usize = 4096;
 
 #[derive(Clone, Copy)]
@@ -170,18 +171,24 @@ pub enum ResponsePool {
     /// 64 MiB isolated pool for `session-media` images (<= 6 MiB each) so slow list streams
     /// cannot starve image fetches across workspaces.
     Media,
-    /// 256 MiB pool for deferred `message.list` and `session-history/window` responses.
+    /// 64 MiB isolated pool for `session-history/window` responses so atomic history reservations
+    /// can never queue ahead of incremental `message.list` reservations in a shared FIFO semaphore.
+    History,
+    /// 256 MiB pool exclusively for deferred `message.list` (single builder slot, deadlock-free).
     List,
 }
 
 static MEDIA_RESPONSE_MEM: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
     std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(MEDIA_MEM_UNITS)));
+static HISTORY_RESPONSE_MEM: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(HISTORY_MEM_UNITS)));
 static LIST_RESPONSE_MEM: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
     std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(LIST_MEM_UNITS)));
 
 pub fn response_memory_units(pool: ResponsePool, bytes: usize) -> u32 {
     let cap = match pool {
         ResponsePool::Media => MEDIA_MEM_UNITS,
+        ResponsePool::History => HISTORY_MEM_UNITS,
         ResponsePool::List => LIST_MEM_UNITS,
     };
     bytes.div_ceil(RESPONSE_CHUNK).clamp(1, cap) as u32
@@ -193,6 +200,7 @@ pub async fn acquire_response_units(
 ) -> Result<tokio::sync::OwnedSemaphorePermit, tokio::sync::AcquireError> {
     let sem = match pool {
         ResponsePool::Media => &*MEDIA_RESPONSE_MEM,
+        ResponsePool::History => &*HISTORY_RESPONSE_MEM,
         ResponsePool::List => &*LIST_RESPONSE_MEM,
     };
     sem.clone().acquire_many_owned(units).await

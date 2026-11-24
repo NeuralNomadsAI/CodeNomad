@@ -230,6 +230,7 @@ pub async fn bridge(app: Shared) {
                 let next = tokio::select! {
                     biased;
                     _ = lanes.failed.cancelled() => break,
+                    _ = app.native.wait_retired(&endpoint) => break,
                     _ = app.opened.notified(), if connected => {
                         lanes.receipts.schedule();
                         continue;
@@ -421,7 +422,7 @@ async fn route(app: &Shared, routes: &Routes, Job { event, endpoint, received: (
             {
                 continue;
             }
-        } else if app.workspace(&workspace.id.to_string()).is_err() {
+        } else if !app.native.current(&endpoint) || app.workspace(&workspace.id.to_string()).is_err() {
             continue;
         }
         app.emit(envelope);

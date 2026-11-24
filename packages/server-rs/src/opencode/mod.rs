@@ -390,14 +390,25 @@ async fn session_record_segment_at(
     if response.status() == Status::BAD_REQUEST {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    let response = read_json(response.error_for_status().map_err(|_| upstream_error())?, max_bytes)
+    let raw = read_bytes(response.error_for_status().map_err(|_| upstream_error())?, max_bytes)
         .await
         .map_err(|_| upstream_error())?;
-    let response = response.get("data").unwrap_or(&response);
-    if !response.is_object() || (strict_id && response["id"] != id) {
-        Err(upstream_error())
+    let parse = |bytes: Vec<u8>, id: &str, strict_id: bool| -> Result<Value, ()> {
+        let mut parsed: Value = serde_json::from_slice(&bytes).map_err(|_| ())?;
+        let data = match parsed.as_object_mut().and_then(|o| o.remove("data")) {
+            Some(inner) => inner,
+            None => parsed,
+        };
+        if !data.is_object() || (strict_id && data["id"] != id) { Err(()) } else { Ok(data) }
+    };
+    if raw.len() > 32 * 1024 {
+        let expected = id.to_owned();
+        tokio::task::spawn_blocking(move || parse(raw, &expected, strict_id))
+            .await
+            .map_err(|_| upstream_error())?
+            .map_err(|_| upstream_error())
     } else {
-        Ok(response.clone())
+        parse(raw, id, strict_id).map_err(|_| upstream_error())
     }
 }
 

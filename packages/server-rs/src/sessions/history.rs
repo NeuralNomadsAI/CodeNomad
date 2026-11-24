@@ -64,16 +64,16 @@ pub(super) struct Placement {
 }
 
 impl Placement {
-    pub(super) async fn capture(app: &App, id: &str, session: &str, references: bool) -> Result<Self, Error> {
+    pub(super) async fn capture(app: &Shared, id: &str, session: &str, references: bool) -> Result<Self, Error> {
         Self::capture_inner(app, id, session, false, false, references).await
     }
 
-    pub(super) async fn capture_for_media(app: &App, id: &str, session: &str) -> Result<Self, Error> {
+    pub(super) async fn capture_for_media(app: &Shared, id: &str, session: &str) -> Result<Self, Error> {
         Self::capture_inner(app, id, session, true, true, false).await
     }
 
     pub(super) async fn capture_with_media(
-        app: &App,
+        app: &Shared,
         id: &str,
         session: &str,
         media: bool,
@@ -83,7 +83,7 @@ impl Placement {
     }
 
     async fn capture_inner(
-        app: &App,
+        app: &Shared,
         id: &str,
         session: &str,
         media: bool,
@@ -111,7 +111,9 @@ impl Placement {
         let endpoint = {
             let timeout = if media { Duration::from_secs(30) } else { Duration::from_secs(10) };
             let deadline = tokio::time::Instant::now() + timeout;
-            app.native.acquire(deadline).await.map_err(|_| crate::opencode::upstream_error())?
+            let endpoint = app.native.acquire(deadline).await.map_err(|_| crate::opencode::upstream_error())?;
+            let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(app, &endpoint)).await;
+            endpoint
         };
         let capture = async {
             let current_fast = |displays: &[Arc<AtomicBool>]| {
@@ -257,12 +259,24 @@ impl Placement {
         {
             return Err(changed());
         }
+        let cur_anchor = if self.strict_media {
+            let path = self.path.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::worktrees::ownership::directory_anchor(&path).ok().flatten().map(std::path::PathBuf::from)
+            })
+            .await
+            .ok()
+            .flatten()
+            .ok_or_else(changed)?
+        } else {
+            self.anchor.clone()
+        };
         let current = crate::worktrees::ownership::media_directory(
             app,
             &self.workspace,
             &self.endpoint,
             &self.path,
-            &self.anchor,
+            &cur_anchor,
             self.strict_media,
         )
         .await
@@ -290,14 +304,30 @@ impl Placement {
         let anchor = self.anchor.clone();
         let physical = self.physical.clone();
         let checkout = self.checkout.clone();
+        let strict_media = self.strict_media;
         let ok = tokio::task::spawn_blocking(move || {
-            workspace_physical
+            let workspace_ok = workspace_physical
                 .as_ref()
-                .is_none_or(|expected| directory_identity(&workspace_path).is_ok_and(|current| &current == expected))
-                && crate::worktrees::ownership::resolve_exact_directory(&raw_dir).as_ref() == Some(&path)
-                && crate::worktrees::ownership::directory_anchor(&path) == Ok(Some(anchor.as_path()))
-                && directory_identity(&anchor).is_ok_and(|current| current == physical)
-                && checkout.live(&path)
+                .is_none_or(|expected| directory_identity(&workspace_path).is_ok_and(|current| &current == expected));
+            if !workspace_ok
+                || crate::worktrees::ownership::resolve_exact_directory(&raw_dir).as_ref() != Some(&path)
+                || !checkout.live(&path)
+            {
+                return false;
+            }
+            let Ok(Some(cur_anchor)) = crate::worktrees::ownership::directory_anchor(&path) else {
+                return false;
+            };
+            if cur_anchor == anchor.as_path() {
+                directory_identity(&anchor).is_ok_and(|current| current == physical)
+            } else {
+                // TS `session-media.ts:61-76` + `worktree-directory.ts:166-193`: if only a
+                // session's subfolder disappears while its checkout stays intact, ownership
+                // resolves through the existing ancestor inside the same live checkout.
+                strict_media
+                    && anchor.starts_with(cur_anchor)
+                    && std::fs::symlink_metadata(&path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            }
         })
         .await
         .unwrap_or(false);
@@ -306,7 +336,9 @@ impl Placement {
 
     async fn ready(&self, app: &Shared, id: &str, session: &str) -> Result<&str, Recheck> {
         let directory = self.source["location"]["directory"].as_str().ok_or(Recheck::Unavailable)?;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        // Share a single 5 s readiness budget across plugin catalogue activation and presence
+        // challenge, matching TS `desktop-plugin-lifecycle.ts:135-154`.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         // Provision bundled plugins for this exact captured endpoint before checking the catalogue
         // and presence lease under the same deadline (TS `opencode-service.ts:148-166`).
         let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(app, &self.endpoint)).await;
@@ -651,7 +683,7 @@ pub async fn handle(
                 let permit = tokio::select! {
                     biased;
                     _ = workspace_closed => return blocked("unavailable"),
-                    permit = crate::shared::reserve_response_memory(crate::shared::ResponsePool::List, reserve_len) => {
+                    permit = crate::shared::reserve_response_memory(crate::shared::ResponsePool::History, reserve_len) => {
                         match permit {
                             Ok(permit) => permit,
                             Err(_) => return blocked("unavailable"),
@@ -779,25 +811,44 @@ pub async fn attachment(
         if !status.is_success() || reply["output"]["status"] != "current" {
             return Err(missing());
         }
-        principal.live()?;
         if !placement.operation_current(&app, &id).await {
             return Err(missing());
         }
         if !placement.live(&app, &id).await {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
-        Ok((
+        principal.live()?;
+        let length = axum::http::HeaderValue::from(bytes.len());
+        let abort = crate::shared::stream_abort(
+            app.clone(),
+            id.clone(),
+            placement.workspace.clone(),
+            placement.endpoint.clone(),
+            principal.0.clone(),
+        );
+        let write_abort = crate::shared::stream_abort(
+            app.clone(),
+            id.clone(),
+            placement.workspace.clone(),
+            placement.endpoint.clone(),
+            principal.0.clone(),
+        );
+        let mut response = (
             [
-                (header::CONTENT_TYPE, "application/octet-stream"),
-                (header::CACHE_CONTROL, "private, no-store"),
-                (header::CONTENT_DISPOSITION, "attachment"),
-                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+                (header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/octet-stream")),
+                (header::CONTENT_LENGTH, length),
+                (header::CACHE_CONTROL, axum::http::HeaderValue::from_static("private, no-store")),
+                (header::CONTENT_DISPOSITION, axum::http::HeaderValue::from_static("attachment")),
+                (header::X_CONTENT_TYPE_OPTIONS, axum::http::HeaderValue::from_static("nosniff")),
             ],
-            bytes,
+            crate::shared::permit_body(bytes.into(), None, abort),
         )
-            .into_response())
+            .into_response();
+        response.extensions_mut().insert(crate::shared::CancelWrite::new(write_abort));
+        Ok(response)
     };
     tokio::select! {
+        biased;
         _ = principal.0.cancelled() => Err(crate::auth::unauthorized()),
         result = tokio::time::timeout(Duration::from_secs(15), request) => result.unwrap_or_else(|_| Err(missing())),
     }

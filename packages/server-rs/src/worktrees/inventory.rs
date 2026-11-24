@@ -214,21 +214,25 @@ pub struct Tree {
     layout: Physical,
     identity: Option<String>,
     /// When a sibling worktree's projected subfolder is a symlink into a verified worktree of
-    /// the same repository, stores `(link_path, resolved_target, target_worktree_root)` so
-    /// cached lookups re-verify the link target and nested-Git checks anchor on the target root.
-    projected_link: Option<(PathBuf, PathBuf, PathBuf)>,
+    /// the same repository, stores `(link_path, resolved_target, target_worktree_root, target_id)`
+    /// so `Tree.path` remains inside the sibling worktree (never directing Git staging into
+    /// another worktree) while media/history ownership checks validate the resolved target.
+    projected_link: Option<(PathBuf, PathBuf, PathBuf, String)>,
 }
 impl Tree {
     pub fn registered(&self) -> &Path {
         &self.layout.root
     }
     pub(super) fn target_root(&self) -> &Path {
-        self.projected_link.as_ref().map_or(&self.layout.root, |(_, _, root)| root.as_path())
+        self.projected_link.as_ref().map_or(&self.layout.root, |(_, _, root, _)| root.as_path())
+    }
+    pub(super) fn media_path_len(&self) -> usize {
+        self.projected_link.as_ref().map_or(&self.path, |(_, target, _, _)| target).as_os_str().len()
     }
     fn link_live(&self) -> bool {
         self.projected_link
             .as_ref()
-            .is_none_or(|(link, target, _)| dunce::canonicalize(link).ok().as_ref() == Some(target))
+            .is_none_or(|(link, target, _, _)| dunce::canonicalize(link).ok().as_ref() == Some(target))
     }
     pub(super) fn public(&self) -> Value {
         let label = self.branch.clone().unwrap_or_else(|| {
@@ -269,6 +273,12 @@ impl Tree {
             && identity(&self.path).ok() == self.identity
     }
     pub(super) fn contains_media(&self, dir: &Path) -> bool {
+        if let Some((link, target, _, target_id)) = &self.projected_link {
+            return dir.starts_with(target)
+                && self.layout.live()
+                && dunce::canonicalize(link).ok().as_ref() == Some(target)
+                && identity(target).ok().as_deref() == Some(target_id.as_str());
+        }
         let within = if self.nested_missing {
             // Existing checkout root stays physically exact; the missing nested tail follows
             // Windows case-insensitivity like TS `worktree-directory.ts:203-230`.
@@ -534,7 +544,10 @@ async fn catalogue_in_at(
             let scope = app.scope.clone();
             let repo_roots = repo_roots.clone();
             match tokio::task::spawn_blocking(
-                move || -> Result<Option<(Physical, PathBuf, Option<String>, Option<(PathBuf, PathBuf, PathBuf)>)>, Error> {
+                move || -> Result<
+                    Option<(Physical, PathBuf, Option<String>, Option<(PathBuf, PathBuf, PathBuf, String)>)>,
+                    Error,
+                > {
                     if !check.live() {
                         return Ok(None);
                     }
@@ -545,8 +558,10 @@ async fn catalogue_in_at(
                             Err(error) => return Err(error),
                         },
                         // TS resolves a sibling worktree's symlinked projected subfolder and admits it
-                        // when its physical target stays inside any verified worktree of the same repo
-                        // (`manager.ts:582-605`, `worktree-directory.ts:248-278`).
+                        // for media/history ownership when its target stays inside a verified worktree
+                        // of the same repo (`manager.ts:582-605`, `worktree-directory.ts:248-278`).
+                        // Keep `Tree.path` inside this worktree (and mark cross-worktree targets
+                        // `nested_missing` via `id = None`) so Git staging never runs in another worktree.
                         Ok(real) if !opened && real.is_dir() && real.starts_with(&scope) => {
                             if let Some(target_root) = repo_roots
                                 .iter()
@@ -555,7 +570,13 @@ async fn catalogue_in_at(
                             {
                                 match identity(&real) {
                                     Ok(value) => {
-                                        (real.clone(), Some(value), Some((projected, real, target_root.clone())))
+                                        let same_worktree = *target_root == root;
+                                        let own_id = same_worktree.then(|| value.clone());
+                                        (
+                                            projected.clone(),
+                                            own_id,
+                                            Some((projected, real, target_root.clone(), value)),
+                                        )
                                     }
                                     Err(_) => return Ok(None),
                                 }
