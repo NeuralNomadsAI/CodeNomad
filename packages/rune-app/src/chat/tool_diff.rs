@@ -194,7 +194,9 @@ impl Cache {
 }
 
 pub(super) fn candidate(tool: &Tool, patch: &str) -> bool {
-    tool.name == "edit" && tool.status == "completed" && structured_candidate(patch)
+    tool.name == "edit"
+        && matches!(tool.status.as_str(), "running" | "completed")
+        && structured_candidate(patch)
 }
 
 pub(super) fn structured_candidate(patch: &str) -> bool {

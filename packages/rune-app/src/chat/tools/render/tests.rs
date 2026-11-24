@@ -700,11 +700,11 @@ fn skill_search_hit_inside_mermaid_fence_reveals_source_with_match_anchor() {
         rt.find(&format!("{skill_key}-tool_output-code-0-diagram"))
             .is_some()
     );
-    // A new search matching the Mermaid fence reveals the source and anchor again.
+    // Re-running even the exact same search reveals the Mermaid source and anchor again.
     rt.update(|s, _| {
         s.transcript_display.search_highlight = Some(crate::chat::search_hit::SearchHit::new(
             &hit,
-            "flowchart",
+            "MERMAID_SEARCH_NEEDLE",
             false,
         ));
     });

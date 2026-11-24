@@ -191,9 +191,24 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
             })
         })
         .take(STEP_LIMIT)
-        .map_while(|(row, report)| {
-            report_bytes = report_bytes.checked_sub(report.body.len())?;
-            Some((row.id.clone(), report.clone()))
+        .map(|(row, report)| {
+            let body = if report.body.len() <= report_bytes {
+                report_bytes -= report.body.len();
+                report.body.clone()
+            } else {
+                let end = report.body.floor_char_boundary(report_bytes);
+                report_bytes -= end;
+                report.body[..end].to_owned()
+            };
+            (
+                row.id.clone(),
+                SubagentReport {
+                    child: report.child.clone(),
+                    state: report.state.clone(),
+                    body,
+                    created: report.created,
+                },
+            )
         })
         .collect();
     reports.reverse();

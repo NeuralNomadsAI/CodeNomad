@@ -34,7 +34,7 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
         ("running", "running") if live.name == "execute" && fetched.name == "execute" => {
             let saved = execute_calls(&live.metadata);
             let published = execute_calls(&fetched.metadata);
-            if saved.len() > published.len()
+            if saved.len() >= published.len()
                 && saved
                     .iter()
                     .zip(published)
@@ -45,13 +45,20 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
                     .zip(saved)
                     .map(|(http, sse)| {
                         if http["status"] == "running" && sse["status"] != "running" {
-                            sse
+                            let mut merged = sse.clone();
+                            if let (Some(dst), Some(src)) =
+                                (merged.as_object_mut(), http.as_object())
+                                && !dst.contains_key("input")
+                                && let Some(input) = src.get("input")
+                            {
+                                dst.insert("input".into(), input.clone());
+                            }
+                            merged
                         } else {
-                            http
+                            http.clone()
                         }
                     })
-                    .chain(saved.iter().skip(published.len()))
-                    .cloned()
+                    .chain(saved.iter().skip(published.len()).cloned())
                     .collect();
                 let snapshot = Arc::make_mut(fetched);
                 if let Some(fields) = snapshot.metadata.as_object_mut() {
@@ -198,7 +205,11 @@ pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u
     if tool.name == "execute"
         && kind == "session.tool.progress"
         && tool.bytes.saturating_add(tool.output_bytes) > LIVE_BYTES
-        && let Some(calls) = tool.metadata["toolCalls"].as_array_mut()
+        && let Some(calls) = tool
+            .metadata
+            .as_object_mut()
+            .and_then(|fields| fields.get_mut("toolCalls"))
+            .and_then(Value::as_array_mut)
     {
         // Keep progress visible even when the nested inputs cannot be retained.
         for call in calls {
@@ -577,5 +588,64 @@ mod tests {
             panic!("tool part")
         };
         assert_eq!(merged_late.ended, Some(13_000));
+
+        // Oversized non-object execute metadata returns Repair without panicking, and equal-length
+        // execute toolCalls preserve HTTP inputs while adopting settled SSE statuses.
+        let mut exec_row =
+            crate::history::decode_message(&json!({"id":"ex","type":"assistant"})).unwrap();
+        assert!(matches!(
+            apply_at(
+                &mut exec_row,
+                "session.tool.input.started",
+                &json!({"id":"e1","name":"execute"}),
+                Some(1_000)
+            ),
+            Fit::Applied(_)
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut exec_row,
+                "session.tool.called",
+                &json!({"id":"e1","input":{"code":"1"}}),
+                Some(1_500)
+            ),
+            Fit::Applied(_)
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut exec_row,
+                "session.tool.progress",
+                &json!({"id":"e1","metadata":"x".repeat(LIVE_BYTES + 32)}),
+                Some(1_600)
+            ),
+            Fit::Repair
+        ));
+        assert!(matches!(
+            apply_at(
+                &mut exec_row,
+                "session.tool.progress",
+                &json!({"id":"e1","metadata":{"toolCalls":[{"tool":"read","status":"completed"}]}}),
+                Some(1_700)
+            ),
+            Fit::Applied(_)
+        ));
+        let mut exec_http = [Arc::new(
+            crate::history::decode_message(&json!({
+                "id":"ex","type":"assistant","content":[
+                    {"type":"tool","id":"e1","name":"execute","state":{"status":"running",
+                     "metadata":{"toolCalls":[{"tool":"read","status":"running","input":{"filePath":"a.rs"}}]}}}
+                ]
+            }))
+            .unwrap(),
+        )];
+        crate::content::merge_page(&[Arc::new(exec_row)], &mut exec_http).unwrap();
+        let Part::Tool(merged_exec) = &exec_http[0].parts[0] else {
+            panic!("tool part")
+        };
+        assert_eq!(merged_exec.metadata["toolCalls"][0]["status"], "completed");
+        assert_eq!(
+            merged_exec.metadata["toolCalls"][0]["input"]["filePath"],
+            "a.rs"
+        );
     }
 }

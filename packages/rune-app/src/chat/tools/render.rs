@@ -208,8 +208,6 @@ fn render_body(
             .then(|| search::view(s, parts[0]))
             .flatten();
     let rich_diff = !active && !nested && tool_diff::candidate(tool, parts[0]);
-    let edit_diff =
-        !active && !nested && tool.name == "edit" && tool_diff::structured_candidate(parts[0]);
     let wrap_key = format!("{key}-wrap");
     let wrap = !s.transcript_display.toggled(&wrap_key);
     let shared_wrap = expanded
@@ -217,7 +215,6 @@ fn render_body(
         && !is_task
         && !skill
         && !is_patch(tool)
-        && !edit_diff
         && result_list.is_none()
         && !rich_diff
         && !matches!(tool.name.as_str(), "question" | "todowrite");
@@ -311,8 +308,22 @@ fn render_body(
             && !claimed.get()
         {
             let prompt = super::string(&tool.input, &["prompt"]);
-            if (!prompt.is_empty() && q.matches(prompt))
-                || (!parts[0].is_empty() && q.matches(parts[0]))
+            if (!prompt.is_empty()
+                && document::bounded_prose_matches(
+                    s,
+                    &format!("{key}-task-prompt"),
+                    prompt,
+                    task::PANE_LIMIT,
+                    q,
+                ))
+                || (!parts[0].is_empty()
+                    && document::bounded_prose_matches(
+                        s,
+                        &format!("{key}-task-output"),
+                        parts[0],
+                        task::PANE_LIMIT,
+                        q,
+                    ))
             {
                 claimed.set(true);
             }

@@ -88,6 +88,7 @@ pub(super) fn observe(b: &Backend, event: &Value) {
             | "session.tool.success"
             | "session.tool.failed"
             | "session.step.ended"
+            | "session.synthetic"
             | "session.moved"
             | "session.deleted"
             | "session.revert.committed"

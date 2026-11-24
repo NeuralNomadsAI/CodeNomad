@@ -8,8 +8,13 @@ pub(crate) enum Landing {
     Missing,
 }
 
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+static NEXT_SEARCH_ID: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Clone, Hash)]
 pub(crate) struct SearchHit {
+    pub id: u64,
     pub message: String,
     terms: Vec<String>,
     ranked: bool,
@@ -20,6 +25,7 @@ pub(crate) struct SearchHit {
 impl SearchHit {
     pub(crate) fn new(hit: &Hit, text: &str, ranked: bool) -> Self {
         Self {
+            id: NEXT_SEARCH_ID.fetch_add(1, Relaxed),
             message: hit.message.clone(),
             terms: if ranked {
                 terms(text)

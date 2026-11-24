@@ -14,7 +14,7 @@ use rune_theme_codenomad::{
     markdown,
 };
 
-const PANE_LIMIT: usize = 20_000;
+pub(super) const PANE_LIMIT: usize = 20_000;
 const INITIAL_STEPS: usize = 30;
 const REVEAL: usize = 100;
 
@@ -328,7 +328,10 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
                 .role("status"),
             );
         }
-        result = result.child(markdown::tool_pane(list, true).drawn_rect_into(&pane_clip));
+        result = result.child(super::duration::observe_clip(
+            s,
+            markdown::tool_pane(list, true).drawn_rect_into(&pane_clip),
+        ));
     }
     Some(result)
 }

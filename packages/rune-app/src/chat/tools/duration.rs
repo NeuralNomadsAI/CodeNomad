@@ -176,6 +176,23 @@ impl Clock {
     }
 }
 
+pub(in crate::chat) fn observe_clip(s: &State, el: El) -> El {
+    let scope = s.input_scope.clone();
+    el.on_drawn_layout_tx(move |s: &mut State, _, tx| {
+        let clock = &s.transcript_display.tool_clock;
+        if s.current_scope(&scope)
+            && !s.history_detached
+            && online(&s.phase)
+            && !clock.paused
+            && clock.next.is_none()
+            && !clock.visible.is_empty()
+        {
+            tx.wake_after(Duration::ZERO);
+        }
+        tx.live_only();
+    })
+}
+
 pub(super) fn tool_timing(tool: &Tool) -> Option<(u64, Option<u64>)> {
     match tool.status.as_str() {
         "running" => tool.started.map(|start| (start, tool.ended)),

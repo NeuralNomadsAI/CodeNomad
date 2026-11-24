@@ -226,6 +226,10 @@ impl Reader {
                     } else {
                         self.owed_tools.clear();
                         self.tool_settlement_reads = 0;
+                        if !self.historical {
+                            self.parked = true;
+                            reader_event(reading, self.generation, out, wake, Event::Failed).await;
+                        }
                     }
                     let done = (self.terminal || self.busy) && !page.running;
                     if done && !self.historical && !self.owed.is_empty() {

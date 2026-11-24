@@ -76,7 +76,9 @@ fn prose_ranges(
     }
     let options =
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
+    const MAX_SPANS: usize = 2_048;
     let mut out = Vec::new();
+    let mut total_spans = 0usize;
     let mut blocks = 0usize;
     let mut rendered = String::new();
     // (rendered_start, rendered_end, source_start, source_end, verbatim)
@@ -84,13 +86,14 @@ fn prose_ranges(
     let flush = |rendered: &mut String,
                  map: &mut Vec<(usize, usize, usize, usize, bool)>,
                  out: &mut Vec<Vec<std::ops::Range<usize>>>,
+                 total_spans: &mut usize,
                  blocks: &mut usize| {
         if rendered.is_empty() {
             map.clear();
             return;
         }
         *blocks += 1;
-        if out.len() >= limit {
+        if out.len() >= limit || (!out.is_empty() && *total_spans >= MAX_SPANS) {
             rendered.clear();
             map.clear();
             return;
@@ -123,8 +126,12 @@ fn prose_ranges(
                 idx += 1;
             }
             if !spans.is_empty() {
+                if !out.is_empty() && total_spans.saturating_add(spans.len()) > MAX_SPANS {
+                    break;
+                }
+                *total_spans = total_spans.saturating_add(spans.len());
                 out.push(spans);
-                if out.len() >= limit {
+                if out.len() >= limit || *total_spans >= MAX_SPANS {
                     break;
                 }
             }
@@ -175,7 +182,13 @@ fn prose_ranges(
                 | pulldown_cmark::TagEnd::CodeBlock
                 | pulldown_cmark::TagEnd::TableCell,
             ) => {
-                flush(&mut rendered, &mut map, &mut out, &mut blocks);
+                flush(
+                    &mut rendered,
+                    &mut map,
+                    &mut out,
+                    &mut total_spans,
+                    &mut blocks,
+                );
                 if limit == 1 && !out.is_empty() {
                     break;
                 }
@@ -183,7 +196,13 @@ fn prose_ranges(
             _ => {}
         }
     }
-    flush(&mut rendered, &mut map, &mut out, &mut blocks);
+    flush(
+        &mut rendered,
+        &mut map,
+        &mut out,
+        &mut total_spans,
+        &mut blocks,
+    );
     if limit > 1 {
         out.truncate((16_384 / blocks.max(1)).clamp(1, limit));
     }

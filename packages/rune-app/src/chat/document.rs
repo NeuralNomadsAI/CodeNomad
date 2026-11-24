@@ -39,6 +39,18 @@ pub(super) fn search_limit_for(
     TOOL_LIMIT + if revealed { STEP } else { 0 }
 }
 
+pub(super) fn bounded_prose_matches(
+    s: &State,
+    key: &str,
+    source: &str,
+    limit: usize,
+    query: rune_theme_codenomad::timeline::search::Query<'_>,
+) -> bool {
+    let budget = limit.saturating_add(STEP.saturating_mul(s.transcript_display.steps(key)));
+    let (shown, _, _, _) = prefix_measured(&[source], budget, units(source));
+    markdown::prose_has_match(&shown, query)
+}
+
 pub(super) fn skill_prose_matches(
     s: &State,
     card_key: &str,
@@ -48,9 +60,7 @@ pub(super) fn skill_prose_matches(
 ) -> bool {
     let revealed = query.active || s.transcript_display.search_revealed(card_key);
     let limit = PROSE_LIMIT + if revealed { STEP } else { 0 };
-    let budget = limit.saturating_add(STEP.saturating_mul(s.transcript_display.steps(key)));
-    let (shown, _, _, _) = prefix_measured(&[source], budget, units(source));
-    markdown::prose_has_match(&shown, query)
+    bounded_prose_matches(s, key, source, limit, query)
 }
 
 pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streaming: bool) -> El {
@@ -110,12 +120,12 @@ fn prose_for(
         let active_locale = locale();
         let search_id = prose_query
             .filter(|q| q.active)
-            .map(|q| {
-                use std::hash::{Hash, Hasher};
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                q.terms.hash(&mut h);
-                q.ranked.hash(&mut h);
-                h.finish().max(1)
+            .and_then(|_| {
+                s.transcript_display
+                    .search_highlight
+                    .as_ref()
+                    .filter(|hit| hit.message == message)
+                    .map(|hit| hit.id)
             })
             .unwrap_or(0);
         let search_overrides = s
