@@ -92,4 +92,35 @@ mod tests {
         finish.send(()).unwrap();
         assert!(tokio::time::timeout(Duration::from_secs(2), deletion).await.unwrap().is_ok());
     }
+
+    #[tokio::test]
+    async fn dropping_the_body_after_a_chunk_still_drains_native_to_eof() {
+        use crate::worktrees::fence;
+        use axum::body::Bytes;
+        let dirs = ["/proxy-write-test/partial-body".to_string()];
+        let (finish, held) = oneshot::channel();
+        let (eof, drained) = oneshot::channel();
+        let response = forward(fence::enter(&dirs).unwrap(), None, CancellationToken::new(), |_| async move {
+            Ok(Response::new(Body::from_stream(async_stream::stream! {
+                yield Ok::<_, std::io::Error>(Bytes::from_static(b"first"));
+                held.await.unwrap();
+                yield Ok(Bytes::from_static(b"last"));
+                eof.send(()).unwrap();
+            })))
+        })
+        .await
+        .unwrap();
+        let mut body = response.into_body().into_data_stream();
+        assert_eq!(body.next().await.unwrap().unwrap(), "first");
+        drop(body);
+        tokio::task::yield_now().await;
+
+        let deletion = fence::block(&dirs);
+        tokio::pin!(deletion);
+        assert!(futures_util::poll!(&mut deletion).is_pending());
+        assert!(fence::enter(&dirs).is_none());
+        finish.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), drained).await.unwrap().unwrap();
+        assert!(tokio::time::timeout(Duration::from_secs(2), deletion).await.unwrap().is_ok());
+    }
 }
