@@ -77,6 +77,8 @@ struct State {
     messages: Vec<history::Row>,
     draft: TextEdit,
     composer: composer::Owner,
+    prompt_history: composer::recall::History,
+    command_receipts: composer::command_receipts::CommandReceipts,
     incoming: Option<Receiver<Event>>,
     reader: Option<chat::reader::Reader>,
     commands: Option<Sender<Command>>,
@@ -137,6 +139,8 @@ fn init() -> State {
         messages: vec![],
         draft: TextEdit::new(""),
         composer: Default::default(),
+        prompt_history: Default::default(),
+        command_receipts: Default::default(),
         incoming: None,
         reader: None,
         commands: None,
@@ -251,6 +255,8 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
     changed |= s.composer.picker.poll(&s.reads, &s.wake);
+    changed |= composer::recall::poll(s);
+    changed |= composer::menu::poll(s, tx);
     changed |= composer::device::poll(s, tx);
     changed |= chat::attachments::poll(s, tx);
     changed |= chat::message_actions::poll(s, tx);

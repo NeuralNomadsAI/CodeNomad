@@ -1,4 +1,4 @@
-use super::draft::Draft;
+use super::{command_receipts, command_receipts::CommandAttempt, draft::Draft};
 use crate::{
     Message, Phase, State,
     transport::{Command, PromptOutcome},
@@ -12,12 +12,14 @@ pub struct Owner {
     pub device: super::device::Device,
     pub draft: Draft,
     pub picker: super::picker::Picker,
+    pub menu: rune_theme_codenomad::action_menu::State<State>,
     sending: Option<Send>,
     pub send_error: bool,
     unconfirmed: Option<UnconfirmedPrompt>,
     pub command_unconfirmed: Option<UnconfirmedCommand>,
     pub restored: bool,
     pub attachments_missing: bool,
+    pub(crate) recall: Option<super::recall::Recall>,
 }
 impl Owner {
     pub fn pending(&self) -> bool {
@@ -25,6 +27,9 @@ impl Owner {
     }
     pub fn blocks_navigation(&self) -> bool {
         self.sending.is_some()
+    }
+    pub(crate) fn editing_locked(&self) -> bool {
+        self.sending.as_ref().is_some_and(|send| !send.recallable)
     }
     pub fn unconfirmed_id(&self) -> Option<&str> {
         self.unconfirmed.as_ref().map(|send| send.id.as_str())
@@ -34,6 +39,14 @@ impl Owner {
     }
     pub(crate) fn restore_unconfirmed(&mut self, send: UnconfirmedPrompt) {
         self.unconfirmed = Some(send);
+    }
+    pub(crate) fn mark_edited(&mut self) {
+        if let Some(send) = &mut self.sending {
+            send.edited = true;
+        }
+        if let Some(send) = &mut self.unconfirmed {
+            send.edited = true;
+        }
     }
     #[cfg(test)]
     pub fn pending_text(&self) -> Option<&str> {
@@ -47,6 +60,7 @@ pub(crate) struct UnconfirmedPrompt {
     text_hash: u64,
     attachments_len: usize,
     attachments_hash: u64,
+    edited: bool,
 }
 impl UnconfirmedPrompt {
     fn from_send(send: &Send) -> Self {
@@ -59,6 +73,7 @@ impl UnconfirmedPrompt {
             text_hash,
             attachments_len,
             attachments_hash,
+            edited: send.edited,
         }
     }
     fn matches(&self, edit: &TextEdit, attachments: &[super::draft::Attachment]) -> bool {
@@ -166,7 +181,9 @@ struct Send {
     edit: TextEdit,
     draft: Draft,
     was_running: bool,
-    slash: Option<UnconfirmedCommand>,
+    slash: Option<CommandAttempt>,
+    edited: bool,
+    recallable: bool,
 }
 
 fn repeats_uncertain_command(s: &State) -> bool {
@@ -181,6 +198,12 @@ fn repeats_uncertain_command(s: &State) -> bool {
                     .is_some_and(|resolved| unconfirmed.matches(candidate, &resolved))
             })
         })
+}
+
+pub(crate) fn command_held(s: &State) -> bool {
+    command_receipts::repeats(s)
+        || repeats_uncertain_command(s)
+        || s.command_receipts.full() && s.composer.picker.selected_command(&s.draft.text).is_some()
 }
 
 pub fn can_send(s: &State) -> bool {
@@ -202,7 +225,7 @@ pub fn can_send(s: &State) -> bool {
         && (s.composer.picker.attachments_supported()
             || !s.composer.draft.requires_attachment_support())
         && s.composer.unconfirmed.is_none()
-        && !repeats_uncertain_command(s)
+        && !command_held(s)
         && s.composer.draft.can_send(&s.draft)
         && s.commands.as_ref().is_some_and(|tx| !tx.is_closed())
         && s.agent.as_ref().is_none_or(|a| !a.blocked())
@@ -221,40 +244,57 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
             s.composer.send_error = true;
             return;
         };
-        let slash = UnconfirmedCommand::new(name, &text);
-        let name = name.to_owned();
+        let Some(target) = super::recall::command_target(s) else {
+            s.composer.send_error = true;
+            return;
+        };
+        let slash = CommandAttempt {
+            target,
+            name: name.to_owned(),
+            args: text,
+        };
         let command = Command::Slash {
             attempt: id.clone(),
-            name: name.clone(),
-            text,
+            name: slash.name.clone(),
+            text: slash.args.clone(),
         };
         if s.commands
             .as_ref()
             .is_some_and(|pipe| pipe.try_send(command).is_ok())
         {
-            s.composer.picker.remember_command(&name);
+            let recallable =
+                super::recall::record(s, format!("/{} {}", slash.name, slash.args), true);
+            s.composer.picker.remember_command(&slash.name);
             s.composer.sending = Some(Send {
                 id,
                 edit: s.draft.clone(),
-                draft: Draft::default(),
+                draft: s.composer.draft.clone(),
                 was_running: true,
                 slash: Some(slash),
+                edited: s.composer.recall.is_some(),
+                recallable,
             });
+            s.draft.clear();
+            s.composer
+                .draft
+                .attachments
+                .retain(|part| !matches!(part, super::draft::Attachment::Pasted { .. }));
+            super::recall::restore(s);
+            s.composer.picker.reset();
+            renew_editor(s, tx);
+            workspace::capture(s);
             s.composer.send_error = false;
-            s.composer.command_unconfirmed = None;
-            #[cfg(target_arch = "wasm32")]
-            s.rotate_composer_input();
         } else {
             s.composer.send_error = true;
         }
         return;
     }
     let was_running = s.phase == Phase::Streaming;
-    let delivery = if was_running && alternate {
-        Delivery::Queue
-    } else {
-        Delivery::Steer
-    };
+    let delivery = follow_up_delivery(
+        was_running,
+        crate::settings::queues_follow_ups(s),
+        alternate,
+    );
     let queued = delivery == Delivery::Queue;
     let Some((prompt, parts)) = s.composer.draft.prepare(&s.draft, &id, delivery) else {
         s.composer.send_error = true;
@@ -270,17 +310,20 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         return;
     }
     s.composer.send_error = false;
-    #[cfg(target_arch = "wasm32")]
-    s.rotate_composer_input();
+    let recallable = super::recall::record(s, body.clone(), false);
     s.composer.sending = Some(Send {
         id: id.clone(),
         edit: s.draft.clone(),
         draft: std::mem::take(&mut s.composer.draft),
         was_running,
         slash: None,
+        edited: s.composer.recall.is_some(),
+        recallable,
     });
     s.draft.clear();
+    super::recall::restore(s);
     s.composer.picker.reset();
+    renew_editor(s, tx);
     if !queued {
         s.messages.push(
             Message {
@@ -296,10 +339,36 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         s.revision += 1;
         s.phase = Phase::Streaming;
     }
-    workspace::draft_changed(s, tx);
+    workspace::capture(s);
+}
+
+fn follow_up_delivery(running: bool, prefer_queue: bool, alternate: bool) -> Delivery {
+    if running && (prefer_queue != alternate) {
+        Delivery::Queue
+    } else {
+        Delivery::Steer
+    }
+}
+
+#[test]
+fn alternate_inverts_the_confirmed_follow_up_only_while_running() {
+    for (preferred, alternate, expected) in [
+        (false, false, Delivery::Steer),
+        (false, true, Delivery::Queue),
+        (true, false, Delivery::Queue),
+        (true, true, Delivery::Steer),
+    ] {
+        assert_eq!(follow_up_delivery(true, preferred, alternate), expected);
+        assert_eq!(
+            follow_up_delivery(false, preferred, alternate),
+            Delivery::Steer
+        );
+    }
 }
 
 pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
+    // A late exact receipt can settle its own hold even after the composer moved on.
+    s.command_receipts.settle(attempted, &outcome);
     if !s
         .composer
         .sending
@@ -308,32 +377,38 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
     {
         return;
     }
-    let Some(send) = s.composer.sending.take() else {
+    let Some(mut send) = s.composer.sending.take() else {
         return;
     };
+    let may_restore = !send.edited
+        && s.composer.recall.is_none()
+        && s.draft.text.is_empty()
+        && !s.composer.device.busy();
     if let Some(slash) = send.slash {
-        match outcome {
-            PromptOutcome::Confirmed(_) if s.draft.text == send.edit.text => {
-                s.draft.clear();
-                s.composer.picker.reset();
-                s.composer.restored = true;
-            }
-            PromptOutcome::Unconfirmed => {
-                s.composer.command_unconfirmed = Some(slash);
-            }
-            PromptOutcome::Rejected => s.composer.send_error = true,
-            _ => {}
-        }
-        return;
-    }
-    if matches!(outcome, PromptOutcome::Unconfirmed) {
-        let prompt = UnconfirmedPrompt::from_send(&send);
-        if s.draft.text.is_empty() && s.composer.draft.attachments.is_empty() {
-            s.draft = send.edit;
+        if matches!(
+            outcome,
+            PromptOutcome::Rejected | PromptOutcome::Unconfirmed
+        ) && may_restore
+        {
+            super::recall::replace_edit(s, send.edit);
             s.composer.draft = send.draft;
             s.composer.restored = true;
         }
-        s.composer.unconfirmed = Some(prompt);
+        if matches!(outcome, PromptOutcome::Unconfirmed) {
+            s.command_receipts.hold(send.id, slash);
+        }
+        s.composer.send_error = matches!(outcome, PromptOutcome::Rejected);
+        return;
+    }
+    if matches!(outcome, PromptOutcome::Unconfirmed) {
+        if may_restore && s.composer.draft.attachments.is_empty() {
+            super::recall::replace_edit(s, send.edit.clone());
+            s.composer.draft = send.draft.clone();
+            s.composer.restored = true;
+        } else {
+            send.edited = true;
+        }
+        s.composer.unconfirmed = Some(UnconfirmedPrompt::from_send(&send));
         return;
     }
     let row = s.messages.iter().position(|row| row.id == attempted);
@@ -366,8 +441,8 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         s.messages.remove(index);
     }
     s.composer.send_error = true;
-    if s.draft.text.is_empty() && s.composer.draft.attachments.is_empty() {
-        s.draft = send.edit;
+    if may_restore && s.composer.draft.attachments.is_empty() {
+        super::recall::replace_edit(s, send.edit);
         s.composer.draft = send.draft;
         s.composer.restored = true;
     }
@@ -391,12 +466,24 @@ pub fn reconcile(s: &mut State) {
             .iter()
             .any(|row| row.id == send.id && row.role == "user")
     }) && let Some(send) = s.composer.unconfirmed.take()
+        && !send.edited
+        && s.composer.recall.is_none()
         && send.matches(&s.draft, &s.composer.draft.attachments)
     {
         s.draft.clear();
         s.composer.draft = Draft::default();
         if s.workspace.is_some() {
             workspace::capture(s);
+        }
+    }
+}
+
+fn renew_editor(_s: &mut State, _tx: &mut Tx) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        _s.rotate_composer_input();
+        if _s.draft.focused {
+            _tx.focus_when_shown("composer", false);
         }
     }
 }
