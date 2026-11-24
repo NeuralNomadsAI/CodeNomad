@@ -742,7 +742,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let builder = relayed(&response);
         let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        let _slot = tokio::select! {
+        let slot = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
             permit = tokio::time::timeout_at(deadline, SLOTS.acquire()) => {
@@ -761,12 +761,19 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             tokio::select! {
                 biased;
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                rewritten = tokio::task::spawn_blocking(move || defer_message_list(&id, &session, bytes)) => {
-                    rewritten.map_err(|_| interrupted())?
+                rewritten = tokio::time::timeout_at(
+                    deadline,
+                    tokio::task::spawn_blocking(move || {
+                        let _slot = slot;
+                        defer_message_list(&id, &session, bytes)
+                    }),
+                ) => {
+                    rewritten.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                 }
             }
         } else {
-            defer_message_list(id, session, bytes)
+            drop(slot);
+            Body::from(bytes)
         };
         if !app.native.current(&endpoint) {
             return Err(upstream_error());

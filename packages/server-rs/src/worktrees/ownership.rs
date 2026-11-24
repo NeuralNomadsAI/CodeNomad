@@ -156,12 +156,16 @@ pub(crate) async fn media_directory(
         return Ok(None);
     }
     let external = !within(&workspace.path, path);
-    if path == workspace.path || !external && super::root_only(workspace).await? == Some(true) {
+    if path == workspace.path {
+        let proof = DirectoryProof { tree: None, source: None, external, media: true };
+        return Ok(proof.live(path).then_some(proof));
+    }
+    if !external && let Some(subfolders) = super::root_only(workspace).await? {
         if !current() {
             return Err(native_error());
         }
         let proof = DirectoryProof { tree: None, source: None, external, media: true };
-        return Ok(proof.live(path).then_some(proof));
+        return Ok((subfolders && proof.live(path)).then_some(proof));
     }
     if external && !shares_common_directory(&workspace.path, anchor).await.map_err(|_| native_error())? {
         if !current() {
@@ -178,8 +182,6 @@ pub(crate) async fn media_directory(
     for _ in 0..4 {
         let revision = inventory::revision(app);
         let catalogue = inventory::catalogue_at(app, workspace, refresh, Some(endpoint)).await?;
-        refreshed |= refresh;
-        refresh = false;
         if !current() {
             return Err(native_error());
         }
@@ -187,6 +189,8 @@ pub(crate) async fn media_directory(
         if inventory::revision(app) != revision {
             continue;
         }
+        refreshed |= refresh;
+        refresh = false;
         if proof.is_some() || refreshed {
             return Ok(proof);
         }

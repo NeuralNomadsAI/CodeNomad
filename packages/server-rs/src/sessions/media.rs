@@ -123,11 +123,48 @@ pub(crate) fn defer(workspace: &str, session: &str, messages: &mut Value) -> boo
     changed
 }
 
+fn extract_media(
+    message_id: &str,
+    part_index: usize,
+    item_index: usize,
+    digest: &str,
+    revert_boundary: Option<&str>,
+    raw: &[u8],
+) -> Result<(&'static str, Vec<u8>), Error> {
+    let missing = || error(Status::NOT_FOUND, "Media not found");
+    let unavailable = || error(Status::BAD_GATEWAY, "Media unavailable");
+    let envelope: Value = serde_json::from_slice(raw).map_err(|_| unavailable())?;
+    let message = envelope.get("data").filter(|message| message.is_object()).ok_or_else(unavailable)?;
+    if message["id"] != message_id
+        || message["type"] != "assistant"
+        || revert_boundary.is_some_and(|boundary| message_id >= boundary)
+    {
+        return Err(missing());
+    }
+    let part = &message["content"][part_index];
+    if part["type"] != "tool" {
+        return Err(missing());
+    }
+    let (mime, uri) = renderable(&part["state"]["content"][item_index]).ok_or_else(missing)?;
+    if user_files::digest(uri.as_bytes()) != digest {
+        return Err(missing());
+    }
+    let prefix = format!("data:{mime};base64,");
+    let payload = uri.strip_prefix(&prefix).ok_or_else(missing)?;
+    if payload.len() % 4 != 0 {
+        return Err(missing());
+    }
+    let bytes = STANDARD.decode(payload).map_err(|_| missing())?;
+    let mime = raster(&bytes).filter(|&detected| detected == mime).ok_or_else(missing)?;
+    Ok((mime, bytes))
+}
+
 pub(super) async fn route(
     State(app): State<Shared>,
     Extension(principal): Extension<Principal>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response, Error> {
+    static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
     let invalid = || error(Status::BAD_REQUEST, "Invalid media reference");
     let reference = uri.query().is_none().then(|| parse(uri.path())).flatten().ok_or_else(invalid)?;
     let missing = || error(Status::NOT_FOUND, "Media not found");
@@ -171,35 +208,26 @@ pub(super) async fn route(
         if !placement.live(&app, &r.workspace) {
             return Err(error(Status::CONFLICT, "Session location changed"));
         }
-        let envelope = crate::opencode::read_json(response, MESSAGE_LIMIT).await.map_err(|_| unavailable())?;
+        let slot = SLOTS.acquire().await.map_err(|_| unavailable())?;
+        let raw = crate::opencode::read_bytes(response, MESSAGE_LIMIT).await.map_err(|_| unavailable())?;
         let newest = placement
             .latest(&app, &r.workspace, &r.session)
             .await
             .map_err(|failure| if failure.0 == Status::CONFLICT { failure } else { unavailable() })?;
-        let message = envelope.get("data").filter(|message| message.is_object()).ok_or_else(unavailable)?;
-        if message["id"] != r.message
-            || message["type"] != "assistant"
-            || newest["revert"]["messageID"].as_str().is_some_and(|boundary| r.message.as_str() >= boundary)
-        {
-            return Err(missing());
-        }
-        let part = &message["content"][r.part];
-        if part["type"] != "tool" {
-            return Err(missing());
-        }
-        let (mime, uri) = renderable(&part["state"]["content"][r.index]).ok_or_else(missing)?;
-        if user_files::digest(uri.as_bytes()) != r.digest {
-            return Err(missing());
-        }
-        let prefix = format!("data:{mime};base64,");
-        let payload = uri.strip_prefix(&prefix).ok_or_else(missing)?;
-        if payload.len() % 4 != 0 {
-            return Err(missing());
-        }
-        let bytes = STANDARD.decode(payload).map_err(|_| missing())?;
-        if raster(&bytes) != Some(mime) {
-            return Err(missing());
-        }
+        let revert = newest["revert"]["messageID"].as_str().map(str::to_owned);
+        let (mime, bytes) = if raw.len() > INLINE_LIMIT {
+            let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.clone());
+            tokio::task::spawn_blocking(move || {
+                let _slot = slot;
+                extract_media(&message_id, part, index, &digest, revert.as_deref(), &raw)
+            })
+            .await
+            .map_err(|_| unavailable())??
+        } else {
+            let decoded = extract_media(&r.message, r.part, r.index, &r.digest, revert.as_deref(), &raw);
+            drop(slot);
+            decoded?
+        };
         principal.live()?;
         if !placement.operation_current(&app, &r.workspace) {
             return Err(unavailable());
