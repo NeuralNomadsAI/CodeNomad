@@ -12,16 +12,20 @@ function harness(
   hooks?: {
     onProviderGet?: () => Promise<void> | void
     onOwnsLocation?: (callIndex: number) => Promise<void> | void
+    onSessionGet?: (callIndex: number, signal?: AbortSignal | null) => Promise<void> | void
   },
 ) {
-  const state = { nativeCalls: [] as string[], directory: "/repo", stale: false, evicted: false, ownsCalls: 0 }
+  const state = { nativeCalls: [] as string[], directory: "/repo", stale: false, evicted: false, ownsCalls: 0, sessionGets: 0 }
   const logs: string[] = []
   const app = Fastify({ logger: { stream: { write: (text: string) => { logs.push(text) } } } })
   const workspace = {} as NonNullable<ReturnType<UsageRouteDeps["workspaceManager"]["get"]>>
   const nativeFetch: typeof fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input))
     state.nativeCalls.push(url.pathname)
-    if (url.pathname === "/api/session/session") return Response.json({ data: { id: "session", location: { directory: state.directory } } })
+    if (url.pathname === "/api/session/session") {
+      await hooks?.onSessionGet?.(++state.sessionGets, init?.signal)
+      return Response.json({ data: { id: "session", location: { directory: state.directory } } })
+    }
     if (url.pathname.startsWith("/api/provider/")) {
       await hooks?.onProviderGet?.()
       const id = decodeURIComponent(url.pathname.split("/")[3])
@@ -302,6 +306,25 @@ test("expired plugin quota timer after RPC 404 still returns supported=false whe
     assert.equal(response.statusCode, 200, response.body)
     assert.equal(response.json().supported, false)
     assert.equal(response.json().ok, false)
+  } finally { await app.close() }
+})
+
+test("the quota deadline bounds the pre-dispatch session re-read without dispatching the plugin RPC", async t => {
+  const realSetTimeout = globalThis.setTimeout
+  t.mock.method(globalThis, "setTimeout", (callback: (...args: any[]) => void, delay?: number, ...args: any[]) =>
+    realSetTimeout(callback, delay === 12_000 ? 25 : delay === 15_000 ? 1_000 : delay, ...args))
+  let dispatched = 0
+  const { app } = harness(
+    async () => { dispatched++; return Response.json({ output: { configured: true, ok: true, windows: {} } }) },
+    { onSessionGet: (index, signal) => index === 2 ? new Promise<void>((_resolve, reject) =>
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true })) : undefined },
+  )
+  try {
+    const response = await app.inject(url)
+    assert.equal(response.statusCode, 200, response.body)
+    assert.equal(response.json().supported, true)
+    assert.equal(response.json().ok, false)
+    assert.equal(dispatched, 0)
   } finally { await app.close() }
 })
 

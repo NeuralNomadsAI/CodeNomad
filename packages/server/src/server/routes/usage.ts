@@ -7,7 +7,7 @@ import { createNativeCodexUsage } from "../../usage/native-codex"
 import { claudeCodeAuthEntry, claudeCodeCredential, type ClaudeCodeHost } from "../../usage/claude-credential"
 import { readUsageCredentials } from "../../usage/native-credentials"
 import { readUsageProviderSettings } from "../../usage/native-settings"
-import { readPluginProviderUsage } from "../../usage/plugin-usage"
+import { readPluginProviderUsage, unavailable as pluginUsageUnavailable } from "../../usage/plugin-usage"
 import { getProviderUsage, resolveUsageProvider } from "../../usage/service"
 import { isOpenCodeFreeModel } from "../../usage/opencode-free-estimate"
 import type { OpenCodeFreeUsage } from "../../usage/opencode-free-usage"
@@ -108,13 +108,22 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           if (!free && !provider) {
             // Plugin code receives the Location: confirm the session did not move during the ownership check.
             const rpcSignal = AbortSignal.any([signal, closed.signal])
-            const current = readLocationRef((await connection.client.session.get({ sessionID: sessionId }, { signal: rpcSignal })).location)
-            if (current.directory !== location.directory || current.workspaceID !== undefined || !assertCurrentWorkspace(rpcSignal)) {
-              return reply.code(403).send({ error: "Session does not belong to workspace" })
+            const rpcQuotaSignal = AbortSignal.any([quotaSignal, closed.signal])
+            let confirmed = false
+            try {
+              const current = readLocationRef((await connection.client.session.get({ sessionID: sessionId }, { signal: rpcQuotaSignal })).location)
+              if (current.directory !== location.directory || current.workspaceID !== undefined || !assertCurrentWorkspace(rpcSignal)) {
+                return reply.code(403).send({ error: "Session does not belong to workspace" })
+              }
+              confirmed = true
+            } catch (error) {
+              rpcSignal.throwIfAborted()
+              if (!quotaSignal.aborted) throw error
             }
-            plugin = await readPluginProviderUsage(connection, {
+            // The quota deadline also bounds the re-read; past it, publish an unavailable quota without dispatching.
+            plugin = confirmed ? await readPluginProviderUsage(connection, {
               providerId: params.data.providerId, location, modelId,
-            }, rpcSignal, AbortSignal.any([quotaSignal, closed.signal]))
+            }, rpcSignal, rpcQuotaSignal) : pluginUsageUnavailable(params.data.providerId, modelId)
             reply.raw.off("close", abortOnClose)
             if (!plugin && (!await verifyOwned(signal) || !assertCurrentWorkspace(signal))) {
               return reply.code(403).send({ error: "Session does not belong to workspace" })

@@ -156,7 +156,7 @@ export function parsePluginUsageOutput(
   }
 }
 
-function unavailable(providerId: string, modelId?: string): ProviderUsageResponse {
+export function unavailable(providerId: string, modelId?: string): ProviderUsageResponse {
   return {
     requestedProviderId: providerId,
     providerId,
