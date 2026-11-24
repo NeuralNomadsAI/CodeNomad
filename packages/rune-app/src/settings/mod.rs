@@ -42,15 +42,15 @@ use appearance::effective_contrast;
 use appearance::render_with;
 pub(crate) use appearance::{app_locale, render};
 pub(crate) use connection::{
-    bound_backend, connected, connection_event, conversation_authentication, invalidate,
-    stop_before_conversation,
+    authentication_required, bound_backend, connected, connection_event,
+    conversation_authentication, invalidate, stop_before_conversation,
 };
 #[cfg(test)]
 use connection::{provider_changed, provider_stopped};
 pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_notification};
 #[cfg(test)]
 pub(crate) use delivery::{notification_fixture, notification_test_config};
-pub(crate) use shortcuts::{with_shortcut_label, with_shortcut_label_excluding};
+pub(crate) use shortcuts::{shortcut_disabled, with_shortcut_label, with_shortcut_label_excluding};
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
 pub(crate) use window::{close, direct_entry, entries, open_providers};

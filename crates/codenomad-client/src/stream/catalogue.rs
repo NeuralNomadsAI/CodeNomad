@@ -29,6 +29,7 @@ pub(super) struct Signals {
     workspace_events: Mutex<VecDeque<WorkspaceEvent>>,
     workspace_stopped: Mutex<HashSet<String>>,
     workspace_overflow: std::sync::atomic::AtomicBool,
+    authentication_required: std::sync::atomic::AtomicBool,
     wake: Wake,
     generation: std::sync::atomic::AtomicU64,
 }
@@ -244,6 +245,7 @@ impl CatalogueWatch {
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
             wake,
         });
@@ -281,6 +283,8 @@ impl CatalogueWatch {
                 state.cancelled.store(true, SeqCst);
                 observer.disconnected();
                 if expired {
+                    observer.authentication_required.store(true, SeqCst);
+                    (observer.wake)();
                     break 'watch;
                 }
                 futures_lite::future::race(runtime::sleep(Duration::from_millis(delay)), async {
@@ -297,6 +301,10 @@ impl CatalogueWatch {
             },
             task,
         )
+    }
+
+    pub fn take_authentication_required(&self) -> bool {
+        self.signals.authentication_required.swap(false, SeqCst)
     }
 
     pub fn take(&self) -> CatalogueChanges {
@@ -478,6 +486,7 @@ mod tests {
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: 3.into(),
             wake: Arc::new(move || {
                 wakes.fetch_add(1, SeqCst);
@@ -512,6 +521,7 @@ mod tests {
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
             wake: Arc::new(|| {}),
         };
@@ -541,6 +551,7 @@ mod tests {
             workspace_events: Mutex::default(),
             workspace_stopped: Mutex::default(),
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
+            authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
             wake: Arc::new(|| {}),
         };

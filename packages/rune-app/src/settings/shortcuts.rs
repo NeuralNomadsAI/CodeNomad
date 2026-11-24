@@ -58,6 +58,10 @@ fn shortcut_label(s: &State, action: &str) -> String {
     format_chords(&catalog::resolve(&s.settings.shared.borrow(), action))
 }
 
+pub(crate) fn shortcut_disabled(s: &State, action: &str) -> bool {
+    catalog::resolve(&s.settings.shared.borrow(), action).is_empty()
+}
+
 pub(crate) fn with_shortcut_label(s: &State, label: &str, action: &str) -> String {
     let shortcut = shortcut_label(s, action);
     if shortcut.is_empty() {

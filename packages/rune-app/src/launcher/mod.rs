@@ -202,13 +202,16 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let blocked = !can_change_session(s);
     let selected = crate::workspace::active_session(s).map(str::to_owned);
     let stream_update = s.screen.launcher_mut().and_then(|l| {
-        let (generation, overflow, events) = l.catalogue_watch.as_ref()?.take_workspace_events();
+        let watch = l.catalogue_watch.as_ref()?;
+        let unauthorized = watch.take_authentication_required();
+        let (generation, overflow, events) = watch.take_workspace_events();
         let previous = l.workspace_stream_generation;
         l.workspace_stream_generation = generation;
-        Some((previous, generation, overflow, events))
+        let expired = unauthorized.then(|| l.connection.clone()).flatten();
+        Some((previous, generation, overflow, events, expired))
     });
     let mut relayed = false;
-    if let Some((previous, generation, overflow, events)) = stream_update {
+    if let Some((previous, generation, overflow, events, expired)) = stream_update {
         let mut stopped = Vec::new();
         let mut other = Vec::new();
         for event in events {
@@ -239,6 +242,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         if !other.is_empty() {
             relayed |= crate::workspace::deliver_detached_events(s, &other);
+        }
+        if let Some(expired) = expired {
+            relayed |= crate::settings::authentication_required(s, &expired);
         }
     }
     let Some(l) = s.screen.launcher_mut() else {

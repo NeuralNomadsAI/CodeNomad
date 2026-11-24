@@ -148,7 +148,7 @@ pub(super) fn retry_selected(s: &mut State, tx: &mut Tx) {
     }
 }
 
-pub(crate) fn keys(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+pub(crate) fn close_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if event.key == Key::Escape && state(s).open {
         if std::mem::take(&mut state(s).scope_open) {
             return true;
@@ -157,7 +157,12 @@ pub(crate) fn keys(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         tx.focus("history-search-toggle", true);
         return true;
     }
-    if matches!(event.key, Key::Command(c) if c.eq_ignore_ascii_case(&'f'))
+    false
+}
+
+pub(crate) fn open_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    if !crate::settings::shortcut_disabled(s, "session-search")
+        && matches!(event.key, Key::Command(c) if c.eq_ignore_ascii_case(&'f'))
         && (event.mods.ctrl || event.mods.cmd)
         && !event.mods.alt
         && !event.mods.shift
@@ -169,6 +174,10 @@ pub(crate) fn keys(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     false
+}
+
+pub(crate) fn keys(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    close_key(s, event, tx) || open_key(s, event, tx)
 }
 
 impl Search {

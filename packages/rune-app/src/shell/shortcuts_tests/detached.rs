@@ -63,6 +63,7 @@ fn session_new_resolves_authoritative_directory_and_honors_placement_hold() {
                 "POST /workspaces/proj-1/instance/api/session?directory=%2Frepo-moved ",
             ) {
                 assert!(saw_lookup && worktree_reads >= 1);
+                assert_eq!(req.body["location"]["directory"], json!("/repo-moved"));
                 saw_create = true;
                 req.reply(
                     200,
@@ -132,9 +133,11 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
         let address = format!("http://{}/", listener.local_addr().unwrap());
         let (drop_first_tx, drop_first_rx) = tokio::sync::oneshot::channel::<()>();
         let (allow_second_tx, allow_second_rx) = tokio::sync::oneshot::channel::<()>();
+        let (drop_second_tx, drop_second_rx) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(async move {
             let mut drop_first = Some(drop_first_rx);
             let mut allow_second = Some(allow_second_rx);
+            let mut drop_second = Some(drop_second_rx);
             let mut sse_count = 0usize;
             while let Ok((mut stream, _)) = listener.accept().await {
                 let header = read_http_head(&mut stream).await;
@@ -153,7 +156,7 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
                                 let _ = stream.shutdown().await;
                             });
                         }
-                    } else {
+                    } else if sse_count == 2 {
                         if let Some(rx) = allow_second.take() {
                             let _ = rx.await;
                         }
@@ -163,10 +166,19 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
                             )
                             .await;
                         let _ = stream.flush().await;
-                        tokio::spawn(async move {
-                            crate::platform::sleep(std::time::Duration::from_secs(3)).await;
-                            drop(stream);
-                        });
+                        if let Some(rx) = drop_second.take() {
+                            tokio::spawn(async move {
+                                let _ = rx.await;
+                                let _ = stream.shutdown().await;
+                            });
+                        }
+                    } else {
+                        let _ = stream
+                            .write_all(
+                                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            )
+                            .await;
+                        let _ = stream.flush().await;
                     }
                 } else {
                     let body = b"{\"data\":[]}";
@@ -252,6 +264,29 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
         files.show(true);
         files.activate(true);
         assert!(!files.tree.take_refresh().is_empty());
+
+        // Subsequent 401 on the detached SSE observer surfaces authentication_required on the launcher.
+        let _ = drop_second_tx.send(());
+        for _ in 0..300 {
+            rt.update(|s, tx| {
+                let _ = crate::launcher::poll(s, tx);
+            });
+            if rt
+                .state
+                .screen
+                .launcher()
+                .is_some_and(|l| l.authentication_required)
+            {
+                break;
+            }
+            crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            rt.state
+                .screen
+                .launcher()
+                .is_some_and(|l| l.authentication_required)
+        );
         server.abort();
     });
 }
@@ -384,15 +419,43 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
             "unexpected shadowed hint: {new_help}"
         );
 
-        // Closing and rebinding a session in the same project preserves the Files tree expanded folders.
+        // Control-character overrides are invalid and revert to default instead of disabling the shortcut.
+        settings::fixture_shortcuts(&rt.state, json!({"close-instance": [{"key": "\u{001b}"}]}));
+        assert!(
+            settings::with_shortcut_label(&rt.state, "Close", "close-instance").contains('('),
+            "control char override must revert to default"
+        );
+
+        // Remapping new-instance to Ctrl+F while disabling session-search runs new-instance instead of opening search.
+        settings::fixture_shortcuts(
+            &rt.state,
+            json!({"new-instance": [{"key": "f", "mod": true}], "session-search": []}),
+        );
+        let tabs_before = rt.state.workspace.as_ref().unwrap().tab_count();
+        send_key(&mut rt, Key::Command('f'), primary_mods(false));
+        assert_eq!(
+            rt.state.workspace.as_ref().unwrap().tab_count(),
+            tabs_before + 1
+        );
+        send_key(&mut rt, Key::Command('1'), primary_mods(false));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+
+        // Closing and rebinding a session in the same project preserves the Files tree expanded folders
+        // and revalidates the tree across the conversation-to-detached handoff.
         let mut files = crate::files::Ui::new(
             bound.clone(),
             "/repo".into(),
             rt.state.reads.clone(),
             rt.state.wake.clone(),
         );
+        files.host_width = Some(1200.0);
+        files.show(true);
+        files.activate(true);
+        files.online(true);
+        let _ = files.tree.take_refresh();
         files.tree.select("src".into());
         files.tree.toggle("src");
+        let _ = files.tree.take_refresh();
         assert!(files.tree.expanded("src"));
         assert_eq!(files.tree.selected(), Some("src"));
         rt.state.files = Some(files);
@@ -403,6 +466,16 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         assert_eq!(
             rt.state.files.as_ref().unwrap().tree.selected(),
             Some("src")
+        );
+        assert!(
+            !rt.state
+                .files
+                .as_mut()
+                .unwrap()
+                .tree
+                .take_refresh()
+                .is_empty(),
+            "close-session handoff must revalidate Files tree"
         );
         crate::files::bind(&mut rt.state, &bound);
         assert!(rt.state.files.as_ref().unwrap().tree.expanded("src"));

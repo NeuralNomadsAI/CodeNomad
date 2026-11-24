@@ -64,11 +64,9 @@ fn is_valid_rule(rule: &Value) -> bool {
     let Some(obj) = rule.as_object() else {
         return false;
     };
-    if !obj
-        .get("key")
-        .and_then(Value::as_str)
-        .is_some_and(|key| key == " " || !key.trim().is_empty())
-    {
+    if !obj.get("key").and_then(Value::as_str).is_some_and(|key| {
+        !key.chars().any(char::is_control) && (key == " " || !key.trim().is_empty())
+    }) {
         return false;
     }
     ["mod", "ctrl", "meta", "alt", "shift"]

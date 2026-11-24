@@ -123,7 +123,7 @@ pub(super) fn panel_keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> 
     if shortcuts::modal_open(s) {
         return false;
     }
-    if crate::timeline::search::keys(s, event, tx) {
+    if crate::timeline::search::close_key(s, event, tx) {
         return true;
     }
     if event.key == Key::Escape && crate::timeline::dismiss_preview(s) {
@@ -164,6 +164,9 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         }
     }
     if shortcuts::dispatch(s, event, tx) {
+        return true;
+    }
+    if crate::timeline::search::open_key(s, event, tx) {
         return true;
     }
     if event.mods == Mods::default()

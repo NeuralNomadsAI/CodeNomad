@@ -165,6 +165,7 @@ pub fn create_blank(s: &mut State) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
+    s.notifications.supersede_navigation();
     crate::timeline::search::cancel_destination(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;
@@ -203,6 +204,7 @@ pub fn create(s: &mut State, _: &mut Tx) {
         return;
     };
     let title = l.title.text.clone();
+    s.notifications.supersede_navigation();
     crate::timeline::search::cancel_destination(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;
@@ -349,6 +351,7 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
     });
     if s.screen.is_launcher()
         || !can_change_session(s)
+        || s.transcript_display.messages.pending()
         || tab_key.is_some_and(|key| s.documents.has_tab_edits(key))
         || s.files
             .as_ref()
@@ -373,6 +376,14 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
     clear_conversation_only(s);
     s.show_launcher();
     crate::git::detach_session(s);
+    let stream_online = s
+        .screen
+        .launcher()
+        .is_some_and(Launcher::workspace_stream_online);
+    crate::workspace::set_detached_online(s, false);
+    if stream_online {
+        crate::workspace::set_detached_online(s, true);
+    }
     crate::workspace::schedule_catalogue(s);
     tx.instant();
     true
