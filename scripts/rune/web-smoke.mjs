@@ -14,10 +14,11 @@ import {missionsFixture} from './web-missions.mjs'
 import {historySearch} from './web-history-search.mjs'
 import {markerFilters} from './web-marker-filters.mjs'
 import {recordTouches} from './web-touch-trace.mjs'
+import {checkGitImages, gitImageReadAllowed} from './web-git-images.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'paste-only':{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'mobile-session-search':{type:'boolean'},timeline:{type:'boolean'},'touch-history':{type:'boolean'},'history-search':{type:'boolean'},'same-origin-pairing':{type:'boolean'},missions:{type:'boolean'},'git-images':{type:'boolean'},'paste-only':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
@@ -28,6 +29,7 @@ const searchOnly=values['mobile-session-search']
 assert(!searchOnly||values.mobile)
 if(values['paste-only'])assert(!values.connected)
 if(values.missions)assert(values.connected&&!values.mobile&&url.protocol==='http:')
+if(values['git-images'])assert(values.connected&&!values.mobile&&!values.missions)
 url.searchParams.set('locale', values.locale)
 const catalogueIndex = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/catalogues.json'), 'utf8'))
 assert(catalogueIndex.locales.includes(values.locale), 'Select a supported locale from the generated catalogue')
@@ -54,7 +56,7 @@ const connectedPalettes = values.connected
   if(values.mobile)assets.add('/remote-pair')
 try {
   const android=mobileContext(browser)
-  const sizes=values.missions?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
+  const sizes=values.missions||values['git-images']?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
     [['desktop',values.timeline||values['history-search']?1400:960,760,false],['tablet',768,1024,true],['phone',390,844,true]]
   for (const [name, width, height, touch] of sizes) {
     const control=name==='phone-dpr1-control'
@@ -151,7 +153,15 @@ try {
         }
         await route.continue()
       })
-      const started = performance.now()
+       if(values['git-images'])await context.route('**/api/workspaces/**', async route=>{
+         const request=route.request()
+         if(await gitImageReadAllowed(request,{origin:url.origin,project:values.project,workspaces:policy.workspaces})){
+           const requested=new URL(request.url())
+           routes.push({method:request.method(),path:requested.pathname,query:requested.search,cookie:true})
+           await route.continue()
+         }else await route.fallback()
+       })
+       const started = performance.now()
       try {
         let network
          if(values.mobile){
@@ -498,6 +508,7 @@ try {
             await markerFilters(page,messages,url,values.project,{touch:true,pages})
           }
           if(missions)await missions.check(press)
+          if(values['git-images'])await checkGitImages(page,messages,press,path.join(out,`git-images-${colorScheme}`))
          }else{
         // The DOM editing proxy is ready before the browser presents the GPU handover.
         // Start the synthetic interactions on the canvas that will be sampled.
