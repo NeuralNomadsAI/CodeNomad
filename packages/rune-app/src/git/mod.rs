@@ -236,6 +236,7 @@ impl Ui {
             || self.backend.session_directory != backend.session_directory
             || placement.is_some_and(|slug| self.session_slug != slug)
         {
+            let was_detached = self.backend.session.is_empty();
             self.backend.session.clone_from(&backend.session);
             self.backend
                 .session_directory
@@ -244,7 +245,9 @@ impl Ui {
                 self.session_slug = slug.into();
             }
             self.close_preview();
-            if self.slug != self.session_slug {
+            if self.slug != self.session_slug
+                && !(was_detached && !self.changes.draft.text.is_empty())
+            {
                 self.slug.clone_from(&self.session_slug);
                 self.reset_tree();
             }

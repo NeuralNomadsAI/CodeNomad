@@ -108,14 +108,10 @@ pub(super) async fn dispatch(
 }
 
 fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {
-    let event = parse_workspace_event(value)?;
-    let workspace_id = match &event {
-        WorkspaceEvent::Stopped { workspace_id }
-        | WorkspaceEvent::WorktreesChanged { workspace_id }
-        | WorkspaceEvent::FilesChanged { workspace_id, .. } => workspace_id.as_str(),
-        _ => return None,
-    };
-    (workspace_id == b.workspace).then_some(event)
+    if value["workspaceId"].as_str() != Some(b.workspace.as_str()) {
+        return None;
+    }
+    parse_workspace_event(value)
 }
 
 pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceEvent> {

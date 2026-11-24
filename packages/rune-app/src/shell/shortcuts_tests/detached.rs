@@ -486,12 +486,19 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         rt.state.transcript_display.pictures.fixture_preview(false);
 
         // Remapping new-instance to Ctrl+F opens search when session-search is still active (matching Solid),
-        // and runs new-instance once session-search is disabled.
+        // hides Ctrl+F from close-instance tooltip while shadowed by session-search,
+        // and runs new-instance once session-search is remapped to Ctrl+G or disabled.
         let tabs_before = rt.state.workspace.as_ref().unwrap().tab_count();
         settings::fixture_shortcuts(
             &rt.state,
-            json!({"new-instance": [{"key": "f", "mod": true}]}),
+            json!({
+                "new-instance": [{"key": "f", "mod": true}],
+                "close-instance": [{"key": "f", "mod": true}]
+            }),
         );
+        rt.update(|s, _| s.revision += 1);
+        settle(&mut rt);
+        assert!(!help_of(&rt, "c-tab-0").contains('('));
         send_key(&mut rt, Key::Command('f'), primary_mods(false));
         assert_eq!(
             rt.state.workspace.as_ref().unwrap().tab_count(),
@@ -501,12 +508,27 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
 
         settings::fixture_shortcuts(
             &rt.state,
-            json!({"new-instance": [{"key": "f", "mod": true}], "session-search": []}),
+            json!({
+                "new-instance": [{"key": "f", "mod": true}],
+                "session-search": [{"key": "g", "mod": true}]
+            }),
         );
         send_key(&mut rt, Key::Command('f'), primary_mods(false));
         assert_eq!(
             rt.state.workspace.as_ref().unwrap().tab_count(),
             tabs_before + 1
+        );
+        send_key(&mut rt, Key::Command('1'), primary_mods(false));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+
+        settings::fixture_shortcuts(
+            &rt.state,
+            json!({"new-instance": [{"key": "f", "mod": true}], "session-search": []}),
+        );
+        send_key(&mut rt, Key::Command('f'), primary_mods(false));
+        assert_eq!(
+            rt.state.workspace.as_ref().unwrap().tab_count(),
+            tabs_before + 2
         );
         send_key(&mut rt, Key::Command('1'), primary_mods(false));
         assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
@@ -530,9 +552,15 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         assert!(files.tree.expanded("src"));
         assert_eq!(files.tree.selected(), Some("src"));
         rt.state.files = Some(files);
+        crate::git::connected_placed(&mut rt.state, &bound, "wt-a");
+        crate::git::fixture_commit_draft(&mut rt.state, Some("wip commit"));
         rt.update(|s, tx| {
             assert!(crate::launcher::close_session(s, tx));
         });
+        assert_eq!(
+            crate::git::fixture_commit_draft(&mut rt.state, None).as_deref(),
+            Some("wip commit")
+        );
         assert!(rt.state.files.as_ref().unwrap().tree.expanded("src"));
         assert_eq!(
             rt.state.files.as_ref().unwrap().tree.selected(),
@@ -547,6 +575,12 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
                 .take_refresh()
                 .is_empty(),
             "close-session handoff must revalidate Files tree"
+        );
+        // Rebinding a root conversation from detached mode preserves an active commit draft in the browsed worktree.
+        crate::git::connected_placed(&mut rt.state, &bound, "root");
+        assert_eq!(
+            crate::git::fixture_commit_draft(&mut rt.state, None).as_deref(),
+            Some("wip commit")
         );
         crate::files::bind(&mut rt.state, &bound);
         assert!(rt.state.files.as_ref().unwrap().tree.expanded("src"));

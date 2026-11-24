@@ -294,6 +294,7 @@ fn choose_from(
 pub fn can_change_session(s: &State) -> bool {
     s.phase != Phase::Streaming
         && !s.composer.blocks_navigation()
+        && !s.transcript_display.messages.pending()
         && !s.status_permissions.settling()
         && crate::workspace::input_ready(s)
         && !crate::agent::navigation_blocked(s)
@@ -362,7 +363,6 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
     });
     if s.screen.is_launcher()
         || !can_change_session(s)
-        || s.transcript_display.messages.pending()
         || tab_key.is_some_and(|key| s.documents.has_tab_edits(key))
         || s.files
             .as_ref()

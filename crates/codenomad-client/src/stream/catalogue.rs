@@ -58,8 +58,19 @@ impl Signals {
         self.attention.lock().unwrap().clear();
         self.workspace_events.lock().unwrap().clear();
         *self.stats.lock().unwrap() = StatsChanges::default();
-        if self.generation.load(SeqCst) % 2 == 1 {
-            self.generation.fetch_add(1, SeqCst);
+        let changed = self
+            .generation
+            .try_update(SeqCst, SeqCst, |generation| {
+                if generation == 0 {
+                    Some(2)
+                } else if generation % 2 == 1 {
+                    Some(generation + 1)
+                } else {
+                    None
+                }
+            })
+            .is_ok();
+        if changed {
             (self.wake)();
         }
     }
@@ -471,6 +482,15 @@ mod tests {
             events.front(),
             Some(WorkspaceEvent::WorktreesChanged { workspace_id }) if workspace_id == "proj-1"
         ));
+
+        let (failed_watch, _) = CatalogueWatch::new(
+            Backend::unauthenticated("http://127.0.0.1:9/").unwrap(),
+            Arc::new(|| {}),
+        );
+        failed_watch.signals.disconnected();
+        assert_eq!(failed_watch.take_workspace_events().0, 2);
+        failed_watch.signals.reconnected();
+        assert_eq!(failed_watch.take_workspace_events().0, 3);
     }
 
     #[test]

@@ -42,6 +42,8 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
         .chain(std::iter::once(crate::shell::notifications::history_entry(
             s, touch,
         )));
+    let search_visible =
+        !s.screen.is_launcher() && !crate::files::has_preview(s) && !crate::git::has_preview(s);
     let (new_shadowed, close_shadowed): (&[&str], &[&str]) =
         if crate::platform::folder_picker_available() && crate::shell::launcher_replaces_project(s)
         {
@@ -49,7 +51,14 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
         } else if !crate::shell::launcher_replaces_project(s)
             && s.screen.launcher().is_some_and(|l| l.project.is_some())
         {
-            (&["session-new"], &["session-new", "new-instance"])
+            if search_visible {
+                (
+                    &["session-search", "session-new"],
+                    &["session-search", "session-new", "new-instance"],
+                )
+            } else {
+                (&["session-new"], &["session-new", "new-instance"])
+            }
         } else {
             (&[], &["new-instance"])
         };

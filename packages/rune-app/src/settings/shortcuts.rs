@@ -58,8 +58,15 @@ fn shortcut_label(s: &State, action: &str) -> String {
     format_chords(&catalog::resolve(&s.settings.shared.borrow(), action))
 }
 
-pub(crate) fn shortcut_disabled(s: &State, action: &str) -> bool {
-    catalog::resolve(&s.settings.shared.borrow(), action).is_empty()
+pub(crate) fn shortcut_override_match(
+    s: &State,
+    action: &str,
+    event: &KeyEvent,
+    tx: &Tx,
+) -> Option<bool> {
+    let preferences = s.settings.shared.borrow();
+    preferences.shortcut(action)?;
+    Some(matches_shortcut_in(&preferences, action, event, tx))
 }
 
 pub(crate) fn with_shortcut_label(s: &State, label: &str, action: &str) -> String {
