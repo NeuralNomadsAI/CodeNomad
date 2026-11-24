@@ -28,6 +28,8 @@ Ajanlar yapılandırmaları okuyabilir, kaydedebilir, değiştirebilir veya yeni
 
 Altta İptal ve Oluştur yanındaki **Yapılandırmayı kaydet**, yeniden kullanılabilir bir yapılandırma saklar; Görev oluşturmaz veya başlatmaz. Zamanlama ve otomatik başlatma ayrı seçilir. Dişli, Tercihler ve kitaplığı açar; yapılandırmayı silmek mevcut görevleri ve konuşmaları korur.
 
+Kayıtlı bir yapılandırmayı değiştirmek için adını kullanıp **Değiştir**’i seçin. Aynı adı taşıyan birden fazla yapılandırma varsa önce değiştirmek istediğinizi yükleyin. Kitaplıkta yer olduğu sürece yeni ad ayrı bir kopya kaydeder.
+
 ### Hedef, Başlık ve Notlar {#mission-instructions}
 
 Tek seferlik Missions için ajanlar başlatabilir, sürdürebilir, mevcut adımdan sonra duraklatabilir, hemen kesebilir, durdurabilir, düzenleyebilir, silebilir, hata sonrası koordinasyonu sürdürebilir ve eksik rapor veya güncelleme isteyebilir. Sizin oluşturduğunuz Missions da panelle aynı kabul ve revizyon kontrollerine tabidir. Açıkça başka bir seçenek belirtilmedikçe silme işlemi, yönetilen oturumları silme tercihinizi kullanır. Onaylanmamış kontroller ve temizlik özgün kimliklerini korur; ajanlar, doğrulanmış kısmi bir işlemi açıkça sürdürmeden önce kayıtlı durumu okur.
