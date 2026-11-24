@@ -157,14 +157,20 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
   const editor = page.locator('textarea:focus')
   const pad=theme['space-md'],gap=theme['space-sm']
   const line=2*gap+Math.ceil(theme['font-size-base']*theme['line-height-normal'])
+  async function tryFieldRect(timeout){
+    try{
+      const group=await composer.boundingBox(timeout?{timeout}:undefined)
+      const actions=await composer.getByRole('button').evaluateAll(buttons=>Math.min(...buttons.map(button=>button.getBoundingClientRect().top)))
+      if(!group||!Number.isFinite(actions))return null
+      const x=Math.ceil(group.x+pad),y=Math.ceil(group.y+pad)
+      const width=Math.floor(group.x+group.width-pad)-x,height=Math.floor(actions-gap)-y
+      return width>0&&height>0?{x,y,width,height}:null
+    }catch{return null}
+  }
   async function fieldRect(){
-    const group=await composer.boundingBox()
-    const actions=await composer.getByRole('button').evaluateAll(buttons=>Math.min(...buttons.map(button=>button.getBoundingClientRect().top)))
-    assert(group&&Number.isFinite(actions))
-    const x=Math.ceil(group.x+pad),y=Math.ceil(group.y+pad)
-    const width=Math.floor(group.x+group.width-pad)-x,height=Math.floor(actions-gap)-y
-    assert(width>0&&height>0)
-    return {x,y,width,height}
+    const rect=await tryFieldRect()
+    assert(rect,'Composer field must expose non-empty bounds')
+    return rect
   }
   const inkClip=field=>({...field,height:Math.min(line,field.height)})
   const capture=async clip=>`data:image/png;base64,${(await page.screenshot({clip,scale:'css'})).toString('base64')}`
@@ -242,7 +248,12 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
         }
         requestAnimationFrame(frame)
       }))
-      const after = await rowSample()
+      let after = await rowSample()
+      // Post-scroll accessibility mirror updates defer for SCROLL_SETTLE + IDLE_TIMEOUT (#1670).
+      for (const until = Date.now() + 1500; JSON.stringify(before) === JSON.stringify(after) && Date.now() < until;) {
+        await page.waitForTimeout(Math.min(50, Math.max(1, until - Date.now())))
+        after = await rowSample()
+      }
       const latest = await center(role('button', labels.latest))
       await page.touchscreen.tap(latest.x, latest.y)
       return {moved:JSON.stringify(before)!==JSON.stringify(after),before,after,frameP95Ms:frames[Math.floor(frames.length*0.95)]}
@@ -324,12 +335,17 @@ export async function mobileInteraction(page, labels, imagePage, theme, colors) 
       let field, button
       // Mirror updates defer off rAF after resize/scroll settle (#1670).
       for(const until=Date.now()+2000;;){
-        field = await fieldRect()
-        button = await send.boundingBox()
+        const remaining=until-Date.now()
+        if(remaining<=0) break
+        const step=Math.min(remaining,250)
+        field = await tryFieldRect(step)
+        const buttonBudget=until-Date.now()
+        button = buttonBudget>0?await send.boundingBox({timeout:Math.min(buttonBudget,250)}).catch(()=>null):null
         if(field&&field.height>0&&field.y>=top-1&&field.y+field.height<=bottom+1&&field.x>=left-1&&field.x+field.width<=right+1
           &&button&&button.y>=top&&button.y+button.height<=bottom+1) break
-        if(Date.now()>=until) break
-        await page.waitForTimeout(25)
+        const wait=Math.min(25,until-Date.now())
+        if(wait<=0) break
+        await page.waitForTimeout(wait)
       }
       await waitValue(value)
       assert(field&&field.height>0&&field.y>=top-1&&field.y+field.height<=bottom+1&&field.x>=left-1&&field.x+field.width<=right+1,

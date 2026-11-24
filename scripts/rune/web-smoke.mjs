@@ -61,6 +61,16 @@ try {
         ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
       const page = await context.newPage()
       page.setDefaultTimeout(15000)
+      await page.addInitScript(() => {
+        const events = []
+        globalThis.__codenomadPointerTrace = events
+        for (const type of ['pointerdown', 'pointerup', 'pointercancel']) {
+          window.addEventListener(type, e => {
+            events.push({type, timeStamp: e.timeStamp, now: performance.now(), pointerType: e.pointerType, pointerId: e.pointerId, x: e.clientX, y: e.clientY})
+            if (events.length > 64) events.shift()
+          }, {capture: true, passive: true})
+        }
+      })
       if (values.mobile) await page.addInitScript(() => {
         window.Notification = class {
           static permission = 'default'
@@ -69,7 +79,7 @@ try {
       })
       const missions=values.missions?missionsFixture({page,messages,artifact:path.join(out,`missions-${colorScheme}`),project:values.project}):null
       if(missions)await context.addInitScript(()=>Object.defineProperty(Crypto.prototype,'subtle',{value:undefined}))
-      const errors = [], forbiddenRequests = [], routes=[], history=[]
+      const errors = [], forbiddenRequests = [], routes=[], history=[], tapTrace=[]
       let holdOlder
       let holdAnchor
       let holdPreview
@@ -162,28 +172,68 @@ try {
         assert.equal(await page.locator('html').getAttribute('lang'), values.locale)
         assert.equal(await page.locator('html').getAttribute('dir'), values.locale === 'he' ? 'rtl' : 'ltr')
         if(values.connected){
+          const waitStableBox=async(locator,label,{settleMs=values.mobile?180:0,timeoutMs=4000}={})=>{
+            await locator.waitFor({state:'attached'})
+            await locator.scrollIntoViewIfNeeded({timeout:timeoutMs}).catch(()=>{})
+            const deadline=Date.now()+timeoutMs
+            let prev=null,stableSince=0
+            while(true){
+              const remaining=deadline-Date.now()
+              const box=remaining>0?await locator.boundingBox({timeout:Math.min(remaining,250)}).catch(()=>null):null
+              const usable=box&&box.width>0&&box.height>0&&box.x>=-1&&box.y>=-1&&box.x+box.width<=width+1&&box.y+box.height<=height+1
+              if(usable){
+                const same=prev&&Math.abs(box.x-prev.x)<0.5&&Math.abs(box.y-prev.y)<0.5&&Math.abs(box.width-prev.width)<0.5&&Math.abs(box.height-prev.height)<0.5
+                if(same||settleMs===0){
+                  if(settleMs===0||Date.now()-stableSince>=settleMs)return box
+                }else{
+                  prev=box;stableSince=Date.now()
+                }
+              }else{prev=null;stableSince=0}
+              assert(Date.now()<deadline,`Connected control outside viewport or unstable: ${label} (${JSON.stringify(box)})`)
+              await page.waitForTimeout(Math.min(30,Math.max(1,deadline-Date.now())))
+            }
+          }
+          const dispatchPress=async(locator,label,role,box)=>{
+            const point={x:box.x+box.width/2,y:box.y+box.height/2}
+            tapTrace.push({label,role,rect:box,point,at:Date.now()})
+            if(tapTrace.length>32)tapTrace.shift()
+            if(values.mobile)await page.touchscreen.tap(point.x,point.y)
+            else await locator.click({force:true})
+          }
           const press=async (label,role='button')=>{
-            const button=page.getByRole(role,{name:label,exact:true});await button.waitFor({state:'attached'})
-            await button.scrollIntoViewIfNeeded()
-            const box=await button.boundingBox()
-            assert(box&&box.width>0&&box.height>0&&box.x>=-1&&box.y>=-1&&box.x+box.width<=width+1&&box.y+box.height<=height+1,`Connected control outside viewport: ${label}`)
-            if(values.mobile)await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
-            else await button.click({force:true})
+            const button=page.getByRole(role,{name:label,exact:true})
+            const box=await waitStableBox(button,label)
+            await dispatchPress(button,label,role,box)
           }
           const left=messages['window.menu.leftPanel']
           const sessions=page.getByRole('region',{name:left,exact:true})
+          const waitDrawerSync=async(toggle,expected)=>{
+            const deadline=Date.now()+4000
+            while(true){
+              const expanded=await toggle.getAttribute('aria-expanded').catch(()=>null)==='true'
+              const visible=await sessions.isVisible().catch(()=>false)
+              if(expected===undefined?expanded===visible:expanded===expected&&visible===expected)return expanded
+              assert(Date.now()<deadline,`Left drawer mirror state did not settle (expected=${expected}, expanded=${expanded}, visible=${visible})`)
+              await page.waitForTimeout(Math.min(30,Math.max(1,deadline-Date.now())))
+            }
+          }
           const openSessions=async()=>{
             const toggle=page.getByRole('button',{name:left,exact:true})
             await toggle.waitFor()
-            await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
-            if(await toggle.getAttribute('aria-expanded')!=='true')await press(left)
+            const expanded=await waitDrawerSync(toggle)
+            if(!expanded){
+              await press(left)
+              await waitDrawerSync(toggle,true)
+            }
             await sessions.waitFor()
           }
           const row=name=>sessions.getByRole('listitem',{name,exact:true})
           const select=async(name,id)=>{
             await openSessions()
+            const target=row(name)
+            const box=await waitStableBox(target,name,{settleMs:180})
             const window=page.waitForResponse(res=>res.url().endsWith('/session-history/window')&&res.ok()&&res.request().postDataJSON()?.sessionID===id)
-            await press(name,'listitem')
+            await dispatchPress(target,name,'listitem',box)
             assert.equal((await (await window).json()).status,'window')
             await page.getByRole('heading',{name,exact:true}).waitFor()
           }
@@ -632,8 +682,11 @@ try {
           ]}:{pass:true})})
       } catch (error) {
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
-        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot(),
-          marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))}, null, 2))
+        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,
+          lastTap: tapTrace.at(-1) ?? null, tapTrace,
+          pointerEvents: await page.evaluate(() => globalThis.__codenomadPointerTrace ?? []).catch(() => []),
+          mirror:await page.locator('body').ariaSnapshot().catch(() => null),
+          marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime}))).catch(() => [])}, null, 2))
         throw error
        } finally {missions?.release();releaseLinked?.();await context.close()}
     }
