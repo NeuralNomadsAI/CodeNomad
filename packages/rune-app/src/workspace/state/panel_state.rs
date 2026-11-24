@@ -296,8 +296,8 @@ pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) 
         .incoming
         .as_ref()
         .is_none_or(codenomad_client::Receiver::is_closed);
-    if active_detached {
-        for event in events {
+    for event in events {
+        if active_detached || matches!(event, WorkspaceEvent::Stopped { .. }) {
             if s.git.owner.is_some() {
                 crate::git::event(s, event);
                 delivered = true;

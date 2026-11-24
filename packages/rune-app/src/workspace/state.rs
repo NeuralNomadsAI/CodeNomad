@@ -272,6 +272,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
 }
 fn busy(s: &State) -> bool {
     s.status_permissions.settling()
+        || s.transcript_display.messages.pending()
         || s.screen.launcher().is_some_and(|l| l.pending)
         || s.workspace.as_ref().is_some_and(|ui| !ui.ready)
 }

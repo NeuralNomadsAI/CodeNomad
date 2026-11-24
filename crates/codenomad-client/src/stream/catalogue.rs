@@ -32,6 +32,7 @@ pub(super) struct Signals {
     authentication_required: std::sync::atomic::AtomicBool,
     wake: Wake,
     generation: std::sync::atomic::AtomicU64,
+    workspace_generation: std::sync::atomic::AtomicU64,
 }
 
 #[derive(Default)]
@@ -51,6 +52,15 @@ impl Signals {
         self.mark(&self.pending, None);
         self.mark(&self.providers, None);
         self.generation.fetch_add(1, SeqCst);
+        let _ = self
+            .workspace_generation
+            .try_update(SeqCst, SeqCst, |generation| {
+                Some(if generation % 2 == 0 {
+                    generation + 1
+                } else {
+                    generation + 2
+                })
+            });
         (self.wake)();
     }
 
@@ -58,8 +68,14 @@ impl Signals {
         self.attention.lock().unwrap().clear();
         self.workspace_events.lock().unwrap().clear();
         *self.stats.lock().unwrap() = StatsChanges::default();
-        let changed = self
+        let gen_changed = self
             .generation
+            .try_update(SeqCst, SeqCst, |generation| {
+                (generation % 2 == 1).then_some(generation + 1)
+            })
+            .is_ok();
+        let ws_changed = self
+            .workspace_generation
             .try_update(SeqCst, SeqCst, |generation| {
                 if generation == 0 {
                     Some(2)
@@ -70,7 +86,7 @@ impl Signals {
                 }
             })
             .is_ok();
-        if changed {
+        if gen_changed || ws_changed {
             (self.wake)();
         }
     }
@@ -258,6 +274,7 @@ impl CatalogueWatch {
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
+            workspace_generation: Default::default(),
             wake,
         });
         let (stop, cancelled) = bounded(1);
@@ -323,7 +340,7 @@ impl CatalogueWatch {
     }
 
     pub fn take_workspace_events(&self) -> (u64, bool, VecDeque<WorkspaceEvent>) {
-        let generation = self.signals.generation.load(SeqCst);
+        let generation = self.signals.workspace_generation.load(SeqCst);
         let overflow = self.signals.workspace_overflow.swap(false, SeqCst);
         let mut events = VecDeque::new();
         for workspace_id in self.signals.workspace_stopped.lock().unwrap().drain() {
@@ -489,8 +506,12 @@ mod tests {
         );
         failed_watch.signals.disconnected();
         assert_eq!(failed_watch.take_workspace_events().0, 2);
+        assert_eq!(failed_watch.take_attention().0, 0);
+        assert_eq!(failed_watch.take_provider_changes().2, 0);
         failed_watch.signals.reconnected();
         assert_eq!(failed_watch.take_workspace_events().0, 3);
+        assert_eq!(failed_watch.take_attention().0, 1);
+        assert_eq!(failed_watch.take_provider_changes().2, 1);
     }
 
     #[test]
@@ -508,6 +529,7 @@ mod tests {
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: 3.into(),
+            workspace_generation: 3.into(),
             wake: Arc::new(move || {
                 wakes.fetch_add(1, SeqCst);
             }),
@@ -543,6 +565,7 @@ mod tests {
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
+            workspace_generation: Default::default(),
             wake: Arc::new(|| {}),
         };
         for frame in [
@@ -573,6 +596,7 @@ mod tests {
             workspace_overflow: std::sync::atomic::AtomicBool::new(false),
             authentication_required: std::sync::atomic::AtomicBool::new(false),
             generation: Default::default(),
+            workspace_generation: Default::default(),
             wake: Arc::new(|| {}),
         };
         for (id, kind) in [

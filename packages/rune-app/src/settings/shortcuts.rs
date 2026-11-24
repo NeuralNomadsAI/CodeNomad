@@ -194,12 +194,8 @@ fn canonical_char(c: char) -> char {
 }
 
 fn logical_command(typed: char, event: &KeyEvent, base: Option<char>) -> char {
-    // Rune substitutes the US-position character for non-ASCII native Ctrl chords.
-    if cfg!(not(any(target_os = "macos", target_arch = "wasm32")))
-        && typed.is_ascii()
-        && event.mods.ctrl
-        && !event.mods.alt
-    {
+    // Rune substitutes the US-position character for non-ASCII Ctrl chords off macOS.
+    if cfg!(not(target_os = "macos")) && typed.is_ascii() && event.mods.ctrl && !event.mods.alt {
         return base.filter(|c| !c.is_ascii()).unwrap_or(typed);
     }
     typed

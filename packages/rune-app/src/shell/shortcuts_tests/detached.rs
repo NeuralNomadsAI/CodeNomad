@@ -533,6 +533,27 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         send_key(&mut rt, Key::Command('1'), primary_mods(false));
         assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
 
+        // Pending message edit also blocks tab switching via global shortcuts.
+        rt.state.transcript_display.messages.fixture_set_pending();
+        send_key(&mut rt, Key::Command('2'), primary_mods(false));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+        rt.state.transcript_display.messages = Default::default();
+
+        // Remapping session-search to a bare letter does not swallow typing once search is open.
+        settings::fixture_shortcuts(&rt.state, json!({"session-search": [{"key": "s"}]}));
+        rt.update(|s, tx| {
+            let open_ev = KeyEvent {
+                key: Key::Text("s".into()),
+                mods: Mods::default(),
+            };
+            assert!(crate::timeline::search::open_key(s, &open_ev, tx));
+            assert!(
+                !crate::timeline::search::open_key(s, &open_ev, tx),
+                "bare text key must not be swallowed once search is open"
+            );
+            crate::timeline::search::close(s);
+        });
+
         // Closing and rebinding a session in the same project preserves the Files tree expanded folders
         // and revalidates the tree across the conversation-to-detached handoff.
         let mut files = crate::files::Ui::new(
@@ -576,6 +597,51 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
                 .is_empty(),
             "close-session handoff must revalidate Files tree"
         );
+        // Passive file change schedules a wake deadline even when idle in detached mode.
+        rt.state.files.as_mut().unwrap().event(
+            codenomad_client::transport::WorkspaceEvent::FilesChanged {
+                workspace_id: bound.workspace.clone(),
+                changes: vec![codenomad_client::transport::DirectoryChange {
+                    directory: "/repo".into(),
+                    path: "src/new.rs".into(),
+                }],
+            },
+        );
+        rt.update(|s, tx| {
+            crate::files::poll(s, 1.0, tx);
+            assert!(
+                s.files.as_ref().unwrap().next_wake().is_some(),
+                "detached passive file change must keep a wake deadline"
+            );
+        });
+        // Re-authentication on the same server identity preserves detached Files tree state.
+        let attest_old = tokio::spawn({
+            let backend = bound.clone();
+            async move { backend.attest_server().await.unwrap() }
+        });
+        http.accept()
+            .await
+            .reply(200, json!({"apiContract": 1, "serverId": "srv-1"}))
+            .await;
+        assert_eq!(attest_old.await.unwrap(), "srv-1");
+        let mut renewed = Backend::unauthenticated(&http.backend.base).unwrap();
+        renewed.workspace = bound.workspace.clone();
+        let attest_new = tokio::spawn({
+            let backend = renewed.clone();
+            async move { backend.attest_server().await.unwrap() }
+        });
+        http.accept()
+            .await
+            .reply(200, json!({"apiContract": 1, "serverId": "srv-1"}))
+            .await;
+        assert_eq!(attest_new.await.unwrap(), "srv-1");
+        assert!(!bound.client.same_connection(&renewed.client));
+        crate::files::bind(&mut rt.state, &renewed);
+        assert!(rt.state.files.as_ref().unwrap().tree.expanded("src"));
+        assert_eq!(
+            rt.state.files.as_ref().unwrap().tree.selected(),
+            Some("src")
+        );
         // Rebinding a root conversation from detached mode preserves an active commit draft in the browsed worktree.
         crate::git::connected_placed(&mut rt.state, &bound, "root");
         assert_eq!(
@@ -588,6 +654,36 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
             rt.state.files.as_ref().unwrap().tree.selected(),
             Some("src")
         );
+
+        // project_opened during a catalogue SSE outage keeps detached Files/Git offline.
+        let (watch, _watch_task) = codenomad_client::stream::CatalogueWatch::new(
+            http.backend.clone(),
+            std::sync::Arc::new(|| {}),
+        );
+        if let Some(l) = rt.state.screen.launcher_mut() {
+            l.connection = Some(http.backend.clone());
+            l.catalogue_watch = Some(watch);
+            l.workspace_stream_generation = 2;
+        }
+        rt.state.git.owner = None;
+        crate::git::project_opened(&mut rt.state);
+        assert_eq!(crate::git::fixture_online(&rt.state), Some(false));
+        if let Some(l) = rt.state.screen.launcher_mut() {
+            l.catalogue_watch = None;
+            l.workspace_stream_generation = 1;
+        }
+
+        // WorkspaceEvent::Stopped reaches active Files/Git even while a conversation stream is open.
+        let (_stop_tx, stop_rx) = codenomad_client::bounded(1);
+        rt.state.incoming = Some(stop_rx);
+        assert!(crate::workspace::deliver_detached_events(
+            &mut rt.state,
+            &[codenomad_client::transport::WorkspaceEvent::Stopped {
+                workspace_id: bound.workspace.clone(),
+            }],
+        ));
+        assert!(rt.state.files.as_ref().unwrap().stopped);
+        rt.state.incoming = None;
 
         // Creating an untitled session whose directory matches the project root under different casing/slashes
         // omits ?directory= and sends the project's canonical root path in the body.

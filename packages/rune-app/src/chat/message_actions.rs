@@ -122,6 +122,19 @@ impl Actions {
     pub(crate) fn fixture_confirmation(&mut self, scope: &Rc<()>, preview: Option<PrunePreview>) {
         self.confirmation = preview.map(|preview| (Rc::downgrade(scope), preview));
     }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_set_pending(&mut self) {
+        let (cancel, _) = bounded(1);
+        let (_, returned) = bounded(1);
+        self.job = Some(Job {
+            scope: Weak::new(),
+            cancel,
+            returned,
+            error: "",
+            reread: false,
+        });
+    }
 }
 
 fn available(s: &State) -> bool {

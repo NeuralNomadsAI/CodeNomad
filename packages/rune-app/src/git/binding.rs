@@ -197,6 +197,10 @@ pub(crate) fn detach_session(s: &mut State) {
 }
 
 pub(crate) fn project_opened(s: &mut State) {
+    let stream_online = s
+        .screen
+        .launcher()
+        .is_some_and(crate::launcher::Launcher::workspace_stream_online);
     let Some(mut backend) = s.screen.launcher().and_then(|launcher| {
         let mut backend = launcher.connection.clone()?;
         backend.workspace.clone_from(&launcher.project.as_ref()?.id);
@@ -209,9 +213,9 @@ pub(crate) fn project_opened(s: &mut State) {
     crate::files::bind(s, &backend);
     connected(s, &backend);
     if let Some(files) = &mut s.files {
-        files.online(true);
+        files.online(stream_online);
     }
-    online(s, true);
+    online(s, stream_online);
 }
 
 pub(super) fn sync_files(s: &mut State) {

@@ -55,6 +55,11 @@ impl Ui {
         self.backend.client.same_connection(&backend.client)
     }
 
+    pub(crate) fn same_server_identity(&self, backend: &Backend) -> bool {
+        let previous = self.backend.client.server_identity();
+        previous.is_some() && previous == backend.client.server_identity()
+    }
+
     pub fn new(backend: Backend, directory: String, reads: Reads, wake: Wake) -> Self {
         let (out, incoming) = bounded(16);
         Self {
@@ -173,10 +178,17 @@ impl Ui {
         self.backend.session.clear();
     }
     pub fn rebind_session(&mut self, backend: &Backend) {
+        let renewed = !self.uses_connection(backend);
         self.close_reader();
         self.backend = backend.clone();
         self.reader.rebind_session(backend);
         self.document.rebind_session(backend);
+        if renewed {
+            self.actions.revoke();
+            self.tree.invalidate_all();
+            self.pending = None;
+            self.demand();
+        }
     }
     pub fn online(&mut self, online: bool) {
         if !online {
@@ -444,6 +456,19 @@ impl Ui {
             return true;
         }
         false
+    }
+    pub(crate) fn next_wake(&self) -> Option<f64> {
+        if self.stopped {
+            return None;
+        }
+        let pending = self.pending.as_ref().map(|(due, _)| *due);
+        let refresh = (self.active && self.tree_visible() && self.online)
+            .then_some(self.due)
+            .flatten();
+        match (pending, refresh) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
     pub fn poll(&mut self, now: f64) -> bool {
         self.clock = now;

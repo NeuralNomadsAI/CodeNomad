@@ -161,6 +161,9 @@ pub(crate) fn close_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
 }
 
 pub(crate) fn open_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    if state(s).open && matches!(event.key, Key::Text(_)) && (!event.mods.alt || event.mods.ctrl) {
+        return false;
+    }
     let matched = match crate::settings::shortcut_override_match(s, "session-search", event, tx) {
         Some(matched) => matched,
         None => {

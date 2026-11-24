@@ -391,9 +391,17 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
         .screen
         .launcher()
         .is_some_and(Launcher::workspace_stream_online);
-    crate::workspace::set_detached_online(s, false);
-    if stream_online {
-        crate::workspace::set_detached_online(s, true);
+    if let Some(files) = &mut s.files {
+        files.online(false);
+        if stream_online {
+            files.online(true);
+        }
+    }
+    if s.git.owner.is_some() {
+        crate::git::online(s, false);
+        if stream_online {
+            crate::git::online(s, true);
+        }
     }
     crate::workspace::schedule_catalogue(s);
     tx.instant();
