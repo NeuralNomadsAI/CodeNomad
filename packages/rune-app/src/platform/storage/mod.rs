@@ -92,6 +92,8 @@ mod native {
             plain(&directory, true)?;
             let path = directory.join("state.lock");
             plain(&path, false)?;
+            // Lock file: keep existing bytes without truncating before try_lock.
+            #[allow(clippy::suspicious_open_options)]
             let lock = OpenOptions::new()
                 .read(true)
                 .write(true)

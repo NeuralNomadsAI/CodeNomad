@@ -10,6 +10,7 @@ use windows_sys::Win32::{
     System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW},
 };
 
+type Proc = unsafe extern "system" fn() -> isize;
 type Handle = *mut *mut c_void;
 type Close = unsafe extern "C" fn(Handle);
 type DefaultZone = unsafe extern "C" fn(*mut u16, i32, *mut UErrorCode) -> i32;
@@ -62,16 +63,16 @@ impl Icu {
             let loaded = (|| {
                 let get = |name: &std::ffi::CStr| GetProcAddress(module, name.as_ptr().cast());
                 Some(Self {
-                    open_pattern: std::mem::transmute::<_, PatternOpen>(get(c"udatpg_open")?),
-                    best_pattern: std::mem::transmute::<_, PatternBest>(get(
+                    open_pattern: std::mem::transmute::<Proc, PatternOpen>(get(c"udatpg_open")?),
+                    best_pattern: std::mem::transmute::<Proc, PatternBest>(get(
                         c"udatpg_getBestPattern",
                     )?),
-                    close_pattern: std::mem::transmute::<_, Close>(get(c"udatpg_close")?),
-                    open_date: std::mem::transmute::<_, DateOpen>(get(c"udat_open")?),
-                    format_date: std::mem::transmute::<_, DateFormat>(get(c"udat_format")?),
-                    close_date: std::mem::transmute::<_, Close>(get(c"udat_close")?),
+                    close_pattern: std::mem::transmute::<Proc, Close>(get(c"udatpg_close")?),
+                    open_date: std::mem::transmute::<Proc, DateOpen>(get(c"udat_open")?),
+                    format_date: std::mem::transmute::<Proc, DateFormat>(get(c"udat_format")?),
+                    close_date: std::mem::transmute::<Proc, Close>(get(c"udat_close")?),
                     default_zone: get(c"ucal_getDefaultTimeZone")
-                        .map(|symbol| std::mem::transmute::<_, DefaultZone>(symbol)),
+                        .map(|symbol| std::mem::transmute::<Proc, DefaultZone>(symbol)),
                 })
             })();
             if loaded.is_none() {
