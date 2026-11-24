@@ -209,17 +209,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     let mut translated_directories = std::collections::BTreeMap::new();
     let mut prompt_locations = Vec::new();
-    let observe_checkout = |location: &super::prompt::Location| {
-        (
-            crate::worktrees::fence::capture_display(&crate::worktrees::fence::identity(&location.checkout)),
-            tokio::time::Instant::now(),
-        )
-    };
     for directory in prompt_directories {
-        let translated = super::prompt::directory(&app, &workspace, &directory).await?;
+        let (translated, live, observed) = super::prompt::observe_directory(&app, &workspace, &directory).await?;
         translated_directories.insert(directory.clone(), translated.directory.clone());
-        let live = observe_checkout(&translated);
-        prompt_locations.push((directory, translated, live));
+        prompt_locations.push((directory, translated, (live, observed)));
     }
     if let Some(data) = &mut prompt_input {
         super::prompt::translate(data, &translated_directories);
@@ -231,17 +224,22 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         .find(|(k, _)| matches!(k.as_ref(), "directory" | "location[directory]"))
         .map(|(_, v)| v.into_owned());
     let prompt_query = if send_input && let Some(raw) = &requested {
-        let location = super::prompt::directory(&app, &workspace, raw).await?;
-        let translated = location.directory.clone();
-        let live = observe_checkout(&location);
-        prompt_locations.push((raw.clone(), location, live));
-        Some(translated)
+        if let Some(translated) = translated_directories.get(raw) {
+            Some(translated.clone())
+        } else {
+            let (location, live, observed) = super::prompt::observe_directory(&app, &workspace, raw).await?;
+            let translated = location.directory.clone();
+            prompt_locations.push((raw.clone(), location, (live, observed)));
+            Some(translated)
+        }
     } else {
         None
     };
     let session_path = route.strip_prefix("/api/session/").or_else(|| route.strip_prefix("/api/experimental/session/"));
     let session = session_path.and_then(|path| path.split('/').next()).filter(|v| !matches!(*v, "active" | "global"));
-    let trace_fence = send_input && std::env::var_os("CNRS_MUTATION_FENCE_TRACE").is_some();
+    static TRACE_FENCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let trace_fence =
+        send_input && *TRACE_FENCE.get_or_init(|| std::env::var_os("CNRS_MUTATION_FENCE_TRACE").is_some());
     let actual = if let Some(session) = session {
         if trace_fence {
             eprintln!("mutation-fence prompt {session}: read native session before admission");
@@ -310,12 +308,17 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             .ok_or_else(|| error(Status::BAD_REQUEST, "Invalid location context"))?;
         if send_input {
             let raw = super::prompt::context(&context)?;
-            let context = super::prompt::directory(&app, &workspace, raw).await?;
-            if prompt_locations.iter().any(|(_, location, _)| location != &context) {
-                return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
+            if let Some((_, existing, _)) = prompt_locations.iter().find(|(seen, _, _)| seen == raw) {
+                if prompt_locations.iter().any(|(_, location, _)| location != existing) {
+                    return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
+                }
+            } else {
+                let (context, live, observed) = super::prompt::observe_directory(&app, &workspace, raw).await?;
+                if prompt_locations.iter().any(|(_, location, _)| location != &context) {
+                    return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
+                }
+                prompt_locations.push((raw.to_owned(), context, (live, observed)));
             }
-            let live = observe_checkout(&context);
-            prompt_locations.push((raw.to_owned(), context, live));
         } else {
             one_location(&context, directory)?;
         }
@@ -520,26 +523,68 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     let mut mutation = if !matches!(head.method, Method::GET | Method::HEAD) {
         use crate::worktrees::fence;
-        let physical = crate::files::paths::canonical(&app.scope, directory).ok_or_else(foreign)?;
-        let mut checkouts = vec![fence::identity(&physical)];
+        let physical = match crate::files::paths::canonical(&app.scope, directory) {
+            Some(physical) => physical,
+            None => {
+                let target = crate::worktrees::ownership::resolve_directory(directory)
+                    .unwrap_or_else(|| std::path::PathBuf::from(directory));
+                if fence::is_blocked(&fence::identity(&target)) {
+                    return Err(error(Status::CONFLICT, "Worktree deletion is in progress"));
+                }
+                return Err(foreign());
+            }
+        };
+        let mut checkouts = vec![fence::identity(&fence::checkout_root(&app.scope, &physical))];
         // Native reads can outlive a deletion. A prospective directory may
         // still resolve lexically after its original checkout has disappeared.
-        for (raw, initial, (live, observed)) in &prompt_locations {
+        let mut prospective_fallback = Vec::new();
+        let mut live_rechecks = Vec::new();
+        for (raw, initial, (initial_live, observed)) in &prompt_locations {
+            let key = fence::identity(&initial.checkout);
+            if fence::is_blocked(&key) {
+                return Err(error(Status::CONFLICT, "Worktree deletion is in progress"));
+            }
+            let recheck_live = fence::capture_display(&key);
             match super::prompt::directory(&app, &workspace, raw).await {
-                Ok(current) if &current == initial => {}
-                Err(_)
-                    if live.load(std::sync::atomic::Ordering::Relaxed)
-                        && initial.removed_prospectively(raw, *observed) => {}
+                Ok(current) if &current == initial => {
+                    live_rechecks.push((raw.as_str(), initial, recheck_live));
+                }
+                _ if fence::is_blocked(&key) => {
+                    return Err(error(Status::CONFLICT, "Worktree deletion is in progress"));
+                }
+                _ if initial_live.load(std::sync::atomic::Ordering::Relaxed)
+                    && initial.removed_prospectively(raw, *observed) =>
+                {
+                    prospective_fallback.push((raw.as_str(), initial, initial_live, *observed));
+                }
                 _ => return Err(foreign()),
             }
-            checkouts.push(fence::identity(&initial.checkout));
+            checkouts.push(key);
         }
         checkouts.extend(session.map(fence::session));
         if trace_fence {
             eprintln!("mutation-fence prompt {session:?}: admit");
         }
+        #[cfg(test)]
+        if send_input {
+            crate::worktrees::fence_test_trace::after_recheck_before_admit().await;
+        }
         let permit = fence::admit(&checkouts)?;
-        if prompt_locations.iter().any(|(_, _, (live, _))| !live.load(std::sync::atomic::Ordering::Relaxed)) {
+        for (raw, initial, initial_live, observed) in prospective_fallback {
+            if !initial_live.load(std::sync::atomic::Ordering::Relaxed) || !initial.removed_prospectively(raw, observed)
+            {
+                return Err(foreign());
+            }
+        }
+        for (raw, initial, recheck_live) in live_rechecks {
+            if !recheck_live.load(std::sync::atomic::Ordering::Relaxed) {
+                match super::prompt::directory(&app, &workspace, raw).await {
+                    Ok(current) if &current == initial => {}
+                    _ => return Err(foreign()),
+                }
+            }
+        }
+        if create && !crate::worktrees::owns(&app, &workspace, directory).await {
             return Err(foreign());
         }
         Some(permit)

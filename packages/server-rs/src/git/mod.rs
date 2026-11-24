@@ -224,7 +224,7 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
         return Err(bad("Invalid path count"));
     }
     let (w, tree) = repo_target(&app, &id, &slug).await?;
-    let _admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&w.path)])?;
+    let _admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(tree.registered())])?;
     app.workspace(&id)?;
     files::root(&w)?;
     let mut validated = Vec::new();
@@ -271,7 +271,7 @@ pub async fn commit(
         return Err(bad("Invalid commit message"));
     }
     let (w, tree) = repo_target(&app, &id, &slug).await?;
-    let _admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&w.path)])?;
+    let _admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(tree.registered())])?;
     app.workspace(&id)?;
     if !tree.contains_live(&w.path) {
         return Err(error(Status::CONFLICT, "Worktree changed"));
@@ -297,11 +297,11 @@ pub async fn init(
     Json(body): Json<Init>,
 ) -> Result<Json<Value>, Error> {
     let w = app.workspace(&id)?;
-    let _admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&w.path)])?;
     let mismatch =
         || coded(Status::CONFLICT, "Only the opened folder can be initialized", "git_init_directory_mismatch");
     files::directory(&w, Some(&body.directory)).map_err(|_| mismatch())?;
     let identity = files::host_identity(&w.path).map_err(|_| mismatch())?;
+    let _admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&w.path)])?;
     let exists = || coded(Status::CONFLICT, "Folder already belongs to a Git repository", "git_init_repository_exists");
     match worktrees::root_only(&w).await? {
         None => return Err(exists()),

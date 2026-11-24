@@ -158,47 +158,57 @@ async function start(label, fixture, folder, password, trustedCA) {
       "--ui-dir", uiDir, "--workspace-root", folder]
   }
   const relay = await bench?.nativeRelay?.(fixture)
-  if (relay) env.CNRS_FIXTURE_URL = relay.url
-  const child = label === "ts"
-    ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
-      "--ui-no-update", "--ui-dir", uiDir, "--config", env.CLI_CONFIG, "--workspace-root", folder],
-      { env, cwd: root, windowsHide: true, stdio: [scripted ? "pipe" : "ignore", "pipe", "pipe"] })
-    : spawn(rust, rustArgs, { env, cwd: root, windowsHide: true, stdio: [scripted || serve ? "pipe" : "ignore", "pipe", "pipe"] })
-  // The process can exit while an inherited stdio pipe still delays "close".
-  const stopped = new Promise(resolve => child.once("exit", resolve))
+  let child, stopped, close
   let output = "", spawnError
-  child.on("error", error => { spawnError = error })
-  for (const stream of [child.stdout, child.stderr]) stream.on("data", data => { output += data })
-  const native = scripted ? nativeHost(child) : undefined
-  const request = (route, init) => fetch(`${listen}${route}`, { signal: AbortSignal.timeout(HTTP_TIMEOUT), redirect: "manual", ...init })
-  const close = async () => {
-    try {
-      if (serve && !spawnError && child.exitCode === null && child.signalCode === null) {
-        child.stdin.end("codenomad:shutdown\n", () => {})
-        await Promise.race([stopped, delay(15_000, undefined, { ref: false })])
-      }
-      if (!spawnError && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, stopped)
-    } finally {
-      child.stdin?.destroy()
-      child.stdout?.destroy()
-      child.stderr?.destroy()
-      try { await relay?.close() } finally {
-        await dropRegistration(fixture.env, child.pid)
-        const leaked = (bench?.secrets?.() ?? []).filter(secret => output.includes(secret))
-        const safe = leaked.reduce((text, secret) => text.replaceAll(secret, "<redacted>"), output)
-        await writeFile(path.join(out, `${mode}-${label}.log`), safe.replaceAll(password, "<redacted>").replaceAll(env.CNRS_FIXTURE_PASSWORD, "<redacted>"))
-        if (leaked.length) (result.leaks ??= []).push({ label, count: leaked.length })
+  try {
+    if (relay) env.CNRS_FIXTURE_URL = relay.url
+    child = label === "ts"
+      ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
+        "--ui-no-update", "--ui-dir", uiDir, "--config", env.CLI_CONFIG, "--workspace-root", folder],
+        { env, cwd: root, windowsHide: true, stdio: [scripted ? "pipe" : "ignore", "pipe", "pipe"] })
+      : spawn(rust, rustArgs, { env, cwd: root, windowsHide: true, stdio: [scripted || serve ? "pipe" : "ignore", "pipe", "pipe"] })
+    // The process can exit while an inherited stdio pipe still delays "close".
+    stopped = new Promise(resolve => child.once("exit", resolve))
+    const drained = [child.stdout, child.stderr].map(stream => new Promise(resolve => {
+      stream.on("data", data => { output += data })
+      stream.once("end", resolve)
+      stream.once("close", resolve)
+    }))
+    child.on("error", error => { spawnError = error })
+    const native = scripted ? nativeHost(child) : undefined
+    const request = (route, init) => fetch(`${listen}${route}`, { signal: AbortSignal.timeout(HTTP_TIMEOUT), redirect: "manual", ...init })
+    close = async () => {
+      try {
+        if (serve && !spawnError && child.exitCode === null && child.signalCode === null) {
+          child.stdin.end("codenomad:shutdown\n", () => {})
+          await Promise.race([stopped, delay(15_000, undefined, { ref: false })])
+        }
+        if (!spawnError && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, stopped)
+        await Promise.race([Promise.all(drained), delay(500, undefined, { ref: false })])
+      } finally {
+        child.stdin?.destroy()
+        child.stdout?.destroy()
+        child.stderr?.destroy()
+        try { await relay?.close() } finally {
+          await dropRegistration(fixture.env, child.pid)
+          const leaked = (bench?.secrets?.() ?? []).filter(secret => output.includes(secret))
+          const safe = leaked.reduce((text, secret) => text.replaceAll(secret, "<redacted>"), output)
+          await writeFile(path.join(out, `${mode}-${label}.log`), safe.replaceAll(password, "<redacted>").replaceAll(env.CNRS_FIXTURE_PASSWORD, "<redacted>"))
+          if (leaked.length) (result.leaks ??= []).push({ label, count: leaked.length })
+        }
       }
     }
-  }
-  try {
     await eventually(async () => {
       if (spawnError || child.exitCode !== null) throw Error(`${label} startup: ${spawnError ?? output.slice(-2500)}`)
       return (await request("/api/auth/status").catch(() => undefined))?.status === 200 && (label !== "ts" || output.includes("Local Connection URL"))
     }, `${label} startup`, STARTUP_TIMEOUT).catch(error => { throw Error(`${error.message}\n${output.slice(-2500)}`, { cause: error }) })
     const ingress = () => /^CNRS_TEST_INGRESS (http:\/\/127\.0\.0\.1:\d+)$/m.exec(output)?.[1]
     return { request, close, native, origin: listen, secureOrigin: /^HTTPS (https:\/\/\S+)$/m.exec(output)?.[1]?.trim(), ingress, pid: child.pid, status: info.version, daemonPID: info.pid }
-  } catch (e) { await close(); throw e }
+  } catch (e) {
+    if (close) await close()
+    else await relay?.close()
+    throw e
+  }
 }
 
 async function signIn(host, password) {
@@ -503,8 +513,8 @@ try {
       ts = await start("ts", local, tsRoot, password, missionServe ? undefined : path.join(remote.root, "rust.data", "tls", "ca-cert.pem"))
       assert.notEqual(ts.daemonPID, rs.daemonPID)
       result.daemons = [ts.status, rs.status]
-      // Attachment history opens and authenticates its own workspaces. Pending
-      // question recovery belongs to the general qualification, not this mode.
+      // Modes that open and authenticate their own workspaces (or run dedicated
+      // mutation-fence scenarios) skip the generic pending-question qualification.
       if (!["attachment-history", "history-search", "mutation-fence"].includes(mode)) await qualify(ts, rs, password, rsRoot)
       if (mode === "solid") return await solid({ ts, rs, local, remote, tsRoot, rsRoot, password })
       const hosts = []

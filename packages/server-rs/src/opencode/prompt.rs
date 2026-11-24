@@ -199,6 +199,17 @@ impl Location {
 }
 
 pub(super) async fn directory(app: &App, workspace: &Workspace, candidate: &str) -> Result<Location, Error> {
+    observe_directory(app, workspace, candidate).await.map(|(location, _, _)| location)
+}
+
+/// Resolve a prompt directory selector while capturing its deletion display
+/// token before the async ownership lookup, closing the TOCTOU window where a
+/// CodeNomad deletion finishes during resolution.
+pub(super) async fn observe_directory(
+    app: &App,
+    workspace: &Workspace,
+    candidate: &str,
+) -> Result<(Location, std::sync::Arc<std::sync::atomic::AtomicBool>, tokio::time::Instant), Error> {
     let foreign = || error(Status::FORBIDDEN, "Location does not belong to workspace");
     let candidate = crate::shared::js_trim(candidate);
     let normalized = crate::files::node_path::Style::host().normalize(candidate);
@@ -208,13 +219,17 @@ pub(super) async fn directory(app: &App, workspace: &Workspace, candidate: &str)
     let target = crate::worktrees::ownership::resolve_directory(candidate)
         .filter(|target| target.starts_with(&app.scope))
         .ok_or_else(foreign)?;
+    let live = crate::worktrees::fence::capture_display(&crate::worktrees::fence::identity(&target));
     let directory = target.to_str().ok_or_else(foreign)?.to_owned();
     let checkout = crate::worktrees::ownership::resolve(app, workspace, &directory)
         .await
         .filter(|owned| owned.directory == directory)
         .ok_or_else(foreign)?
         .checkout;
-    Ok(Location { directory, checkout })
+    let observed = tokio::time::Instant::now();
+    #[cfg(test)]
+    crate::worktrees::fence_test_trace::after_prompt_resolve().await;
+    Ok((Location { directory, checkout }, live, observed))
 }
 
 pub(super) fn translate(body: &mut Value, directories: &BTreeMap<String, String>) {
