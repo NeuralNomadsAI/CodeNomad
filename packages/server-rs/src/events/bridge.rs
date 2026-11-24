@@ -80,28 +80,45 @@ impl Held {
 #[derive(Default)]
 struct Routes {
     held: Mutex<Held>,
-    locations: Mutex<HashMap<String, (Instant, String)>>,
+    locations: Mutex<(u64, HashMap<String, (Instant, String)>)>,
 }
 
 impl Routes {
+    /// Clears cached session directories for a new SSE subscription while preserving `held`
+    /// recipients (so `session.moved` after reconnect still notifies the old workspace, TS
+    /// `instance-events.ts:143-147, 282-309`) and bumps the generation so late workers from an
+    /// earlier subscription cannot repopulate stale locations.
+    fn reset_locations(&self) -> u64 {
+        let mut guard = self.locations.lock().unwrap();
+        guard.0 = guard.0.wrapping_add(1);
+        guard.1.clear();
+        guard.0
+    }
     /// The directory a session event is routed by: its envelope's, else a fresh cached one.
     /// Located events refresh the cache; a move or deletion clears it.
-    fn directory(&self, kind: &str, session: Option<&str>, event: &Value) -> Option<String> {
+    fn directory(&self, generation: u64, kind: &str, session: Option<&str>, event: &Value) -> Option<String> {
         let located = event["location"]["directory"].as_str().map(str::to_owned);
         let Some(session) = session else { return located };
-        let mut cache = self.locations.lock().unwrap();
+        let mut guard = self.locations.lock().unwrap();
+        if guard.0 != generation {
+            return located;
+        }
+        let cache = &mut guard.1;
         let now = Instant::now();
         if matches!(kind, "session.moved" | "session.deleted") || event["location"].get("workspaceID").is_some() {
             cache.remove(session);
         } else if let Some(dir) = &located {
-            Self::cache(&mut cache, session, dir, now);
+            Self::cache(cache, session, dir, now);
         } else if located.is_none() {
             return cache.get(session).filter(|(until, _)| *until > now).map(|(_, dir)| dir.clone());
         }
         located
     }
-    fn learn(&self, session: &str, dir: &str) {
-        Self::cache(&mut self.locations.lock().unwrap(), session, dir, Instant::now());
+    fn learn(&self, generation: u64, session: &str, dir: &str) {
+        let mut guard = self.locations.lock().unwrap();
+        if guard.0 == generation {
+            Self::cache(&mut guard.1, session, dir, Instant::now());
+        }
     }
 
     fn cache(cache: &mut HashMap<String, (Instant, String)>, session: &str, dir: &str, now: Instant) {
@@ -134,6 +151,7 @@ struct Job {
     endpoint: Arc<crate::opencode::Endpoint>,
     received: (Instant, i64),
     bytes: usize,
+    generation: u64,
 }
 
 /// One upstream connection's lanes; `failed` ends the connection.
@@ -191,14 +209,12 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
     // Rotate the `server.connected` daemon token whenever the underlying daemon endpoint/credentials
     // change (TS `instance-events.ts:203-210`).
     let mut daemon_source: Option<(String, String)> = None;
+    let routes = Arc::new(Routes::default());
     loop {
         if shutdown.is_cancelled() {
             return;
         }
-        // Allocate a fresh route cache per SSE subscription so a late worker from an older
-        // subscription can never repopulate the new subscription with stale session locations
-        // (TS `instance-events.ts:143-147`).
-        let routes = Arc::new(Routes::default());
+        let generation = routes.reset_locations();
         while {
             let store = app.inner.lock().unwrap();
             store.workspaces.is_empty() && store.generation == 0
@@ -362,7 +378,7 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                         break;
                     }
                 }
-                let job = Job { bytes, event, received, endpoint: endpoint.clone() };
+                let job = Job { bytes, event, received, endpoint: endpoint.clone(), generation };
                 if !lanes.enqueue(&app, &routes, lane(&job.event), job) {
                     keep_connection = true;
                     break;
@@ -388,7 +404,11 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
     }
 }
 
-async fn route(app: &Shared, routes: &Routes, Job { event, endpoint, received: (routed, received), .. }: Job) {
+async fn route(
+    app: &Shared,
+    routes: &Routes,
+    Job { event, endpoint, received: (routed, received), generation, .. }: Job,
+) {
     let kind = event["type"].as_str().unwrap_or_default();
     let inbox = kind.starts_with("session.inbox.");
     let receipt_event = matches!(kind, "permission.asked" | "permission.replied" | "session.deleted");
@@ -396,13 +416,13 @@ async fn route(app: &Shared, routes: &Routes, Job { event, endpoint, received: (
         .as_str()
         .or_else(|| event["data"]["form"]["sessionID"].as_str())
         .filter(|s| crate::opencode::valid_id(s));
-    let mut directory = routes.directory(kind, session, &event);
+    let mut directory = routes.directory(generation, kind, session, &event);
     if directory.is_none()
         && let Some(session) = session
     {
         directory = crate::opencode::session_directory(app, session).await.ok();
         if let Some(dir) = directory.as_deref().filter(|_| kind != "session.deleted") {
-            routes.learn(session, dir);
+            routes.learn(generation, session, dir);
         }
     }
     let candidates = {
@@ -547,25 +567,37 @@ mod tests {
     #[test]
     fn located_events_feed_the_session_location_cache_until_a_move() {
         let routes = Routes::default();
+        let gen0 = routes.reset_locations();
         let at = |dir: &str| json!({"location":{"directory":dir}});
-        assert_eq!(routes.directory("session.execution.started", Some("ses_a"), &json!({})), None);
-        assert_eq!(routes.directory("session.text.delta", Some("ses_a"), &at("/w")).as_deref(), Some("/w"));
-        assert_eq!(routes.directory("session.usage.updated", Some("ses_a"), &json!({})).as_deref(), Some("/w"));
+        assert_eq!(routes.directory(gen0, "session.execution.started", Some("ses_a"), &json!({})), None);
+        assert_eq!(routes.directory(gen0, "session.text.delta", Some("ses_a"), &at("/w")).as_deref(), Some("/w"));
+        assert_eq!(routes.directory(gen0, "session.usage.updated", Some("ses_a"), &json!({})).as_deref(), Some("/w"));
         let scoped = json!({"location":{"directory":"/remote","workspaceID":"x"}});
-        assert_eq!(routes.directory("session.text.delta", Some("ses_b"), &scoped).as_deref(), Some("/remote"));
+        assert_eq!(routes.directory(gen0, "session.text.delta", Some("ses_b"), &scoped).as_deref(), Some("/remote"));
         assert_eq!(
-            routes.directory("session.usage.updated", Some("ses_b"), &json!({})),
+            routes.directory(gen0, "session.usage.updated", Some("ses_b"), &json!({})),
             None,
             "a scoped location is not cached"
         );
-        assert_eq!(routes.directory("session.moved", Some("ses_a"), &at("/w")).as_deref(), Some("/w"));
+        assert_eq!(routes.directory(gen0, "session.moved", Some("ses_a"), &at("/w")).as_deref(), Some("/w"));
         assert_eq!(
-            routes.directory("session.usage.updated", Some("ses_a"), &json!({})),
+            routes.directory(gen0, "session.usage.updated", Some("ses_a"), &json!({})),
             None,
             "a move forgets the location"
         );
-        routes.learn("ses_a", "/v");
-        routes.locations.lock().unwrap().get_mut("ses_a").unwrap().0 = Instant::now() - Duration::from_millis(1);
-        assert_eq!(routes.directory("session.usage.updated", Some("ses_a"), &json!({})), None, "expired after 2 s");
+        routes.learn(gen0, "ses_a", "/v");
+        routes.locations.lock().unwrap().1.get_mut("ses_a").unwrap().0 = Instant::now() - Duration::from_millis(1);
+        assert_eq!(
+            routes.directory(gen0, "session.usage.updated", Some("ses_a"), &json!({})),
+            None,
+            "expired after 2 s"
+        );
+        let gen1 = routes.reset_locations();
+        routes.learn(gen0, "ses_a", "/stale");
+        assert_eq!(
+            routes.directory(gen1, "session.usage.updated", Some("ses_a"), &json!({})),
+            None,
+            "stale subscription worker cannot repopulate locations after reconnect"
+        );
     }
 }

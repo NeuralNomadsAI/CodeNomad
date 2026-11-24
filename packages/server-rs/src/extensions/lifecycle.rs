@@ -257,11 +257,20 @@ async fn connection_at(
                         let app_check = app.clone();
                         let ep_check = endpoint.cloned();
                         let stop_check = stop.cloned();
-                        let installed = tokio::task::spawn_blocking(move || {
+                        // Run installation AND STATE registration (or immediate stale disposal) under
+                        // `LEASE_IO` inside `spawn_blocking` so cancelling `connection_at` during
+                        // shutdown can never leave an unregistered `.lease` file on disk.
+                        // Lock order is strictly `LEASE_IO` -> `STATE`.
+                        tokio::task::spawn_blocking(move || {
+                            let _io = LEASE_IO.lock().unwrap();
                             let still_current = || {
                                 !stop_check.as_ref().is_some_and(CancellationToken::is_cancelled)
                                     && ep_check.as_ref().is_none_or(|ep| app_check.native.current(ep))
+                                    && STATE.lock().unwrap().active
                             };
+                            if !still_current() {
+                                return Err("OpenCode connection replaced before plugin installation".into());
+                            }
                             let mut done = Vec::new();
                             for (feature, lease) in chosen.into_iter().zip(&written) {
                                 let result = provision::payloads(feature).and_then(|(b, p)| {
@@ -278,50 +287,35 @@ async fn connection_at(
                                     }
                                 }
                             }
-                            Ok(done)
+                            let mut state = STATE.lock().unwrap();
+                            if !state.active
+                                || stop_check.as_ref().is_some_and(CancellationToken::is_cancelled)
+                                || ep_check.as_ref().is_some_and(|ep| !app_check.native.current(ep))
+                            {
+                                drop(state);
+                                provision::dispose(&done);
+                                return Err("OpenCode connection replaced during plugin provisioning".into());
+                            }
+                            let readiness = done
+                                .iter()
+                                .find(|i| i.feature == "session-pruning")
+                                .map(|i| Arc::new(Owner::new(i.lease.clone())));
+                            for i in &done {
+                                println!("plugin-provision {} {}", i.feature, i.sha256);
+                            }
+                            let ready = vec![false; done.len()];
+                            state.installations.push(Installation {
+                                paths: target,
+                                features: done,
+                                written,
+                                readiness,
+                                ready,
+                                since: tokio::time::Instant::now(),
+                            });
+                            Ok((state.installations.len() - 1, true))
                         })
                         .await
-                        .unwrap_or_else(|_| Err("Provisioning task failed".into()));
-                        match installed {
-                            Err(err) => Err(err),
-                            Ok(done) => {
-                                let registered = {
-                                    let mut state = STATE.lock().unwrap();
-                                    if !state.active
-                                        || stop.is_some_and(CancellationToken::is_cancelled)
-                                        || endpoint.is_some_and(|ep| !app.native.current(ep))
-                                    {
-                                        Err(done)
-                                    } else {
-                                        let readiness = done
-                                            .iter()
-                                            .find(|i| i.feature == "session-pruning")
-                                            .map(|i| Arc::new(Owner::new(i.lease.clone())));
-                                        for i in &done {
-                                            println!("plugin-provision {} {}", i.feature, i.sha256);
-                                        }
-                                        let ready = vec![false; done.len()];
-                                        state.installations.push(Installation {
-                                            paths,
-                                            features: done,
-                                            written: contents,
-                                            readiness,
-                                            ready,
-                                            since: tokio::time::Instant::now(),
-                                        });
-                                        Ok((state.installations.len() - 1, true))
-                                    }
-                                };
-                                match registered {
-                                    Ok(pair) => Ok(pair),
-                                    Err(stale_done) => {
-                                        let _ =
-                                            tokio::task::spawn_blocking(move || provision::dispose(&stale_done)).await;
-                                        Err("OpenCode connection replaced during plugin provisioning".into())
-                                    }
-                                }
-                            }
-                        }
+                        .unwrap_or_else(|_| Err("Provisioning task failed".into()))
                     }
                 }
             }

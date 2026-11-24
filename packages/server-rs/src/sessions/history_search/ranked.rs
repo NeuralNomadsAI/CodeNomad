@@ -83,26 +83,30 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
     let Some(limit) = input["limit"].as_u64() else { return Ok(blocked()) };
     input["limit"] = json!(40);
     let mut capped = selected.len() < directories.len();
-    // Capture deletion-fence display watches for ALL selected worktrees BEFORE the first RPC
-    // (TS `session-history-ranked.ts:62`) so a delete-and-recreate ABA on a disjoint worktree
-    // during an earlier RPC invalidates the page even when unqueried targets are skipped below.
+    // Capture deletion-fence display watches for BOTH the submitted raw path and the resolved
+    // anchor of ALL selected worktrees BEFORE the first RPC (TS `session-history-ranked.ts:62-70`,
+    // `worktree-display-identity.ts:9-17`) so deleting a symlinked checkout invalidates the page
+    // even if its target remains intact or the target is skipped by a continuation.
     let selected_fences: Vec<Arc<AtomicBool>> = tokio::task::spawn_blocking({
         let app_scope = scope.app.scope.clone();
         let dirs: Vec<String> = selected.to_vec();
         move || {
-            dirs.into_iter()
-                .map(|dir| {
-                    let target = worktrees::ownership::resolve_media_path(&app_scope, &dir)
-                        .map(|(_, anchor)| anchor)
-                        .unwrap_or_else(|| PathBuf::from(&dir));
-                    display(&target)
-                })
-                .collect()
+            let mut watched = Vec::with_capacity(dirs.len() * 2);
+            for dir in dirs {
+                let raw_path = PathBuf::from(&dir);
+                watched.push(display(&raw_path));
+                if let Some((_, anchor)) = worktrees::ownership::resolve_media_path(&app_scope, &dir)
+                    && anchor != raw_path
+                {
+                    watched.push(display(&anchor));
+                }
+            }
+            watched
         }
     })
     .await
     .unwrap_or_default();
-    if selected_fences.len() != selected.len() || selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.current() {
+    if selected_fences.len() < selected.len() || selected_fences.iter().any(|f| !f.load(Relaxed)) || !scope.current() {
         return Ok(blocked());
     }
     let mut fences = Vec::with_capacity(selected.len());
@@ -125,7 +129,7 @@ pub(super) async fn run(scope: &Scope<'_>, mut input: Value, token: Option<&str>
             return Ok(blocked());
         }
         let owned = owned.ok_or_else(location_denied)?;
-        match scope.verify_native_location(&owned.directory, true).await {
+        match scope.verify_native_location(&owned.directory).await {
             Ok(()) => {}
             Err(Some(err)) => return Err(err),
             Err(None) => return Ok(blocked()),

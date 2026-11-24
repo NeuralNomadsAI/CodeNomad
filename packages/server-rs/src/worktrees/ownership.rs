@@ -38,6 +38,10 @@ impl DirectoryProof {
         self.live_at(physical, None, false)
     }
 
+    pub(crate) fn root_direct() -> Self {
+        Self { tree: None, source: None, root: None, external: false, media: false }
+    }
+
     pub(crate) fn history_live(&self, workspace: &Path, physical: &Path) -> bool {
         self.live_at(physical, Some(workspace), false)
     }
@@ -362,11 +366,11 @@ fn resolve_media_step(
                                 return Ok(None);
                             };
                             *hops_left = rem;
-                            let target_str = target.to_string_lossy();
-                            if reject_network_path(&target_str, &target).is_err() {
+                            let simplified = dunce::simplified(&target);
+                            let target_str = simplified.to_string_lossy();
+                            if reject_network_path(&target_str, simplified).is_err() {
                                 return Ok(None);
                             }
-                            let simplified = dunce::simplified(&target);
                             if simplified.is_absolute() {
                                 #[cfg(windows)]
                                 if !scope_comps.is_empty() && !path_starts_with_scope(scope, simplified) {
@@ -815,7 +819,9 @@ impl HistoryInventory {
             return Some(Self { catalogue: None, allow_subfolders });
         }
         Some(Self {
-            catalogue: Some(super::linked::catalogue(app, workspace, false).await.ok()?),
+            // Refresh native worktree registrations on cold/invalidated history inventory load
+            // (TS `manager.ts:467-482`, `native-worktrees.ts:86-95`).
+            catalogue: Some(super::linked::catalogue(app, workspace, true).await.ok()?),
             allow_subfolders: true,
         })
     }

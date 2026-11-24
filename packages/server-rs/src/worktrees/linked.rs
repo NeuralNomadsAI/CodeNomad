@@ -151,7 +151,7 @@ pub async fn create(
     git::guard_config(&catalogue.main).await?;
     let from = catalogue.get(from_slug)?;
     if !from.creatable_source() {
-        return Err(conflict("Source worktree does not contain the workspace folder"));
+        return Err(invalid("Source worktree not found"));
     }
     let mut paths: Vec<_> = catalogue.trees.iter().map(|tree| super::fence::identity(tree.registered())).collect();
     paths.push(super::fence::identity(&catalogue.parent));
@@ -243,7 +243,12 @@ pub async fn create(
         delete_worktree(&app, &catalogue.project, service).await?;
         return Err(conflict("Unable to attach the branch"));
     }
-    let updated = self::catalogue(&app, &w, false).await?;
+    // Retry the final inventory read once on transient Git config-change invalidation so a
+    // newly created and attached worktree is not falsely reported as failed (TS `native-worktrees.ts:236-264`).
+    let updated = match self::catalogue(&app, &w, false).await {
+        Ok(cat) => cat,
+        Err(_) => self::catalogue(&app, &w, false).await?,
+    };
     let row = updated
         .by_registered(service)
         .filter(|r| r.branch.as_deref() == Some(branch))

@@ -154,8 +154,11 @@ impl Placement {
                 return Err(forbidden());
             }
             let location = &source["location"];
-            if location.get("workspaceID").is_some() {
-                return Err(forbidden());
+            if let Some(ws_id) = location.get("workspaceID") {
+                if ws_id.as_str().is_some_and(|s| !s.is_empty()) {
+                    return Err(forbidden());
+                }
+                return Err(unavailable());
             }
             let directory = location["directory"]
                 .as_str()
@@ -578,7 +581,10 @@ fn process_window_payload(
                 envelope_ok = false;
             } else if k == "messages" {
                 messages_raw = Some(v);
-            } else if envelope_map.len() >= 32 || !media_stream::json_node_count_within(v.as_bytes(), 1024) {
+            } else if envelope_map.len() >= 32
+                || v.len() > 8192
+                || !media_stream::json_node_count_within(v.as_bytes(), 1024)
+            {
                 envelope_ok = false;
             } else if let Ok(val) = serde_json::from_str::<Value>(v) {
                 envelope_map.insert(k.to_owned(), val);

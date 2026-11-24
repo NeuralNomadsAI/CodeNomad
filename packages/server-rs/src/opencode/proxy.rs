@@ -1094,6 +1094,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     | "transfer-encoding"
                     | "upgrade"
                     | "content-length"
+                    | "content-type"
                     | "x-forwarded-for"
                     | "x-forwarded-host"
                     | "x-forwarded-port"
@@ -1101,6 +1102,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     | "x-codenomad-location"
                     | "x-codenomad-human-answer"
                     | "x-codenomad-media"
+                    | "x-codenomad-pending-reconciliation"
                     | "x-codenomad-session-placement"
             ) || lower.starts_with("x-opencode-")
                 || is_hop_by_hop_connection_token(&head.headers, lower);
@@ -1128,12 +1130,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     if let Some(session) = defer_media {
         // Banker's admission budget for deadlock-free concurrency: `ResponsePool::List` is 256 MiB,
-        // `DEFER_SLOTS = 4`, `FAIR_LIST_SHARE = 32 MiB`, and `OUTPUT_LIMIT = 160 MiB`. Up to 3
-        // streams waiting on `LARGE_DEFER_SLOT` hold at most `3 * 32 = 96 MiB`, leaving the full
-        // `160 MiB` guaranteed for the single `LARGE_DEFER_SLOT` holder (`96 + 160 = 256 MiB`).
-        static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+        // `DEFER_SLOTS = 4` (acquired before `upstream.send()` and held across building + draining),
+        // `FAIR_LIST_SHARE = 32 MiB`, and `OUTPUT_LIMIT = 160 MiB`. Up to 3 other active/draining
+        // requests hold at most `3 * 32 = 96 MiB`, leaving the full `160 MiB` guaranteed for the
+        // single `LARGE_DEFER_SLOT` holder (`96 + 160 = 256 MiB`).
+        static DEFER_SLOTS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
         static LARGE_DEFER_SLOT: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
             std::sync::OnceLock::new();
+        let defer_slots =
+            || std::sync::Arc::clone(DEFER_SLOTS.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4))));
         let large_defer_slot = || {
             std::sync::Arc::clone(LARGE_DEFER_SLOT.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(1))))
         };
@@ -1143,6 +1148,19 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return Err(upstream_error());
         }
         principal.live()?;
+        // Acquire a concurrency slot BEFORE sending upstream so at most 4 deferred `message.list`
+        // requests exist simultaneously across upstream I/O, projection, and downstream draining.
+        let slot = match defer_slots().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                permit = tokio::time::timeout(super::PROXY_IDLE, defer_slots().acquire_owned()) => {
+                    permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+                }
+            },
+        };
         // Once dispatched, TS (`proxy.ts:37-115`, `http-server.ts:261-273`) binds `message.list`
         // only to client disconnect (principal revocation) and OpenCode connection retirement.
         let mut response = tokio::select! {
@@ -1159,17 +1177,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             }
         };
         if response.status().is_success() && is_json_content_type(response.headers()) {
-            let slot = match DEFER_SLOTS.try_acquire() {
-                Ok(permit) => permit,
-                Err(_) => tokio::select! {
-                    biased;
-                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    permit = tokio::time::timeout(super::PROXY_IDLE, DEFER_SLOTS.acquire()) => {
-                        permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
-                    }
-                },
-            };
             let status = response.status();
             let headers: Vec<(&'static str, axum::http::HeaderValue)> =
                 ["content-type", "cache-control", "etag", "last-modified"]
@@ -1432,16 +1439,20 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             } else if mem.is_none() {
                 return Err(interrupted());
             }
-            // Keep `large_slot` attached to the draining response until its backing drops to or
-            // below `FAIR_LIST_SHARE` (32 MiB) so at most one request (building OR draining) ever
-            // holds >32 MiB of `ResponsePool::List`.
+            // Keep `slot` and `large_slot` attached to the draining response so at most 4
+            // deferred responses exist globally (building OR draining) and at most one holds >32 MiB.
             let drain_large = if final_units > fair_units {
                 large_slot.take().map(|p| (p, FAIR_LIST_SHARE))
             } else {
                 drop(large_slot);
                 None
             };
-            drop(slot);
+            let drain_slot = if final_units > 0 {
+                slot.take()
+            } else {
+                drop(slot);
+                None
+            };
             if !app.native.current(&endpoint) {
                 return Err(upstream_error());
             }
@@ -1470,7 +1481,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return builder
                 .extension(NativeBody)
                 .extension(crate::shared::CancelWrite::new(write_abort))
-                .body(crate::shared::permit_body_chunks(payload, mem, drain_large, abort))
+                .body(crate::shared::permit_body_chunks(payload, mem, drain_slot, drain_large, abort))
                 .map_err(|_| upstream_error());
         }
         let status = response.status();

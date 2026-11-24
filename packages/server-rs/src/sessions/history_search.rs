@@ -203,10 +203,19 @@ impl Scope<'_> {
         .await
         .ok()??;
         let fence = display(&anchor);
-        let (inventory_rev, inventory) = self.inventory().await?;
-        let ws_path = self.workspace.path.clone();
-        let path_for_prove = path.clone();
-        let proof = tokio::task::spawn_blocking(move || inventory.prove(&ws_path, &path_for_prove)).await.ok()??;
+        // Exact opened root directory is authorized directly without requiring full worktree
+        // enumeration (TS `manager.ts:388-399`, `session-history.ts:45-52`), so a transient
+        // `worktree.list` failure never reports `403` for the root workspace.
+        let (inventory_rev, proof) = if path == self.workspace.path {
+            (worktrees::inventory_revision(self.app), DirectoryProof::root_direct())
+        } else {
+            let (inventory_rev, inventory) = self.inventory().await?;
+            let ws_path = self.workspace.path.clone();
+            let path_for_prove = path.clone();
+            let proof =
+                tokio::task::spawn_blocking(move || inventory.prove(&ws_path, &path_for_prove)).await.ok()??;
+            (inventory_rev, proof)
+        };
         let owned = Owned { directory: directory.into(), path, anchor, identity, proof, fence, inventory_rev };
         owned.current_local(self).await.then_some(owned)
     }
@@ -233,7 +242,7 @@ impl Scope<'_> {
     /// Matches TS `session-history.ts:67-72` & `session-history-ranked.ts:73-75`: for any non-root
     /// worktree target, resolve native `GET /api/location` and confirm it echoes the exact owned
     /// directory with no `workspaceID` before preparing plugins or calling the history RPC.
-    async fn verify_native_location(&self, directory: &str, include_header: bool) -> Result<(), Option<Error>> {
+    async fn verify_native_location(&self, directory: &str) -> Result<(), Option<Error>> {
         if self.workspace.location["directory"].as_str() == Some(directory) {
             return Ok(());
         }
@@ -241,18 +250,17 @@ impl Scope<'_> {
         if left.is_zero() || !self.current() {
             return Err(None);
         }
-        let mut req = self
+        let response = self
             .app
             .native
             .client
             .get(self.endpoint.url.join("/api/location").map_err(|_| None)?)
             .basic_auth("opencode", Some(&self.endpoint.password))
             .query(&[("location[directory]", directory)])
-            .timeout(left);
-        if include_header {
-            req = req.header("x-opencode-directory", crate::sessions::media::encode(directory));
-        }
-        let response = req.send().await.map_err(|_| None)?;
+            .timeout(left)
+            .send()
+            .await
+            .map_err(|_| None)?;
         if !self.current() || !response.status().is_success() {
             return Err(None);
         }
@@ -469,7 +477,7 @@ async fn query(scope: &Scope<'_>, mut input: Value, token: Option<&str>) -> Resu
     }
     let owned = owned.ok_or_else(location_denied)?;
     if source.is_none() {
-        match scope.verify_native_location(directory, false).await {
+        match scope.verify_native_location(directory).await {
             Ok(()) => {}
             Err(Some(err)) => return Err(err),
             Err(None) => return Ok(blocked()),

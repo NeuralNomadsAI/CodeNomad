@@ -195,7 +195,52 @@ fn separate_marker(root: &Path, common: &Path) -> Result<Vec<u8>, Error> {
     Ok(marker)
 }
 
+fn pre_config_stamps(path: &Path) -> Option<(PathBuf, PathBuf, [Option<ConfigStamp>; 2])> {
+    let mut cur = dunce::canonicalize(path).ok()?;
+    loop {
+        let marker = cur.join(".git");
+        match std::fs::symlink_metadata(&marker) {
+            Ok(meta) if meta.is_dir() => {
+                let common = dunce::canonicalize(&marker).ok()?;
+                let s0 = config_stamp(&common.join("config"))?;
+                let s1 = config_stamp(&common.join("config.worktree"))?;
+                return Some((common.clone(), common, [s0, s1]));
+            }
+            Ok(meta) if meta.is_file() => {
+                let bytes = small(&marker).ok()?;
+                let gitdir = std::str::from_utf8(&bytes)
+                    .ok()
+                    .and_then(|t| t.trim_end().strip_prefix("gitdir: "))
+                    .filter(|s| !s.is_empty())?;
+                let admin = dunce::canonicalize(cur.join(gitdir)).ok()?;
+                let common = if let Ok(cb) = small(&admin.join("commondir")) {
+                    let ct = std::str::from_utf8(&cb).ok()?.trim_end();
+                    dunce::canonicalize(admin.join(ct)).ok()?
+                } else {
+                    admin.clone()
+                };
+                let s0 = config_stamp(&common.join("config"))?;
+                let s1 = config_stamp(&admin.join("config.worktree"))?;
+                return Some((common, admin, [s0, s1]));
+            }
+            _ => {}
+        }
+        if !cur.pop() {
+            return None;
+        }
+    }
+}
+
 async fn checkout(path: &Path) -> Result<Physical, Error> {
+    // Capture config stamps BEFORE `git rev-parse` (TS `git-worktrees.ts:92-135`) so a mid-probe
+    // config edit cannot pair an old `rev-parse` root with a newly written config stamp.
+    let pre = tokio::task::spawn_blocking({
+        let path = path.to_path_buf();
+        move || pre_config_stamps(&path)
+    })
+    .await
+    .ok()
+    .flatten();
     let text =
         git(path, &["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"]).await?;
     tokio::task::spawn_blocking(move || {
@@ -216,11 +261,19 @@ async fn checkout(path: &Path) -> Result<Physical, Error> {
             let [marker, backlink, common_marker] = linked_markers(&root, &admin, &common)?;
             (Some(marker), Some(backlink), Some(common_marker))
         };
+        let stamp = [
+            config_stamp(&common.join("config")).ok_or_else(native_error)?,
+            config_stamp(&admin.join("config.worktree")).ok_or_else(native_error)?,
+        ];
+        if let Some((pre_common, pre_admin, pre_stamp)) = pre
+            && pre_common == common
+            && pre_admin == admin
+            && pre_stamp != stamp
+        {
+            return Err(native_error());
+        }
         Ok(Physical {
-            stamp: [
-                config_stamp(&common.join("config")).ok_or_else(native_error)?,
-                config_stamp(&admin.join("config.worktree")).ok_or_else(native_error)?,
-            ],
+            stamp,
             root_id: identity(&root)?,
             admin_id: identity(&admin)?,
             common_id: identity(&common)?,
@@ -630,7 +683,9 @@ async fn catalogue_in_at(
                     Error,
                 > {
                     if !check.live() {
-                        return Ok(None);
+                        // A layout that vanished mid-scan is omitted; a config change rejects the
+                        // whole scan rather than publishing a partial inventory (TS `git-worktrees.ts:128-135`).
+                        return if git_layout_gone(&root) { Ok(None) } else { Err(native_error()) };
                     }
                     let (tree_path, id, projected_link, nested_missing) = match dunce::canonicalize(&projected) {
                         Ok(real) if real == projected && real.is_dir() => match identity(&projected) {
