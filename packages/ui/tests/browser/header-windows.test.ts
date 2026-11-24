@@ -14,6 +14,7 @@ import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import { observeHeaderFixture } from "./header-fixture-diagnostics"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
+import { fixtureEventStream } from "./fixture-event-stream"
 import { prepareInterruptionDock } from "./fixtures/interruption-dock-preparation"
 
 let server: ViteDevServer, browser: Browser, url: string
@@ -57,6 +58,33 @@ before(async () => {
   }
 })
 after(disposeFixture)
+
+test("the header retry counts down on its own deadline while the composer accepts keys", async () => {
+  const events = await fixtureEventStream(url)
+  const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/panel-extensions" ? [] : {} }))
+    await events.route(page)
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const editor = page.locator("textarea.prompt-input")
+    await editor.focus({ timeout: 5_000 })
+    const start = new Date("2025-01-01T00:00:00Z")
+    await page.clock.install({ time: start })
+    await page.clock.pauseAt(new Date(+start + 1_000))
+    await page.evaluate(() => (window as any).fixture.retry())
+    const label = page.locator(".session-header-indicators .session-status-text:visible")
+    assert.equal(await label.textContent({ timeout: 5_000 }), "Retrying in 3s")
+    await page.clock.runFor(501)
+    assert.equal(await label.textContent(), "Retrying in 2s")
+    await page.keyboard.press("a")
+    assert.equal(await editor.inputValue(), "a")
+    await page.keyboard.press("Backspace")
+    assert.equal(await editor.inputValue(), "")
+    await page.clock.runFor(2_000)
+    assert.equal(await label.textContent(), "Retrying")
+  } finally { try { await page.close() } finally { await events.close() } }
+})
 
 test("the real shell badge reopens the selected question with a same-session permission queued", async (t) => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })

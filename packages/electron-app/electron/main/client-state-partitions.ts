@@ -116,7 +116,7 @@ export class ClientStatePartitionStore {
     this.directory = join(root, PARTITION_DIRECTORY)
   }
 
-  async prepare(commit: ValidatedClientStatePartitionCommit, authorityValid: () => void): Promise<void> {
+  async prepare(commit: ValidatedClientStatePartitionCommit, authorityValid: () => Promise<void>): Promise<void> {
     await mkdir(this.directory, { recursive: true })
     await this.assertDirectory()
     // The manager's publication queue covers verification, root replacement and sweep.
@@ -125,7 +125,7 @@ export class ClientStatePartitionStore {
     for (const key of commit.partitionKeys) {
       if (supplied.has(key)) continue
       const content = await this.readVerified(key)
-      authorityValid()
+      await authorityValid()
       if (content === null) throw new Error(`Missing or invalid client state partition ${key}`)
       totalBytes += content.byteLength
       if (totalBytes > MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES) {
@@ -141,14 +141,14 @@ export class ClientStatePartitionStore {
     }
   }
 
-  async load(key: string, authorityValid: () => void): Promise<string | null> {
+  async load(key: string, authorityValid: () => Promise<void>): Promise<string | null> {
     if (!await this.assertDirectory(true)) return null
     const content = await this.readVerified(key)
-    authorityValid()
+    await authorityValid()
     return content?.toString("utf8") ?? null
   }
 
-  async sweep(partitionKeys: readonly string[], authorityValid: () => void): Promise<void> {
+  async sweep(partitionKeys: readonly string[], authorityValid: () => Promise<void>): Promise<void> {
     const retained = new Set(partitionKeys)
     if (!await this.assertDirectory(true)) return
     let entries: string[]
@@ -158,14 +158,14 @@ export class ClientStatePartitionStore {
       if (hasErrorCode(error, "ENOENT")) return
       throw error
     }
-    authorityValid()
+    await authorityValid()
     for (const entry of entries) {
       if (!isPartitionKey(entry) || retained.has(entry)) continue
       const path = join(this.directory, entry)
       const stats = await lstat(path)
       if (!stats.isFile() || stats.isSymbolicLink()) continue
       await unlink(path)
-      authorityValid()
+      await authorityValid()
     }
   }
 
@@ -205,10 +205,10 @@ export class ClientStatePartitionStore {
     }
   }
 
-  private async writeImmutable(key: string, content: string, authorityValid: () => void): Promise<boolean> {
+  private async writeImmutable(key: string, content: string, authorityValid: () => Promise<void>): Promise<boolean> {
     const path = join(this.directory, key)
     const existing = await this.readVerified(key)
-    authorityValid()
+    await authorityValid()
     if (existing !== null) return false
     try {
       await lstat(path)
@@ -226,14 +226,14 @@ export class ClientStatePartitionStore {
       } finally {
         await file.close()
       }
-      authorityValid()
+      await authorityValid()
       try {
         await link(temporary, path)
       } catch (error) {
         if (!hasErrorCode(error, "EEXIST") || await this.readVerified(key) === null) throw error
         return false
       }
-      authorityValid()
+        await authorityValid()
       return true
     } finally {
       await rm(temporary, { force: true }).catch(() => {})

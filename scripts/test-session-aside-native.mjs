@@ -1,5 +1,4 @@
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
@@ -7,7 +6,7 @@ import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 // Explicit CLI, private home/database, local fake provider. Never discovers or
 // connects to the shared daemon and never uses real provider credentials.

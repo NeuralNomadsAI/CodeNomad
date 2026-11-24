@@ -12,6 +12,7 @@ import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages } from "../../../src/stores/session-api"
 import { getRenderTextWindow, MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../../../src/lib/render-text-window"
 import transcript from "../../../../rune-app/fixtures/transcript.json"
+import transcriptSettings from "../../../../rune-app/fixtures/transcript-settings.json"
 import "../../../src/index.css"
 
 // Native API records enter through the real load/normalize/store/display path.
@@ -58,11 +59,10 @@ setSessions(previous => new Map(previous).set(instanceId, new Map(Object.keys(me
   status: "idle", agent: "build", model: { providerId: "fixture", modelId: "fixture" }, time: { created: 1, updated: 2 },
 } as any]))))
 setActiveSession(instanceId, "reveal-a")
-await applyUiSettings({ toolInputsVisibility: "hidden", toolOutputExpansion: "expanded", diagnosticsExpansion: "collapsed",
-  ...(parity ? { showThinkingBlocks: true } : {}),
-  toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: parity
-    ? { read: "collapsed", grep: "collapsed", bash: "expanded", edit: "expanded", execute: "collapsed" }
-    : { read: "expanded", task: "expanded", other: "expanded" } } })
+await applyUiSettings(parity ? transcriptSettings as Parameters<typeof applyUiSettings>[0] : {
+  toolInputsVisibility: "hidden", toolOutputExpansion: "expanded", diagnosticsExpansion: "collapsed",
+  toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { read: "expanded", task: "expanded", other: "expanded" } },
+})
 for (const id of parity ? ["transcript"] : ["reveal-a", "reveal-b", "reveal-c"]) {
   await loadMessages(instanceId, id, { force: true })
 }

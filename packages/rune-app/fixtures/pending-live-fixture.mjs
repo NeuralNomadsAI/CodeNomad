@@ -28,7 +28,7 @@ async function relay(route,init={}){
 }
 async function stage(event){
   if(event.type==='pending-live-visible'){proof.visible.push(event);return}
-  if(event.type==='pending-live-complete'){assert.equal(position,5);assert.equal(event.cases,5);proof.complete=event;return}
+  if(event.type==='pending-live-complete'){assert.equal(position,5);assert.equal(event.cases,5);assert.equal(event.transcriptReceipts,3);proof.complete=event;return}
   if(event.type!=='pending-live-stage')return
   assert.equal(event.case,expected[position]);assert.equal(event.stage,awaiting);proof.stages.push(event)
   const index=position,prefix=`/workspaces/${proof.workspace}/instance/api/session/${session.id}`
@@ -55,6 +55,14 @@ try{
   origin=await rust.ready(rustOrigin)
   const login=await fixtureFetch(`${origin}/api/auth/login`,post({username:'codenomad',password:'fixture-rune-native-pending'}));assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await relay('/api/workspaces',post({path:project,requestId:`rune-native-ui-${randomUUID()}`}));assert.equal(opened.status,201);assert.equal(path.resolve(opened.body.path),project);proof.workspace=opened.body.id
+  await until(async()=>{
+    const window=await relay(`/api/workspaces/${proof.workspace}/session-history/window`,{
+      ...post({sessionID:session.id,target:{kind:'latest'}}),
+      headers:{'content-type':'application/json','x-codenomad-user-files':'reference-v1'},
+    })
+    proof.historyStatus={status:window.status,kind:window.body?.status,reason:window.body?.reason}
+    return window.body?.status==='window'
+  },'native history window ready')
   ui=launchFixture(clientBinary,['--probe-real-pending'],{cwd:root,env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-rune-native-pending',RUNE_WORKSPACE:proof.workspace,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_PENDING_OUT:root,RUNE_PENDING_IDS:JSON.stringify(ids),RUNE_LOCALE:'fr'}})
   ui.child.stdout.on('data',b=>{
     uiLines+=b;assert(uiLines.length<65536)
@@ -63,7 +71,9 @@ try{
   const code=await Promise.race([ui.closed,delay(60000,124,{ref:false})]);await protocol;if(protocolError)throw protocolError;assert.equal(code,0);assert.equal(position,5);assert.equal(proof.visible.length,5);assert(proof.complete)
   const receipts=await until(async()=>{const r=await relay(`/api/workspaces/${proof.workspace}/sessions/${session.id}/permission-receipts?unanchored=true`);return r.body?.receipts?.length===3?r.body.receipts:null},'three UI permission receipts')
   proof.receipts=receipts.map(r=>({decision:r.decision,reason:r.reason,origin:r.origin})).sort((a,b)=>a.decision.localeCompare(b.decision));assert.deepEqual(proof.receipts,['always','once','reject'].map(decision=>({decision,reason:`Motif réel Rune ${decision} 🦀`,origin:'codenomad'})))
-  assert.equal((await client.experimental.session.export({sessionID:session.id})).messages.length,0);assert(!proof.events.some(e=>e.type.startsWith('session.tool.')||e.type.startsWith('session.execution.')))
+  const history=await relay(`/api/workspaces/${proof.workspace}/session-history/window`,post({sessionID:session.id,target:{kind:'latest'}}))
+  assert.equal(history.body?.status,'window');assert.deepEqual(history.body.messages,[])
+  assert(!proof.events.some(e=>e.type.startsWith('session.tool.')||e.type.startsWith('session.execution.')))
   assert.equal(proof.events.filter(e=>e.type==='permission.asked').length,3);assert.equal(proof.events.filter(e=>e.type==='form.created').length,2)
   proof.result=0
 }catch(error){proof.error=String(error?.stack??error);process.exitCode=1}

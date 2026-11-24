@@ -13,12 +13,11 @@ pub fn image_cache(wake: Waker) -> ImageCache {
 }
 
 pub fn image(image: &Image) -> Option<El> {
-    let [width, height] = image.size()?;
+    let [width, _] = image.size()?;
     Some(
         rune::el()
             .w_full()
             .max_w(width as f32)
-            .aspect_ratio(width as f32 / height.max(1) as f32)
             .pixels_fit(image.pixels(), rune::SurfaceFit::Fit),
     )
 }

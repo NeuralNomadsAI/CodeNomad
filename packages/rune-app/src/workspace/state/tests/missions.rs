@@ -50,6 +50,20 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
                 rt.frame(1.0 / 60.0);
             }
         }
+        async fn until(
+            rt: &mut rune::Runtime<State>,
+            signal: &codenomad_client::Receiver<()>,
+            ready: impl Fn(&rune::Runtime<State>) -> bool,
+        ) {
+            test_http::wait(async {
+                tick(rt);
+                while !ready(rt) {
+                    signal.recv().await.unwrap();
+                    tick(rt);
+                }
+            })
+            .await;
+        }
         fn click(rt: &mut rune::Runtime<State>, key: &str) {
             let (x, y) = rt.find(key).unwrap_or_else(|| panic!("{key}"));
             rt.pointer_down(x, y);
@@ -69,9 +83,10 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
         let meta = http.accept().await;
         assert!(meta.header.starts_with("GET /api/meta "));
         meta.reply(200, json!({"capabilities":["missions"]})).await;
-        test_http::wait(signal.recv()).await.unwrap();
-        tick(&mut rt);
-        assert!(rt.find("right-panel-tab-2").is_some());
+        until(&mut rt, &signal, |rt| {
+            rt.find("right-panel-tab-2").is_some()
+        })
+        .await;
         assert!(rt.find("missions-panel").is_none());
         http.quiet().await;
 
@@ -111,16 +126,12 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
             }
             req.reply(200, page).await;
         }
-        for _ in 0..2 {
-            test_http::wait(signal.recv()).await.unwrap();
-        }
-        tick(&mut rt);
-        assert!(rt.accessibility_json().to_string().contains("Alpha 🦀"));
-        assert!(
-            rt.accessibility_json()
-                .to_string()
-                .contains(crate::strings::t("missions.cleanup.documentPending"))
-        );
+        until(&mut rt, &signal, |rt| {
+            let tree = rt.accessibility_json().to_string();
+            tree.contains("Alpha 🦀")
+                && tree.contains(crate::strings::t("missions.cleanup.documentPending"))
+        })
+        .await;
         click(&mut rt, "mission-row-alpha");
         let header = http.accept().await;
         assert_eq!(
@@ -157,10 +168,11 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
                 ),
             )
             .await;
-        test_http::wait(signal.recv()).await.unwrap();
-        tick(&mut rt);
-        let tree = rt.accessibility_json().to_string();
-        assert!(tree.contains("Owned mission objective 🦀") && tree.contains("Owned task"));
+        until(&mut rt, &signal, |rt| {
+            let tree = rt.accessibility_json().to_string();
+            tree.contains("Owned mission objective 🦀") && tree.contains("Owned task")
+        })
+        .await;
         let activity = http.accept().await;
         assert_eq!(
             activity.body,

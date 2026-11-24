@@ -2,14 +2,18 @@
 use crate::history::Result;
 use serde_json::Value;
 use std::{mem::size_of, sync::Arc};
+mod media;
 mod reasoning;
 mod subagent;
+pub use media::{Picture, PictureSource};
 mod tool_live;
+mod usage;
 mod user;
 pub use reasoning::{Reasoning, ReasoningEvent, apply_window as apply_reasoning};
 pub use subagent::SubagentReport;
 pub use tool_live::install as install_tool;
 pub(crate) use tool_live::{Fit as ToolFit, apply as apply_tool};
+pub use usage::{FAMILY_LIMIT, Family, FamilyChange, FamilyMember, FamilySnapshot, Usage};
 pub(crate) use user::digest as attachment_digest;
 pub use user::{File, Reference, Skill};
 #[derive(Clone, Debug, PartialEq)]
@@ -177,6 +181,7 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
             continue;
         };
         let row = std::sync::Arc::make_mut(row);
+        row.usage = row.usage.or(prior.usage);
         let texts: Vec<_> = prior
             .parts
             .iter()
@@ -210,7 +215,9 @@ pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]
                             && (live.text.len() > fetched.text.len()
                                 || live.units > fetched.units) =>
                     {
+                        let index = fetched.part_index;
                         *fetched = live.clone();
+                        fetched.part_index = index;
                     }
                     _ => {}
                 }
@@ -258,6 +265,7 @@ fn part_keys(parts: &[Part]) -> Vec<String> {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tool {
+    pub part_index: Option<usize>,
     pub id: String,
     pub name: String,
     pub status: String,
@@ -266,12 +274,25 @@ pub struct Tool {
     pub output: String,
     pub error: String,
     pub started: Option<u64>,
+    pub pictures: Vec<Picture>,
     bytes: usize,
     output_bytes: usize,
 }
 impl Tool {
     pub fn retained_bytes(&self) -> usize {
-        self.bytes + self.output_bytes
+        self.bytes + self.output_bytes + self.media_bytes()
+    }
+
+    fn media_bytes(&self) -> usize {
+        self.pictures
+            .iter()
+            .map(|item| {
+                size_of::<Picture>()
+                    + item.mime.len()
+                    + item.name.as_ref().map_or(0, String::len)
+                    + item.source.retained_bytes()
+            })
+            .sum()
     }
 }
 pub fn decode(v: &Value) -> Result<Vec<Part>> {
@@ -294,7 +315,8 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
     let mut tool_text = 0usize;
     let mut ids = std::collections::HashSet::new();
     let mut reasoning_ordinal = 0;
-    for part in parts {
+    let mut media_bytes = media::ROW_IMAGE_BYTES;
+    for (index, part) in parts.iter().enumerate() {
         if part["type"] == "text" {
             if let Some(text) = part["text"].as_str() {
                 charge(&mut resident, text.len())?;
@@ -316,6 +338,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
             result.push(Part::Reasoning(reasoning::decode(
                 part,
                 reasoning_ordinal,
+                index,
                 !v["time"]["completed"].is_null(),
             )));
             reasoning_ordinal += 1;
@@ -362,6 +385,7 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 return Err("resident tool text limit reached".into());
             }
             result.push(Part::Tool(Arc::new(Tool {
+                part_index: Some(index),
                 id: id.into(),
                 name: name.into(),
                 status: status.into(),
@@ -369,6 +393,12 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 metadata: state["metadata"].clone(),
                 output: text_parts.collect::<Vec<_>>().join("\n"),
                 error: error.into(),
+                pictures: media::tool_pictures(
+                    state,
+                    v["id"].as_str().unwrap_or_default(),
+                    index,
+                    &mut media_bytes,
+                ),
                 started: part["time"]["ran"]
                     .as_u64()
                     .or_else(|| part["time"]["created"].as_u64())
@@ -454,10 +484,24 @@ pub fn attachment_bytes(parts: &[Part]) -> usize {
         })
         .sum()
 }
+
+pub(crate) fn media_bytes(parts: &[Part]) -> usize {
+    parts
+        .iter()
+        .map(|part| match part {
+            Part::Tool(tool) => tool.media_bytes(),
+            _ => 0,
+        })
+        .sum()
+}
 fn file_bytes(file: &File) -> usize {
     file.id.len()
         + file.mime.len()
         + file.name.as_ref().map_or(0, String::len)
+        + file
+            .picture
+            .as_ref()
+            .map_or(0, PictureSource::retained_bytes)
         + file
             .reference
             .as_ref()

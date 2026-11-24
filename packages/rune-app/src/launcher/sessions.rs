@@ -173,6 +173,11 @@ pub fn create(s: &mut State, _: &mut Tx) {
     });
 }
 pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
+    s.notifications.supersede_navigation();
+    choose_destination(s, id, None, tx);
+}
+
+pub(crate) fn choose_destination(s: &mut State, id: String, ticket: Option<u64>, tx: &mut Tx) {
     if !s.screen.is_launcher()
         && crate::workspace::active_session(s) == Some(id.as_str())
         && s.phase != Phase::Failed
@@ -181,10 +186,15 @@ pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
             s.shell.close_floating(tx);
         }
     } else {
-        choose_from(s, vec![(id, None)], s.shell.floating_sessions());
+        choose_from(s, vec![(id, None)], s.shell.floating_sessions(), ticket);
     }
 }
-fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss: Option<u64>) {
+fn choose_from(
+    s: &mut State,
+    candidates: Vec<(String, Option<usize>)>,
+    dismiss: Option<u64>,
+    ticket: Option<u64>,
+) {
     let recovery = candidates
         .first()
         .is_some_and(|(id, step)| step.is_none() && can_rebind(s, id));
@@ -203,7 +213,8 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
     if l.pending {
         return;
     }
-    l.job("rune.open_error", async move {
+    l.selection_ticket = ticket;
+    l.job("sessionList.reload.error", async move {
         let mut missing = Vec::new();
         for (id, step) in candidates {
             let started = Instant::now();
@@ -248,7 +259,8 @@ pub fn visit(s: &mut State, back: bool) {
         .steps(back, shown(s))
         .map(|(step, id)| (id.into(), Some(step)))
         .collect();
-    choose_from(s, candidates, None);
+    s.notifications.supersede_navigation();
+    choose_from(s, candidates, None, None);
 }
 fn shown(s: &State) -> Option<&str> {
     (!s.screen.is_launcher())
@@ -290,6 +302,29 @@ pub(super) fn bind(
     title: String,
     visit: Option<usize>,
     slug: &str,
+    tx: &mut Tx,
+) {
+    bind_at(s, b, title, visit, slug, None, tx);
+}
+
+pub(crate) fn bind_search(
+    s: &mut State,
+    b: Backend,
+    title: String,
+    slug: &str,
+    message: String,
+    tx: &mut Tx,
+) {
+    bind_at(s, b, title, None, slug, Some(message), tx);
+}
+
+fn bind_at(
+    s: &mut State,
+    b: Backend,
+    title: String,
+    visit: Option<usize>,
+    slug: &str,
+    anchor: Option<String>,
     tx: &mut Tx,
 ) {
     let same_session =
@@ -339,7 +374,7 @@ pub(super) fn bind(
     s.history_error = false;
     s.history_detached = false;
     s.revision += 1;
-    attach(s, b);
+    crate::transport::start_bound_at(s, b, anchor);
     s.show_chat();
     crate::workspace::capture(s);
     if !same_session {

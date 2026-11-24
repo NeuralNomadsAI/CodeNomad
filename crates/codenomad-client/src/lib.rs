@@ -13,6 +13,8 @@ pub mod files;
 pub mod git;
 pub mod history;
 pub mod http;
+pub mod interruption_receipts;
+pub mod message_actions;
 pub mod missions;
 pub mod prompt;
 pub mod prompt_catalogue;
@@ -21,6 +23,7 @@ pub mod prompt_history;
 mod prompt_receipt;
 pub mod recovery;
 pub mod runtime;
+pub mod search;
 mod server_path;
 pub mod settings;
 pub use server_path::absolute as absolute_server_path;
@@ -31,7 +34,7 @@ pub mod stream;
 pub mod timeline;
 pub mod transport;
 pub mod wire;
-pub use async_channel::{Receiver, Sender, bounded};
+pub use async_channel::{Receiver, Sender, TryRecvError, bounded};
 
 /// Notify an owner's event loop after publishing data, without depending on its UI framework.
 pub type Wake = std::sync::Arc<dyn Fn() + Send + Sync>;
@@ -42,6 +45,7 @@ pub struct Message {
     pub role: String,
     pub completed: bool,
     pub body: String,
+    pub usage: Option<content::Usage>,
     pub parts: Vec<content::Part>,
 }
 

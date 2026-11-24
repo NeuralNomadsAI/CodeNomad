@@ -1,6 +1,9 @@
 pub(super) mod behavior;
 mod document;
+mod notifications;
+pub(super) mod server;
 
+use super::transcript_preset::{self, Row};
 use crate::{backend::Backend, platform};
 pub(super) use codenomad_client::settings::Owner;
 use codenomad_client::settings::PreferencesWatch;
@@ -15,8 +18,14 @@ pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
     pub(super) provider_target: Option<super::providers::Target>,
     pub(super) memory: super::memory::Setting,
+    pub(super) opencode_install: super::opencode::install::Install,
+    pub(super) notification_update: Option<String>,
+    pub(super) announced_update: Option<String>,
     config: Document,
     state: Document,
+    server: Document,
+    show_server: bool,
+    show_environment: bool,
     pub(super) window_wake: Option<rune::Waker>,
     pub(super) main_wake: Option<rune::Waker>,
     pub(super) revision: u64,
@@ -26,10 +35,126 @@ pub(super) struct Preferences {
 }
 
 impl Preferences {
+    pub(super) fn show_timeline(&self) -> bool {
+        self.config
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot["settings"]["showMessageTimeline"].as_bool())
+            .unwrap_or(true)
+    }
+
+    pub(super) fn usage_visibility(&self, pending: bool) -> &'static str {
+        self.transcript_mode(Row::Usage, pending)
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_usage_visibility(&mut self, mode: &'static str) {
+        self.set_transcript(Some(Row::Usage), mode);
+    }
+
+    fn transcript_settings(&self) -> &Value {
+        self.saved(Owner::Config)
+            .map_or(&Value::Null, |data| &data["settings"])
+    }
+
+    pub(super) fn transcript_mode(&self, row: Row, pending: bool) -> &'static str {
+        let choice = Choice::TranscriptRow(row);
+        if pending {
+            if let Some(mode) = self
+                .config
+                .requested(choice)
+                .filter(|_| !self.config.choice_failed(choice))
+            {
+                return mode;
+            }
+            if let Some(preset) = self
+                .config
+                .requested(Choice::TranscriptPreset)
+                .filter(|_| !self.config.choice_failed(Choice::TranscriptPreset))
+            {
+                return row.mode(&transcript_preset::patch(preset));
+            }
+        }
+        row.mode(self.transcript_settings())
+    }
+
+    pub(super) fn transcript_preset(&self) -> &'static str {
+        transcript_preset::selected(self.transcript_settings())
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn fixture_transcript(&mut self, settings: Value) {
+        self.config.snapshot = Some(json!({ "settings": settings }));
+    }
+
+    pub(super) fn set_transcript(&mut self, row: Option<Row>, mode: &'static str) {
+        if self.saved(Owner::Config).is_some()
+            && self.can_retry()
+            && row.is_none_or(|row| self.transcript_mode(row, true) != mode)
+        {
+            self.config.stage(
+                row.map_or(Choice::TranscriptPreset, Choice::TranscriptRow),
+                mode,
+            );
+            self.revision += 1;
+        }
+    }
+
+    pub(super) fn take_notification_failure(&mut self) -> bool {
+        self.config.take_notification_failure()
+            | self.state.take_notification_failure()
+            | self.server.take_notification_failure()
+    }
+    #[cfg(test)]
+    pub(super) fn notification_test_config(&mut self, snapshot: Option<Value>) {
+        self.reset_notification_fixture();
+        self.config.snapshot = snapshot;
+    }
+
     pub(super) fn shortcut(&self, action: &str) -> Option<&[Value]> {
         self.config.snapshot.as_ref()?["settings"]["hotkeyOverrides"][action]
             .as_array()
             .map(Vec::as_slice)
+    }
+
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(super) fn stage_file_save(&mut self, binding: Value) {
+        self.stage_shortcut(super::shortcuts::FILE_SAVE, binding);
+    }
+
+    pub(super) fn stage_shortcut(&mut self, id: &'static str, binding: Value) {
+        if self.can_retry()
+            && self.saved(Owner::Config).is_some()
+            && !self.config.resetting_shortcuts()
+        {
+            self.config.stage_shortcut(id, binding);
+            self.revision += 1;
+        }
+    }
+
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(super) fn file_save_pending(&self) -> bool {
+        self.shortcuts_pending()
+    }
+
+    pub(super) fn shortcuts_pending(&self) -> bool {
+        self.config.shortcuts_pending()
+    }
+
+    pub(super) fn shortcut_failed(&self, id: Option<&'static str>) -> bool {
+        self.config
+            .choice_failed(id.map_or(Choice::ShortcutReset, Choice::Shortcut))
+    }
+
+    pub(super) fn resetting_shortcuts(&self) -> bool {
+        self.config.resetting_shortcuts()
+    }
+
+    pub(super) fn reset_shortcuts(&mut self) {
+        if self.can_retry() && self.saved(Owner::Config).is_some() {
+            self.config.reset_shortcuts();
+            self.revision += 1;
+        }
     }
 
     #[cfg(test)]
@@ -44,13 +169,14 @@ impl Preferences {
             self.take_invalidations();
             self.config.prepare_drain();
             self.state.prepare_drain();
+            self.server.prepare_drain();
             // Each lane can finish a PATCH/readback, a retry preflight, and one trailing PATCH/readback.
-            if self.config.draining() || self.state.draining() {
+            if self.documents_draining() {
                 platform::block_on(async {
                     let _ = tokio::time::timeout(
                         codenomad_client::http::REQUEST_TIMEOUT * 5 + Duration::from_millis(100),
                         async {
-                            while self.config.draining() || self.state.draining() {
+                            while self.documents_draining() {
                                 self.poll_documents();
                                 if self.config.draining() || self.state.draining() {
                                     platform::sleep(Duration::from_millis(10)).await;
@@ -62,7 +188,14 @@ impl Preferences {
                 });
             }
         }
-        !self.config.has_unconfirmed() && !self.state.has_unconfirmed()
+        !self.config.has_unconfirmed()
+            && !self.state.has_unconfirmed()
+            && !self.server.has_unconfirmed()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn documents_draining(&self) -> bool {
+        self.config.draining() || self.state.draining() || self.server.draining()
     }
     pub fn bind(&mut self, owner: Option<Backend>) -> bool {
         if self.backend.as_ref().map(|b| &b.client_id) == owner.as_ref().map(|b| &b.client_id) {
@@ -79,7 +212,9 @@ impl Preferences {
             });
         self.config.rebind(same_address);
         self.state.rebind(same_address);
+        self.server.rebind(same_address);
         self.memory.bind(same_address);
+        self.opencode_install.cancel_check();
         self.backend = owner;
         self.authentication_required = false;
         self.unwatch();
@@ -93,9 +228,59 @@ impl Preferences {
         self.state.invalidate();
     }
 
-    pub fn retry(&mut self) {
-        self.config.retry();
-        self.state.retry();
+    pub(super) fn retry_general(&mut self) {
+        self.config.retry(general_config);
+        self.state.retry(general_state);
+    }
+
+    pub(super) fn transcript_error(&self) -> Option<&'static str> {
+        if self.authentication_required || self.config.read_failed() {
+            Some("rune.connect_error")
+        } else if self.config.any_failure(is_transcript) {
+            Some("settings.preferenceSaveFailed")
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn retry_transcript(&mut self) {
+        self.config.retry(is_transcript);
+    }
+
+    pub(super) fn retry_advanced(&mut self) {
+        self.config.retry(is_advanced);
+    }
+
+    pub(super) fn advanced_failed(&self) -> bool {
+        self.config.any_failure(is_advanced)
+    }
+
+    pub(super) fn notifications_failed(&self) -> bool {
+        self.config.any_failure(is_notification)
+    }
+
+    pub(super) fn retry_notifications(&mut self) {
+        self.config.retry(is_notification);
+    }
+
+    pub(super) fn retry_shortcuts(&mut self) {
+        self.config.retry(is_shortcut);
+    }
+
+    pub(super) fn shortcuts_failed(&self) -> bool {
+        self.config.any_failure(is_shortcut)
+    }
+
+    pub(super) fn general_error(&self) -> Option<&'static str> {
+        if self.authentication_required || self.config.read_failed() || self.state.read_failed() {
+            Some("rune.connect_error")
+        } else if self.contrast_failed() {
+            Some("settings.appearance.contrast.saveError")
+        } else if self.config.any_failure(general_config) || self.state.any_failure(general_state) {
+            Some("settings.preferenceSaveFailed")
+        } else {
+            None
+        }
     }
 
     pub fn can_retry(&self) -> bool {
@@ -143,6 +328,7 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
+        self.opencode_install.cancel_check();
         if let Some(target) = &mut self.provider_target {
             target.transport(false);
         }
@@ -175,13 +361,19 @@ impl Preferences {
     }
 
     pub fn invalidate(&mut self, owner: Owner) {
-        self.doc_mut(owner).invalidate();
+        if owner != Owner::Server || self.show_server {
+            self.doc_mut(owner).invalidate();
+        }
+        if owner == Owner::Config && self.show_server {
+            self.server.invalidate();
+        }
     }
 
     fn doc_mut(&mut self, owner: Owner) -> &mut Document {
         match owner {
             Owner::Config => &mut self.config,
             Owner::State => &mut self.state,
+            Owner::Server => &mut self.server,
         }
     }
 
@@ -189,13 +381,29 @@ impl Preferences {
         match owner {
             Owner::Config => &self.config,
             Owner::State => &self.state,
+            Owner::Server => &self.server,
         }
+    }
+
+    pub(super) fn notification_config(&self) -> Option<&Value> {
+        self.config.confirmed()
+    }
+
+    pub(super) fn notification_config_refreshing(&self) -> bool {
+        self.config.refreshing()
+    }
+
+    #[cfg(test)]
+    pub(super) fn reset_notification_fixture(&mut self) {
+        self.config = Default::default();
+        self.fixture();
     }
 
     pub fn saved(&self, owner: Owner) -> Option<&Value> {
         self.doc(owner).snapshot.as_ref()
     }
 
+    #[cfg(test)]
     pub fn error(&self) -> Option<&'static str> {
         if self.authentication_required {
             Some("rune.connect_error")
@@ -225,6 +433,11 @@ impl Preferences {
             if config {
                 self.config.invalidate();
             }
+            if (config | stream.take_server_changed())
+                && (self.show_server || self.show_environment)
+            {
+                self.server.invalidate();
+            }
             if state {
                 self.state.invalidate();
             }
@@ -235,16 +448,23 @@ impl Preferences {
     }
 
     fn poll_documents(&mut self) -> bool {
+        let install = self.opencode_install.poll();
         if self.authentication_required {
-            return false;
+            return install;
         }
         let Some(backend) = &self.backend else {
-            return false;
+            return install;
         };
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         let changed = self.config.poll(backend, Owner::Config, &main, &window)
             | self.state.poll(backend, Owner::State, &main, &window)
-            | self.memory.poll(backend, &main, &window);
+            | ((self.show_server || self.show_environment || self.server.unsettled())
+                && self.server.poll(backend, Owner::Server, &main, &window))
+            | self.memory.poll(backend, &main, &window)
+            | self
+                .memory
+                .poll_review(backend, self.provider_target.as_ref(), &main, &window)
+            | install;
         if changed {
             self.revision += 1;
         }
@@ -464,6 +684,46 @@ impl Preferences {
             self.revision += 1;
         }
     }
+
+    #[cfg(test)]
+    pub(super) fn fixture_usage(&mut self, mode: &str) {
+        let config = self
+            .config
+            .snapshot
+            .get_or_insert_with(|| json!({"settings": {}}));
+        config["settings"]["showUsageMetrics"] = json!(mode != "hidden");
+        config["settings"]["usageMetricsExpansion"] = json!(mode);
+    }
+}
+
+fn general_config(choice: Choice) -> bool {
+    matches!(
+        choice,
+        Choice::Locale | Choice::Contrast | Choice::GeneralBehavior(_)
+    )
+}
+
+fn is_transcript(choice: Choice) -> bool {
+    matches!(choice, Choice::TranscriptPreset | Choice::TranscriptRow(_))
+}
+
+fn general_state(choice: Choice) -> bool {
+    matches!(choice, Choice::Mode | Choice::Palette(_))
+}
+
+fn is_advanced(choice: Choice) -> bool {
+    matches!(choice, Choice::Advanced(toggle) if toggle.supported())
+}
+
+fn is_notification(choice: Choice) -> bool {
+    matches!(
+        choice,
+        Choice::NotificationRoute(..) | Choice::NotificationsFocused
+    )
+}
+
+fn is_shortcut(choice: Choice) -> bool {
+    matches!(choice, Choice::Shortcut(_) | Choice::ShortcutReset)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

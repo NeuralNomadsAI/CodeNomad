@@ -49,6 +49,8 @@ Dies sind Ausführungsentscheidungen für spätere Eingaben, keine Änderungen a
 
 ## Entwürfe und Anhänge {#drafts-attachments}
 
+In Rune zeigt das Überfahren eines Bildanhangs eine Vorschau. Mit **Bild vergrößern** öffnest du eine größere Ansicht.
+
 1. Schreiben Sie in der ausgewählten Unterhaltung. Ein Unterhaltungswechsel behält deren Entwurf, statt ihn zu senden.
 2. Wählen Sie für Dateien dieses Geräts **Datei anhängen…** im Menü **Weitere Aktionen** des Eingabefelds oder legen Sie sie ab bzw. fügen Sie sie ein; oder geben Sie `@` ein, um Projektdateien, Agenten oder Skills auszuwählen.
 3. Prüfen Sie die Anhang-Chips und entfernen Sie alles, was nicht zur nächsten Eingabe gehören soll.
@@ -116,6 +118,8 @@ Schließen bricht die wartende Nebenanfrage ab, ohne die Hauptsitzung zu unterbr
 Ein Ziel gehört zu seiner Unterhaltung: Untersitzungen und Abzweigungen beginnen ohne Ziel. OpenCode pausiert ein Ziel auch selbst, wenn Sie die Sitzung stoppen, ein Lauf fehlschlägt, kein Fortschritt mehr entsteht, das Rundenlimit erreicht ist oder der Dienst neu startet; setzen Sie es fort, um weiterzumachen. Pausieren oder Entfernen macht bereits erledigte Arbeit nicht rückgängig. Ohne Ziel oder mit einem OpenCode-Dienst ohne Zielunterstützung erscheint die Zeile nicht.
 
 ## Abzweigen, rückgängig machen und Fehler beheben {#fork-errors}
+
+In Rune setzt Rückgängig den ursprünglichen Text in ein leeres Eingabefeld. **Letzte Nachricht wiederherstellen** über der Unterhaltung stellt den Verlauf wieder her. Rückgängig und das Entfernen von Tools und Denkprozessen benötigen Serverunterstützung.
 
 1. Wählen Sie an einer Nachricht **Nach dieser Nachricht abzweigen (Fork)**, um nach diesem Punkt eine Unterhaltung anzulegen, ohne das Original zu ersetzen.
 2. Prüfen Sie zum Rückgängigmachen **Änderungen bis hierhin rückgängig machen (löscht Nachrichten)** sorgfältig. Die Palette bietet **Letzte Nachricht rückgängig machen** und **Letzte Nachricht wiederherstellen** für die vorgemerkte Rücknahme. Rückgängigmachen ist ohne rücknehmbare Benutzernachricht deaktiviert; Wiederherstellen ist ohne vorgemerkte Rücknahme deaktiviert.

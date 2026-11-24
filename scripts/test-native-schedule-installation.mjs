@@ -1,6 +1,6 @@
 // node --import tsx scripts/test-native-schedule-installation.mjs <isolated-cli> <fresh-scratch>
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
@@ -80,7 +80,7 @@ try {
     assert(child.exitCode === null && Date.now() < deadline, "private native startup deadline")
     if (existsSync(registrationFile)) {
       const info = JSON.parse(readFileSync(registrationFile, "utf8"))
-      if (info.pid === child.pid) endpoint = await Service.discover({ file: registrationFile })
+      if (info.pid === await fixtureChildPid(child)) endpoint = await Service.discover({ file: registrationFile })
     }
     if (!endpoint) await delay(100)
   }
@@ -93,7 +93,7 @@ try {
   assert.deepEqual(first.setup, { global: false, server: false }, "private services belong to the fresh RPC graph")
   assert.equal(first.installation.registrationFile, registrationFile)
   assert.deepEqual({ provider: first.installation.provider, runtime: first.installation.runtime }, artifacts)
-  assert.equal(first.graph.pid, child.pid)
+  assert.equal(first.graph.pid, await fixtureChildPid(child))
   assert.equal(first.graph.state, path.dirname(registrationFile))
   assert(first.graph.urls.some(url => new URL(url).href === new URL(endpoint.url).href))
   assert.equal(second.priorReleased, true)

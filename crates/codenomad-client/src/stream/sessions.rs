@@ -14,6 +14,24 @@ pub(super) async fn relay(
     let native = &value["event"];
     if own && value["type"] == "instance.event" {
         children::observe(b, native);
+        if let Some(urgent) = native["type"]
+            .as_str()
+            .and_then(crate::settings::stats::event)
+        {
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::StatsChanged {
+                    workspace_id: b.workspace.clone(),
+                    urgent,
+                },
+            ))
+            .await?;
+        }
+        if (native["data"]["sessionID"] == b.session || native["type"] == "tui.toast.show")
+            && let Some(event) = super::notifications::other_notice(native)
+        {
+            out.send(Input::Workspace(epoch, event)).await?;
+        }
     } else if own && value["type"] == "instance.eventStatus" && value["status"] == "connected" {
         b.client.children().invalidate(b, None);
     }
@@ -22,6 +40,13 @@ pub(super) async fn relay(
         && let Some(event) = mission_events::decode(&b.workspace, value)
     {
         out.send(Input::Workspace(epoch, event)).await?;
+    }
+    if own
+        && value["type"] == "instance.event"
+        && native["data"]["sessionID"] != b.session
+        && crate::content::FamilyChange::tracks(native)
+    {
+        return Ok(out.send(Input::Native(epoch, 0, native.clone())).await?);
     }
     let catalogues = (own && value["type"] == "instance.event")
         .then(|| match native["type"].as_str() {
@@ -54,6 +79,9 @@ pub(super) async fn relay(
     } else if own && value["type"] == "instance.eventStatus" {
         let ready = value["status"] == "connected";
         let was_ready = state.upstream.swap(ready, SeqCst);
+        if ready != was_ready {
+            state.history_revision.fetch_add(1, SeqCst);
+        }
         if ready && !was_ready {
             out.send(Input::Workspace(
                 epoch,
@@ -99,7 +127,18 @@ pub(super) async fn relay(
             || native["data"]["form"]["sessionID"] == b.session
             || native["type"] == "server.connected")
     {
+        if crate::history::valid_id(&b.session)
+            && let Some(event) = super::session_attention(native, &b.session)
+        {
+            out.send(Input::Workspace(epoch, event)).await?;
+        }
         let version = state.version.fetch_add(1, SeqCst) + 1;
+        if matches!(
+            native["type"].as_str(),
+            Some("session.moved" | "session.deleted" | "session.revert.committed")
+        ) {
+            state.history_revision.fetch_add(1, SeqCst);
+        }
         if native["type"] == "session.moved"
             && native["data"]["sessionID"] == b.session
             && let Some((cancel, _)) = &state.placement
@@ -109,6 +148,12 @@ pub(super) async fn relay(
         }
         out.send(Input::Native(epoch, version, native.clone()))
             .await?;
+    } else if own
+        && value["type"] == "instance.event"
+        && native["data"]["sessionID"] != b.session
+        && crate::content::FamilyChange::tracks(native)
+    {
+        out.send(Input::Native(epoch, 0, native.clone())).await?;
     }
     Ok(())
 }

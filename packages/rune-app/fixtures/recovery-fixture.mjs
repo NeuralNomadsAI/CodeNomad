@@ -1,7 +1,7 @@
 // Isolated real Rust backend + synthetic OpenCode storage/events + loopback fault proxy.
 import assert from 'node:assert/strict'
 import {createServer,request} from 'node:http'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../../scripts/native-fixture-guards.mjs'
 import {mkdir,writeFile} from 'node:fs/promises'
 import {randomUUID} from 'node:crypto'
 import path from 'node:path'

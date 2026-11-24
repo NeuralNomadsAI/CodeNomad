@@ -8,6 +8,9 @@ use crate::transport::{DirectoryChange, WorkspaceEvent};
 use serde_json::{Value, json};
 
 fn storage_owner(value: &Value) -> Option<crate::settings::Owner> {
+    if value["type"] == "storage.configChanged" && value["owner"] == "server" {
+        return Some(crate::settings::Owner::Server);
+    }
     if !matches!(value["owner"].as_str(), Some("ui" | "*")) {
         return None;
     }
@@ -49,6 +52,22 @@ pub(super) async fn dispatch(
     }
     if let Some(owner) = storage_owner(&value) {
         return state.storage_changed(epoch, owner, out).await;
+    }
+    if value["type"] == "permission.receiptsChanged"
+        && value["instanceId"] == b.workspace
+        && value["sessionId"] == b.session
+    {
+        let message = match &value["messageId"] {
+            Value::Null => None,
+            Value::String(id) if crate::history::valid_id(id) => Some(id.clone()),
+            _ => return Ok(()),
+        };
+        out.send(Input::Workspace(
+            epoch,
+            WorkspaceEvent::PermissionReceiptsChanged { message },
+        ))
+        .await?;
+        return Ok(());
     }
     if value["type"] == "memory.changed" {
         out.send(Input::Workspace(epoch, WorkspaceEvent::MemoryChanged))

@@ -49,6 +49,14 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
                 )
             }),
         )
+        .children((!s.messages.is_empty()).then(|| {
+            crate::components::button_tx(
+                "oldest",
+                t("messageSection.scroll.toFirstAriaLabel"),
+                s.paging || s.phase == Phase::Reconnecting || s.phase == Phase::Failed,
+                screen::action_tx(&scope, crate::chat::reader::oldest),
+            )
+        }))
         .child(crate::components::button_tx(
             "latest",
             t("rune.latest"),
@@ -371,7 +379,7 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
             _ => false,
         };
     if adds_part && s.composer.draft.active_count(&s.draft) >= super::draft::MAX_PARTS {
-        layout::announce_selection(tx, t("promptInput.attachFiles.errorTitle"));
+        layout::announce_polite(tx, t("promptInput.attachFiles.errorTitle"));
         return;
     }
     let previous = adds_part.then(|| (s.draft.clone(), s.composer.draft.clone()));
@@ -385,7 +393,7 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
             s.draft = edit;
             s.composer.draft = draft;
             s.composer.picker.changed(&s.draft, &s.reads, &s.wake);
-            layout::announce_selection(tx, t("promptInput.attachFiles.errorTitle"));
+            layout::announce_polite(tx, t("promptInput.attachFiles.errorTitle"));
             return;
         }
         if tab && s.composer.picker.open() {

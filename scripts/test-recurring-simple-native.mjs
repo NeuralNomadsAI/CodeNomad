@@ -6,7 +6,7 @@
 // SETTLE (2.5 min), far below the hourly Job ceiling. Next-day passages cannot be
 // fast-forwarded here; the offline day e2e covers them.
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { createServer } from "node:http"
 import { existsSync } from "node:fs"
@@ -17,7 +17,7 @@ import { tsImport } from "tsx/esm/api"
 import Fastify from "fastify"
 import pino from "pino"
 import { OpenCode } from "@opencode/client"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureChildPid, spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 const source = process.argv[2], journeys = process.argv[3] ?? "ABCD"
 assert.ok(source && path.isAbsolute(source), "Explicit existing CLI required")
@@ -134,7 +134,7 @@ async function start() {
   await until(() => /http:\/\/127\.0\.0\.1:\d+/.test(output))
   endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password: env.OPENCODE_SERVER_PASSWORD } }
   const info = await (await fetch(`${endpoint.url}/api/info`, { headers: { authorization: `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}` } })).json()
-  assert.equal(info.pid, child.pid)
+  assert.equal(info.pid, await fixtureChildPid(child))
   rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   // Fixture-owned read-only observer bound to this exact service; independent of the backend.
   client = OpenCode.make({ baseUrl: endpoint.url, headers: { Authorization: `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}` } })
@@ -142,9 +142,10 @@ async function start() {
   if (evidence.serviceStarts.length > 1) await waitForMissions()
 }
 async function stop() {
-  assert.equal((await client.server.info()).pid, child.pid, "Exact owned PID before stop")
+  const pid = await fixtureChildPid(child)
+  assert.equal((await client.server.info()).pid, pid, "Exact owned PID before stop")
   child.kill(); await Promise.race([closed, delay(10_000).then(() => { throw new Error("Owned service stop timeout") })])
-  evidence.stoppedPIDs ??= []; evidence.stoppedPIDs.push(child.pid)
+  evidence.stoppedPIDs ??= []; evidence.stoppedPIDs.push(pid)
 }
 const yaml = path.join(root, "profile.yaml")
 await writeFile(yaml, "server:\n  environmentVariables: {}\n")
@@ -414,7 +415,7 @@ try {
   hold = false; for (const release of releases) release()
   await closeBackend().catch(error => { evidence.backendCleanupError = error.message })
   if (child && child.exitCode === null && child.signalCode === null) {
-    const pid = child.pid
+    const pid = await fixtureChildPid(child)
     await stopFixtureChild(child, closed).then(() => { evidence.stoppedPIDs.push(pid) })
       .catch(error => { evidence.serviceCleanupError = error.message; process.exitCode = 1 })
   }

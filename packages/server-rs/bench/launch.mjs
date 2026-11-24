@@ -2,7 +2,7 @@
 // `CODENOMAD_NATIVE_PARENT=1`, `CLI_CONFIG`), one after the other in private homes; stdout contract
 // lines, token exchange, sign-in pages, UI bundle, `tls/` and the stdin stop compared. `node launch.mjs`
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { spawnFixtureChild as spawn } from "../../../scripts/native-fixture-guards.mjs"
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
@@ -77,6 +77,9 @@ async function observe(label, command, prefix) {
     o.signed = { status: await call("/api/auth/status", signed), login: await call("/login", signed), root: await call("/", signed),
       asset: await call("/assets/app.js", signed), spa: await call("/some/page", signed) }
     const meta = JSON.parse((await fetch(url + "/api/meta", signed).then(r => r.text())))
+    await writeJson(`launch-meta-${label}.json`, {
+      apiContract: meta.apiContract, serverId: "<fixture>", capabilities: meta.capabilities,
+    })
     const identity = (await readFile(path.join(config, "config.yaml.server-id"), "utf8")).trim()
     o.files = { identity: meta.serverId === identity && /^[0-9a-f-]{36}$/.test(identity), ui: meta.ui,
       tls: ["ca-cert.pem", "ca-key.pem", "server-cert.pem", "server-key.pem"].map(f => existsSync(path.join(config, "tls", f))) }

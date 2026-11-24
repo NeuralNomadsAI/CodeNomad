@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import { spawn, execFileSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
+import { fixtureChildPid, spawnFixtureChild as spawn } from "./native-fixture-guards.mjs"
 import { randomUUID } from "node:crypto"
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
 import os from "node:os"
@@ -40,7 +41,7 @@ try {
   }
   const endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password } }
   const version = execFileSync(cli, ["--version"], { cwd: root, env, encoding: "utf8", windowsHide: true }).trim().split(/\s+/).at(-1).replace(/^v/, "")
-  rememberRuntime(endpoint, { version, pid: child.pid, discovery: "info" })
+  rememberRuntime(endpoint, { version, pid: await fixtureChildPid(child), discovery: "info" })
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint) })
   const info = await client.session.create({ location: { directory: root } })
   console.log(`OpenCode ${version}`)

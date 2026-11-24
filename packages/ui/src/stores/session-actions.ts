@@ -601,8 +601,8 @@ async function applySessionModel(
   })
 
   const nativeModel = getNativeModel(instanceId, model)
-  const releasePending = () => withSession(instanceId, sessionId, current => {
-    if (current.model !== model || !current.modelSelectionPending) return false
+  const releasePending = () => withSession(instanceId, sessionId, (current, previous) => {
+    if (previous.model !== model || !current.modelSelectionPending) return false
     delete current.modelSelectionPending
   })
   try {

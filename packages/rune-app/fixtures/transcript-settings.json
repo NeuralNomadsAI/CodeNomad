@@ -1,0 +1,19 @@
+{
+  "toolInputsVisibility": "hidden",
+  "toolOutputExpansion": "expanded",
+  "diagnosticsExpansion": "collapsed",
+  "showThinkingBlocks": true,
+  "showUsageMetrics": true,
+  "usageMetricsExpansion": "collapsed",
+  "toolCallExpansionDefaults": {
+    "preset": "custom",
+    "thinking": "collapsed",
+    "tools": {
+      "read": "collapsed",
+      "grep": "collapsed",
+      "bash": "expanded",
+      "edit": "expanded",
+      "execute": "collapsed"
+    }
+  }
+}

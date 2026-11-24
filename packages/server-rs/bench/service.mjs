@@ -4,18 +4,31 @@
 // malformed CLI output and a daemon below the minimum version. `node service.mjs <opencode executable>`
 import assert from "node:assert/strict"
 import { execFile, spawn } from "node:child_process"
+import { once } from "node:events"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
-import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
+import { spawnFixtureChild, stopFixtureChild, stopFixtureHandle } from "../../../scripts/native-fixture-guards.mjs"
 import { assertOutsideAccount } from "./private-profile.mjs"
 import { out, privateGit, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 const exe = process.argv[2]
 assert(path.isAbsolute(exe ?? "") && process.platform === "win32", "usage: node service.mjs <absolute opencode executable> (Windows)")
+// This bench deliberately restarts the backend while keeping its daemon alive.
+// One job owns the whole bench; per-backend jobs would invalidate that experiment.
+if (!process.argv.includes("--owned-service-worker")) {
+  const worker = spawnFixtureChild(process.execPath, [process.argv[1], exe, "--owned-service-worker"],
+    { windowsHide: true, stdio: "inherit" })
+  const closed = once(worker, "close")
+  const stop = () => void stopFixtureChild(worker, closed).catch(error => console.error(error.message))
+  process.once("SIGINT", stop)
+  process.once("SIGTERM", stop)
+  const [code] = await closed
+  process.exit(code ?? 1)
+}
 const bin = rustBinary()
 await useBenchTemp()
 const free = async () => { const s = net.createServer(); await new Promise(r => s.listen(0, "127.0.0.1", r)); const { port } = s.address(); await new Promise(r => s.close(r)); return port }
@@ -100,7 +113,7 @@ async function start(p, binary, logs) {
   const call = (route, init = {}) => fetch(`${origin}${route}`, { ...init, headers: { cookie, "content-type": "application/json", ...init.headers }, signal: AbortSignal.timeout(60000) })
   const stop = async () => {
     if (p.label === "rs") { child.stdin.write("shutdown\n"); await Promise.race([closed, delay(20000)]) }
-    if (child.exitCode === null) await stopFixtureChild(child, closed)
+    if (child.exitCode === null) await stopFixtureHandle(child, closed)
   }
   return { call, stop }
 }

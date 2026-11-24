@@ -1,5 +1,5 @@
 import { execFile, spawnSync } from "node:child_process"
-import { readFile as readFileAsync } from "node:fs/promises"
+import { readFile as readFileAsync, readlink } from "node:fs/promises"
 import { readFileSync, readlinkSync } from "node:fs"
 import { basename, resolve } from "node:path"
 
@@ -123,11 +123,32 @@ export function isExpectedTauriProcess(pid: number): boolean | undefined {
             : ["-p", String(pid), "-o", "comm="],
           "path",
         )?.slice(5)
-    if (!executable) return undefined
-    if (resolve(executable).toLowerCase() === resolve(process.execPath).toLowerCase()) return false
-    return ["codenomad", "codenomad.exe", "codenomad-tauri", "codenomad-tauri.exe"]
-      .includes(basename(executable).toLowerCase())
+    return isTauriExecutable(executable)
   } catch {
     return undefined
   }
+}
+
+export async function isExpectedTauriProcessAsync(pid: number): Promise<boolean | undefined> {
+  try {
+    const executable = process.platform === "linux"
+      ? await readlink(`/proc/${pid}/exe`)
+      : (await readCommandIdentityAsync(
+          process.platform === "win32" ? "powershell.exe" : "ps",
+          process.platform === "win32"
+            ? ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).Path`]
+            : ["-p", String(pid), "-o", "comm="],
+          "path", 1000,
+        ))?.slice(5)
+    return isTauriExecutable(executable)
+  } catch {
+    return undefined
+  }
+}
+
+function isTauriExecutable(executable: string | undefined): boolean | undefined {
+  if (!executable) return undefined
+  if (resolve(executable).toLowerCase() === resolve(process.execPath).toLowerCase()) return false
+  return ["codenomad", "codenomad.exe", "codenomad-tauri", "codenomad-tauri.exe"]
+    .includes(basename(executable).toLowerCase())
 }

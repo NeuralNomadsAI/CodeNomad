@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite"
 import path from "node:path"
 import os from "node:os"
 import { collectColdFailure, fixtureRedactor } from "./native-fixture-cold-diagnostics.mjs"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { stopFixtureHandle as stopFixtureChild } from "./native-fixture-guards.mjs"
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 import { createHash } from "node:crypto"
 

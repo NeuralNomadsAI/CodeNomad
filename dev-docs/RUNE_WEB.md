@@ -16,6 +16,8 @@ Après une rupture SSE et un historique indisponible, l'inventaire authentifié 
 
 **Réglages → Général** écrit le contraste dans les préférences du serveur connecté ; **Auto** suit `prefers-contrast: more`. **Fournisseurs** ouvre le catalogue en lecture seule du projet courant, même sans conversation. La coupure du flux retire les données et annule la lecture ; la reconnexion rafraîchit le même projet. `packages/rune-app/fixtures/providers-web-fixture.mjs` exerce ces comportements dans Chromium sur un bundle WASM.
 
+**Statistiques** lit le cache et l’agrégat du service OpenCode par le backend du projet, dans le fuseau du navigateur. Masquer le document annule la lecture et la demande en attente ; le retour au premier plan revalide. Les nombres d’activité restent lisibles dans le miroir accessible. Le banc `packages/rune-app/fixtures/providers-web-fixture.mjs <bundle> --stats` exerce le panneau sur un bundle WASM.
+
 ## Risques à qualifier
 
 La révision Rune est celle épinglée dans le manifeste de l'application. Les références suivantes décrivent les mécanismes présents dans ses sources. La qualification utilisateur exige les essais indiqués dans la dernière colonne.
@@ -38,7 +40,7 @@ Le miroir web omet aussi le conteneur `menu`, les entrées désactivées du Menu
 
 ## Vérifications reproductibles
 
-Le bundle produit est qualifié avec le vrai serveur Rust et OpenCode simulé : connexion avec cookies, deux pages de sessions, historique exact, session vide puis retour, et refus 401 sans cookie. Le smoke mobile vérifie le toucher au centre, l'IME, le redimensionnement, un message visible uniquement via SSE, la récupération d'un message absent pendant la coupure et la conservation du brouillon après révocation et réappairage. Sur l'émulateur Android, `interactive-widget=resizes-content` fait redimensionner le viewport de mise en page à l'ouverture de Gboard. Les commandes et limites du banc sont dans [Coquille web Rune](../scripts/rune/web-README.md).
+Le bundle produit est qualifié avec le vrai serveur Rust et OpenCode simulé : connexion avec cookies, deux pages de sessions, historique exact, session vide puis retour, et refus 401 sans cookie. La barre réserve des commandes tactiles d'au moins 44 px ; seule la liste d'onglets défile horizontalement. Le smoke mobile vérifie leurs rectangles distincts à 320, 390 et 430 px, le toucher au centre, l'IME, le redimensionnement, un message visible uniquement via SSE, la récupération d'un message absent pendant la coupure et la conservation du brouillon après révocation et réappairage. Sur l'émulateur Android, `interactive-widget=resizes-content` fait redimensionner le viewport de mise en page à l'ouverture de Gboard. Les commandes et limites du banc sont dans [Coquille web Rune](../scripts/rune/web-README.md).
 
 Depuis le worktree isolé, avec le `CARGO_TARGET_DIR` existant :
 
@@ -49,3 +51,5 @@ cargo +1.99.1 check --locked --target wasm32-unknown-unknown -p codenomad-rune-a
 ```
 
 La compilation des cibles précède la qualification de la coquille servie par le serveur. Celle-ci couvre connexion, liste des sessions et lecture avec le même code d'état et de vues. Le parcours complet sur téléphone ajoute écriture, permissions, questions et arrêt via l'accès distant, puis les notifications push.
+
+`node scripts/rune/web-loopback-links.mjs <bundle>` vérifie les liens sous Chromium mobile avec la scène `transcript-loopback` d'un bundle WASM construit et empaqueté avec `test-support`. Le banc intercepte l'origine distante et les destinations dans le navigateur.

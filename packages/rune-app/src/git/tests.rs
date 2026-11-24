@@ -2,6 +2,56 @@ use super::*;
 use codenomad_client::git::{Change, Commit, Status};
 use codenomad_client::{git::Section, transport::WorkspaceEvent};
 
+#[test]
+fn history_uses_the_inventory_label_and_falls_back_to_branch_then_slug() {
+    let mut state = crate::init();
+    let mut owner = ui();
+    owner.inventory = Some(Worktrees {
+        repository: Repository::Git,
+        trees: vec![
+            Worktree {
+                slug: "owned-review".into(),
+                label: None,
+                directory: "D:/repo/review".into(),
+                service_directory: None,
+                branch: Some("review/feature".into()),
+                head: Some("not-a-label".into()),
+                missing: false,
+            },
+            Worktree {
+                slug: "detached".into(),
+                label: Some("Review checkout".into()),
+                directory: "D:/repo/detached".into(),
+                service_directory: None,
+                branch: None,
+                head: Some("not-a-label".into()),
+                missing: false,
+            },
+        ],
+    });
+    state.git.owner = Some(owner);
+    assert_eq!(
+        history_worktree(&state, "owned-review"),
+        Some("review/feature")
+    );
+    assert_eq!(
+        history_worktree(&state, "detached"),
+        Some("Review checkout")
+    );
+    state
+        .git
+        .owner
+        .as_mut()
+        .unwrap()
+        .inventory
+        .as_mut()
+        .unwrap()
+        .trees[1]
+        .label = None;
+    assert_eq!(history_worktree(&state, "detached"), Some("detached"));
+    assert_eq!(history_worktree(&state, "foreign"), None);
+}
+
 fn change(path: impl Into<String>, staged: bool, whitespace: bool, score: u64) -> Status {
     let counts = Change {
         kind: "modified".into(),
@@ -90,6 +140,7 @@ fn ui() -> Ui {
             trees: vec![
                 Worktree {
                     slug: "root".into(),
+                    label: None,
                     directory: "D:/repo".into(),
                     branch: Some("main".into()),
                     head: Some("a".repeat(40)),
@@ -98,6 +149,7 @@ fn ui() -> Ui {
                 },
                 Worktree {
                     slug: "other".into(),
+                    label: None,
                     directory: "D:/other".into(),
                     branch: None,
                     head: None,
@@ -124,6 +176,72 @@ fn the_linked_conversation_owns_the_git_target_without_a_root_fallback() {
     ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
     assert!(ui.tree().is_none());
     assert!(!ui.can_mutate());
+}
+
+#[test]
+fn late_worktree_inventory_syncs_the_tree_without_closing_a_session_link() {
+    for native in ["D:/other", "/mnt/d/other"] {
+        let mut s = crate::init();
+        let mut owner = ui();
+        let mut inventory = owner.inventory.take().unwrap();
+        inventory
+            .trees
+            .iter_mut()
+            .find(|tree| tree.slug == "other")
+            .unwrap()
+            .service_directory = Some("/mnt/d/other".into());
+        let mut backend = owner.backend.clone();
+        backend.session_directory = Some(native.into());
+        assert!(owner.bind_placed(&backend, Some("other")));
+        s.files = Some(crate::files::Ui::new(
+            backend.clone(),
+            "D:/repo".into(),
+            s.reads.clone(),
+            s.wake.clone(),
+        ));
+        s.git.owner = Some(owner);
+        let (_, directory) = super::file_link_scope(&s).unwrap();
+        assert_eq!(directory, native);
+        assert!(crate::files::open_session_path(
+            &mut s,
+            &backend,
+            native.into(),
+            "notes.txt".into()
+        ));
+        let scope = s.files.as_ref().unwrap().document.scope();
+
+        let publish = |s: &mut crate::State, inventory| {
+            s.git
+                .owner
+                .as_mut()
+                .unwrap()
+                .accept(Lane::Worktrees, Value::Worktrees(inventory));
+            super::binding::sync_files(s);
+        };
+        publish(&mut s, inventory.clone());
+        let files = s.files.as_ref().unwrap();
+        assert_eq!(files.tree.directory(), "D:/other");
+        assert_eq!(
+            files
+                .reader
+                .target()
+                .map(|target| target.directory.as_str()),
+            Some(native)
+        );
+        assert_eq!(
+            files.document.scope(),
+            scope,
+            "tree sync must not reopen the reader"
+        );
+        assert_eq!(super::file_link_scope(&s).unwrap().1, "D:/other");
+
+        inventory.trees.retain(|tree| tree.slug == "root");
+        publish(&mut s, inventory);
+        assert!(
+            !crate::files::has_preview(&s),
+            "authoritative removal still closes the reader"
+        );
+    }
 }
 
 #[test]
@@ -412,6 +530,45 @@ fn only_live_history_with_a_different_head_revokes_index_authority() {
 }
 
 #[test]
+fn a_git_receipt_after_reattachment_does_not_notify_on_the_new_connection() {
+    use crate::files::test_http::{Http, wait};
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let mut ui = ui();
+        let (wake, settled) = codenomad_client::bounded(1);
+        ui.backend = http.backend.clone();
+        ui.requests = Requests::new(
+            ui.backend.clone(),
+            Reads::default(),
+            std::sync::Arc::new(move || {
+                let _ = wake.try_send(());
+            }),
+        );
+        let tree = ui.tree().unwrap().clone();
+        ui.requests.mutate(
+            ui.tree_epoch,
+            tree,
+            Mutation::Commit {
+                message: "fixture".into(),
+                draft: "fixture".into(),
+            },
+        );
+        let request = http.accept().await;
+        assert!(
+            request.header.starts_with("POST ") && request.header.contains("/git-commit HTTP/")
+        );
+        ui.backend.client = codenomad_client::http::Http::new().unwrap();
+        ui.requests.renew(ui.backend.clone());
+        request.reply(204, serde_json::Value::Null).await;
+        wait(settled.recv()).await.unwrap();
+        assert!(ui.poll_results());
+        assert!(ui.requests.mutation.is_none());
+        assert!(ui.take_files_invalidation());
+        assert!(ui.mutation_notice.is_none());
+    });
+}
+
+#[test]
 fn mutation_settlement_preserves_edits_and_cannot_clear_another_checkout() {
     let mut ui = ui();
     let epoch = ui.tree_epoch;
@@ -427,6 +584,11 @@ fn mutation_settlement_preserves_edits_and_cannot_clear_another_checkout() {
         Ok(()),
     );
     assert_eq!(ui.changes.draft.text, "different");
+    assert!(
+        ui.mutation_notice
+            .take()
+            .is_some_and(|(success, _)| success)
+    );
     assert!(ui.take_files_invalidation());
     ui.select_tree("other".into());
     ui.changes.draft = TextEdit::new("old");
@@ -441,6 +603,7 @@ fn mutation_settlement_preserves_edits_and_cannot_clear_another_checkout() {
     );
     assert_eq!(ui.changes.draft.text, "old");
     assert!(ui.mutation_message.is_none());
+    assert!(ui.mutation_notice.is_none());
     ui.select_tree("root".into());
     ui.changes.draft = TextEdit::new("old");
     ui.settle_mutation(

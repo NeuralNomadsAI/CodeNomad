@@ -7,7 +7,7 @@ import { registerEscapeShortcut, resetEscapeState, setEscapeStateChangeHandler }
 import { keyboardRegistry } from "../keyboard-registry"
 import { commandHotkeyDefinitions } from "../hotkey-definitions"
 import { resolveResolvable, type Command } from "../commands"
-import { abortSession, getSessions, isSessionBusy } from "../../stores/sessions"
+import { abortSession, isSessionBusy } from "../../stores/sessions"
 import { showCommandPalette, hideCommandPalette } from "../../stores/command-palette"
 import type { Instance } from "../../types/instance"
 import { getLogger } from "../logger"
@@ -89,10 +89,6 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
 
         const sessionId = options.getActiveSessionIdForInstance()
         if (!sessionId || sessionId === "info") return false
-
-        const sessions = getSessions(instance.id)
-        const session = sessions.find((s) => s.id === sessionId)
-        if (!session) return false
 
         return isSessionBusy(instance.id, sessionId)
       },

@@ -3,6 +3,7 @@ use crate::{
     State,
     content::{Reasoning, TextProvenance},
     screen,
+    settings::{self, TranscriptRow},
     strings::{locale, t},
 };
 use rune::{El, col, text};
@@ -53,6 +54,10 @@ pub(crate) fn run_anchor(
 }
 
 pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> Option<El> {
+    let mode = settings::transcript_mode(s, TranscriptRow::Thinking);
+    if !super::anchors::reasoning_visible(s) {
+        return None;
+    }
     let mut reasoning = parts.iter().filter_map(|part| match part {
         crate::content::Part::Reasoning(part) if part.visible() => Some(part),
         _ => None,
@@ -60,7 +65,16 @@ pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> 
     let first = reasoning.next()?;
     let last = reasoning.clone().next_back().unwrap_or(first);
     let key = block_key(message, first.ordinal);
-    let expanded = s.transcript_display.toggled(&key);
+    let expanded = s.transcript_display.expanded(&key, mode == "expanded")
+        || std::iter::once(first).chain(reasoning.clone()).any(|part| {
+            super::search_hit::query(
+                s,
+                message,
+                codenomad_client::search::Kind::Reasoning,
+                part.part_index,
+            )
+            .is_some_and(|q| q.active)
+        });
     let title = last.text.trim().strip_prefix("**").and_then(|source| {
         let (title, rest) = source.split_once("**")?;
         (!title.is_empty()
@@ -99,7 +113,7 @@ pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> 
                 &base,
                 false,
                 screen::action(&s.input_scope, move |s| {
-                    Display::toggle(s, &toggle);
+                    Display::set_expanded(s, &toggle, !expanded);
                 }),
             )
             .key(format!("toggle-{key}"))
@@ -116,7 +130,7 @@ pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> 
     if expanded {
         group = group.children(std::iter::once(first).chain(reasoning).map(|part| {
             let fragment = block_key(message, part.ordinal);
-            let pane = body(s, &fragment, part);
+            let pane = body(s, message, &fragment, part);
             if part.ordinal == first.ordinal {
                 pane
             } else {
@@ -127,17 +141,23 @@ pub(super) fn view(s: &State, message: &str, parts: &[crate::content::Part]) -> 
     Some(group)
 }
 
-fn body(s: &State, key: &str, part: &Reasoning) -> El {
+fn body(s: &State, message: &str, key: &str, part: &Reasoning) -> El {
+    let query = super::search_hit::query(
+        s,
+        message,
+        codenomad_client::search::Kind::Reasoning,
+        part.part_index,
+    );
     markdown::tool_pane(
         document::window_with_total(
             s,
             format!("{key}-body"),
             &[&part.text],
-            document::TOOL_LIMIT,
+            document::search_limit(query),
             Some((part.retained_units, part.units)),
             |shown, units| {
                 let build = || {
-                    text(shown)
+                    rune_theme_codenomad::timeline::search::ink(text(shown), shown, query)
                         .full_width()
                         .wrap()
                         .content_direction()
@@ -150,6 +170,10 @@ fn body(s: &State, key: &str, part: &Reasoning) -> El {
                             s.transcript_display.stream_version(),
                             s.transcript_display.steps(&format!("{key}-body")),
                             std::rc::Rc::as_ptr(&s.input_scope) as usize,
+                            s.transcript_display
+                                .search_highlight
+                                .as_ref()
+                                .filter(|hit| hit.message == message),
                         ),
                         build,
                     )
@@ -177,6 +201,7 @@ fn reasoning_group_uses_native_block_keys_and_reveals_its_parts() {
         ]
     })).unwrap();
     let mut s = crate::init();
+    crate::settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":true}));
     s.messages.push(row.into());
     s.phase = crate::Phase::Ready;
     let mut rt = Runtime::new(
@@ -237,7 +262,8 @@ fn live_reasoning_updates_the_counter_and_coalesces_long_revealed_text() {
     s.messages.push(row.into());
     s.incoming = Some(incoming);
     s.phase = crate::Phase::Streaming;
-    Display::toggle(&mut s, "reasoning-step:0");
+    crate::settings::fixture_transcript(&mut s, json!({"showThinkingBlocks":true}));
+    Display::set_expanded(&mut s, "reasoning-step:0", true);
     let mut rt = Runtime::new(s, crate::view, (960.0, 800.0), Env::new(false, 1.0));
     rt.poll = Some(crate::poll);
     rt.frame(0.0);

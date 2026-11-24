@@ -9,6 +9,7 @@ use std::time::Duration;
 pub struct Model {
     pub reference: Value,
     pub label: String,
+    pub included: bool,
 }
 #[derive(Clone)]
 pub struct Permission {
@@ -17,20 +18,68 @@ pub struct Permission {
     pub resources: Vec<String>,
     pub message: String,
     pub supported: bool,
+    pub tool: Option<ToolSource>,
 }
 #[derive(Clone)]
 pub struct Form {
     pub id: String,
     pub title: String,
     pub fields: Vec<Value>,
+    pub tool: Option<ToolSource>,
+    pub infer_websearch: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ToolSource {
+    pub message: String,
+    pub call: String,
+}
+
+fn target(message: &Value, call: &Value) -> Option<ToolSource> {
+    let id = |value: &Value| value.as_str().filter(|id| valid_id(id)).map(str::to_owned);
+    Some(ToolSource {
+        message: id(message)?,
+        call: id(call)?,
+    })
+}
+
+fn tool_source(row: &Value) -> Option<ToolSource> {
+    let source = &row["source"];
+    if source["type"] != "tool" {
+        return None;
+    }
+    let (message, call) = (source["messageID"].as_str()?, source["id"].as_str()?);
+    if !valid_id(message) || call.is_empty() || call.len() > 512 {
+        return None;
+    }
+    Some(ToolSource {
+        message: message.into(),
+        call: call.into(),
+    })
 }
 pub struct Snapshot {
     pub models: Option<Vec<Model>>,
     pub current: Option<Value>,
     pub session_known: bool,
+    pub usage: Option<crate::content::Usage>,
     pub running: bool,
+    pub root_directory: Option<String>,
     pub permissions: Option<Vec<Permission>>,
     pub forms: Option<Vec<Form>>,
+}
+
+/// Metadata from the session read already made by the interruption dock.
+fn root_directory(session: &Value, id: &str) -> Option<String> {
+    let row = &session["data"];
+    if row["id"] != id || !row["parentID"].is_null() {
+        return None;
+    }
+    row["location"]["directory"]
+        .as_str()
+        .filter(|path| {
+            crate::absolute_server_path(path) && row["location"]["workspaceID"].is_null()
+        })
+        .map(str::to_owned)
 }
 pub enum Action {
     Model(Value),
@@ -39,6 +88,66 @@ pub enum Action {
     Cancel(String),
 }
 impl Backend {
+    pub async fn notification_label(&self) -> Option<String> {
+        if !valid_id(&self.session) || self.session.starts_with("ses_cn_schedule_") {
+            return None;
+        }
+        let project = self
+            .projects()
+            .await
+            .ok()?
+            .into_iter()
+            .find(|project| project.id == self.workspace)?;
+        let session = self.bind_root_session(&project, &self.session).await.ok()?;
+        let title = session.title.trim();
+        Some(
+            if title.is_empty() {
+                self.session.as_str()
+            } else {
+                title
+            }
+            .chars()
+            .take(256)
+            .collect(),
+        )
+    }
+
+    pub async fn notification_session(&self, pending: Option<(bool, &str)>) -> Option<String> {
+        if !valid_id(&self.session) || self.session.starts_with("ses_cn_schedule_") {
+            return None;
+        }
+        let path = format!("session/{}", self.session);
+        let record = self.control_get(&path).await.ok()?;
+        let directory = root_directory(&record, &self.session)?;
+        let present = match pending {
+            Some((true, id)) => forms(
+                &self.control_get(&format!("{path}/form")).await.ok()?,
+                &self.session,
+            )
+            .ok()?
+            .iter()
+            .any(|form| form.id == id),
+            Some((false, id)) => permissions(
+                &self.control_get(&format!("{path}/permission")).await.ok()?,
+                &self.session,
+            )
+            .ok()?
+            .iter()
+            .any(|permission| permission.id == id),
+            None => self.session_inactive_at(&directory).await,
+        };
+        present.then(|| {
+            record["data"]["title"]
+                .as_str()
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+                .unwrap_or(&self.session)
+                .chars()
+                .take(256)
+                .collect()
+        })
+    }
+
     fn control_url(&self, path: &str) -> String {
         format!(
             "{}workspaces/{}/instance/api/{path}",
@@ -55,6 +164,38 @@ impl Backend {
                 .error_for_status()?,
         )
         .await
+    }
+    pub async fn session_inactive_at(&self, directory: &str) -> bool {
+        if !crate::absolute_server_path(directory) {
+            return false;
+        }
+        let Ok(response) = self
+            .client
+            .get(self.control_url("session/active"))
+            .query(&[("directory", directory)])
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        else {
+            return false;
+        };
+        if !read_json(response).await.ok().is_some_and(|value| {
+            value["data"]
+                .as_object()
+                .is_some_and(|active| !active.contains_key(&self.session))
+        }) {
+            return false;
+        }
+        // The relay can omit a member it could not scope during the active-list read.
+        let Ok(record) = self.control_get(&format!("session/{}", self.session)).await else {
+            return false;
+        };
+        let time = &record["data"]["time"];
+        root_directory(&record, &self.session)
+            .as_deref()
+            .is_some_and(|current| crate::same_server_path(current, directory))
+            && matches!((time["busy"].as_u64(), time["idle"].as_u64()), (Some(busy), Some(idle)) if busy <= idle)
     }
     async fn control_post(&self, path: &str, input: Value) -> Result<()> {
         self.client
@@ -114,7 +255,15 @@ impl Backend {
             models,
             current,
             session_known: session.is_ok(),
+            usage: session
+                .as_ref()
+                .ok()
+                .and_then(|v| crate::content::Usage::decode(&v["data"])),
             running,
+            root_directory: session
+                .as_ref()
+                .ok()
+                .and_then(|row| root_directory(row, &self.session)),
             permissions,
             forms,
         }
@@ -215,9 +364,12 @@ pub fn models(value: &Value) -> Result<Vec<Model>> {
         if id.is_empty() || provider.is_empty() {
             return Err("empty model identity".into());
         }
+        let cost = &row["cost"][0];
+        let included = cost["input"].as_f64() == Some(0.0) && cost["output"].as_f64() == Some(0.0);
         out.push(Model {
             reference: json!({"id":id,"providerID":provider}),
             label: format!("{provider} · {name}"),
+            included,
         });
         if let Some(variants) = row["variants"].as_array().filter(|v| v.len() <= 32) {
             for variant in variants {
@@ -225,6 +377,7 @@ pub fn models(value: &Value) -> Result<Vec<Model>> {
                 out.push(Model {
                     reference: json!({"id":id,"providerID":provider,"variant":v}),
                     label: format!("{provider} · {name} · {v}"),
+                    included,
                 });
             }
         }
@@ -271,6 +424,15 @@ pub fn permissions(value: &Value, session: &str) -> Result<Vec<Permission>> {
                 .take(4096)
                 .collect(),
             supported: resources.len() <= 64,
+            tool: target(
+                &row["source"]["messageID"],
+                row.get("partID")
+                    .or_else(|| row.get("partId"))
+                    .or_else(|| row["metadata"].get("partID"))
+                    .or_else(|| row["metadata"].get("partId"))
+                    .unwrap_or(&row["source"]["id"]),
+            )
+            .or_else(|| tool_source(row)),
         });
     }
     Ok(out)
@@ -291,10 +453,33 @@ pub fn forms(value: &Value, session: &str) -> Result<Vec<Form>> {
             .filter(|v| !v.is_empty() && v.len() <= 32)
             .ok_or("invalid question fields")?
             .clone();
+        let metadata = &row["metadata"];
+        let source = metadata
+            .get("tool")
+            .filter(|v| v.is_object())
+            .or_else(|| metadata.get("source").filter(|v| v.is_object()))
+            .unwrap_or(&Value::Null);
+        let explicit = |keys: &[&str]| {
+            keys.iter()
+                .find_map(|key| source.get(*key))
+                .or_else(|| {
+                    keys.iter()
+                        .filter(|key| **key != "id")
+                        .find_map(|key| metadata.get(*key))
+                })
+                .unwrap_or(&Value::Null)
+        };
+        let tool = target(
+            explicit(&["messageID", "messageId"]),
+            explicit(&["id", "callID", "callId"]),
+        )
+        .or_else(|| tool_source(row));
         out.push(Form {
             id,
             title: string(&row["title"], 4096)?,
             fields,
+            infer_websearch: tool.is_none() && metadata["kind"] == "websearch.provider",
+            tool,
         });
     }
     Ok(out)

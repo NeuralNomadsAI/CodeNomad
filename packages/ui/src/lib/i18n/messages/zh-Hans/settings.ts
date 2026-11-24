@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.configFiles.syntaxLine": "第 {line} 行有语法错误",
   "settings.nav.servers": "服务器",
   "settings.servers.open": "打开",
   "settings.servers.dialog.name": "名称",
@@ -251,6 +252,8 @@ export const settingsMessages = {
   "contextUsagePanel.labels.output": "输出",
   "contextUsagePanel.labels.cost": "费用",
   "contextUsagePanel.included": "已包含",
+  "contextUsagePanel.partialTotal": "会话部分总计",
+  "contextUsagePanel.totalUnavailable": "无法获取会话总计",
   "contextUsagePanel.labels.totalInput": "总输入",
   "contextUsagePanel.labels.totalOutput": "总输出",
   "contextUsagePanel.labels.totalCost": "总费用",
@@ -749,5 +752,6 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "下载 .txt",
   "settings.info.diagnostics.reportBug": "报告错误",
   "settings.info.diagnostics.copied": "诊断信息已复制。",
+  "settings.info.actions.failed": "无法完成操作。请重试。",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI 不为这种 ChatGPT 登录方式提供用量数据。你仍可继续聊天。",
 } as const

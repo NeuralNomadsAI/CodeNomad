@@ -6,6 +6,8 @@ export const nativePluginBuild = {
   format: "esm",
   target: "node22",
   external: ["effect", "@opencode/plugin"],
+  // The UMD entry hides its relative requires from esbuild; use the ESM entry.
+  alias: { "jsonc-parser": "jsonc-parser/lib/esm/main.js" },
   // Native agent/skill files are embedded as text (esbuild already loads `.txt` as text).
   loader: { ".md": "text" },
 }

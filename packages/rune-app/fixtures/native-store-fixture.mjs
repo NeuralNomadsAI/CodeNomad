@@ -186,7 +186,7 @@ finally{
   const secrets=[env.OPENCODE_SERVER_PASSWORD,rustPassword].filter(Boolean)
   for(const [name,log]of Object.entries(logs))await writeFile(path.join(root,`${name}.log`),secrets.reduce((text,secret)=>text.replaceAll(secret,'<fixture password>'),log))
   if(errors.length){proof.result='failed';proof.cleanupErrors=errors.map(error=>error.message);failure??=new AggregateError(errors,'Owned fixture cleanup failed')}
-  proof.children=children.map(({name,child})=>({name,pid:child.pid,exitCode:child.exitCode,signal:child.signalCode}))
+  proof.children=await Promise.all(children.map(async ({name,child})=>({name,pid:await fixtureChildPid(child),exitCode:child.exitCode,signal:child.signalCode})))
   await writeFile(path.join(root,'proof.json'),JSON.stringify(proof,null,2)+'\n')
 }
 console.log(JSON.stringify({type:'native-store-fixture',result:proof.result,root,stages:stages.map(s=>s.stage),rows:600,ownedSessions:ownedIDs.length}))

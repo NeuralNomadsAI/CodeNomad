@@ -652,7 +652,9 @@ name = "codenomad-client"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "avif-parse",
  "base64 0.22.1",
+ "bitreader",
  "futures-lite",
  "getrandom 0.4.3",
  "imagesize",
@@ -661,6 +663,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "time",
  "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -684,9 +687,11 @@ dependencies = [
  "base64 0.22.1",
  "codenomad-client",
  "codenomad-host-process",
+ "codenomad-windows-notifications",
  "icu_collator",
  "icu_locale_core",
  "js-sys",
+ "percent-encoding",
  "reqwest",
  "rune",
  "rune-kit",
@@ -697,6 +702,13 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "codenomad-windows-notifications"
+version = "0.1.0"
+dependencies = [
+ "windows",
 ]
 
 [[package]]

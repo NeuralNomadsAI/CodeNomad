@@ -7,7 +7,7 @@ use crate::{
     history,
     runtime::Instant,
     stream,
-    transport::{Event, publish},
+    transport::{Event, HistoryEdge, publish},
 };
 use serde_json::Value;
 use std::{
@@ -35,6 +35,7 @@ pub(super) struct Reader {
     pub(super) seen: Seen,
     first: Option<String>,
     older: Option<Value>,
+    newer: Option<Value>,
     pub(super) repairs: u8,
     pub(super) settlement_reads: u8,
     pub(super) dirty: bool,
@@ -62,6 +63,7 @@ impl Reader {
             },
             first: None,
             older: None,
+            newer: None,
             repairs: 0,
             settlement_reads: 0,
             dirty: true,
@@ -90,6 +92,7 @@ impl Reader {
                 self.seen.bytes = 0;
                 self.first = None;
                 self.older = None;
+                self.newer = None;
                 self.repairs = 0;
                 self.settlement_reads = 0;
                 self.dirty = self.active_reader;
@@ -103,6 +106,8 @@ impl Reader {
         self.historical = false;
         self.anchored = None;
         self.first = None;
+        self.older = None;
+        self.newer = None;
         self.resident.clear();
         self.known.clear();
         self.owed.clear();
@@ -113,71 +118,10 @@ impl Reader {
         self.anchored = None;
         self.resident.clear();
         self.first = None;
+        self.older = None;
+        self.newer = None;
         self.known.clear();
         self.owed.clear();
-    }
-
-    pub(super) async fn older(&mut self, lane: &Lane<'_>, opened: bool) -> history::Result<Turn> {
-        let Lane {
-            backend,
-            reading,
-            rx,
-            wire,
-            out,
-            wake,
-        } = *lane;
-        if let Some(target) = self.older.clone().filter(|_| {
-            self.active_reader
-                && opened
-                && (!self.dirty || self.historical)
-                && wire.upstream.load(SeqCst)
-        }) {
-            let stamp = wire.version.load(SeqCst);
-            let Some(page) = read_page(
-                backend,
-                reading,
-                self.generation,
-                wire,
-                backend.page(target),
-            )
-            .await
-            else {
-                return Ok(Turn::Next);
-            };
-            match page {
-                Ok(page) if wire.valid(stamp) && rx.is_empty() => {
-                    if history::previous_page(&page, &self.resident).is_ok() {
-                        if !page.rows.is_empty() {
-                            self.historical = page.newer.is_some();
-                            self.resident = page.rows.clone();
-                            self.first = self.resident.first().map(|r| r.id.clone());
-                            self.known = self.resident.iter().map(|r| r.id.clone()).collect();
-                            self.owed.retain(|(id, _)| self.known.contains(id));
-                        }
-                        self.older = page.older.clone();
-                        reader_event(reading, self.generation, out, wake, Event::Older(page)).await;
-                    } else {
-                        reader_event(reading, self.generation, out, wake, Event::PagingFailed)
-                            .await;
-                    }
-                }
-                Ok(_) => {
-                    self.dirty = true;
-                    self.quiet = Instant::now() + Duration::from_millis(100);
-                    reader_event(reading, self.generation, out, wake, Event::PagingFailed).await;
-                }
-                Err(PageFailure::AuthenticationExpired) => {
-                    expire_reading(backend, reading, wire, out, wake).await;
-                    return Ok(Turn::Stop);
-                }
-                Err(PageFailure::Read(_)) => {
-                    reader_event(reading, self.generation, out, wake, Event::PagingFailed).await;
-                }
-            }
-        } else if self.active_reader {
-            reader_event(reading, self.generation, out, wake, Event::PagingFailed).await;
-        }
-        Ok(Turn::Process)
     }
 
     pub(super) async fn sync(
@@ -244,6 +188,7 @@ impl Reader {
                     self.anchored = None;
                     self.first = page.rows.first().map(|r| r.id.clone());
                     self.older = page.older.clone();
+                    self.newer = page.newer.clone();
                     self.known = page.rows.iter().map(|r| r.id.clone()).collect();
                     self.resident = page.rows.clone();
                     let done = (self.terminal || self.busy) && !page.running;
@@ -319,7 +264,7 @@ pub(super) struct Lane<'a> {
     pub(super) backend: &'a Backend,
     pub(super) reading: Option<&'a ReadingLane>,
     pub(super) rx: &'a Receiver<Input>,
-    pub(super) wire: &'a stream::State,
+    pub(super) wire: &'a Arc<stream::State>,
     pub(super) out: &'a Sender<Event>,
     pub(super) wake: &'a Wake,
 }
@@ -512,3 +457,5 @@ mod diagnostic_tests {
         assert_eq!(super::read_diagnostic(&anchor), "resident anchor missing");
     }
 }
+
+mod pages;

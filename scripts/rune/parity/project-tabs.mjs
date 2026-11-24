@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import {mkdir,readFile,writeFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
-import {spawn} from 'node:child_process'
+import {spawnFixtureChild as spawn} from '../../native-fixture-guards.mjs'
 import {createRequire} from 'node:module'
 import {fileURLToPath} from 'node:url'
 import path from 'node:path'

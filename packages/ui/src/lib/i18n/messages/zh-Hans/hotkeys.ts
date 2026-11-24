@@ -1,4 +1,6 @@
 export const hotkeyMessages = {
+  "hotkeys.unavailable": "Rune 尚不支持为此操作配置快捷键。",
+  "hotkeys.reserved": "此快捷键为编辑器保留。请选择其他组合。",
   "settings.nav.hotkeys": "键盘快捷键",
   "hotkeys.filter": "筛选快捷键",
   "hotkeys.resetAll": "全部重置",
