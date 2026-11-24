@@ -17,6 +17,7 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         if !s.screen.is_launcher() {
             composer::view::overlays(s, &mut layer);
         }
+        layer.extend(crate::workspace::mission_confirmation(s));
         shell::notifications::app_layers(s, &mut layer);
         #[cfg(not(target_arch = "wasm32"))]
         layer.extend(chat::authentication::dialog(s));

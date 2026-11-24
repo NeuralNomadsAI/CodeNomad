@@ -21,9 +21,11 @@ pub(super) struct Detail {
     observed: Option<u64>,
     pub snapshot: Option<Snapshot>,
     active: Option<(Demand, Receiver<Result<Answer>>)>,
+    staged: Option<(Demand, Result<Answer>)>,
     pending: Option<Demand>,
     retry: Option<Demand>,
     pub failed: bool,
+    pub map_reads: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -58,11 +60,21 @@ impl Answer {
 }
 
 impl Detail {
+    pub fn authoritative(&self) -> bool {
+        !self.busy()
+            && !self.failed
+            && self
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| Some(snapshot.header.root.revision) >= self.observed)
+    }
+
     pub fn clear(&mut self) {
         *self = Self::default();
     }
     pub fn cancel(&mut self) {
         self.active = None;
+        self.staged = None;
         self.pending = None;
     }
     pub fn busy(&self) -> bool {
@@ -78,6 +90,25 @@ impl Detail {
             self.id = id.into();
         }
         self.observed = self.observed.max(Some(revision));
+    }
+
+    pub fn revision_floor(&mut self, id: &str, summary: Option<u64>) -> Option<u64> {
+        if self.id != id {
+            return summary;
+        }
+        if self.staged.is_none() {
+            self.staged = self
+                .active
+                .as_ref()
+                .and_then(|(demand, inbox)| inbox.try_recv().ok().map(|answer| (*demand, answer)));
+        }
+        let answer = self.staged.as_ref().and_then(|(_, answer)| match answer {
+            Ok(answer) => Some(answer.revision()),
+            Err(error) => error
+                .downcast_ref::<RevisionChanged>()
+                .map(|changed| changed.0),
+        });
+        self.observed.max(summary).max(answer)
     }
     pub fn retry(&mut self) {
         self.pending = self.retry;
@@ -98,7 +129,7 @@ impl Detail {
             && self
                 .snapshot
                 .as_ref()
-                .is_some_and(|s| s.attention_remaining() > 0)
+                .is_some_and(|s| s.attention_remaining().0 > 0)
         {
             self.pending = Some(Demand::Attention);
         }
@@ -124,11 +155,8 @@ impl Detail {
             self.observed = revision;
             self.refresh();
         }
-        if let Some((demand, result)) = self
-            .active
-            .as_ref()
-            .and_then(|(demand, r)| r.try_recv().ok().map(|result| (*demand, result)))
-        {
+        self.revision_floor(id, revision);
+        if let Some((demand, result)) = self.staged.take() {
             self.active = None;
             self.retry = None;
             self.failed = match result {
@@ -140,6 +168,7 @@ impl Detail {
                     self.observed = self.observed.max(Some(answer.revision()));
                     match answer {
                         Answer::New(header, tasks, end) => {
+                            self.map_reads = self.map_reads.saturating_add(1);
                             self.snapshot = Some(Snapshot {
                                 header,
                                 tasks: Rc::new(TaskRows::new(tasks)),
@@ -149,6 +178,7 @@ impl Detail {
                             false
                         }
                         Answer::Same(header) => {
+                            self.map_reads = self.map_reads.saturating_add(1);
                             if let Some(old) = &mut self.snapshot {
                                 old.header = header;
                             }
@@ -270,13 +300,26 @@ impl Detail {
 }
 
 impl Snapshot {
-    pub fn attention_remaining(&self) -> u64 {
+    pub fn attention_remaining(&self) -> (u64, bool) {
         self.header
             .tasks
             .page
             .attention
             .as_ref()
-            .map_or(0, |a| a.omitted.saturating_sub(self.attention_end))
+            .map_or((0, true), |a| {
+                let (remaining, exact) =
+                    a.unread_after(self.attention_end, |key| self.tasks.contains(key));
+                (
+                    remaining.min(
+                        self.header
+                            .tasks
+                            .page
+                            .total
+                            .saturating_sub(self.tasks.len()),
+                    ),
+                    exact,
+                )
+            })
     }
 
     fn extend(&mut self, page: TaskWindow) -> bool {
@@ -454,5 +497,12 @@ mod tests {
         assert!(detail.poll(&backend, "project", "mission", None, &reads, &wake));
         assert_eq!(detail.snapshot.as_ref().unwrap().end, 0);
         assert!(detail.failed && matches!(detail.retry, Some(Demand::Refresh)));
+        let (send, inbox) = bounded(1);
+        send.try_send(Err(RevisionChanged(10).into())).ok().unwrap();
+        detail.active = Some((Demand::More, inbox));
+        assert_eq!(detail.revision_floor("mission", Some(8)), Some(10));
+        assert_eq!(detail.revision_floor("other", Some(8)), Some(8));
+        assert!(detail.poll(&backend, "project", "mission", None, &reads, &wake));
+        assert_eq!(detail.revision_floor("mission", Some(8)), Some(10));
     }
 }

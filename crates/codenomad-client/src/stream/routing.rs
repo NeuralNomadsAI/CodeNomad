@@ -50,6 +50,20 @@ pub(super) async fn dispatch(
         signals.observe(&value);
         return Ok(());
     }
+    if value["instanceId"] == b.workspace
+        && state.provider_usage.is_some()
+        && value["type"] == "instance.event"
+        && value["event"]["type"] == "provider.updated"
+    {
+        let directory = value["event"]["location"]["directory"]
+            .as_str()
+            .map(str::to_owned);
+        out.send(Input::Workspace(
+            epoch,
+            WorkspaceEvent::ProviderUsageRefresh(directory),
+        ))
+        .await?;
+    }
     if let Some(owner) = storage_owner(&value) {
         return state.storage_changed(epoch, owner, out).await;
     }
@@ -94,10 +108,48 @@ pub(super) async fn dispatch(
 }
 
 fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {
-    let id = value["workspaceId"].as_str()?;
-    if id != b.workspace || !crate::history::valid_id(id) {
+    if value["workspaceId"].as_str() != Some(b.workspace.as_str()) {
         return None;
     }
+    parse_workspace_event(value)
+}
+
+pub(super) fn parse_detached_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
+    if storage_owner(value) == Some(crate::settings::Owner::Config) {
+        return Some(WorkspaceEvent::UiPreferencesChanged);
+    }
+    if let Some(event) = parse_workspace_event(value) {
+        return Some(event);
+    }
+    if value["type"] == "instance.eventStatus" && value["status"] == "connected" {
+        let id = value["instanceId"]
+            .as_str()
+            .filter(|id| crate::history::valid_id(id))?;
+        return Some(WorkspaceEvent::WorktreesChanged {
+            workspace_id: id.into(),
+        });
+    }
+    if value["type"] != "instance.event" {
+        return None;
+    }
+    let id = value["instanceId"]
+        .as_str()
+        .filter(|id| crate::history::valid_id(id))?;
+    match value["event"]["type"].as_str()? {
+        "vcs.branch.updated" | "worktree.updated" => Some(WorkspaceEvent::WorktreesChanged {
+            workspace_id: id.into(),
+        }),
+        "filesystem.changed" => Some(WorkspaceEvent::NativeFilesystemChanged {
+            workspace_id: id.into(),
+        }),
+        _ => None,
+    }
+}
+
+pub(super) fn parse_workspace_event(value: &Value) -> Option<WorkspaceEvent> {
+    let id = value["workspaceId"]
+        .as_str()
+        .filter(|id| crate::history::valid_id(id))?;
     match value["type"].as_str()? {
         "workspace.stopped" => Some(WorkspaceEvent::Stopped {
             workspace_id: id.into(),

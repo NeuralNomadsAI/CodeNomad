@@ -290,6 +290,7 @@ fn audit_settlement_during_edit(permission: bool) {
                 Snapshot {
                     models: None,
                     current: None,
+                    directory: None,
                     session_known: true,
                     root_directory: None,
                     usage: None,
@@ -297,7 +298,8 @@ fn audit_settlement_during_edit(permission: bool) {
                     permissions: Some(vec![]),
                     forms: Some(vec![]),
                 },
-                false
+                false,
+                0
             ))
             .is_ok()
     );

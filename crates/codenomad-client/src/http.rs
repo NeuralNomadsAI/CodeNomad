@@ -78,13 +78,17 @@ impl Drop for ClientDropWatch {
 #[derive(Clone)]
 pub struct Http(
     Client,
-    Arc<OnceLock<String>>,
+    Arc<OnceLock<Identity>>,
     Arc<crate::stream::Children>,
     Arc<AtomicBool>,
     Arc<[AtomicU64; 3]>,
     DropTable,
     Arc<CapabilityState>,
 );
+struct Identity {
+    server: String,
+    capabilities: Vec<String>,
+}
 impl Http {
     pub fn new() -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -269,7 +273,12 @@ impl Http {
         &self.2
     }
     pub fn server_identity(&self) -> Option<&str> {
-        self.1.get().map(String::as_str)
+        self.1.get().map(|identity| identity.server.as_str())
+    }
+    pub fn supports(&self, capability: &str) -> bool {
+        self.1
+            .get()
+            .is_some_and(|identity| identity.capabilities.iter().any(|item| item == capability))
     }
     pub fn require_attestation(&self) {
         self.6.required.store(true, Ordering::SeqCst);
@@ -284,15 +293,39 @@ impl Http {
         }
     }
     #[cfg(test)]
-    pub(crate) fn verify_server_identity(&self, id: &str) -> bool {
-        let matched = self.1.get_or_init(|| id.to_owned()) == id;
+    pub(crate) fn attest(&self, id: &str, capabilities: Vec<String>) -> bool {
+        let matched = self
+            .1
+            .get_or_init(|| Identity {
+                server: id.to_owned(),
+                capabilities,
+            })
+            .server
+            == id;
         if !matched {
             self.6.drop_generation.fetch_add(1, Ordering::SeqCst);
         }
         matched
     }
-    pub(crate) fn verify_server_identity_at(&self, id: &str, generation: u64, seq: u64) -> bool {
-        let matched = self.1.get_or_init(|| id.to_owned()) == id;
+    #[cfg(test)]
+    pub(crate) fn verify_server_identity(&self, id: &str) -> bool {
+        self.attest(id, Vec::new())
+    }
+    pub(crate) fn verify_server_identity_at(
+        &self,
+        id: &str,
+        capabilities: Vec<String>,
+        generation: u64,
+        seq: u64,
+    ) -> bool {
+        let matched = self
+            .1
+            .get_or_init(|| Identity {
+                server: id.to_owned(),
+                capabilities,
+            })
+            .server
+            == id;
         if !matched {
             self.revoke_server_attestation_at(generation, seq);
         }

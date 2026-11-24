@@ -41,6 +41,10 @@ node roundtrip.mjs $OpenCode
 |---|---|
 | (native-daemon modes) | Sign-in on both servers, then the Rust local admission surface (device, authority and server-pairing refusals; workspace claims, instance storage, `pending-requests`). |
 | `http` | Linked worktrees: creation, session move, evacuation on deletion, refusal of a modified checkout; owned locations and VCS reads. |
+| `receipt-worktree` | Anchored receipts in linked checkouts, including outside the browse root. Covers missing and file-valued project projections, refusal in an unrelated workspace, and inventory calls and elapsed time for repeated reads. |
+| `receipt-reconnect` | Reconnect snapshots across two projects. A native reply during a held snapshot retains its original source and resources; the other project recovers before the hold is released. |
+| `meta-update` | Isolated release listing: preview offers through `/api/meta`, readiness and installed-release lookup, feed changes, and stale-offer suppression. |
+| `mutation-fence` | Project-B writes during a held project-A POST; worktree creation concurrent with a session move and refused during deletion; client disconnect after the first response bytes draining before deletion while a non-overlapping sibling checkout in the same project stays writable; prospective prompt selectors blocked during deletion, rejected after CodeNomad deletion, and preserved on external Git removal. |
 | `files` | Files and Git on a rich repository (rename, gitlink, conflict, CRLF, large and binary files), mutations, refusals, watches. |
 | `contract` | Session placement header, foreign sessions, outline in a worktree, `pending-requests`. |
 | `history-bytes` | Validated history JSON across the HTTP broker with a native RPC response at exactly 24 MiB, including numbers that expand when serialized again. |

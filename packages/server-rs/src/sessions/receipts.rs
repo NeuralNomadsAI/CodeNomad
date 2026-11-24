@@ -1,16 +1,21 @@
 //! Permission receipts: a session's asked and replied permissions, recorded from native events.
+mod locks;
+mod observers;
+mod recovery;
 use axum::{
     Json,
     extract::{Path, Query, State, rejection::QueryRejection},
     http::{StatusCode as Status, header},
     response::{IntoResponse, Response},
 };
+pub(crate) use recovery::Recovery;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    fs, io,
+    fs,
+    io::{self, Read},
     path::{Path as FsPath, PathBuf},
     sync::LazyLock,
     time::Duration,
@@ -57,7 +62,6 @@ struct Record {
     #[serde(skip_serializing_if = "Option::is_none")]
     receipt: Option<Receipt>,
 }
-static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn hash(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
@@ -129,8 +133,19 @@ fn snapshot(value: &Value) -> Option<Snapshot> {
 }
 fn read(file: &FsPath) -> Result<Option<Record>, Error> {
     let failed = || error(Status::INTERNAL_SERVER_ERROR, "Permission receipt unavailable");
-    match fs::read(file) {
-        Ok(bytes) if bytes.len() <= 1024 * 1024 => serde_json::from_slice(&bytes).map(Some).map_err(|_| failed()),
+    const MAX: u64 = 1024 * 1024;
+    match fs::File::open(file) {
+        Ok(file) => {
+            if !file.metadata().is_ok_and(|m| m.is_file() && m.len() <= MAX) {
+                return Err(failed());
+            }
+            let mut bytes = Vec::new();
+            file.take(MAX + 1).read_to_end(&mut bytes).map_err(|_| failed())?;
+            if bytes.len() as u64 > MAX {
+                return Err(failed());
+            }
+            serde_json::from_slice(&bytes).map(Some).map_err(|_| failed())
+        }
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         _ => Err(failed()),
     }
@@ -140,61 +155,143 @@ fn persist(file: &FsPath, record: &Record) -> Result<(), Error> {
         .map_err(|_| error(Status::SERVICE_UNAVAILABLE, "Permission receipt unavailable"))?;
     crate::storage::write(file, &json!(record))
 }
-pub async fn observe(app: &App, event: &Value, recipients: &[Workspace]) -> Result<(), Error> {
+async fn capture(
+    app: &App,
+    scope: &str,
+    request: Snapshot,
+    current: impl FnOnce() -> bool + Send + 'static,
+    reanchored: impl FnOnce(Vec<Workspace>) + Send + 'static,
+) -> Result<(), Error> {
+    let file = dir(app, scope, &request.session_id).join(format!("{}.json", hash(&request.request_id)));
+    locks::receipt(file, move |file| {
+        if !current() {
+            return Err(upstream_error());
+        }
+        match read(file)? {
+            None => {
+                persist(file, &Record { request, receipt: None })?;
+                Ok(())
+            }
+            // A native settlement can persist before its already-read snapshot.
+            Some(mut entry)
+                if entry.request.action.is_none()
+                    && request.action.is_some()
+                    && entry.receipt.as_ref().is_some_and(|receipt| receipt.origin == "native") =>
+            {
+                entry.request = request;
+                entry.receipt.as_mut().unwrap().request = entry.request.clone();
+                persist(file, &entry)?;
+                reanchored(observers::take(file));
+                Ok(())
+            }
+            Some(entry)
+                if entry.request.source.as_ref().is_some_and(|source| {
+                    request.source.as_ref().is_some_and(|request| request.message_id == source.message_id)
+                }) && entry.receipt.as_ref().is_some_and(|receipt| receipt.origin == "native") =>
+            {
+                reanchored(Vec::new());
+                Ok(())
+            }
+            Some(_) => Ok(()),
+        }
+    })
+    .await
+}
+
+pub async fn observe(
+    app: &Shared,
+    endpoint: &std::sync::Arc<Endpoint>,
+    event: &Value,
+    recipients: &[Workspace],
+) -> Result<(), Error> {
     let kind = event["type"].as_str().unwrap_or_default();
     if !matches!(kind, "permission.asked" | "permission.replied" | "session.deleted") || recipients.is_empty() {
         return Ok(());
     }
     let data = &event["data"];
     let Some(session) = id(&data["sessionID"]) else { return Ok(()) };
-    let endpoint = app.native.endpoint().ok_or_else(upstream_error)?;
-    let scope = scope(app, &endpoint).await?;
-    let _serial = SERIAL.lock().await;
-    let folder = dir(app, &scope, session);
-    if kind == "session.deleted" {
-        return match fs::remove_dir_all(folder) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(_) => Err(error(Status::SERVICE_UNAVAILABLE, "Permission receipt unavailable")),
-        };
+    let scope = scope(app, endpoint).await?;
+    if !app.native.current(endpoint) {
+        return Err(upstream_error());
     }
     if kind == "permission.asked" {
         if let Some(request) = snapshot(data) {
-            let file = folder.join(format!("{}.json", hash(&request.request_id)));
-            if read(&file)?.is_none() {
-                persist(&file, &Record { request, receipt: None })?;
-            }
+            let (owner, endpoint) = (app.clone(), endpoint.clone());
+            let (dispatch, pinned) = (app.clone(), endpoint.clone());
+            let session = request.session_id.clone();
+            let message = request.source.as_ref().map(|source| source.message_id.clone());
+            capture(
+                app,
+                &scope,
+                request,
+                move || owner.native.current(&endpoint),
+                move |previous| {
+                    invalidate_fallbacks(&dispatch, &pinned, &session, message.as_deref(), previous);
+                },
+            )
+            .await?;
         }
-    } else if let (Some(request), Some(decision @ ("once" | "always" | "reject"))) =
+        return Ok(());
+    }
+    let folder = dir(app, &scope, session);
+    let (owner, pinned) = (app.clone(), endpoint.clone());
+    if kind == "session.deleted" {
+        return locks::session(folder, move |folder| {
+            if !owner.native.current(&pinned) {
+                return Err(upstream_error());
+            }
+            match fs::remove_dir_all(folder) {
+                Ok(()) => {
+                    observers::forget(folder);
+                    Ok(())
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(_) => Err(error(Status::SERVICE_UNAVAILABLE, "Permission receipt unavailable")),
+            }
+        })
+        .await;
+    }
+    if let (Some(request), Some(decision @ ("once" | "always" | "reject"))) =
         (id(&data["requestID"]), data["reply"].as_str())
     {
         let file = folder.join(format!("{}.json", hash(request)));
-        let mut saved = read(&file)?.unwrap_or_else(|| Record {
-            request: Snapshot {
-                request_id: request.into(),
-                session_id: session.into(),
-                resources: Vec::new(),
-                action: None,
-                request_message: None,
-                source: None,
-            },
-            receipt: None,
-        });
-        if saved.receipt.is_none() {
-            saved.receipt = Some(Receipt {
-                request: saved.request.clone(),
-                decision: decision.into(),
-                origin: "native".into(),
-                reason: None,
-                resolved_at: event["created"].as_u64().unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as u64),
-            });
-            persist(&file, &saved)?;
-        }
+        let decision = decision.to_owned();
+        let observed = recipients.to_vec();
+        let resolved_at = event["created"].as_u64().unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as u64);
+        let fallback = Snapshot {
+            request_id: request.into(),
+            session_id: session.into(),
+            resources: Vec::new(),
+            action: None,
+            request_message: None,
+            source: None,
+        };
+        let source = locks::receipt(file, move |file| {
+            if !owner.native.current(&pinned) {
+                return Err(upstream_error());
+            }
+            let mut saved = read(file)?.unwrap_or(Record { request: fallback, receipt: None });
+            if saved.receipt.is_none() {
+                saved.receipt = Some(Receipt {
+                    request: saved.request.clone(),
+                    decision,
+                    origin: "native".into(),
+                    reason: None,
+                    resolved_at,
+                });
+                persist(file, &saved)?;
+            }
+            if saved.request.action.is_none() {
+                observers::remember(file, observed);
+            }
+            Ok(saved.request.source)
+        })
+        .await?;
         for workspace in recipients {
             if app.workspace(&workspace.id.to_string()).is_ok() {
                 let mut changed =
                     json!({"type":"permission.receiptsChanged","instanceId":workspace.id,"sessionId":session});
-                if let Some(source) = &saved.request.source {
+                if let Some(source) = &source {
                     changed["messageId"] = json!(source.message_id);
                 }
                 app.emit(changed);
@@ -202,6 +299,26 @@ pub async fn observe(app: &App, event: &Value, recipients: &[Workspace]) -> Resu
         }
     }
     Ok(())
+}
+
+fn invalidate_fallbacks(
+    app: &Shared,
+    endpoint: &std::sync::Arc<Endpoint>,
+    session: &str,
+    message: Option<&str>,
+    previous: Vec<Workspace>,
+) {
+    for workspace in previous {
+        if !app.native.current(endpoint) || !super::permission_mode::workspace_current(app, &workspace) {
+            continue;
+        }
+        let mut change = json!({"type":"permission.receiptsChanged","instanceId":workspace.id,"sessionId":session});
+        app.emit(change.clone());
+        if let Some(message) = message {
+            change["messageId"] = json!(message);
+            app.emit(change);
+        }
+    }
 }
 
 pub struct Prepared {
@@ -216,37 +333,45 @@ pub async fn prepare(app: &App, endpoint: &Endpoint, request: &Value, input: &Va
     let decision = input["decision"].as_str().ok_or_else(upstream_error)?.to_owned();
     let reason = text(&input["message"]);
     let scope = scope(app, endpoint).await?;
-    let _serial = SERIAL.lock().await;
     let file = dir(app, &scope, &request.session_id).join(format!("{}.json", hash(&request.request_id)));
-    if read(&file)?.is_none() {
-        persist(&file, &Record { request, receipt: None })?;
-    }
+    locks::receipt(file.clone(), move |file| {
+        if read(file)?.is_none() {
+            persist(file, &Record { request, receipt: None })?;
+        }
+        Ok(())
+    })
+    .await?;
     Ok(Prepared { file, decision, reason })
 }
 impl Prepared {
     /// Upgrade only the same native decision; a removed snapshot stays removed.
     pub async fn confirm(self, app: &App, workspace: &Workspace) -> Result<(), Error> {
-        let _serial = SERIAL.lock().await;
-        let Some(mut saved) = read(&self.file)? else { return Ok(()) };
-        if saved.receipt.as_ref().is_some_and(|r| r.origin != "native" || r.decision != self.decision) {
-            return Ok(());
-        }
-        let at = saved
-            .receipt
-            .as_ref()
-            .map(|r| r.resolved_at)
-            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as u64);
-        saved.receipt = Some(Receipt {
-            request: saved.request.clone(),
-            decision: self.decision,
-            origin: "codenomad".into(),
-            resolved_at: at,
-            reason: self.reason,
-        });
-        persist(&self.file, &saved)?;
+        let saved = locks::receipt(self.file, move |file| {
+            let Some(mut saved) = read(file)? else { return Ok(None) };
+            if saved.receipt.as_ref().is_some_and(|r| r.origin != "native" || r.decision != self.decision) {
+                return Ok(None);
+            }
+            let at = saved
+                .receipt
+                .as_ref()
+                .map(|r| r.resolved_at)
+                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as u64);
+            saved.receipt = Some(Receipt {
+                request: saved.request.clone(),
+                decision: self.decision,
+                origin: "codenomad".into(),
+                resolved_at: at,
+                reason: self.reason,
+            });
+            persist(file, &saved)?;
+            Ok(Some(saved.request))
+        })
+        .await?;
+        let Some(saved) = saved else { return Ok(()) };
         if crate::sessions::permission_mode::workspace_current(app, workspace) {
-            let mut change = json!({"type":"permission.receiptsChanged","instanceId":workspace.id,"sessionId":saved.request.session_id});
-            if let Some(source) = &saved.request.source {
+            let mut change =
+                json!({"type":"permission.receiptsChanged","instanceId":workspace.id,"sessionId":saved.session_id});
+            if let Some(source) = &saved.source {
                 change["messageId"] = json!(source.message_id);
             }
             app.emit(change);
@@ -290,16 +415,16 @@ pub async fn list(
     let Ok(physical) = same_file::Handle::from_path(&open.path) else {
         return route_error(Status::CONFLICT, "Workspace changed");
     };
-    let found = match crate::opencode::session_record(&app, &session).await {
+    let Some(endpoint) = app.native.endpoint() else {
+        return route_error(Status::SERVICE_UNAVAILABLE, "Receipt scope unavailable");
+    };
+    let found = match crate::opencode::session_record_at(&app, &endpoint, &session).await {
         Ok(found) => found,
         Err((Status::NOT_FOUND, _)) => return route_error(Status::NOT_FOUND, "Session not found"),
         Err((status, _)) => return route_error(status, "OpenCode is unavailable"),
     };
-    if found["location"]["directory"] != open.location["directory"] || found["location"].get("workspaceID").is_some() {
+    let Some(placement) = owned_location(&app, &open, &endpoint, &found["location"]).await else {
         return route_error(Status::FORBIDDEN, "Session does not belong to workspace");
-    }
-    let Some(endpoint) = app.native.endpoint() else {
-        return route_error(Status::SERVICE_UNAVAILABLE, "Receipt scope unavailable");
     };
     let Ok(scope) = scope(&app, &endpoint).await else {
         return route_error(Status::SERVICE_UNAVAILABLE, "Receipt scope unavailable");
@@ -334,11 +459,18 @@ pub async fn list(
             break;
         }
     }
-    if app.workspace(&workspace).is_err()
-        || !same_file::Handle::from_path(&open.path).is_ok_and(|path| path == physical)
-        || !crate::opencode::session_record(&app, &session)
+    let live = || {
+        app.native.current(&endpoint)
+            && super::permission_mode::workspace_current(&app, &open)
+            && same_file::Handle::from_path(&open.path).is_ok_and(|path| path == physical)
+    };
+    if !live()
+        || !crate::opencode::session_record_at(&app, &endpoint, &session)
             .await
             .is_ok_and(|current| current["location"] == found["location"] && current["projectID"] == found["projectID"])
+        || !live()
+        || !placement.live(&app, &open)
+        || !app.native.current(&endpoint)
     {
         return route_error(Status::CONFLICT, "Workspace changed");
     }
@@ -347,4 +479,17 @@ pub async fn list(
         response["next"] = json!(names[scanned - 1]);
     }
     reply(Status::OK, response)
+}
+
+async fn owned_location(
+    app: &Shared,
+    workspace: &Workspace,
+    endpoint: &std::sync::Arc<Endpoint>,
+    location: &Value,
+) -> Option<crate::worktrees::ownership::ReceiptLocation> {
+    if location.get("workspaceID").is_some() {
+        return None;
+    }
+    let directory = location["directory"].as_str()?;
+    crate::worktrees::ownership::receipt_location(app, workspace, endpoint, directory).await
 }

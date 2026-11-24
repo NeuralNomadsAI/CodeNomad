@@ -144,6 +144,7 @@ pub fn contract() {
             | Event::ConnectionLost
             | Event::WorkspaceMissing
             | Event::Connected(_)
+            | Event::ProviderUsageWatch(_)
             | Event::AgentHint(_)
             | Event::ObservedRunning { .. }
             | Event::Workspace(_)

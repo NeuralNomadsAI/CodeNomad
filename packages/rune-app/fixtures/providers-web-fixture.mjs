@@ -968,11 +968,11 @@ try {
       await openCode.click({force:true})
       await update.waitFor({state:'attached'})
       assert.deepEqual(opencodeRequests,['GET'])
-      const logging = page.getByRole('button',{name:'OpenCode Log Level',exact:true})
-      await page.locator('button[aria-description="Debug"]').waitFor({state:'attached'})
+      const logging = page.getByRole('combobox',{name:'OpenCode Log Level',exact:true})
+      await logging.and(page.locator('[aria-description="Debug"]')).waitFor({state:'attached'})
       await logging.click({force:true})
       await page.getByRole('option',{name:'Warn',exact:true}).click({force:true})
-      await page.locator('button[aria-description="Warn"]').waitFor({state:'attached'})
+      await logging.and(page.locator('[aria-description="Warn"]')).waitFor({state:'attached'})
       assert.deepEqual(logLevelWrites,[{logLevel:'WARN'}])
       await Promise.all([
         page.waitForRequest(request=>new URL(request.url()).pathname==='/api/opencode/update' && request.method()==='POST'),
@@ -1065,38 +1065,36 @@ try {
   await radio('Off').click({force:true})
   await savedOff
   assert.deepEqual(writes,[{settings:{highContrast:'off'}}])
-  assert.equal(await radio('Off').getAttribute('aria-checked'),'true')
-  const permissionTrigger = page.getByRole('button',{name:'New conversation permissions',exact:true})
-  assert.equal(await permissionTrigger.getAttribute('aria-description'),'Autonomous')
+  await page.getByRole('radio',{name:'Off',checked:true,exact:true}).waitFor({state:'attached'})
+  const permissionTrigger = page.getByRole('combobox',{name:'New conversation permissions',exact:true})
+  await permissionTrigger.and(page.locator('[aria-description="Autonomous"]')).waitFor({state:'attached'})
   await permissionTrigger.click({force:true})
   const savedPermissions = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
   await page.getByRole('option',{name:'Supervised',exact:true}).click({force:true})
   await savedPermissions
   assert.deepEqual(writes.at(-1),{settings:{newConversationPermissions:'supervised'}})
-  await page.locator('button[aria-description="Supervised"]').waitFor({state:'attached'})
-  const languageTrigger = page.getByRole('button',{name:'Language',exact:true})
-  assert.equal(await languageTrigger.getAttribute('aria-description'),'English')
+  await permissionTrigger.and(page.locator('[aria-description="Supervised"]')).waitFor({state:'attached'})
+  const languageTrigger = page.getByRole('combobox',{name:'Language',exact:true})
+  await languageTrigger.and(page.locator('[aria-description="English"]')).waitFor({state:'attached'})
   await languageTrigger.click({force:true})
   const savedFrench = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
   await page.getByRole('option',{name:'Français',exact:true}).click({force:true})
   await savedFrench
   assert.deepEqual(writes.at(-1),{settings:{locale:'fr'}})
-  const frenchLanguage = page.getByRole('button',{name:'Langue',exact:true})
-  await frenchLanguage.waitFor({state:'attached'})
-  assert.equal(await frenchLanguage.getAttribute('aria-description'),'Français')
+  const frenchLanguage = page.getByRole('combobox',{name:'Langue',exact:true})
+  await frenchLanguage.and(page.locator('[aria-description="Français"]')).waitFor({state:'attached'})
   await frenchLanguage.click({force:true})
   const savedEnglish = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
   await page.getByRole('option',{name:'English',exact:true}).click({force:true})
   await savedEnglish
   assert.deepEqual(writes.at(-1),{settings:{locale:'en'}})
-  await languageTrigger.waitFor({state:'attached'})
-  assert.equal(await languageTrigger.getAttribute('aria-description'),'English')
+  await languageTrigger.and(page.locator('[aria-description="English"]')).waitFor({state:'attached'})
 
   const savedDark = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/state/ui' && response.request().method() === 'PATCH')
   await radio('Dark').click({force:true})
   await savedDark
   assert.deepEqual(stateWrites.at(-1),{appearancePreferences:{mode:'dark'}})
-  const paletteTrigger = page.getByRole('button',{name:'Color scheme',exact:true})
+  const paletteTrigger = page.getByRole('combobox',{name:'Color scheme',exact:true})
   await paletteTrigger.and(page.locator('[aria-description="Mist"]')).waitFor({state:'attached'})
   await paletteTrigger.click({force:true})
   const savedBasalt = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/state/ui' && response.request().method() === 'PATCH')
@@ -1152,15 +1150,18 @@ try {
   const itemHeaderBox = await page.getByRole('columnheader',{name:'Item',exact:true}).boundingBox()
   const stateHeaderBox = await page.getByRole('columnheader',{name:'Default state',exact:true}).boundingBox()
   const groupsRowBox = await page.getByRole('rowheader',{name:'Tool groups',exact:true}).boundingBox()
-  const groupsBtnBox = await page.getByRole('button',{name:'Default state for Tool groups — Collapsed',exact:true}).boundingBox()
+  const groupsBtnBox = await page.getByRole('combobox',{name:'Default state for Tool groups — Collapsed',exact:true}).boundingBox()
   assert(itemHeaderBox && stateHeaderBox && groupsRowBox && groupsBtnBox)
   assert(Math.abs(stateHeaderBox.x - groupsBtnBox.x) < 4, 'narrow table state column must align with row picker')
   assert(Math.abs(groupsRowBox.y - groupsBtnBox.y) < groupsBtnBox.height, 'narrow table row must not wrap picker below label')
   await page.setViewportSize({width:1100,height:760})
-  await afterPaint()
-  await afterPaint()
-  const b0Wide = await presetButton('Nothing').boundingBox()
-  const b2Wide = await presetButton('Balanced').boundingBox()
+  let b0Wide, b2Wide
+  for (const until = Date.now() + 2000; Date.now() < until;) {
+    await afterPaint()
+    b0Wide = await presetButton('Nothing').boundingBox()
+    b2Wide = await presetButton('Balanced').boundingBox()
+    if (b0Wide && b2Wide && Math.abs(b2Wide.y - b0Wide.y) < 2) break
+  }
   assert(b0Wide && b2Wide && Math.abs(b2Wide.y - b0Wide.y) < 2, 'wide viewport must place all 4 presets on one row')
   await page.setViewportSize({width:390,height:844})
   await afterPaint()
@@ -1197,9 +1198,8 @@ try {
     return btn?.getAttribute('aria-description') === 'Active'
   })
   assert.equal(await presetButton('Balanced').getAttribute('aria-description'),null)
-  // Pinned Rune mirrors Select combobox triggers as HTML buttons in the browser mirror
-  // (native AccessKit exposes combobox, covered in view::tests).
-  const groupsTrigger = page.getByRole('button',{name:'Default state for Tool groups — Collapsed',exact:true})
+  // Rune mirrors Select triggers with ARIA role="combobox" in both native AccessKit and browser.
+  const groupsTrigger = page.getByRole('combobox',{name:'Default state for Tool groups — Collapsed',exact:true})
   await groupsTrigger.waitFor({state:'attached'})
   await groupsTrigger.click({force:true})
   const savedGroups = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
@@ -1212,11 +1212,11 @@ try {
   await savedGroups
   await echoGroups
   assert.deepEqual(writes.at(-1),{settings:{toolGroupVisibility:'hidden'}})
-  await page.getByRole('button',{name:'Default state for Tool groups — Disabled',exact:true}).waitFor({state:'attached'})
+  await page.getByRole('combobox',{name:'Default state for Tool groups — Disabled',exact:true}).waitFor({state:'attached'})
   // Concurrent edits on the server before a manual read edit must survive its merge patch.
   transcriptSettings.toolCallExpansionDefaults.tools.skill = 'expanded'
   transcriptSettings.showThinkingBlocks = true
-  const readTrigger = page.getByRole('button',{name:'Default state for read — Hidden',exact:true})
+  const readTrigger = page.getByRole('combobox',{name:'Default state for read — Hidden',exact:true})
   await readTrigger.waitFor({state:'attached'})
   await readTrigger.click({force:true})
   const savedRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
@@ -1231,7 +1231,7 @@ try {
   assert.deepEqual(writes.at(-1),{settings:{toolCallExpansionDefaults:{preset:'custom',tools:{read:'expanded'}}}})
   assert.equal(transcriptSettings.toolCallExpansionDefaults.tools.skill,'expanded','concurrent skill edit survived')
   assert.equal(transcriptSettings.showThinkingBlocks,true,'concurrent thinking edit survived')
-  const readExpanded = page.getByRole('button',{name:'Default state for read — Expanded',exact:true})
+  const readExpanded = page.getByRole('combobox',{name:'Default state for read — Expanded',exact:true})
   await readExpanded.waitFor({state:'attached'})
   // Wait for the client to finish settling echoRead before opening the picker and arming 503.
   await afterPaint()
@@ -1246,7 +1246,7 @@ try {
   await page.getByRole('option',{name:'Hidden',exact:true}).waitFor({state:'detached'})
   const settingsDialog = page.getByRole('dialog',{name:'Settings',exact:true})
   await settingsDialog.getByRole('button',{name:'Retry',exact:true}).waitFor({state:'attached'})
-  await page.locator('[aria-live="assertive"]').filter({hasText:'Connection failed'}).waitFor({state:'attached'})
+  await page.locator('[aria-atomic="true"][aria-live="assertive"]').filter({hasText:'Connection failed'}).waitFor({state:'attached'})
   assert.equal(await presetButton('Nothing').getAttribute('aria-description'),'Disabled')
   const writesDuringOutage = writes.length
   await presetButton('Nothing').click({force:true})
@@ -1267,7 +1267,7 @@ try {
   assert.equal((await failedEverything).status(),503)
   await settingsDialog.getByText('Could not save the preference.',{exact:true}).waitFor({state:'attached'})
   await settingsDialog.getByRole('button',{name:'Retry',exact:true}).waitFor({state:'attached'})
-  await page.locator('[aria-live="polite"]').filter({hasText:'Could not save the preference.'}).waitFor({state:'attached'})
+  await page.locator('[aria-atomic="true"][aria-live="polite"]').filter({hasText:'Could not save the preference.'}).waitFor({state:'attached'})
   await afterPaint()
   const retriedEverything = page.waitForResponse(response => new URL(response.url()).pathname === '/api/storage/config/ui' && response.request().method() === 'PATCH')
   await settingsDialog.getByRole('button',{name:'Retry',exact:true}).click({force:true})
@@ -1275,7 +1275,7 @@ try {
   assert.equal(writes.at(-1).settings.toolCallExpansionDefaults.preset,'everything')
   assert.equal(writes.at(-1).settings.showThinkingBlocks,true)
   assert.equal(writes.at(-1).settings.showUsageMetrics,true)
-  await page.getByRole('button',{name:'Default state for Tool groups — Expanded',exact:true}).waitFor({state:'attached'})
+  await page.getByRole('combobox',{name:'Default state for Tool groups — Expanded',exact:true}).waitFor({state:'attached'})
   await settingsDialog.getByRole('button',{name:'Retry',exact:true}).waitFor({state:'detached'})
   await radio('General').click({force:true})
   assert.equal(reads.length,0,'General and Chat do not load the provider catalogue')

@@ -10,4 +10,7 @@ mod long_paste;
 mod picker;
 mod tokens;
 pub(crate) mod view;
-pub(crate) use actions::{Owner, acknowledge, can_send, reconcile, send, settle_pending};
+pub(crate) use actions::{
+    Owner, UnconfirmedCommand, UnconfirmedPrompt, acknowledge, can_send, reconcile, send,
+    settle_pending,
+};

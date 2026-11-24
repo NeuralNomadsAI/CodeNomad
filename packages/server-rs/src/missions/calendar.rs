@@ -535,7 +535,6 @@ async fn mutate(
         return Err(human_required());
     }
     let _gate = app.calendar_slot.lock().await;
-    let _path = app.project_mutation.lock().await;
     let endpoint = app.native.endpoint().ok_or_else(|| unconfirmed(Status::SERVICE_UNAVAILABLE, mid.as_deref()))?;
     let (w, project, canonical) = scope(&app, &id, input.directory.as_deref())
         .await
@@ -848,7 +847,6 @@ async fn activate_for(app: &App, id: &str, mid: &str, q: &Activation, principal:
         return Err(bad());
     }
     let _gate = app.calendar_slot.lock().await;
-    let _path = app.project_mutation.lock().await;
     let endpoint = app.native.endpoint().ok_or_else(unavailable)?;
     let (w, project, canonical) = scope(&app, &id, None).await?;
     let physical = files::host_identity(&w.path).map_err(|_| unavailable())?;

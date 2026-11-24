@@ -18,6 +18,8 @@ use serde_json::json;
 pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
     pub(super) provider_target: Option<super::providers::Target>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) open_providers: bool,
     pub(super) memory: super::memory::Setting,
     pub(super) opencode_install: super::opencode::install::Install,
     pub(super) notification_update: Option<String>,
@@ -696,8 +698,19 @@ impl Preferences {
     }
 
     pub fn watch(&mut self, wake: &rune::Waker) {
+        self.watch_project(None, wake);
+    }
+
+    pub fn watch_project(&mut self, project: Option<&str>, wake: &rune::Waker) {
         if self.authentication_required {
             return;
+        }
+        if self
+            .stream
+            .as_ref()
+            .is_some_and(|watch| watch.project() != project)
+        {
+            self.unwatch();
         }
         if self
             .closing_stream
@@ -712,7 +725,7 @@ impl Preferences {
         if self.stream.is_none()
             && let Some(backend) = &self.backend
         {
-            let (watch, task) = PreferencesWatch::task(backend.clone(), wake.clone());
+            let (watch, task) = PreferencesWatch::task(backend.clone(), project, wake.clone());
             self.stream = Some(watch);
             self.sync_drop_watch();
             platform::spawn(task);

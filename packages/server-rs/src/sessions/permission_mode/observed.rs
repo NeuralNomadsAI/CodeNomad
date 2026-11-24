@@ -61,7 +61,8 @@ impl Place {
     }
 }
 
-/// Proxy fork responses are already point reads bound to the request's direct source.
+/// Proxy fork responses are already point reads bound to the request's direct source
+/// and already hold the deletion fence permit for the verified checkout.
 pub(crate) async fn observe_fork(
     app: &App,
     endpoint: &Arc<Endpoint>,
@@ -69,7 +70,7 @@ pub(crate) async fn observe_fork(
     row: &Value,
     source: &Value,
 ) -> Result<bool, Error> {
-    observe(app, endpoint, workspace, row, source, &row["permissions"]).await
+    observe(app, endpoint, workspace, row, source, &row["permissions"], false).await
 }
 
 async fn observe(
@@ -79,6 +80,7 @@ async fn observe(
     child: &Value,
     source: &Value,
     copied: &Value,
+    enter_fence: bool,
 ) -> Result<bool, Error> {
     let id = child["id"].as_str().filter(|id| ordinary(id)).ok_or_else(unavailable)?;
     let from = source["id"].as_str().filter(|id| ordinary(id)).ok_or_else(unavailable)?;
@@ -95,8 +97,11 @@ async fn observe(
     let (child_place, source_place) =
         tokio::join!(Place::load(app, workspace, child), Place::load(app, workspace, source));
     let (Some(child_place), Some(source_place)) = (child_place, source_place) else { return Ok(false) };
-    let _fence =
-        fence::enter(&[child_place.checkout.clone(), source_place.checkout.clone()]).ok_or_else(unavailable)?;
+    let _fence = if enter_fence || child_place.checkout != source_place.checkout {
+        Some(fence::enter(&[child_place.checkout.clone(), source_place.checkout.clone()]).ok_or_else(unavailable)?)
+    } else {
+        None
+    };
     let (live, direct) = tokio::try_join!(
         opencode::session_record_at(app, endpoint, id),
         opencode::session_record_at(app, endpoint, from)
@@ -304,7 +309,7 @@ async fn process(app: &Shared, endpoint: &Arc<Endpoint>, stream: &tokio_util::sy
         let Ok(source) = opencode::session_record_at(&app, &endpoint, from).await else { return };
         let Some((w, _)) = owner(&app, &row).await else { return };
         let rules = if kind == "session.created" { &data["permissions"] } else { &row["permissions"] };
-        if !live() || !observe(&app, &endpoint, &w, &row, &source, rules).await.unwrap_or(false) {
+        if !live() || !observe(&app, &endpoint, &w, &row, &source, rules, true).await.unwrap_or(false) {
             return;
         }
     }

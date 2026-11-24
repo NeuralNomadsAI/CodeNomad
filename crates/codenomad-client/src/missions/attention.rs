@@ -45,6 +45,20 @@ pub(super) fn matches_page(
 }
 
 impl Attention {
+    pub fn unread_after(&self, end: u64, mut loaded: impl FnMut(&str) -> bool) -> (u64, bool) {
+        let mut remaining = self.omitted.saturating_sub(end);
+        let mut known = 0;
+        if let Some(keys) = &self.keys {
+            for key in keys.iter().skip(end as usize) {
+                known += 1;
+                if loaded(key) {
+                    remaining -= 1;
+                }
+            }
+        }
+        (remaining, known == self.omitted.saturating_sub(end))
+    }
+
     pub(super) fn valid(&self, total: u64, blocked: u64, failed: u64, offset: Option<u64>) -> bool {
         let counts = [
             self.counts.notifications,
@@ -99,5 +113,20 @@ mod tests {
         assert!(!attention.valid(100, 60, 0, Some(0)));
         assert!(!attention.valid(100, 61, 0, Some(50)));
         assert!(attention.observed_keys(50, 55, &HashSet::new()));
+    }
+
+    #[test]
+    fn counts_numbered_rows_only_when_their_attention_membership_is_known() {
+        let page: Attention = serde_json::from_value(json!({
+            "sequence":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "counts":{"notifications":0,"blocked":3,"failed":0,"recovery":0},
+            "omitted":3,"keys":["first","second","third"],
+        }))
+        .unwrap();
+        assert_eq!(page.unread_after(0, |key| key == "second"), (2, true));
+        assert_eq!(page.unread_after(1, |key| key != "first"), (0, true));
+        let mut partial = page;
+        partial.keys.as_mut().unwrap().pop();
+        assert_eq!(partial.unread_after(1, |key| key == "second"), (1, false));
     }
 }

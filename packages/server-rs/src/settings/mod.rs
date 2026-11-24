@@ -439,6 +439,9 @@ fn publish(app: &App, kind: Kind, name: &str, value: Value) {
 }
 
 fn publish_with_order(app: &App, kind: Kind, name: &str, value: Value, history_order: &[String]) {
+    if kind == Kind::Config && matches!(name, "server" | "*") {
+        app.releases.update_feed(&app.settings);
+    }
     let (event_type, value) = match kind {
         Kind::Config => ("storage.configChanged", sanitized(name, value)),
         Kind::State => ("storage.stateChanged", value),

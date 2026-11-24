@@ -186,6 +186,7 @@ impl Window {
             prefs.show_environment(false);
             prefs.memory.show(false);
             prefs.provider_target = None;
+            prefs.open_providers = false;
         }
         if !self.token.take().is_some_and(|token| token.get()) {
             super::settle_close(&self.shared, warn);

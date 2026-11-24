@@ -1,11 +1,12 @@
 //! `GET /api/meta`: the server identity, its listeners and capabilities.
+pub(crate) mod releases;
 use std::path::Path;
 
 use axum::{Extension, Json, Router, extract::State, routing::get};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::{Shared, auth::tls, bench, config, settings::Kind};
+use crate::{Shared, auth::tls, bench, config};
 
 /// CodeNomad `meta-contract.ts`.
 const API_CONTRACT: u32 = 1;
@@ -23,7 +24,12 @@ async fn read(State(app): State<Shared>, channel: Option<Extension<tls::Channel>
     {
         capabilities.push(json!("missions"));
     }
-    meta["updateFeed"] = json!(update_feed(&app.settings.owner(Kind::Config, "server")));
+    app.releases.update_feed(&app.settings);
+    let (feed, update) = app.releases.snapshot();
+    meta["updateFeed"] = json!(feed);
+    if let Some(update) = update {
+        meta["update"] = update;
+    }
     if channel.is_some() {
         // SideCar content stays host-only: the direct HTTPS opt-in is not served here.
         (meta["localRequest"], meta["sidecarsAllowed"]) = (json!(false), json!(false));
@@ -52,6 +58,7 @@ pub fn document(
         "service-usage",
         "provider-usage",
         "settings-atomic-patches",
+        "conversation-permissions",
     ];
     if bench::missions_run() {
         capabilities.push("missions");
@@ -85,7 +92,13 @@ fn update_feed(server: &crate::settings::document::Doc) -> &'static str {
     match server.get("updateFeed").and_then(Value::as_str) {
         Some("preview") => "preview",
         Some("stable") => "stable",
-        _ if regex::Regex::new(r"(?i)-dev[.-]").unwrap().is_match(config::VERSION) => "preview",
+        _ if {
+            let label = config::VERSION.to_ascii_lowercase();
+            label.contains("-dev-") || label.contains("-dev.")
+        } =>
+        {
+            "preview"
+        }
         _ => "stable",
     }
 }

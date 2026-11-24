@@ -23,13 +23,7 @@ fn session_rows(
     if remote_search {
         (&l.search_results.rows, &[])
     } else {
-        (
-            &l.sessions,
-            l.linked
-                .pages
-                .as_ref()
-                .map_or(&[], |page| page.rows.as_slice()),
-        )
+        (&l.sessions, l.linked.rows.as_slice())
     }
 }
 
@@ -46,6 +40,37 @@ fn session_row(
     }
 }
 
+fn visible_indices(l: &launcher::Launcher) -> (bool, Vec<usize>) {
+    let searching = l.show_search && !l.search.text.trim().is_empty();
+    let remote_search = cfg!(target_arch = "wasm32") && searching;
+    let (first, linked) = session_rows(l, remote_search);
+    let filter = if l.show_search {
+        l.search.text.trim().to_lowercase()
+    } else {
+        String::new()
+    };
+    let mut seen = std::collections::HashSet::new();
+    let indices = first
+        .iter()
+        .chain(linked)
+        .enumerate()
+        .filter_map(|(index, row)| {
+            ((remote_search || filter.is_empty() || row.title.to_lowercase().contains(&filter))
+                && seen.insert(row.id.as_str()))
+            .then_some(index)
+        })
+        .collect();
+    (remote_search, indices)
+}
+
+pub(super) fn visible_session_ids(l: &launcher::Launcher) -> Vec<String> {
+    let (remote_search, indices) = visible_indices(l);
+    indices
+        .into_iter()
+        .filter_map(|index| session_row(l, remote_search, index).map(|row| row.id.clone()))
+        .collect()
+}
+
 pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     let Some(l) = s.screen.launcher() else {
         return col();
@@ -56,7 +81,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         move |s: &mut State, key: &rune::KeyEvent, tx: &mut rune::Tx| {
             s.current_scope(&scope)
                 && matches!(key.key, rune::Key::Escape | rune::Key::Function(6))
-                && super::keys(s, key, tx)
+                && super::panel_keys(s, key, tx)
         }
     };
     let navigation_blocked = !launcher::can_change_session(s);
@@ -102,12 +127,19 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
             shell::panel_title(title).role("heading"),
             shell::spacer(),
             shell::control(&PLUS, t("sessionList.actions.newSession.ariaLabel"), touch)
-                .disabled(disabled)
-                .on_press_tx(screen::action_tx(scope, |s, tx| {
-                    if let Some(l) = s.screen.launcher_mut() {
-                        l.show_title = true;
-                        tx.focus_when_shown("session-title", true);
-                    }
+                .help(crate::settings::with_shortcut_label_excluding(
+                    s,
+                    t("sessionList.actions.newSession.title"),
+                    "session-new",
+                    if crate::timeline::search::available(s) {
+                        &["session-search"]
+                    } else {
+                        &[]
+                    },
+                ))
+                .disabled(disabled || l.creation_uncertain || crate::git::placement_unconfirmed(s))
+                .on_press_tx(screen::action_tx(scope, |s, _| {
+                    launcher::create_blank(s);
                 }))
                 .build(kit(layout::dark()))
                 .key("session-new"),
@@ -137,22 +169,8 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         )
     });
     let searching = l.show_search && !l.search.text.trim().is_empty();
-    let mut seen = std::collections::HashSet::new();
-    let remote_search = cfg!(target_arch = "wasm32") && searching;
-    let (first, linked) = session_rows(l, remote_search);
-    let filter = l.search.text.to_lowercase();
-    let filtered = std::rc::Rc::new(
-        first
-            .iter()
-            .chain(linked)
-            .enumerate()
-            .filter_map(|(index, row)| {
-                ((remote_search || filter.is_empty() || row.title.to_lowercase().contains(&filter))
-                    && seen.insert(row.id.as_str()))
-                .then_some(index)
-            })
-            .collect::<Vec<_>>(),
-    );
+    let (remote_search, filtered) = visible_indices(l);
+    let filtered = std::rc::Rc::new(filtered);
     let count = filtered.len();
     let for_key = filtered.clone();
     let items = layout::transcript_rows(

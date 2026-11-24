@@ -50,6 +50,19 @@ pub fn view(s: &State) -> El {
             crate::screen::action_tx(&scope, launcher::connect),
         ));
     } else {
+        let mut browse = button_tx(
+            "browse",
+            t("folderSelection.browseMenu.title"),
+            l.pending || waiting || !crate::platform::folder_picker_available(),
+            crate::screen::action_tx(&scope, crate::platform::browse),
+        );
+        if crate::platform::folder_picker_available() {
+            browse = browse.help(crate::settings::with_shortcut_label(
+                s,
+                t("folderSelection.browseMenu.thisComputer"),
+                "browse-folder",
+            ));
+        }
         body = body
             .child(text(t("instanceInfo.labels.folder")).text_role(TextRole::Title))
             .child(
@@ -64,12 +77,7 @@ pub fn view(s: &State) -> El {
             .child(
                 rune_theme_codenomad::layout::action_row()
                     .separate(Space::Sm)
-                    .child(button_tx(
-                        "browse",
-                        t("folderSelection.browseMenu.title"),
-                        l.pending || waiting || !crate::platform::folder_picker_available(),
-                        crate::screen::action_tx(&scope, crate::platform::browse),
-                    ))
+                    .child(browse)
                     .child(button_tx(
                         "open-folder",
                         t("directoryBrowser.openCurrent"),

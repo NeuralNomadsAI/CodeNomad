@@ -92,6 +92,9 @@ impl Editor {
             rejected: TextEdit::new(""),
         }
     }
+    pub fn rebind_session(&mut self, backend: &Backend) {
+        self.backend = backend.clone();
+    }
     pub fn key(&self) -> Option<&Key> {
         self.key.as_ref()
     }
