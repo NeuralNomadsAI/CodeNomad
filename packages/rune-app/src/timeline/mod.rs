@@ -261,13 +261,11 @@ pub(super) fn conversation_shown(s: &State) -> bool {
     !s.screen.is_launcher() && !crate::files::has_preview(s) && !crate::git::has_preview(s)
 }
 
-pub(super) fn active_conversation(s: &State) -> bool {
-    conversation_shown(s) && crate::settings::show_timeline(s)
-}
-
 pub(crate) fn demanded(s: &State) -> bool {
     let t = &s.transcript_display.timeline;
-    active_conversation(s) && rune_theme_codenomad::timeline::fits(t.width)
+    conversation_shown(s)
+        && crate::settings::show_timeline(s)
+        && rune_theme_codenomad::timeline::fits(t.width)
 }
 
 fn reproject(s: &mut State) -> bool {
@@ -351,10 +349,20 @@ fn reproject(s: &mut State) -> bool {
 }
 
 pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
+    poll_inner(s, tx, tx.input_waiting())
+}
+
+// Temporary test seam: headless Runtime on Rune 1d78d5688 does not stamp q.at, so
+// tx.input_waiting() stays false in tests (anomalyco/rune#2035); remove once fixed upstream.
+#[cfg(test)]
+pub(super) fn poll_with_input(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
+    poll_inner(s, tx, input_waiting)
+}
+
+fn poll_inner(s: &mut State, tx: &mut rune::Tx, input_waiting: bool) -> bool {
     let mut changed = sync_outline_mutation(s);
     if !demanded(s) {
         let on_conversation = conversation_shown(s);
-        let narrow = active_conversation(s);
         owner(s).previews.hide();
         let was_visible = std::mem::take(&mut owner(s).visible);
         let was_shown = std::mem::take(&mut owner(s).rail_shown);
@@ -372,24 +380,16 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             }
             return changed | navigation::apply_alignment(s, tx);
         }
-        if was_shown && owner(s).jump.align.is_none() {
+        if was_shown && !input_waiting && owner(s).jump.align.is_none() {
             crate::chat::reading::keep_passage(s, tx);
         }
-        if !narrow {
-            if std::mem::take(&mut owner(s).live) || was_visible {
-                cancel_scan(owner(s));
-                owner(s).refresh = true;
-                drop_uncacheable_outline(owner(s));
-                changed = true;
-            }
-            changed |= navigation::cancel_rail_jump(s);
-        } else if was_visible {
-            // Narrowing hides the rail while keeping the conversation visible: cancel the rail
-            // scan, but keep an already-clicked navigation jump alive so it lands in the transcript.
+        if std::mem::take(&mut owner(s).live) || was_visible {
             cancel_scan(owner(s));
             owner(s).refresh = true;
-            changed |= drop_uncacheable_outline(owner(s));
+            drop_uncacheable_outline(owner(s));
+            changed = true;
         }
+        changed |= navigation::cancel_rail_jump(s, !crate::settings::show_timeline(s));
         return changed | navigation::poll(s, tx);
     }
     let reads = s.reads.clone();
@@ -482,7 +482,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     let was_shown = std::mem::replace(&mut owner(s).rail_shown, shown);
     if shown != was_shown {
         changed = true;
-        if owner(s).jump.align.is_none() {
+        if !input_waiting && owner(s).jump.align.is_none() {
             crate::chat::reading::keep_passage(s, tx);
         }
     }

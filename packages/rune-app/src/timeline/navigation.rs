@@ -44,11 +44,11 @@ pub(super) fn has_pending_or_locked(s: &State) -> bool {
     j.flight.is_some() || j.locked || j.retry.is_some()
 }
 
-pub(super) fn cancel_rail_jump(s: &mut State) -> bool {
+pub(super) fn cancel_rail_jump(s: &mut State, clear_locked: bool) -> bool {
     let j = &s.transcript_display.timeline.jump;
     let rail_jump = j.flight.as_ref().is_some_and(|(_, m)| !m.id.is_empty())
         || j.retry.as_ref().is_some_and(|m| !m.id.is_empty())
-        || (j.locked && j.requested_active.is_some());
+        || (clear_locked && j.locked && j.requested_active.is_some());
     if rail_jump {
         cancel_jump(s);
         true
@@ -303,12 +303,12 @@ pub(super) fn admit_window(s: &mut State, serial: u64, page: Page, accept: impl 
     else {
         return;
     };
-    let allowed = super::conversation_shown(s)
-        && if is_search {
-            super::search::is_open(s) || crate::settings::show_timeline(s)
-        } else {
-            crate::settings::show_timeline(s)
-        };
+    let allowed = if is_search {
+        super::conversation_shown(s)
+            && (super::search::is_open(s) || crate::settings::show_timeline(s))
+    } else {
+        super::demanded(s)
+    };
     if !allowed || owner(s).jump.serial != serial || gesture(s) {
         return;
     }
@@ -345,10 +345,11 @@ fn gesture(s: &mut State) -> bool {
     let previous = std::mem::replace(&mut t.jump.last, observed);
     let rail_moved = previous.rail != observed.rail;
     let transcript_moved = previous.transcript != observed.transcript;
+    let last_rail = observed.wheel_last_rail.unwrap_or(observed.last_hand_rail);
     if transcript_moved {
         cancel_jump(s);
     }
-    if rail_moved && (!transcript_moved || observed.last_hand_rail) {
+    if rail_moved && (!transcript_moved || last_rail) {
         owner(s).jump.browse = true;
     } else if transcript_moved {
         owner(s).jump.browse = false;
@@ -427,6 +428,7 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     {
         let t = owner(s);
         let mut scroll = t.scroll.get();
+        let mut dirty = scroll.wheel_last_rail.take().is_some();
         if scroll.halt_rail_glide {
             scroll.halt_rail_glide = false;
             scroll.rail_glide = None;
@@ -434,9 +436,12 @@ pub(super) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             scroll.rail_glide_stalled = 0;
             let at = scroll.at.offset[1];
             scroll.programmatic_rail = Some(at);
-            t.scroll.set(scroll);
+            dirty = true;
             rune_theme_codenomad::timeline::scroll_rail_to(at, tx);
             halted = true;
+        }
+        if dirty {
+            t.scroll.set(scroll);
         }
     }
     let aligned = apply_alignment(s, tx);

@@ -2175,6 +2175,23 @@ fn banners_keep_history_mounted(reduced_motion: bool) {
             && owner(&mut rt.state).jump.is_browsing(),
         "owned rail burst drifting onto scrollable history-search-body must accumulate two same-frame deltas (+80px) without scrolling transcript: body={body_before}->{body_after}, hist={hist_before_body}->{hist_after_body}"
     );
+    // Drifting onto the history-search toolbar (inside search_rect but strictly above body_rect)
+    // must NOT scroll the results list OR history behind it, while keeping browse active.
+    let toolbar_y = search_rect[1] + (body_rect[1] - search_rect[1]) / 2.0;
+    assert!(
+        toolbar_y > search_rect[1] && toolbar_y < body_rect[1] - 2.0,
+        "precondition: history-search toolbar band must sit strictly above body_rect: search={search_rect:?}, body={body_rect:?}"
+    );
+    rt.wheel_xy(search_rect[0] + search_rect[2] / 2.0, toolbar_y, 0.0, -60.0);
+    rt.frame(0.016);
+    let body_after_toolbar = search::body_scroll_offset(&rt.state);
+    let hist_after_toolbar = owner(&mut rt.state).scroll.get().viewport.offset[1];
+    assert!(
+        (body_after_toolbar - body_after).abs() <= 1.0
+            && (hist_after_toolbar - hist_after_body).abs() <= 1.0
+            && owner(&mut rt.state).jump.is_browsing(),
+        "owned rail burst drifting onto history-search toolbar must not scroll results body or history: body={body_after}->{body_after_toolbar}, hist={hist_after_body}->{hist_after_toolbar}"
+    );
     rt.update(|s, _| {
         search::close(s);
         owner(s).outline_error = false;
@@ -2482,10 +2499,11 @@ fn banners_keep_history_mounted(reduced_motion: bool) {
     settle(&mut rt);
     let max_bottom = owner(&mut rt.state).scroll.get().viewport.max[1];
     assert!(max_bottom > 200.0);
+    // Select row-26 (bottom of rail), then position history at max_bottom - 20.0 at stable height
+    // (no banner resize) and scroll the rail programmatically to 0.0 so reveal_active arms
+    // programmatic_rail without shifting history's max[1].
     rt.update(|s, tx| {
         s.paging = false;
-        tx.instant();
-        tx.scroll_to_instant("history", 0.0, max_bottom - 20.0);
         navigation::select(s, "row-26:User:0:false", tx);
     });
     settle(&mut rt);
@@ -2495,12 +2513,31 @@ fn banners_keep_history_mounted(reduced_motion: bool) {
         tx.scroll_to_instant("history", 0.0, max_bottom - 20.0);
     });
     settle(&mut rt);
-    let max_bottom = owner(&mut rt.state).scroll.get().viewport.max[1];
-    while cmd_rx.try_recv().is_ok() {}
-    rt.update(|s, _| owner(s).outline_error = true);
+    rt.update(|s, tx| {
+        let mut sc = owner(s).scroll.get();
+        sc.programmatic_rail = Some(0.0);
+        owner(s).scroll.set(sc);
+        rune_theme_codenomad::timeline::scroll_rail_to(0.0, tx);
+    });
     rt.frame(0.016);
+    while cmd_rx.try_recv().is_ok() {}
+    let pre_mom_vp = owner(&mut rt.state).scroll.get().viewport;
+    assert!(
+        (pre_mom_vp.max[1] - pre_mom_vp.offset[1] - 20.0).abs() <= 1.0,
+        "precondition: history must sit 20px above max before momentum arrival: offset={}/{}",
+        pre_mom_vp.offset[1],
+        pre_mom_vp.max[1]
+    );
     let rail_rect = rt.presented("timeline").expect("timeline presented").0;
     let hist_rect = rt.presented("history").expect("history presented").0;
+    // Arm a programmatic rail scroll on the exact frame the wheel arrives (without resizing history).
+    rt.update(|s, tx| {
+        let mut sc = owner(s).scroll.get();
+        let target = sc.at.max[1].max(120.0);
+        sc.programmatic_rail = Some(target);
+        owner(s).scroll.set(sc);
+        rune_theme_codenomad::timeline::scroll_rail_to(target, tx);
+    });
     rt.wheel_event(
         rune_theme_codenomad::timeline::WheelEvent::new(0.0, 40.0)
             .at(
@@ -2544,12 +2581,8 @@ fn banners_keep_history_mounted(reduced_motion: bool) {
     for _ in 0..10 {
         rt.frame(0.02);
     }
-    rt.update(|s, _| owner(s).outline_error = false);
-    settle(&mut rt);
     rt.update(|s, tx| {
         s.paging = false;
-        tx.instant();
-        tx.scroll_to_instant("history", 0.0, max_bottom);
         navigation::select(s, "row-26:User:0:false", tx);
     });
     settle(&mut rt);
@@ -2559,11 +2592,30 @@ fn banners_keep_history_mounted(reduced_motion: bool) {
         tx.scroll_to_instant("history", 0.0, max_bottom);
     });
     settle(&mut rt);
-    while cmd_rx.try_recv().is_ok() {}
-    rt.update(|s, _| owner(s).outline_error = true);
+    rt.update(|s, tx| {
+        let mut sc = owner(s).scroll.get();
+        sc.programmatic_rail = Some(0.0);
+        owner(s).scroll.set(sc);
+        rune_theme_codenomad::timeline::scroll_rail_to(0.0, tx);
+    });
     rt.frame(0.016);
+    while cmd_rx.try_recv().is_ok() {}
+    let pre_edge_vp = owner(&mut rt.state).scroll.get().viewport;
+    assert!(
+        (pre_edge_vp.max[1] - pre_edge_vp.offset[1]).abs() <= 0.5,
+        "precondition: history must sit right at max before non-momentum edge paging: offset={}/{}",
+        pre_edge_vp.offset[1],
+        pre_edge_vp.max[1]
+    );
     let rail_rect = rt.presented("timeline").expect("timeline presented").0;
     let hist_rect = rt.presented("history").expect("history presented").0;
+    rt.update(|s, tx| {
+        let mut sc = owner(s).scroll.get();
+        let target = sc.at.max[1].max(120.0);
+        sc.programmatic_rail = Some(target);
+        owner(s).scroll.set(sc);
+        rune_theme_codenomad::timeline::scroll_rail_to(target, tx);
+    });
     rt.wheel_xy(
         rail_rect[0] + rail_rect[2] / 2.0,
         rail_rect[1] + rail_rect[3] / 2.0,
@@ -2600,7 +2652,7 @@ fn banners_keep_history_mounted(reduced_motion: bool) {
 }
 
 #[test]
-fn narrow_window_still_admits_in_flight_jump() {
+fn narrow_window_cancels_rail_jump_and_admits_search_jump() {
     for reduced_motion in [false, true] {
         let mut s = crate::init();
         s.messages = vec![user("row-0")];
@@ -2634,19 +2686,7 @@ fn narrow_window_still_admits_in_flight_jump() {
         rt.poll = Some(crate::poll);
         rt.set_system_reduced_motion(reduced_motion);
         rt.frame(0.0);
-        rt.update(|s, tx| navigation::select(s, "distant:User:0:false", tx));
-        let cmd = rx.try_recv().expect("distant jump dispatched");
-        let ticket = match cmd {
-            crate::transport::Command::Anchor(jump) => jump.ticket,
-            other => panic!("unexpected command: {other:?}"),
-        };
-        assert!(owner(&mut rt.state).jump.has_flight());
-        rt.set_viewport((419.0, 600.0), 1.0);
-        for _ in 0..20 {
-            rt.frame(0.016);
-        }
-        assert!(rt.presented("timeline").is_none());
-        assert!(owner(&mut rt.state).jump.has_flight());
+
         let page = crate::history::Page {
             rows: vec![
                 user("above-0"),
@@ -2659,6 +2699,55 @@ fn narrow_window_still_admits_in_flight_jump() {
             running: false,
             user_file_references: false,
         };
+
+        // 1. A rail jump narrowed below 420px is rejected immediately by admit_window (!demanded)
+        //    even before poll runs, and cancelled once poll sees the narrow width.
+        rt.update(|s, tx| navigation::select(s, "distant:User:0:false", tx));
+        let (rail_ticket, rail_cancelled) = match rx.try_recv().expect("rail jump dispatched") {
+            crate::transport::Command::Anchor(jump) => (jump.ticket, jump.cancelled),
+            other => panic!("unexpected command: {other:?}"),
+        };
+        assert!(owner(&mut rt.state).jump.has_flight());
+        rt.update(|s, _| {
+            owner(s).width = 419.0;
+            let mut accepted = false;
+            navigation::admit_window(s, rail_ticket, page.clone(), || {
+                accepted = true;
+                true
+            });
+            assert!(
+                !accepted && s.messages.iter().all(|m| m.id != "distant"),
+                "rail jump must be rejected by admit_window once window is narrower than 420px"
+            );
+        });
+        rt.set_viewport((419.0, 600.0), 1.0);
+        for _ in 0..10 {
+            rt.frame(0.016);
+        }
+        assert!(
+            rt.presented("timeline").is_none()
+                && rail_cancelled.is_closed()
+                && !owner(&mut rt.state).jump.has_flight(),
+            "narrowing below 420px must cancel an in-flight rail jump"
+        );
+
+        // 2. A search jump narrowed below 420px remains alive, admits, aligns, and locks.
+        rt.set_viewport((800.0, 600.0), 1.0);
+        for _ in 0..10 {
+            rt.frame(0.016);
+        }
+        rt.update(|s, tx| navigation::seek_message(s, "distant", tx));
+        let ticket = match rx.try_recv().expect("distant search jump dispatched") {
+            crate::transport::Command::Anchor(jump) => jump.ticket,
+            other => panic!("unexpected command: {other:?}"),
+        };
+        assert!(owner(&mut rt.state).jump.has_flight());
+        rt.set_viewport((419.0, 600.0), 1.0);
+        for _ in 0..20 {
+            rt.frame(0.016);
+        }
+        assert!(rt.presented("timeline").is_none());
+        assert!(owner(&mut rt.state).jump.has_flight());
         rt.update(|s, _| {
             navigation::admit_window(s, ticket, page.clone(), || true);
         });
@@ -2666,15 +2755,15 @@ fn narrow_window_still_admits_in_flight_jump() {
             rt.frame(0.016);
         }
         let hist = rt.presented("history").expect("history presented").0;
-        let distant_body = rt
-            .presented("body-distant")
-            .expect("distant body presented")
+        let distant_row = rt
+            .presented("distant")
+            .expect("distant message presented")
             .0;
         assert!(
             !owner(&mut rt.state).jump.has_flight()
                 && owner(&mut rt.state).jump.is_locked()
-                && (distant_body[1] - hist[1]).abs() <= 2.0,
-            "in-flight jump must admit, align distant to top of history, and lock while narrowed: hist={hist:?}, distant={distant_body:?}"
+                && (distant_row[1] - hist[1]).abs() <= 2.0,
+            "in-flight search jump must admit, align distant to top of history, and lock while narrowed: hist={hist:?}, distant={distant_row:?}"
         );
         // Move transcript away via instant jump (non-user) so reading line would select above-0 if unlocked.
         rt.update(|_, tx| {
@@ -2689,16 +2778,14 @@ fn narrow_window_still_admits_in_flight_jump() {
             rt.frame(0.016);
         }
         assert!(
-            owner(&mut rt.state).jump.is_locked()
-                && owner(&mut rt.state).jump.active.as_deref() == Some("distant:User:0:false"),
-            "widening back must keep distant locked rather than drifting to above-0"
+            owner(&mut rt.state).jump.is_locked() && owner(&mut rt.state).jump.active.is_none(),
+            "widening back must keep search jump locked rather than drifting to above-0"
         );
 
-        // Disabling timeline while narrowed with an in-flight jump must suspend cleanly, cancel
-        // the transport token, and reject stale responses even when a new jump is waiting later.
-        rt.update(|s, tx| navigation::select(s, "row-0:User:0:false", tx));
-        let cmd2 = rx.try_recv().expect("second distant jump dispatched");
-        let (ticket2, cancelled2) = match cmd2 {
+        // 3. Disabling timeline while narrowed with an in-flight search jump (and search closed)
+        //    must reject stale responses even when a new jump is waiting later.
+        rt.update(|s, tx| navigation::seek_message(s, "row-0", tx));
+        let (ticket2, cancelled2) = match rx.try_recv().expect("second distant jump dispatched") {
             crate::transport::Command::Anchor(jump) => (jump.ticket, jump.cancelled),
             other => panic!("unexpected command: {other:?}"),
         };
@@ -2708,7 +2795,20 @@ fn narrow_window_still_admits_in_flight_jump() {
         }
         assert!(owner(&mut rt.state).jump.has_flight());
         rt.update(|s, _| {
-            crate::settings::fixture_transcript(s, json!({ "showMessageTimeline": false }))
+            crate::settings::fixture_transcript(s, json!({ "showMessageTimeline": false }));
+            navigation::admit_window(
+                s,
+                ticket2,
+                crate::history::Page {
+                    rows: vec![user("row-0")],
+                    older: None,
+                    newer: None,
+                    running: false,
+                    user_file_references: false,
+                },
+                || panic!("search jump with timeline disabled and search closed must not admit"),
+            );
+            navigation::cancel_jump(s);
         });
         for _ in 0..10 {
             rt.frame(0.016);
@@ -2717,7 +2817,7 @@ fn narrow_window_still_admits_in_flight_jump() {
             cancelled2.is_closed()
                 && !owner(&mut rt.state).jump.has_flight()
                 && !owner(&mut rt.state).jump.is_locked(),
-            "disabling showMessageTimeline after narrowing must cancel transport and clear in-flight jump"
+            "cancelling after disabling showMessageTimeline must close transport and clear flight"
         );
         rt.set_viewport((800.0, 600.0), 1.0);
         rt.update(|s, _| {
@@ -2732,8 +2832,7 @@ fn narrow_window_still_admits_in_flight_jump() {
             "re-enabling timeline must resume reading-line tracking cleanly without stranded flight"
         );
         rt.update(|s, tx| navigation::select(s, "row-0:User:0:false", tx));
-        let cmd3 = rx.try_recv().expect("third distant jump dispatched");
-        let ticket3 = match cmd3 {
+        let ticket3 = match rx.try_recv().expect("third distant jump dispatched") {
             crate::transport::Command::Anchor(jump) => jump.ticket,
             other => panic!("unexpected command: {other:?}"),
         };
@@ -2791,8 +2890,8 @@ fn narrow_window_still_admits_in_flight_jump() {
             "newer jump ticket must admit cleanly after stale ticket rejection"
         );
 
-        // Manual transcript touch pan (measured on_scroll_offset move) while narrowed with an
-        // in-flight distant jump must cancel the ticket and reject a late response.
+        // 4. Manual transcript touch pan (measured on_scroll_offset move) while narrowed with an
+        //    in-flight distant search jump must cancel the ticket and reject a late response.
         rt.update(|s, tx| {
             s.messages = (0..10).map(|i| user(&format!("scroll-row-{i}"))).collect();
             s.revision += 1;
@@ -2802,7 +2901,7 @@ fn narrow_window_still_admits_in_flight_jump() {
         for _ in 0..10 {
             rt.frame(0.016);
         }
-        rt.update(|s, tx| navigation::select(s, "distant:User:0:false", tx));
+        rt.update(|s, tx| navigation::seek_message(s, "distant", tx));
         let (ticket_pan, cancelled_pan) = match rx.try_recv().expect("narrow pan jump dispatched") {
             crate::transport::Command::Anchor(jump) => (jump.ticket, jump.cancelled),
             other => panic!("unexpected command: {other:?}"),
@@ -4007,34 +4106,50 @@ fn touch_pan_on_rail_enters_browse_mode_without_snapping_back() {
         "precondition: tap point ({x}, {tap_y}) must lie in the gap between rail markers"
     );
     rt.touch(6, TouchPhase::Started, x, tap_y, 7.0);
-    rt.frame(0.016);
     rt.touch(6, TouchPhase::Ended, x, tap_y, 7.032);
     rt.frame(0.016);
     let stalled_after_tap = owner(&mut rt.state).scroll.get().at.offset[1];
-    let stall_wake = rt.wake_deadline();
+    let stall_wake = rt.wake_deadline().expect("50ms watchdog wake scheduled");
+    let stall_dt = stall_wake - rt.clock;
     assert!(
-        stalled_after_tap > 80.0 && stall_wake.is_some(),
-        "zero-drag tap must stall mid-flight and rely on watchdog wake_deadline to resume: offset={stalled_after_tap}, wake={stall_wake:?}"
+        !rt.animating && stalled_after_tap > 80.0 && stall_dt > 0.0 && stall_dt <= 0.06,
+        "zero-drag tap must stall mid-flight (!animating) and schedule the ~50ms watchdog wake (not 500ms long-press): animating={}, offset={stalled_after_tap}, dt={stall_dt}",
+        rt.animating
     );
+    // Advance strictly via the ~50ms watchdog wakes until the watchdog itself restarts the glide.
+    let mut watchdog_wakes = 0usize;
+    let mut restarted = false;
     for _ in 0..80 {
-        if owner(&mut rt.state).scroll.get().at.offset[1] <= 1.0 {
+        let off = owner(&mut rt.state).scroll.get().at.offset[1];
+        if off <= 1.0 {
             break;
         }
         if rt.animating {
+            if watchdog_wakes > 0 && !restarted {
+                restarted = true;
+            }
             rt.frame(0.016);
         } else if let Some(deadline) = rt.wake_deadline() {
-            rt.frame((deadline - rt.clock).max(0.016));
+            let dt = deadline - rt.clock;
+            assert!(
+                dt > 0.0 && dt <= 0.06,
+                "stall watchdog wake must remain bounded at ~50ms (not 500ms long-press): dt={dt}"
+            );
+            watchdog_wakes += 1;
+            rt.frame(dt.max(0.016));
         } else {
             panic!(
-                "stall watchdog stopped scheduling wakes before rail reached tp-0: offset={}",
-                owner(&mut rt.state).scroll.get().at.offset[1]
+                "stall watchdog stopped scheduling wakes before rail reached tp-0: offset={off}"
             );
         }
     }
     let after_tap_recovery = owner(&mut rt.state).scroll.get().at.offset[1];
     assert!(
-        !owner(&mut rt.state).jump.is_browsing() && after_tap_recovery <= 1.0,
-        "zero-drag touch tap mid-glide must recover via watchdog wake and finish revealing tp-0: mid={mid_tap}, stalled={stalled_after_tap}, after={after_tap_recovery}"
+        watchdog_wakes >= 1
+            && restarted
+            && !owner(&mut rt.state).jump.is_browsing()
+            && after_tap_recovery <= 1.0,
+        "zero-drag touch tap mid-glide must recover via 50ms watchdog wakes and finish revealing tp-0: wakes={watchdog_wakes}, restarted={restarted}, mid={mid_tap}, stalled={stalled_after_tap}, after={after_tap_recovery}"
     );
 
     // Distant jump in flight: a vertical wheel burst starting on the rail must be claimed by
@@ -4184,16 +4299,13 @@ fn disabling_timeline_while_search_open_cancels_rail_jump_and_clears_retry_banne
     for _ in 0..10 {
         rt.frame(0.016);
     }
-    // Start a rail jump, narrow below TIMELINE_MIN_WIDTH, open history search, then disable timeline.
+    // Start a rail jump, open history search, then disable timeline (keeping rail width >= 420px
+    // so narrowing does not already cancel the rail jump).
     rt.update(|s, tx| navigation::select(s, "distant:User:0:false", tx));
     let (ticket, cancelled) = match rx.try_recv().expect("rail jump dispatched") {
         crate::transport::Command::Anchor(jump) => (jump.ticket, jump.cancelled),
         other => panic!("unexpected command: {other:?}"),
     };
-    rt.set_viewport((419.0, 500.0), 1.0);
-    for _ in 0..15 {
-        rt.frame(0.016);
-    }
     rt.update(|s, tx| {
         assert!(search::keys(
             s,
@@ -4212,7 +4324,7 @@ fn disabling_timeline_while_search_open_cancels_rail_jump_and_clears_retry_banne
     }
     assert!(
         search::is_open(&rt.state) && owner(&mut rt.state).jump.has_flight(),
-        "precondition: search open and rail jump still in flight while narrowed"
+        "precondition: search open and rail jump still in flight before disabling timeline"
     );
     // Disable showMessageTimeline WITHOUT stepping poll() first: admit_window's own origin guard
     // must reject the rail-originated response before poll() has a chance to cancel it.
@@ -4983,8 +5095,8 @@ fn toggling_rail_at_fixed_width_keeps_inner_passage_anchored() {
     .unwrap()
     .into();
     s.messages = vec![user("head"), long_msg, user("tail")];
-    owner(&mut s).width = 800.0;
-    let mut rt = Runtime::new(s, view, (800.0, 320.0), Env::new(false, 1.0));
+    owner(&mut s).width = 500.0;
+    let mut rt = Runtime::new(s, view, (500.0, 320.0), Env::new(false, 1.0));
     rt.poll = Some(crate::poll);
     for _ in 0..10 {
         rt.frame(0.016);
@@ -4998,15 +5110,19 @@ fn toggling_rail_at_fixed_width_keeps_inner_passage_anchored() {
     for _ in 0..10 {
         rt.frame(0.016);
     }
-    let hist = rt.presented("history").expect("history presented").0;
+    let hist_before = rt.presented("history").expect("history presented").0;
+    let frag0_before = rt
+        .presented("fragment-long-msg:0")
+        .expect("opening block presented before rail hide")
+        .0;
     let before = rt
         .presented("fragment-long-msg:1")
         .expect("second block presented before rail hide")
         .0;
-    let before_rel = before[1] - hist[1];
+    let before_rel = before[1] - hist_before[1];
     assert!(
         before_rel.abs() <= 4.0,
-        "precondition: fragment-long-msg:1 aligned near top of history before toggling rail: before={before:?}, hist={hist:?}"
+        "precondition: fragment-long-msg:1 aligned near top of history before toggling rail: before={before:?}, hist={hist_before:?}"
     );
     // Hide the rail at fixed window width (800px): history widens by 40px and fragment 0 reflows shorter,
     // yet keep_passage must hold fragment 1 at its reading offset.
@@ -5015,14 +5131,25 @@ fn toggling_rail_at_fixed_width_keeps_inner_passage_anchored() {
         rt.frame(0.016);
     }
     assert!(rt.presented("timeline").is_none());
+    let hist_after_hide = rt.presented("history").expect("history presented").0;
+    let frag0_after_hide = rt
+        .presented("fragment-long-msg:0")
+        .expect("opening block presented after rail hide")
+        .0;
     let after_hide = rt
         .presented("fragment-long-msg:1")
         .expect("second block presented after rail hide")
         .0;
-    let after_hide_rel = after_hide[1] - hist[1];
+    let after_hide_rel = after_hide[1] - hist_after_hide[1];
     assert!(
-        (after_hide_rel - before_rel).abs() <= 2.0,
-        "hiding rail at fixed width must keep inner passage fragment-long-msg:1 anchored: before={before_rel}, after_hide={after_hide_rel}"
+        hist_after_hide[2] > hist_before[2] + 30.0
+            && frag0_after_hide[3] < frag0_before[3] - 10.0
+            && (after_hide_rel - before_rel).abs() <= 2.0,
+        "hiding rail at fixed width must widen history, reflow fragment 0 shorter, and keep fragment 1 anchored: hist_w={}->{}, frag0_h={}->{}, rel={before_rel}->{after_hide_rel}",
+        hist_before[2],
+        hist_after_hide[2],
+        frag0_before[3],
+        frag0_after_hide[3]
     );
     // Show the rail again at fixed window width (800px): history narrows by 40px and fragment 0 reflows taller,
     // yet keep_passage must keep fragment 1 anchored.
@@ -5031,14 +5158,226 @@ fn toggling_rail_at_fixed_width_keeps_inner_passage_anchored() {
         rt.frame(0.016);
     }
     assert!(rt.presented("timeline").is_some());
+    let hist_after_show = rt.presented("history").expect("history presented").0;
+    let frag0_after_show = rt
+        .presented("fragment-long-msg:0")
+        .expect("opening block presented after rail show")
+        .0;
     let after_show = rt
         .presented("fragment-long-msg:1")
         .expect("second block presented after rail show")
         .0;
-    let after_show_rel = after_show[1] - hist[1];
+    let after_show_rel = after_show[1] - hist_after_show[1];
     assert!(
-        (after_show_rel - before_rel).abs() <= 2.0,
-        "showing rail at fixed width must keep inner passage fragment-long-msg:1 anchored: before={before_rel}, after_show={after_show_rel}"
+        hist_after_show[2] < hist_after_hide[2] - 30.0
+            && frag0_after_show[3] > frag0_after_hide[3] + 10.0
+            && (after_show_rel - before_rel).abs() <= 2.0,
+        "showing rail at fixed width must narrow history, reflow fragment 0 taller, and keep fragment 1 anchored: hist_w={}->{}, frag0_h={}->{}, rel={before_rel}->{after_show_rel}",
+        hist_after_hide[2],
+        hist_after_show[2],
+        frag0_after_hide[3],
+        frag0_after_show[3]
+    );
+
+    // Narrowing across the 420px threshold hides the rail inside on_layout_tx: Frame 1 measures
+    // 419px and enqueues Action::Layout; Frame 2 executes on_layout_tx (unmounting the rail BEFORE
+    // timeline::poll sees 419px) and must keep fragment 1 anchored on that very first unmounted frame.
+    rt.set_viewport((419.0, 320.0), 1.0);
+    rt.frame(0.016);
+    assert!(rt.presented("timeline").is_some());
+    rt.frame(0.016);
+    assert!(rt.presented("timeline").is_none());
+    let hist_narrow = rt.presented("history").expect("history presented").0;
+    let frag0_narrow = rt
+        .presented("fragment-long-msg:0")
+        .expect("opening block presented after narrowing")
+        .0;
+    let after_narrow = rt
+        .presented("fragment-long-msg:1")
+        .expect("second block presented after narrowing")
+        .0;
+    let after_narrow_rel = after_narrow[1] - hist_narrow[1];
+    assert!(
+        frag0_narrow[3] > frag0_after_show[3] + 10.0
+            && (after_narrow_rel - before_rel).abs() <= 2.0,
+        "narrowing across 420px must keep inner passage anchored on the very first frame the rail unmounts: frag0_h={}->{}, rel={before_rel}->{after_narrow_rel}",
+        frag0_after_show[3],
+        frag0_narrow[3]
+    );
+}
+
+#[test]
+fn same_frame_rail_then_transcript_wheel_clears_browse() {
+    let mut s = crate::init();
+    s.messages = (0..30).map(|i| user(&format!("row-{i}"))).collect();
+    owner(&mut s).width = 800.0;
+    let mut rt = Runtime::new(s, view, (800.0, 320.0), Env::new(false, 1.0));
+    rt.poll = Some(crate::poll);
+    for _ in 0..10 {
+        rt.frame(0.016);
+    }
+    rt.update(|s, tx| {
+        s.paging = true;
+        tx.instant();
+        tx.scroll_to_instant("history", 0.0, 300.0);
+        let mut sc = owner(s).scroll.get();
+        sc.programmatic_rail = Some(200.0);
+        owner(s).scroll.set(sc);
+        rune_theme_codenomad::timeline::scroll_rail_to(200.0, tx);
+    });
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    let rail_rect = rt.presented("timeline").expect("timeline presented").0;
+    let hist_rect = rt.presented("history").expect("history presented").0;
+    let rail_before = owner(&mut rt.state).scroll.get().at.offset[1];
+    let hist_before = owner(&mut rt.state).scroll.get().viewport.offset[1];
+    assert!(rail_before > 50.0 && hist_before > 100.0);
+    // In a single frame during pagination, wheel on rail first, then drift onto transcript.
+    // Even though on_scroll_offset fires in DOM order (history before timeline), wheel_last_rail
+    // must preserve chronological order and clear browse.
+    rt.wheel_xy(
+        rail_rect[0] + rail_rect[2] / 2.0,
+        rail_rect[1] + rail_rect[3] / 2.0,
+        0.0,
+        40.0,
+    );
+    rt.wheel_xy(
+        hist_rect[0] + hist_rect[2] / 2.0,
+        hist_rect[1] + hist_rect[3] / 2.0,
+        0.0,
+        -40.0,
+    );
+    rt.frame(0.016);
+    rt.frame(0.016);
+    let rail_after = owner(&mut rt.state).scroll.get().at.offset[1];
+    let hist_after = owner(&mut rt.state).scroll.get().viewport.offset[1];
+    assert!(
+        (rail_before - rail_after) > 20.0
+            && (hist_after - hist_before) > 20.0
+            && !owner(&mut rt.state).jump.is_browsing(),
+        "same-frame rail -> transcript wheel during pagination must clear browse despite DOM scroll order: rail={rail_before}->{rail_after}, hist={hist_before}->{hist_after}, browse={}",
+        owner(&mut rt.state).jump.is_browsing()
+    );
+}
+
+#[test]
+fn rail_arrival_does_not_overwrite_queued_transcript_wheel() {
+    let mut s = crate::init();
+    let long_intro = "Reflowing opening paragraph with plenty of words so toggling the rail wraps onto extra lines. ".repeat(18);
+    let second_block = "Second paragraph below the opening text. ".repeat(10);
+    let tail_block = "Trailing text below the second block. ".repeat(16);
+    let long_msg: crate::history::Row = crate::history::decode_message(&json!({
+        "id": "long-msg",
+        "type": "assistant",
+        "time": { "completed": 1 },
+        "content": [
+            { "type": "text", "text": long_intro },
+            { "type": "text", "text": second_block },
+            { "type": "text", "text": tail_block }
+        ]
+    }))
+    .unwrap()
+    .into();
+    s.messages = vec![user("head"), long_msg, user("tail")];
+    owner(&mut s).width = 800.0;
+    let mut rt = Runtime::new(s, view, (800.0, 320.0), Env::new(false, 1.0));
+    rt.poll = Some(crate::poll);
+    for _ in 0..10 {
+        rt.frame(0.016);
+    }
+    rt.update(|_, tx| {
+        tx.instant();
+        tx.scroll_key_to("long-msg/fragment-long-msg:1", 0.0);
+    });
+    for _ in 0..5 {
+        rt.frame(0.016);
+    }
+    // Simulate the rail being absent before an outline/marker update arrives (settings::poll settled).
+    rt.update(|s, _| {
+        let t = owner(s);
+        t.markers.clear();
+        t.has_raw_markers = false;
+        t.changed = false;
+        t.refresh = false;
+    });
+    rt.frame(0.016);
+    assert!(rt.presented("timeline").is_none());
+    let hist_rect = rt.presented("history").expect("history presented").0;
+    let frag1_before = rt
+        .presented("fragment-long-msg:1")
+        .expect("fragment 1 presented")
+        .0;
+    let offset_before = owner(&mut rt.state).scroll.get().viewport.offset[1];
+    assert!(
+        offset_before > 100.0 && (frag1_before[1] - hist_rect[1]).abs() <= 2.0,
+        "precondition: fragment-long-msg:1 aligned at top before rail arrival: offset={offset_before}, rel={}",
+        frag1_before[1] - hist_rect[1]
+    );
+    // First verify the control case (input_waiting=false): rail arrival calls keep_passage and
+    // snaps fragment-long-msg:1 back to rel=0 even if a wheel notch arrives on the same frame.
+    rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, false));
+    rt.update(|s, _| {
+        owner(s).changed = true;
+        owner(s).index_changed = true;
+    });
+    rt.wheel_xy(
+        hist_rect[0] + hist_rect[2] / 2.0,
+        hist_rect[1] + hist_rect[3] / 2.0,
+        0.0,
+        60.0,
+    );
+    rt.frame(0.016);
+    let hist_ctrl = rt.presented("history").expect("history presented").0;
+    let frag1_ctrl = rt
+        .presented("fragment-long-msg:1")
+        .expect("fragment 1 presented after control arrival")
+        .0;
+    assert!(
+        rt.presented("timeline").is_some() && (frag1_ctrl[1] - hist_ctrl[1]).abs() <= 2.0,
+        "control: without input_waiting, rail arrival snaps fragment-long-msg:1 back to rel=0: rel={}",
+        frag1_ctrl[1] - hist_ctrl[1]
+    );
+    // Reset to rail-absent state, align fragment-long-msg:1 at top, then repeat with
+    // input_waiting=true (as Rune's native/web hosts set when wheel input is queued):
+    // timeline::poll must skip keep_passage so the user's upward wheel moves history (~60px).
+    rt.poll = Some(crate::poll);
+    rt.update(|s, _| {
+        let t = owner(s);
+        t.markers.clear();
+        t.has_raw_markers = false;
+        t.changed = false;
+        t.refresh = false;
+    });
+    rt.frame(0.016);
+    assert!(rt.presented("timeline").is_none());
+    let hist_rect = rt.presented("history").expect("history presented").0;
+    let offset_before = owner(&mut rt.state).scroll.get().viewport.offset[1];
+    rt.poll = Some(|s, _, tx| super::poll_with_input(s, tx, true));
+    rt.update(|s, _| {
+        owner(s).changed = true;
+        owner(s).index_changed = true;
+    });
+    rt.wheel_xy(
+        hist_rect[0] + hist_rect[2] / 2.0,
+        hist_rect[1] + hist_rect[3] / 2.0,
+        0.0,
+        60.0,
+    );
+    rt.frame(0.016);
+    let hist_after = rt.presented("history").expect("history presented").0;
+    let frag1_after = rt
+        .presented("fragment-long-msg:1")
+        .expect("fragment 1 presented after arrival")
+        .0;
+    let offset_after = owner(&mut rt.state).scroll.get().viewport.offset[1];
+    let rel_after = frag1_after[1] - hist_after[1];
+    assert!(
+        rt.presented("timeline").is_some()
+            && (offset_before - offset_after) >= 30.0
+            && rel_after >= 40.0,
+        "rail arrival with queued transcript wheel (input_waiting=true) must not overwrite user scroll with keep_passage: shown={}, offset={offset_before}->{offset_after}, rel_after={rel_after}",
+        rt.presented("timeline").is_some()
     );
 }
 

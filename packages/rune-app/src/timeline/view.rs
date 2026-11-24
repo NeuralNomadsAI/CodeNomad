@@ -26,6 +26,7 @@ pub(super) struct Scroll {
     pub transcript_wheel_target: Option<f32>,
     pub transcript_wheel_momentum: bool,
     pub last_hand_rail: bool,
+    pub wheel_last_rail: Option<bool>,
     #[cfg(test)]
     pub last_rail_wheel_taken: bool,
     pub at: timeline::ScrollPosition,
@@ -189,6 +190,7 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
                         state.transcript_wheel_target = Some(target);
                         state.transcript_wheel_momentum = event.momentum;
                         state.last_hand_rail = false;
+                        state.wheel_last_rail = Some(false);
                         wheel_scroll.set(state);
                         tx.scroll_to_instant("history", state.viewport.offset[0], target);
                         if event.dy.abs() > event.dx.abs() {
@@ -212,6 +214,7 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
                 if event.dy != 0.0 {
                     super::navigation::hand_scrolled(s, true);
                     state.last_hand_rail = true;
+                    state.wheel_last_rail = Some(true);
                     state.rail_glide = None;
                     state.rail_glide_stalled = 0;
                     state.rail_glide_interrupted = false;
@@ -243,6 +246,9 @@ fn scroll(s: &State, el: El, rail: bool) -> El {
                 state.rail_wheel.note_phase(event.phase, tx);
                 state.transcript_wheel_momentum = false;
                 state.last_hand_rail = false;
+                if event.dy != 0.0 {
+                    state.wheel_last_rail = Some(false);
+                }
                 wheel_scroll.set(state);
                 super::navigation::hand_scrolled(s, false);
                 if event.dy != 0.0 && event.dy.abs() > event.dx.abs() {
@@ -335,7 +341,16 @@ pub(crate) fn view(s: &State, history: El, expanded: bool) -> El {
         .key("conversation-history")
         .on_layout_tx(move |s: &mut State, [_, _, width, _], tx| {
             if s.current_scope(&scope) && super::owner(s).width != width {
+                let was_shown = super::owner(s).rail_shown;
                 super::owner(s).width = width;
+                let shown = super::demanded(s)
+                    && (super::owner(s).has_raw_markers || !super::owner(s).markers.is_empty());
+                if shown != was_shown {
+                    super::owner(s).rail_shown = shown;
+                    if !tx.input_waiting() && super::owner(s).jump.align.is_none() {
+                        crate::chat::reading::keep_passage(s, tx);
+                    }
+                }
                 (s.wake)();
             } else {
                 tx.live_only();

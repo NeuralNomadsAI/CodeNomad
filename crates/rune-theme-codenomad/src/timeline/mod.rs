@@ -658,8 +658,9 @@ mod tests {
         // Let the previous native gesture's 50 ms momentum window expire before starting a new one.
         rt.frame(0.06);
 
-        // Same-frame follow-up gesture: an intercepted gesture ends and a new gesture begins +
-        // moves in the SAME frame while the first jump is still pending; both deltas must combine.
+        // Same-frame momentum-chained follow-up: an intercepted gesture ends and a chained
+        // gesture begins + moves in the SAME frame (within Rune's 50 ms momentum window) while
+        // the first jump is still pending; both deltas must combine on the pending jump.
         rt.update(|s, tx| {
             let (_, wheel, at, _) = s.scroll.get();
             scroll_rail_to(500.0, tx);
@@ -695,7 +696,34 @@ mod tests {
             (scroll.get().2.offset[1] - 125.0).abs() <= 1.0
                 && scroll.get().1.is_owned()
                 && scroll.get().3,
-            "same-frame follow-up gesture must accumulate on pending jump instead of being overwritten: {:?}",
+            "same-frame momentum-chained follow-up must accumulate on pending jump instead of being overwritten: {:?}",
+            scroll.get().2
+        );
+        // Once the chained gesture ends and the 50 ms momentum window expires, a distinct new
+        // gesture must release ownership and scroll natively.
+        rt.wheel_event(
+            WheelEvent::new(0.0, 0.0)
+                .at(20.0, 60.0)
+                .phase(GesturePhase::Ended),
+        );
+        rt.frame(0.016);
+        rt.frame(0.06);
+        rt.wheel_event(
+            WheelEvent::new(0.0, 0.0)
+                .at(20.0, 60.0)
+                .phase(GesturePhase::Began),
+        );
+        rt.wheel_event(
+            WheelEvent::new(0.0, 20.0)
+                .at(20.0, 60.0)
+                .phase(GesturePhase::Moved),
+        );
+        rt.frame(0.016);
+        assert!(
+            (scroll.get().2.offset[1] - 105.0).abs() <= 1.0
+                && !scroll.get().1.is_owned()
+                && !scroll.get().3,
+            "distinct gesture after MOMENTUM_GAP must release ownership and scroll natively: {:?}",
             scroll.get().2
         );
     }
