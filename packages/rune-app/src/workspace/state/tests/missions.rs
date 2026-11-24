@@ -451,3 +451,98 @@ fn parked_tab_disconnect_marks_own_missions_panel_offline_and_hidden_deletions_f
         assert!(ui.entries[0].missions.as_ref().unwrap().selected.is_none());
     });
 }
+
+#[test]
+fn parked_tab_clears_saved_selection_on_tombstone_and_replacement_panel_inherits_offline() {
+    crate::platform::block_on(async {
+        let http = test_http::Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            crate::platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+        let wake: codenomad_client::Wake = std::sync::Arc::new(|| {});
+        let s = crate::init();
+        let mut active_entry = entry("tab-active".into(), Tab::Workspace(workspace("alpha", "")));
+        active_entry.binding = Some(backend.clone());
+        active_entry.project = Some(codenomad_client::catalog::Project {
+            id: backend.workspace.clone(),
+            path: "/fixture".into(),
+        });
+        let mut parked_saved = workspace("alpha", "");
+        parked_saved.view.selected_mission = Some("msn-tomb".into());
+        let mut parked_entry = entry("tab-parked".into(), Tab::Workspace(parked_saved));
+        let mut parked_panel = crate::missions::Panel::new(
+            backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        parked_panel.seed_summary_for_test("msn-tomb");
+        parked_entry.missions = Some(parked_panel);
+
+        let mut ui = Ui::new();
+        ui.entries = vec![active_entry, parked_entry];
+        ui.active = 0;
+
+        // 1. Replacement panel created while the preference stream is offline starts offline.
+        crate::settings::set_stream_online(&s, false);
+        let mut tx = rune::Tx::default();
+        super::super::panel_state::poll_missions(&mut ui, &s, &mut tx);
+        assert!(
+            !ui.entries[0].missions.as_ref().unwrap().online(),
+            "replacement panel created while stream is offline must start offline"
+        );
+
+        // 2. A 503 cleanup-pending reconciled as a tombstone (no live mission card) clears
+        // both the parked panel's live selection and its persisted saved.view.selected_mission.
+        ui.mission_lifecycle.start_delete_for_test(
+            "tab-active",
+            &http.backend,
+            "project",
+            "msn-tomb",
+            7,
+            wake,
+        );
+        let del = http.accept().await;
+        let request_id = del.body["requestId"].as_str().unwrap().to_owned();
+        del.reply(503, json!({"code": "cleanup-pending"})).await;
+        let rec = http.accept().await;
+        rec.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [{
+                    "missionID": "msn-tomb", "deletionID": "del-tomb", "requestID": request_id,
+                    "expectedRevision": 7, "deleteManagedSessions": false,
+                    "objective": "Tomb", "createdAt": 1, "removed": 0, "retained": 0,
+                    "pending": 1, "reasons": [], "documentPending": false
+                }]
+            }),
+        )
+        .await;
+        let mut cleared = false;
+        for _ in 0..100 {
+            super::super::panel_state::poll_missions(&mut ui, &s, &mut tx);
+            if matches!(
+                &ui.entries[1].saved,
+                Tab::Workspace(saved) if saved.view.selected_mission.is_none()
+            ) {
+                cleared = true;
+                break;
+            }
+            crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            cleared,
+            "tombstoned mission must clear saved.view.selected_mission on parked tabs"
+        );
+        assert!(ui.entries[1].missions.as_ref().unwrap().selected.is_none());
+    });
+}

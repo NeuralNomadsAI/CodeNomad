@@ -345,6 +345,7 @@ pub(super) fn bind(
     crate::composer::literal::restore(&mut s.draft, &s.composer.draft.literal_spans);
     s.phase = Phase::Loading;
     crate::git::online(s, false);
+    crate::settings::set_stream_online(s, false);
     crate::workspace::missions_online(s, false);
     crate::git::connected_placed(s, &b, slug);
     crate::workspace::restore_files_mode(s);

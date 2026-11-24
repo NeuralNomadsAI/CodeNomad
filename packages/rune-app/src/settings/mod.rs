@@ -81,6 +81,10 @@ pub(crate) fn mission_delete_sessions(s: &State) -> Option<bool> {
     s.settings.shared.borrow().mission_delete_sessions()
 }
 
+pub(crate) fn stream_offline(s: &State) -> bool {
+    s.settings.shared.borrow().stream_offline()
+}
+
 pub(crate) fn set_stream_online(s: &State, online: bool) {
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.set_stream_online(online);
@@ -193,7 +197,6 @@ pub(crate) fn poll(s: &mut State) -> bool {
             }
         }
     }
-    let was_offline = shared.stream_offline();
     if s.screen
         .launcher()
         .is_some_and(|launcher| launcher.authentication_required)
@@ -210,7 +213,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
     if let Some(online) = stream_state {
         shared.set_stream_online(online);
     }
-    let handoff_offline = !was_offline && shared.stream_offline() && stream_state.is_none();
+    let still_offline = shared.stream_offline() && stream_state.is_none();
     let preferences_changed = bound | shared.poll();
     if preferences_changed && let Some(wake) = &shared.window_wake {
         wake();
@@ -278,7 +281,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
     } else {
         if let Some(online) = stream_state {
             crate::workspace::missions_online(s, online);
-        } else if handoff_offline {
+        } else if still_offline {
             crate::workspace::missions_online(s, false);
         }
         if reconnected && stream_state != Some(false) {

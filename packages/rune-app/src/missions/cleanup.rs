@@ -7,7 +7,7 @@ use codenomad_client::{
     missions::{Cleanup, DeletionOutcome, DeletionRequest, LifecycleTarget},
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -60,11 +60,13 @@ pub(super) enum DeleteResult {
         key: &'static str,
         document_cleanup: bool,
         deletion_id: Option<String>,
+        tombstoned: bool,
     },
     Cancelled {
         dispatched: bool,
         document_cleanup: bool,
         deletion_id: Option<String>,
+        tombstoned: bool,
     },
 }
 
@@ -84,13 +86,16 @@ enum CleanupRetryResult {
     Settled {
         receipt: Box<Cleanup>,
         mutated: bool,
+        document_cleanup: bool,
     },
     Failed {
         key: &'static str,
         mutated: bool,
+        document_cleanup: bool,
     },
     Cancelled {
         mutated: bool,
+        document_cleanup: bool,
     },
 }
 
@@ -108,6 +113,7 @@ pub(super) struct CleanupPolled {
     pub refreshed_scopes: Vec<WorkspaceScope>,
     pub deleted_missions: Vec<(WorkspaceScope, String)>,
     pub settled_cleanups: Vec<(WorkspaceScope, Cleanup)>,
+    pub document_pending_rows: Vec<(WorkspaceScope, String, String)>,
     pub changed: bool,
 }
 
@@ -118,6 +124,7 @@ impl CleanupPolled {
             && self.refreshed_scopes.is_empty()
             && self.deleted_missions.is_empty()
             && self.settled_cleanups.is_empty()
+            && self.document_pending_rows.is_empty()
     }
 }
 
@@ -126,6 +133,7 @@ pub(super) struct CleanupOwner {
     deletes: HashMap<(WorkspaceScope, MissionKey), DeleteIntent>,
     retries: HashMap<WorkspaceScope, CleanupRetry>,
     retry_errors: HashMap<WorkspaceScope, (String, String, &'static str)>,
+    document_cleanups: HashSet<(WorkspaceScope, String, String)>,
 }
 
 impl CleanupOwner {
@@ -335,9 +343,20 @@ impl CleanupOwner {
             retry.retired = true;
         }
         self.retry_errors.remove(scope);
+        self.document_cleanups
+            .retain(|(doc_scope, _, _)| doc_scope != scope);
     }
 
     pub fn retire_settled_cleanups(&mut self, scope: &WorkspaceScope, cleanups: &[Cleanup]) {
+        for row in cleanups {
+            if row.document_pending == Some(false) {
+                self.document_cleanups.remove(&(
+                    scope.clone(),
+                    row.mission_id.clone(),
+                    row.deletion_id.clone(),
+                ));
+            }
+        }
         self.deletes.retain(|_, intent| {
             if &intent.scope != scope || intent.flight.is_some() {
                 return true;
@@ -416,6 +435,12 @@ impl CleanupOwner {
             return;
         }
         self.retry_errors.remove(&scope);
+        let require_document_settled = cleanup.document_pending == Some(true)
+            || self.document_cleanups.contains(&(
+                scope.clone(),
+                cleanup.mission_id.clone(),
+                cleanup.deletion_id.clone(),
+            ));
         let key = CleanupKey::new(scope.clone(), &cleanup);
         let project = scope.project.clone();
         let (out, inbox) = bounded(1);
@@ -430,7 +455,15 @@ impl CleanupOwner {
             },
         );
         platform::spawn(async move {
-            let result = run_cleanup_retry(backend, project, cleanup, view_live, row_live).await;
+            let result = run_cleanup_retry(
+                backend,
+                project,
+                cleanup,
+                require_document_settled,
+                view_live,
+                row_live,
+            )
+            .await;
             if out.send(result).await.is_ok() {
                 wake();
             }
@@ -474,11 +507,17 @@ impl CleanupOwner {
                     key,
                     document_cleanup,
                     deletion_id,
+                    tombstoned,
                 } => {
                     intent.error = Some(key);
                     intent.document_cleanup |= document_cleanup;
                     if intent.deletion_id.is_none() {
                         intent.deletion_id = deletion_id;
+                    }
+                    if tombstoned {
+                        polled
+                            .deleted_missions
+                            .push((intent.scope.clone(), intent.target.mission.clone()));
                     }
                     polled
                         .refreshed_missions
@@ -492,10 +531,16 @@ impl CleanupOwner {
                     dispatched,
                     document_cleanup,
                     deletion_id,
+                    tombstoned,
                 } => {
                     intent.document_cleanup |= document_cleanup;
                     if intent.deletion_id.is_none() {
                         intent.deletion_id = deletion_id;
+                    }
+                    if tombstoned {
+                        polled
+                            .deleted_missions
+                            .push((intent.scope.clone(), intent.target.mission.clone()));
                     }
                     if dispatched && !polled.refreshed_scopes.contains(&intent.scope) {
                         polled.refreshed_scopes.push(intent.scope.clone());
@@ -528,10 +573,42 @@ impl CleanupOwner {
             }
             let view_current =
                 view_live.load(Ordering::Acquire) && row_live.load(Ordering::Acquire);
+            let record_doc = |owner: &mut Self,
+                              polled: &mut CleanupPolled,
+                              scope: &WorkspaceScope,
+                              mission_id: &str,
+                              deletion_id: &str| {
+                let doc_key = (scope.clone(), mission_id.to_owned(), deletion_id.to_owned());
+                if !owner.document_cleanups.contains(&doc_key) {
+                    if owner.document_cleanups.len() >= CAPACITY
+                        && let Some(evict) = owner.document_cleanups.iter().next().cloned()
+                    {
+                        owner.document_cleanups.remove(&evict);
+                    }
+                    owner.document_cleanups.insert(doc_key.clone());
+                }
+                polled.document_pending_rows.push(doc_key);
+            };
             match result {
-                CleanupRetryResult::Settled { receipt, mutated } => {
+                CleanupRetryResult::Settled {
+                    receipt,
+                    mutated,
+                    document_cleanup,
+                } => {
+                    if receipt.document_pending == Some(false) {
+                        self.document_cleanups.remove(&(
+                            scope.clone(),
+                            receipt.mission_id.clone(),
+                            receipt.deletion_id.clone(),
+                        ));
+                    } else if document_cleanup {
+                        record_doc(self, &mut polled, &scope, &mission_id, &deletion_id);
+                    }
+                    if !view_current && !mutated {
+                        continue;
+                    }
                     self.deletes.retain(|_, intent| {
-                        !(intent.scope == scope
+                        let matches = intent.scope == scope
                             && intent.flight.is_none()
                             && intent.target.mission == receipt.mission_id
                             && intent.request.request_id == receipt.request_id
@@ -541,7 +618,16 @@ impl CleanupOwner {
                             && intent
                                 .deletion_id
                                 .as_deref()
-                                .is_none_or(|id| id == receipt.deletion_id))
+                                .is_none_or(|id| id == receipt.deletion_id);
+                        if matches {
+                            intent.document_cleanup |= document_cleanup;
+                            if intent.deletion_id.is_none() {
+                                intent.deletion_id = Some(receipt.deletion_id.clone());
+                            }
+                            !cleanup_settled_for(intent.document_cleanup, &receipt)
+                        } else {
+                            true
+                        }
                     });
                     if view_current {
                         self.retry_errors.remove(&scope);
@@ -552,16 +638,18 @@ impl CleanupOwner {
                         if !polled.refreshed_scopes.contains(&scope) {
                             polled.refreshed_scopes.push(scope);
                         }
-                    } else if mutated {
-                        polled
-                            .deleted_missions
-                            .push((scope.clone(), receipt.mission_id.clone()));
-                        if !polled.refreshed_scopes.contains(&scope) {
-                            polled.refreshed_scopes.push(scope);
-                        }
+                    } else if mutated && !polled.refreshed_scopes.contains(&scope) {
+                        polled.refreshed_scopes.push(scope);
                     }
                 }
-                CleanupRetryResult::Failed { key, mutated } => {
+                CleanupRetryResult::Failed {
+                    key,
+                    mutated,
+                    document_cleanup,
+                } => {
+                    if document_cleanup {
+                        record_doc(self, &mut polled, &scope, &mission_id, &deletion_id);
+                    }
                     if view_current {
                         if !self.retry_errors.contains_key(&scope)
                             && self.retry_errors.len() >= CAPACITY
@@ -578,7 +666,13 @@ impl CleanupOwner {
                         polled.refreshed_scopes.push(scope);
                     }
                 }
-                CleanupRetryResult::Cancelled { mutated } => {
+                CleanupRetryResult::Cancelled {
+                    mutated,
+                    document_cleanup,
+                } => {
+                    if document_cleanup {
+                        record_doc(self, &mut polled, &scope, &mission_id, &deletion_id);
+                    }
                     if mutated && !polled.refreshed_scopes.contains(&scope) {
                         polled.refreshed_scopes.push(scope);
                     }
@@ -606,6 +700,7 @@ async fn run_delete(
         live.as_ref()
             .is_none_or(|flag| flag.load(Ordering::Acquire))
     };
+    let mut tombstoned = false;
     if reconcile_first {
         let Ok(snapshot) = backend
             .read_mission_reconciliation(&target.project, &target.mission)
@@ -616,12 +711,14 @@ async fn run_delete(
                     key: "missions.cleanup.error.unconfirmed",
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    tombstoned,
                 }
             } else {
                 DeleteResult::Cancelled {
                     dispatched: false,
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    tombstoned,
                 }
             };
         };
@@ -631,12 +728,14 @@ async fn run_delete(
                     key: "missions.cleanup.error.unconfirmed",
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    tombstoned,
                 }
             } else {
                 DeleteResult::Cancelled {
                     dispatched: false,
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    tombstoned,
                 }
             };
         }
@@ -646,7 +745,33 @@ async fn run_delete(
                     .as_deref()
                     .is_none_or(|id| item.deletion_id == id)
         });
+        if matching.is_none()
+            && expected_deletion_id.as_deref().is_some_and(|pinned| {
+                snapshot.cleanups.iter().any(|item| {
+                    request.matches_cleanup(&target.mission, item) && item.deletion_id != pinned
+                })
+            })
+        {
+            return if still_live() {
+                DeleteResult::Failed {
+                    key: "missions.cleanup.error.unconfirmed",
+                    document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
+                    tombstoned: false,
+                }
+            } else {
+                DeleteResult::Cancelled {
+                    dispatched: false,
+                    document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
+                    tombstoned: false,
+                }
+            };
+        }
         if let Some(intent) = matching {
+            if snapshot.mission_revision.is_none() {
+                tombstoned = true;
+            }
             if intent.document_pending == Some(true) {
                 require_document_settled = true;
             }
@@ -661,12 +786,14 @@ async fn run_delete(
                         key: "missions.cleanup.error.unconfirmed",
                         document_cleanup: require_document_settled,
                         deletion_id: expected_deletion_id,
+                        tombstoned,
                     }
                 } else {
                     DeleteResult::Cancelled {
                         dispatched: false,
                         document_cleanup: require_document_settled,
                         deletion_id: expected_deletion_id,
+                        tombstoned,
                     }
                 };
             }
@@ -681,12 +808,14 @@ async fn run_delete(
                     key: "missions.cleanup.error.revisionConflict",
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    tombstoned,
                 }
             } else {
                 DeleteResult::Cancelled {
                     dispatched: false,
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    tombstoned,
                 }
             };
         }
@@ -695,6 +824,7 @@ async fn run_delete(
                 dispatched: false,
                 document_cleanup: require_document_settled,
                 deletion_id: expected_deletion_id,
+                tombstoned,
             };
         }
     }
@@ -715,6 +845,7 @@ async fn run_delete(
             dispatched: true,
             document_cleanup: require_document_settled,
             deletion_id: expected_deletion_id,
+            tombstoned,
         };
     }
     let mut key = outcome.error_key();
@@ -733,6 +864,9 @@ async fn run_delete(
                     .is_none_or(|id| item.deletion_id == id)
         })
     {
+        if snapshot.mission_revision.is_none() {
+            tombstoned = true;
+        }
         if expected_deletion_id.is_none() {
             expected_deletion_id = Some(intent.deletion_id.clone());
         }
@@ -755,12 +889,14 @@ async fn run_delete(
             dispatched: true,
             document_cleanup: require_document_settled,
             deletion_id: expected_deletion_id,
+            tombstoned,
         };
     }
     DeleteResult::Failed {
         key,
         document_cleanup: require_document_settled,
         deletion_id: expected_deletion_id,
+        tombstoned,
     }
 }
 
@@ -768,11 +904,11 @@ async fn run_cleanup_retry(
     backend: Backend,
     project: String,
     saved: Cleanup,
+    mut require_document_settled: bool,
     view_live: Arc<AtomicBool>,
     row_live: Arc<AtomicBool>,
 ) -> CleanupRetryResult {
     let still_live = || view_live.load(Ordering::Acquire) && row_live.load(Ordering::Acquire);
-    let mut require_document_settled = saved.document_pending == Some(true);
     let Ok(snapshot) = backend
         .read_mission_reconciliation(&project, &saved.mission_id)
         .await
@@ -781,9 +917,13 @@ async fn run_cleanup_retry(
             CleanupRetryResult::Failed {
                 key: "missions.cleanup.error.unconfirmed",
                 mutated: false,
+                document_cleanup: require_document_settled,
             }
         } else {
-            CleanupRetryResult::Cancelled { mutated: false }
+            CleanupRetryResult::Cancelled {
+                mutated: false,
+                document_cleanup: require_document_settled,
+            }
         };
     };
     if snapshot.cleanup_unavailable {
@@ -791,9 +931,13 @@ async fn run_cleanup_retry(
             CleanupRetryResult::Failed {
                 key: "missions.cleanup.error.unconfirmed",
                 mutated: false,
+                document_cleanup: require_document_settled,
             }
         } else {
-            CleanupRetryResult::Cancelled { mutated: false }
+            CleanupRetryResult::Cancelled {
+                mutated: false,
+                document_cleanup: require_document_settled,
+            }
         };
     }
     let Some(fresh) = snapshot
@@ -805,9 +949,13 @@ async fn run_cleanup_retry(
             CleanupRetryResult::Failed {
                 key: "missions.cleanup.error.unconfirmed",
                 mutated: false,
+                document_cleanup: require_document_settled,
             }
         } else {
-            CleanupRetryResult::Cancelled { mutated: false }
+            CleanupRetryResult::Cancelled {
+                mutated: false,
+                document_cleanup: require_document_settled,
+            }
         };
     };
     if fresh.document_pending == Some(true) {
@@ -815,27 +963,36 @@ async fn run_cleanup_retry(
     }
     if !fresh.is_pending() {
         if !still_live() {
-            return CleanupRetryResult::Cancelled { mutated: false };
+            return CleanupRetryResult::Cancelled {
+                mutated: false,
+                document_cleanup: require_document_settled,
+            };
         }
         return if cleanup_settled_for(require_document_settled, fresh) {
             CleanupRetryResult::Settled {
                 receipt: Box::new(fresh.clone()),
                 mutated: false,
+                document_cleanup: require_document_settled,
             }
         } else {
             CleanupRetryResult::Failed {
                 key: "missions.cleanup.error.unconfirmed",
                 mutated: false,
+                document_cleanup: require_document_settled,
             }
         };
     }
     if !still_live() {
-        return CleanupRetryResult::Cancelled { mutated: false };
+        return CleanupRetryResult::Cancelled {
+            mutated: false,
+            document_cleanup: require_document_settled,
+        };
     }
     let Ok(request) = DeletionRequest::from_cleanup(fresh) else {
         return CleanupRetryResult::Failed {
             key: "missions.cleanup.error.unconfirmed",
             mutated: false,
+            document_cleanup: require_document_settled,
         };
     };
     let outcome = backend
@@ -851,10 +1008,14 @@ async fn run_cleanup_retry(
         return CleanupRetryResult::Settled {
             receipt,
             mutated: true,
+            document_cleanup: require_document_settled,
         };
     }
     if !still_live() {
-        return CleanupRetryResult::Cancelled { mutated: true };
+        return CleanupRetryResult::Cancelled {
+            mutated: true,
+            document_cleanup: require_document_settled,
+        };
     }
     if matches!(outcome, DeletionOutcome::Failed(err) if err.status == 409)
         && let Ok(after) = backend
@@ -862,27 +1023,39 @@ async fn run_cleanup_retry(
             .await
     {
         if !still_live() {
-            return CleanupRetryResult::Cancelled { mutated: true };
+            return CleanupRetryResult::Cancelled {
+                mutated: true,
+                document_cleanup: require_document_settled,
+            };
         }
         if !after.cleanup_unavailable
             && let Some(intent) = after
                 .cleanups
                 .iter()
                 .find(|item| item.matches_saved(&saved))
-            && cleanup_settled_for(require_document_settled, intent)
         {
-            return CleanupRetryResult::Settled {
-                receipt: Box::new(intent.clone()),
-                mutated: true,
-            };
+            if intent.document_pending == Some(true) {
+                require_document_settled = true;
+            }
+            if cleanup_settled_for(require_document_settled, intent) {
+                return CleanupRetryResult::Settled {
+                    receipt: Box::new(intent.clone()),
+                    mutated: true,
+                    document_cleanup: require_document_settled,
+                };
+            }
         }
     }
     if !still_live() {
-        return CleanupRetryResult::Cancelled { mutated: true };
+        return CleanupRetryResult::Cancelled {
+            mutated: true,
+            document_cleanup: require_document_settled,
+        };
     }
     CleanupRetryResult::Failed {
         key: outcome.error_key(),
         mutated: true,
+        document_cleanup: require_document_settled,
     }
 }
 

@@ -310,6 +310,7 @@ impl Preferences {
     }
 
     pub fn stop_before_conversation(&mut self) -> Option<codenomad_client::Receiver<()>> {
+        self.set_stream_online(false);
         self.unwatch();
         self.closing_stream
             .clone()
@@ -318,6 +319,7 @@ impl Preferences {
 
     pub fn require_authentication(&mut self) {
         self.authentication_required = true;
+        self.set_stream_online(false);
         self.opencode_install.cancel_check();
         if let Some(target) = &mut self.provider_target {
             target.transport(false);

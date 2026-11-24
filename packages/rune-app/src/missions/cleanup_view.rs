@@ -61,7 +61,8 @@ pub(crate) fn cleanup_view<S: 'static>(
                     "status",
                 ));
             } else if let Some(err) = intent.error {
-                let retry_disabled = owner.has_active_cleanup_retry(scope, &mission_key.id);
+                let retry_disabled =
+                    !panel.online() || owner.has_active_cleanup_retry(scope, &mission_key.id);
                 let occ_retry = occurrence.to_owned();
                 let scope_retry = scope.clone();
                 let key_retry = mission_key.clone();
@@ -186,7 +187,7 @@ pub(crate) fn cleanup_view<S: 'static>(
             let delete_busy = scope
                 .as_ref()
                 .is_some_and(|scope| owner.has_active_delete_flight(scope, &cleanup.mission_id));
-            let disabled = scope.is_none() || busy || delete_busy;
+            let disabled = !panel.online() || scope.is_none() || busy || delete_busy;
             let occ = occurrence.to_owned();
             let captured_scope = scope.clone();
             let saved = cleanup.clone();

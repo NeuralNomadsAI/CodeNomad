@@ -148,6 +148,9 @@ impl Panel {
     }
 
     pub(crate) fn set_online(&mut self, online: bool) {
+        if self.online == online {
+            return;
+        }
         self.online = online;
         self.observation.set_online(online);
         if !online {
@@ -225,6 +228,22 @@ impl Panel {
         }
     }
 
+    pub(super) fn mark_cleanup_document_pending(&mut self, mission_id: &str, deletion_id: &str) {
+        for row in &mut self.cleanups {
+            if row.mission_id == mission_id
+                && row.deletion_id == deletion_id
+                && row.document_pending.is_none()
+            {
+                row.document_pending = Some(true);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn cleanup_token_count(&self) -> usize {
+        self.cleanup_tokens.len()
+    }
+
     pub(super) fn cleanup_row_live(
         &mut self,
         mission_id: &str,
@@ -245,6 +264,14 @@ impl Panel {
                 }
                 alive
             });
+            while self.cleanup_tokens.len() >= 64 {
+                let Some(evict) = self.cleanup_tokens.keys().next().cloned() else {
+                    break;
+                };
+                if let Some(token) = self.cleanup_tokens.remove(&evict) {
+                    token.store(false, Ordering::Release);
+                }
+            }
         }
         let token = Arc::new(AtomicBool::new(true));
         self.cleanup_tokens.insert(key, token.clone());
@@ -754,7 +781,7 @@ pub(super) fn title(row: &Summary) -> &str {
         .unwrap_or(&row.objective)
 }
 
-fn pending_cleanup_keys(cleanups: &[Cleanup]) -> Vec<(String, String, String, u64, bool)> {
+fn pending_cleanup_keys(cleanups: &[Cleanup]) -> Vec<(String, String, String, u64, bool, u64)> {
     let mut keys: Vec<_> = cleanups
         .iter()
         .filter(|row| row.is_pending())
@@ -765,6 +792,7 @@ fn pending_cleanup_keys(cleanups: &[Cleanup]) -> Vec<(String, String, String, u6
                 row.request_id.clone(),
                 row.expected_revision,
                 row.delete_managed_sessions,
+                row.created_at.to_bits(),
             )
         })
         .collect();

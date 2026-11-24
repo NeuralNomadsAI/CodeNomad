@@ -45,6 +45,7 @@ enum Attempt {
         mission: MissionKey,
         target: LifecycleTarget,
         flight: Receiver<RecoveryOutcome>,
+        retired: bool,
     },
     Admitted(u64),
 }
@@ -119,7 +120,15 @@ impl Recovery {
     pub fn retire_scope(&mut self, scope: &WorkspaceScope) {
         self.attempts.retain(|key, attempt| {
             let same_scope = key.server == scope.server && key.workspace == scope.workspace;
-            !same_scope || matches!(attempt, Attempt::Pending { .. })
+            if !same_scope {
+                return true;
+            }
+            if let Attempt::Pending { retired, .. } = attempt {
+                *retired = true;
+                true
+            } else {
+                false
+            }
         });
         self.errors
             .retain(|key, _| !(key.server == scope.server && key.workspace == scope.workspace));
@@ -205,6 +214,7 @@ impl Recovery {
                 mission: source.mission.clone(),
                 target: lifecycle_target.clone(),
                 flight: inbox,
+                retired: false,
             },
         );
         platform::spawn(async move {
@@ -227,6 +237,7 @@ impl Recovery {
                 mission,
                 target,
                 flight,
+                retired,
             } = attempt
                 && let Ok(outcome) = flight.try_recv()
             {
@@ -235,12 +246,17 @@ impl Recovery {
                     scope.clone(),
                     mission.clone(),
                     target.clone(),
+                    *retired,
                     outcome,
                 ));
             }
         }
         polled.changed = !settled.is_empty();
-        for (key, scope, mission, target, outcome) in settled {
+        for (key, scope, mission, target, retired, outcome) in settled {
+            if retired {
+                self.attempts.remove(&key);
+                continue;
+            }
             if !polled.refreshed_scopes.contains(&scope) {
                 polled.refreshed_scopes.push(scope);
             }

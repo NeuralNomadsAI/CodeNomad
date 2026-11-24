@@ -65,6 +65,7 @@ impl Cleanup {
             && self.request_id == other.request_id
             && self.expected_revision == other.expected_revision
             && self.delete_managed_sessions == other.delete_managed_sessions
+            && self.created_at.to_bits() == other.created_at.to_bits()
     }
 }
 

@@ -434,6 +434,7 @@ fn settled_guard_capacity_never_evicts_pending_attempts() {
             mission: src.mission.clone(),
             target: src.target.clone(),
             flight: inbox,
+            retired: false,
         },
     );
     for i in 1..=(SETTLED_CAPACITY + 10) as u64 {
@@ -505,5 +506,31 @@ fn concurrent_recovery_failures_preserve_each_missions_error() {
             guard.error_for(&src_a, RecoveryTarget::Coordinator),
             Some(RecoveryError::Busy)
         );
+    });
+}
+
+#[test]
+fn retire_scope_drops_late_recovery_refusal_error() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-retire");
+        let mut guard = Recovery::default();
+
+        guard.start(
+            &src,
+            7,
+            RecoveryTarget::Coordinator,
+            http.backend.clone(),
+            wake,
+        );
+        let req = http.accept().await;
+        guard.retire_scope(&src.workspace_scope());
+        req.reply(409, json!({"code": "recovery-busy"})).await;
+        wait(done.recv()).await.unwrap();
+        let polled = guard.poll();
+        assert!(polled.admitted.is_empty());
+        assert!(polled.refreshed_scopes.is_empty());
+        assert_eq!(guard.error_for(&src, RecoveryTarget::Coordinator), None);
     });
 }

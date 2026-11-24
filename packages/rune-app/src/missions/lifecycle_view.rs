@@ -180,6 +180,7 @@ pub(crate) fn controls(
     }
     if delete_state.is_none() {
         let disabled = !ready
+            || !panel.online()
             || owner.busy(&source)
             || owner.unresolved(&source, header)
             || recovery_busy
@@ -234,7 +235,8 @@ pub(crate) fn controls(
             ));
         }
         Some(DeleteState::Failed(key)) => {
-            let retry_disabled = owner.busy(&source)
+            let retry_disabled = !panel.online()
+                || owner.busy(&source)
                 || recovery_busy
                 || owner
                     .cleanup

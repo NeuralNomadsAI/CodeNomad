@@ -54,6 +54,17 @@ pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El, c
         shown = true;
         let id = row.id.clone();
         let selected = ui.selected.as_deref() == Some(&id);
+        let interrupted = selected
+            && row.status == Status::Active
+            && row.run_state.unwrap_or(RunState::Running) == RunState::Running
+            && ui.detail.snapshot.as_ref().is_some_and(|snap| {
+                snap.header.root.id == row.id && ui.observation.interrupted(&snap.header)
+            });
+        let description = if interrupted {
+            t("missionsPanel.state.interrupted")
+        } else {
+            status(row.status, row.run_state)
+        };
         let scoped = scoped.clone();
         list = list.child(
             shell::session_row(title(row), selected, false, move |state, tx| {
@@ -63,7 +74,7 @@ pub(crate) fn panel_body<S: 'static>(ui: &Panel, owner: Owner<S>, actions: El, c
                 }
             })
             .key(format!("mission-row-{}", row.id))
-            .description(status(row.status, row.run_state)),
+            .description(description),
         );
     }
     let mut body = theme::scroll().child(list);

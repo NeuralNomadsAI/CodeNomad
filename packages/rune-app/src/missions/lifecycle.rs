@@ -271,6 +271,7 @@ impl Panel {
             }
             Gesture::DeleteMission(witnessed, delete_managed_sessions)
                 if ready
+                    && self.online()
                     && !recovery_busy
                     && witnessed == revision
                     && !owner.unresolved(source, header)
@@ -294,7 +295,7 @@ impl Panel {
                 );
                 None
             }
-            Gesture::RetryDelete if !owner.busy(source) && !recovery_busy => {
+            Gesture::RetryDelete if self.online() && !owner.busy(source) && !recovery_busy => {
                 owner.cleanup.retry_delete(
                     source,
                     self.selection_live.clone(),
@@ -330,6 +331,11 @@ impl Panel {
                 owner.recovery.clear_error_for(&scope, mission_id);
             }
         }
+        for (doc_scope, mission_id, deletion_id) in &settled.cleanup.document_pending_rows {
+            if doc_scope == &scope {
+                self.mark_cleanup_document_pending(mission_id, deletion_id);
+            }
+        }
     }
 
     pub(crate) fn settle_controls(
@@ -344,6 +350,11 @@ impl Panel {
                 if deleted_scope == &scope {
                     self.forget_deleted_mission(mission_id);
                     owner.recovery.clear_error_for(&scope, mission_id);
+                }
+            }
+            for (doc_scope, mission_id, deletion_id) in &settled.cleanup.document_pending_rows {
+                if doc_scope == &scope {
+                    self.mark_cleanup_document_pending(mission_id, deletion_id);
                 }
             }
             for (settled_scope, receipt) in &settled.cleanup.settled_cleanups {

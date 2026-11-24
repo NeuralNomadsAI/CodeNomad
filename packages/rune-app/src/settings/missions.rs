@@ -317,4 +317,56 @@ mod tests {
             prefs.unwatch();
         });
     }
+
+    #[test]
+    fn stop_before_conversation_revokes_mission_delete_sessions_even_if_get_returns_true() {
+        platform::block_on(async {
+            let http = Http::new().await;
+            let mut prefs = Preferences::default();
+            prefs.bind(Some(http.backend.clone()));
+
+            let (mut got_config, mut got_state) = (false, false);
+            while !(got_config && got_state) {
+                prefs.poll();
+                let req = http.accept().await;
+                if req.header.contains("/api/storage/config/ui") {
+                    req.reply(200, json!({"settings": {"missionDeleteSessions": true}}))
+                        .await;
+                    got_config = true;
+                } else if req.header.contains("/api/storage/state") {
+                    req.reply(200, json!({})).await;
+                    got_state = true;
+                } else {
+                    req.reply(404, json!({})).await;
+                }
+            }
+            wait_until(|| {
+                prefs.poll();
+                prefs.mission_delete_sessions() == Some(true)
+            })
+            .await;
+
+            // Handoff to a conversation SSE marks the preference stream offline immediately.
+            let _ = prefs.stop_before_conversation();
+            prefs.invalidate(Owner::Config);
+            assert!(prefs.stream_offline());
+            assert_eq!(prefs.mission_delete_sessions(), None);
+            // Even if a queued config GET completes with `true` during the observation gap,
+            // `mission_delete_sessions()` must stay withheld until the replacement SSE opens.
+            prefs.poll();
+            let req = http.accept().await;
+            assert!(req.header.contains("/api/storage/config/ui"));
+            req.reply(200, json!({"settings": {"missionDeleteSessions": true}}))
+                .await;
+            for _ in 0..10 {
+                prefs.poll();
+                platform::sleep(Duration::from_millis(10)).await;
+            }
+            assert_eq!(
+                prefs.mission_delete_sessions(),
+                None,
+                "config GET during SSE handoff gap must not re-enable missionDeleteSessions"
+            );
+        });
+    }
 }

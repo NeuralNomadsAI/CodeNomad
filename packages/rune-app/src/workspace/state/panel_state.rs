@@ -237,40 +237,16 @@ fn mission_edit(s: &mut State) -> (Option<&mut missions::Panel>, &mut TextEdit) 
 }
 
 pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
-    let finished = ui.mission_lifecycle.poll_all();
-    let mut changed = finished.changed();
+    let mut changed = false;
     let mut selection_changed = false;
     let mounted = crate::shell::right_panel_visible(s);
-    let current = &ui.entries[ui.active];
-    let current_source = (mounted
-        && matches!(&current.saved, Tab::Workspace(saved)
-        if saved.view.right_panel == RightPanelTab::Missions))
-    .then(|| {
-        current
-            .missions
-            .as_ref()?
-            .control_source(&current.key)
-            .map(|(key, _)| key)
-    })
-    .flatten();
-    ui.mission_lifecycle
-        .retain_checks_for(current_source.as_ref());
-    if ui
-        .mission_lifecycle
-        .confirmation
-        .as_ref()
-        .is_some_and(|(source, _)| current_source.as_ref() != Some(source))
-    {
-        ui.mission_lifecycle.confirmation = None;
-        changed = true;
-    }
     let mut retired_panels = Vec::new();
+    let mut active_visible = false;
     for (index, entry) in ui.entries.iter_mut().enumerate() {
         if index != ui.active {
             if let Some(panel) = &mut entry.missions {
                 panel.show(false);
                 panel.cancel_probe();
-                panel.apply_background_deletions(&mut ui.mission_lifecycle, &finished);
             }
             continue;
         }
@@ -308,8 +284,21 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
                     .then(|| old.project().map(str::to_owned))
                     .flatten()
             });
+            let stream_offline = crate::settings::stream_offline(s)
+                || (s.incoming.is_some()
+                    && matches!(
+                        s.phase,
+                        crate::Phase::Loading | crate::Phase::Reconnecting | crate::Phase::Failed
+                    ))
+                || entry
+                    .missions
+                    .as_ref()
+                    .is_some_and(|old| old.same_workspace_target(&backend) && !old.online());
             let mut panel =
                 missions::Panel::new(backend, carried_project, s.reads.clone(), s.wake.clone());
+            if stream_offline {
+                panel.set_online(false);
+            }
             panel.selected.clone_from(&saved.view.selected_mission);
             if let Some(old) = entry.missions.replace(panel) {
                 retired_panels.push(old);
@@ -331,19 +320,53 @@ pub(super) fn poll_missions(ui: &mut Ui, s: &State, tx: &mut rune::Tx) -> bool {
             }
             changed |= panel.poll();
             panel.show(panel.supported() && visible);
-            if panel.supported() && visible {
+            active_visible = panel.supported() && visible;
+        }
+    }
+    for old in retired_panels {
+        retire_unused_mission_scope(&ui.entries, &mut ui.mission_lifecycle, Some(old));
+    }
+    // Poll lifecycle/cleanup completions only after directory reads, visibility transitions,
+    // and scope retirements have updated every live publication fence.
+    let finished = ui.mission_lifecycle.poll_all();
+    changed |= finished.changed();
+    for (index, entry) in ui.entries.iter_mut().enumerate() {
+        if let Some(panel) = &mut entry.missions {
+            if index == ui.active && active_visible {
                 panel.settle_controls(&entry.key, &mut ui.mission_lifecycle, &finished);
             } else {
                 panel.apply_background_deletions(&mut ui.mission_lifecycle, &finished);
             }
-            if saved.view.selected_mission != panel.selected {
+            if let Tab::Workspace(saved) = &mut entry.saved
+                && saved.view.selected_mission != panel.selected
+            {
                 saved.view.selected_mission.clone_from(&panel.selected);
                 selection_changed = true;
             }
         }
     }
-    for old in retired_panels {
-        retire_unused_mission_scope(&ui.entries, &mut ui.mission_lifecycle, Some(old));
+    let current = &ui.entries[ui.active];
+    let current_source = (mounted
+        && matches!(&current.saved, Tab::Workspace(saved)
+        if saved.view.right_panel == RightPanelTab::Missions))
+    .then(|| {
+        current
+            .missions
+            .as_ref()?
+            .control_source(&current.key)
+            .map(|(key, _)| key)
+    })
+    .flatten();
+    ui.mission_lifecycle
+        .retain_checks_for(current_source.as_ref());
+    if ui
+        .mission_lifecycle
+        .confirmation
+        .as_ref()
+        .is_some_and(|(source, _)| current_source.as_ref() != Some(source))
+    {
+        ui.mission_lifecycle.confirmation = None;
+        changed = true;
     }
     if selection_changed {
         ui.changed();
