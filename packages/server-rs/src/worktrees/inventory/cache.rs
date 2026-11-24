@@ -251,6 +251,12 @@ async fn cached_catalogue(
             Join(u64, u64, InventoryRead),
         }
         let step = {
+            // Acquire `inner` before `linked_events` (matching `App::remove` -> `forget`) so a
+            // closed/forgotten workspace can never register or recreate a cache entry.
+            let workspaces = app.inner.lock().unwrap();
+            if !workspaces.workspaces.iter().any(|item| item.id == w.id) {
+                return None;
+            }
             let mut cache = app.linked_events.lock().unwrap();
             if !app.native.current(endpoint) {
                 return None;
@@ -395,12 +401,17 @@ async fn cached_catalogue(
             }
             Step::Join(epoch, sse_gen, loading) => {
                 let result = loading.await;
-                if app.workspace(&w.id.to_string()).is_err() || !app.native.current(endpoint) {
+                let workspaces = app.inner.lock().unwrap();
+                if !workspaces.workspaces.iter().any(|item| item.id == w.id) {
                     return None;
                 }
                 let cache = app.linked_events.lock().unwrap();
+                if !app.native.current(endpoint) {
+                    return None;
+                }
                 if !refresh_on_load && cache.sse_gen(w.id) != sse_gen {
                     drop(cache);
+                    drop(workspaces);
                     continue;
                 }
                 let result = result?;
