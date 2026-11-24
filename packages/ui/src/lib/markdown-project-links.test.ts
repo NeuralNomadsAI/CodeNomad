@@ -17,6 +17,9 @@ describe("project-file link paths", () => {
     assert.equal(projectLinkPath("javascript%3Aalert(1)"), undefined)
     assert.equal(projectLinkPath("data%3Atext/plain,x"), undefined)
     assert.equal(projectLinkPath("C%3A/Users/me/report.md"), "C:/Users/me/report.md")
+    assert.equal(projectLinkPath("file:///C:/Users/me/My%20reports"), "C:/Users/me/My reports")
+    assert.equal(projectLinkPath("file://localhost/home/me/repo/docs/"), "/home/me/repo/docs")
+    assert.equal(projectLinkPath("file://server/share/x.md"), undefined)
     for (const source of ["", "#", "#section", "https://example.com/x", "http://x", "mailto:a@b.c",
       "javascript:alert(1)", "data:text/plain,x", "//cdn.example.com/a.png", "\\\\server\\share\\x.png"]) {
       assert.equal(projectLinkPath(source), undefined, source)

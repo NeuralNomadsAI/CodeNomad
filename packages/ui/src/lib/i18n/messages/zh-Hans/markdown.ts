@@ -13,4 +13,5 @@ export const markdownMessages = {
 
   "markdown.link.previewOpens": "在网页预览中打开。Ctrl+点击（macOS 上为 ⌘+点击）或鼠标中键点击可在浏览器中打开。",
   "markdown.link.fileOpens": "在文件预览中打开。Ctrl+点击（macOS 上为 ⌘+点击）或鼠标中键点击可在浏览器中打开。",
+  "markdown.link.pathOpens": "在文件预览中打开文件，或在文件管理器中打开文件夹。Ctrl+点击（macOS 上为 ⌘+点击）或鼠标中键点击可在浏览器中打开。",
 } as const

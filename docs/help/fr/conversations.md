@@ -73,7 +73,8 @@ Les brouillons sont un état de travail côté client, pas des messages natifs p
 1. Les réponses de l’agent lient des fichiers du projet par des chemins relatifs et absolus.
 2. Un chemin écrit en texte simple devient aussi un lien lorsque le worktree de la conversation est connu pour contenir le fichier ; les chemins inexistants restent en texte simple.
 3. Un clic simple ouvre le fichier lié dans l’aperçu du fichier, lu depuis le worktree de la conversation.
-4. Les clics modifiés (Ctrl/⌘-clic, Maj-clic, clic milieu) et les liens hors du worktree de la session conservent le comportement normal des liens.
+4. Dans l'application de bureau, un lien ou un chemin en texte vers un dossier du worktree l'ouvre dans votre gestionnaire de fichiers ; une erreur s'affiche s'il ne peut pas être ouvert.
+5. Les clics modifiés (Ctrl/⌘-clic, Maj-clic, clic milieu) et les liens hors du worktree de la session conservent le comportement normal des liens.
 
 ## Commandes et mode shell {#commands-shell}
 

@@ -1,5 +1,8 @@
 import { tGlobal } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
+import { backendOf } from "../lib/backend-client"
+import { showToastNotification } from "../lib/notifications"
+import { canOpenWorkspacePaths, openWorkspacePath } from "../lib/workspace-open"
 import { resolveProjectLinkPath } from "../lib/markdown-project-links"
 import { showAlertDialog } from "../stores/alerts"
 import { activeInstanceId, instances } from "../stores/instances"
@@ -84,11 +87,30 @@ export function routeSessionLink(instanceId: string, sessionId: string, href: st
     return true
   }
   const resolution = resolveSessionProjectLink(instanceId, sessionId, href)
-  if (resolution) {
-    openFilePreview(instanceId, { kind: "workspace", sessionId, ...resolution })
-    return true
-  }
-  return false
+  if (!resolution) return false
+  if (canOpenWorkspacePaths(instanceId)) openProjectLinkNatively(instanceId, sessionId, resolution)
+  else openFilePreview(instanceId, { kind: "workspace", sessionId, ...resolution })
+  return true
+}
+
+// On the local desktop a folder opens in the system file manager; a file, or a
+// path the listing cannot confirm as a folder, keeps the file reader.
+const openProjectLinkNatively = (instanceId: string, sessionId: string, link: SessionProjectLink) => {
+  const operation = captureBackendOperation(instanceId)
+  const slash = link.path.lastIndexOf("/")
+  const name = link.path.slice(slash + 1)
+  void backendOf(instanceId).api.listWorkspaceFiles(instanceId, slash < 0 ? "." : link.path.slice(0, slash), link.directory)
+    .then(entries => entries.some(entry => entry.name === name && entry.type === "directory"), () => false)
+    .then(async folder => {
+      if (!operation.current()) return
+      if (!folder) {
+        openFilePreview(instanceId, { kind: "workspace", sessionId, ...link })
+        return
+      }
+      await openWorkspacePath({ target: "default", instanceId, worktreeSlug: link.slug, path: link.path })
+    })
+    .catch(error => showToastNotification({ category: "files", variant: "error",
+      message: tGlobal("instanceShell.filesShell.toast.openError", { message: error instanceof Error ? error.message : String(error) }) }))
 }
 
 /** The titles decorated links carry, computed from the reactive availability
@@ -99,7 +121,7 @@ export function sessionLinkTitles(instanceId: string | undefined, sessionId: str
   const sessionBound = Boolean(instanceId && sessionId && captureBackendOperation(instanceId).current())
   return {
     preview: sessionBound && loopbackLinksOpenPreview ? tGlobal("markdown.link.previewOpens") : "",
-    file: sessionBound ? tGlobal("markdown.link.fileOpens") : "",
+    file: !sessionBound ? "" : tGlobal(canOpenWorkspacePaths(instanceId) ? "markdown.link.pathOpens" : "markdown.link.fileOpens"),
   }
 }
 

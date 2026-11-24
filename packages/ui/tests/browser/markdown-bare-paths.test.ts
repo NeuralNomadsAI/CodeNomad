@@ -55,6 +55,22 @@ test("bare paths link exactly the files that exist", { timeout: 60_000 }, async 
   assert.deepEqual(errors, [])
 })
 
+test("on the local desktop, bare folder paths link too", { timeout: 60_000 }, async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript("window.electronAPI = {}")
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => (window as any).fixture?.count("src/inner") === 1)
+    assert.equal(await page.evaluate(() => (window as any).fixture.title("src/inner")),
+      await page.evaluate(() => (window as any).fixture.label("markdown.link.pathOpens")))
+  } finally {
+    await page.close()
+  }
+  assert.deepEqual(errors, [])
+})
+
 test("a listing that resolves after a re-render wraps the new DOM only", { timeout: 60_000 }, async () => {
   const page = await browser.newPage()
   const errors: string[] = []

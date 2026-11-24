@@ -13,4 +13,5 @@ export const markdownMessages = {
 
   "markdown.link.previewOpens": "Se abre en la vista previa web. Ctrl+clic (⌘-clic en macOS) o clic central lo abre en tu navegador.",
   "markdown.link.fileOpens": "Se abre en la vista previa del archivo. Ctrl+clic (⌘-clic en macOS) o clic central lo abre en tu navegador.",
+  "markdown.link.pathOpens": "Abre un archivo en la vista previa del archivo o una carpeta en tu gestor de archivos. Ctrl+clic (⌘-clic en macOS) o clic central lo abre en tu navegador.",
 } as const

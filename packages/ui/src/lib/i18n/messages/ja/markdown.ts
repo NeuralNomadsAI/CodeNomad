@@ -13,4 +13,5 @@ export const markdownMessages = {
 
   "markdown.link.previewOpens": "Web プレビューで開きます。Ctrl+クリック（macOS では ⌘+クリック）または中クリックでブラウザーで開きます。",
   "markdown.link.fileOpens": "ファイルのプレビューで開きます。Ctrl+クリック（macOS では ⌘+クリック）または中クリックでブラウザーで開きます。",
+  "markdown.link.pathOpens": "ファイルはファイルのプレビューで、フォルダーはファイル マネージャーで開きます。Ctrl+クリック（macOS では ⌘+クリック）または中クリックでブラウザーで開きます。",
 } as const

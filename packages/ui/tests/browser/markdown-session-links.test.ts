@@ -91,6 +91,41 @@ test("session links route to the preview and the file reader", { timeout: 60_000
   assert.deepEqual(errors, [])
 })
 
+test("on the local desktop, project folder links open in the file manager", { timeout: 60_000 }, async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  // A source string: the test transform would inject helpers a page cannot resolve.
+  await page.addInitScript(`window.opened = []
+    window.electronAPI = { openWorkspaceTarget: async request => {
+      if (request.path === "locked") throw new Error("Access denied")
+      window.opened.push(request)
+      return { ok: true }
+    } }`)
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => (window as any).fixture?.rendered() > 0)
+
+    await page.click('#main-root a[href="file:///fixture-root/docs/"]')
+    await page.waitForFunction(() => (window as any).opened.length === 1)
+    assert.deepEqual(await page.evaluate(() => (window as any).opened),
+      [{ target: "default", instanceId: "markdown-session-links", worktreeSlug: "root", path: "docs" }])
+    assert.equal(await page.evaluate(() => (window as any).fixture.target()), null)
+
+    // A file keeps the file reader, including through a `file:` URL.
+    await page.click('#main-root a[href="file:///fixture-root/README.md"]')
+    await page.waitForFunction(() => (window as any).fixture.target() === "README.md")
+
+    await page.click('#main-root a[href="./locked"]')
+    await page.waitForFunction(() => (window as any).fixture.errorToasts().length === 1)
+    assert.match(await page.evaluate(() => (window as any).fixture.errorToasts()[0]), /Access denied/)
+    for (const click of await page.evaluate(() => (window as any).fixture.clicks())) assert.equal(click.prevented, true, click.href)
+  } finally {
+    await page.close()
+  }
+  assert.deepEqual(errors, [])
+})
+
 test("a populated but unmatched inventory never captures session links", async () => {
   const page = await browser.newPage()
   const errors: string[] = []
