@@ -454,10 +454,8 @@ async fn catalogue_in_at(
     })
     .await
     .map_err(|_| native_error())?;
-    let mut checked = Vec::new();
+    let mut verified_roots = Vec::new();
     for (service_root, root, meta) in candidates {
-        let service_root = service_root.as_str();
-        let meta = meta.as_str();
         let check = if root == local.root {
             local.clone()
         } else if root == main.root {
@@ -486,12 +484,20 @@ async fn catalogue_in_at(
         if check.root != root || check.common != local.common || check.common_id != local.common_id {
             continue;
         }
+        verified_roots.push((service_root, root, meta, check));
+    }
+    let repo_roots: Arc<Vec<PathBuf>> = Arc::new(verified_roots.iter().map(|(_, root, _, _)| root.clone()).collect());
+    let mut checked = Vec::new();
+    for (service_root, root, meta, check) in verified_roots {
+        let service_root = service_root.as_str();
+        let meta = meta.as_str();
         let opened = root == local.root;
         let projected = if tail.as_os_str().is_empty() { root.clone() } else { root.join(tail) };
         let (check, tree_path, id, projected_link) = {
             let root = root.clone();
             let projected = projected.clone();
             let scope = app.scope.clone();
+            let repo_roots = repo_roots.clone();
             match tokio::task::spawn_blocking(
                 move || -> Result<Option<(Physical, PathBuf, Option<String>, Option<(PathBuf, PathBuf)>)>, Error> {
                     if !check.live() {
@@ -504,8 +510,14 @@ async fn catalogue_in_at(
                             Err(error) => return Err(error),
                         },
                         // TS resolves a sibling worktree's symlinked projected subfolder and admits it
-                        // when its physical target stays inside the same checkout (`worktree-directory.ts:248-278`).
-                        Ok(real) if !opened && real.starts_with(&root) && real.is_dir() && real.starts_with(&scope) => {
+                        // when its physical target stays inside any verified worktree of the same repo
+                        // (`manager.ts:582-605`, `worktree-directory.ts:248-278`).
+                        Ok(real)
+                            if !opened
+                                && real.is_dir()
+                                && real.starts_with(&scope)
+                                && repo_roots.iter().any(|repo_root| real.starts_with(repo_root)) =>
+                        {
                             match identity(&real) {
                                 Ok(value) => (real.clone(), Some(value), Some((projected, real))),
                                 Err(_) => return Ok(None),

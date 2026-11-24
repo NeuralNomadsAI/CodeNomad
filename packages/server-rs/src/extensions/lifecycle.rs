@@ -318,3 +318,31 @@ pub async fn ready(directory: &str, deadline: tokio::time::Instant) -> Result<()
     let owner = owner.ok_or("Pruning presence unavailable for captured connection")?;
     owner.prepare(directory, deadline).await.map(|_| ())
 }
+
+/// Ensures bundled plugins are provisioned for this exact captured endpoint, then runs a
+/// fresh presence challenge against that endpoint's installation under the same deadline.
+pub async fn ready_at(
+    app: &Shared,
+    endpoint: &Arc<crate::opencode::Endpoint>,
+    directory: &str,
+    deadline: tokio::time::Instant,
+) -> Result<(), String> {
+    if !STATE.lock().unwrap().active {
+        return Ok(());
+    }
+    tokio::time::timeout_at(deadline, prepare(app, endpoint))
+        .await
+        .map_err(|_| "Provisioning timed out for captured connection".to_owned())?;
+    let owner = {
+        let state = STATE.lock().unwrap();
+        if !state.active {
+            return Ok(());
+        }
+        if !state.prepared.as_ref().is_some_and(|prepared| Arc::ptr_eq(prepared, endpoint)) {
+            return Err("Pruning lease does not match captured connection".into());
+        }
+        state.current.and_then(|i| state.installations[i].readiness.clone())
+    };
+    let owner = owner.ok_or("Pruning presence unavailable for captured connection")?;
+    owner.prepare(directory, deadline).await.map(|_| ())
+}

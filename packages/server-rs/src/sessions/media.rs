@@ -166,7 +166,9 @@ fn extract_media_from_envelope(
     envelope: &Value,
 ) -> Result<(&'static str, Vec<u8>), Error> {
     let missing = || error(Status::NOT_FOUND, "Media not found");
-    let message = envelope.get("data").filter(|message| message.is_object()).ok_or_else(missing)?;
+    let unavailable = || error(Status::BAD_GATEWAY, "Media unavailable");
+    let data = envelope.get("data").filter(|value| !value.is_null()).ok_or_else(unavailable)?;
+    let message = data.as_object().map(|_| data).ok_or_else(missing)?;
     if message["id"] != message_id
         || message["type"] != "assistant"
         || revert_boundary.is_some_and(|boundary| message_id.encode_utf16().cmp(boundary.encode_utf16()).is_ge())

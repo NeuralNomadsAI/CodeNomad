@@ -246,9 +246,23 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         && session.is_some_and(|s| {
             route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
         });
+    let workspace_closed = || async {
+        loop {
+            let notified = app.workspace_closed.notified();
+            if !app.workspace(id).is_ok_and(|current| current.id == workspace.id && current.path == workspace.path) {
+                return;
+            }
+            notified.await;
+        }
+    };
     let endpoint = if message_list {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        app.native.acquire(deadline).await.map_err(|_| upstream_error())?
+        tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = workspace_closed() => return Err(not_found()),
+            acquired = app.native.acquire(deadline) => acquired.map_err(|_| upstream_error())?,
+        }
     } else {
         app.native.endpoint().ok_or_else(upstream_error)?
     };
@@ -302,77 +316,89 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         return Err(error(Status::BAD_REQUEST, "Location does not belong to workspace"));
     }
     let requested = requested_dirs.first().cloned();
-    let workspace_closed = || async {
-        loop {
-            let notified = app.workspace_closed.notified();
-            if !app.workspace(id).is_ok_and(|current| current.id == workspace.id && current.path == workspace.path) {
-                return;
-            }
-            notified.await;
-        }
-    };
     let resolve_media_path = |raw: &str| crate::worktrees::ownership::resolve_media_path(&app.scope, raw);
     let allow_subfolder = send_input || message_list;
     // TS checks every client-supplied directory and ambient context before session lookup or relay
     // (`http-server.ts:1248-1269`).
     let mut requested_checkout = None;
     let mut verified_media_dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
-    for req in &requested_dirs {
-        if message_list {
-            let Some((resolved, anchor)) = resolve_media_path_async(app.scope.clone(), req.clone()).await else {
-                return Err(foreign());
-            };
-            let _proof =
-                crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor, false)
-                    .await
-                    .ok()
-                    .flatten()
-                    .ok_or_else(foreign)?;
-            verified_media_dirs.push((req.clone(), resolved));
-        } else if send_input {
-            let Some(physical) = crate::files::paths::canonical(&app.scope, req) else {
-                return Err(foreign());
-            };
-            let proof = crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, &physical, true)
+    let admission_work = async {
+        for req in &requested_dirs {
+            if message_list {
+                let Some((resolved, anchor)) = resolve_media_path_async(app.scope.clone(), req.clone()).await else {
+                    return Err(foreign());
+                };
+                let _proof = crate::worktrees::ownership::media_directory(
+                    &app, &workspace, &endpoint, &resolved, &anchor, false,
+                )
                 .await
+                .ok()
+                .flatten()
                 .ok_or_else(foreign)?;
-            if requested_checkout.is_none() {
-                requested_checkout = Some(proof);
-            }
-        } else if !crate::worktrees::owns(&app, &workspace, req).await {
-            return Err(foreign());
-        }
-    }
-    if message_list && let Some(ctx_dir) = parsed_location_context.as_ref().and_then(|v| v["directory"].as_str()) {
-        let ctx_resolved = if let Some((_, resolved)) = verified_media_dirs.iter().find(|(raw, _)| raw == ctx_dir) {
-            resolved.clone()
-        } else {
-            let Some((resolved, anchor)) = resolve_media_path_async(app.scope.clone(), ctx_dir.to_owned()).await else {
+                verified_media_dirs.push((req.clone(), resolved));
+            } else if send_input {
+                let Some(physical) = crate::files::paths::canonical(&app.scope, req) else {
+                    return Err(foreign());
+                };
+                let proof =
+                    crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, &physical, true)
+                        .await
+                        .ok_or_else(foreign)?;
+                if requested_checkout.is_none() {
+                    requested_checkout = Some(proof);
+                }
+            } else if !crate::worktrees::owns(&app, &workspace, req).await {
                 return Err(foreign());
-            };
-            let _proof =
-                crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor, false)
-                    .await
-                    .ok()
-                    .flatten()
-                    .ok_or_else(foreign)?;
-            verified_media_dirs.push((ctx_dir.to_owned(), resolved.clone()));
-            resolved
-        };
-        if requested_dirs.iter().any(|req| {
-            verified_media_dirs.iter().find(|(raw, _)| raw == req).is_none_or(|(_, resolved)| *resolved != ctx_resolved)
-        }) {
-            return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
+            }
         }
-    }
-    let actual = if let Some(session) = session {
-        Some(if message_list {
-            super::session_record_media_at(&app, &endpoint, session).await?
+        if message_list && let Some(ctx_dir) = parsed_location_context.as_ref().and_then(|v| v["directory"].as_str()) {
+            let ctx_resolved = if let Some((_, resolved)) = verified_media_dirs.iter().find(|(raw, _)| raw == ctx_dir) {
+                resolved.clone()
+            } else {
+                let Some((resolved, anchor)) = resolve_media_path_async(app.scope.clone(), ctx_dir.to_owned()).await
+                else {
+                    return Err(foreign());
+                };
+                let _proof = crate::worktrees::ownership::media_directory(
+                    &app, &workspace, &endpoint, &resolved, &anchor, false,
+                )
+                .await
+                .ok()
+                .flatten()
+                .ok_or_else(foreign)?;
+                verified_media_dirs.push((ctx_dir.to_owned(), resolved.clone()));
+                resolved
+            };
+            if requested_dirs.iter().any(|req| {
+                verified_media_dirs
+                    .iter()
+                    .find(|(raw, _)| raw == req)
+                    .is_none_or(|(_, resolved)| *resolved != ctx_resolved)
+            }) {
+                return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
+            }
+        }
+        let actual = if let Some(session) = session {
+            Some(if message_list {
+                super::session_record_media_at(&app, &endpoint, session).await?
+            } else {
+                super::session_record_at(&app, &endpoint, session).await?
+            })
         } else {
-            super::session_record_at(&app, &endpoint, session).await?
-        })
+            None
+        };
+        Ok(actual)
+    };
+    let actual = if message_list {
+        tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+            _ = workspace_closed() => return Err(not_found()),
+            result = admission_work => result?,
+        }
     } else {
-        None
+        admission_work.await?
     };
     let native_directory = actual.as_ref().and_then(|r| r["location"]["directory"].as_str());
     let directory = requested.as_deref().or(native_directory).unwrap_or(opened);
@@ -408,10 +434,20 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     // alias retargeted between query validation and `session.get` cannot reuse a stale proof.
     let input_checkout = if message_list {
         if let Some((resolved, anchor, _)) = &initial_identity {
-            crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor, false)
-                .await
-                .ok()
-                .flatten()
+            tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                _ = workspace_closed() => return Err(not_found()),
+                proof = crate::worktrees::ownership::media_directory(
+                    &app,
+                    &workspace,
+                    &endpoint,
+                    resolved,
+                    anchor,
+                    false,
+                ) => proof.ok().flatten(),
+            }
         } else {
             None
         }
@@ -1026,12 +1062,36 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let cancelled = Box::pin(principal.0.clone().cancelled_owned());
         let app_retire = app.clone();
         let endpoint_retire = endpoint.clone();
+        let ws_key = id.to_owned();
+        let ws_snapshot = workspace.clone();
+        let ws_app = app.clone();
+        let ws_closed = Box::pin(async move {
+            loop {
+                let notified = ws_app.workspace_closed.notified();
+                if !ws_app
+                    .workspace(&ws_key)
+                    .is_ok_and(|current| current.id == ws_snapshot.id && current.path == ws_snapshot.path)
+                {
+                    return;
+                }
+                notified.await;
+            }
+        });
         // Matches TS `proxy.ts:33-35`: invalidate a 401 connection only after the native
         // 401 error body finishes streaming downstream, so retiring it does not truncate the body.
         let invalidate = unauthorized.then(|| InvalidateOnDrop { app: app.clone(), endpoint: endpoint.clone() });
         let bytes = futures_util::stream::unfold(
-            (response.bytes_stream(), cancelled, app_retire, endpoint_retire, unauthorized, invalidate, false),
-            |(mut inner, mut cancelled, app_retire, endpoint_retire, unauthorized, invalidate, done)| async move {
+            (
+                response.bytes_stream(),
+                cancelled,
+                ws_closed,
+                app_retire,
+                endpoint_retire,
+                unauthorized,
+                invalidate,
+                false,
+            ),
+            |(mut inner, mut cancelled, mut ws_closed, app_retire, endpoint_retire, unauthorized, invalidate, done)| async move {
                 if done {
                     return None;
                 }
@@ -1040,13 +1100,19 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     _ = &mut cancelled => {
                         return Some((
                             Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "upstream stream aborted")),
-                            (inner, cancelled, app_retire, endpoint_retire, unauthorized, invalidate, true),
+                            (inner, cancelled, ws_closed, app_retire, endpoint_retire, unauthorized, invalidate, true),
+                        ));
+                    }
+                    _ = &mut ws_closed => {
+                        return Some((
+                            Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "workspace closed")),
+                            (inner, cancelled, ws_closed, app_retire, endpoint_retire, unauthorized, invalidate, true),
                         ));
                     }
                     _ = app_retire.native.wait_retired(&endpoint_retire), if !unauthorized => {
                         return Some((
                             Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "upstream stream aborted")),
-                            (inner, cancelled, app_retire, endpoint_retire, unauthorized, invalidate, true),
+                            (inner, cancelled, ws_closed, app_retire, endpoint_retire, unauthorized, invalidate, true),
                         ));
                     }
                     item = inner.next() => item,
@@ -1054,7 +1120,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 next.map(|chunk| {
                     (
                         chunk.map_err(std::io::Error::other),
-                        (inner, cancelled, app_retire, endpoint_retire, unauthorized, invalidate, false),
+                        (inner, cancelled, ws_closed, app_retire, endpoint_retire, unauthorized, invalidate, false),
                     )
                 })
             },

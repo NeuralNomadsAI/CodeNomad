@@ -274,27 +274,28 @@ impl Placement {
         ok && self.operation_current_fast(app, id) && self.displays.iter().all(|display| display.load(Relaxed))
     }
 
-    async fn ready(&self, app: &App, id: &str, session: &str) -> Result<&str, Recheck> {
+    async fn ready(&self, app: &Shared, id: &str, session: &str) -> Result<&str, Recheck> {
         let directory = self.source["location"]["directory"].as_str().ok_or(Recheck::Unavailable)?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        if self.media {
-            let url = self.endpoint.url.join("/api/plugin").map_err(|_| Recheck::Unavailable)?;
-            super::pending::await_plugin_with(super::pending::SESSION_PRUNING_PLUGIN, directory, deadline, || {
-                (self.operation_current_fast(app, id) && self.displays.iter().all(|d| d.load(Relaxed)))
-                    .then(|| app.native.client.get(url.clone()).basic_auth("opencode", Some(&self.endpoint.password)))
-            })
+        // Provision bundled plugins for this exact captured endpoint before checking the catalogue
+        // and presence lease under the same deadline (TS `opencode-service.ts:148-166`).
+        let _ = tokio::time::timeout_at(deadline, crate::extensions::lifecycle::prepare(app, &self.endpoint)).await;
+        let url = self.endpoint.url.join("/api/plugin").map_err(|_| Recheck::Unavailable)?;
+        super::pending::await_plugin_with(super::pending::SESSION_PRUNING_PLUGIN, directory, deadline, || {
+            self.operation_current_fast(app, id)
+                .then(|| app.native.client.get(url.clone()).basic_auth("opencode", Some(&self.endpoint.password)))
+        })
+        .await
+        .map_err(|_| Recheck::Unavailable)?;
+        if !self.operation_current(app, id).await {
+            return Err(Recheck::Unavailable);
+        }
+        if !self.live(app, id).await {
+            return Err(Recheck::Conflict);
+        }
+        crate::extensions::lifecycle::ready_at(app, &self.endpoint, directory, deadline)
             .await
             .map_err(|_| Recheck::Unavailable)?;
-            if !self.operation_current(app, id).await {
-                return Err(Recheck::Unavailable);
-            }
-            if !self.live(app, id).await {
-                return Err(Recheck::Conflict);
-            }
-            crate::extensions::lifecycle::ready(directory, deadline).await.map_err(|_| Recheck::Unavailable)?;
-        } else {
-            prepare(app, directory, deadline).await.ok_or(Recheck::Unavailable)?;
-        }
         match self.current(app, id, session).await {
             Recheck::Current => Ok(directory),
             other => Err(other),

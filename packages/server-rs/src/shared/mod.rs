@@ -169,9 +169,6 @@ pub fn permit_body(
             return std::task::Poll::Ready(None);
         }
         let chunk = bytes.split_to(bytes.len().min(RESPONSE_CHUNK));
-        if let Some(permit) = mem.as_mut() {
-            drop(permit.split(1));
-        }
         std::task::Poll::Ready(Some(Ok::<_, std::io::Error>(chunk)))
     }))
 }
@@ -303,9 +300,12 @@ pub async fn serve_local(
             }
         }
     }
-    let _ =
+    let drained =
         tokio::time::timeout(std::time::Duration::from_secs(5), async { while tasks.join_next().await.is_some() {} })
             .await;
     tasks.abort_all();
-    Ok(())
+    match drained {
+        Ok(()) => Ok(()),
+        Err(_) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "local server shutdown drain timed out")),
+    }
 }
