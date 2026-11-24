@@ -6,9 +6,17 @@ use crate::{
     platform::{self, reads},
 };
 use codenomad_client::{Receiver, Sender, bounded};
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    hash::{DefaultHasher, Hash, Hasher},
+};
 
 const MAX_BROWSED_SESSIONS: usize = 2_000;
+fn cursor_hash(cursor: &str) -> u64 {
+    let mut hash = DefaultHasher::new();
+    cursor.hash(&mut hash);
+    hash.finish()
+}
 #[derive(Clone, Default)]
 pub(crate) struct Pages {
     pub rows: Vec<Session>,
@@ -18,7 +26,8 @@ pub(crate) struct Pages {
 struct Location {
     directory: String,
     cursor: Option<String>,
-    seen: HashSet<String>,
+    seen: HashSet<u64>,
+    synthetic_target: bool,
 }
 impl Pages {
     fn keep(&mut self, rows: Vec<Session>, ids: &mut HashSet<String>) -> bool {
@@ -106,6 +115,7 @@ pub(super) fn load(s: &mut State) {
                             } else {
                                 remaining.push_front(Location {
                                     directory: target_dir.to_owned(),
+                                    synthetic_target: true,
                                     ..Default::default()
                                 });
                             }
@@ -118,9 +128,10 @@ pub(super) fn load(s: &mut State) {
                 };
                 let mut ids = pages.rows.iter().map(|row| row.id.clone()).collect();
                 let mut target_verified = false;
+                let mut deferred_target: Option<Location> = None;
                 for _ in 0..1000 {
                     let Some(mut location) = pages.remaining.pop_front() else {
-                        return Ok((pages, true, target.is_none() || target_verified));
+                        break;
                     };
                     let first_page = location.cursor.is_none();
                     let matches_target = target.as_deref().is_some_and(|target_dir| {
@@ -134,6 +145,40 @@ pub(super) fn load(s: &mut State) {
                         )
                         .await
                     else {
+                        if location.synthetic_target {
+                            let mut workspace = backend.clone();
+                            workspace.workspace.clone_from(&project.id);
+                            let removed =
+                                workspace
+                                    .git_worktrees(true)
+                                    .await
+                                    .ok()
+                                    .is_some_and(|trees| {
+                                        trees.repository
+                                            != codenomad_client::git::Repository::Unknown
+                                            && !trees.trees.iter().any(|tree| {
+                                                !tree.missing
+                                                    && (codenomad_client::same_server_path(
+                                                        &tree.directory,
+                                                        &location.directory,
+                                                    ) || tree
+                                                        .service_directory
+                                                        .as_deref()
+                                                        .is_some_and(|service| {
+                                                            codenomad_client::same_server_path(
+                                                                service,
+                                                                &location.directory,
+                                                            )
+                                                        }))
+                                            })
+                                    });
+                            if removed {
+                                target_verified = true;
+                            } else {
+                                deferred_target = Some(location);
+                            }
+                            continue;
+                        }
                         pages.remaining.push_front(location);
                         break;
                     };
@@ -146,13 +191,17 @@ pub(super) fn load(s: &mut State) {
                         break;
                     }
                     if let Some(next) = page.next {
-                        if location.seen.len() >= 1000 || !location.seen.insert(next.clone()) {
+                        if location.seen.len() >= 1000 || !location.seen.insert(cursor_hash(&next))
+                        {
                             pages.remaining.push_front(location);
                             break;
                         }
                         location.cursor = Some(next);
                         pages.remaining.push_back(location);
                     }
+                }
+                if let Some(location) = deferred_target {
+                    pages.remaining.push_front(location);
                 }
                 let complete = pages.remaining.is_empty();
                 if target.is_none() {

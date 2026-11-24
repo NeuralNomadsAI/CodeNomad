@@ -376,9 +376,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 relayed |= crate::workspace::set_detached_online(s, false);
             } else if generation % 2 == 1 {
                 relayed |= crate::workspace::set_detached_online(s, false);
-                if previous == 0 && generation == 1 && !overflow {
-                    relayed |= crate::workspace::set_detached_online(s, true);
-                } else if crate::workspace::has_detached_panels(s) {
+                if crate::workspace::has_detached_panels(s) {
                     start_reconcile = Some(generation);
                 }
             }

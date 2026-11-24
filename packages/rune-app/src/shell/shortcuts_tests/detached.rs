@@ -181,7 +181,7 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
                     }
                 } else if header.starts_with("GET /api/workspaces ") {
                     workspaces_count += 1;
-                    if workspaces_count == 1 {
+                    if workspaces_count == 2 {
                         let _ = stream
                             .write_all(
                                 b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
@@ -295,6 +295,26 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
         }
 
         wait_gen(&mut rt, 1).await;
+        for _ in 0..300 {
+            rt.update(|s, tx| {
+                let _ = crate::launcher::poll(s, tx);
+            });
+            if rt
+                .state
+                .screen
+                .launcher()
+                .is_some_and(crate::launcher::Launcher::workspace_stream_online)
+            {
+                break;
+            }
+            crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            rt.state
+                .screen
+                .launcher()
+                .is_some_and(crate::launcher::Launcher::workspace_stream_online)
+        );
         // Consume the gen=1 connection revalidation on tab 0 before disconnecting.
         send_key(&mut rt, Key::Command('['), primary_mods(false));
         assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);

@@ -60,7 +60,8 @@ impl Launcher {
         }));
         self.sessions = page.rows;
         self.visits.observe_listing(&listed);
-        if self.next.is_none() && page.next.is_some() || complete {
+        let root_page = authoritative || !includes_linked;
+        if root_page && (self.next.is_none() && page.next.is_some() || complete) {
             self.listed_sessions = listed;
             self.next = page.next;
             self.consumed_cursors.clear();
@@ -435,6 +436,10 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
         if stream_online {
             crate::git::online(s, true);
         }
+    }
+    if let Some(l) = s.screen.launcher_mut() {
+        l.next = None;
+        l.consumed_cursors.clear();
     }
     crate::workspace::schedule_catalogue_refresh(s);
     tx.instant();

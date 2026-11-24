@@ -138,21 +138,47 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                         Ok(None) => true,
                         Err(_) => false,
                     };
+                    let mut target_removed = false;
                     if let Some(target_dir) = uncertain_linked.as_deref() {
-                        let _permit = reads.background(&cancelled).await?;
-                        if let Ok(target_page) = backend
-                            .linked_session_page(&project, target_dir, None)
-                            .await
-                        {
+                        let target_page = {
+                            let _permit = reads.background(&cancelled).await?;
+                            backend
+                                .linked_session_page(&project, target_dir, None)
+                                .await
+                        };
+                        if let Ok(mut target_page) = target_page {
+                            target_page.next = None;
                             return Some((target_page, false, true));
                         }
+                        let trees = {
+                            let _permit = reads.background(&cancelled).await?;
+                            let mut workspace = backend.clone();
+                            workspace.workspace.clone_from(&project.id);
+                            workspace.git_worktrees(true).await
+                        };
+                        target_removed = trees.ok().is_some_and(|trees| {
+                            trees.repository != codenomad_client::git::Repository::Unknown
+                                && !trees.trees.iter().any(|tree| {
+                                    !tree.missing
+                                        && (codenomad_client::same_server_path(
+                                            &tree.directory,
+                                            target_dir,
+                                        ) || tree.service_directory.as_deref().is_some_and(
+                                            |service| {
+                                                codenomad_client::same_server_path(
+                                                    service, target_dir,
+                                                )
+                                            },
+                                        ))
+                                })
+                        });
                     }
                     let _permit = reads.background(&cancelled).await?;
                     backend
                         .sessions(&project, None)
                         .await
                         .ok()
-                        .map(|page| (page, can_replace, false))
+                        .map(|page| (page, can_replace, target_removed))
                 };
                 let result = codenomad_client::runtime::until_closed(&out, read).await;
                 drop(owner);

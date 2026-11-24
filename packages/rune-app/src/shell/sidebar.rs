@@ -140,7 +140,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                         &[]
                     },
                 ))
-                .disabled(disabled || l.creation_uncertain)
+                .disabled(disabled || l.creation_uncertain || crate::git::placement_unconfirmed(s))
                 .on_press_tx(screen::action_tx(scope, |s, _| {
                     launcher::create_blank(s);
                 }))

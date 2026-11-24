@@ -701,11 +701,13 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
     assert!(launcher.creation_uncertain_linked.is_some());
     assert_eq!(launcher.error, Some("rune.create_error"));
     // A direct linked target page (authoritative = false, includes_linked = true) merges
-    // additively (retaining existing root sessions) and unlocks creation_uncertain_linked.
+    // additively (retaining existing root sessions), never leaks its cursor into Launcher.next,
+    // and unlocks creation_uncertain_linked.
+    launcher.next = None;
     launcher.apply_passive_listing(
         Sessions {
             rows: vec![row("linked-new")],
-            next: None,
+            next: Some("linked-cursor".into()),
         },
         None,
         false,
@@ -714,6 +716,7 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
     assert!(!launcher.creation_uncertain);
     assert!(launcher.creation_uncertain_linked.is_none());
     assert_eq!(launcher.error, None);
+    assert_eq!(launcher.next, None);
     assert!(launcher.sessions.iter().any(|r| r.id == "root"));
     assert!(launcher.sessions.iter().any(|r| r.id == "linked-new"));
 }
