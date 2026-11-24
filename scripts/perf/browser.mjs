@@ -21,15 +21,23 @@ export async function withBrowser(daemon, tree, root, followLongReplies, run) {
       })
       await context.addInitScript({ path: fileURLToPath(new URL("./page-probe.js", import.meta.url)) })
       const localOrigin = new URL(url).origin
+      await context.route("**/*", async route => {
+        const target = new URL(route.request().url())
+        if (target.origin !== localOrigin) return route.abort("blockedbyclient")
+        if (target.pathname === "/api/events") return route.continue()
+        const response = await route.fetch({ maxRedirects: 0 })
+        const location = response.headers().location
+        if (response.status() >= 300 && response.status() < 400 && location) {
+          const redirected = new URL(location, target)
+          if (redirected.origin !== localOrigin) return route.abort("blockedbyclient")
+        }
+        return route.fulfill({ response })
+      })
       await context.addCookies([{ name: "codenomad_session", value: cookie, url }])
       const page = context.pages()[0] ?? await context.newPage()
       page.setDefaultTimeout(60_000)
       const failures = []
       page.on("pageerror", error => failures.push(error.message))
-      page.on("request", req => {
-        const target = new URL(req.url())
-        if (target.hostname === "127.0.0.1" && target.origin !== localOrigin) failures.push(`Unexpected loopback target: ${target.origin}`)
-      })
       await page.goto(url, { waitUntil: "domcontentloaded" })
       await page.locator(".folder-home-recent-primary-action").first().click()
       const search = page.getByRole("button", { name: "Search sessions" })

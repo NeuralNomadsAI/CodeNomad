@@ -26,19 +26,22 @@ const suffix=path.basename(profile).slice(-8),longTitle=`Rune · reprise réelle
 await native.read(`/api/session/${fork.id}`,{method:'PATCH',body:JSON.stringify({title:longTitle,permissions:deny})})
 const verified=(await native.read(`/api/session/${fork.id}`)).data;assert.deepEqual(verified.permissions,deny)
 const copied=await native.read(`/api/session/${fork.id}/message?limit=200`);assert.equal(copied.data.length,200);assert(copied.cursor?.next)
-const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'interactive-rune-owned-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
+const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'interactive-rune-owned-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
 const server=launchFixture(serverBinary,[directory,path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,'interactive-rune-owned-backend']})
-let child,observer,stream,watchTask,guardTask,stopped=false,newID
+let child,observer,stream,watchTask,guardTask,stopped=false,newID,guardError=null
 const guarded=new Set([source.id,fork.id])
 const stats={sourceID:source.id,longID:fork.id,longTitle,newTitle,sourceRowsInPage:first.data.length,sourceHasOlder:true,longCopiedRowsInPage:copied.data.length,newID:null,turns:[],tools:0}
 const save=()=>writeFile(path.join(profile,'proof.json'),JSON.stringify(stats,null,2))
 try{
   const origin=await server.ready(rustOrigin)
-  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'interactive-rune-owned-backend'})});assert.equal(login.status,200)
+  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'interactive-rune-owned-backend'}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const call=(route,init={})=>fixtureFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
   observer=new AbortController()
-  stream=await fixtureFetch(`${origin}/api/events?clientId=rune-interactive-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal});assert.equal(stream.status,200)
+  const openTimer=setTimeout(()=>observer.abort(Error('SSE open timed out')),15000)
+  try{stream=await fixtureFetch(`${origin}/api/events?clientId=rune-interactive-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal})}
+  finally{clearTimeout(openTimer)}
+  assert.equal(stream.status,200)
   const fragments=new Map()
   async function watch(){
     let buffer='';const decoder=new TextDecoder()
@@ -47,8 +50,9 @@ try{
         if(block.includes('event: codenomad.client.ping')){await call('/api/client-connections/pong',{method:'POST',body:JSON.stringify({clientId:'rune-interactive-observer',connectionId:'observer'})});continue}
         const raw=block.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5)).join('\n');if(!raw)continue
         const value=JSON.parse(raw),e=value.event,id=e?.data?.sessionID
-        if(value.type!=='instance.event'||![fork.id,newID].includes(id))continue
-        if(e.type.startsWith('session.tool.'))stats.tools++
+        if(value.type!=='instance.event')continue
+        if(e?.type?.startsWith('session.tool.'))stats.tools++
+        if(![fork.id,newID].includes(id))continue
         if(e.type==='session.text.delta')fragments.set(id,(fragments.get(id)??0)+1)
         if(['session.execution.succeeded','session.execution.failed','session.execution.interrupted'].includes(e.type)){
           const rows=(await native.read(`/api/session/${id}/message?limit=200`)).data
@@ -59,7 +63,7 @@ try{
       }
     }
   }
-  watchTask=watch().catch(error=>{if(!stopped&&error.name!=='AbortError')console.error('observer:',error.message)})
+  watchTask=watch().catch(error=>{if(!stopped&&error.name!=='AbortError'){guardError??=error;console.error('observer:',error.message)}})
   guardTask=(async()=>{
     while(!stopped){
       try{
@@ -71,15 +75,17 @@ try{
           guarded.add(row.id)
           if(row.title===newTitle&&!newID){newID=row.id;stats.newID=newID;await save();console.log(JSON.stringify({type:'INTERACTIVE_NEW_SESSION_GUARDED',session:newID}))}
         }
-      }catch(error){if(!stopped&&error.name!=='AbortError')console.error('guard:',error.message)}
+      }catch(error){if(!stopped&&error.name!=='AbortError'){guardError??=error;console.error('guard:',error.message)}}
       try{await delay(1000,undefined,{signal:observer.signal})}catch{break}
     }
   })()
   await save();await writeFile(path.join(profile,'session.json'),JSON.stringify({profile,directory,sourceID:source.id,longID:fork.id,longTitle,newTitle}))
-  child=launchFixture(clientBinary,[],{cwd:profile,redact:[native.password,'interactive-rune-owned-backend'],env:{...await privateEnvironment(profile),RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'interactive-rune-owned-backend',RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
-  child.child.stderr.on('data',d=>console.error(String(d).trim()))
+  child=launchFixture(clientBinary,[],{cwd:profile,redact:[native.password,'interactive-rune-owned-backend'],env:{...native.runtimeEnv,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'interactive-rune-owned-backend',RUNE_LOCALE:'fr',RUNE_LIVE_TITLE:'1'}})
+  child.child.stderr.on('data',d=>console.error(child.redact(String(d).trim())))
   console.log(JSON.stringify({type:'INTERACTIVE_READY',profile,directory,longTitle,newTitle,pid:await child.pid()}))
   assert.equal(await child.closed,0,child.output())
+  if(guardError)throw guardError
+  assert.equal(stats.tools,0,'Interactive fixture must not execute tools')
 }finally{
   stopped=true;observer?.abort();void stream?.body?.cancel?.().catch(()=>{})
   await Promise.race([Promise.allSettled([watchTask,guardTask].filter(Boolean)),delay(2000,undefined,{ref:false})])

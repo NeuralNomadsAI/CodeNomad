@@ -2,15 +2,18 @@
 import assert from 'node:assert/strict'
 import {mkdir, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {fileURLToPath} from 'node:url'
+import {fileURLToPath, pathToFileURL} from 'node:url'
 import {createHash} from 'node:crypto'
-import {build} from 'esbuild'
-import {OpenCode} from '@opencode/client'
-import {tsImport} from 'tsx/esm/api'
 import {nativePluginBuild} from '../../packages/server/scripts/native-plugin-build.mjs'
+import {fixtureFetch, fixtureTarget, resolveWorktreePackage} from '../native-fixture-http.mjs'
 import {privatePath} from './isolation.mjs'
 
 export async function preparePruning(root, config) {
+  const [{build},{OpenCode},{tsImport}]=await Promise.all([
+    import(pathToFileURL(resolveWorktreePackage('esbuild')).href),
+    import(pathToFileURL(resolveWorktreePackage('@opencode/client')).href),
+    import(pathToFileURL(resolveWorktreePackage('tsx/esm/api')).href),
+  ])
   root=privatePath(root);config=privatePath(config)
   const folder=privatePath(path.join(root,'pruning-build'))
   await mkdir(folder,{recursive:true})
@@ -32,7 +35,15 @@ export async function preparePruning(root, config) {
   return {
     async activate(daemon,assertCurrent){
       current=assertCurrent;directory=privatePath(daemon.project)
-      client=OpenCode.make({baseUrl:daemon.url,fetch:(url,init)=>daemon.send(new Request(url,init))})
+      const transport=daemon.send??(async(input,init={})=>{
+        const request=input instanceof Request?input:new Request(input,init)
+        const target=fixtureTarget(request.url,daemon.url)
+        assert(target,'Pruning client cannot address a foreign OpenCode origin')
+        const headers=new Headers(request.headers)
+        if(daemon.authorization)headers.set('authorization',daemon.authorization)
+        return fixtureFetch(request,{headers})
+      })
+      client=OpenCode.make({baseUrl:daemon.url,fetch:(url,init)=>transport(new Request(url,init))})
       const location={directory},signal=AbortSignal.timeout(15_000)
       const entry=record=>record.data.map(item=>({id:item.id,status:item.state.status}))
       try{

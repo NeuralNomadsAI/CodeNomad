@@ -14,7 +14,7 @@ import {fixtureFetch} from '../../../scripts/native-fixture-http.mjs'
 requirePrivateCli();requireTestSupport()
 await withNative(async native=>{
 const {profile:root,project,password}=native
-const env=await privateEnvironment(root),proof={root,project,native:true,ui:'Rune Runtime, offscreen',modelCalls:0,tools:0,requests:[],events:[],stages:[],visible:[],cases:[],cleaned:false,result:1}
+const env=native.runtimeEnv,proof={root,project,native:true,ui:'Rune Runtime, offscreen',modelCalls:0,tools:0,requests:[],events:[],stages:[],visible:[],cases:[],cleaned:false,result:1}
 let rust,ui,client,observer,watch,session,origin,cookie,uiLines='',protocolError
 const ids=['once','always','reject'].map(decision=>`per_rune_live_${decision}_${randomUUID().replaceAll('-','')}`),forms=new Map()
 const expected=['once','always','reject','typed-question','cancel-question'];let position=0,awaiting='ready',protocol=Promise.resolve()
@@ -53,7 +53,7 @@ try{
   session=await client.session.create({location:{directory:project},title:'Rune private native pending UI',permissions:[{action:'*',resource:'*',effect:'deny'},{action:'rune_fixture',resource:'*',effect:'ask'}]});assert.equal(path.resolve(session.location.directory),project);proof.session=session.id
   rust=launchFixture(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{cwd:root,shutdown:'shutdown\n',redact:[password,'fixture-rune-native-pending'],env:{...env,CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:password,CNRS_SERVER_PASSWORD:'fixture-rune-native-pending',CNRS_FIXTURE_STDIN_STOP:'1'}})
   origin=await rust.ready(rustOrigin)
-  const login=await fixtureFetch(`${origin}/api/auth/login`,post({username:'codenomad',password:'fixture-rune-native-pending'}));assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
+  const login=await fixtureFetch(`${origin}/api/auth/login`,{...post({username:'codenomad',password:'fixture-rune-native-pending'}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await relay('/api/workspaces',post({path:project,requestId:`rune-native-ui-${randomUUID()}`}));assert.equal(opened.status,201);assert.equal(path.resolve(opened.body.path),project);proof.workspace=opened.body.id
   await until(async()=>{
     const window=await relay(`/api/workspaces/${proof.workspace}/session-history/window`,{

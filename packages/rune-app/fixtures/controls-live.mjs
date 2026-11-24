@@ -19,28 +19,32 @@ const session=(await native.read('/api/session',{method:'POST',body:JSON.stringi
 await writeFile(path.join(profile,'session.json'),JSON.stringify({session:session.id,project,title},null,2))
 assert(session?.id&&session.location.directory===project)
 assert.deepEqual(session.permissions,permissions,'session must enforce deny-all before launching Rune')
-const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'fixture-controls-live',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile}
+const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,CNRS_SERVER_PASSWORD:'fixture-controls-live',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile}
 const server=launchFixture(serverBinary,[project,path.join(profile,'identity.json'),'0','owned-real-controls'],{cwd:profile,env,shutdown:'shutdown\n',redact:[native.password,'fixture-controls-live']})
 let client,result=1,observer,stream,watch,watchError=null,events=[],cleaned=false
 try{
   const origin=await server.ready(rustOrigin)
-  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'fixture-controls-live'})});assert.equal(login.status,200)
+  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'fixture-controls-live'}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
-  const response=await fixtureFetch(`${origin}/api/workspaces`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({path:project})})
+  const response=await fixtureFetch(`${origin}/api/workspaces`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({path:project}),signal:AbortSignal.timeout(15000)})
   assert.equal(response.status,201)
   const workspace=await response.json();assert(workspace.id&&path.resolve(workspace.path)===project)
   observer=new AbortController()
-  stream=await fixtureFetch(`${origin}/api/events?clientId=controls-live-observer&connectionId=owned`,{headers:{cookie},signal:observer.signal});assert.equal(stream.status,200)
+  const openTimer=setTimeout(()=>observer.abort(Error('SSE open timed out')),15000)
+  try{stream=await fixtureFetch(`${origin}/api/events?clientId=controls-live-observer&connectionId=owned`,{headers:{cookie},signal:observer.signal})}
+  finally{clearTimeout(openTimer)}
+  assert.equal(stream.status,200)
   watch=(async()=>{let buffer='';const decoder=new TextDecoder();for await(const chunk of stream.body){
     buffer+=decoder.decode(chunk,{stream:true});assert(buffer.length<2*1024*1024);let index
     while((index=buffer.indexOf('\n\n'))>=0){const block=buffer.slice(0,index);buffer=buffer.slice(index+2)
-      if(block.includes('event: codenomad.client.ping')){await fixtureFetch(`${origin}/api/client-connections/pong`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({clientId:'controls-live-observer',connectionId:'owned'})});continue}
+      if(block.includes('event: codenomad.client.ping')){await fixtureFetch(`${origin}/api/client-connections/pong`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({clientId:'controls-live-observer',connectionId:'owned'}),signal:AbortSignal.timeout(15000)});continue}
       const raw=block.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5)).join('\n');if(!raw)continue
       const value=JSON.parse(raw);if(value.type==='instance.event'&&value.event?.data?.sessionID===session.id)events.push(value.event.type)
     }
   }})().catch(error=>{if(!observer.signal.aborted)watchError??=error})
   client=launchFixture(clientBinary,['--probe-real-controls'],{cwd:profile,env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-controls-live',RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session.id,RUNE_EMPTY_SESSION:'1',RUNE_TEST_MODEL:JSON.stringify(target),RUNE_LOCALE:'fr'},redact:[native.password,'fixture-controls-live']})
-  result=await client.closed
+  result=await Promise.race([client.closed,delay(120000,124,{ref:false})])
+  if(result===124)await client.stop()
   process.stdout.write(client.output())
   if(watchError)throw watchError
   assert.equal(result,0)

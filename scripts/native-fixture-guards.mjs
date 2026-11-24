@@ -4,15 +4,21 @@ import { accessSync, constants } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
+import { isLocalAbsolutePath, resolveLocalExecutable } from "./native-fixture-http.mjs"
 
 const jobs = new WeakMap()
 export function spawnFixtureChild(command, args, options) {
+  if (typeof command === "string" && (path.isAbsolute(command) || /^[\\/]{2}/.test(command))) {
+    command = resolveLocalExecutable(command, "fixture executable")
+  }
   if (process.platform !== "win32") return spawn(command, args, options)
   const root = fileURLToPath(new URL("../", import.meta.url))
-  const exe = process.env.CODENOMAD_FIXTURE_JOB_EXE
+  const rawExe = process.env.CODENOMAD_FIXTURE_JOB_EXE
     ?? path.resolve(root, process.env.CARGO_TARGET_DIR || "target", "debug", "codenomad-fixture-job.exe")
+  let exe
   try {
-    if (!path.isAbsolute(exe)) throw new Error("Expected an absolute path")
+    if (!isLocalAbsolutePath(rawExe)) throw new Error("Expected an absolute local path")
+    exe = resolveLocalExecutable(rawExe, "fixture job launcher")
     accessSync(exe, constants.X_OK)
   } catch (cause) {
     throw new Error("Build `cargo build -p codenomad-host-process --bin codenomad-fixture-job` or set CODENOMAD_FIXTURE_JOB_EXE", { cause })

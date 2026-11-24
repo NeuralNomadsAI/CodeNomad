@@ -18,7 +18,7 @@ const {profile,project,sessionID}=live
 const current=(await live.read(`/api/session/${sessionID}`)).data
 assert.equal(current.location.directory,project)
 assert.deepEqual(current.permissions,[{action:'*',resource:'*',effect:'deny'}])
-const env={...await privateEnvironment(profile),CNRS_FIXTURE_URL:live.origin,CNRS_FIXTURE_PASSWORD:live.password,
+const env={...live.runtimeEnv,CNRS_FIXTURE_URL:live.origin,CNRS_FIXTURE_PASSWORD:live.password,
   CNRS_SERVER_PASSWORD:'rune-live-private-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
 const server=launchFixture(serverBinary,
   [path.dirname(project),path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[live.password,'rune-live-private-backend']})
@@ -26,7 +26,7 @@ let child
 let observed,stream,observeTask
 try {
   const origin=await server.ready(rustOrigin)
-  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'rune-live-private-backend'})})
+  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'rune-live-private-backend'}),signal:AbortSignal.timeout(15000)})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const call=(route,init={})=>fixtureFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
@@ -34,7 +34,9 @@ try {
   const workspace=await opened.json();assert.equal(opened.status,201,'Disposable workspace admission')
   const abort=new AbortController()
   observed=abort
-  stream=await fixtureFetch(`${origin}/api/events?clientId=rune-live-observer&connectionId=demo-observer`,{headers:{cookie},signal:abort.signal})
+  const openTimer=setTimeout(()=>abort.abort(Error('SSE open timed out')),15000)
+  try{stream=await fixtureFetch(`${origin}/api/events?clientId=rune-live-observer&connectionId=demo-observer`,{headers:{cookie},signal:abort.signal})}
+  finally{clearTimeout(openTimer)}
   assert.equal(stream.status,200)
   const stats={turn:0,chunks:0,body:'',ids:[],tools:0}
   const observe=async()=>{
@@ -66,7 +68,7 @@ try {
   observeTask=observe().catch(error=>{if(!abort.signal.aborted&&error.name!=='AbortError')console.error(`Live observer: ${error.message}`)})
   console.log(JSON.stringify({type:'RUNE_LIVE_READY',profile,project,sessionID,workspace:workspace.id,tools:'deny-all'}))
   child=launchFixture(clientBinary,[],{cwd:profile,redact:[live.password,'rune-live-private-backend'],
-    env:{...await privateEnvironment(profile),RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:sessionID,
+    env:{...live.runtimeEnv,RUNE_BACKEND:`${origin}/`,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:sessionID,
       RUNE_PASSWORD:'rune-live-private-backend',RUNE_LOCALE:'fr',RUNE_EMPTY_SESSION:'1',RUNE_LIVE_TITLE:'1'}})
   console.log(JSON.stringify({type:'RUNE_LIVE_WINDOW',pid:await child.pid()}))
   assert.equal(await child.closed,0,child.output())

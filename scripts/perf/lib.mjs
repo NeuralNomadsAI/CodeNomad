@@ -35,7 +35,8 @@ export async function sseReader(send, onFrame) {
   })().catch(error => { if (!controller.signal.aborted) failure = error })
   return async () => {
     controller.abort()
-    await reading
+    void response.body?.cancel?.().catch(() => {})
+    await Promise.race([reading, sleep(2000, undefined, { ref: false })])
     if (failure) throw failure
   }
 }

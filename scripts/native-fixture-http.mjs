@@ -1,9 +1,50 @@
 import assert from 'node:assert/strict'
-import {existsSync} from 'node:fs'
+import {existsSync,realpathSync} from 'node:fs'
 import {Agent as HttpAgent} from 'node:http'
-import {Agent,fetch as undiciFetch} from 'undici'
+import {createRequire} from 'node:module'
+import path from 'node:path'
+import {fileURLToPath} from 'node:url'
 
-assert(existsSync(new URL('../node_modules',import.meta.url)),'Worktree node_modules is required; parent checkout dependencies are forbidden')
+const repoRoot=path.resolve(fileURLToPath(new URL('..',import.meta.url)))
+const worktreeNodeModules=path.join(repoRoot,'node_modules')
+const requireLocal=createRequire(import.meta.url)
+
+function packageNameOf(specifier){
+  const parts=specifier.split('/')
+  return specifier.startsWith('@')?parts.slice(0,2).join('/'):parts[0]
+}
+
+export function resolveWorktreePackage(specifier,nodeModulesDir=worktreeNodeModules){
+  assert(existsSync(nodeModulesDir),'Worktree node_modules is required; parent checkout dependencies are forbidden')
+  const pkg=packageNameOf(specifier)
+  const pkgDir=path.join(nodeModulesDir,...pkg.split('/'))
+  assert(existsSync(path.join(pkgDir,'package.json')),
+    `Worktree node_modules is missing ${pkg}; parent checkout dependencies are forbidden`)
+  return requireLocal.resolve(specifier,{paths:[nodeModulesDir]})
+}
+
+const isUnc=value=>typeof value==='string'&&(/^[\\/]{2}/.test(value)||/^[\\/]{2}/.test(path.normalize(value)))
+export const isLocalAbsolutePath=value=>typeof value==='string'&&value.length>0&&path.isAbsolute(value)&&!isUnc(value)
+
+export function resolveLocalExecutable(raw,label='executable'){
+  assert(isLocalAbsolutePath(raw),`Pass an absolute local ${label}`)
+  const resolved=realpathSync(raw)
+  assert(isLocalAbsolutePath(resolved),`Resolved ${label} must stay on a local filesystem`)
+  return resolved
+}
+
+export function redactSecrets(text,secrets=[]){
+  let value=String(text??'')
+  for(const secret of secrets){
+    if(!secret)continue
+    for(const token of [secret,Buffer.from(`opencode:${secret}`).toString('base64'),Buffer.from(`codenomad:${secret}`).toString('base64')]){
+      value=value.replaceAll(token,'<fixture password>')
+    }
+  }
+  return value
+}
+
+const {Agent,fetch:undiciFetch}=requireLocal(resolveWorktreePackage('undici'))
 
 const dispatcher=new Agent()
 export const fixtureHttpAgent=new HttpAgent({keepAlive:true,proxyEnv:{}})

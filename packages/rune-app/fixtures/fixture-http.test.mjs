@@ -12,7 +12,7 @@ async function listen(t,handler){
   return {server,origin:`http://127.0.0.1:${server.address().port}`}
 }
 
-test('absolute foreign and blob targets receive a 403 without contacting the upstream',async t=>{
+test('absolute foreign and blob targets receive a 403 without contacting the upstream',{timeout:15000},async t=>{
   let forwarded=0
   const base='http://127.0.0.1:42395'
   const {origin}=await listen(t,(req,res)=>{
@@ -38,7 +38,7 @@ test('absolute foreign and blob targets receive a 403 without contacting the ups
   assert.equal(forwarded,1)
 })
 
-test('an active environment proxy cannot see fixture authentication or redirects',async t=>{
+test('an active environment proxy cannot see fixture authentication or redirects',{timeout:20000},async t=>{
   let proxyHits=0, targetHits=0
   const proxy=await listen(t,(_req,res)=>{proxyHits++;res.end('proxy')})
   proxy.server.on('connect',(_req,socket)=>{proxyHits++;socket.end('HTTP/1.1 502 Refused\r\n\r\n')})

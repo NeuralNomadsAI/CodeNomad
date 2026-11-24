@@ -98,7 +98,7 @@ L'adaptateur `scripts/perf/rune.mjs` pilote la sonde `tests/probes/latency.rs`, 
 
 Un préflight L1 d'un tour qualifie le parcours. L'admission exige des builds optimisés, trois tours L8/L32 et le contrôle des budgets, avec le vrai OpenCode privé et son fournisseur local. Le plugin d'historique utilise l'installateur du produit dans le seul profil du banc.
 
-Le banc atteste le PID du daemon privé avant le premier appel de session. Les requêtes JSON et le flux SSE du pilote (`daemon.send`) utilisent ce transport direct, sans proxy ni redirection ; la TUI démarre avec son propre transport dans un environnement purgé des variables proxy. Sous Windows, construire `codenomad-fixture-job` ou fournir son chemin absolu dans `CODENOMAD_FIXTURE_JOB_EXE`.
+Le banc atteste le propriétaire du socket loopback et le PID du daemon privé avant le premier appel de session. Les requêtes JSON et le flux SSE du pilote (`daemon.send`) utilisent ce transport direct, sans proxy ni redirection ; la TUI démarre avec son propre transport dans un environnement purgé des variables proxy (lancée directement dans son PTY). Sous Windows, construire `codenomad-fixture-job` ou fournir son chemin absolu dans `CODENOMAD_FIXTURE_JOB_EXE` pour contenir le daemon, le serveur et les sondes dans un Job Object.
 
 ```powershell
 node scripts/perf/bench.mjs $env:OPENCODE_TEST_BINARY --mode latency --rune-only --rune $env:RUNE_CLIENT_EXE --rune-server $env:RUNE_SERVER_EXE --rounds 3 --levels 8,32

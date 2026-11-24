@@ -23,5 +23,11 @@ rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "in
 OpenCodeCliService.prototype.discover = async () => endpoint
 for (const action of ["ensure", "restart"]) OpenCodeCliService.prototype[action] = async () => { throw Error(`Bench forbids service ${action}`) }
 const entry = new URL("index.js", dist)
+const baseFetch = globalThis.fetch
+globalThis.fetch = (input, init) => {
+  const target = new URL(input instanceof Request ? input.url : String(input))
+  assert.equal(target.hostname, "127.0.0.1", `Benchmark server cannot contact external host: ${target.origin}`)
+  return baseFetch(input, init)
+}
 process.argv[1] = fileURLToPath(entry)
 await import(entry)

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {spawnFixtureChild,stopFixtureChild} from '../native-fixture-guards.mjs'
-import {fixtureFetch,withoutFixtureProxy} from '../native-fixture-http.mjs'
+import {fixtureFetch,redactSecrets,resolveLocalExecutable,withoutFixtureProxy} from '../native-fixture-http.mjs'
 import {MARKER, now, sleep} from './lib.mjs'
 import {withBackend} from './stacks.mjs'
 
@@ -28,7 +28,8 @@ export function observation(value, clock) {
 }
 
 export async function withRune(binary, rustBinary, daemon, session, root, run) {
-  for (const executable of [binary, rustBinary]) assert(path.isAbsolute(executable), 'Rune and Rust server binaries must be absolute')
+  binary = resolveLocalExecutable(binary, 'Rune client binary')
+  rustBinary = resolveLocalExecutable(rustBinary, 'Rust server binary')
   assert.equal((await daemon.call('GET','/api/info')).pid,daemon.pid,'Rune workload must use the owned benchmark daemon')
   assert(daemon.pruning,'Rune benchmark requires explicitly provisioned pruning capability')
   await daemon.pruning.window(session)
@@ -44,8 +45,10 @@ export async function withRune(binary, rustBinary, daemon, session, root, run) {
     await writeFile(path.join(root,'history-capability.json'),JSON.stringify({nativeWindowProven:true,httpStatus:history.status,
       status:historyBody.status??'invalid',reason:historyBody.reason,messages:Array.isArray(historyBody.messages)?historyBody.messages.length:undefined},null,2))
     assert(history.ok&&historyBody.status==='window','Rust history capability unavailable; inspect history-capability.json and native pruning-proof.json')
-    const child = spawnFixtureChild(binary, ['--probe-latency','--tree',path.join(root,'unexpected-product-tree.json'),'--at','0'], {cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+    const group = process.platform !== 'win32'
+    const child = spawnFixtureChild(binary, ['--probe-latency','--tree',path.join(root,'unexpected-product-tree.json'),'--at','0'], {cwd: root, detached: group, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
       env: withoutFixtureProxy({...daemon.env, RUNE_BACKEND: `${origin}/`, RUNE_WORKSPACE: workspace.id, RUNE_SESSION: session, RUNE_PASSWORD: password, RUNE_LOCALE: 'en'})})
+    const startedBy = new Date()
     const pending = new Map()
     let serial = 0, buffer = '', stderr = '', failure
     const rejectAll = error => {failure ??= error; for (const task of pending.values()) task.reject(error); pending.clear()}
@@ -114,8 +117,8 @@ export async function withRune(binary, rustBinary, daemon, session, root, run) {
       try {
         if(child.exitCode===null&&!failure){await call('stop');await Promise.race([stopped,sleep(2000,undefined,{ref:false})]);graceful=child.exitCode===0}
       } catch {}
-      try {await stopFixtureChild(child, stopped)} finally {
-        await writeFile(path.join(root, 'rune-probe.log'), stderr.replaceAll(password, '<fixture password>').replaceAll(daemon.password, '<fixture password>'))
+      try {await stopFixtureChild(child, stopped, 1_000, 2_000, {group, startedBy})} finally {
+        await writeFile(path.join(root, 'rune-probe.log'), redactSecrets(stderr, [password, daemon.password]))
       }
       if(completed)assert(graceful,'Rune latency probe must acknowledge stop and exit 0')
     }

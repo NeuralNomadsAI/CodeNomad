@@ -4,15 +4,21 @@ import os from 'node:os'
 import path from 'node:path'
 import {test} from 'node:test'
 import {attestNative,fixtureTarget,isLocalAbsolutePath,privateManifest,requirePrivateCli,validatePrivateTree} from './live-access.mjs'
+import {launchFixture,onFixtureSignal} from './fixture-host.mjs'
 import {seedRealHistory} from './real-history-seed.mjs'
+import {redactSecrets,resolveWorktreePackage} from '../../../scripts/native-fixture-http.mjs'
 import {runDirectory} from '../../../scripts/perf/isolation.mjs'
 
 const origin='http://127.0.0.1:42395'
 const auth='fixture-credential'
 const fixture=()=>({pid:127,exitCode:null,signalCode:null})
 
-test('live fixtures fail closed before work when the listener cannot prove its PID',async()=>{
+test('live fixtures fail closed before work when the listener cannot prove its PID',{timeout:15000},async()=>{
   const child=fixture()
+  const ownerDenied=[]
+  await assert.rejects(attestNative(origin,child,auth,async url=>{ownerDenied.push(url.href);return Response.json({pid:127})},127,
+    async()=>{throw Error('Loopback port is not owned by fixture PID')}),/the shared OpenCode service is forbidden/)
+  assert.deepEqual(ownerDenied,[],'No HTTP request or Authorization header may be sent before socket ownership passes')
   for(const response of [Response.json({pid:381}),Response.json({}, {status:401}),Response.json({})]){
     const requests=[]
     await assert.rejects(attestNative(origin,child,auth,async(url,init)=>{
@@ -109,4 +115,59 @@ test('privateManifest rejects missing sessionID and seedRealHistory omits runtim
     const validated=await privateManifest(path.join(profile,'seeded.json'))
     assert.equal(validated.sessionID,persisted.sessionID)
   }finally{await rm(profile,{recursive:true,force:true})}
+})
+
+test('resumed profiles reject unattested config files, Git hooks and parent package resolution',{timeout:15000},async()=>{
+  const temp=await mkdtemp(path.join(os.tmpdir(),'rune-live-content-'))
+  try{
+    const root=await realpath(temp),profile=path.join(root,'profile')
+    await mkdir(path.join(profile,'project','.git','hooks'),{recursive:true})
+    await validatePrivateTree(profile)
+    const hook=path.join(profile,'project','.git','hooks','pre-commit')
+    await writeFile(hook,'#!/bin/sh\necho bad\n')
+    await assert.rejects(validatePrivateTree(profile),/active Git hook/)
+    await rm(hook)
+    const gitConfig=path.join(profile,'project','.git','config')
+    await writeFile(gitConfig,'[core]\n\thooksPath = /tmp/evil\n')
+    await assert.rejects(validatePrivateTree(profile),/forbidden directive/)
+    await rm(gitConfig)
+    const sneaky=path.join(profile,'opencode.json')
+    await writeFile(sneaky,'{}')
+    await assert.rejects(validatePrivateTree(profile),/unattested config entry/)
+    await rm(sneaky)
+    await mkdir(path.join(profile,'config'),{recursive:true})
+    const persistedConfig=path.join(profile,'config','config.yaml')
+    await writeFile(persistedConfig,'server: {}')
+    await assert.rejects(validatePrivateTree(profile),/persisted config file/)
+    await rm(persistedConfig)
+    const emptyModules=path.join(root,'empty-node_modules')
+    await mkdir(emptyModules)
+    assert.throws(()=>resolveWorktreePackage('undici',emptyModules),/missing undici/)
+    const secret='super-secret-value'
+    const basic=Buffer.from(`opencode:${secret}`).toString('base64')
+    const redacted=redactSecrets(`pw=${secret} header=Basic ${basic}`,[secret])
+    assert.equal(redacted.includes(secret),false)
+    assert.equal(redacted.includes(basic),false)
+  }finally{await rm(temp,{recursive:true,force:true})}
+})
+
+test('launchFixture redacts output and stops owned children cleanly',{timeout:15000},async()=>{
+  const secret='fixture-secret-token'
+  const basic=Buffer.from(`opencode:${secret}`).toString('base64')
+  let signalHookRegistered=false
+  const untrack=onFixtureSignal(()=>{signalHookRegistered=true})
+  const proc=launchFixture(process.execPath,['-e',`console.log("ready ${secret} ${basic}"); setInterval(()=>{},1000)`],{
+    cwd:process.cwd(),env:{PATH:process.env.PATH},redact:[secret],
+  })
+  try{
+    await proc.ready(out=>out.includes('ready'))
+    assert.equal(proc.output().includes(secret),false)
+    assert.equal(proc.output().includes(basic),false)
+    await proc.stop()
+    assert.notEqual(proc.child.exitCode===null&&proc.child.signalCode===null,true)
+    assert.equal(signalHookRegistered,false)
+  }finally{
+    untrack()
+    await proc.stop()
+  }
 })

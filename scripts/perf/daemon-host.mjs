@@ -6,13 +6,13 @@ import { createServer } from "node:http"
 import path from "node:path"
 import { fixtureEnvironment } from "../native-product-fixture.mjs"
 import { launchFixture } from "../../packages/rune-app/fixtures/fixture-host.mjs"
-import { attestNative, isLocalAbsolutePath } from "../../packages/rune-app/fixtures/live-access.mjs"
-import { fixtureFetch } from "../native-fixture-http.mjs"
+import { attestNative } from "../../packages/rune-app/fixtures/live-access.mjs"
+import { fixtureFetch, redactSecrets, resolveLocalExecutable } from "../native-fixture-http.mjs"
 import { privatePath } from "./isolation.mjs"
 import { json, now, sleep } from "./lib.mjs"
 
 export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnabled = false} = {}) {
-  assert(isLocalAbsolutePath(cli), "Pass the absolute local path to the pinned OpenCode binary")
+  cli = resolveLocalExecutable(cli, "OpenCode binary")
   root = privatePath(root)
   const project = privatePath(path.join(root, "project"))
   await mkdir(project, { recursive: true })
@@ -27,8 +27,9 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
     OPENCODE_DISABLE_AUTOUPDATE: "true", OPENCODE_SERVER_PASSWORD: password,
   })
   await mkdir(env.OPENCODE_CONFIG_DIR)
-  const git = (...args) => execFileSync("git", args, { cwd: project, env, windowsHide: true })
-  git("init", "-q")
+  const gitEnv = { ...env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: path.join(root, "empty.gitconfig"), GIT_TEMPLATE_DIR: "" }
+  const git = (...args) => execFileSync("git", ["-c", "core.hooksPath=", ...args], { cwd: project, env: gitEnv, windowsHide: true })
+  git("init", "-q", "--template=")
   git("add", ".")
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@invalid", "commit", "-qm", "fixture")
 
@@ -117,7 +118,7 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
       provider.closeAllConnections()
       batch?.release()
       await new Promise(resolve => provider.close(resolve))
-      await writeFile(path.join(root, "daemon.log"), (daemon?.output()??"").replaceAll(password, "<fixture password>"))
+      await writeFile(path.join(root, "daemon.log"), redactSecrets(daemon?.output()??"", [password]))
     }
   }
 }

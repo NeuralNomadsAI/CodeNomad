@@ -2,27 +2,30 @@ import assert from 'node:assert/strict'
 import {setTimeout as delay} from 'node:timers/promises'
 import {request} from 'playwright'
 import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {redactSecrets,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 
-const activeGroups=new Set()
+const activeChildren=new Set()
 const signalCleanups=new Set()
 let cleaningSignals=false,signalHooked=false
 function updateSignalHooks(){
-  const active=activeGroups.size+signalCleanups.size>0
+  const active=activeChildren.size+signalCleanups.size>0
   if(active&&!signalHooked){signalHooked=true;process.on('SIGINT',onSignal);process.on('SIGTERM',onSignal)}
   else if(!active&&signalHooked){signalHooked=false;process.off('SIGINT',onSignal);process.off('SIGTERM',onSignal)}
 }
 function onSignal(signal){
   if(cleaningSignals)return
   cleaningSignals=true
-  Promise.allSettled([...activeGroups].map(stop=>stop()))
-    .then(()=>Promise.allSettled([...signalCleanups].map(cleanup=>cleanup())))
+  const teardown=(async()=>{
+    await Promise.allSettled([...activeChildren].map(stop=>stop()))
+    await Promise.allSettled([...signalCleanups].map(cleanup=>cleanup()))
+  })()
+  Promise.race([teardown,delay(10000,undefined,{ref:false})])
     .finally(()=>process.exit(signal==='SIGINT'?130:143))
 }
-function trackGroup(stop){
-  activeGroups.add(stop)
+function trackChild(stop){
+  activeChildren.add(stop)
   updateSignalHooks()
-  return ()=>{activeGroups.delete(stop);updateSignalHooks()}
+  return ()=>{activeChildren.delete(stop);updateSignalHooks()}
 }
 export function onFixtureSignal(cleanup){
   signalCleanups.add(cleanup)
@@ -45,23 +48,26 @@ export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000,redact=
   const group=process.platform!=='win32'
   const child=spawnFixtureChild(binary,args,{cwd,env:withoutFixtureProxy(env),detached:group,windowsHide:true,stdio:[shutdown?'pipe':'ignore','pipe','pipe']})
   const startedBy=new Date()
-  let output='',stdout='',error
-  const sanitize=text=>redact.filter(Boolean).reduce((value,secret)=>value.replaceAll(secret,'<fixture password>'),text)
+  let output='',stdout='',error,stopping
+  const sanitize=text=>redactSecrets(text,redact)
   const closed=new Promise(resolve=>{
     child.once('close',resolve)
     child.once('error',cause=>{error=cause;resolve(1)})
   })
-  const stop=async close=>{
-    if(child.pid)await stopFixtureChild(child,closed,graceMs,2000,{
-      group,startedBy,close:close??(shutdown?()=>child.stdin.end(shutdown):undefined),
-    })
+  const stop=close=>{
+    stopping??=(async()=>{
+      if(child.pid)await stopFixtureChild(child,closed,graceMs,2000,{
+        group,startedBy,close:close??(shutdown?()=>child.stdin.end(shutdown):undefined),
+      })
+    })()
+    return stopping
   }
-  const untrack=group?trackGroup(()=>stop()):()=>{}
+  const untrack=trackChild(()=>stop())
   void closed.finally(untrack)
   child.stdout.on('data',data=>{stdout=(stdout+data).slice(-1048576)})
   for(const stream of [child.stdout,child.stderr])stream.on('data',data=>{output=(output+data).slice(-1048576)})
   child.stdin?.on('error',()=>{})
-  return {child,pid:()=>fixtureChildPid(child),closed,output:()=>output,stdout:()=>stdout,ready:(match,ms)=>until(()=>{
+  return {child,pid:()=>fixtureChildPid(child),closed,redact:sanitize,output:()=>sanitize(output),stdout:()=>sanitize(stdout),ready:(match,ms)=>until(()=>{
     if(error)throw error
     assert(child.exitCode===null&&child.signalCode===null,`Fixture child exited: ${sanitize(output.slice(-2000))}`)
     return match(stdout)

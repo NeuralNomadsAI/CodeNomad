@@ -18,7 +18,7 @@ const current=(await native.read(`/api/session/${manifest.sessionID}`)).data
 assert.deepEqual(current.permissions,[{action:'*',resource:'*',effect:'deny'}])
 const info=await native.read('/api/info')
 const stats={nativeVersion:info.version??info.data?.version,prompts:0,cuts:0,nativeFragments:0,tools:0,terminals:0,sseConnections:0,lastOutcome:null}
-const env={...await privateEnvironment(manifest.profile),CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,
+const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:native.password,
   CNRS_SERVER_PASSWORD:'real-history-private-backend',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:manifest.profile}
 const server=launchFixture(serverBinary,
   [path.dirname(manifest.project),path.join(manifest.profile,'real-backend.json'),'0','existing-opencode'],
@@ -27,7 +27,7 @@ let child,proxy,observer,stream,watchTask,proxyError=null
 let result=1
 try{
   const origin=await server.ready(rustOrigin)
-  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'real-history-private-backend'})})
+  const login=await fixtureFetch(`${origin}/api/auth/login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'codenomad',password:'real-history-private-backend'}),signal:AbortSignal.timeout(15000)})
   assert.equal(login.status,200)
   const cookie=login.headers.get('set-cookie').split(';')[0]
   const call=(route,init={})=>fixtureFetch(`${origin}${route}`,{...init,headers:{cookie,'content-type':'application/json'},signal:AbortSignal.timeout(30000)})
@@ -35,7 +35,9 @@ try{
   const workspace=await opened.json();assert.equal(opened.status,201)
   const own=value=>value.type==='instance.event'&&value.instanceId===workspace.id&&value.event?.data?.sessionID===manifest.sessionID
   observer=new AbortController()
-  stream=await fixtureFetch(`${origin}/api/events?clientId=real-history-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal})
+  const openTimer=setTimeout(()=>observer.abort(Error('SSE open timed out')),15000)
+  try{stream=await fixtureFetch(`${origin}/api/events?clientId=real-history-observer&connectionId=observer`,{headers:{cookie},signal:observer.signal})}
+  finally{clearTimeout(openTimer)}
   assert.equal(stream.status,200)
   async function watch(){
     let buffer='';const decoder=new TextDecoder()
@@ -101,10 +103,11 @@ try{
   await new Promise(r=>proxy.listen(0,'127.0.0.1',r))
   const base=`http://127.0.0.1:${proxy.address().port}/`
   child=launchFixture(clientBinary,['--probe-real-history'],
-    {cwd:manifest.profile,env:{...await privateEnvironment(manifest.profile),RUNE_BACKEND:base,
+    {cwd:manifest.profile,env:{...native.runtimeEnv,RUNE_BACKEND:base,
       RUNE_WORKSPACE:workspace.id,RUNE_SESSION:manifest.sessionID,RUNE_PASSWORD:'real-history-private-backend',RUNE_TEST_CONTROL:`${base}__real__/`},
       redact:[native.password,'real-history-private-backend']})
-  result=await child.closed
+  result=await Promise.race([child.closed,delay(120000,124,{ref:false})])
+  if(result===124)await child.stop()
   process.stdout.write(child.output())
   if(proxyError)throw proxyError
   assert.equal(result,0,'real history probe failed')
