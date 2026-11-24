@@ -75,6 +75,7 @@ fn a_large_session_catalogue_mounts_only_visible_rows_but_search_reaches_the_tai
             < 100
     );
     click(&mut rt, "session-search-toggle");
+    click(&mut rt, "session-search");
     rt.paste("Row 2099");
     settle(&mut rt);
     assert!(rt.find("session-catalogue-2099").is_some());
@@ -242,12 +243,54 @@ fn compressed_grip_starts_at_its_presented_width_and_accepts_keyboard() {
 }
 
 #[test]
+fn session_search_keeps_the_pressed_control_when_the_field_mounts() {
+    let mut state = init();
+    fixture(&mut state);
+    state.screen.launcher_mut().unwrap().show_title = true;
+    let mut rt = Runtime::new(state, english, (600.0, 900.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    click(&mut rt, "sessions-panel-toggle");
+    let key = "session-search-toggle";
+    let path = |rt: &Runtime<State>, key: &str| {
+        rt.elements()
+            .into_iter()
+            .find(|element| element.key.as_deref() == Some(key))
+            .unwrap()
+            .path
+    };
+    let before = path(&rt, key);
+    let create = path(&rt, "create-session");
+    let (x, y) = rt.find(key).unwrap();
+    rt.pointer_down(x, y);
+    rt.update(|s, _| s.screen.launcher_mut().unwrap().show_search = true);
+    rt.frame(0.02);
+    assert!(rt.find("session-search").is_some());
+    let after = path(&rt, key);
+    assert_eq!(path(&rt, "create-session"), create);
+    rt.pointer_up(x, y);
+    settle(&mut rt);
+    assert!(
+        !rt.state.screen.launcher().unwrap().show_search,
+        "pointer release was lost after reparenting: {before} → {after}"
+    );
+    assert_eq!(before, after);
+}
+
+#[test]
 fn resizing_out_of_room_returns_focus_from_the_search_editor() {
     let mut state = init();
     fixture(&mut state);
     let mut rt = Runtime::new(state, english, (1000.0, 900.0), Env::new(false, 1.0));
     settle(&mut rt);
     click(&mut rt, "session-search-toggle");
+    assert!(rt.find("session-search").is_some());
+    assert!(rt.find("session-title").is_none());
+    assert!(
+        !rt.elements()
+            .iter()
+            .any(|element| element.focused && element.path.contains("/session-search/"))
+    );
+    click(&mut rt, "session-search");
     assert!(
         rt.elements()
             .iter()
@@ -271,6 +314,7 @@ fn escape_from_the_search_editor_closes_its_floating_panel() {
     settle(&mut rt);
     click(&mut rt, "sessions-panel-toggle");
     click(&mut rt, "session-search-toggle");
+    click(&mut rt, "session-search");
     for shift in [false, true] {
         let event = KeyEvent {
             key: Key::Function(6),
@@ -405,4 +449,103 @@ fn tab_after_a_background_click_returns_to_the_floating_drawer() {
             .iter()
             .any(|e| e.key.as_deref() == Some("right-panel-toggle") && e.focused)
     );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn direct_authentication_dialog_keeps_shell_paths_on_show_and_hide() {
+    let mut state = init();
+    fixture(&mut state);
+    state.screen = crate::Screen::Chat { launcher: None };
+    let mut rt = Runtime::new(state, english, (1000.0, 900.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    let path = |rt: &Runtime<State>, key: &str| {
+        rt.elements()
+            .into_iter()
+            .find(|element| element.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("{key}"))
+            .path
+    };
+    let keys = ["session-shell", "conversation-draft", "composer"];
+    let before: Vec<_> = keys.iter().map(|key| path(&rt, key)).collect();
+    assert!(rt.find("direct-recovery-dialog").is_none());
+    let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    rt.update(|s, _| {
+        crate::chat::authentication::expired(
+            s,
+            codenomad_client::transport::Authentication {
+                backend,
+                confirmed: true,
+            },
+        );
+    });
+    settle(&mut rt);
+    assert!(rt.find("direct-recovery-dialog").is_some());
+    assert_eq!(
+        keys.iter().map(|key| path(&rt, key)).collect::<Vec<_>>(),
+        before
+    );
+    rt.update(|s, _| {
+        s.direct_authentication = Default::default();
+    });
+    settle(&mut rt);
+    assert!(rt.find("direct-recovery-dialog").is_none());
+    assert_eq!(
+        keys.iter().map(|key| path(&rt, key)).collect::<Vec<_>>(),
+        before
+    );
+}
+
+#[test]
+fn notification_bubbles_keep_their_path_across_composer_overlays() {
+    let mut state = init();
+    fixture(&mut state);
+    let (commands, _receiver) = codenomad_client::bounded(1);
+    state.commands = Some(commands);
+    crate::settings::notification_fixture(&state);
+    crate::settings::notification_test_config(
+        &state,
+        serde_json::json!({"settings":{"notificationRouting":{
+            "settings":{"screen":true,"history":true,"system":false}
+        }}}),
+    );
+    state.notifications.record();
+    crate::shell::notifications::emit_outcome(
+        &mut state,
+        crate::shell::notifications::Category::Settings,
+        None,
+        "Write failed",
+        true,
+    );
+    let mut rt = Runtime::new(state, english, (1000.0, 900.0), Env::new(false, 1.0));
+    rt.update(|s, tx| {
+        crate::shell::notifications::poll(s, tx);
+    });
+    settle(&mut rt);
+    let path = |rt: &Runtime<State>, key: &str| {
+        rt.elements()
+            .into_iter()
+            .find(|element| element.key.as_deref() == Some(key))
+            .unwrap_or_else(|| panic!("{key}"))
+            .path
+    };
+    let before = path(&rt, "notification-bubbles");
+    let before_dismiss = path(&rt, "notification-dismiss-0");
+    assert!(!rt.state.composer.picker.open());
+    rt.update(|_, tx| tx.focus("composer", false));
+    settle(&mut rt);
+    rt.paste("/");
+    settle(&mut rt);
+    assert!(rt.state.composer.picker.open());
+    assert!(rt.elements().iter().any(|e| e.role == "listbox"));
+    assert_eq!(path(&rt, "notification-bubbles"), before);
+    assert_eq!(path(&rt, "notification-dismiss-0"), before_dismiss);
+    rt.key(KeyEvent {
+        key: Key::Escape,
+        mods: Mods::default(),
+    });
+    settle(&mut rt);
+    assert!(!rt.state.composer.picker.open());
+    assert_eq!(path(&rt, "notification-bubbles"), before);
+    assert_eq!(path(&rt, "notification-dismiss-0"), before_dismiss);
 }

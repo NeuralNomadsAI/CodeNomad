@@ -10,6 +10,7 @@ pub(crate) mod login_start;
 mod prompt;
 pub mod proxy;
 mod proxy_body;
+mod proxy_write;
 pub mod scope;
 mod session_environment;
 pub mod update;
@@ -34,6 +35,8 @@ pub use daemon::Endpoint;
 
 /// A working connection is rediscovered after this interval; only a different daemon replaces it.
 const RECHECK: Duration = Duration::from_secs(30);
+// Default headers/body inactivity limit of the reference's Undici transport.
+const PROXY_IDLE: Duration = Duration::from_secs(300);
 
 pub struct Native {
     pub client: Client,
@@ -56,6 +59,7 @@ impl Native {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(3))
+            .read_timeout(PROXY_IDLE)
             // The reference's fetch idle keep-alive (undici 4 s): hyper's 90 s default reused
             // sockets the daemon had already closed (ConnectionReset, a 502 in the UI).
             .pool_idle_timeout(Duration::from_secs(4))

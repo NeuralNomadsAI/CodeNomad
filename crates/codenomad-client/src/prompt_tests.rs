@@ -110,6 +110,7 @@ impl Server {
                 workspace: "workspace".into(),
                 session: "session".into(),
                 client_id: "prompt-fixture".into(),
+                session_directory: None,
                 fresh_mode: false,
             },
             requests,
@@ -405,6 +406,10 @@ fn legacy_file_blobs_keep_labels_without_retaining_inline_bytes_or_device_paths(
         };
         assert_eq!(file.name.as_deref(), Some("shot.png"));
         assert!(file.reference.is_none());
+        assert_eq!(
+            file.picture,
+            Some(crate::content::PictureSource::Unavailable)
+        );
         assert!(!format!("{file:?}").contains("AAEC/w=="));
         assert!(!format!("{file:?}").contains("D:/device"));
     });
@@ -558,7 +563,10 @@ fn prompt_and_history_limits_do_not_expand_catalogues() {
             .insert(0, json!({"id":"overlap","type":"user","text":""}));
         let left = history::decode(before).unwrap();
         let right = history::decode(after).unwrap();
-        assert!(history::previous_page(&left, &right.rows).is_ok());
-        assert!(history::previous_page(&left, &right.rows[1..]).is_err());
+        use crate::transport::HistoryEdge::{After, Before};
+        assert!(history::edge_page(&left, &right.rows, Before).is_ok());
+        assert!(history::edge_page(&left, &right.rows[1..], Before).is_err());
+        assert!(history::edge_page(&right, &left.rows, After).is_ok());
+        assert!(history::edge_page(&right, &left.rows[..1], After).is_err());
     });
 }

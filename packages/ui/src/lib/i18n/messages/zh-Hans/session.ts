@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.filter.includeSubsessions": "子会话",
   "session.pruning.maintenance_required": "请等待当前操作完成后重试清理。",
   "session.pruning.unavailable": "请重新打开 CodeNomad 后重试。",
+  "session.messageActions.serverUnavailable": "此服务器不支持此操作。",
   "session.pruning.conflict": "请重新加载消息并再次选择内容。",
   "session.pruning.not_deletable": "只能移除此会话中已完成的工具和推理。",
   "session.pruning.unsupported_storage": "清理插件无法验证此会话的存储。清理已被拒绝。",

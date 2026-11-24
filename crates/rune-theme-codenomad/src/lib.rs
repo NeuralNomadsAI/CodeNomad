@@ -20,6 +20,7 @@ pub mod palettes;
 pub mod settings;
 pub mod shell;
 pub mod tabs;
+pub mod timeline;
 mod tokens;
 pub mod usage;
 pub mod window_control;

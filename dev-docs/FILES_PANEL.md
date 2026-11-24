@@ -22,6 +22,14 @@ Changes (Git actions and the compact commit field before its rows) and Changes. 
 selection, reads no status and leaves the header a staging drop target; mode
 switches and refreshes keep both disclosure states.
 
+A commit waits for the user's Git hooks and signing. If they fail, the staged
+changes remain available for another attempt.
+
+The Rust server stages a save beside the resolved target and replaces the name
+only after writing and flushing it. Symbolic links keep pointing to the target.
+Targets are saved in place when the volume or permissions prevent replacement,
+or when hard links require every alias to keep pointing to the same file.
+
 ### Large inventories
 
 Large `filesystem.changed` inventories, including nested worktrees, use three rules:

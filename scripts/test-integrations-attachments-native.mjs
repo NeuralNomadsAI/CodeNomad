@@ -3,7 +3,6 @@
 // <absolute OpenCode 2.2.x executable> [pilot checkout] [Blender >=5.2 executable].
 // All children have allowlisted/private environments. AC-B4 remains a separate manual check.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { access, cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
@@ -15,7 +14,7 @@ import { OpenCode } from "@opencode/client"
 import { tsImport } from "tsx/esm/api"
 import { assertNoSentinels, FAKE_INTEGRATION_SENTINELS, startFakeHost, writeFakeIntegrationPackage } from "./fixtures/fake-integration/index.mjs"
 import { fixtureEnvironment, withProductRuntime, writeFixtureServiceRegistration } from "./native-product-fixture.mjs"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 import { EventBus } from "../packages/server/src/events/bus.ts"
 import { ClientConnectionManager } from "../packages/server/src/clients/connection-manager.ts"
 import { InstanceEventBridge } from "../packages/server/src/workspaces/instance-events.ts"

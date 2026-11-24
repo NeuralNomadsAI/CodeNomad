@@ -29,8 +29,8 @@ use rune::{Tx, edit::TextEdit};
 use sessions::attach;
 #[cfg(feature = "test-support")]
 pub use sessions::back;
-pub(crate) use sessions::choose_destination;
 use sessions::{bind, dismiss_origin_panel, retire_session};
+pub(crate) use sessions::{bind_search, choose_destination};
 pub use sessions::{can_change_session, can_visit, choose, create, list, visit};
 use std::{collections::HashSet, future::Future};
 pub(crate) use visits::Visits;

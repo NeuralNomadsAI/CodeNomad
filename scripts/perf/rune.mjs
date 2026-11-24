@@ -1,9 +1,8 @@
 // CPU-buffer readiness through the real Rune runtime; no native window or virtual clock.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
 import {writeFile} from 'node:fs/promises'
 import path from 'node:path'
-import {stopFixtureChild} from '../native-fixture-guards.mjs'
+import {spawnFixtureChild as spawn,stopFixtureChild} from '../native-fixture-guards.mjs'
 import {MARKER, now, sleep} from './lib.mjs'
 import {withBackend} from './stacks.mjs'
 

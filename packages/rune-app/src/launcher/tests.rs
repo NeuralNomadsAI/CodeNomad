@@ -206,6 +206,7 @@ fn a_selection_reply_cannot_replace_a_session_that_resumed_streaming() {
         workspace: "header-windows".into(),
         session: "another".into(),
         client_id: "fixture".into(),
+        session_directory: None,
         fresh_mode: false,
     };
     assert!(
@@ -246,6 +247,7 @@ fn a_rebind_of_the_current_session_keeps_the_last_history_until_sync() {
         workspace: "header-windows".into(),
         session: "session".into(),
         client_id: "fixture".into(),
+        session_directory: None,
         fresh_mode: false,
     };
     let launcher = state.screen.launcher_mut().unwrap();
@@ -291,6 +293,7 @@ fn session_choices_remain_visible_in_the_scrolling_launcher() {
             workspace: String::new(),
             session: String::new(),
             client_id: "fixture".into(),
+            session_directory: None,
             fresh_mode: false,
         });
         launcher.project = Some(Project {

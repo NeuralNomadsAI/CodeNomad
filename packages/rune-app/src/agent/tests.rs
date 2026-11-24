@@ -30,6 +30,8 @@ fn notifications_deliver_a_root_question_once_and_wait_for_an_idle_verification(
             id: "question".into(),
             title: "A question".into(),
             fields: vec![],
+            tool: None,
+            infer_websearch: false,
         }]),
     };
     let mut s = crate::init();
@@ -126,6 +128,8 @@ fn terminal_event_fences_only_activity_in_a_pending_control_response() {
     assert!(
         out.try_send(super::Result::Read(
             snapshot(vec![Form {
+                tool: None,
+                infer_websearch: false,
                 id: "form_pending".into(),
                 title: "Pending question".into(),
                 fields: vec![],
@@ -191,6 +195,8 @@ fn settled_requests_and_removed_models_reject_late_actions_before_dispatch() {
 #[test]
 fn native_questions_keep_typed_defaults_conditions_and_validation() {
     let form = Form {
+        tool: None,
+        infer_websearch: false,
         id: "form_one".into(),
         title: "Synthetic".into(),
         fields: vec![

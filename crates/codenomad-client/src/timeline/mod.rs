@@ -7,13 +7,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::HashSet,
-    sync::atomic::{AtomicU64, Ordering::SeqCst},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering::SeqCst},
+    },
 };
 
 mod anchor;
+mod jump;
+mod previews;
 mod rail;
+mod saved;
 pub use anchor::AnchorWindow;
+pub use jump::{Admission, Jump};
+pub(crate) use jump::{page_offer, until_cancelled};
+pub use previews::{Excerpt, PREVIEW_BATCH};
 pub use rail::{Marker, MarkerKind, Resident, UnplacedWindow, WindowPosition, project};
+use saved::Identity;
+pub use saved::{SAVED_BYTES, decode_saved_outlines, encode_saved_outlines};
 
 const PAGE_ENTRIES: usize = 16_384;
 const PAGE_BYTES: usize = 24 * 1024 * 1024;
@@ -22,7 +33,7 @@ const CACHE_BYTES: usize = 16 * 1024 * 1024;
 const INDEX_BYTES: usize = 128 * 1024 * 1024;
 const MAX_SEQ: u64 = (1 << 53) - 1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Kind {
     User,
@@ -38,7 +49,7 @@ pub enum Kind {
     LocationSwitched,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Entry {
     pub id: String,
@@ -53,7 +64,7 @@ pub struct Entry {
     pub omitted: Option<Omitted>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Omitted {
     pub reasoning: u64,
@@ -61,13 +72,15 @@ pub struct Omitted {
     pub continues: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Outline {
     pub entries: Vec<Entry>,
     /// Count at the last page's read transaction, not a guarantee against concurrent deletion.
     pub total: u64,
     /// Larger indexes stay in the active view, outside the reusable cache.
     pub cacheable: bool,
+    #[doc(hidden)]
+    pub saved: Option<saved::Metadata>,
 }
 
 /// The view invalidates this revision on undo and on revocation of its history read.
@@ -87,9 +100,17 @@ struct Cursor {
     through: u64,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Checkpoint {
+    after: i64,
+    through: u64,
+    digest: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Checked {
     after: i64,
     through: u64,
     digest: String,
@@ -104,7 +125,7 @@ enum Page {
         total: u64,
         #[serde(deserialize_with = "Option::deserialize")]
         cursor: Option<Cursor>,
-        checkpoints: Vec<Checkpoint>,
+        checkpoints: Vec<Checked>,
     },
     Blocked {
         reason: Blocked,
@@ -128,9 +149,29 @@ impl std::fmt::Display for Blocked {
 }
 impl std::error::Error for Blocked {}
 
+#[derive(Debug)]
+pub struct OutlineIdentityChanged;
+impl std::fmt::Display for OutlineIdentityChanged {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str("outline session identity changed")
+    }
+}
+impl std::error::Error for OutlineIdentityChanged {}
+
 impl Backend {
     /// A cold scan publishes only after the last page. Drop the future to cancel the read.
-    pub async fn outline(&self, revision: &OutlineRevision) -> Result<Outline> {
+    #[cfg(test)]
+    pub async fn read_outline(&self, revision: &OutlineRevision) -> Result<Outline> {
+        self.read_outline_cached(revision, None, None, |_| ()).await
+    }
+
+    pub async fn read_outline_cached(
+        &self,
+        revision: &OutlineRevision,
+        project: Option<&str>,
+        saved: Option<Arc<Outline>>,
+        show_saved: impl FnOnce(Option<Arc<Outline>>),
+    ) -> Result<Outline> {
         if !valid_id(&self.workspace) || !valid_id(&self.session) {
             return Err("invalid outline scope".into());
         }
@@ -144,41 +185,70 @@ impl Backend {
                 .then_some(())
                 .ok_or(Blocked::Conflict)
         };
-        let undo = self.outline_undo().await?;
+        let (undo, identity) = self.outline_session(project).await?;
+        current()?;
+        let check_seed = saved.is_some();
+        let saved = saved.filter(|seed| {
+            seed.saved
+                .as_ref()
+                .is_some_and(|m| Some(&m.identity) == identity.as_ref())
+        });
+        if check_seed {
+            show_saved(saved.clone());
+        }
         let mut scan = Scan::default();
+        let mut known = saved
+            .as_deref()
+            .filter(|seed| seed.has_complete_metadata())
+            .and_then(|seed| seed.saved.as_ref())
+            .map_or(&[][..], |m| m.checkpoints.as_slice());
         loop {
             current()?;
-            let body = match scan.cursor {
+            let mut body = match scan.cursor {
                 None => json!({"sessionID": self.session}),
                 Some(cursor) => json!({"sessionID": self.session, "cursor": cursor}),
             };
-            let response = self
-                .client
-                .post(&url)
-                .json(&body)
-                .send()
-                .await?
-                .error_for_status()?;
+            if !known.is_empty() {
+                body["known"] = json!(known);
+            }
+            let response = self.client.post(&url).json(&body).send().await?;
+            if response.status() == reqwest::StatusCode::BAD_REQUEST && !known.is_empty() {
+                known = &[];
+                scan = Scan::default();
+                continue;
+            }
+            let response = response.error_for_status()?;
             let page = serde_json::from_value(read_json_limited(response, PAGE_BYTES).await?)?;
             current()?;
-            let total = scan.accept(page)?;
+            let total = scan.accept_with(page, saved.as_deref().filter(|_| !known.is_empty()))?;
             // Each broker page is stable within its own request. The native undo boundary
             // and the live revision together fence the complete multi-page scan.
-            if self.outline_undo().await? != undo {
-                return Err(Blocked::Conflict.into());
+            if self.outline_session(project).await? != (undo.clone(), identity.clone()) {
+                return Err(OutlineIdentityChanged.into());
             }
             current()?;
             if let Some(total) = total {
+                let saved = identity
+                    .filter(|_| {
+                        scan.cacheable
+                            && scan.entries.len() as u64 == total
+                            && scan.checkpoints.len() <= 512
+                    })
+                    .map(|identity| saved::Metadata {
+                        identity,
+                        checkpoints: scan.checkpoints,
+                    });
                 return Ok(Outline {
                     cacheable: scan.cacheable,
                     entries: scan.entries,
                     total,
+                    saved,
                 });
             }
         }
     }
 
-    async fn outline_undo(&self) -> Result<Value> {
+    async fn outline_session(&self, project: Option<&str>) -> Result<(Value, Option<Identity>)> {
         let value = read_json(
             self.client
                 .get(format!(
@@ -192,9 +262,12 @@ impl Backend {
         .await?;
         let record = value.get("data").unwrap_or(&value);
         if record["id"] != self.session {
-            return Err("outline session identity changed".into());
+            return Err(OutlineIdentityChanged.into());
         }
-        Ok(record["revert"].clone())
+        Ok((
+            record["revert"].clone(),
+            project.and_then(|root| Identity::from_session(self, root, record)),
+        ))
     }
 }
 
@@ -206,11 +279,18 @@ struct Scan {
     bytes: usize,
     pages: usize,
     cacheable: bool,
+    checkpoints: Vec<Checkpoint>,
+    source_offset: usize,
 }
 
 impl Scan {
     /// None carries the next cursor; Some gives the last transaction's total.
+    #[cfg(test)]
     fn accept(&mut self, page: Page) -> Result<Option<u64>> {
+        self.accept_with(page, None)
+    }
+
+    fn accept_with(&mut self, page: Page, seed: Option<&Outline>) -> Result<Option<u64>> {
         let (entries, total, next, checkpoints) = match page {
             Page::Outline {
                 entries,
@@ -237,8 +317,10 @@ impl Scan {
         }
         let start = self.cursor.map_or(-1, |cursor| cursor.after as i64);
         let mut after = start;
+        let mut delta = entries.into_iter().peekable();
+        let mut seq = start;
         for checkpoint in checkpoints {
-            let Checkpoint {
+            let Checked {
                 after: begin,
                 through,
                 digest,
@@ -247,13 +329,41 @@ impl Scan {
             if begin != after
                 || through > MAX_SEQ
                 || through as i64 <= after
-                || !changed
-                || digest.len() != 64
-                || !digest
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || b"abcdef".contains(&b))
+                || !saved::valid_digest(&digest)
             {
                 return Err("invalid outline checkpoint".into());
+            }
+            let next_checkpoint = Checkpoint {
+                after: begin,
+                through,
+                digest,
+            };
+            let unchanged = seed
+                .and_then(|seed| seed.saved.as_ref().map(|m| (seed, m)))
+                .filter(|(_, m)| m.checkpoints.iter().any(|known| *known == next_checkpoint));
+            if !changed && unchanged.is_none() {
+                return Err("unrecognized outline checkpoint".into());
+            }
+            if let Some(seed) = seed {
+                while let Some(entry) = seed
+                    .entries
+                    .get(self.source_offset)
+                    .filter(|entry| entry.seq <= through)
+                {
+                    self.source_offset += 1;
+                    if !changed && entry.seq as i64 > begin {
+                        self.admit(entry.clone(), &mut seq, through)?;
+                    }
+                }
+            }
+            while delta.peek().is_some_and(|entry| entry.seq <= through) {
+                if !changed {
+                    return Err("outline returned entries in an unchanged range".into());
+                }
+                self.admit(delta.next().unwrap(), &mut seq, through)?;
+            }
+            if self.checkpoints.len() <= 512 {
+                self.checkpoints.push(next_checkpoint);
             }
             after = through as i64;
         }
@@ -268,29 +378,32 @@ impl Scan {
         }) {
             return Err("outline cursor changed or did not advance".into());
         }
-        let mut seq = start;
-        for entry in entries {
-            if entry.seq > MAX_SEQ
-                || entry.seq as i64 <= seq
-                || entry.seq as i64 > after
-                || !entry.valid()
-                || !self.ids.insert(entry.id.clone())
-            {
-                return Err("invalid or duplicate outline entry".into());
-            }
-            self.bytes += std::mem::size_of::<Entry>()
-                + 2 * entry.id.len()
-                + entry.layout.as_ref().map_or(0, String::len)
-                + entry.tool_name.as_ref().map_or(0, String::len);
-            if self.bytes > INDEX_BYTES {
-                return Err("outline memory budget reached".into());
-            }
-            seq = entry.seq as i64;
-            self.entries.push(entry);
+        if delta.next().is_some() {
+            return Err("outline entry outside checkpoint coverage".into());
         }
         self.cursor = next;
         self.cacheable &= self.entries.len() <= CACHE_ENTRIES && self.bytes <= CACHE_BYTES;
         Ok(next.is_none().then_some(total))
+    }
+
+    fn admit(&mut self, entry: Entry, seq: &mut i64, through: u64) -> Result<()> {
+        if entry.seq > through
+            || entry.seq as i64 <= *seq
+            || !entry.valid()
+            || !self.ids.insert(entry.id.clone())
+        {
+            return Err("invalid or duplicate outline entry".into());
+        }
+        self.bytes += std::mem::size_of::<Entry>()
+            + 2 * entry.id.len()
+            + entry.layout.as_ref().map_or(0, String::len)
+            + entry.tool_name.as_ref().map_or(0, String::len);
+        if self.bytes > INDEX_BYTES {
+            return Err("outline memory budget reached".into());
+        }
+        *seq = entry.seq as i64;
+        self.entries.push(entry);
+        Ok(())
     }
 }
 
@@ -320,4 +433,4 @@ impl Entry {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

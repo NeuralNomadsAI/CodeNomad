@@ -1,6 +1,5 @@
 // Native stored history and Rune workspace restoration; every process and Location is private.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
 import {randomUUID,createHash} from 'node:crypto'
 import {mkdir,copyFile,readFile,writeFile} from 'node:fs/promises'
 import {createServer,request} from 'node:http'
@@ -11,7 +10,7 @@ import {privateEnvironment} from './private-profile.mjs'
 import {clientBinary,serverBinary,requireTestSupport} from './fixture-binaries.mjs'
 import {preparePruning} from '../../../scripts/perf/pruning.mjs'
 import {privatePath} from '../../../scripts/perf/isolation.mjs'
-import {stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
+import {fixtureChildPid,spawnFixtureChild as spawn,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 
 const {values}=parseArgs({options:{opencode:{type:'string'}}})
 assert(values.opencode&&path.isAbsolute(values.opencode),'--opencode requires an absolute private-runtime executable')
@@ -86,7 +85,7 @@ try{
   const authorization=`Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`
   native=OpenCode.make({baseUrl:endpoint,headers:{authorization},fetch:(url,init)=>fetch(url,{...init,
     signal:AbortSignal.any([...(init?.signal?[init.signal]:[]),AbortSignal.timeout(30000)])})})
-  const info=await native.server.info();assert.equal(info.pid,daemon.child.pid)
+  const info=await native.server.info();assert.equal(info.pid,await fixtureChildPid(daemon.child))
   proof.nativeVersion=info.version
   await pruning.activate({project,url:endpoint,authorization},()=>assert.equal(daemon.child.exitCode,null))
   const create=async title=>{
@@ -181,7 +180,7 @@ finally{
   const secrets=[env.OPENCODE_SERVER_PASSWORD,rustPassword].filter(Boolean)
   for(const [name,log]of Object.entries(logs))await writeFile(path.join(root,`${name}.log`),secrets.reduce((text,secret)=>text.replaceAll(secret,'<fixture password>'),log))
   if(errors.length){proof.result='failed';proof.cleanupErrors=errors.map(error=>error.message);failure??=new AggregateError(errors,'Owned fixture cleanup failed')}
-  proof.children=children.map(({name,child})=>({name,pid:child.pid,exitCode:child.exitCode,signal:child.signalCode}))
+  proof.children=await Promise.all(children.map(async ({name,child})=>({name,pid:await fixtureChildPid(child),exitCode:child.exitCode,signal:child.signalCode})))
   await writeFile(path.join(root,'proof.json'),JSON.stringify(proof,null,2)+'\n')
 }
 console.log(JSON.stringify({type:'native-store-fixture',result:proof.result,root,stages:stages.map(s=>s.stage),rows:600,ownedSessions:ownedIDs.length}))

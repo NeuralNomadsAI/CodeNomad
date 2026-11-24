@@ -273,7 +273,7 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
     if project || !s.chat_title.is_empty() || s.files.is_some() {
         center = center.child(header(s, project, docked, touch));
     } else if let Some(warning) = connection_warning(s) {
-        center = center.child(shell::floating_notice(warning));
+        center = center.child(shell::floating_notice(warning).key("connection-warning"));
     }
     let center = center.child(body.remaining());
     let mut columns = shell::columns();
@@ -327,7 +327,7 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
         [
             shell::spacer(),
             shell::panel_title(title).key("chat-title").role("heading"),
-            shell::spacer(),
+            crate::timeline::search::trigger(s).unwrap_or_else(shell::spacer),
             crate::files::view::toggle(s),
             connection_warning(s).unwrap_or_else(col),
         ],

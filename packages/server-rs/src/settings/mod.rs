@@ -244,6 +244,9 @@ fn owner_strict(doc: &Doc, name: &str) -> Result<Doc, Unreadable> {
 
 /// `SettingsService.publish` for an owner write.
 fn publish(app: &App, kind: Kind, name: &str, value: Value) {
+    if kind == Kind::Config && matches!(name, "server" | "*") {
+        app.releases.update_feed(&app.settings);
+    }
     let (kind, value) = match kind {
         Kind::Config => ("storage.configChanged", sanitized(name, value)),
         Kind::State => ("storage.stateChanged", value),

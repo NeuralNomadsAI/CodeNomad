@@ -4,6 +4,7 @@ pub mod browse;
 pub mod links;
 pub mod node_path;
 pub mod paths;
+mod save;
 pub mod watch;
 
 pub fn routes() -> axum::Router<Shared> {
@@ -30,7 +31,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    io::{self, Read, Seek, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -295,39 +296,48 @@ pub async fn put(
     if body.contents.len() > MAX {
         return Err(large());
     }
-    let _write = app.project_mutation.lock().await;
     let w = select(&app, &id, &q).await?;
     let p = workspace_path(&w.path, q.path.as_deref().ok_or_else(invalid)?, false)?;
-    root(&w)?;
-    // Written through links like the reference (`links`).
-    links::guard(&w.path, &p)?;
-    let p = links::target(&w.path, &p);
     let expected = match (headers.get(axum::http::header::IF_MATCH), body.expected_version.as_deref()) {
         (Some(_), Some(_)) => return Err(error(Status::BAD_REQUEST, "Conflicting version selectors")),
-        (Some(h), None) => Some(h.to_str().map_err(|_| error(Status::BAD_REQUEST, "Invalid file version"))?),
-        (None, other) => other,
+        (Some(h), None) => Some(h.to_str().map_err(|_| error(Status::BAD_REQUEST, "Invalid file version"))?.to_owned()),
+        (None, other) => other.map(str::to_owned),
     };
-    if expected.is_some() && !p.is_file() {
-        return Err(error(Status::CONFLICT, "File changed on disk"));
-    }
-    // One handle for the optional CAS and the write; truncate only after it.
-    let mut opts = std::fs::OpenOptions::new();
-    opts.read(true).write(true).create(expected.is_none());
-    let mut file = opts.open(&p).map_err(io_error)?;
-    if !file.metadata().is_ok_and(|m| m.is_file()) {
-        return Err(error(Status::BAD_REQUEST, "Selected path is not a file"));
-    }
-    if let Some(expected) = expected {
-        let original = bounded(&mut file, MAX)?;
-        if expected != version(&original) {
-            return Err(error(Status::CONFLICT, "File changed on disk"));
-        }
-    }
-    file.rewind().map_err(io_error)?;
-    file.write_all(body.contents.as_bytes()).map_err(io_error)?;
-    file.set_len(body.contents.len() as u64).map_err(io_error)?;
-    file.sync_all().map_err(io_error)?;
-    Ok((Status::NO_CONTENT, [(axum::http::header::ETAG, version(body.contents.as_bytes()))]).into_response())
+    use crate::worktrees::fence;
+    root(&w)?;
+    links::guard(&w.path, &p)?;
+    let target = links::write_target(links::target(&w.path, &p))?;
+    let key = fence::identity(&target);
+    let admitted = fence::admit(&[fence::identity(&w.path), key.clone()])?;
+    let write = fence::serialize(format!("file\n{key}")).await;
+    // Physical aliases have distinct paths but must share the version check.
+    let identity = save::file_identity(&target, expected.is_some())?;
+    let aliases = match &identity {
+        Some(key) => Some(fence::serialize(format!("file-identity\n{key}")).await),
+        None => None,
+    };
+    app.workspace(&id)?;
+    let tag = version(body.contents.as_bytes());
+    tokio::task::spawn_blocking(move || {
+        let (_write, _aliases, _admitted) = (write, aliases, admitted);
+        let current = || {
+            app.workspace(&id)?;
+            root(&w)?;
+            links::guard(&w.path, &p)?;
+            if links::write_target(links::target(&w.path, &p))? != target {
+                return Err(error(Status::CONFLICT, "File changed on disk"));
+            }
+            if save::file_identity(&target, expected.is_some())? != identity {
+                return Err(error(Status::CONFLICT, "File changed on disk"));
+            }
+            Ok(())
+        };
+        current()?;
+        save::replace(&target, expected.as_deref(), current, |file| file.write_all(body.contents.as_bytes()))
+    })
+    .await
+    .map_err(|_| unavailable())??;
+    Ok((Status::NO_CONTENT, [(axum::http::header::ETAG, tag)]).into_response())
 }
 
 #[cfg(test)]

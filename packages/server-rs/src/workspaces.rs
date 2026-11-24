@@ -130,6 +130,9 @@ async fn create(
     let Some(path) = dunce::canonicalize(candidate).ok().filter(authorized) else {
         return bad_request("Workspace directory is not authorized".into());
     };
+    let Ok(_admitted) = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(&path)]) else {
+        return crate::error(Status::CONFLICT, "Worktree deletion is in progress").into_response();
+    };
     let validation = async {
         let deadline = tokio::time::Instant::now() + daemon::TIMEOUT;
         let endpoint = app.native.acquire(deadline).await?;
@@ -172,7 +175,6 @@ async fn create(
         }
     };
     let Some(location) = location else { return bad_request("OpenCode location is unavailable".into()) };
-    let _publish = app.project_mutation.lock().await;
     if let Err(e) = principal.live() {
         return e.into_response();
     }
@@ -213,7 +215,6 @@ async fn create(
 }
 
 async fn delete(State(app): State<Shared>, Path(id): Path<String>) -> Status {
-    let _mutation = app.project_mutation.lock().await;
     let mut store = app.inner.lock().unwrap();
     if let Some(index) = store.workspaces.iter().position(|w| w.id.to_string() == id) {
         app.remove(&mut store, index);
@@ -234,7 +235,6 @@ async fn cancel(
     input: Result<Json<Claim>, JsonRejection>,
 ) -> Result<Status, (Status, &'static str)> {
     let key = read_claim(input)?;
-    let _mutation = app.project_mutation.lock().await;
     let mut store = app.inner.lock().unwrap();
     if let Some(pending) = store.pending.get(&key) {
         pending.cancel();

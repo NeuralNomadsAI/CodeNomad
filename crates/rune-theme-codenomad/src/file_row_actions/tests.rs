@@ -126,6 +126,35 @@ fn focused(rt: &Runtime<App>) -> Option<String> {
 }
 
 #[test]
+fn compact_file_overflow_opens_with_only_an_unavailable_action() {
+    let mut rt = runtime(50.0);
+    rt.update(|s, tx| {
+        let actions = actions();
+        let disabled = actions
+            .menu
+            .items
+            .iter()
+            .find(|item| item.disabled)
+            .unwrap()
+            .clone();
+        s.actions = Rc::new(Actions::new(Menu::new("files", "Actions", vec![disabled])));
+        update(s, tx);
+    });
+    focus(&mut rt, "files:trigger");
+    for key in [Key::Enter, Key::Enter] {
+        rt.key(KeyEvent {
+            key,
+            mods: Mods::default(),
+        });
+        rt.frame(0.0);
+    }
+    deliver(&mut rt);
+    assert_eq!(focused(&rt).as_deref(), Some("files:item:disabled"));
+    assert!(rt.state.menus.is_open("files"));
+    assert!(rt.state.events.is_empty());
+}
+
+#[test]
 fn enter_and_space_activate_independent_inline_buttons_once() {
     for (key, target, expected) in [
         (Key::Enter, "files:pinned:pin", "pin"),

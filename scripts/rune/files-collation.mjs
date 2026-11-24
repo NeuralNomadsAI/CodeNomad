@@ -1,7 +1,7 @@
 // Headless qualification of the actual Rust/WASM Files collator; product sources stay untouched.
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
 import {createHash} from 'node:crypto'
+import {spawnFixtureChild as spawn} from '../native-fixture-guards.mjs'
 import {createServer} from 'node:http'
 import {copyFile, mkdir, mkdtemp, readFile, realpath, stat, writeFile} from 'node:fs/promises'
 import path from 'node:path'
@@ -31,23 +31,23 @@ const bundle=path.join(out,'bundle'),probe=path.join(root,'packages/rune-app/tes
 await mkdir(bundle)
 await writeFile(path.join(out,'owner.json'),JSON.stringify({runner:fileURLToPath(import.meta.url),target},null,2))
 async function run(command,args,label){
-  let tail='',log=''
+  let stdout='',tail='',log=''
   const started=Date.now()
   await new Promise((resolve,reject)=>{
     const child=spawn(command,args,{cwd:root,windowsHide:true,env:{...process.env,CARGO_INCREMENTAL:'0'}})
     const timer=setTimeout(()=>{child.kill();reject(new Error(`${label} timed out`))},180000)
     const consume=chunk=>{tail=(tail+chunk).slice(-16000);if(log.length<524288)log=(log+chunk).slice(0,524288)}
-    child.stdout.on('data',consume);child.stderr.on('data',consume)
+    child.stdout.on('data',chunk=>{stdout+=chunk;consume(chunk)});child.stderr.on('data',consume)
     child.once('error',error=>{clearTimeout(timer);reject(error)})
     child.once('close',code=>{clearTimeout(timer);code===0?resolve():reject(new Error(`${label} exited ${code}:\n${tail}`))})
   }).finally(()=>writeFile(path.join(out,`${label}.log`),log))
-  return {milliseconds:Date.now()-started,tail}
+  return {milliseconds:Date.now()-started,stdout,tail}
 }
 const lock=await readFile(path.join(root,'Cargo.lock'),'utf8')
 const version=name=>{const match=lock.match(new RegExp(`name = "${name}"\\r?\\nversion = "([^"]+)"`));assert(match,`${name} missing in lock`);return match[1]}
 const bindgenVersion=version('wasm-bindgen')
 const bindgen=await run(values.bindgen,['--version'],'bindgen-version')
-assert(bindgen.tail.trim()===`wasm-bindgen ${bindgenVersion}`,'Installed bindgen must match Cargo.lock')
+assert(bindgen.stdout.trim()===`wasm-bindgen ${bindgenVersion}`,'Installed bindgen must match Cargo.lock')
 const quote=value=>JSON.stringify(value.replaceAll('\\','/'))
 await writeFile(path.join(out,'Cargo.toml'),`[package]
 name = "rune-files-collation-probe"

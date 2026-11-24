@@ -50,6 +50,7 @@ fn setup(s: &mut crate::State, mode: Mode) {
         workspace: "git-prototype".into(),
         session: "session".into(),
         client_id: "git-fixture".into(),
+        session_directory: None,
         fresh_mode: false,
     };
     let mut ui = Ui::new(
@@ -68,6 +69,7 @@ fn setup(s: &mut crate::State, mode: Mode) {
         trees: vec![
             Worktree {
                 slug: "root".into(),
+                label: None,
                 directory: "/CodeNomad".into(),
                 branch: Some("feat/git-history".into()),
                 head: empty.is_none().then(|| "1".repeat(40)),
@@ -76,6 +78,7 @@ fn setup(s: &mut crate::State, mode: Mode) {
             },
             Worktree {
                 slug: "review".into(),
+                label: None,
                 directory: "/CodeNomad/.codenomad/worktrees/review".into(),
                 branch: Some("dev".into()),
                 head: None,

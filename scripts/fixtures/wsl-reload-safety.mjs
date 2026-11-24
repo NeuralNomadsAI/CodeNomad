@@ -1,11 +1,10 @@
 // Destructive reload characterization against an explicitly isolated fixture.
 // The synthetic provider holds one real model stream open across location.reload.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
 import { boundedFixtureOperation } from "./wsl-fixture-bounds.mjs"
-import { stopFixtureChild } from "../native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "../native-fixture-guards.mjs"
 
 export async function startReloadSafetyProvider({ distro, root, environment, unc, signal }) {
   const directory = `${root}/reload-provider`

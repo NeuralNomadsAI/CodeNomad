@@ -89,8 +89,13 @@ impl Stream {
         finish(self.log.clone(), true)
     }
 
-    pub fn code(&mut self, source: &str, wrap: bool) -> El {
-        render(self.update(source), wrap)
+    pub fn code(
+        &mut self,
+        source: &str,
+        wrap: bool,
+        query: Option<crate::timeline::search::Query<'_>>,
+    ) -> El {
+        render(self.update(source), wrap, query)
     }
 }
 

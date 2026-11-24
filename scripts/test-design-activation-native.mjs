@@ -4,7 +4,7 @@
 //   node scripts/test-design-activation-native.mjs <absolute opencode executable>
 // Requires the session-pruning bundle (npm run build:pruning --workspace @neuralnomads/codenomad).
 import assert from "node:assert/strict"
-import { spawn, spawnSync } from "node:child_process"
+import { spawnSync } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { createServer } from "node:http"
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises"
@@ -14,7 +14,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
 import { tsImport } from "tsx/esm/api"
 import { OpenCode } from "@opencode/client"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { spawnFixtureChild as spawn, stopFixtureChild } from "./native-fixture-guards.mjs"
 import { fixtureEnvironment, fixtureParent } from "./native-product-fixture.mjs"
 
 const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "packages", "server", "src", "opencode")

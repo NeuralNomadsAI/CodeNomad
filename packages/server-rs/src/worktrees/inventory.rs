@@ -1,16 +1,15 @@
 //! The checkout inventory: `git worktree list` joined to native projects, cached for event routing.
+mod cache;
 use super::linked::{conflict, git, missing, native, native_error, physical};
 use crate::{App, Error, Workspace, files};
 use axum::http::Method;
+pub use cache::{EventCache, event_catalogue, forget, invalidate, invalidate_project};
+pub(super) use cache::{receipt_catalogue, revision};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use uuid::Uuid;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Physical {
@@ -198,7 +197,6 @@ impl Tree {
             && self.layout.live()
             && identity(&self.path).ok() == self.identity
     }
-
     pub(super) fn contains_media(&self, dir: &Path) -> bool {
         dir.starts_with(&self.path)
             && self.layout.live()
@@ -207,6 +205,12 @@ impl Tree {
             } else {
                 identity(&self.path).ok() == self.identity
             }
+    }
+    pub(super) fn contains_receipt_location(&self, dir: &Path) -> bool {
+        super::ownership::within(&self.path, dir)
+            && self.layout.live()
+            && self.path.to_str().and_then(super::ownership::resolve_directory).as_deref() == Some(&self.path)
+            && super::ownership::existing_directory(&self.path).is_some()
     }
 }
 #[derive(Clone)]
@@ -238,89 +242,6 @@ pub fn scope(mut w: Workspace, tree: &Tree) -> Workspace {
     w
 }
 
-pub struct EventEntry {
-    at: Instant,
-    value: Option<Arc<Catalogue>>,
-    refreshing: bool,
-}
-pub type EventCache = std::sync::Mutex<(u64, HashMap<Uuid, EventEntry>)>;
-/// Event routing reuses an inventory for 4 s, then refreshes it in the
-/// background while still serving it, up to the TS worktree cache TTL
-/// (`WORKTREE_CACHE_TTL_MS`). A blocking refresh stalled the ordered event
-/// bridge for 250–600 ms every 4 s. Invalidation always forces a fresh read,
-/// and each lookup still rechecks identity and Git markers locally.
-const EVENT_FRESH: Duration = Duration::from_secs(4);
-const EVENT_STALE_LIMIT: Duration = Duration::from_secs(10);
-const EVENT_ENTRIES: usize = 64;
-fn store(cache: &mut (u64, HashMap<Uuid, EventEntry>), id: Uuid, value: Option<Arc<Catalogue>>) {
-    if cache.1.len() >= EVENT_ENTRIES {
-        cache.1.retain(|_, e| e.at.elapsed() < EVENT_STALE_LIMIT);
-    }
-    if cache.1.len() < EVENT_ENTRIES || cache.1.contains_key(&id) {
-        cache.1.insert(id, EventEntry { at: Instant::now(), value, refreshing: false });
-    }
-}
-/// Drops one workspace's inventory, or every one; a running refresh never stores after it.
-fn drop_entries(app: &App, id: Option<Uuid>) {
-    let mut cache = app.linked_events.lock().unwrap();
-    cache.0 = cache.0.wrapping_add(1);
-    match id {
-        Some(id) => _ = cache.1.remove(&id),
-        None => cache.1.clear(),
-    }
-}
-pub fn invalidate(app: &App) {
-    drop_entries(app, None)
-}
-pub(super) fn revision(app: &App) -> u64 {
-    app.linked_events.lock().unwrap().0
-}
-pub fn forget(app: &App, id: Uuid) {
-    drop_entries(app, Some(id))
-}
-pub async fn event_catalogue(app: &crate::Shared, w: &Workspace) -> Option<Arc<Catalogue>> {
-    let epoch = {
-        let mut cache = app.linked_events.lock().unwrap();
-        let epoch = cache.0;
-        if let Some(entry) = cache.1.get_mut(&w.id) {
-            let age = entry.at.elapsed();
-            if age < EVENT_FRESH {
-                return entry.value.clone();
-            }
-            if age < EVENT_STALE_LIMIT && entry.value.is_some() {
-                if !entry.refreshing {
-                    entry.refreshing = true;
-                    let (app, w) = (app.clone(), w.clone());
-                    tokio::spawn(async move {
-                        let started = Instant::now();
-                        let result = catalogue(&app, &w, false).await.ok().map(Arc::new);
-                        crate::bench::trace_elapsed("event-catalogue background", started);
-                        let mut cache = app.linked_events.lock().unwrap();
-                        if cache.0 != epoch {
-                            return;
-                        }
-                        match result {
-                            Some(value) => store(&mut cache, w.id, Some(value)),
-                            // A failed refresh never extends the old inventory.
-                            None => _ = cache.1.remove(&w.id),
-                        }
-                    });
-                }
-                return entry.value.clone();
-            }
-        }
-        epoch
-    };
-    let started = Instant::now();
-    let result = catalogue(app, w, false).await.ok().map(Arc::new);
-    crate::bench::trace_elapsed("event-catalogue blocking", started);
-    let mut cache = app.linked_events.lock().unwrap();
-    if cache.0 != epoch {
-        return None;
-    }
-    store(&mut cache, w.id, result.clone());
-    result
-}
 struct Root {
     project: String,
     local: Physical,
@@ -347,7 +268,12 @@ async fn catalogue_native(
     current().then_some(result).ok_or_else(native_error)
 }
 
-async fn root_at(app: &App, w: &Workspace, endpoint: Option<&Arc<crate::opencode::Endpoint>>) -> Result<Root, Error> {
+async fn root_at(
+    app: &App,
+    w: &Workspace,
+    scoped: bool,
+    endpoint: Option<&Arc<crate::opencode::Endpoint>>,
+) -> Result<Root, Error> {
     let native_dir = w.location["directory"].as_str().ok_or_else(native_error)?;
     let here = catalogue_native(
         app,
@@ -370,8 +296,7 @@ async fn root_at(app: &App, w: &Workspace, endpoint: Option<&Arc<crate::opencode
         || main.admin != main.common
         || main.common != local.common
         || main.common_id != local.common_id
-        || !main_path.starts_with(&app.scope)
-        || !local.root.starts_with(&app.scope)
+        || scoped && (!main_path.starts_with(&app.scope) || !local.root.starts_with(&app.scope))
     {
         return Err(conflict("Workspace and native project do not share a checkout"));
     }
@@ -382,10 +307,14 @@ async fn root_at(app: &App, w: &Workspace, endpoint: Option<&Arc<crate::opencode
 }
 /// Root-only session mutations need the opened checkout's proof, independent of sibling inventory size.
 pub async fn root_supported(app: &App, w: &Workspace) -> bool {
-    root_at(app, w, None).await.is_ok()
+    root_at(app, w, true, None).await.is_ok()
 }
 pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalogue, Error> {
-    catalogue_at(app, w, refresh, None).await
+    catalogue_in(app, w, refresh, true).await
+}
+
+async fn catalogue_in(app: &App, w: &Workspace, refresh: bool, scoped: bool) -> Result<Catalogue, Error> {
+    catalogue_in_at(app, w, refresh, scoped, None).await
 }
 
 pub(crate) async fn catalogue_at(
@@ -394,7 +323,17 @@ pub(crate) async fn catalogue_at(
     refresh: bool,
     endpoint: Option<&Arc<crate::opencode::Endpoint>>,
 ) -> Result<Catalogue, Error> {
-    let Root { project, local, main } = root_at(app, w, endpoint).await?;
+    catalogue_in_at(app, w, refresh, true, endpoint).await
+}
+
+async fn catalogue_in_at(
+    app: &App,
+    w: &Workspace,
+    refresh: bool,
+    scoped: bool,
+    endpoint: Option<&Arc<crate::opencode::Endpoint>>,
+) -> Result<Catalogue, Error> {
+    let Root { project, local, main } = root_at(app, w, scoped, endpoint).await?;
     let native_dir = w.location["directory"].as_str().ok_or_else(native_error)?;
     let project = project.as_str();
     let tail = w.path.strip_prefix(&local.root).map_err(|_| native_error())?;
@@ -427,7 +366,7 @@ pub(crate) async fn catalogue_at(
     for entry in entries {
         let service_root = entry["directory"].as_str().ok_or_else(native_error)?;
         let Some(root) = physical(service_root) else { continue };
-        if !root.starts_with(&app.scope) || !seen.insert(root.clone()) {
+        if scoped && !root.starts_with(&app.scope) || !seen.insert(root.clone()) {
             continue;
         }
         let Some(meta) = snapshot.get(&root) else { continue };
@@ -445,7 +384,8 @@ pub(crate) async fn catalogue_at(
                     crate::bench::route_trace(format_args!("worktree-omitted layout-gone"));
                     continue;
                 }
-                Err(error) => return Err(error),
+                Err(error) if root.starts_with(&app.scope) => return Err(error),
+                Err(_) => continue,
             }
         };
         if check.root != root || check.common != local.common || check.common_id != local.common_id || !check.live() {
@@ -453,16 +393,15 @@ pub(crate) async fn catalogue_at(
         }
         let opened = root == local.root;
         let projected = if tail.as_os_str().is_empty() { root.clone() } else { root.join(tail) };
-        let id = if let Ok(real) = dunce::canonicalize(&projected) {
-            if !real.is_dir() && !opened && !tail.as_os_str().is_empty() {
-                None
-            } else if real != projected || !real.is_dir() {
-                return Err(conflict("Projected worktree directory is not physically owned"));
-            } else {
-                Some(identity(&projected)?)
-            }
-        } else {
-            None
+        let id = match dunce::canonicalize(&projected) {
+            Ok(real) if real == projected && real.is_dir() => match identity(&projected) {
+                Ok(value) => Some(value),
+                Err(_) if !opened && !root.starts_with(&app.scope) => None,
+                Err(error) => return Err(error),
+            },
+            Ok(real) if !opened && (real == projected && real.is_file() || !root.starts_with(&app.scope)) => None,
+            Ok(_) => return Err(conflict("Projected worktree directory is not physically owned")),
+            Err(_) => None,
         };
         let service = if opened {
             native_dir.to_string()

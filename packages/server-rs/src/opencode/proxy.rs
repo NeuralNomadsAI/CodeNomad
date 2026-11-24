@@ -177,7 +177,7 @@ fn one_location(location: &Value, directory: &str) -> Result<(), Error> {
 
 pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Response, Error> {
     let (head, body) = request.into_parts();
-    let principal = head.extensions.get::<crate::auth::Principal>().ok_or_else(crate::auth::unauthorized)?;
+    let principal = head.extensions.get::<crate::auth::Principal>().cloned().ok_or_else(crate::auth::unauthorized)?;
     let invalid = || error(Status::BAD_REQUEST, "Invalid workspace instance path");
     let tail = head.uri.path().strip_prefix("/workspaces/").ok_or_else(invalid)?;
     let (id, suffix) = tail.split_once('/').ok_or_else(invalid)?;
@@ -221,16 +221,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     } else {
         None
     };
-    // Native writes that can create or move execution state share the
-    // backend's worktree mutation fence with Git, files and removal.
-    let mut mutation = if head.method != Method::GET {
-        let held = app.project_mutation.clone().lock_owned().await;
-        principal.live()?;
-        Some(held)
-    } else {
-        None
-    };
-
     let opened = workspace.location["directory"].as_str().ok_or_else(upstream_error)?;
     let endpoint = app.native.endpoint().ok_or_else(upstream_error)?;
     if dunce::canonicalize(opened).ok().as_ref() != Some(&workspace.path) {
@@ -562,7 +552,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             input = Some(Value::Object(data));
         }
     }
-    let _rules_lock = if permissions_patch {
+    let rules_lock = if permissions_patch {
         let id = session.ok_or_else(upstream_error)?;
         let lock = crate::sessions::permission_mode::lock_patch(id, input.as_ref().ok_or_else(upstream_error)?).await?;
         let fresh = super::session_record_at(&app, &endpoint, id).await?;
@@ -573,6 +563,17 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return Err(foreign());
         }
         Some(lock)
+    } else {
+        None
+    };
+    let mut mutation = if !matches!(head.method, Method::GET | Method::HEAD) {
+        use crate::worktrees::fence;
+        let physical = crate::files::paths::canonical(&app.scope, directory).ok_or_else(foreign)?;
+        let mut checkouts = vec![fence::identity(&physical)];
+        // Prompt contexts have already been resolved, including prospective subfolders.
+        checkouts.extend(prompt_directories.iter().map(|p| fence::identity(std::path::Path::new(p))));
+        checkouts.extend(session.map(fence::session));
+        Some(fence::admit(&checkouts)?)
     } else {
         None
     };
@@ -624,6 +625,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             super::prompt::validate(&app, &workspace, input).await?;
         }
         recheck_input().await?;
+        if prompt_directories
+            .iter()
+            .any(|p| crate::worktrees::ownership::resolve_directory(p).as_deref() != Some(std::path::Path::new(p)))
+        {
+            return Err(foreign());
+        }
         let response = app
             .native
             .client
@@ -666,7 +673,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             &workspace,
             &endpoint,
             &head,
-            principal,
+            &principal,
             actual.as_ref().ok_or_else(upstream_error)?,
             form,
             input.as_ref().ok_or_else(upstream_error)?,
@@ -688,14 +695,14 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     } else {
         None
     };
-    if control.is_some() {
-        let fresh = super::session_record_at(&app, &endpoint, session.ok_or_else(upstream_error)?)
+    if mutation.is_some()
+        && !send_input
+        && let Some(session) = session
+    {
+        let fresh = super::session_record_at(&app, &endpoint, session)
             .await
             .map_err(|e| if e.0 == Status::NOT_FOUND { foreign() } else { e })?;
-        if actual.as_ref().is_none_or(|prior| {
-            ["id", "location", "projectID", "parentID", "fork"].iter().any(|key| prior[*key] != fresh[*key])
-                || prior["time"]["created"] != fresh["time"]["created"]
-        }) {
+        if actual.as_ref().is_none_or(|record| !same_target(record, &fresh)) {
             return Err(foreign());
         }
         if !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
@@ -719,9 +726,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         recheck_input().await?;
     }
-    static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
-    let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
-    let defer_guard = if defer_media.is_some() {
+    if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
+        return Err(upstream_error());
+    }
+    if let Some(session) = defer_media {
+        static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+        let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         let slot = tokio::select! {
             biased;
@@ -730,185 +740,208 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
             }
         };
-        Some((deadline, slot))
-    } else {
-        None
-    };
-    let response = if let Some((deadline, _)) = &defer_guard {
-        tokio::select! {
+        let response = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-            sent = tokio::time::timeout_at(*deadline, upstream.send()) => {
+            sent = tokio::time::timeout_at(deadline, upstream.send()) => {
                 sent.map_err(|_| interrupted())?.map_err(|_| upstream_error())?
             }
-        }
-    } else {
-        upstream.send().await.map_err(|_| upstream_error())?
-    };
-    if response.status().is_success() {
-        if let Some(receipt) = receipt {
-            if let Err(error) = receipt.confirm(&app, &workspace).await {
-                eprintln!("Permission confirmed; receipt persistence failed: {}", error.0);
-            }
-        }
-    }
-    if fork && response.status().is_success() {
-        let builder = relayed(&response);
-        let native = read_json(response, 2 * 1024 * 1024).await.map_err(|_| upstream_error())?;
-        let row = native.get("data").unwrap_or(&native);
-        let source = actual.as_ref().ok_or_else(upstream_error)?;
-        if row["projectID"] != source["projectID"]
-            || row["fork"]["sessionID"] != source["id"]
-            || row["location"] != source["location"]
-        {
-            return Err(foreign());
-        }
-        let _ = crate::sessions::permission_mode::observe_fork(&app, &endpoint, &workspace, row, source).await;
-        return builder.extension(NativeBody).body(Body::from(native.to_string())).map_err(|_| upstream_error());
-    }
-    if let Some(block) = root_permissions.filter(|_| response.status().is_success()) {
-        let builder = relayed(&response);
-        let native = read_json(response, 2 * 1024 * 1024).await.map_err(|_| upstream_error())?;
-        let row = native.get("data").unwrap_or(&native);
-        let session = row["id"].as_str().ok_or_else(upstream_error)?;
-        let project = row["projectID"].as_str().filter(|s| !s.is_empty()).ok_or_else(upstream_error)?;
-        crate::sessions::permission_mode::confirm_root(
-            &app,
-            &endpoint,
-            directory,
-            project,
-            session,
-            &block,
-            false,
-            || crate::sessions::permission_mode::workspace_current(&app, &workspace),
-        )
-        .await?;
-        return builder.extension(NativeBody).body(Body::from(native.to_string())).map_err(|_| upstream_error());
-    }
-    if response.status().is_success() && project.is_some() {
-        let builder = relayed(&response);
-        let mut native = read_json(response, 8 * 1024 * 1024).await.map_err(|_| upstream_error())?;
-        if !crate::worktrees::native_project(&app, &workspace, project.as_deref().unwrap()).await? {
-            return Err(error(Status::FORBIDDEN, "Session list does not belong to workspace"));
-        }
-        let rows = native["data"].as_array_mut().ok_or_else(upstream_error)?;
-        let catalogue = crate::worktrees::linked::catalogue(&app, &workspace, false).await?;
-        rows.retain(|row| {
-            row["location"].get("workspaceID").is_none()
-                && row["location"]["directory"].as_str().is_some_and(|p| catalogue.by_directory(p).is_some())
-        });
-        app.workspace(id)?;
-        principal.live()?;
-        return builder.extension(NativeBody).body(Body::from(native.to_string())).map_err(|_| upstream_error());
-    }
-    if response.status().is_success() && matches!(route, "/api/project" | "/api/session/active") {
-        let mut native: Value = response.json().await.map_err(|_| upstream_error())?;
-        if route == "/api/project" {
-            let mut projects = native.as_array().cloned().ok_or_else(upstream_error)?;
-            let catalogue = crate::worktrees::linked::catalogue(&app, &workspace, false).await.ok();
-            projects.retain(|project| {
-                project["canonical"].as_str().and_then(|s| dunce::canonicalize(s).ok()).as_ref()
-                    == Some(catalogue.as_ref().map_or(&workspace.path, |c| &c.main))
-                    && catalogue.as_ref().is_none_or(|c| project["id"] == c.project)
-            });
-            for project in &mut projects {
-                if let Some(paths) = project["sandboxes"].as_array_mut() {
-                    paths.retain(|path| {
-                        path.as_str().is_some_and(|p| {
-                            p == opened || catalogue.as_ref().is_some_and(|c| c.by_registered(p).is_some())
-                        })
-                    });
-                }
-            }
-            return Ok(Json(projects).into_response());
-        }
-        let active = native["data"].as_object_mut().ok_or_else(upstream_error)?;
-        for id in active.keys().cloned().collect::<Vec<_>>() {
-            if session_directory(&app, &id).await.as_deref().ok() != Some(directory) {
-                active.remove(&id);
-            }
-        }
-        return Ok(Json(native).into_response());
-    }
-    if let Some(session) = defer_media
-        && response.status().is_success()
-        && is_json_content_type(response.headers())
-    {
-        let (deadline, slot) = defer_guard.ok_or_else(interrupted)?;
-        let status = response.status();
-        let headers: Vec<(&'static str, axum::http::HeaderValue)> =
-            ["content-type", "cache-control", "etag", "last-modified"]
-                .into_iter()
-                .filter_map(|name| response.headers().get(name).cloned().map(|value| (name, value)))
-                .collect();
-        // Deliberate safety cap (128 MiB) so an oversized native page cannot OOM the server.
-        let bytes = tokio::select! {
-            biased;
-            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-            read = tokio::time::timeout_at(deadline, super::read_bytes(response, 128 * 1024 * 1024)) => {
-                read.map_err(|_| interrupted())?.map_err(|_| interrupted())?
-            }
         };
-        let (body, changed) = if bytes.len() > 32 * 1024 {
-            let (id, session) = (id.to_owned(), session.to_owned());
-            tokio::select! {
+        if response.status().is_success() && is_json_content_type(response.headers()) {
+            let status = response.status();
+            let headers: Vec<(&'static str, axum::http::HeaderValue)> =
+                ["content-type", "cache-control", "etag", "last-modified"]
+                    .into_iter()
+                    .filter_map(|name| response.headers().get(name).cloned().map(|value| (name, value)))
+                    .collect();
+            // Deliberate safety cap (128 MiB) so an oversized native page cannot OOM the server.
+            let bytes = tokio::select! {
                 biased;
                 _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-                rewritten = tokio::time::timeout_at(
-                    deadline,
-                    tokio::task::spawn_blocking(move || {
-                        let _slot = slot;
-                        defer_message_list(&id, &session, bytes)
-                    }),
-                ) => {
-                    rewritten.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+                read = tokio::time::timeout_at(deadline, super::read_bytes(response, 128 * 1024 * 1024)) => {
+                    read.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                 }
+            };
+            let (body, changed) = if bytes.len() > 32 * 1024 {
+                let (id, session) = (id.to_owned(), session.to_owned());
+                tokio::select! {
+                    biased;
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    rewritten = tokio::time::timeout_at(
+                        deadline,
+                        tokio::task::spawn_blocking(move || {
+                            let _slot = slot;
+                            defer_message_list(&id, &session, bytes)
+                        }),
+                    ) => {
+                        rewritten.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+                    }
+                }
+            } else {
+                drop(slot);
+                (Body::from(bytes), false)
+            };
+            let fresh = tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                record = tokio::time::timeout_at(deadline, super::session_record_media_at(&app, &endpoint, session)) => {
+                    record.map_err(|_| interrupted())??
+                }
+            };
+            let (resolved, anchor, _) = initial_identity.as_ref().ok_or_else(foreign)?;
+            let admitted = input_checkout.as_ref().ok_or_else(foreign)?;
+            let current_checkout = tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                proof = tokio::time::timeout_at(
+                    deadline,
+                    crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor),
+                ) => {
+                    proof.map_err(|_| interrupted())?.map_err(|_| upstream_error())?
+                }
+            };
+            if !app.native.current(&endpoint) {
+                return Err(upstream_error());
             }
-        } else {
-            drop(slot);
-            (Body::from(bytes), false)
-        };
-        let fresh = tokio::select! {
-            biased;
-            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-            record = tokio::time::timeout_at(deadline, super::session_record_media_at(&app, &endpoint, session)) => {
-                record.map_err(|_| interrupted())??
+            app.workspace(id)?;
+            if !current_checkout.as_ref().is_some_and(|proof| admitted.same_checkout(proof))
+                || !actual.as_ref().is_some_and(|initial| same_target(initial, &fresh))
+                || fresh["location"]["directory"] != directory
+                || !input_location_live()
+            {
+                return Err(foreign());
             }
-        };
-        let (resolved, anchor, _) = initial_identity.as_ref().ok_or_else(foreign)?;
-        let admitted = input_checkout.as_ref().ok_or_else(foreign)?;
-        let current_checkout = tokio::select! {
-            biased;
-            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-            proof = tokio::time::timeout_at(
-                deadline,
-                crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor),
-            ) => {
-                proof.map_err(|_| interrupted())?.map_err(|_| upstream_error())?
-            }
-        };
-        if !app.native.current(&endpoint) {
+            principal.live()?;
+            let builder = headers
+                .into_iter()
+                .filter(|(name, _)| !(changed && *name == "etag"))
+                .fold(Response::builder().status(status), |builder, (name, value)| builder.header(name, value));
+            return builder.extension(NativeBody).body(body).map_err(|_| upstream_error());
+        }
+        drop(slot);
+        let builder = relayed(&response);
+        use futures_util::StreamExt;
+        let bytes = response.bytes_stream().take_until(principal.0.clone().cancelled_owned());
+        return builder.extension(NativeBody).body(Body::from_stream(bytes)).map_err(|_| upstream_error());
+    }
+    let (route, opened, directory, id) = (route.to_owned(), opened.to_owned(), directory.to_owned(), id.to_owned());
+    let dispatched_mutation = mutation.is_some();
+    let observer = principal.0.clone();
+    let dispatch = move |detached: tokio_util::sync::CancellationToken| async move {
+        principal.live()?;
+        if detached.is_cancelled()
+            || !app.native.current(&endpoint)
+            || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
+        {
             return Err(upstream_error());
         }
-        app.workspace(id)?;
-        if !current_checkout.as_ref().is_some_and(|proof| admitted.same_checkout(proof))
-            || !actual.as_ref().is_some_and(|initial| same_target(initial, &fresh))
-            || fresh["location"]["directory"] != directory
-            || !input_location_live()
-        {
-            return Err(foreign());
+        // Undici's default headers deadline for the TypeScript runtime transport.
+        // Do not cap the total lifetime of a streaming native response.
+        let response = tokio::select! {
+            _ = principal.0.cancelled(), if !dispatched_mutation => return Err(crate::auth::unauthorized()),
+            response = tokio::time::timeout(super::PROXY_IDLE, upstream.send()) =>
+                response.map_err(|_| upstream_error())?.map_err(|_| upstream_error())?,
+        };
+        if response.status().is_success() {
+            if let Some(receipt) = receipt {
+                if let Err(error) = receipt.confirm(&app, &workspace).await {
+                    eprintln!("Permission confirmed; receipt persistence failed: {}", error.0);
+                }
+            }
         }
-        principal.live()?;
-        let builder = headers
-            .into_iter()
-            .filter(|(name, _)| !(changed && *name == "etag"))
-            .fold(Response::builder().status(status), |builder, (name, value)| builder.header(name, value));
-        return builder.extension(NativeBody).body(body).map_err(|_| upstream_error());
+        if fork && response.status().is_success() {
+            let builder = relayed(&response);
+            let native = read_json(response, 2 * 1024 * 1024).await.map_err(|_| upstream_error())?;
+            let row = native.get("data").unwrap_or(&native);
+            let source = actual.as_ref().ok_or_else(upstream_error)?;
+            if row["projectID"] != source["projectID"]
+                || row["fork"]["sessionID"] != source["id"]
+                || row["location"] != source["location"]
+            {
+                return Err(foreign());
+            }
+            let _ = crate::sessions::permission_mode::observe_fork(&app, &endpoint, &workspace, row, source).await;
+            return builder.extension(NativeBody).body(Body::from(native.to_string())).map_err(|_| upstream_error());
+        }
+        if let Some(block) = root_permissions.filter(|_| response.status().is_success()) {
+            let builder = relayed(&response);
+            let native = read_json(response, 2 * 1024 * 1024).await.map_err(|_| upstream_error())?;
+            let row = native.get("data").unwrap_or(&native);
+            let session = row["id"].as_str().ok_or_else(upstream_error)?;
+            let project = row["projectID"].as_str().filter(|s| !s.is_empty()).ok_or_else(upstream_error)?;
+            crate::sessions::permission_mode::confirm_root(
+                &app,
+                &endpoint,
+                &directory,
+                project,
+                session,
+                &block,
+                false,
+                || crate::sessions::permission_mode::workspace_current(&app, &workspace),
+            )
+            .await?;
+            return builder.extension(NativeBody).body(Body::from(native.to_string())).map_err(|_| upstream_error());
+        }
+        if response.status().is_success() && project.is_some() {
+            let builder = relayed(&response);
+            let mut native = read_json(response, 8 * 1024 * 1024).await.map_err(|_| upstream_error())?;
+            if !crate::worktrees::native_project(&app, &workspace, project.as_deref().unwrap()).await? {
+                return Err(error(Status::FORBIDDEN, "Session list does not belong to workspace"));
+            }
+            let rows = native["data"].as_array_mut().ok_or_else(upstream_error)?;
+            let catalogue = crate::worktrees::linked::catalogue(&app, &workspace, false).await?;
+            rows.retain(|row| {
+                row["location"].get("workspaceID").is_none()
+                    && row["location"]["directory"].as_str().is_some_and(|p| catalogue.by_directory(p).is_some())
+            });
+            app.workspace(&id)?;
+            principal.live()?;
+            return builder.extension(NativeBody).body(Body::from(native.to_string())).map_err(|_| upstream_error());
+        }
+        if response.status().is_success() && matches!(route.as_str(), "/api/project" | "/api/session/active") {
+            let mut native: Value = response.json().await.map_err(|_| upstream_error())?;
+            if route == "/api/project" {
+                let mut projects = native.as_array().cloned().ok_or_else(upstream_error)?;
+                let catalogue = crate::worktrees::linked::catalogue(&app, &workspace, false).await.ok();
+                projects.retain(|project| {
+                    project["canonical"].as_str().and_then(|s| dunce::canonicalize(s).ok()).as_ref()
+                        == Some(catalogue.as_ref().map_or(&workspace.path, |c| &c.main))
+                        && catalogue.as_ref().is_none_or(|c| project["id"] == c.project)
+                });
+                for project in &mut projects {
+                    if let Some(paths) = project["sandboxes"].as_array_mut() {
+                        paths.retain(|path| {
+                            path.as_str().is_some_and(|p| {
+                                p == opened || catalogue.as_ref().is_some_and(|c| c.by_registered(p).is_some())
+                            })
+                        });
+                    }
+                }
+                return Ok(Json(projects).into_response());
+            }
+            let active = native["data"].as_object_mut().ok_or_else(upstream_error)?;
+            for id in active.keys().cloned().collect::<Vec<_>>() {
+                if session_directory(&app, &id).await.as_deref().ok() != Some(directory.as_str()) {
+                    active.remove(&id);
+                }
+            }
+            return Ok(Json(native).into_response());
+        }
+        let builder = relayed(&response);
+        use futures_util::StreamExt;
+        let bytes = response.bytes_stream().take_until(async move {
+            if dispatched_mutation {
+                std::future::pending::<()>().await;
+            }
+            principal.0.cancelled().await;
+        });
+        builder.extension(NativeBody).body(Body::from_stream(bytes)).map_err(|_| upstream_error())
+    };
+    if let Some(permit) = mutation {
+        super::proxy_write::forward(permit, rules_lock, observer, dispatch).await
+    } else {
+        dispatch(tokio_util::sync::CancellationToken::new()).await
     }
-    let builder = relayed(&response);
-    use futures_util::StreamExt;
-    let bytes = response.bytes_stream().take_until(principal.0.clone().cancelled_owned());
-    builder.extension(NativeBody).body(Body::from_stream(bytes)).map_err(|_| upstream_error())
 }
 
 #[test]
