@@ -91,6 +91,202 @@ fn wrapped_reader_keeps_its_logical_top_line_across_resize_and_reopen() {
 }
 
 #[test]
+fn wrapped_reader_keeps_exact_segment_inside_long_line_across_resize_reopen_and_refresh() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "source-long-segment"));
+        let long_line: String = (0..120).map(|i| format!("seg{i:03} ")).collect();
+        let make = |prefix: &str| {
+            STANDARD.encode(format!("{prefix}\n{long_line}\n{}", "after\n".repeat(120)))
+        };
+        let contents = make("header");
+        open(&mut rt, &http, "long.txt", &contents).await;
+        click(&mut rt, "file-wrap");
+        let top_row_span = |rt: &mut Runtime<State>| {
+            let viewport = rt
+                .elements()
+                .into_iter()
+                .find(|node| {
+                    node.key.as_deref().is_some_and(|key| {
+                        key.starts_with("file-source-scroll-") && !key.contains("-anchor-")
+                    })
+                })
+                .unwrap();
+            let input = rt
+                .elements()
+                .into_iter()
+                .find(|node| editable_source(&node.path, &node.role))
+                .unwrap();
+            let y = viewport.rect[1] + 4.0;
+            let click_col = |rt: &mut Runtime<State>, x: f32| {
+                rt.pointer_down(x, y);
+                rt.pointer_up(x, y);
+                rt.frame(0.02);
+                let edit = rt.state.files.as_ref().unwrap().document.edit();
+                let line2_start = edit.text.find('\n').unwrap() + 1;
+                let line2_end = edit.text[line2_start..]
+                    .find('\n')
+                    .map(|rel| line2_start + rel)
+                    .unwrap_or(edit.text.len());
+                assert!(
+                    edit.focus >= line2_start && edit.focus <= line2_end,
+                    "focus {} outside line 2 ({line2_start}..{line2_end})",
+                    edit.focus
+                );
+                edit.focus - line2_start
+            };
+            let left = click_col(rt, input.visible[0] + 10.0);
+            let right = click_col(rt, input.visible[0] + input.visible[2] - 10.0);
+            assert!(left < right, "top row span empty: {left}..{right}");
+            (left, right)
+        };
+        // Scroll well inside the wrapped second line (row 5 inside line 2, plus 1 row for "header").
+        rt.update(|s, tx| {
+            let scope = s.files.as_ref().unwrap().document.scope();
+            tx.scroll_to_instant(
+                format!("file-source-scroll-{scope}"),
+                0.0,
+                8.0 + 17.5 * 6.0 + 2.0,
+            );
+        });
+        rt.frame(0.02);
+        let (before_left, before_right) = top_row_span(&mut rt);
+        assert!(
+            before_left > 450,
+            "expected deep inside long line, got {before_left}..{before_right}"
+        );
+
+        // Preserve a pre-existing selection across resize and wrap round-trip.
+        let preserved = {
+            let line2_start = rt
+                .state
+                .files
+                .as_ref()
+                .unwrap()
+                .document
+                .edit()
+                .text
+                .find('\n')
+                .unwrap()
+                + 1;
+            let sel = [line2_start + 12, line2_start + 30];
+            rt.update(|s, _| {
+                let ui = s.files.as_mut().unwrap();
+                let scope = ui.document.scope();
+                let edit = ui.document.input(scope);
+                edit.anchor = sel[0];
+                edit.focus = sel[1];
+            });
+            rt.frame(0.02);
+            sel
+        };
+
+        // Resize narrower: the anchored text segment stays on the top visible wrapped row,
+        // and the pre-existing selection is untouched.
+        rt.set_viewport((550.0, 700.0), 1.0);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        let edit_sel = {
+            let edit = rt.state.files.as_ref().unwrap().document.edit();
+            [edit.anchor, edit.focus]
+        };
+        assert_eq!(edit_sel, preserved);
+        let narrow_scroll = rt
+            .state
+            .files
+            .as_ref()
+            .unwrap()
+            .document
+            .source_viewport()
+            .captured_scroll()[1];
+        assert!(
+            ((narrow_scroll - 8.0) % 17.5 - 2.0).abs() <= 0.6,
+            "sub-line offset lost on resize: {narrow_scroll}"
+        );
+        let (narrow_left, narrow_right) = top_row_span(&mut rt);
+        assert!(
+            narrow_left <= before_left && before_left <= narrow_right,
+            "narrow resize missed segment {before_left}: visible {narrow_left}..{narrow_right}"
+        );
+
+        // Close, resize to a wider viewport, reopen: the saved segment stays on the top row.
+        click(&mut rt, "file-close");
+        rt.set_viewport((760.0, 700.0), 1.0);
+        for _ in 0..20 {
+            rt.frame(0.02);
+        }
+        open(&mut rt, &http, "long.txt", &contents).await;
+        let (reopen_left, reopen_right) = top_row_span(&mut rt);
+        assert!(
+            reopen_left <= narrow_left && narrow_left <= reopen_right,
+            "reopen at 760px missed segment {narrow_left}: visible {reopen_left}..{reopen_right}"
+        );
+
+        // Refresh where line 1 grows into many wrapped rows: line 2's top wrapped row stays fixed.
+        let taller_prefix = make(&"longer header ".repeat(35));
+        click(&mut rt, "file-refresh");
+        rt.update_if(|s, _| s.files.as_mut().unwrap().poll(20.0));
+        http.request("GET", "long.txt")
+            .await
+            .preview("long.txt", &taller_prefix, Some("v2"))
+            .await;
+        settle(&mut rt).await;
+        let (refresh_left, refresh_right) = top_row_span(&mut rt);
+        assert_eq!(
+            (refresh_left, refresh_right),
+            (reopen_left, reopen_right),
+            "refresh shifted top wrapped row"
+        );
+
+        // Toggle word wrap off and back on while scrolled: selection survives and top logical line stays anchored.
+        let sel_before_toggle = {
+            let ui = rt.state.files.as_mut().unwrap();
+            let scope = ui.document.scope();
+            let line2_start = ui.document.edit().text.find('\n').unwrap() + 1;
+            let sel = [line2_start + 14, line2_start + 28];
+            let edit = ui.document.input(scope);
+            edit.anchor = sel[0];
+            edit.focus = sel[1];
+            sel
+        };
+        rt.frame(0.02);
+        click(&mut rt, "file-wrap");
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        let unwrapped_y = rt
+            .state
+            .files
+            .as_ref()
+            .unwrap()
+            .document
+            .source_viewport()
+            .captured_scroll()[1];
+        assert!(
+            (unwrapped_y - (8.0 + 17.5 + 2.0)).abs() <= 1.0,
+            "unwrapped toggle missed line 2: {unwrapped_y}"
+        );
+        click(&mut rt, "file-wrap");
+        for _ in 0..10 {
+            rt.frame(0.02);
+        }
+        let edit_after_toggle = rt.state.files.as_ref().unwrap().document.edit();
+        assert_eq!(
+            [edit_after_toggle.anchor, edit_after_toggle.focus],
+            sel_before_toggle
+        );
+        let (rewrapped_left, _) = top_row_span(&mut rt);
+        assert!(
+            rewrapped_left < 20,
+            "rewrapped toggle missed start of line 2: {rewrapped_left}"
+        );
+        http.quiet().await;
+    });
+}
+
+#[test]
 fn reopening_source_restores_selection_and_both_scroll_axes() {
     use base64::{Engine, engine::general_purpose::STANDARD};
     crate::platform::block_on(async {
