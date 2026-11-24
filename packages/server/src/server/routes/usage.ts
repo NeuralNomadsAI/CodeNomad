@@ -9,6 +9,7 @@ import { readUsageCredentials } from "../../usage/native-credentials"
 import { readUsageProviderSettings } from "../../usage/native-settings"
 import { pluginUsageRpcId, readPluginProviderUsage, unavailable as pluginUsageUnavailable } from "../../usage/plugin-usage"
 import { getProviderUsage, resolveUsageProvider } from "../../usage/service"
+import { requestAdmission } from "../request-admission"
 import { isOpenCodeFreeModel } from "../../usage/opencode-free-estimate"
 import type { OpenCodeFreeUsage } from "../../usage/opencode-free-usage"
 
@@ -62,13 +63,10 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
         isOpenCodeFreeModel(params.data.providerId, modelId) ? new AbortController() : null
       const quotaTimeout = quotaController ? setTimeout(() => quotaController.abort(), 12_000) : undefined
       const quotaSignal = quotaController ? AbortSignal.any([signal, quotaController.signal]) : signal
-      // A plugin RPC runs plugin code: stop it once the client has gone. Only the RPC phase listens,
-      // since the Codex fallback shares one upstream read across clients.
-      const closed = new AbortController()
-      const abortOnClose = () => { if (!reply.raw.writableFinished) closed.abort() }
+      // A plugin RPC runs plugin code: stop it once the client has gone.
       const pluginPhase = !resolvedProvider && !isOpenCodeFreeModel(params.data.providerId, modelId)
         && pluginUsageRpcId(params.data.providerId) !== null
-      if (pluginPhase) reply.raw.once("close", abortOnClose)
+      const admission = pluginPhase ? requestAdmission(request, reply) : null
       let consoleTimeout: ((publicationSignal: AbortSignal) => Promise<unknown>) | undefined
       try {
         return await boundedRead(async () => {
@@ -109,11 +107,13 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
           let plugin: ProviderUsageResponse | null = null
           if (pluginPhase) {
             // Plugin code receives the Location: confirm the session did not move during the ownership check.
-            const rpcSignal = AbortSignal.any([signal, closed.signal])
-            const rpcQuotaSignal = AbortSignal.any([quotaSignal, closed.signal])
+            // Client disconnect aborts only this phase: the Codex fallback shares one upstream read across clients.
+            const rpcSignal = AbortSignal.any([signal, admission!.signal])
+            const rpcQuotaSignal = AbortSignal.any([quotaSignal, admission!.signal])
             let confirmed = false
             try {
-              const current = readLocationRef((await boundedRead(() => connection.client.session.get({ sessionID: sessionId }, { signal: rpcQuotaSignal }), rpcQuotaSignal)).location)
+              const current = readLocationRef((await admission!.wait(
+                connection.client.session.get({ sessionID: sessionId }, { signal: rpcQuotaSignal }), rpcQuotaSignal)).location)
               if (current.directory !== location.directory || current.workspaceID !== undefined || !assertCurrentWorkspace(rpcSignal)) {
                 return reply.code(403).send({ error: "Session does not belong to workspace" })
               }
@@ -126,7 +126,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             plugin = confirmed ? await readPluginProviderUsage(connection, {
               providerId: params.data.providerId, location, modelId,
             }, rpcSignal, rpcQuotaSignal) : pluginUsageUnavailable(params.data.providerId, modelId)
-            reply.raw.off("close", abortOnClose)
+            admission!.dispose()
             if (!plugin && (!await verifyOwned(signal) || !assertCurrentWorkspace(signal))) {
               return reply.code(403).send({ error: "Session does not belong to workspace" })
             }
@@ -184,7 +184,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
         const missing = error && typeof error === "object" && "_tag" in error && error._tag === "SessionNotFoundError"
         return reply.code(missing ? 404 : 503).send({ error: missing ? "Session not found" : "Provider usage unavailable" })
       } finally {
-        reply.raw.off("close", abortOnClose)
+        admission?.dispose()
         clearTimeout(quotaTimeout)
         clearTimeout(timeout)
       }

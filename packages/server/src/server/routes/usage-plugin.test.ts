@@ -385,10 +385,62 @@ test("a client disconnect aborts the plugin RPC without follow-up ownership chec
     await rpcStarted
     client.abort()
     await request
-    await Promise.race([aborted, new Promise((_resolve, reject) => setTimeout(() => reject(new Error("RPC not aborted")), 2_000))])
+    let watchdog: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([aborted, new Promise((_resolve, reject) => { watchdog = setTimeout(() => reject(new Error("RPC not aborted")), 2_000) })])
+    } finally { clearTimeout(watchdog) }
     await new Promise(resolve => setTimeout(resolve, 50))
     // Initial read plus the pre-dispatch Location re-read; nothing after the abort.
     assert.equal(state.nativeCalls.filter(path => path === "/api/session/session").length, 2)
+  } finally { await app.close() }
+})
+
+test("a client that disconnected before the handler started never reaches the plugin RPC", async () => {
+  let dispatched = 0
+  const { app } = harness(async () => { dispatched++; return Response.json({ output: { configured: true, ok: true, windows: {} } }) })
+  let entered!: () => void
+  const preHandlerEntered = new Promise<void>(resolve => { entered = resolve })
+  let release!: () => void
+  const released = new Promise<void>(resolve => { release = resolve })
+  let handled!: () => void
+  const handlerDone = new Promise<void>(resolve => { handled = resolve })
+  app.addHook("preHandler", async () => { entered(); await released })
+  app.addHook("onResponse", async () => { handled() })
+  try {
+    const address = await app.listen({ host: "127.0.0.1", port: 0 })
+    const client = new AbortController()
+    const request = fetch(`${address}${url}`, { signal: client.signal }).catch(() => undefined)
+    await preHandlerEntered
+    client.abort()
+    await request
+    await new Promise(resolve => setTimeout(resolve, 100))
+    release()
+    let watchdog: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([handlerDone, new Promise(resolve => { watchdog = setTimeout(resolve, 2_000) })])
+    } finally { clearTimeout(watchdog) }
+    assert.equal(dispatched, 0)
+  } finally { await app.close() }
+})
+
+test("an already-expired quota deadline publishes an unavailable quota even if the re-read ignores abort", async t => {
+  const realSetTimeout = globalThis.setTimeout
+  t.mock.method(globalThis, "setTimeout", (callback: (...args: any[]) => void, delay?: number, ...args: any[]) =>
+    realSetTimeout(callback, delay === 12_000 ? 25 : delay === 15_000 ? 1_000 : delay, ...args))
+  let dispatched = 0
+  const { app } = harness(
+    async () => { dispatched++; return Response.json({ output: { configured: true, ok: true, windows: {} } }) },
+    {
+      onOwnsLocation: index => index === 1 ? new Promise<void>(resolve => realSetTimeout(resolve, 60)) : undefined,
+      onSessionGet: index => index === 2 ? new Promise<void>(() => {}) : undefined,
+    },
+  )
+  try {
+    const response = await app.inject(url)
+    assert.equal(response.statusCode, 200, response.body)
+    assert.equal(response.json().supported, true)
+    assert.equal(response.json().ok, false)
+    assert.equal(dispatched, 0)
   } finally { await app.close() }
 })
 

@@ -129,6 +129,11 @@ test("parsePluginUsageOutput clears windows on failure and rejects malformed, pr
   assert.equal(noDoubleRound.windows.weekly?.usedPercent, 99.99)
   assert.equal(noDoubleRound.windows.weekly?.remainingPercent, 0.01)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { credits: { balanceUSD: { remaining: 5, total: -1 } } } }, { requestedProviderId: "x", providerId: "x" }), null)
+  // An unconfigured provider never publishes windows, even when it claims ok.
+  const unconfigured = parsePluginUsageOutput({ configured: false, ok: true, windows: { weekly: { usedPercent: 15 } } }, { requestedProviderId: "x", providerId: "x" })
+  assert.equal(unconfigured?.configured, false)
+  assert.equal(unconfigured?.ok, false)
+  assert.deepEqual(unconfigured?.windows, {})
   // An unlimited window cannot also declare a percentage.
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { pro: { usedPercent: 100, consumption: { unlimited: true } } } }, { requestedProviderId: "x", providerId: "x" }), null)
   assert.equal(parsePluginUsageOutput({ configured: true, ok: true, windows: { pro: { remainingPercent: 0, consumption: { unlimited: true } } } }, { requestedProviderId: "x", providerId: "x" }), null)

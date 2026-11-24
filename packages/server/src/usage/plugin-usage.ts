@@ -121,8 +121,10 @@ export function parsePluginUsageOutput(
   const parsed = pluginUsageOutputSchema.safeParse(raw)
   if (!parsed.success) return null
   const data = parsed.data
+  // An unconfigured provider has no quota to show, whatever `ok` claims.
+  const ok = data.ok && data.configured
   const windows: Record<string, ProviderUsageWindow> = {}
-  if (data.ok) {
+  if (ok) {
     for (const [label, item] of Object.entries(data.windows)) {
       const usedHundredths = item.usedPercent != null
         ? toHundredths(item.usedPercent)
@@ -150,7 +152,7 @@ export function parsePluginUsageOutput(
     modelId: context.modelId,
     supported: true,
     configured: data.configured,
-    ok: data.ok,
+    ok,
     windows,
     fetchedAt: data.fetchedAt ?? (context.now ?? Date.now)(),
   }
