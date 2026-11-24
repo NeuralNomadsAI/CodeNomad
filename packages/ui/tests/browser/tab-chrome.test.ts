@@ -102,6 +102,30 @@ async function checkFittingTabs(page: Page, label: string) {
   await page.evaluate(() => (window as any).tabFixture.count(9))
 }
 
+test("the browser brand fits beside project tabs without adding a row", async () => {
+  const page = await browser.newPage({ viewport: { width: 434, height: 800 } })
+  try {
+    await prepare(page)
+    const logo = page.locator(".tab-bar-logo")
+    await logo.waitFor()
+    for (const dir of ["ltr", "rtl"]) {
+      await page.evaluate(dir => { document.dir = dir }, dir)
+      const layout = await logo.evaluate(element => {
+        const bar = element.closest(".tab-bar-instance")!
+        const row = bar.querySelector(".tab-container")!.getBoundingClientRect()
+        const strip = bar.querySelector(".tab-scroll-frame")!.getBoundingClientRect()
+        const brand = element.getBoundingClientRect()
+        return {
+          extraHeight: bar.getBoundingClientRect().height - row.height,
+          overlapsVertically: brand.bottom > strip.top && brand.top < strip.bottom,
+          beside: document.dir === "rtl" ? brand.left >= strip.right : brand.right <= strip.left,
+        }
+      })
+      assert.deepEqual(layout, { extraHeight: 0, overlapsVertically: true, beside: true }, dir)
+    }
+  } finally { await page.close() }
+})
+
 test("focused local and remote tabs keep their name and expose their status as a description", async () => {
   const page = await browser.newPage()
   try {
