@@ -90,6 +90,7 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
             .screen
             .launcher()
             .is_some_and(|l| l.rebind_after_send.is_some())
+            && crate::launcher::session_loaded(s)
         {
             s.show_chat();
         }

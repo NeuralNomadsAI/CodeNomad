@@ -83,23 +83,23 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         .and_then(|(_, rx)| rx.try_recv().ok())
     {
         refresh.request = None;
-        refresh.urgent = false;
-        if refresh.due.is_none()
-            && let Some((page, authoritative)) = result
-        {
-            let selected = match &entry.saved {
-                super::Tab::Workspace(w) => w.active_session_id.as_deref(),
-                _ => None,
-            };
-            if let Some(row) = page
-                .rows
-                .iter()
-                .find(|row| Some(row.id.as_str()) == selected)
-            {
-                s.chat_title.clone_from(&row.title);
+        if refresh.due.is_none() {
+            refresh.urgent = false;
+            if let Some((page, authoritative)) = result {
+                let selected = match &entry.saved {
+                    super::Tab::Workspace(w) => w.active_session_id.as_deref(),
+                    _ => None,
+                };
+                if let Some(row) = page
+                    .rows
+                    .iter()
+                    .find(|row| Some(row.id.as_str()) == selected)
+                {
+                    s.chat_title.clone_from(&row.title);
+                }
+                l.apply_passive_listing(page, selected, authoritative);
+                changed = true;
             }
-            l.apply_passive_listing(page, selected, authoritative);
-            changed = true;
         }
     }
     if let (None, Some(due), Some(backend), Some(project)) =
@@ -197,6 +197,45 @@ mod tests {
             // Opening already loads the directory page. Only Windows follows it with full inventory.
             assert_eq!(entry.catalogue.due.is_some(), cfg!(target_os = "windows"));
             assert!(s.screen.launcher().unwrap().catalogue_watch.is_none());
+        });
+    }
+
+    #[test]
+    fn urgent_refresh_stays_armed_when_trailing_due_coalesces() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        state.workspace = Some(workspace::Ui::new());
+        workspace::connected(&mut state);
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1000.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.update(|s, tx| {
+            let project = Project {
+                id: "p1".into(),
+                path: "/repo".into(),
+            };
+            s.screen.launcher_mut().unwrap().project = Some(project.clone());
+            workspace::opened(s, &project);
+            s.shell.wanted = [Some([false, false]); 2];
+            assert!(!s.shell.visible(0));
+            let (out, rx) = codenomad_client::bounded(1);
+            let generation = s.screen.launcher().unwrap().catalogue_generation;
+            let ui = s.workspace.as_mut().unwrap();
+            let entry = &mut ui.entries[ui.active];
+            entry.catalogue.urgent = true;
+            entry.catalogue.request = Some((generation, rx));
+            entry.catalogue.due = Some(2.0);
+            assert!(out.try_send(None).is_ok());
+            let _ = super::poll(s, 1.0, tx);
+            let entry = &s.workspace.as_ref().unwrap().entries[0];
+            assert!(
+                entry.catalogue.urgent,
+                "urgent must remain set while a coalesced trailing read is queued"
+            );
+            assert!(entry.catalogue.due.is_some());
         });
     }
 }

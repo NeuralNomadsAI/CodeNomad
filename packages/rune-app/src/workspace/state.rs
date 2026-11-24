@@ -112,6 +112,10 @@ impl Ui {
         self.ready = true;
     }
     #[cfg(test)]
+    pub(crate) fn fixture_hydrate(&mut self, saved: Snapshot) {
+        self.hydrate(saved);
+    }
+    #[cfg(test)]
     pub(crate) fn active_index(&self) -> usize {
         self.active
     }

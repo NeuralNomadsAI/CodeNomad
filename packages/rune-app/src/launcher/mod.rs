@@ -67,6 +67,7 @@ pub struct Launcher {
     pub creation_uncertain_linked: Option<String>,
     pub openings: crate::workspace::opening::Openings,
     result: Option<Receiver<Result<Reply>>>,
+    pending_stream_generation: u64,
     stopped_during_pending: HashSet<String>,
     detached_reconcile: Option<(u64, HashSet<String>, Receiver<Option<Vec<Project>>>)>,
     failed_detached_workspaces: HashSet<String>,
@@ -187,6 +188,7 @@ impl Launcher {
             creation_uncertain_linked: None,
             openings: Default::default(),
             result: None,
+            pending_stream_generation: 0,
             stopped_during_pending: HashSet::new(),
             detached_reconcile: None,
             failed_detached_workspaces: HashSet::new(),
@@ -206,6 +208,7 @@ impl Launcher {
             return;
         }
         self.pending = true;
+        self.pending_stream_generation = self.workspace_stream_generation;
         self.stopped_during_pending.clear();
         self.catalogue_generation = self.catalogue_generation.wrapping_add(1);
         self.error = None;
@@ -278,6 +281,15 @@ pub(super) fn retry_detached_reconcile(s: &mut State) {
         let generation = l.workspace_stream_generation;
         spawn_detached_reconcile(l, generation);
     }
+}
+
+pub(crate) fn session_loaded(s: &State) -> bool {
+    s.files.is_some()
+        || s.agent.is_some()
+        || s.commands.is_some()
+        || s.incoming.is_some()
+        || s.composer.pending()
+        || s.status_permissions.writing()
 }
 
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
@@ -433,10 +445,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 .retain(|id| active_detached.contains(id));
         }
     }
+    let loaded = session_loaded(s);
     let deferred_rebind = s.screen.launcher().and_then(|l| {
         let id = l.rebind_after_send.as_ref()?;
         if l.authentication_required
-            || s.screen.is_launcher()
+            || (loaded && s.screen.is_launcher())
             || crate::workspace::active_session(s) != Some(id.as_str())
         {
             return Some(None);
@@ -452,7 +465,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         if let Some(id) = action {
             s.incoming = None;
-            s.phase = Phase::Failed;
+            if loaded {
+                s.phase = Phase::Failed;
+            }
             choose_destination(s, id, None, tx);
             relayed = true;
         }
@@ -475,6 +490,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.result = None;
     l.pending = false;
     l.listing = false;
+    let pending_stream_generation = l.pending_stream_generation;
     let stopped_during_pending = std::mem::take(&mut l.stopped_during_pending);
     if l.selection_ticket
         .take()
@@ -523,10 +539,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         }
                         s.phase = Phase::Failed;
                         s.show_chat();
-                    } else {
+                    } else if session_loaded(s) {
                         s.incoming = None;
                         s.phase = Phase::Failed;
                         s.show_chat();
+                        choose_destination(s, id, None, tx);
+                    } else {
+                        s.incoming = None;
                         choose_destination(s, id, None, tx);
                     }
                 } else {
@@ -560,7 +579,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.rebind_after_send = None;
             l.failed_detached_workspaces.remove(&project.id);
             let stopped_in_flight = stopped_during_pending.contains(&project.id);
-            if !stopped_in_flight && let Some((_, opened_after, _)) = &mut l.detached_reconcile {
+            if !stopped_in_flight
+                && let Some((reconcile_generation, opened_after, _)) = &mut l.detached_reconcile
+                && pending_stream_generation == *reconcile_generation
+            {
                 opened_after.insert(project.id.clone());
             }
             connection::watch_catalogue(l);
@@ -722,7 +744,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 let id = opening.project.id.clone();
                 l.failed_detached_workspaces.remove(&id);
                 let stopped_in_flight = stopped_during_pending.contains(&id);
-                if !stopped_in_flight && let Some((_, opened_after, _)) = &mut l.detached_reconcile
+                if !stopped_in_flight
+                    && let Some((reconcile_generation, opened_after, _)) = &mut l.detached_reconcile
+                    && pending_stream_generation == *reconcile_generation
                 {
                     opened_after.insert(id.clone());
                 }

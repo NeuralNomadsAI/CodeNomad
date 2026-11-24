@@ -466,8 +466,12 @@ fn reauthentication_settles_pending_prompt_and_rebinds_active_session() {
         rt.state.show_launcher();
         let renewed = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
         assert!(
-            out.try_send(Ok(Reply::Connected(renewed, vec![project], "srv-1".into())))
-                .is_ok()
+            out.try_send(Ok(Reply::Connected(
+                renewed.clone(),
+                vec![project.clone()],
+                "srv-1".into(),
+            )))
+            .is_ok()
         );
         rt.update(|s, tx| {
             assert!(poll(s, tx));
@@ -514,10 +518,31 @@ fn reauthentication_settles_pending_prompt_and_rebinds_active_session() {
         assert!(!rt.state.screen.is_launcher());
         assert!(!rt.state.screen.launcher().unwrap().authentication_required);
         assert!(rt.state.screen.launcher().unwrap().pending);
-        // Once the rebind completes (Ready + not pending), sending is unlocked (not stuck in Unconfirmed).
-        rt.state.screen.launcher_mut().unwrap().pending = false;
+        // Settle the rebind reply on the renewed connection and verify the new commands channel allows sending.
+        let (rebind_out, rebind_in) = bounded(1);
+        rt.state.screen.launcher_mut().unwrap().result = Some(rebind_in);
+        let rebound = Backend {
+            workspace: project.id.clone(),
+            session: "ses-1".into(),
+            ..renewed
+        };
+        assert!(
+            rebind_out
+                .try_send(Ok(Reply::Selected(
+                    vec![],
+                    Some((rebound, "Chat".into(), None, Instant::now(), "root".into())),
+                    None,
+                )))
+                .is_ok()
+        );
+        rt.update(|s, tx| {
+            assert!(poll(s, tx));
+        });
+        assert!(!rt.state.screen.launcher().unwrap().pending);
+        assert!(rt.state.commands.is_some());
         rt.state.phase = Phase::Ready;
         assert!(crate::composer::can_send(&rt.state));
+        assert_eq!(rt.state.draft.text, "unsent prompt");
     });
 }
 
@@ -859,6 +884,7 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
         let l = rt.state.screen.launcher_mut().unwrap();
         l.authentication_required = false;
         l.detached_reconcile = Some((1, HashSet::new(), reconcile_rx));
+        l.pending_stream_generation = 1;
         l.stopped_during_pending.insert(project_c.id.clone());
         l.result = Some(opened_in);
         l.pending = true;
@@ -890,4 +916,202 @@ fn reauthentication_stops_unlisted_detached_projects_and_defers_permission_write
             .contains("proj-c")
     );
     assert!(rt.state.files.as_ref().unwrap().stopped);
+
+    // Reply::Opened started before an SSE disconnect/reconnect (generation 1 vs reconcile 3)
+    // is not inserted into opened_after even without a Stopped frame.
+    let (opened_out_d, opened_in_d) = bounded(1);
+    let (_reconcile_tx_d, reconcile_rx_d) = bounded(1);
+    let project_d = Project {
+        id: "proj-d".into(),
+        path: "/repo-d".into(),
+    };
+    let opening_d = rt
+        .state
+        .screen
+        .launcher()
+        .unwrap()
+        .openings
+        .begin(
+            rt.state
+                .screen
+                .launcher()
+                .unwrap()
+                .connection
+                .clone()
+                .unwrap(),
+            "tab-d",
+        )
+        .unwrap()
+        .fixture_opening(project_d.clone());
+    {
+        let l = rt.state.screen.launcher_mut().unwrap();
+        l.detached_reconcile = Some((3, HashSet::new(), reconcile_rx_d));
+        l.pending_stream_generation = 1;
+        l.result = Some(opened_in_d);
+        l.pending = true;
+    }
+    assert!(
+        opened_out_d
+            .try_send(Ok(Reply::Opened(
+                opening_d,
+                Sessions {
+                    rows: vec![],
+                    next: None
+                },
+                Restored::Empty,
+            )))
+            .is_ok()
+    );
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(
+        !rt.state
+            .screen
+            .launcher()
+            .unwrap()
+            .detached_reconcile
+            .as_ref()
+            .unwrap()
+            .1
+            .contains("proj-d")
+    );
+}
+
+#[test]
+fn reauthentication_hydrates_unbound_restored_attachment_draft() {
+    let mut s = crate::init();
+    crate::gallery::shell::fixture(&mut s);
+    let mut ui = crate::workspace::Ui::new();
+    ui.fixture_ready();
+    let backend = Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    let project = Project {
+        id: "proj-att".into(),
+        path: "/repo-att".into(),
+    };
+    let mut draft = crate::composer::draft::Draft::default();
+    draft
+        .attachments
+        .push(crate::composer::draft::Attachment::Path(
+            "src/main.rs".into(),
+        ));
+    let saved_parts =
+        crate::composer::draft_storage::SavedParts::capture(&draft, false, &TextEdit::new("fix"))
+            .unwrap();
+    let snapshot = crate::workspace::Snapshot {
+        revision: 1,
+        saved_at: 1,
+        panel_widths: [None; 2],
+        file_wrap: None,
+        tabs: vec![crate::workspace::Tab::Workspace(
+            crate::workspace::Workspace {
+                backend_id: Some("external".into()),
+                server_id: Some("srv-att".into()),
+                folder: project.path.clone(),
+                occurrence: 0,
+                workspace_id: Some(project.id.clone()),
+                active_session_id: Some("ses-att".into()),
+                drafts: [("ses-att".into(), "fix".into())].into_iter().collect(),
+                attachment_drafts: ["ses-att".into()].into_iter().collect(),
+                attachment_parts: [("ses-att".into(), saved_parts)].into_iter().collect(),
+                view: Default::default(),
+            },
+        )],
+        active: Some(0),
+    };
+    ui.fixture_hydrate(snapshot);
+    s.workspace = Some(ui);
+    let opening = s
+        .screen
+        .launcher()
+        .unwrap()
+        .openings
+        .begin(backend.clone(), "tab-0")
+        .unwrap()
+        .fixture_opening(project.clone());
+    let bound_backend = Backend {
+        workspace: project.id.clone(),
+        session: "ses-att".into(),
+        ..backend.clone()
+    };
+
+    // Auth expires before Reply::Opened is processed: Restored::Bound is skipped, leaving
+    // Screen::Launcher active with s.files == None and saved attachment parts unhydrated.
+    s.show_launcher();
+    let (open_out, open_in) = bounded(1);
+    {
+        let l = s.screen.launcher_mut().unwrap();
+        l.connection = Some(backend.clone());
+        l.server_id = Some("srv-att".into());
+        l.authentication_required = true;
+        l.result = Some(open_in);
+        l.pending = true;
+    }
+    assert!(
+        open_out
+            .try_send(Ok(Reply::Opened(
+                opening,
+                Sessions {
+                    rows: vec![],
+                    next: None
+                },
+                Restored::Bound(bound_backend.clone(), "Title".into(), "root".into()),
+            )))
+            .is_ok()
+    );
+    let mut rt = rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(rt.state.screen.is_launcher());
+    assert!(rt.state.files.is_none());
+
+    // Reauthentication keeps Screen::Launcher until Reply::Selected binds the session so
+    // workspace::bound hydrates the recoverable attachment parts and initializes Files.
+    let (conn_out, conn_in) = bounded(1);
+    {
+        let l = rt.state.screen.launcher_mut().unwrap();
+        l.result = Some(conn_in);
+        l.pending = true;
+    }
+    assert!(
+        conn_out
+            .try_send(Ok(Reply::Connected(
+                backend,
+                vec![project],
+                "srv-att".into(),
+            )))
+            .is_ok()
+    );
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(rt.state.screen.is_launcher());
+    assert!(rt.state.screen.launcher().unwrap().pending);
+
+    let (sel_out, sel_in) = bounded(1);
+    rt.state.screen.launcher_mut().unwrap().result = Some(sel_in);
+    assert!(
+        sel_out
+            .try_send(Ok(Reply::Selected(
+                vec![],
+                Some((
+                    bound_backend,
+                    "Title".into(),
+                    None,
+                    Instant::now(),
+                    "root".into()
+                )),
+                None,
+            )))
+            .is_ok()
+    );
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(!rt.state.screen.is_launcher());
+    assert_eq!(rt.state.draft.text, "fix");
+    assert!(!rt.state.composer.attachments_missing);
+    assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+    assert!(rt.state.files.is_some());
 }

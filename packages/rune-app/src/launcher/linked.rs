@@ -110,12 +110,19 @@ pub(super) fn load(s: &mut State) {
                     }
                 };
                 let mut ids = pages.rows.iter().map(|row| row.id.clone()).collect();
-                let mut target_verified = target.as_deref().is_some_and(|target_dir| {
-                    fresh
-                        && !pages.remaining.iter().any(|loc| {
-                            codenomad_client::same_server_path(&loc.directory, target_dir)
-                        })
+                let target_matched = target.as_deref().is_some_and(|target_dir| {
+                    pages
+                        .remaining
+                        .iter()
+                        .any(|loc| codenomad_client::same_server_path(&loc.directory, target_dir))
                 });
+                let mut unverified_first_pages = if fresh && target.is_some() && !target_matched {
+                    pages.remaining.len()
+                } else {
+                    0
+                };
+                let mut target_verified =
+                    fresh && target.is_some() && !target_matched && unverified_first_pages == 0;
                 for _ in 0..1000 {
                     let Some(mut location) = pages.remaining.pop_front() else {
                         return Ok((pages, true, true));
@@ -136,8 +143,15 @@ pub(super) fn load(s: &mut State) {
                         break;
                     };
                     let kept_all = pages.keep(page.rows, &mut ids);
-                    if first_page && matches_target && (kept_all || !pages.rows.is_empty()) {
-                        target_verified = true;
+                    if first_page {
+                        if matches_target && (kept_all || !pages.rows.is_empty()) {
+                            target_verified = true;
+                        } else if !target_matched && unverified_first_pages > 0 {
+                            unverified_first_pages -= 1;
+                            if unverified_first_pages == 0 && (kept_all || !pages.rows.is_empty()) {
+                                target_verified = true;
+                            }
+                        }
                     }
                     if !kept_all {
                         pages.remaining.push_front(location);
@@ -186,7 +200,19 @@ pub(super) fn poll(s: &mut State) -> bool {
     };
     l.linked.job = None;
     match result {
-        Ok((pages, complete, target_verified)) => {
+        Ok((mut pages, complete, target_verified)) => {
+            if !complete && let Some(previous) = l.linked.pages.as_ref() {
+                let mut seen: HashSet<String> =
+                    pages.rows.iter().map(|row| row.id.clone()).collect();
+                for row in &previous.rows {
+                    if pages.rows.len() == MAX_BROWSED_SESSIONS {
+                        break;
+                    }
+                    if seen.insert(row.id.clone()) {
+                        pages.rows.push(row.clone());
+                    }
+                }
+            }
             l.linked.pages = Some(pages);
             l.linked.failed = !complete;
             if target_verified && l.creation_uncertain_linked.is_some() {
@@ -257,12 +283,19 @@ mod tests {
             cursor: Some("next".into()),
             ..Default::default()
         });
-        // Cap/error before verifying the target worktree keeps creation locked.
+        // Cap/error before verifying the target worktree keeps creation locked and preserves retained rows.
         assert!(out.try_send(Ok((pages.clone(), false, false))).is_ok());
         assert!(poll(&mut s));
         let l = s.screen.launcher().unwrap();
         assert!(l.creation_uncertain);
         assert!(l.creation_uncertain_linked.is_some());
+        assert!(
+            l.linked
+                .pages
+                .as_ref()
+                .is_some_and(|p| p.rows.iter().any(|row| row.id == "existing")),
+            "partial refresh must preserve previously retained linked rows"
+        );
 
         // Once the target worktree's first page is verified, creation unlocks even if capped overall.
         let (cancel, _cancelled) = bounded(1);
