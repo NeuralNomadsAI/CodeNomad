@@ -287,3 +287,116 @@ fn paginated_pending_cleanups_emit_incremental_observation_deltas() {
     }
     assert_eq!(panel.cleanups.len(), 250);
 }
+
+#[test]
+fn background_refresh_keeps_actions_vertical_position_stable() {
+    use codenomad_client::missions::{
+        Activity, Actor, ActorState, Coverage, MapHeader, RunState, Window,
+    };
+    use rune::{Cx, El, Env, Runtime};
+    use serde_json::json;
+
+    struct Host {
+        panel: Panel,
+        fallback: rune::edit::TextEdit,
+    }
+
+    fn view(host: &Host, _: &mut Cx<Host>) -> El {
+        let actions =
+            rune_theme_codenomad::layout::button("Check status", false, |_: &mut Host| {})
+                .key("mission-control-primary");
+        super::super::panel_body(
+            &host.panel,
+            |h: &mut Host| (Some(&mut h.panel), &mut h.fallback),
+            actions,
+            rune::el(),
+            None,
+        )
+    }
+
+    let mut panel = panel();
+    panel.visible = true;
+    panel.supported = Some(true);
+    assert!(panel.accept(
+        Kind::Summaries,
+        Read::Refresh,
+        page("project", "ord-1", 0, 1, vec![summary("gamma", "Gamma")])
+    ));
+    panel.selected = Some("gamma".into());
+    let header: MapHeader = serde_json::from_value(json!({
+        "root":{"version":1,"id":"gamma","projectID":"project","projectCanonical":"/fixture",
+            "excerpt":"Fixture","template":"custom","status":"active","runState":"running",
+            "coordinatorSessionId":"ses_c","revision":7,"createdAt":1,"updatedAt":1,
+            "historyTruncated":false,"bodies":{}},
+        "collections":{},"tasks":{"page":{"order":"","offset":0,"end":0,"total":0,"counts":{},"reports":0},
+            "pins":[],"reportPins":[],"version":""}
+    }))
+    .unwrap();
+    panel.detail.snapshot = Some(super::super::detail::Snapshot {
+        header,
+        tasks: std::rc::Rc::new(super::super::task_rows::TaskRows::new(vec![])),
+        end: 0,
+        attention_end: 0,
+    });
+    panel.observation.observe(7);
+    assert!(panel.observation.adopt_page(
+        0,
+        Activity {
+            revision: 7,
+            observed_at: 1.0,
+            coordinator_session_id: "ses_c".into(),
+            status: Status::Active,
+            run_state: Some(RunState::Running),
+            family_observed: true,
+            window: Window {
+                order: "act-1".into(),
+                offset: 0,
+                end: 1,
+                total: 1,
+            },
+            coverage: Coverage::Observed,
+            requests: Coverage::Observed,
+            actors: vec![Actor {
+                session_id: "ses_c".into(),
+                title: "Coordinator".into(),
+                state: ActorState::IdleWithoutReport,
+                request: None,
+            }],
+            questions: vec![],
+        },
+    ));
+
+    let mut rt = Runtime::new(
+        Host {
+            panel,
+            fallback: rune::edit::TextEdit::default(),
+        },
+        view,
+        (420.0, 800.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.016);
+    let control_y = |rt: &Runtime<Host>| {
+        rt.elements()
+            .into_iter()
+            .find(|el| el.key.as_deref() == Some("mission-control-primary"))
+            .expect("primary mission control button rendered")
+            .rect[1]
+    };
+    let y_before = control_y(&rt);
+
+    // Mark summaries, detail, and observation busy as during a background refresh.
+    let (cancel_sum, _rx_sum) = bounded::<()>(1);
+    rt.state.panel.lanes[Kind::Summaries as usize].active = Some((1, cancel_sum));
+    rt.state.panel.detail.refresh();
+    rt.state.panel.observation.refresh();
+    assert!(rt.state.panel.busy(Kind::Summaries));
+    assert!(rt.state.panel.detail.busy());
+
+    rt.frame(0.016);
+    let y_during = control_y(&rt);
+    assert!(
+        (y_before - y_during).abs() < 0.01,
+        "background refresh shifted mission controls vertically: before={y_before}, during={y_during}"
+    );
+}

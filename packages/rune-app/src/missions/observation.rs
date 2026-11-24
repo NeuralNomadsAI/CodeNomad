@@ -494,7 +494,8 @@ impl Observation {
             }
         }
         view = view.child(list);
-        if self.busy() {
+        let busy = self.busy();
+        if self.pages.is_empty() && busy {
             view = view.child(theme::note(t("missions.control.loading"), "status"));
         } else if self.failed.is_some() || self.more_offset().is_some() {
             let failed = self.failed.is_some();
@@ -507,7 +508,7 @@ impl Observation {
                 } else {
                     "missionsPanel.pages.more"
                 }),
-                false,
+                busy,
                 more,
             )
             .key("mission-activity-more");

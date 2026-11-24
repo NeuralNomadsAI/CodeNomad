@@ -205,7 +205,7 @@ mod tests {
     #[test]
     fn mission_delete_sessions_change_wakes_main_panel_display() {
         use rune::{Env, Runtime};
-        let mut root = crate::init();
+        let root = crate::init();
         root.settings.shared.borrow_mut().fixture();
         let mut rt = Runtime::new(root, crate::view, (960.0, 800.0), Env::new(false, 1.0));
         // Establish baseline display snapshot.

@@ -163,16 +163,19 @@ fn default_cleanups<S: 'static>(ui: &Panel) -> El {
 
 fn page_footer<S: 'static>(ui: &Panel, owner: Scoped<S>, kind: Kind) -> El {
     let mut footer = col().full_width();
-    if ui.busy(kind) {
+    let busy = ui.busy(kind);
+    if !ui.loaded(kind) && busy {
         footer = footer.child(theme::note(t("missions.control.loading"), "status"));
     } else if ui.failed(kind) {
         footer = footer
             .child(theme::note(t("missionsPanel.pages.failed"), "alert"))
             .child(layout::button_tx(
                 t("missionsPanel.reader.retry"),
-                false,
+                busy,
                 move |s, tx| {
-                    if let Some(panel) = owner.get(s).0 {
+                    if let Some(panel) = owner.get(s).0
+                        && !panel.busy(kind)
+                    {
                         panel.more(kind);
                         if kind == Kind::Summaries {
                             tx.focus("missions-search", tx.focus_visible());
@@ -184,9 +187,11 @@ fn page_footer<S: 'static>(ui: &Panel, owner: Scoped<S>, kind: Kind) -> El {
     } else if ui.has_more(kind) {
         footer = footer.child(layout::button(
             t("missionsPanel.pages.more"),
-            false,
+            busy,
             move |s| {
-                if let Some(panel) = owner.get(s).0 {
+                if let Some(panel) = owner.get(s).0
+                    && !panel.busy(kind)
+                {
                     panel.more(kind);
                 }
             },
@@ -267,14 +272,17 @@ fn detail<S: 'static>(
         }
         result = result.child(snapshot.tasks.view::<S>(task_recovery));
     }
-    if detail.busy() || detail.snapshot.is_none() && !detail.failed {
+    let busy = detail.busy();
+    if detail.snapshot.is_none() && !detail.failed {
         result = result.child(theme::note(t("missions.control.loading"), "status"));
     } else if detail.failed {
         result = result
             .child(theme::note(t("missionsPanel.pages.failed"), "alert"))
             .child(
-                layout::button(t("missionsPanel.reader.retry"), false, move |s| {
-                    if let Some(panel) = owner.get(s).0 {
+                layout::button(t("missionsPanel.reader.retry"), busy, move |s| {
+                    if let Some(panel) = owner.get(s).0
+                        && !panel.detail.busy()
+                    {
                         panel.detail.retry();
                     }
                 })
@@ -286,8 +294,10 @@ fn detail<S: 'static>(
         .is_some_and(|s| s.end < s.header.tasks.page.total)
     {
         result = result.child(
-            layout::button(t("missionsPanel.pages.more"), false, move |s| {
-                if let Some(panel) = owner.get(s).0 {
+            layout::button(t("missionsPanel.pages.more"), busy, move |s| {
+                if let Some(panel) = owner.get(s).0
+                    && !panel.detail.busy()
+                {
                     panel.detail.more();
                 }
             })

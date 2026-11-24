@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import {waitSettledControl} from './web-chromium.mjs'
 import {pressControl} from './web-mission-lifecycle.mjs'
 
 export function recoveryCleanupFixture(){
@@ -132,29 +133,7 @@ export function recoveryCleanupFixture(){
 async function setDeleteSessionsPreference(page,messages,expected){
   const waitStable=async(locator,label)=>{
     await locator.waitFor({state:'attached'})
-    let previous=null
-    let lastState=null
-    for(const until=Date.now()+15000;;){
-      const state=await locator.evaluateAll(nodes=>{
-        if(nodes.length!==1)return {count:nodes.length}
-        const el=nodes[0]
-        const rect=el.getBoundingClientRect()
-        return {
-          count:1,connected:el.isConnected,disabled:Boolean(el.disabled),
-          ariaDisabled:el.getAttribute('aria-disabled'),
-          ariaChecked:el.getAttribute('aria-checked'),
-          checked:Boolean(el.checked),
-          box:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
-        }
-      }).catch(()=>null)
-      lastState=state
-      if(state&&state.count===1&&state.connected&&!state.disabled&&state.ariaDisabled!=='true'&&state.box.width>0&&state.box.height>0){
-        if(previous&&previous.x===state.box.x&&previous.y===state.box.y&&previous.width===state.box.width&&previous.height===state.box.height)return state
-        previous=state.box
-      }else previous=null
-      assert(Date.now()<until,`Preference control "${label}" not ready: ${JSON.stringify(lastState)}`)
-      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)))
-    }
+    return waitSettledControl(page,locator,{timeoutMs:15000,label})
   }
   const openPrefs=page.getByRole('button',{name:messages['settings.title'],exact:true})
   await waitStable(openPrefs,'settings.title')

@@ -43,3 +43,38 @@ export async function activateControl(page,control,{touch=false,rect,timeout}={}
   assert(box,'Expected a laid-out control')
   await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
 }
+
+/** Wait until a mirrored Rune control is enabled and its rect stays stable past
+ * Rune's deferred web accessibility mirror settle window (#1670, ~150 ms). */
+export async function waitSettledControl(page,target,{settleMs=200,timeoutMs=20000,label}={}){
+  let previous=null
+  let stableSince=0
+  let lastState=null
+  for(const until=Date.now()+timeoutMs;;){
+    const state=await target.evaluateAll(nodes=>{
+      if(nodes.length!==1)return {count:nodes.length}
+      const el=nodes[0]
+      const rect=el.getBoundingClientRect()
+      return {
+        count:1,connected:el.isConnected,disabled:Boolean(el.disabled),
+        ariaDisabled:el.getAttribute('aria-disabled'),
+        box:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
+      }
+    }).catch(()=>null)
+    lastState=state
+    if(state&&state.count===1&&state.connected&&!state.disabled&&state.ariaDisabled!=='true'&&state.box.width>0&&state.box.height>0){
+      const same=previous&&previous.x===state.box.x&&previous.y===state.box.y&&previous.width===state.box.width&&previous.height===state.box.height
+      if(same){
+        if(Date.now()-stableSince>=settleMs)return state.box
+      }else{
+        previous=state.box
+        stableSince=Date.now()
+      }
+    }else{
+      previous=null
+      stableSince=0
+    }
+    assert(Date.now()<until,label?`Control "${label}" not ready: ${JSON.stringify(lastState)}`:'Control remained unavailable or disabled')
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)))
+  }
+}
