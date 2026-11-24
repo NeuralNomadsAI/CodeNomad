@@ -263,32 +263,39 @@ impl Listener {
         })
     }
     pub async fn serve(self, router: Router, shutdown: CancellationToken) -> io::Result<()> {
+        const DRAIN: Duration = Duration::from_secs(25);
         let gate = Arc::new(crate::auth::tls_admission::Gate::default());
+        let mut tasks = tokio::task::JoinSet::new();
         loop {
+            while tasks.try_join_next().is_some() {}
             let (socket, peer) = tokio::select! {
-                _=shutdown.cancelled()=>return Ok(()),
-                result=self.socket.accept()=>match result {
+                _ = shutdown.cancelled() => break,
+                Some(_) = tasks.join_next(), if !tasks.is_empty() => continue,
+                result = self.socket.accept() => match result {
                     Ok(accepted) => accepted,
                     // A per-connection failure (reset before accept, descriptor
                     // pressure) never stops the listener.
                     Err(_) => { tokio::time::sleep(Duration::from_millis(50)).await; continue }
                 },
             };
-            let (acceptor, router) = (self.acceptor.clone(), router.clone());
+            let (acceptor, router, stop) = (self.acceptor.clone(), router.clone(), shutdown.clone());
+            // Keep per-connection eviction (`gate`) separate from server `shutdown` so active
+            // HTTPS requests drain gracefully before `main` tears down plugin leases.
             let channel = Channel {
                 origin: self.origin.clone(),
                 ingress: self.ingress,
-                socket: shutdown.child_token(),
+                socket: CancellationToken::new(),
                 principal: Arc::new(std::sync::Mutex::new(None)),
             };
             let Some(ticket) = gate.admit(peer.ip(), channel.principal.clone(), channel.socket.clone()) else {
                 continue;
             };
-            tokio::spawn(async move {
+            tasks.spawn(async move {
                 let _ticket = ticket;
                 let lifetime = channel.socket.clone();
                 let io = tokio::select! {
                     _ = lifetime.cancelled() => return,
+                    _ = stop.cancelled() => return,
                     result = tokio::time::timeout(HANDSHAKE, acceptor.accept(socket)) => {
                         let Ok(Ok(io)) = result else { return; };
                         io
@@ -304,10 +311,24 @@ impl Listener {
                     .header_read_timeout(IDLE)
                     .serve_connection(TokioIo::new(io), crate::shared::abortable_service(service, cancel))
                     .with_upgrades();
-                tokio::select! { _=lifetime.cancelled()=>{}, _=connection=>{} }
+                tokio::pin!(connection);
+                tokio::select! {
+                    _ = lifetime.cancelled() => {}
+                    _ = &mut connection => {}
+                    _ = stop.cancelled() => {
+                        connection.as_mut().graceful_shutdown();
+                        tokio::select! {
+                            _ = lifetime.cancelled() => {}
+                            _ = tokio::time::timeout(DRAIN, connection) => {}
+                        }
+                    }
+                }
                 lifetime.cancel();
             });
         }
+        let _ = tokio::time::timeout(DRAIN, async { while tasks.join_next().await.is_some() {} }).await;
+        tasks.abort_all();
+        Ok(())
     }
 }
 

@@ -152,7 +152,9 @@ pub fn refresh_design(app: &App) {
         let mut design = DESIGN.lock().unwrap();
         *design = Some(crate::extensions::requests_design(app));
     }
-    sync(app, false);
+    if let Some(snapshot) = sync_leases(app, false) {
+        tokio::spawn(write_status(snapshot));
+    }
 }
 
 /// `lease-request.ts` content per feature for this backend.
@@ -166,7 +168,7 @@ fn content(app: &App, feature: &str) -> String {
     }
 }
 
-fn status(app: &App, state: &State) {
+fn status(app: &App, state: &State) -> (std::path::PathBuf, Vec<u8>) {
     let current = state.current.map(|i| &state.installations[i]);
     let features: Vec<Value> = current
         .map(|i| {
@@ -190,7 +192,17 @@ fn status(app: &App, state: &State) {
     let doc = json!({"version":1,"state":state_name,"pid":std::process::id(),"expected":state.expected,
         "connections":state.connections,"namespaces":state.installations.len(),
         "discovery":current.map(|i|&i.paths.config),"features":features,"error":state.last});
-    let _ = crate::auth::tls::write_private(&app.data.join("plugin-provision.json"), doc.to_string().as_bytes());
+    (app.data.join("plugin-provision.json"), doc.to_string().into_bytes())
+}
+
+static STATUS_WRITE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn write_status((path, bytes): (std::path::PathBuf, Vec<u8>)) {
+    let _guard = STATUS_WRITE.lock().await;
+    let _ = tokio::task::spawn_blocking(move || {
+        let _ = crate::auth::tls::write_private(&path, &bytes);
+    })
+    .await;
 }
 
 async fn connection_at(
@@ -289,31 +301,34 @@ async fn connection_at(
             }
         }
     };
-    let mut state = STATE.lock().unwrap();
-    match outcome {
-        Ok((index, fresh)) => {
-            state.current = Some(index);
-            state.reported.clear();
-            state.last = None;
-            if !fresh {
-                println!("plugin-provision connection {} reused", state.connections);
+    let snapshot = {
+        let mut state = STATE.lock().unwrap();
+        match outcome {
+            Ok((index, fresh)) => {
+                state.current = Some(index);
+                state.reported.clear();
+                state.last = None;
+                if !fresh {
+                    println!("plugin-provision connection {} reused", state.connections);
+                }
+            }
+            Err(message) => {
+                // `provisionDesktopPlugins`: once per distinct failure until a success.
+                if state.reported.insert(message.clone()) {
+                    eprintln!("plugin-provision error: {message}");
+                }
+                state.current = None;
+                state.prepared = None;
+                state.last = Some(message);
             }
         }
-        Err(message) => {
-            // `provisionDesktopPlugins`: once per distinct failure until a success.
-            if state.reported.insert(message.clone()) {
-                eprintln!("plugin-provision error: {message}");
-            }
-            state.current = None;
-            state.prepared = None;
-            state.last = Some(message);
-        }
-    }
-    status(app, &state);
+        status(app, &state)
+    };
+    write_status(snapshot).await;
 }
 
 /// `DesktopPluginLifecycle.sync`: rewrite a lease whose request changed, else renew it.
-fn sync(app: &App, renew: bool) {
+fn sync_leases(app: &App, renew: bool) -> Option<(std::path::PathBuf, Vec<u8>)> {
     let mut state = STATE.lock().unwrap();
     let mut changed = false;
     for installation in &mut state.installations {
@@ -339,8 +354,12 @@ fn sync(app: &App, renew: bool) {
             }
         }
     }
-    if changed {
-        status(app, &state);
+    changed.then(|| status(app, &state))
+}
+
+async fn sync(app: &App, renew: bool) {
+    if let Some(snapshot) = sync_leases(app, renew) {
+        write_status(snapshot).await;
     }
 }
 
@@ -357,6 +376,24 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
     }
     let app = app.clone();
     Ok(Some(tokio::spawn(async move {
+        // Renew active leases on an independent timer so slow reprovisioning discovery
+        // (up to 15 s) never pauses lease renewal (TS `desktop-plugin-installation.ts:138-151`).
+        let sync_app = app.clone();
+        let sync_stop = stop.clone();
+        let sync_task = tokio::spawn(async move {
+            let mut renewed = tokio::time::Instant::now();
+            while !sync_stop.is_cancelled() {
+                tokio::select! {
+                    _ = sync_stop.cancelled() => break,
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                }
+                let renew = renewed.elapsed() >= PRESENCE_INTERVAL;
+                if renew {
+                    renewed = tokio::time::Instant::now();
+                }
+                sync(&sync_app, renew).await;
+            }
+        });
         // A discovered daemon is first provisioned when its event stream connects.
         if let Some(endpoint) = app.native.endpoint() {
             let _serial = SERIAL.lock().await;
@@ -366,7 +403,6 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
                 state.prepared = Some(endpoint);
             }
         }
-        let mut renewed = tokio::time::Instant::now();
         while !stop.is_cancelled() {
             tokio::select! {
                 _ = stop.cancelled() => break,
@@ -383,31 +419,31 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
                         }
                     }
                 }
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
             }
-            let renew = renewed.elapsed() >= PRESENCE_INTERVAL;
-            if renew {
-                renewed = tokio::time::Instant::now();
-            }
-            sync(&app, renew);
         }
+        let _ = sync_task.await;
         // Hold `SERIAL` across shutdown cleanup so any detached `prepare()` finishes and
         // registers its leases before we drain them, and subsequent waiters see `!state.active`.
         let _serial = SERIAL.lock().await;
-        let (owners, leases): (Vec<_>, Vec<_>) = {
+        let (owners, leases, snapshot): (Vec<_>, Vec<_>, _) = {
             let mut state = STATE.lock().unwrap();
             state.active = false;
             let installations = std::mem::take(&mut state.installations);
             state.current = None;
-            status(&app, &state);
-            installations.into_iter().map(|i| (i.readiness, i.features)).unzip()
+            let snapshot = status(&app, &state);
+            let (owners, leases) = installations.into_iter().map(|i| (i.readiness, i.features)).unzip();
+            (owners, leases, snapshot)
         };
+        write_status(snapshot).await;
         for owner in owners.into_iter().flatten() {
             owner.close().await;
         }
-        for features in leases {
-            provision::dispose(&features);
-        }
+        let _ = tokio::task::spawn_blocking(move || {
+            for features in leases {
+                provision::dispose(&features);
+            }
+        })
+        .await;
     })))
 }
 

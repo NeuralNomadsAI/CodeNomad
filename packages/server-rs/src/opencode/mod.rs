@@ -215,41 +215,46 @@ async fn run_acquire(inner: &NativeInner, deadline: Instant) -> Result<Arc<Endpo
             .clone()
             .ok_or_else(|| Refusal::Failed("OpenCode fixture endpoint is missing".into()));
     };
-    let validated = *inner.validated.lock().unwrap();
-    let current = inner.endpoint.read().unwrap().clone();
-    let found = match (&current, validated) {
-        (Some(current), Some(at)) if at.elapsed() < RECHECK => return Ok(current.clone()),
-        (Some(current), Some(_)) => match lifecycle.discover(deadline).await {
-            Ok(Some(found)) if found != **current => found,
-            _ => {
-                let mut validated = inner.validated.lock().unwrap();
-                if validated.is_none() {
-                    return Err(Refusal::Failed("OpenCode connection was invalidated during discovery".into()));
+    for _attempt in 0..3 {
+        let validated = *inner.validated.lock().unwrap();
+        let current = inner.endpoint.read().unwrap().clone();
+        let found = match (&current, validated) {
+            (Some(current), Some(at)) if at.elapsed() < RECHECK => return Ok(current.clone()),
+            (Some(current), Some(_)) => match lifecycle.discover(deadline).await {
+                Ok(Some(found)) if found != **current => found,
+                _ => {
+                    let mut validated = inner.validated.lock().unwrap();
+                    if validated.is_none() {
+                        // Connection was invalidated while discovery ran (e.g. SSE disconnect);
+                        // retry acquisition within the same request deadline (TS `opencode-service.ts:196-204`).
+                        continue;
+                    }
+                    *validated = Some(Instant::now());
+                    return Ok(current.clone());
                 }
-                *validated = Some(Instant::now());
-                return Ok(current.clone());
-            }
-        },
-        _ => match lifecycle.discover(deadline).await? {
-            Some(found) => found,
-            None => lifecycle.ensure(deadline).await?,
-        },
-    };
-    if current.as_ref().is_some_and(|old| **old != found) {
-        // Retire the replaced daemon immediately upon discovering a different endpoint
-        // (TS `opencode-service.ts:196-200, 333-343`), even if admitting the replacement fails.
-        *inner.endpoint.write().unwrap() = None;
-        *inner.validated.lock().unwrap() = None;
+            },
+            _ => match lifecycle.discover(deadline).await? {
+                Some(found) => found,
+                None => lifecycle.ensure(deadline).await?,
+            },
+        };
+        if current.as_ref().is_some_and(|old| **old != found) {
+            // Retire the replaced daemon immediately upon discovering a different endpoint
+            // (TS `opencode-service.ts:196-200, 333-343`), even if admitting the replacement fails.
+            *inner.endpoint.write().unwrap() = None;
+            *inner.validated.lock().unwrap() = None;
+            inner.retired.notify_waiters();
+        }
+        admission::admit(&inner.client, &found).await?;
+        let found = Arc::new(found);
+        let mut endpoint = inner.endpoint.write().unwrap();
+        *endpoint = Some(found.clone());
+        *inner.validated.lock().unwrap() = Some(Instant::now());
+        drop(endpoint);
         inner.retired.notify_waiters();
+        return Ok(found);
     }
-    admission::admit(&inner.client, &found).await?;
-    let found = Arc::new(found);
-    let mut endpoint = inner.endpoint.write().unwrap();
-    *endpoint = Some(found.clone());
-    *inner.validated.lock().unwrap() = Some(Instant::now());
-    drop(endpoint);
-    inner.retired.notify_waiters();
-    Ok(found)
+    Err(Refusal::Failed("OpenCode connection was invalidated during discovery".into()))
 }
 
 pub fn routes() -> Router<Shared> {

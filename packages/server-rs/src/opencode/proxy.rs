@@ -1210,14 +1210,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return Err(upstream_error());
         }
         let unauthorized = status == Status::UNAUTHORIZED;
-        if !status.is_success()
-            && status != Status::NOT_MODIFIED
-            && !response
-                .headers()
-                .get(header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .is_some_and(|ct| ct.contains("application/json"))
-        {
+        if !status.is_success() && status != Status::NOT_MODIFIED && !is_json_content_type(response.headers()) {
             drop(response);
             if unauthorized {
                 app.native.invalidate(&endpoint);
@@ -1235,6 +1228,62 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 })),
             )
                 .into_response());
+        }
+        if status.is_success() {
+            // Re-verify session placement and physical checkout identity on non-JSON 2xx fallback
+            // responses too, matching both deferred JSON and inline `message.list`.
+            let latest = tokio::select! {
+                biased;
+                _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                _ = workspace_closed() => return Err(not_found()),
+                record = tokio::time::timeout_at(list_deadline, super::session_record_media_at(&app, &endpoint, session)) => {
+                    record.map_err(|_| interrupted())??
+                }
+            };
+            if actual.as_ref().is_none_or(|orig| latest["id"] != orig["id"] || latest["location"] != orig["location"]) {
+                return Err(foreign());
+            }
+            let live_ok = if let (Some((resolved, anchor, expected_id)), Some(checkout), Some(raw)) =
+                (&initial_identity, &input_checkout, native_directory)
+            {
+                let (scope, raw, resolved, anchor, expected_id, checkout) = (
+                    app.scope.clone(),
+                    raw.to_owned(),
+                    resolved.clone(),
+                    anchor.clone(),
+                    expected_id.clone(),
+                    checkout.clone(),
+                );
+                tokio::select! {
+                    biased;
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    _ = workspace_closed() => return Err(not_found()),
+                    res = tokio::time::timeout_at(
+                        list_deadline,
+                        tokio::task::spawn_blocking(move || {
+                            crate::worktrees::ownership::resolve_media_path(&scope, &raw).is_some_and(
+                                |(cur_res, cur_anc)| {
+                                    cur_res == resolved
+                                        && cur_anc == anchor
+                                        && crate::files::directory_identity(&cur_anc).ok() == Some(expected_id)
+                                        && checkout.live(&cur_res)
+                                },
+                            )
+                        }),
+                    ) => res.map_err(|_| interrupted())?.unwrap_or(false),
+                }
+            } else {
+                false
+            };
+            if !live_ok || !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
+                return Err(foreign());
+            }
+            if !app.native.current(&endpoint) {
+                return Err(upstream_error());
+            }
+            principal.live()?;
         }
         struct InvalidateOnDrop {
             app: Shared,

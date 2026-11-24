@@ -431,6 +431,9 @@ pub async fn serve_local(
     shutdown: tokio_util::sync::CancellationToken,
     on_shutdown: impl FnOnce(),
 ) -> std::io::Result<()> {
+    // Keep graceful drain below the desktop host's 30 s hard stop (`tests/serve.rs:113`) while
+    // allowing admitted 15 s history and media requests to finish before plugin leases tear down.
+    const DRAIN: std::time::Duration = std::time::Duration::from_secs(25);
     let mut tasks = tokio::task::JoinSet::new();
     loop {
         while tasks.try_join_next().is_some() {}
@@ -462,16 +465,14 @@ pub async fn serve_local(
                         _ = &mut conn => {}
                         _ = stop.cancelled() => {
                             conn.as_mut().graceful_shutdown();
-                            let _ = tokio::time::timeout(std::time::Duration::from_secs(15), conn).await;
+                            let _ = tokio::time::timeout(DRAIN, conn).await;
                         }
                     }
                 });
             }
         }
     }
-    let drained =
-        tokio::time::timeout(std::time::Duration::from_secs(15), async { while tasks.join_next().await.is_some() {} })
-            .await;
+    let drained = tokio::time::timeout(DRAIN, async { while tasks.join_next().await.is_some() {} }).await;
     tasks.abort_all();
     match drained {
         Ok(()) => Ok(()),

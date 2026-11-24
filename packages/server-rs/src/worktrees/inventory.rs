@@ -214,25 +214,24 @@ pub struct Tree {
     layout: Physical,
     identity: Option<String>,
     /// When a sibling worktree's projected subfolder is a symlink into a verified worktree of
-    /// the same repository, stores `(link_path, resolved_target, target_worktree_root, target_id)`
+    /// the same repository, stores `(link_path, resolved_target, target_layout, target_id)`
     /// so `Tree.path` remains inside the sibling worktree (never directing Git staging into
-    /// another worktree) while media/history ownership checks validate the resolved target.
-    projected_link: Option<(PathBuf, PathBuf, PathBuf, String)>,
+    /// another worktree) while media/history ownership checks validate the resolved target
+    /// and the target checkout's own Git layout.
+    projected_link: Option<Box<(PathBuf, PathBuf, Physical, String)>>,
 }
 impl Tree {
     pub fn registered(&self) -> &Path {
         &self.layout.root
     }
     pub(super) fn target_root(&self) -> &Path {
-        self.projected_link.as_ref().map_or(&self.layout.root, |(_, _, root, _)| root.as_path())
+        self.projected_link.as_ref().map_or(&self.layout.root, |link| link.2.root.as_path())
     }
     pub(super) fn media_path_len(&self) -> usize {
-        self.projected_link.as_ref().map_or(&self.path, |(_, target, _, _)| target).as_os_str().len()
+        self.projected_link.as_ref().map_or(&self.path, |link| &link.1).as_os_str().len()
     }
     fn link_live(&self) -> bool {
-        self.projected_link
-            .as_ref()
-            .is_none_or(|(link, target, _, _)| dunce::canonicalize(link).ok().as_ref() == Some(target))
+        self.projected_link.as_ref().is_none_or(|link| dunce::canonicalize(&link.0).ok().as_ref() == Some(&link.1))
     }
     pub(super) fn public(&self) -> Value {
         let label = self.branch.clone().unwrap_or_else(|| {
@@ -273,15 +272,20 @@ impl Tree {
             && identity(&self.path).ok() == self.identity
     }
     pub(super) fn contains_media(&self, dir: &Path) -> bool {
-        if let Some((link, target, _, target_id)) = &self.projected_link {
+        if let Some(link) = &self.projected_link {
+            let (link_path, target, target_layout, target_id) = link.as_ref();
             return dir.starts_with(target)
                 && self.layout.live()
-                && dunce::canonicalize(link).ok().as_ref() == Some(target)
+                && target_layout.live()
+                && dunce::canonicalize(link_path).ok().as_ref() == Some(target)
                 && identity(target).ok().as_deref() == Some(target_id.as_str());
         }
-        let within = if self.nested_missing {
-            // Existing checkout root stays physically exact; the missing nested tail follows
-            // Windows case-insensitivity like TS `worktree-directory.ts:203-230`.
+        let project_missing = self.nested_missing
+            || std::fs::symlink_metadata(&self.path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+        let within = if project_missing {
+            // Existing checkout root stays physically exact; a missing nested project folder
+            // (initially or removed mid-read while the checkout remains intact) follows Windows
+            // case-insensitivity like TS `worktree-directory.ts:166-193,203-230`.
             dir.starts_with(self.registered()) && super::ownership::within(&self.path, dir)
         } else {
             dir.starts_with(&self.path)
@@ -289,7 +293,7 @@ impl Tree {
         within
             && self.layout.live()
             && self.link_live()
-            && if self.nested_missing {
+            && if project_missing {
                 std::fs::symlink_metadata(&self.path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
             } else {
                 identity(&self.path).ok() == self.identity
@@ -531,7 +535,8 @@ async fn catalogue_in_at(
         }
         verified_roots.push((service_root, root, meta, check));
     }
-    let repo_roots: Arc<Vec<PathBuf>> = Arc::new(verified_roots.iter().map(|(_, root, _, _)| root.clone()).collect());
+    let repo_layouts: Arc<Vec<Physical>> =
+        Arc::new(verified_roots.iter().map(|(_, _, _, check)| check.clone()).collect());
     let mut checked = Vec::new();
     for (service_root, root, meta, check) in verified_roots {
         let service_root = service_root.as_str();
@@ -542,10 +547,10 @@ async fn catalogue_in_at(
             let root = root.clone();
             let projected = projected.clone();
             let scope = app.scope.clone();
-            let repo_roots = repo_roots.clone();
+            let repo_layouts = repo_layouts.clone();
             match tokio::task::spawn_blocking(
                 move || -> Result<
-                    Option<(Physical, PathBuf, Option<String>, Option<(PathBuf, PathBuf, PathBuf, String)>)>,
+                    Option<(Physical, PathBuf, Option<String>, Option<Box<(PathBuf, PathBuf, Physical, String)>>)>,
                     Error,
                 > {
                     if !check.live() {
@@ -563,16 +568,16 @@ async fn catalogue_in_at(
                         // Keep `Tree.path` inside this worktree (and mark cross-worktree targets
                         // `nested_missing` via `id = None`) so Git staging never runs in another worktree.
                         Ok(real) if !opened && real.is_dir() && real.starts_with(&scope) => {
-                            if let Some(target_root) = repo_roots
+                            if let Some(target_layout) = repo_layouts
                                 .iter()
-                                .filter(|repo_root| real.starts_with(repo_root))
-                                .max_by_key(|repo_root| repo_root.as_os_str().len())
+                                .filter(|layout| real.starts_with(&layout.root))
+                                .max_by_key(|layout| layout.root.as_os_str().len())
                             {
                                 match identity(&real) {
                                     Ok(value) => (
                                         projected.clone(),
                                         None,
-                                        Some((projected, real, target_root.clone(), value)),
+                                        Some(Box::new((projected, real, target_layout.clone(), value))),
                                     ),
                                     Err(_) => return Ok(None),
                                 }

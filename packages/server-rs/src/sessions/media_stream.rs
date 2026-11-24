@@ -387,7 +387,7 @@ fn for_each_json_array_item<'a>(raw: &'a str, limit: usize, mut visit: impl FnMu
 /// Projects a single message JSON item by streaming through up to `MAX_SCANNED_ITEMS` parts
 /// and tool content items with zero intermediate array/node allocations, recording only the
 /// byte ranges of replaced `"uri"` JSON string tokens and splicing them in one single pass.
-pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>) -> (Vec<u8>, bool) {
+pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, mut raw: Vec<u8>) -> (Vec<u8>, bool) {
     if !may_contain_image_uri(&raw) {
         return (raw, false);
     }
@@ -470,12 +470,45 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, raw: Vec<u8>)
         return (raw, false);
     };
     patches.sort_unstable_by_key(|(start, _, _)| *start);
+    let mut cursor = 0usize;
+    let mut fits_in_place = true;
+    for (start, end, replacement) in &patches {
+        if *start < cursor || *end > raw.len() {
+            return (raw, false);
+        }
+        if replacement.len() > end - start {
+            fits_in_place = false;
+        }
+        cursor = *end;
+    }
+    if fits_in_place {
+        // Every deferred `/api/workspaces/.../session-media/...` URI is strictly shorter than the
+        // `> 32 KiB` data URI it replaces, so splicing in-place avoids allocating a second `Vec`.
+        let mut read_pos = 0usize;
+        let mut write_pos = 0usize;
+        for (start, end, replacement) in patches {
+            let prefix_len = start - read_pos;
+            if write_pos != read_pos && prefix_len > 0 {
+                raw.copy_within(read_pos..start, write_pos);
+            }
+            write_pos += prefix_len;
+            let rep = replacement.as_bytes();
+            raw[write_pos..write_pos + rep.len()].copy_from_slice(rep);
+            write_pos += rep.len();
+            read_pos = end;
+        }
+        let tail_len = raw.len() - read_pos;
+        if write_pos != read_pos && tail_len > 0 {
+            raw.copy_within(read_pos.., write_pos);
+        }
+        write_pos += tail_len;
+        raw.truncate(write_pos);
+        raw.shrink_to_fit();
+        return (raw, true);
+    }
     let mut out = Vec::new();
     let mut cursor = 0usize;
     for (start, end, replacement) in patches {
-        if start < cursor || end > raw.len() {
-            return (raw, false);
-        }
         out.extend_from_slice(&raw[cursor..start]);
         out.extend_from_slice(replacement.as_bytes());
         cursor = end;

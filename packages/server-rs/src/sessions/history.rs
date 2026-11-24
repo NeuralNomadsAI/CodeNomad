@@ -543,14 +543,16 @@ pub async fn handle(
     };
     let defer = action == "window" && media::wants_deferred(req.headers());
     let invalid = || error(Status::BAD_REQUEST, "Invalid history navigation request");
-    let json_content_type = req
+    match req
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .map(|ct| ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
-        .is_some_and(|essence| essence == "application/json" || essence.ends_with("+json"));
-    if !json_content_type {
-        return Err(invalid());
+        .as_deref()
+    {
+        Some("application/json") => {}
+        None | Some("text/plain") => return Err(invalid()),
+        Some(_) => return Err(error(Status::UNSUPPORTED_MEDIA_TYPE, "Unsupported Media Type")),
     }
     let bytes = to_bytes(req.into_body(), limit)
         .await
