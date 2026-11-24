@@ -21,7 +21,7 @@ impl Record {
     /// (TS `automation-plugin.ts:189-196`, `shutdown.ts:135-146`).
     pub fn remove(mut self) -> io::Result<()> {
         let mut last_err = None;
-        for _ in 0..2 {
+        for attempt in 0..2 {
             match fs::remove_file(&self.path) {
                 Ok(()) => {
                     self.removed = true;
@@ -31,7 +31,12 @@ impl Record {
                     self.removed = true;
                     return Ok(());
                 }
-                Err(e) => last_err = Some(e),
+                Err(e) => {
+                    last_err = Some(e);
+                    if attempt == 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(250));
+                    }
+                }
             }
         }
         self.removed = true;

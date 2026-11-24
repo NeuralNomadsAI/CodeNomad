@@ -16,7 +16,7 @@ const URI_LIMIT: usize = 8 * 1024 * 1024;
 const MESSAGE_LIMIT: usize = 16 * 1024 * 1024;
 const INLINE_LIMIT: usize = 32 * 1024;
 
-pub(super) fn encode(id: &str) -> String {
+pub(crate) fn encode(id: &str) -> String {
     let mut encoded = String::new();
     for byte in id.bytes() {
         if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
@@ -152,45 +152,53 @@ pub(crate) fn defer(workspace: &str, session: &str, messages: &mut Value) -> boo
     changed
 }
 
-fn parse_message_envelope(raw: &[u8]) -> Result<Value, Error> {
-    let unavailable = || error(Status::BAD_GATEWAY, "Media unavailable");
-    serde_json::from_slice(raw).map_err(|_| unavailable())
-}
-
-fn extract_media_from_envelope(
+/// Validates the raw message envelope without allocating a `serde_json::Value` tree, then decodes
+/// the targeted tool image. Outer `Err` reports malformed JSON or null `data` (`502 Media
+/// unavailable`, checked before the final `session.get`); inner `Result` reports the decoded image
+/// or `404 Media not found` (checked after the final `session.get`).
+fn extract_media_from_raw(
     message_id: &str,
     part_index: usize,
     item_index: usize,
     digest: &str,
     revert_boundary: Option<&str>,
-    envelope: &Value,
-) -> Result<(&'static str, Vec<u8>), Error> {
+    raw: &[u8],
+) -> Result<Result<(&'static str, Vec<u8>), Error>, Error> {
     let missing = || error(Status::NOT_FOUND, "Media not found");
     let unavailable = || error(Status::BAD_GATEWAY, "Media unavailable");
-    let data = envelope.get("data").filter(|value| !value.is_null()).ok_or_else(unavailable)?;
-    let message = data.as_object().map(|_| data).ok_or_else(missing)?;
-    if message["id"] != message_id
-        || message["type"] != "assistant"
-        || revert_boundary.is_some_and(|boundary| message_id.encode_utf16().cmp(boundary.encode_utf16()).is_ge())
-    {
-        return Err(missing());
-    }
-    let part = &message["content"][part_index];
-    if part["type"] != "tool" {
-        return Err(missing());
-    }
-    let (mime, uri) = renderable(&part["state"]["content"][item_index]).ok_or_else(missing)?;
-    if user_files::digest(uri.as_bytes()) != digest {
-        return Err(missing());
-    }
-    let prefix = format!("data:{mime};base64,");
-    let payload = uri.strip_prefix(&prefix).ok_or_else(missing)?;
-    if payload.len() % 4 != 0 {
-        return Err(missing());
-    }
-    let bytes = STANDARD.decode(payload).map_err(|_| missing())?;
-    let mime = raster(&bytes).filter(|&detected| detected == mime).ok_or_else(missing)?;
-    Ok((mime, bytes))
+    let Some(fields) =
+        super::media_stream::extract_tool_media(raw, part_index, item_index).map_err(|_| unavailable())?
+    else {
+        return Ok(Err(missing()));
+    };
+    let decode = || -> Result<(&'static str, Vec<u8>), Error> {
+        if fields.id.as_deref() != Some(message_id)
+            || fields.msg_type.as_deref() != Some("assistant")
+            || revert_boundary.is_some_and(|boundary| message_id.encode_utf16().cmp(boundary.encode_utf16()).is_ge())
+            || fields.part_type.as_deref() != Some("tool")
+            || fields.file_type.as_deref() != Some("file")
+        {
+            return Err(missing());
+        }
+        let (mime, uri) = renderable_parts(
+            fields.file_type.as_deref().ok_or_else(missing)?,
+            fields.mime.as_deref().ok_or_else(missing)?,
+            fields.uri.as_deref().ok_or_else(missing)?,
+        )
+        .ok_or_else(missing)?;
+        if user_files::digest(uri.as_bytes()) != digest {
+            return Err(missing());
+        }
+        let prefix = format!("data:{mime};base64,");
+        let payload = uri.strip_prefix(&prefix).ok_or_else(missing)?;
+        if payload.len() % 4 != 0 {
+            return Err(missing());
+        }
+        let bytes = STANDARD.decode(payload).map_err(|_| missing())?;
+        let mime = raster(&bytes).filter(|&detected| detected == mime).ok_or_else(missing)?;
+        Ok((mime, bytes))
+    };
+    Ok(decode())
 }
 
 #[cfg(test)]
@@ -202,8 +210,7 @@ fn extract_media(
     revert_boundary: Option<&str>,
     raw: &[u8],
 ) -> Result<(&'static str, Vec<u8>), Error> {
-    let envelope = parse_message_envelope(raw)?;
-    extract_media_from_envelope(message_id, part_index, item_index, digest, revert_boundary, &envelope)
+    extract_media_from_raw(message_id, part_index, item_index, digest, revert_boundary, raw)?
 }
 
 pub(super) async fn route(
@@ -285,39 +292,31 @@ pub(super) async fn route(
             if !placement.operation_current(&app, &r.workspace).await {
                 return Ok(crate::shared::abort_response());
             }
-            // Matches TS `session-media.ts:61-76`: parse and validate the message envelope
-            // before issuing the final `session.get` so malformed JSON fails with 502 immediately.
+            // Matches TS `session-media.ts:61-76`: validate JSON and decode the attachment
+            // before issuing the final `session.get` (so malformed JSON fails with 502 immediately
+            // and no `spawn_blocking` yield occurs after the last `revert` check), without building
+            // a `serde_json::Value` tree over ignored fields.
             let raw_len = raw.len();
-            let (envelope, slot) = if raw_len > INLINE_LIMIT {
-                let (parsed, slot) = tokio::task::spawn_blocking(move || (parse_message_envelope(&raw), slot))
-                    .await
-                    .map_err(|_| unavailable())?;
+            let (decoded, slot) = if raw_len > INLINE_LIMIT {
+                let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.to_owned());
+                let (parsed, slot) = tokio::task::spawn_blocking(move || {
+                    (extract_media_from_raw(&message_id, part, index, &digest, None, &raw), slot)
+                })
+                .await
+                .map_err(|_| unavailable())?;
                 match parsed {
-                    Ok(envelope) => (envelope, slot),
+                    Ok(decoded) => (decoded, slot),
                     Err(_) if !placement.operation_current(&app, &r.workspace).await => {
                         return Ok(crate::shared::abort_response());
                     }
                     Err(failure) => return Err(failure),
                 }
             } else {
-                (parse_message_envelope(&raw)?, slot)
+                (extract_media_from_raw(&r.message, r.part, r.index, r.digest, None, &raw)?, slot)
             };
             if !placement.operation_current(&app, &r.workspace).await {
                 return Ok(crate::shared::abort_response());
             }
-            // Decode and verify the attachment before the final `session.get` so no
-            // `spawn_blocking` yield occurs between the last `revert` check and sending bytes.
-            let (decoded, slot) = if raw_len > INLINE_LIMIT {
-                let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.to_owned());
-                tokio::task::spawn_blocking(move || {
-                    let decoded = extract_media_from_envelope(&message_id, part, index, &digest, None, &envelope);
-                    (decoded, slot)
-                })
-                .await
-                .map_err(|_| unavailable())?
-            } else {
-                (extract_media_from_envelope(&r.message, r.part, r.index, r.digest, None, &envelope), slot)
-            };
             // Reserve response-stream memory BEFORE the final `session.get` so no blocking
             // wait occurs after the last native revert/placement revalidation.
             let mem = crate::shared::reserve_response_memory(
@@ -347,12 +346,14 @@ pub(super) async fn route(
             bytes.shrink_to_fit();
             drop(slot);
             principal.live()?;
-            let abort = crate::shared::stream_abort(
+            const MEDIA_STREAM_MAX: Duration = Duration::from_secs(60);
+            let abort = crate::shared::bounded_stream_abort(
                 app.clone(),
                 r.workspace.clone(),
                 initial_workspace.clone(),
                 placement.endpoint.clone(),
                 principal.0.clone(),
+                MEDIA_STREAM_MAX,
             );
             let length = HeaderValue::from(bytes.len());
             let mut response = (
@@ -366,12 +367,13 @@ pub(super) async fn route(
                 crate::shared::permit_body(bytes.into(), Some(mem), abort),
             )
                 .into_response();
-            let write_abort = crate::shared::stream_abort(
+            let write_abort = crate::shared::bounded_stream_abort(
                 app.clone(),
                 r.workspace.clone(),
                 initial_workspace.clone(),
                 placement.endpoint.clone(),
                 principal.0.clone(),
+                MEDIA_STREAM_MAX,
             );
             response.extensions_mut().insert(crate::shared::CancelWrite::new(write_abort));
             Ok(response)

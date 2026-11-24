@@ -161,6 +161,51 @@ pub fn stream_abort(
     })
 }
 
+pub fn bounded_stream_abort(
+    app: crate::Shared,
+    workspace_id: String,
+    workspace: crate::Workspace,
+    endpoint: std::sync::Arc<crate::opencode::Endpoint>,
+    principal: tokio_util::sync::CancellationToken,
+    max_duration: std::time::Duration,
+) -> AbortFuture {
+    let deadline = tokio::time::Instant::now() + max_duration;
+    let inner = stream_abort(app, workspace_id, workspace, endpoint, principal);
+    Box::pin(async move {
+        tokio::select! {
+            _ = inner => {}
+            _ = tokio::time::sleep_until(deadline) => {}
+        }
+    })
+}
+
+/// Stream abort bound to principal revocation, daemon retirement, and an optional total lifetime
+/// (without cancelling on workspace close once a proxied request has been dispatched, matching TS
+/// `proxy.ts:37-115`).
+pub fn proxy_stream_abort(
+    app: crate::Shared,
+    endpoint: std::sync::Arc<crate::opencode::Endpoint>,
+    principal: tokio_util::sync::CancellationToken,
+    max_duration: Option<std::time::Duration>,
+) -> AbortFuture {
+    let deadline = max_duration.map(|d| tokio::time::Instant::now() + d);
+    Box::pin(async move {
+        match deadline {
+            Some(at) => tokio::select! {
+                biased;
+                _ = principal.cancelled() => {}
+                _ = app.native.wait_retired(&endpoint) => {}
+                _ = tokio::time::sleep_until(at) => {}
+            },
+            None => tokio::select! {
+                biased;
+                _ = principal.cancelled() => {}
+                _ = app.native.wait_retired(&endpoint) => {}
+            },
+        }
+    })
+}
+
 pub const RESPONSE_CHUNK: usize = 64 * 1024;
 const MEDIA_MEM_UNITS: usize = 1024;
 const HISTORY_MEM_UNITS: usize = 1024;

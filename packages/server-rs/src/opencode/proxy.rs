@@ -593,6 +593,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     {
         return Err(foreign());
     }
+    let mut list_context_directory: Option<String> = None;
     if let Some(context) = parsed_location_context {
         if send_input {
             let context = super::prompt::directory(&app, &workspace, super::prompt::context(&context)?).await?;
@@ -604,7 +605,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
             }
         } else if message_list {
-            // Shape, ownership and query conflicts were already verified before session lookup.
+            // Shape, ownership and query conflicts were already verified before session lookup;
+            // forward the validated location context as `x-opencode-directory` (TS `http-server.ts:1665`).
+            list_context_directory = context["directory"].as_str().map(str::to_owned);
         } else {
             one_location(&context, directory)?;
         }
@@ -934,6 +937,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         upstream = upstream.header(header::ACCEPT, accept);
     }
     if message_list {
+        if let Some(ctx_dir) = &list_context_directory {
+            upstream = upstream.header("x-opencode-directory", crate::sessions::media::encode(ctx_dir));
+        }
         for conditional in [header::IF_NONE_MATCH, header::IF_MODIFIED_SINCE] {
             if let Some(value) = head.headers.get(&conditional) {
                 upstream = upstream.header(conditional, value);
@@ -977,11 +983,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return Err(upstream_error());
         }
         principal.live()?;
+        // Once dispatched, TS (`proxy.ts:37-115`) binds `message.list` only to client disconnect
+        // (principal revocation) and OpenCode connection retirement, not workspace closure.
         let mut response = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-            _ = workspace_closed() => return Err(not_found()),
             sent = tokio::time::timeout_at(list_deadline, upstream.send()) => match sent {
                 Ok(Ok(response)) => response,
                 Ok(Err(_)) => {
@@ -1007,7 +1014,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    _ = workspace_closed() => return Err(not_found()),
                     next = tokio::time::timeout_at(list_deadline, response.chunk()) => {
                         next.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                     }
@@ -1027,7 +1033,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                        _ = workspace_closed() => return Err(not_found()),
                         permit = tokio::time::timeout_at(
                             list_deadline,
                             crate::shared::acquire_response_units(
@@ -1058,7 +1063,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                             biased;
                             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                             _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                            _ = workspace_closed() => return Err(not_found()),
                             permit = tokio::time::timeout_at(
                                 list_deadline,
                                 crate::shared::acquire_response_units(
@@ -1086,7 +1090,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                        _ = workspace_closed() => return Err(not_found()),
                         res = tokio::time::timeout_at(
                             list_deadline,
                             tokio::task::spawn_blocking(move || {
@@ -1119,7 +1122,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                        _ = workspace_closed() => return Err(not_found()),
                         permit = tokio::time::timeout_at(
                             list_deadline,
                             crate::shared::acquire_response_units(
@@ -1142,7 +1144,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    _ = workspace_closed() => return Err(not_found()),
                     res = tokio::time::timeout_at(
                         list_deadline,
                         tokio::task::spawn_blocking(move || (stream.finish(), held, held_mem)),
@@ -1164,7 +1165,6 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     biased;
                     _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                     _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
-                    _ = workspace_closed() => return Err(not_found()),
                     permit = tokio::time::timeout_at(
                         list_deadline,
                         crate::shared::acquire_response_units(
@@ -1188,11 +1188,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 return Err(interrupted());
             }
             drop(slot);
-            if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
-            {
+            if !app.native.current(&endpoint) {
                 return Err(upstream_error());
             }
-            app.workspace(id)?;
             principal.live()?;
             // Drop the upstream strong ETag only when the JSON body was actually rewritten
             // (RFC 9110: never reuse the original validator for a modified representation).
@@ -1200,33 +1198,18 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             // Bound total response-drain lifetime (120 s) so a trickle reader cannot pin
             // `ResponsePool::List` permits indefinitely without triggering the 30 s stall timer.
             const LIST_STREAM_MAX: Duration = Duration::from_secs(120);
-            let stream_deadline = tokio::time::Instant::now() + LIST_STREAM_MAX;
-            let abort_inner = crate::shared::stream_abort(
+            let abort = crate::shared::proxy_stream_abort(
                 app.clone(),
-                id.to_owned(),
-                workspace.clone(),
                 endpoint.clone(),
                 principal.0.clone(),
+                Some(LIST_STREAM_MAX),
             );
-            let abort = Box::pin(async move {
-                tokio::select! {
-                    _ = abort_inner => {}
-                    _ = tokio::time::sleep_until(stream_deadline) => {}
-                }
-            });
-            let write_abort_inner = crate::shared::stream_abort(
+            let write_abort = crate::shared::proxy_stream_abort(
                 app.clone(),
-                id.to_owned(),
-                workspace.clone(),
                 endpoint.clone(),
                 principal.0.clone(),
+                Some(LIST_STREAM_MAX),
             );
-            let write_abort = Box::pin(async move {
-                tokio::select! {
-                    _ = write_abort_inner => {}
-                    _ = tokio::time::sleep_until(stream_deadline) => {}
-                }
-            });
             let builder = headers
                 .into_iter()
                 .filter(|(name, _)| !(changed && *name == "etag"))
@@ -1266,8 +1249,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 .into_response());
         }
         if status.is_success() {
-            if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
-            {
+            if !app.native.current(&endpoint) {
                 return Err(upstream_error());
             }
             principal.live()?;
@@ -1286,36 +1268,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let cancelled = Box::pin(principal.0.clone().cancelled_owned());
         let app_retire = app.clone();
         let endpoint_retire = endpoint.clone();
-        let ws_key = id.to_owned();
-        let ws_snapshot = workspace.clone();
-        let ws_app = app.clone();
-        let ws_closed = Box::pin(async move {
-            loop {
-                let notified = ws_app.workspace_closed.notified();
-                if !ws_app
-                    .workspace(&ws_key)
-                    .is_ok_and(|current| current.id == ws_snapshot.id && current.path == ws_snapshot.path)
-                {
-                    return;
-                }
-                notified.await;
-            }
-        });
         // Matches TS `proxy.ts:33-35`: invalidate a 401 connection only after the native
         // 401 error body finishes streaming downstream, so retiring it does not truncate the body.
         let invalidate = unauthorized.then(|| InvalidateOnDrop { app: app.clone(), endpoint: endpoint.clone() });
         let bytes = futures_util::stream::unfold(
-            (
-                response.bytes_stream(),
-                cancelled,
-                ws_closed,
-                app_retire,
-                endpoint_retire,
-                unauthorized,
-                invalidate,
-                false,
-            ),
-            |(mut inner, mut cancelled, mut ws_closed, app_retire, endpoint_retire, unauthorized, invalidate, done)| async move {
+            (response.bytes_stream(), cancelled, app_retire, endpoint_retire, unauthorized, invalidate, false),
+            |(mut inner, mut cancelled, app_retire, endpoint_retire, unauthorized, invalidate, done)| async move {
                 if done {
                     return None;
                 }
@@ -1324,19 +1282,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     _ = &mut cancelled => {
                         return Some((
                             Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "upstream stream aborted")),
-                            (inner, cancelled, ws_closed, app_retire, endpoint_retire, unauthorized, invalidate, true),
-                        ));
-                    }
-                    _ = &mut ws_closed => {
-                        return Some((
-                            Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "workspace closed")),
-                            (inner, cancelled, ws_closed, app_retire, endpoint_retire, unauthorized, invalidate, true),
+                            (inner, cancelled, app_retire, endpoint_retire, unauthorized, invalidate, true),
                         ));
                     }
                     _ = app_retire.native.wait_retired(&endpoint_retire), if !unauthorized => {
                         return Some((
                             Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "upstream stream aborted")),
-                            (inner, cancelled, ws_closed, app_retire, endpoint_retire, unauthorized, invalidate, true),
+                            (inner, cancelled, app_retire, endpoint_retire, unauthorized, invalidate, true),
                         ));
                     }
                     item = inner.next() => item,
@@ -1344,7 +1296,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 next.map(|chunk| {
                     (
                         chunk.map_err(std::io::Error::other),
-                        (inner, cancelled, ws_closed, app_retire, endpoint_retire, unauthorized, invalidate, false),
+                        (inner, cancelled, app_retire, endpoint_retire, unauthorized, invalidate, false),
                     )
                 })
             },
@@ -1352,12 +1304,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let cancel_write = if unauthorized {
             crate::shared::CancelWrite::token(principal.0.clone())
         } else {
-            crate::shared::CancelWrite::new(crate::shared::stream_abort(
+            crate::shared::CancelWrite::new(crate::shared::proxy_stream_abort(
                 app.clone(),
-                id.to_owned(),
-                workspace.clone(),
                 endpoint.clone(),
                 principal.0.clone(),
+                None,
             ))
         };
         return builder
@@ -1394,7 +1345,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             biased;
             _ = principal.0.cancelled(), if !dispatched_mutation => return Err(crate::auth::unauthorized()),
             _ = app.native.wait_retired(&endpoint), if !dispatched_mutation => return Err(upstream_error()),
-            _ = ws_closed_headers, if !dispatched_mutation => return Err(not_found()),
+            _ = ws_closed_headers, if !dispatched_mutation && !message_list => return Err(not_found()),
             response = tokio::time::timeout(super::PROXY_IDLE, upstream.send()) => match response {
                 Ok(Ok(response)) => response,
                 Ok(Err(_)) => {
@@ -1435,8 +1386,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 .into_response());
         }
         if message_list && response.status().is_success() {
-            if !app.native.current(&endpoint) || !crate::sessions::permission_mode::workspace_current(&app, &workspace)
-            {
+            if !app.native.current(&endpoint) {
                 return Err(upstream_error());
             }
             principal.live()?;
@@ -1534,6 +1484,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             builder
         } else if unauthorized {
             builder.extension(crate::shared::CancelWrite::token(principal.0.clone()))
+        } else if message_list {
+            builder.extension(crate::shared::CancelWrite::new(crate::shared::proxy_stream_abort(
+                app.clone(),
+                endpoint.clone(),
+                principal.0.clone(),
+                None,
+            )))
         } else {
             builder.extension(crate::shared::CancelWrite::new(crate::shared::stream_abort(
                 app.clone(),
@@ -1551,7 +1508,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let ws_snapshot = workspace.clone();
         let ws_app = app.clone();
         let ws_closed = Box::pin(async move {
-            if dispatched_mutation {
+            if dispatched_mutation || message_list {
                 std::future::pending::<()>().await;
             }
             loop {

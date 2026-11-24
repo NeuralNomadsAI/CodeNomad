@@ -326,7 +326,8 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
                 }
                 permissions.enqueue(&app, &endpoint, &lanes.failed, &event);
                 if kind == "server.connected" {
-                    let source_key = format!("{}\0{}", endpoint.url, endpoint.password);
+                    let source_key =
+                        format!("{}\0{}\0{}\0{}", endpoint.url, endpoint.password, endpoint.pid, endpoint.version);
                     let daemon = match &daemon_source {
                         Some((key, token)) if *key == source_key => token.clone(),
                         _ => {

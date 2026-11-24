@@ -284,14 +284,49 @@ pub(crate) fn resolve_media_path(scope: &Path, raw: &str) -> Option<(PathBuf, Pa
     if !raw.starts_with('/') {
         return None;
     }
-    let normalized = crate::files::node_path::Style::host().normalize(raw);
-    if !crate::files::paths::under(scope, Path::new(&normalized)) {
+    // Resolve symlinks component-by-component BEFORE applying `..` so a POSIX path like
+    // `/workspace/link_to_foreign/..` resolves through `link_to_foreign` into `/foreign`
+    // rather than being lexically collapsed back into `/workspace`.
+    let mut cur = PathBuf::new();
+    let mut missing = false;
+    for component in Path::new(raw).components() {
+        use std::path::Component;
+        match component {
+            Component::Prefix(prefix) => cur.push(prefix.as_os_str()),
+            Component::RootDir => cur.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::Normal(seg) => {
+                cur.push(seg);
+                if !missing {
+                    match dunce::canonicalize(&cur) {
+                        Ok(real) => cur = real,
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => missing = true,
+                        Err(_) => return None,
+                    }
+                }
+            }
+            Component::ParentDir => {
+                if !cur.pop() {
+                    return None;
+                }
+                if missing {
+                    match dunce::canonicalize(&cur) {
+                        Ok(real) => {
+                            cur = real;
+                            missing = false;
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(_) => return None,
+                    }
+                }
+            }
+        }
+    }
+    if !cur.starts_with(scope) {
         return None;
     }
-    // Canonical paths use exact `starts_with` to match cold `inventory.rs` on case-sensitive NTFS volumes.
-    let resolved = resolve_exact_directory(&normalized).filter(|p| p.starts_with(scope))?;
-    let anchor = directory_anchor(&resolved).ok()??.to_path_buf();
-    Some((resolved, anchor))
+    let anchor = directory_anchor(&cur).ok()??.to_path_buf();
+    Some((cur, anchor))
 }
 
 async fn proof_live_async(proof: DirectoryProof, path: PathBuf) -> Option<DirectoryProof> {
@@ -699,6 +734,11 @@ fn strict_discover_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
         Ok(())
     };
     let entry = root.join(".git");
+    let entry_meta = std::fs::symlink_metadata(&entry).map_err(|_| ())?;
+    if entry_meta.file_type().is_symlink() {
+        let link_target = std::fs::read_link(&entry).map_err(|_| ())?;
+        reject_network_path(&link_target.to_string_lossy(), &link_target)?;
+    }
     let git_dir = if std::fs::metadata(&entry).map_err(|_| ())?.is_dir() {
         entry
     } else {

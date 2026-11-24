@@ -57,6 +57,7 @@ struct State {
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
+static LEASE_IO: Mutex<()> = Mutex::new(());
 static CONNECTED: Notify = Notify::const_new();
 static SYNC_NOW: Notify = Notify::const_new();
 /// One provisioning attempt at a time, from a connection's acquirer or from the stream.
@@ -381,26 +382,32 @@ async fn sync(app: &App, renew: bool) {
     let results = tokio::task::spawn_blocking(move || {
         let mut out = Vec::with_capacity(plan.len());
         for (inst_idx, feat_idx, lease, rewrite, do_renew, check_ready) in plan {
-            let written = if let Some(wanted) = rewrite {
-                crate::extensions::artifact::write_replacing(&lease, wanted.as_bytes()).is_ok().then_some(wanted)
-            } else {
-                if do_renew {
-                    let now = std::time::SystemTime::now();
-                    let mut opts = fs::OpenOptions::new();
-                    opts.write(true);
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::OpenOptionsExt;
-                        opts.custom_flags(libc::O_NONBLOCK);
-                    }
-                    // The reference ignores a failed renewal; the lease simply expires.
-                    if let Ok(file) = opts.open(&lease)
-                        && file.metadata().is_ok_and(|meta| meta.is_file())
-                    {
-                        let _ = file.set_modified(now);
-                    }
+            let written = {
+                let _io = LEASE_IO.lock().unwrap();
+                if !STATE.lock().unwrap().active {
+                    break;
                 }
-                None
+                if let Some(wanted) = rewrite {
+                    crate::extensions::artifact::write_replacing(&lease, wanted.as_bytes()).is_ok().then_some(wanted)
+                } else {
+                    if do_renew {
+                        let now = std::time::SystemTime::now();
+                        let mut opts = fs::OpenOptions::new();
+                        opts.write(true);
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::OpenOptionsExt;
+                            opts.custom_flags(libc::O_NONBLOCK);
+                        }
+                        // The reference ignores a failed renewal; the lease simply expires.
+                        if let Ok(file) = opts.open(&lease)
+                            && file.metadata().is_ok_and(|meta| meta.is_file())
+                        {
+                            let _ = file.set_modified(now);
+                        }
+                    }
+                    None
+                }
             };
             let became_ready = check_ready && provision::ready_marker(&lease).exists();
             if written.is_some() || became_ready {
@@ -509,6 +516,11 @@ pub fn start(
                 }
             }
         }
+        // Mark inactive immediately so any in-flight `sync_leases` worker exits before rewriting
+        // leases once it acquires `LEASE_IO`.
+        {
+            STATE.lock().unwrap().active = false;
+        }
         let mut sync_task = sync_task;
         if tokio::time::timeout(Duration::from_secs(1), &mut sync_task).await.is_err() {
             sync_task.abort();
@@ -529,10 +541,12 @@ pub fn start(
         for owner in owners.into_iter().flatten() {
             let _ = tokio::time::timeout(Duration::from_secs(1), owner.close()).await;
         }
-        // Retry lease disposal once matching TS `shutdown.ts:135-146`.
+        // Hold `LEASE_IO` across disposal so a late `sync_leases` worker can never recreate a
+        // deleted lease after shutdown cleanup; retry once after 250 ms (TS `shutdown.ts:135-146`).
         let disposed = tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let _io = LEASE_IO.lock().unwrap();
             let mut last_err = None;
-            for _ in 0..2 {
+            for attempt in 0..2 {
                 let mut first_err = None;
                 for features in &leases {
                     if let Err(e) = provision::dispose_checked(features)
@@ -545,6 +559,9 @@ pub fn start(
                     return Ok(());
                 }
                 last_err = first_err;
+                if attempt == 0 {
+                    std::thread::sleep(Duration::from_millis(250));
+                }
             }
             Err(last_err.unwrap())
         })

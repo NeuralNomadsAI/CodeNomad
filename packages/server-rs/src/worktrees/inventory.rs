@@ -269,6 +269,7 @@ impl Tree {
         self.path == dir
             && !self.nested_missing
             && self.projected_link.is_none()
+            && self.identity.is_some()
             && self.layout.live()
             && self.link_live()
             && identity(dir).ok() == self.identity
@@ -279,6 +280,7 @@ impl Tree {
         dir.starts_with(&self.path)
             && !self.nested_missing
             && self.projected_link.is_none()
+            && self.identity.is_some()
             && self.layout.live()
             && self.link_live()
             && identity(&self.path).ok() == self.identity
@@ -303,7 +305,7 @@ impl Tree {
             && if project_missing {
                 std::fs::symlink_metadata(&self.path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
             } else {
-                identity(&self.path).ok() == self.identity
+                self.identity.is_some() && identity(&self.path).ok() == self.identity
             }
     }
     pub(super) fn contains_receipt_location(&self, dir: &Path) -> bool {
@@ -550,30 +552,31 @@ async fn catalogue_in_at(
         let meta = meta.as_str();
         let opened = root == local.root;
         let projected = if tail.as_os_str().is_empty() { root.clone() } else { root.join(tail) };
-        let (check, tree_path, id, projected_link) = {
+        let (check, tree_path, id, projected_link, nested_missing) = {
             let root = root.clone();
             let projected = projected.clone();
             let scope = app.scope.clone();
             let repo_layouts = repo_layouts.clone();
             match tokio::task::spawn_blocking(
                 move || -> Result<
-                    Option<(Physical, PathBuf, Option<String>, Option<Box<(PathBuf, PathBuf, Physical, String)>>)>,
+                    Option<(Physical, PathBuf, Option<String>, Option<Box<(PathBuf, PathBuf, Physical, String)>>, bool)>,
                     Error,
                 > {
                     if !check.live() {
                         return Ok(None);
                     }
-                    let (tree_path, id, projected_link) = match dunce::canonicalize(&projected) {
+                    let (tree_path, id, projected_link, nested_missing) = match dunce::canonicalize(&projected) {
                         Ok(real) if real == projected && real.is_dir() => match identity(&projected) {
-                            Ok(value) => (projected, Some(value), None),
-                            Err(_) if !opened && !root.starts_with(&scope) => (projected, None, None),
+                            Ok(value) => (projected, Some(value), None, false),
+                            Err(_) if !opened && !root.starts_with(&scope) => (projected, None, None, true),
                             Err(error) => return Err(error),
                         },
                         // TS resolves a sibling worktree's symlinked projected subfolder and admits it
                         // for media/history ownership when its target stays inside a verified worktree
                         // of the same repo (`manager.ts:582-605`, `worktree-directory.ts:248-278`).
-                        // Keep `Tree.path` inside this worktree (and mark cross-worktree targets
-                        // `nested_missing` via `id = None`) so Git staging never runs in another worktree.
+                        // When its target lies outside verified checkouts, TS still keeps the sibling
+                        // checkout descriptor in `/worktrees` with `nestedFolderMissing: false`
+                        // (`native-worktrees.ts:159-181`) while ownership refuses the foreign target.
                         Ok(real) if !opened && real.is_dir() && real.starts_with(&scope) => {
                             if let Some(target_layout) = repo_layouts
                                 .iter()
@@ -585,23 +588,22 @@ async fn catalogue_in_at(
                                         projected.clone(),
                                         None,
                                         Some(Box::new((projected, real, target_layout.clone(), value))),
+                                        false,
                                     ),
                                     Err(_) => return Ok(None),
                                 }
-                            } else if !root.starts_with(&scope) {
-                                (projected, None, None)
                             } else {
-                                return Ok(None);
+                                (projected, None, None, false)
                             }
                         }
                         Ok(real) if !opened && ((real == projected && real.is_file()) || !root.starts_with(&scope)) => {
-                            (projected, None, None)
+                            (projected, None, None, true)
                         }
                         Ok(_) if !opened => return Ok(None),
                         Ok(_) => return Err(conflict("Projected worktree directory is not physically owned")),
-                        Err(_) => (projected, None, None),
+                        Err(_) => (projected, None, None, true),
                     };
-                    Ok(Some((check, tree_path, id, projected_link)))
+                    Ok(Some((check, tree_path, id, projected_link, nested_missing)))
                 },
             )
             .await
@@ -626,7 +628,7 @@ async fn catalogue_in_at(
             service,
             slug,
             identity: id.clone(),
-            nested_missing: id.is_none() && projected_link.is_none(),
+            nested_missing,
             service_root: service_root.into(),
             removable: !opened && check.admin != check.common,
             layout: check,

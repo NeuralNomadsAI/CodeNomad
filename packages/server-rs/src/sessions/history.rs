@@ -332,6 +332,11 @@ impl Placement {
             };
             if cur_anchor == anchor.as_path() {
                 directory_identity(&anchor).is_ok_and(|current| current == physical)
+            } else if cur_anchor.starts_with(&anchor) {
+                // Missing subfolder created in place during the read while the original anchor
+                // stayed identical and `path` still resolves identically inside the owned checkout
+                // (TS `session-media.ts:65-90`, `worktree-directory.ts:166-193`).
+                directory_identity(&anchor).is_ok_and(|current| current == physical)
             } else {
                 // TS `session-navigation.ts:64-87`, `session-media.ts:61-76`, and
                 // `worktree-directory.ts:166-193`: if only a session's subfolder disappears while
@@ -784,13 +789,15 @@ pub async fn handle(
             if principal.live().is_err() {
                 return crate::auth::unauthorized().into_response();
             }
+            const HISTORY_STREAM_MAX: Duration = Duration::from_secs(120);
             let length = axum::http::HeaderValue::from(payload.len());
-            let abort = crate::shared::stream_abort(
+            let abort = crate::shared::bounded_stream_abort(
                 app.clone(),
                 id.clone(),
                 placement.workspace.clone(),
                 placement.endpoint.clone(),
                 principal.0.clone(),
+                HISTORY_STREAM_MAX,
             );
             let response_body = crate::shared::permit_body(payload, mem, abort);
             let mut response = (
@@ -801,12 +808,13 @@ pub async fn handle(
                 response_body,
             )
                 .into_response();
-            let write_abort = crate::shared::stream_abort(
+            let write_abort = crate::shared::bounded_stream_abort(
                 app.clone(),
                 id.clone(),
                 placement.workspace.clone(),
                 placement.endpoint.clone(),
                 principal.0.clone(),
+                HISTORY_STREAM_MAX,
             );
             response.extensions_mut().insert(crate::shared::CancelWrite::new(write_abort));
             response

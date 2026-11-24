@@ -327,6 +327,10 @@ pub(crate) struct UndoPatch {
 pub(crate) struct MessageListStream {
     state: State,
     syntax: JsonSyntax,
+    bom_buf: [u8; 3],
+    bom_len: u8,
+    bom_done: bool,
+    had_bom: bool,
     key_buf: Vec<u8>,
     segments: std::collections::VecDeque<axum::body::Bytes>,
     segments_bytes: usize,
@@ -357,6 +361,10 @@ impl MessageListStream {
         Self {
             state,
             syntax: JsonSyntax::new(),
+            bom_buf: [0; 3],
+            bom_len: 0,
+            bom_done: false,
+            had_bom: false,
             key_buf: Vec::new(),
             segments: std::collections::VecDeque::new(),
             segments_bytes: 0,
@@ -463,6 +471,36 @@ impl MessageListStream {
     /// `> 32 KiB` message item finishes so the caller can project it off the async executor
     /// and call `commit_item` before resuming the same chunk.
     pub(crate) fn feed(&mut self, chunk: &[u8], pos: &mut usize) -> Result<Option<PendingItem>, ()> {
+        const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+        if !self.bom_done {
+            while *pos < chunk.len() && !self.bom_done {
+                let b = chunk[*pos];
+                let idx = self.bom_len as usize;
+                if b == BOM[idx] {
+                    self.bom_buf[idx] = b;
+                    self.bom_len += 1;
+                    *pos += 1;
+                    if self.bom_len == 3 {
+                        self.bom_len = 0;
+                        self.bom_done = true;
+                        self.had_bom = true;
+                    }
+                } else {
+                    self.bom_done = true;
+                    if self.bom_len > 0 {
+                        let prefix = self.bom_buf;
+                        let len = self.bom_len as usize;
+                        self.bom_len = 0;
+                        let mut p = 0;
+                        let _ = self.feed_inner(&prefix[..len], &mut p)?;
+                        self.syntax.feed(&prefix[..p]);
+                    }
+                }
+            }
+            if !self.bom_done || *pos >= chunk.len() {
+                return Ok(None);
+            }
+        }
         let start = *pos;
         let result = self.feed_inner(chunk, pos);
         self.syntax.feed(&chunk[start..*pos]);
@@ -695,6 +733,15 @@ impl MessageListStream {
     }
 
     pub(crate) fn finish(mut self) -> Result<(std::collections::VecDeque<axum::body::Bytes>, usize, bool), ()> {
+        if self.bom_len > 0 {
+            let prefix = self.bom_buf;
+            let len = self.bom_len as usize;
+            self.bom_len = 0;
+            self.bom_done = true;
+            let mut p = 0;
+            let _ = self.feed_inner(&prefix[..len], &mut p)?;
+            self.syntax.feed(&prefix[..p]);
+        }
         if !self.item.is_empty() {
             let item = std::mem::take(&mut self.item);
             self.push_segment(item)?;
@@ -707,32 +754,47 @@ impl MessageListStream {
         }
         if self.syntax.is_valid_eof() {
             drop(self.undo);
-            return Ok((self.segments, self.segments_bytes, self.changed));
+            return Ok((self.segments, self.segments_bytes, self.changed || self.had_bom));
         }
         if self.undo_overflow {
             // Never emit partially rewritten invalid JSON when rollback originals were evicted.
             return Err(());
         }
-        // Invalid JSON anywhere in the document: restore all deferred URIs verbatim to match
-        // TS `proxy.ts:91` (`try { JSON.parse(text) } catch { return reply.send(text) }`).
-        for (idx, patches) in self.undo {
-            if let Some(seg) = self.segments.get_mut(idx) {
-                let delta: isize =
-                    patches.iter().map(|p| p.original.len() as isize - (p.range.end - p.range.start) as isize).sum();
-                let restored_len = (seg.len() as isize + delta) as usize;
-                let mut restored = Vec::with_capacity(restored_len);
+        // Invalid JSON anywhere in the document: restore all deferred URIs verbatim with ZERO
+        // extra heap copies by slicing each modified segment and moving each `Box<[u8]>` original
+        // directly into `Bytes`, matching TS `proxy.ts:91`.
+        let mut by_idx: std::collections::HashMap<usize, Vec<UndoPatch>> = self.undo.into_iter().collect();
+        let mut restored = std::collections::VecDeque::with_capacity(self.segments.len() + by_idx.len() * 2 + 1);
+        let mut total_bytes = 0usize;
+        if self.had_bom {
+            restored.push_back(axum::body::Bytes::from_static(&[0xEF, 0xBB, 0xBF]));
+            total_bytes += 3;
+        }
+        for (idx, seg) in self.segments.into_iter().enumerate() {
+            if let Some(patches) = by_idx.remove(&idx) {
                 let mut cursor = 0usize;
                 for patch in patches {
-                    restored.extend_from_slice(&seg[cursor..patch.range.start]);
-                    restored.extend_from_slice(&patch.original);
+                    if patch.range.start > cursor {
+                        let prefix = seg.slice(cursor..patch.range.start);
+                        total_bytes += prefix.len();
+                        restored.push_back(prefix);
+                    }
+                    let orig = axum::body::Bytes::from(patch.original);
+                    total_bytes += orig.len();
+                    restored.push_back(orig);
                     cursor = patch.range.end;
                 }
-                restored.extend_from_slice(&seg[cursor..]);
-                self.segments_bytes = self.segments_bytes - seg.len() + restored.len();
-                *seg = axum::body::Bytes::from(restored);
+                if cursor < seg.len() {
+                    let suffix = seg.slice(cursor..);
+                    total_bytes += suffix.len();
+                    restored.push_back(suffix);
+                }
+            } else {
+                total_bytes += seg.len();
+                restored.push_back(seg);
             }
         }
-        Ok((self.segments, self.segments_bytes, false))
+        Ok((restored, total_bytes, false))
     }
 }
 
@@ -1127,6 +1189,107 @@ pub(crate) fn project_item(workspace_enc: &str, session_enc: &str, mut raw: Vec<
     (out, undo)
 }
 
+pub(crate) struct ExtractedToolMedia {
+    pub(crate) id: Option<String>,
+    pub(crate) msg_type: Option<String>,
+    pub(crate) part_type: Option<String>,
+    pub(crate) file_type: Option<String>,
+    pub(crate) mime: Option<String>,
+    pub(crate) uri: Option<String>,
+}
+
+/// Validates full RFC 8259 JSON syntax and extracts only the target tool image fields at
+/// `(part_index, item_index)` with O(1) extra memory (no `serde_json::Value` tree allocation),
+/// preventing dense numeric arrays in ignored fields from multiplying a 16 MiB body into 180+ MiB.
+/// Returns `Err(())` when the JSON is malformed or `data` is missing/`null` (`502 Media unavailable`),
+/// `Ok(None)` when `data` is not an object (`404 Media not found`), and `Ok(Some(_))` otherwise.
+pub(crate) fn extract_tool_media(
+    raw: &[u8],
+    part_index: usize,
+    item_index: usize,
+) -> Result<Option<ExtractedToolMedia>, ()> {
+    let text = std::str::from_utf8(raw).map_err(|_| ())?;
+    let mut syntax = JsonSyntax::new();
+    syntax.feed(raw);
+    if !syntax.is_valid_eof() {
+        return Err(());
+    }
+    let mut data_raw: Option<&str> = None;
+    for_each_json_object_field(text, |k, v| {
+        if k == "data" {
+            data_raw = Some(v);
+        }
+    })
+    .ok_or(())?;
+    let data_raw = data_raw.map(str::trim).ok_or(())?;
+    if data_raw == "null" {
+        return Err(());
+    }
+    if !data_raw.starts_with('{') {
+        return Ok(None);
+    }
+    let (mut id_raw, mut type_raw, mut content_raw) = (None, None, None);
+    for_each_json_object_field(data_raw, |k, v| match k {
+        "id" => id_raw = Some(v),
+        "type" => type_raw = Some(v),
+        "content" => content_raw = Some(v),
+        _ => {}
+    })
+    .ok_or(())?;
+    let id = id_raw.and_then(parse_string);
+    let msg_type = type_raw.and_then(parse_string);
+    let mut part_raw = None;
+    if let Some(content) = content_raw {
+        let _ = for_each_json_array_item(content, part_index.saturating_add(1), |idx, elem| {
+            if idx == part_index {
+                part_raw = Some(elem);
+            }
+        });
+    }
+    let mut part_type = None;
+    let mut state_raw = None;
+    if let Some(part) = part_raw {
+        let _ = for_each_json_object_field(part, |k, v| match k {
+            "type" => part_type = Some(v),
+            "state" => state_raw = Some(v),
+            _ => {}
+        });
+    }
+    let mut items_raw = None;
+    if let Some(state) = state_raw {
+        let _ = for_each_json_object_field(state, |k, v| {
+            if k == "content" {
+                items_raw = Some(v);
+            }
+        });
+    }
+    let mut item_raw = None;
+    if let Some(items) = items_raw {
+        let _ = for_each_json_array_item(items, item_index.saturating_add(1), |idx, elem| {
+            if idx == item_index {
+                item_raw = Some(elem);
+            }
+        });
+    }
+    let (mut file_type, mut mime, mut uri) = (None, None, None);
+    if let Some(item) = item_raw {
+        let _ = for_each_json_object_field(item, |k, v| match k {
+            "type" => file_type = Some(v),
+            "mime" => mime = Some(v),
+            "uri" => uri = Some(v),
+            _ => {}
+        });
+    }
+    Ok(Some(ExtractedToolMedia {
+        id,
+        msg_type,
+        part_type: part_type.and_then(parse_string),
+        file_type: file_type.and_then(parse_string),
+        mime: mime.and_then(parse_string),
+        uri: uri.and_then(parse_string),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1302,5 +1465,29 @@ mod tests {
             let uri = parsed["data"][0]["content"][0]["state"]["content"][0]["uri"].as_str().unwrap();
             assert!(uri.starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_dup/0/0/"), "{uri}");
         }
+    }
+
+    #[test]
+    fn projects_utf8_bom_json_and_restores_bom_on_invalid_tail() {
+        let large = format!("data:image/png;base64,{}", "A".repeat(40 * 1024));
+        let valid = format!(
+            "\u{FEFF}{}",
+            json!({
+                "data": [
+                    {"id": "msg_bom", "type": "assistant", "content": [{"type": "tool", "state": {"content": [{"type": "file", "mime": "image/png", "uri": large}]}}]}
+                ]
+            })
+        );
+        let (out, changed) = run_stream("ws_1", "ses_1", valid.as_bytes(), 2);
+        assert!(changed);
+        assert!(!out.starts_with(b"\xEF\xBB\xBF"));
+        let parsed: Value = serde_json::from_slice(&out).unwrap();
+        let uri = parsed["data"][0]["content"][0]["state"]["content"][0]["uri"].as_str().unwrap();
+        assert!(uri.starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_bom/0/0/"), "{uri}");
+
+        let invalid = format!("{valid} garbage");
+        let (out, changed) = run_stream("ws_1", "ses_1", invalid.as_bytes(), 2);
+        assert!(!changed);
+        assert_eq!(out.as_ref(), invalid.as_bytes());
     }
 }
