@@ -327,6 +327,7 @@ fn choose_from(
 pub fn can_change_session(s: &State) -> bool {
     s.phase != Phase::Streaming
         && !s.composer.blocks_navigation()
+        && !crate::workspace::unconfirmed_drafts_full(s)
         && !s.transcript_display.messages.pending()
         && !s.status_permissions.settling()
         && crate::workspace::input_ready(s)
@@ -415,7 +416,11 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
             return false;
         };
         crate::workspace::unselect_missing(s, &id);
-    } else if !s.draft.text.is_empty() || !s.composer.draft.attachments.is_empty() {
+    } else if !s.draft.text.is_empty()
+        || !s.composer.draft.attachments.is_empty()
+        || s.composer.unconfirmed_id().is_some()
+        || s.composer.command_unconfirmed.is_some()
+    {
         return false;
     }
     s.notifications.supersede_navigation();

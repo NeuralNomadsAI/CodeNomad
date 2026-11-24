@@ -829,3 +829,36 @@ fn a_linked_session_requires_the_owned_proxy_placement() {
         assert_eq!(row.id, "linked");
     });
 }
+
+#[test]
+fn linked_session_page_marks_403_as_location_unavailable() {
+    run(async {
+        let route = "GET /workspaces/workspace/instance/api/session?directory=%2Flinked&limit=200";
+        let server = Server::start(vec![
+            reply(route, None, 503, json!({})),
+            reply(
+                route,
+                None,
+                403,
+                json!({"error":"Location does not belong to workspace"}),
+            ),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        let project = crate::catalog::Project {
+            id: "workspace".into(),
+            path: "/trial".into(),
+        };
+        let transient = backend
+            .linked_session_page(&project, "/linked", None)
+            .await
+            .err()
+            .unwrap();
+        assert!(!transient.is::<crate::catalog::LocationUnavailable>());
+        let forbidden = backend
+            .linked_session_page(&project, "/linked", None)
+            .await
+            .err()
+            .unwrap();
+        assert!(forbidden.is::<crate::catalog::LocationUnavailable>());
+    });
+}

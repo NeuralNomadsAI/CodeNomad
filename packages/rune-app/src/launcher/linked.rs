@@ -144,49 +144,62 @@ pub(super) fn load(s: &mut State) {
                     let matches_target = target.as_deref().is_some_and(|target_dir| {
                         codenomad_client::same_server_path(&location.directory, target_dir)
                     });
-                    let Ok(page) = backend
+                    let page = match backend
                         .linked_session_page(
                             &project,
                             &location.directory,
                             location.cursor.as_deref(),
                         )
                         .await
-                    else {
-                        if location.synthetic_target {
-                            let mut workspace = backend.clone();
-                            workspace.workspace.clone_from(&project.id);
-                            let removed =
-                                workspace
-                                    .git_worktrees(true)
-                                    .await
-                                    .ok()
-                                    .is_some_and(|trees| {
-                                        trees.repository == codenomad_client::git::Repository::Git
-                                            && !trees.trees.iter().any(|tree| {
-                                                !tree.missing
-                                                    && (codenomad_client::same_server_path(
-                                                        &tree.directory,
-                                                        &location.directory,
-                                                    ) || tree
-                                                        .service_directory
-                                                        .as_deref()
-                                                        .is_some_and(|service| {
-                                                            codenomad_client::same_server_path(
-                                                                service,
-                                                                &location.directory,
-                                                            )
-                                                        }))
-                                            })
-                                    });
-                            if removed {
-                                target_verified = true;
+                    {
+                        Ok(page) => page,
+                        Err(err) => {
+                            if location.synthetic_target {
+                                if err.is::<codenomad_client::catalog::LocationUnavailable>() {
+                                    let mut workspace = backend.clone();
+                                    workspace.workspace.clone_from(&project.id);
+                                    let is_git = workspace
+                                        .git_worktrees(true)
+                                        .await
+                                        .ok()
+                                        .is_some_and(|trees| {
+                                            trees.repository
+                                                == codenomad_client::git::Repository::Git
+                                        });
+                                    if is_git {
+                                        match backend
+                                            .linked_session_page(
+                                                &project,
+                                                &location.directory,
+                                                location.cursor.as_deref(),
+                                            )
+                                            .await
+                                        {
+                                            Ok(page) => page,
+                                            Err(retry_err)
+                                                if retry_err.is::<codenomad_client::catalog::LocationUnavailable>() =>
+                                            {
+                                                target_verified = true;
+                                                continue;
+                                            }
+                                            Err(_) => {
+                                                deferred_target = Some(location);
+                                                continue;
+                                            }
+                                        }
+                                    } else {
+                                        deferred_target = Some(location);
+                                        continue;
+                                    }
+                                } else {
+                                    deferred_target = Some(location);
+                                    continue;
+                                }
                             } else {
-                                deferred_target = Some(location);
+                                pages.remaining.push_front(location);
+                                break;
                             }
-                            continue;
                         }
-                        pages.remaining.push_front(location);
-                        break;
                     };
                     let kept_all = pages.keep(page.rows, &mut ids);
                     if first_page && kept_all && matches_target {

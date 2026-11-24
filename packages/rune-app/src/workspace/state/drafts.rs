@@ -108,6 +108,45 @@ pub fn capture(s: &mut State) {
     s.workspace = Some(ui);
 }
 
+pub fn unconfirmed_drafts_full(s: &State) -> bool {
+    if s.composer.unconfirmed_id().is_none() && s.composer.command_unconfirmed.is_none() {
+        return false;
+    }
+    let Some(ui) = &s.workspace else {
+        return false;
+    };
+    let Some(item) = ui.entries.get(ui.active) else {
+        return false;
+    };
+    let Tab::Workspace(saved) = &item.saved else {
+        return false;
+    };
+    let key = saved
+        .active_session_id
+        .as_deref()
+        .unwrap_or("__no_session_draft__");
+    let current_is_orphaned = !saved.drafts.contains_key(key)
+        && !saved.attachment_drafts.contains(key)
+        && item
+            .live_drafts
+            .get(key)
+            .is_none_or(|draft| draft.text.is_none() && draft.parts.is_none());
+    if !current_is_orphaned {
+        return false;
+    }
+    item.live_drafts
+        .iter()
+        .filter(|(existing, draft)| {
+            existing.as_str() != key
+                && draft.text.is_none()
+                && draft.parts.is_none()
+                && !saved.drafts.contains_key(existing.as_str())
+                && !saved.attachment_drafts.contains(existing.as_str())
+        })
+        .count()
+        >= super::super::MAX_DRAFTS
+}
+
 pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
     let text = &s.draft.text;
     let mut changed = false;
@@ -125,32 +164,6 @@ pub(super) fn capture_draft(item: &mut super::Entry, s: &State) -> bool {
             let unconfirmed = s.composer.clone_unconfirmed();
             let has_unconfirmed = unconfirmed.is_some() || s.composer.command_unconfirmed.is_some();
             if too_long || has_device_parts || has_unconfirmed {
-                if !too_long
-                    && !has_device_parts
-                    && !item.live_drafts.contains_key(key)
-                    && !saved.drafts.contains_key(key)
-                    && !saved.attachment_drafts.contains(key)
-                    && item
-                        .live_drafts
-                        .iter()
-                        .filter(|(existing, draft)| {
-                            draft.text.is_none()
-                                && draft.parts.is_none()
-                                && !saved.drafts.contains_key(existing.as_str())
-                                && !saved.attachment_drafts.contains(existing.as_str())
-                        })
-                        .count()
-                        >= super::super::MAX_DRAFTS
-                    && let Some(evict) = item.live_drafts.iter().find_map(|(existing, draft)| {
-                        (draft.text.is_none()
-                            && draft.parts.is_none()
-                            && !saved.drafts.contains_key(existing.as_str())
-                            && !saved.attachment_drafts.contains(existing.as_str()))
-                        .then(|| existing.clone())
-                    })
-                {
-                    item.live_drafts.remove(&evict);
-                }
                 let live = item.live_drafts.entry(key.into()).or_default();
                 live.text = too_long.then(|| text.clone());
                 live.parts = (too_long || has_device_parts).then(|| {
@@ -341,8 +354,9 @@ mod tests {
         ));
         capture(&mut s);
 
-        // Cleared sessions with orphaned unconfirmed locks stay bounded to MAX_DRAFTS.
-        for index in 0..(crate::workspace::MAX_DRAFTS + 5) {
+        // Cleared sessions with orphaned unconfirmed locks preserve every lock up to MAX_DRAFTS
+        // and then block leaving an additional unconfirmed session instead of evicting earlier locks.
+        for index in 0..crate::workspace::MAX_DRAFTS {
             b.session = format!("ses-{index}");
             let _ = bound(&mut s, &b);
             s.draft = rune::edit::TextEdit::new("");
@@ -350,15 +364,21 @@ mod tests {
                 "compact",
                 &"x".repeat(1024),
             ));
+            assert!(!unconfirmed_drafts_full(&s));
             capture(&mut s);
         }
-        let ui = s.workspace.as_ref().unwrap();
-        let orphaned = ui.entries[0]
-            .live_drafts
-            .keys()
-            .filter(|id| id.as_str() != "kept-edited")
-            .count();
-        assert!(orphaned <= crate::workspace::MAX_DRAFTS);
+        b.session = "ses-overflow".into();
+        let _ = bound(&mut s, &b);
+        s.draft = rune::edit::TextEdit::new("");
+        s.composer.command_unconfirmed = Some(crate::composer::UnconfirmedCommand::new(
+            "compact",
+            &"x".repeat(1024),
+        ));
+        assert!(unconfirmed_drafts_full(&s));
+        // Every previously recorded unconfirmed session retains its anti-replay lock.
+        b.session = "ses-0".into();
+        let _ = bound(&mut s, &b);
+        assert!(s.composer.command_unconfirmed.is_some());
         b.session = "kept-edited".into();
         assert_eq!(bound(&mut s, &b), "edited user draft");
         assert!(s.composer.command_unconfirmed.is_some());

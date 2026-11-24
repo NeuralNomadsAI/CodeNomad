@@ -28,6 +28,15 @@ impl std::fmt::Display for SessionMissing {
 }
 impl std::error::Error for SessionMissing {}
 
+#[derive(Debug)]
+pub struct LocationUnavailable;
+impl std::fmt::Display for LocationUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("worktree location does not belong to workspace")
+    }
+}
+impl std::error::Error for LocationUnavailable {}
+
 async fn creation_response(response: reqwest::Response) -> Result<Value> {
     if response.status() != reqwest::StatusCode::BAD_REQUEST {
         return read_json(response.error_for_status()?).await;
@@ -272,7 +281,11 @@ impl Backend {
                 }
             }
         };
-        let data = read_json(request.send().await?.error_for_status()?).await?;
+        let response = request.send().await?;
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            return Err(LocationUnavailable.into());
+        }
+        let data = read_json(response.error_for_status()?).await?;
         let page = inventory::decode_page(&data)?;
         let mut sessions = vec![];
         for member in page.members {

@@ -9,7 +9,9 @@ mod panel_state;
 mod polling;
 mod strip;
 
-pub use drafts::{attachment_draft_admissible, bound, capture, draft_changed};
+pub use drafts::{
+    attachment_draft_admissible, bound, capture, draft_changed, unconfirmed_drafts_full,
+};
 pub(crate) use notification::{
     Activation, can_switch_for_notification, check_notification, notification_target,
     observes_notification, open_notification, owns_notification, workspace_notification,

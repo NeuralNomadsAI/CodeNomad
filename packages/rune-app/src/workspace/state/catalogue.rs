@@ -24,8 +24,12 @@ async fn verify_uncertain_linked(
         let _permit = reads.background(cancelled).await?;
         backend.linked_session_page(project, target_dir, None).await
     };
-    if let Ok(target_page) = target_page {
-        return Some(LinkedCheck::Page(target_page));
+    match target_page {
+        Ok(target_page) => return Some(LinkedCheck::Page(target_page)),
+        Err(err) if !err.is::<codenomad_client::catalog::LocationUnavailable>() => {
+            return Some(LinkedCheck::Unverified);
+        }
+        Err(_) => {}
     }
     let trees = {
         let _permit = reads.background(cancelled).await?;
@@ -33,20 +37,22 @@ async fn verify_uncertain_linked(
         workspace.workspace.clone_from(&project.id);
         workspace.git_worktrees(true).await
     };
-    let removed = trees.ok().is_some_and(|trees| {
-        trees.repository == codenomad_client::git::Repository::Git
-            && !trees.trees.iter().any(|tree| {
-                !tree.missing
-                    && (codenomad_client::same_server_path(&tree.directory, target_dir)
-                        || tree.service_directory.as_deref().is_some_and(|service| {
-                            codenomad_client::same_server_path(service, target_dir)
-                        }))
-            })
-    });
-    Some(if removed {
-        LinkedCheck::Removed
-    } else {
-        LinkedCheck::Unverified
+    if trees
+        .ok()
+        .is_none_or(|trees| trees.repository != codenomad_client::git::Repository::Git)
+    {
+        return Some(LinkedCheck::Unverified);
+    }
+    let retry_page = {
+        let _permit = reads.background(cancelled).await?;
+        backend.linked_session_page(project, target_dir, None).await
+    };
+    Some(match retry_page {
+        Ok(target_page) => LinkedCheck::Page(target_page),
+        Err(err) if err.is::<codenomad_client::catalog::LocationUnavailable>() => {
+            LinkedCheck::Removed
+        }
+        Err(_) => LinkedCheck::Unverified,
     })
 }
 

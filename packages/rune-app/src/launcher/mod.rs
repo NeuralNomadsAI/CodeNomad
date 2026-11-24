@@ -620,8 +620,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             let auth_required = l.authentication_required;
             crate::workspace::opened(s, &project);
             match restored {
-                Restored::Bound(backend, title, slug) if !auth_required => {
+                Restored::Bound(backend, title, slug) if !auth_required && !stopped_in_flight => {
                     bind(s, backend, title, None, &slug, tx);
+                }
+                Restored::Bound(_, _, _) if stopped_in_flight => {
+                    crate::git::project_opened(s);
+                    crate::workspace::restore_files_mode(s);
                 }
                 Restored::Bound(_, _, _) => {}
                 Restored::Missing(id) => {
@@ -765,6 +769,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             let auth_required = l.authentication_required;
             if let Some((b, title, visit, _, slug)) = selection.filter(|(b, _, _, _, _)| {
                 !auth_required
+                    && !stopped_during_pending.contains(&b.workspace)
                     && (!blocked
                         || s.phase == Phase::Failed
                             && selected.as_deref() == Some(b.session.as_str()))
@@ -808,7 +813,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         spawn_detached_reconcile_with(l, reconcile_generation, opened_after);
                     }
                 }
-                reopen::apply(s, opening, backend, title, &slug);
+                if !stopped_in_flight {
+                    reopen::apply(s, opening, backend, title, &slug);
+                }
                 if stopped_in_flight {
                     crate::workspace::deliver_detached_events(
                         s,
