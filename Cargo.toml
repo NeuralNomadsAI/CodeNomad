@@ -8,19 +8,21 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-rune = { git = "https://github.com/anomalyco/rune", rev = "d182cd59783e542f4531939724ebb9342917186b", default-features = false, features = ["embedded-fonts", "accessibility", "tooling", "segmenter-dictionaries", "svg", "avif"] }
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "d182cd59783e542f4531939724ebb9342917186b", default-features = false, features = ["markdown", "mermaid"] }
+rune = { git = "https://github.com/anomalyco/rune", rev = "ac452a9c2b75c462c5eb1659024178f1fbbd416a", default-features = false, features = ["embedded-fonts", "accessibility", "tooling", "segmenter-dictionaries", "svg", "avif"] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "ac452a9c2b75c462c5eb1659024178f1fbbd416a", default-features = false, features = ["markdown", "mermaid"] }
 serde_json = "1"
 codenomad-client = { path = "crates/codenomad-client" }
 rune-theme-codenomad = { path = "crates/rune-theme-codenomad" }
 
 [patch.crates-io]
-wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "d182cd59783e542f4531939724ebb9342917186b" }
-winit = { git = "https://github.com/anomalyco/rune", rev = "d182cd59783e542f4531939724ebb9342917186b" }
-parley_engine = { git = "https://github.com/anomalyco/rune", rev = "d182cd59783e542f4531939724ebb9342917186b" }
-accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "d182cd59783e542f4531939724ebb9342917186b" }
-accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "d182cd59783e542f4531939724ebb9342917186b" }
-sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "d182cd59783e542f4531939724ebb9342917186b" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "ac452a9c2b75c462c5eb1659024178f1fbbd416a" }
+naga = { git = "https://github.com/anomalyco/rune", rev = "ac452a9c2b75c462c5eb1659024178f1fbbd416a" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "ac452a9c2b75c462c5eb1659024178f1fbbd416a" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "ac452a9c2b75c462c5eb1659024178f1fbbd416a" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "ac452a9c2b75c462c5eb1659024178f1fbbd416a" }
+accesskit_atspi_common = { git = "https://github.com/anomalyco/rune", rev = "ac452a9c2b75c462c5eb1659024178f1fbbd416a" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "ac452a9c2b75c462c5eb1659024178f1fbbd416a" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune", rev = "ac452a9c2b75c462c5eb1659024178f1fbbd416a" }
 
 [profile.dev]
 debug = 0

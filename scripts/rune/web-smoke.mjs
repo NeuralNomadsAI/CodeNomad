@@ -4,6 +4,7 @@ import {mkdir, readFile, realpath, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
+import {isExpectedWaitError, now, withBudget} from './web-budget.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 import {activateControl,launchChromium} from './web-chromium.mjs'
@@ -53,6 +54,7 @@ const connectedPalettes = values.connected
   : null
   const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??(values.connected?'target/rune-web-connected':'target/rune-web')))
   if(values.mobile)assets.add('/remote-pair')
+let primaryError=null
 try {
   const android=mobileContext(browser)
   const sizes=values.missions||values['git-images']?[['desktop',1200,900,false]]:values['touch-history']?[['phone',390,844,true]]:values.mobile?[['phone',android.viewport.width,android.viewport.height,true],['phone-dpr1-control',390,844,true]]:
@@ -181,25 +183,27 @@ try {
         assert.equal(await page.locator('html').getAttribute('lang'), values.locale)
         assert.equal(await page.locator('html').getAttribute('dir'), values.locale === 'he' ? 'rtl' : 'ltr')
         if(values.connected){
-          const waitStableBox=async(locator,label,{settleMs=values.mobile?180:0,timeoutMs=4000}={})=>{
-            await locator.waitFor({state:'attached'})
-            await locator.scrollIntoViewIfNeeded({timeout:timeoutMs}).catch(()=>{})
-            const deadline=Date.now()+timeoutMs
+          const waitStableBox=async(locator,label,{settleMs=values.mobile?180:0,timeoutMs=15000}={})=>{
+            const deadline=now()+timeoutMs
+            await withBudget(deadline,`${label} waitFor`,ms=>locator.waitFor({state:'attached',timeout:Math.max(1,ms)}))
+            const scrollDeadline=Math.min(deadline,now()+1000)
+            if(scrollDeadline>now())await withBudget(scrollDeadline,`${label} scrollIntoView`,ms=>locator.scrollIntoViewIfNeeded({timeout:Math.max(1,ms)})).catch(err=>{if(!isExpectedWaitError(err))throw err})
             let prev=null,stableSince=0
             while(true){
-              const remaining=deadline-Date.now()
-              const box=remaining>0?await locator.boundingBox({timeout:Math.min(remaining,250)}).catch(()=>null):null
+              const remaining=deadline-now()
+              const stepDeadline=Math.min(deadline,now()+250)
+              const box=remaining>0?await withBudget(stepDeadline,`${label} boundingBox`,ms=>locator.boundingBox({timeout:Math.max(1,ms)})).catch(err=>{if(isExpectedWaitError(err))return null;throw err}):null
               const usable=box&&box.width>0&&box.height>0&&box.x>=-1&&box.y>=-1&&box.x+box.width<=width+1&&box.y+box.height<=height+1
               if(usable){
                 const same=prev&&Math.abs(box.x-prev.x)<0.5&&Math.abs(box.y-prev.y)<0.5&&Math.abs(box.width-prev.width)<0.5&&Math.abs(box.height-prev.height)<0.5
                 if(same||settleMs===0){
-                  if(settleMs===0||Date.now()-stableSince>=settleMs)return box
+                  if((settleMs===0||now()-stableSince>=settleMs)&&now()<deadline)return box
                 }else{
-                  prev=box;stableSince=Date.now()
+                  prev=box;stableSince=now()
                 }
               }else{prev=null;stableSince=0}
-              assert(Date.now()<deadline,`Connected control outside viewport or unstable: ${label} (${JSON.stringify(box)})`)
-              await page.waitForTimeout(Math.min(30,Math.max(1,deadline-Date.now())))
+              assert(now()<deadline,`Connected control outside viewport or unstable: ${label} (${JSON.stringify(box)})`)
+              await page.waitForTimeout(Math.min(30,Math.max(1,deadline-now())))
             }
           }
           const dispatchPress=async(locator,label,role,box)=>{
@@ -217,23 +221,45 @@ try {
           }
           const left=messages['window.menu.leftPanel']
           const sessions=page.getByRole('region',{name:left,exact:true})
-          const waitDrawerSync=async(toggle,expected)=>{
-            const deadline=Date.now()+4000
+          const waitDrawerSync=async(expected)=>{
+            const deadline=now()+4000
             while(true){
-              const expanded=await toggle.getAttribute('aria-expanded').catch(()=>null)==='true'
-              const visible=await sessions.isVisible().catch(()=>false)
-              if(expected===undefined?expanded===visible:expanded===expected&&visible===expected)return expanded
-              assert(Date.now()<deadline,`Left drawer mirror state did not settle (expected=${expected}, expanded=${expanded}, visible=${visible})`)
-              await page.waitForTimeout(Math.min(30,Math.max(1,deadline-Date.now())))
+              const remaining=deadline-now()
+              let state=null
+              if(remaining>0){
+                const stepDeadline=Math.min(deadline,now()+250)
+                state=await withBudget(stepDeadline,'drawer sync',()=>page.evaluate(name=>{
+                  const root=document.querySelector('[data-rune-a11y]')
+                  if(!root)return null
+                  const matchName=el=>(el.getAttribute('aria-label')??el.textContent??'').trim()===name
+                  const toggles=[...root.querySelectorAll('button,[role="button"]')].filter(matchName)
+                  if(toggles.length>1)throw new Error(`Ambiguous drawer toggle (${toggles.length}): ${name}`)
+                  if(toggles.length===0)return null
+                  const raw=toggles[0].getAttribute('aria-expanded')
+                  const regions=[...root.querySelectorAll('[role="region"],section[aria-label],aside[aria-label]')].filter(matchName)
+                  if(regions.length>1)throw new Error(`Ambiguous drawer region (${regions.length}): ${name}`)
+                  const region=regions[0]??null
+                  const rect=region?region.getBoundingClientRect():null
+                  const style=region?getComputedStyle(region):null
+                  const visible=!!(region&&rect.width>0&&rect.height>0&&style.display!=='none'&&style.visibility!=='hidden')
+                  return {raw,visible}
+                },left)).catch(err=>{if(isExpectedWaitError(err))return null;throw err})
+              }
+              const expanded=state?.raw==='true'?true:state?.raw==='false'?false:null
+              if(expanded!==null&&typeof state?.visible==='boolean'&&now()<deadline){
+                if(expected===undefined?expanded===state.visible:expanded===expected&&state.visible===expected)return expanded
+              }
+              assert(now()<deadline,`Left drawer mirror state did not settle (expected=${expected}, state=${JSON.stringify(state)})`)
+              await page.waitForTimeout(Math.min(30,Math.max(1,deadline-now())))
             }
           }
           const openSessions=async()=>{
             const toggle=page.getByRole('button',{name:left,exact:true})
             await toggle.waitFor()
-            const expanded=await waitDrawerSync(toggle)
+            const expanded=await waitDrawerSync()
             if(!expanded){
               await press(left)
-              await waitDrawerSync(toggle,true)
+              await waitDrawerSync(true)
             }
             await sessions.waitFor()
           }
@@ -701,18 +727,38 @@ try {
             ...(measured.live.older.status==='known-gap'?['older-button-disabled-state']:[]),
           ]}:{pass:true})})
       } catch (error) {
-        await flushTouches()
-        await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
+        primaryError = error
+        const bestEffort=(label,fn)=>withBudget(now()+2000,label,fn).catch(()=>null)
+        await bestEffort('failure flushTouches',()=>flushTouches())
+        await bestEffort('failure screenshot',ms=>page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`),timeout:Math.max(1,ms)}))
+        const mirror=await bestEffort('failure mirror',ms=>page.locator('body').ariaSnapshot({timeout:Math.max(1,ms)}))
+        const marks=await bestEffort('failure marks',()=>page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime})))) ?? []
         await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,
-          mirror:await page.locator('body').ariaSnapshot().catch(() => null),
-          touches,lastPress,marks: await page.evaluate(() => performance.getEntriesByType('mark').map(({name,startTime}) => ({name,startTime}))).catch(() => [])}, null, 2))
+          mirror,touches,lastPress,marks}, null, 2)).catch(writeError => console.error(`Failed to write failure artifact: ${writeError.message}`))
         throw error
-       } finally {missions?.release();releaseLinked?.();await context.close()}
+       } finally {
+         missions?.release();releaseLinked?.()
+         try { await context.close() } catch (closeError) {
+           console.error(`Failed to close browser context: ${closeError.message}`)
+           if (!primaryError) throw closeError
+         }
+       }
     }
   }
+} catch (error) {
+  if (!primaryError) primaryError = error
+  throw error
 } finally {
-  await browser.close()
-  await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
-    scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
+  try { await browser.close() } catch (closeError) {
+    console.error(`Failed to close browser: ${closeError.message}`)
+    if (!primaryError) throw closeError
+  }
+  try {
+    await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
+      scene: values.connected?'connected':'synthetic', sessionSearchOnly:searchOnly===true, pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
+  } catch (writeError) {
+    console.error(`Failed to write smoke-report.json: ${writeError.message}`)
+    if (!primaryError) throw writeError
+  }
 }
 console.log(`Rune web smoke evidence: ${out}`)
