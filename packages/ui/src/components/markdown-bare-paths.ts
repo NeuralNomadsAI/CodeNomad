@@ -5,6 +5,7 @@
  * markdown pipeline's fallback/final commits never strand a wrap. */
 
 import { backendOf } from "../lib/backend-client"
+import { backgroundReads } from "../lib/background-read-queue"
 import { barePathCandidates, type BarePathCandidate } from "../lib/markdown-bare-paths"
 import { resolveProjectLinkPath } from "../lib/markdown-project-links"
 import type { SessionLinkBase } from "./markdown-session-links"
@@ -55,8 +56,12 @@ export function fileNamesInDirectory(instanceId: string, directory: string, pare
   const flight = (async (): Promise<Set<string>> => {
     let fetched: Set<string> | undefined
     try {
-      const entries = (await backendOf(instanceId).api
-        .listWorkspaceFiles(instanceId, parentPath || ".", directory)) as Array<{ name: string; type?: string }>
+      // Passive transcript decoration borrows the shared background budget:
+      // a summary naming many directories queues behind visible reads and
+      // never crowds out foreground connections. The flight's own signal is
+      // never aborted — its lifetime belongs to the cache, not a caller.
+      const entries = (await backgroundReads.run(new AbortController().signal, async () =>
+        backendOf(instanceId).api.listWorkspaceFiles(instanceId, parentPath || ".", directory))) as Array<{ name: string; type?: string }>
       fetched = new Set(entries.filter(entry => entry.type !== "directory").map(entry => entry.name))
     } catch {
       // A failed read verifies nothing; the caller converts no paths.

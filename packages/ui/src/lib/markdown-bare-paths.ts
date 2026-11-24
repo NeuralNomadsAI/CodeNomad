@@ -39,7 +39,8 @@ export function barePathCandidates(text: string): BarePathCandidate[] {
     const hasSeparator = trimmed.includes("/") || trimmed.includes("\\")
     if (!hasSeparator && !PLAIN_FILE_NAME.test(trimmed)) continue
     if (projectLinkPath(trimmed) === undefined) continue
-    const start = match.index! + raw.length - trimmed.length
+    // Trimming removes characters from the end only; the match start stands.
+    const start = match.index!
     candidates.push({ start, end: start + trimmed.length, href: trimmed })
   }
   return candidates

@@ -52,6 +52,13 @@ describe("bare path candidates", () => {
     assert.equal(text.slice(candidate.start, candidate.end), candidate.href)
   })
 
+  it("keeps the match start when trimming the candidate's end", () => {
+    const text = "See src/app.ts."
+    const [candidate] = barePathCandidates(text)
+    assert.equal(text.slice(candidate.start, candidate.end), candidate.href)
+    assert.equal(candidate.href, "src/app.ts")
+  })
+
   it("keeps a space-truncated suffix as its own candidate", () => {
     // A path containing a space cannot be recovered from prose; its last
     // space-free segment stays a legal candidate that existence gating

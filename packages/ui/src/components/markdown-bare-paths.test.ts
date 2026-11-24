@@ -24,6 +24,8 @@ describe("directory existence cache", () => {
     try {
       const first = fileNamesInDirectory("inst", "/repo", "src")
       const second = fileNamesInDirectory("inst", "/repo", "src")
+      // The shared background queue starts the read a tick later.
+      await new Promise(resolve => setImmediate(resolve))
       release([{ name: "app.ts", type: "file" }])
       const [a, b] = await Promise.all([first, second])
       assert.deepEqual([...a], ["app.ts"])
@@ -112,11 +114,32 @@ describe("directory existence cache", () => {
       // the render pass that started it may already be gone, and the
       // listing must complete regardless, serving both.
       const second = fileNamesInDirectory("inst", "/repo", "src")
+      await new Promise(resolve => setImmediate(resolve))
       release([{ name: "app.ts", type: "file" }])
       const [a, b] = await Promise.all([first, second])
       assert.deepEqual([...a], ["app.ts"])
       assert.deepEqual([...b], ["app.ts"])
       assert.equal(stub.calls.length, 1)
+    } finally { stub.restore() }
+  })
+
+  it("bounds concurrent listings through the shared background budget", async () => {
+    clearBarePathCaches()
+    let active = 0, peak = 0
+    const stub = patchListing(async () => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      active -= 1
+      return [{ name: "a.ts", type: "file" }]
+    })
+    try {
+      // A summary naming a file in each of several directories must not open
+      // every listing at once: passive transcript decoration leaves room for
+      // foreground reads through the shared background queue.
+      const parents = Array.from({ length: 8 }, (_, index) => `d${index}`)
+      await Promise.all(parents.map(parent => fileNamesInDirectory("inst", "/repo", parent)))
+      assert.ok(peak <= 2, `peak concurrency ${peak} exceeded the background budget`)
     } finally { stub.restore() }
   })
 
