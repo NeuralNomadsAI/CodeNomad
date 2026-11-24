@@ -534,3 +534,75 @@ fn retire_scope_drops_late_recovery_refusal_error() {
         assert_eq!(guard.error_for(&src, RecoveryTarget::Coordinator), None);
     });
 }
+
+#[test]
+fn offline_failed_mission_disables_recovery_and_refuses_dispatch() {
+    use super::super::{Gesture, Lifecycle, Panel, detail, task_rows::TaskRows};
+    use rune::{Env, Runtime};
+
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            crate::platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+        let (wake, _done) = witness();
+        let mut panel = Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        let header = header_value("msn-1", "failed", None, 7, true, None);
+        let src = Source::new("occ", &http.backend, &header).unwrap();
+        panel.detail.snapshot = Some(detail::Snapshot {
+            header,
+            tasks: std::rc::Rc::new(TaskRows::new(vec![])),
+            end: 0,
+            attention_end: 0,
+        });
+        panel.set_online(false);
+
+        let mut owner = Lifecycle::default();
+        panel.control("occ", &mut owner, &src, Gesture::RecoverCoordinator(7));
+        http.quiet().await;
+        assert!(!owner.recovery.any_pending_for(&src));
+
+        let mut rt = Runtime::new(
+            (panel, owner),
+            |(panel, owner), _| {
+                crate::strings::with_locale("en", || {
+                    super::super::lifecycle_view::controls(
+                        panel,
+                        owner,
+                        "occ",
+                        Some(false),
+                        |_: &mut (Panel, Lifecycle), _, _| {},
+                    )
+                })
+            },
+            (420.0, 240.0),
+            Env::new(false, 1.0),
+        );
+        rt.frame(1.0 / 60.0);
+        let tree = rt.accessibility_json();
+        fn has_disabled(node: &Value, key: &str) -> bool {
+            if node["key"].as_str() == Some(key) {
+                return node["states"]
+                    .as_array()
+                    .is_some_and(|s| s.contains(&Value::from("disabled")));
+            }
+            node["children"]
+                .as_array()
+                .is_some_and(|c| c.iter().any(|child| has_disabled(child, key)))
+        }
+        assert!(has_disabled(&tree, "mission-control-primary"));
+    });
+}

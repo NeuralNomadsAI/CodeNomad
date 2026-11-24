@@ -67,7 +67,10 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
         Number.isSafeInteger(body.expectedRevision)&&body.expectedRevision>0&&
         Object.keys(body).every(key=>['target','expectedRevision'].includes(key))
       if(missions&&method==='GET'&&(owned[2]==='missions/old'||owned[2]==='missions/alpha'))return true
-      if(missions&&method==='DELETE'&&(owned[2]==='missions/old'||owned[2]==='missions/alpha'))return Number.isSafeInteger(body?.expectedRevision)&&
+      if(missions&&method==='DELETE'&&owned[2]==='missions/old')return body?.expectedRevision===1&&
+        body.requestId==='request'&&body.deleteManagedSessions===false&&
+        Object.keys(body).every(key=>['expectedRevision','requestId','deleteManagedSessions'].includes(key))
+      if(missions&&method==='DELETE'&&owned[2]==='missions/alpha')return Number.isSafeInteger(body?.expectedRevision)&&
         body.expectedRevision>0&&claim(body)&&typeof body.deleteManagedSessions==='boolean'&&
         Object.keys(body).every(key=>['expectedRevision','requestId','deleteManagedSessions'].includes(key))
       if(missions&&method==='POST'&&owned[2]==='missions/panel-page'){

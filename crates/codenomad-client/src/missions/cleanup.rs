@@ -146,6 +146,7 @@ impl Backend {
         mission_id: &str,
         request: &DeletionRequest,
         expected_deletion_id: Option<&str>,
+        expected_created_at: Option<f64>,
         require_document_settled: bool,
     ) -> Result<DeletionOutcome> {
         request.validate()?;
@@ -164,6 +165,7 @@ impl Backend {
             mission_id,
             request,
             expected_deletion_id,
+            expected_created_at,
             require_document_settled,
         ))
     }
@@ -202,6 +204,7 @@ fn settle_deletion(
     mission_id: &str,
     request: &DeletionRequest,
     expected_deletion_id: Option<&str>,
+    expected_created_at: Option<f64>,
     require_document_settled: bool,
 ) -> DeletionOutcome {
     if !status.is_success() {
@@ -215,6 +218,7 @@ fn settle_deletion(
         return DeletionOutcome::Unconfirmed;
     }
     let require_cleanup = expected_deletion_id.is_some()
+        || expected_created_at.is_some()
         || request.delete_managed_sessions
         || require_document_settled;
     match body.get("cleanup") {
@@ -225,7 +229,9 @@ fn settle_deletion(
                     && request.matches_cleanup(mission_id, &cleanup)
                     && !cleanup.is_pending()
                     && (!require_document_settled || cleanup.document_pending == Some(false))
-                    && expected_deletion_id.is_none_or(|id| cleanup.deletion_id == id) =>
+                    && expected_deletion_id.is_none_or(|id| cleanup.deletion_id == id)
+                    && expected_created_at
+                        .is_none_or(|ts| cleanup.created_at.to_bits() == ts.to_bits()) =>
             {
                 DeletionOutcome::Deleted(Some(Box::new(cleanup)))
             }
@@ -290,10 +296,18 @@ fn valid_cleanup(item: &Cleanup) -> bool {
         && panel_id(&item.deletion_id)
         && request_id_valid(&item.request_id)
         && (1..=MAX_REVISION).contains(&item.expected_revision)
+        && item.objective.encode_utf16().count() <= 240
         && item.created_at.is_finite()
         && item.removed <= MAX_REVISION
         && item.retained <= MAX_REVISION
         && item.pending <= MAX_REVISION
+        && item.reasons.len() <= 5
+        && item.reasons.iter().all(|reason| {
+            matches!(
+                reason.as_str(),
+                "children" | "shared" | "moved" | "identity" | "guarded"
+            )
+        })
 }
 
 #[cfg(test)]
@@ -353,6 +367,7 @@ mod tests {
                 "msn-1",
                 &request,
                 None,
+                None,
                 false,
             );
             assert_eq!(outcome.error_key(), expected, "{status} {code:?}");
@@ -364,6 +379,7 @@ mod tests {
                 "msn-1",
                 &request,
                 None,
+                None,
                 false,
             ),
             DeletionOutcome::Deleted(None)
@@ -374,6 +390,7 @@ mod tests {
                 &json!({"deleted": false}),
                 "msn-1",
                 &request,
+                None,
                 None,
                 false,
             ),
@@ -392,10 +409,53 @@ mod tests {
                 "msn-1",
                 &request,
                 Some("del-1"),
+                Some(1.0),
                 true,
             ),
             DeletionOutcome::Deleted(Some(ref cleanup)) if cleanup.deletion_id == "del-1" && cleanup.removed == 1
         ));
+        let mut wrong_created_at = settled_cleanup.clone();
+        wrong_created_at["createdAt"] = json!(2);
+        assert_eq!(
+            settle_deletion(
+                reqwest::StatusCode::OK,
+                &json!({"deleted": true, "cleanup": wrong_created_at}),
+                "msn-1",
+                &request,
+                Some("del-1"),
+                Some(1.0),
+                true,
+            ),
+            DeletionOutcome::Unconfirmed
+        );
+        let mut oversized_objective = settled_cleanup.clone();
+        oversized_objective["objective"] = json!("x".repeat(241));
+        assert_eq!(
+            settle_deletion(
+                reqwest::StatusCode::OK,
+                &json!({"deleted": true, "cleanup": oversized_objective}),
+                "msn-1",
+                &request,
+                Some("del-1"),
+                Some(1.0),
+                false,
+            ),
+            DeletionOutcome::Unconfirmed
+        );
+        let mut invalid_reasons = settled_cleanup.clone();
+        invalid_reasons["reasons"] = json!(["unknown-reason"]);
+        assert_eq!(
+            settle_deletion(
+                reqwest::StatusCode::OK,
+                &json!({"deleted": true, "cleanup": invalid_reasons}),
+                "msn-1",
+                &request,
+                Some("del-1"),
+                Some(1.0),
+                false,
+            ),
+            DeletionOutcome::Unconfirmed
+        );
         let mut omitted_doc_pending = settled_cleanup.clone();
         omitted_doc_pending
             .as_object_mut()
@@ -408,6 +468,7 @@ mod tests {
                 "msn-1",
                 &request,
                 Some("del-1"),
+                Some(1.0),
                 true,
             ),
             DeletionOutcome::Unconfirmed
@@ -419,6 +480,7 @@ mod tests {
                 "msn-1",
                 &request,
                 Some("del-1"),
+                None,
                 false,
             ),
             DeletionOutcome::Unconfirmed
@@ -430,6 +492,7 @@ mod tests {
                 "msn-1",
                 &request,
                 Some("del-other"),
+                None,
                 false,
             ),
             DeletionOutcome::Unconfirmed
@@ -446,6 +509,7 @@ mod tests {
                 "msn-1",
                 &managed,
                 None,
+                None,
                 false,
             ),
             DeletionOutcome::Unconfirmed
@@ -459,6 +523,7 @@ mod tests {
                 "msn-1",
                 &request,
                 None,
+                None,
                 false,
             ),
             DeletionOutcome::Unconfirmed
@@ -471,6 +536,7 @@ mod tests {
                 &json!({"deleted": true, "cleanup": still_pending}),
                 "msn-1",
                 &request,
+                None,
                 None,
                 false,
             ),

@@ -363,9 +363,11 @@ fn cleanup_retry_reconciles_before_delete_settles_409_and_retires_matching_delet
                 target: old_src.target.clone(),
                 request: DeletionRequest::from_cleanup(&row).unwrap(),
                 flight: None,
+                flight_live: None,
                 error: Some("missions.cleanup.documentPending"),
                 document_cleanup: true,
                 deletion_id: None,
+                created_at_bits: None,
                 retired: false,
             },
         );
@@ -483,9 +485,11 @@ fn cleanup_view_keeps_tombstoned_delete_reachable_and_fences_stale_scope_retry()
             target: gone.target.clone(),
             request: DeletionRequest::new(7, false).unwrap(),
             flight: None,
+            flight_live: None,
             error: Some("missions.cleanup.error.unconfirmed"),
             document_cleanup: false,
             deletion_id: None,
+            created_at_bits: None,
             retired: false,
         },
     );
@@ -702,9 +706,11 @@ fn orphaned_delete_and_cleanup_row_retries_exclude_each_other_and_row_settlement
                 target: old_src.target.clone(),
                 request: DeletionRequest::from_cleanup(&row).unwrap(),
                 flight: None,
+                flight_live: None,
                 error: Some("missions.cleanup.documentPending"),
                 document_cleanup: true,
                 deletion_id: None,
+                created_at_bits: None,
                 retired: false,
             },
         );
@@ -812,9 +818,11 @@ fn closing_workspaces_retires_failed_delete_intents_and_bounds_cleanup_errors() 
                 target: src.target.clone(),
                 request: DeletionRequest::new(1, false).unwrap(),
                 flight: None,
+                flight_live: None,
                 error: Some("missions.cleanup.error.unconfirmed"),
                 document_cleanup: false,
                 deletion_id: None,
+                created_at_bits: None,
                 retired: false,
             },
         );
@@ -888,9 +896,11 @@ fn sse_loss_and_view_revocation_abort_retry_before_and_after_delete() {
                 target: src.target.clone(),
                 request: DeletionRequest::new(7, false).unwrap(),
                 flight: None,
+                flight_live: None,
                 error: Some("missions.cleanup.error.unconfirmed"),
                 document_cleanup: false,
                 deletion_id: None,
+                created_at_bits: None,
                 retired: false,
             },
         );
@@ -1237,10 +1247,25 @@ fn cleanup_retry_fences_selection_change_and_pending_row_set_change() {
             wake.clone(),
         );
         panel.show(true);
+        let empty_digest = "XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc";
         for _ in 0..2 {
             let req = http.accept().await;
             assert!(req.header.starts_with("POST /api/workspaces/"));
-            req.reply(503, json!({"available": false})).await;
+            let source = req.body["source"]
+                .as_str()
+                .unwrap_or("summaries")
+                .to_owned();
+            let mut page = json!({
+                "available": true, "version": 1, "source": source, "projectID": "project",
+                "discardedEvents": 0, "controlUnavailable": false,
+                "notificationUnavailable": false, "cleanupUnavailable": false,
+                "window": {"order": empty_digest, "offset": 0, "end": 0, "total": 0},
+                "page": {"digest": empty_digest, "total": 0, "pieces": []}
+            });
+            if source == "summaries" {
+                page["finishHighWater"] = json!(0);
+            }
+            req.reply(200, page).await;
         }
         for _ in 0..50 {
             panel.poll();
@@ -1642,9 +1667,11 @@ fn revoked_get_only_settlement_preserves_delete_intent_and_cleanup_tokens_cap_at
                     delete_managed_sessions: false,
                 },
                 flight: None,
+                flight_live: None,
                 error: Some("missions.cleanup.error.pending"),
                 document_cleanup: false,
                 deletion_id: Some("del-1".into()),
+                created_at_bits: None,
                 retired: false,
             },
         );
@@ -1742,9 +1769,11 @@ fn offline_panel_disables_cleanup_and_orphaned_delete_retry_buttons() {
                 target: orphan.target.clone(),
                 request: DeletionRequest::new(3, false).unwrap(),
                 flight: None,
+                flight_live: None,
                 error: Some("missions.cleanup.error.unconfirmed"),
                 document_cleanup: false,
                 deletion_id: None,
+                created_at_bits: None,
                 retired: false,
             },
         );
@@ -1776,6 +1805,445 @@ fn offline_panel_disables_cleanup_and_orphaned_delete_retry_buttons() {
         assert!(has_state(
             &tree,
             "mission-delete-retry-msn-orphan",
+            "disabled"
+        ));
+    });
+}
+
+#[test]
+fn pinned_tombstone_refuses_delete_when_reconciliation_returns_live_mission() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-live-after-tomb");
+        let mut owner = CleanupOwner::default();
+        owner.start_delete(
+            &src,
+            "Live contradiction".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let first = http.accept().await;
+        let request_id = first.body["requestId"].as_str().unwrap().to_owned();
+        first.reply(503, json!({"code": "cleanup-pending"})).await;
+        let rec1 = http.accept().await;
+        rec1.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [{
+                    "missionID": "msn-live-after-tomb", "deletionID": "del-a", "requestID": request_id,
+                    "expectedRevision": 7, "deleteManagedSessions": false,
+                    "objective": "Live", "createdAt": 1, "removed": 0, "retained": 0,
+                    "pending": 1, "reasons": [], "documentPending": false
+                }]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+
+        // Retry reconciliation returns a live Mission at the original revision with no cleanups.
+        // Because del-a was already pinned, we must NOT dispatch DELETE against the live Mission.
+        owner.retry_delete(&src, live_flag(), http.backend.clone(), wake);
+        let pre_get = http.accept().await;
+        pre_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                    "mission": {"id": "msn-live-after-tomb", "projectID": "project", "revision": 7},
+                    "cleanups": []
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        http.quiet().await;
+        let polled = owner.poll();
+        assert!(polled.deleted_missions.is_empty());
+        assert!(polled.settled_cleanups.is_empty());
+        assert_eq!(
+            owner.delete_state(&src),
+            Some(DeleteState::Failed("missions.cleanup.error.unconfirmed"))
+        );
+    });
+}
+
+#[test]
+fn ambiguous_cleanup_rows_never_settle_or_authorize_delete() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-amb");
+        let sc = src.workspace_scope();
+        let mut owner = CleanupOwner::default();
+        owner.start_delete(
+            &src,
+            "Ambiguous".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let first = http.accept().await;
+        let request_id = first.body["requestId"].as_str().unwrap().to_owned();
+        first.reply(503, json!({})).await;
+        let rec1 = http.accept().await;
+        rec1.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "mission": {"id": "msn-amb", "projectID": "project", "revision": 7},
+                "cleanups": []
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+
+        let settled_row = json!({
+            "missionID": "msn-amb", "deletionID": "del-1", "requestID": request_id,
+            "expectedRevision": 7, "deleteManagedSessions": false,
+            "objective": "Ambiguous", "createdAt": 1, "removed": 1, "retained": 0,
+            "pending": 0, "reasons": [], "documentPending": false
+        });
+        let pending_row = json!({
+            "missionID": "msn-amb", "deletionID": "del-2", "requestID": request_id,
+            "expectedRevision": 7, "deleteManagedSessions": false,
+            "objective": "Ambiguous", "createdAt": 2, "removed": 0, "retained": 0,
+            "pending": 0, "reasons": [], "documentPending": true
+        });
+        // Passive retirement with two distinct IDs for the same frozen intent must not settle.
+        let r1: Cleanup = serde_json::from_value(settled_row.clone()).unwrap();
+        let r2: Cleanup = serde_json::from_value(pending_row.clone()).unwrap();
+        owner.retire_settled_cleanups(&sc, &[r1.clone(), r2.clone()]);
+        assert!(owner.delete_state(&src).is_some());
+        owner.retire_settled_cleanups(&sc, &[r2, r1]);
+        assert!(owner.delete_state(&src).is_some());
+
+        // Reconciliation with two distinct IDs must stay unconfirmed without dispatching DELETE.
+        for pair in [
+            vec![settled_row.clone(), pending_row.clone()],
+            vec![pending_row, settled_row],
+        ] {
+            owner.retry_delete(&src, live_flag(), http.backend.clone(), wake.clone());
+            let pre_get = http.accept().await;
+            pre_get
+                .reply(
+                    200,
+                    json!({
+                        "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                        "cleanups": pair
+                    }),
+                )
+                .await;
+            wait(done.recv()).await.unwrap();
+            http.quiet().await;
+            let polled = owner.poll();
+            assert!(polled.deleted_missions.is_empty());
+            assert!(polled.settled_cleanups.is_empty());
+            assert_eq!(
+                owner.delete_state(&src),
+                Some(DeleteState::Failed("missions.cleanup.error.unconfirmed"))
+            );
+        }
+    });
+}
+
+#[test]
+fn revoked_delete_retry_view_never_publishes_readonly_settlement() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let src = source("msn-revoked-del");
+        let mut owner = CleanupOwner::default();
+        owner.start_delete(
+            &src,
+            "Revoked".into(),
+            7,
+            false,
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let first = http.accept().await;
+        let request_id = first.body["requestId"].as_str().unwrap().to_owned();
+        first.reply(503, json!({"code": "cleanup-pending"})).await;
+        let rec1 = http.accept().await;
+        rec1.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [{
+                    "missionID": "msn-revoked-del", "deletionID": "del-r", "requestID": request_id,
+                    "expectedRevision": 7, "deleteManagedSessions": false,
+                    "objective": "Revoked", "createdAt": 1, "removed": 0, "retained": 0,
+                    "pending": 1, "reasons": [], "documentPending": false
+                }]
+            }),
+        )
+        .await;
+        wait(done.recv()).await.unwrap();
+        owner.poll();
+
+        // Hold retry GET, let it return a settled row, then revoke view before poll().
+        let live = live_flag();
+        owner.retry_delete(&src, live.clone(), http.backend.clone(), wake);
+        let pre_get = http.accept().await;
+        pre_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                    "cleanups": [{
+                        "missionID": "msn-revoked-del", "deletionID": "del-r", "requestID": request_id,
+                        "expectedRevision": 7, "deleteManagedSessions": false,
+                        "objective": "Revoked", "createdAt": 1, "removed": 1, "retained": 0,
+                        "pending": 0, "reasons": [], "documentPending": false
+                    }]
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        // Revoke the view after the read-only settlement was already queued.
+        live.store(false, Ordering::Release);
+        let polled = owner.poll();
+        assert!(polled.deleted_missions.is_empty());
+        assert!(polled.settled_cleanups.is_empty());
+        assert!(polled.refreshed_scopes.is_empty());
+        assert!(
+            owner.delete_state(&src).is_some(),
+            "revoked read-only delete retry must not retire the intent"
+        );
+    });
+}
+
+#[test]
+fn remembered_document_pending_survives_empty_directory_refresh_and_obsolete_retry_does_not_publish()
+ {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let sc = scope();
+        let mut owner = CleanupOwner::default();
+
+        // 1. Obsolete read-only cleanup retry (view revoked while GET held) must NOT publish documentPending.
+        let mut omitted_row = cleanup_row(1, false);
+        omitted_row.document_pending = None;
+        let view_live = live_flag();
+        owner.start_cleanup_retry(
+            sc.clone(),
+            omitted_row.clone(),
+            view_live.clone(),
+            live_flag(),
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let held_get = http.accept().await;
+        view_live.store(false, Ordering::Release);
+        held_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                    "cleanups": [cleanup_json(1, true)]
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        http.quiet().await;
+        let polled = owner.poll();
+        assert!(
+            polled.document_pending_rows.is_empty(),
+            "obsolete read-only cleanup retry must not publish documentPending"
+        );
+
+        // 2. Remembered documentPending on Panel survives an empty directory refresh gap.
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        assert!(panel.accept_cleanups_for_test(vec![omitted_row.clone()]));
+        panel.mark_cleanup_document_pending("old", "del-1");
+        assert_eq!(panel.cleanups[0].document_pending, Some(true));
+        // Empty directory gap:
+        assert!(panel.accept_cleanups_for_test(vec![]));
+        assert!(panel.cleanups.is_empty());
+        // Returning row with pending: 0 and omitted documentPending must still be marked pending!
+        let mut returned = cleanup_row(0, false);
+        returned.document_pending = None;
+        assert!(panel.accept_cleanups_for_test(vec![returned]));
+        assert_eq!(panel.cleanups[0].document_pending, Some(true));
+        assert!(panel.cleanups[0].is_pending());
+        // Explicit documentPending: false finally clears it.
+        assert!(panel.accept_cleanups_for_test(vec![cleanup_row(0, false)]));
+        assert_eq!(panel.cleanups[0].document_pending, Some(false));
+        assert!(!panel.cleanups[0].is_pending());
+    });
+}
+
+#[test]
+fn cleanup_delete_receipt_rejects_mismatched_created_at_and_adopt_caps_at_2000() {
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let (wake, done) = witness();
+        let sc = scope();
+        let mut owner = CleanupOwner::default();
+        let row = cleanup_row(1, false);
+        owner.start_cleanup_retry(
+            sc.clone(),
+            row,
+            live_flag(),
+            live_flag(),
+            http.backend.clone(),
+            wake.clone(),
+        );
+        let pre = http.accept().await;
+        pre.reply(
+            200,
+            json!({
+                "available": true, "version": 1, "projectID": "project", "generatedAt": 1,
+                "cleanups": [cleanup_json(1, false)]
+            }),
+        )
+        .await;
+        let del = http.accept().await;
+        let mut mismatched = cleanup_json(0, false);
+        mismatched["createdAt"] = json!(2);
+        del.reply(200, json!({"deleted": true, "cleanup": mismatched}))
+            .await;
+        wait(done.recv()).await.unwrap();
+        let polled = owner.poll();
+        assert!(
+            polled.settled_cleanups.is_empty(),
+            "DELETE receipt with mismatched createdAt must not settle the row"
+        );
+        assert_eq!(
+            owner.cleanup_error(&sc),
+            Some("missions.cleanup.error.unconfirmed")
+        );
+
+        // Adopt > 2000 distinct settled receipts and verify Panel::cleanups stays bounded.
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        for i in 0..2_050 {
+            let mut r = cleanup_row(0, false);
+            r.mission_id = format!("msn-{i}");
+            r.deletion_id = format!("del-{i}");
+            panel.adopt_settled_cleanup(r);
+        }
+        assert!(panel.cleanups.len() <= 2_000);
+    });
+}
+
+#[test]
+fn cleanup_directory_failure_revokes_retry_fence_and_disables_retry() {
+    use rune::{Env, Runtime};
+
+    crate::platform::block_on(async {
+        let http = Http::new().await;
+        let backend = http.backend.clone();
+        let attest = std::thread::spawn(move || {
+            crate::platform::block_on(async {
+                let meta = http.accept().await;
+                meta.reply(200, json!({"apiContract": 1, "serverId": "server"}))
+                    .await;
+                http
+            })
+        });
+        backend.attest_server().await.unwrap();
+        let http = attest.join().unwrap();
+        let (wake, done) = witness();
+        let mut panel = super::super::Panel::new(
+            http.backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake.clone(),
+        );
+        assert!(panel.accept_cleanups_for_test(vec![cleanup_row(1, false)]));
+        panel.show(true);
+        // Accept the initial summaries & cleanups directory reads.
+        let r1 = http.accept().await;
+        let r2 = http.accept().await;
+        let (sum_req, clean_req) = if r1.body["source"] == "cleanups" {
+            (r2, r1)
+        } else {
+            (r1, r2)
+        };
+        let empty_digest = "XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc";
+        sum_req
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "source": "summaries", "projectID": "project",
+                    "finishHighWater": 0,
+                    "discardedEvents": 0, "controlUnavailable": false,
+                    "notificationUnavailable": false, "cleanupUnavailable": false,
+                    "window": {"order": empty_digest, "offset": 0, "end": 0, "total": 0},
+                    "page": {"digest": empty_digest, "total": 0, "pieces": []}
+                }),
+            )
+            .await;
+        let mut lifecycle = super::super::Lifecycle::default();
+        let sc = panel.cleanup_scope().unwrap();
+        panel.retry_cleanup(&mut lifecycle, &sc, cleanup_row(1, false));
+        let held_get = http.accept().await;
+        assert!(held_get.header.starts_with("GET /api/workspaces/"));
+
+        // Fail the cleanup directory refresh while point GET is held.
+        clean_req.reply(503, json!({"available": false})).await;
+        for _ in 0..100 {
+            if panel.poll() && panel.cleanups_unavailable() {
+                break;
+            }
+            crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(panel.cleanups_unavailable());
+        assert!(!panel.cleanup_view_live.load(Ordering::Acquire));
+
+        // Releasing the point GET with a matching pending row must NOT send DELETE.
+        held_get
+            .reply(
+                200,
+                json!({
+                    "available": true, "version": 1, "projectID": "project", "generatedAt": 2,
+                    "cleanups": [cleanup_json(1, false)]
+                }),
+            )
+            .await;
+        wait(done.recv()).await.unwrap();
+        let _ = lifecycle.poll_all();
+        http.quiet().await;
+
+        // Rendered cleanup retry button must be disabled while cleanups_unavailable.
+        let mut rt = Runtime::new(
+            (panel, lifecycle.cleanup),
+            |(panel, owner), _| {
+                crate::strings::with_locale("en", || {
+                    cleanup_view::<(Panel, CleanupOwner)>(
+                        panel,
+                        owner,
+                        "occ",
+                        |_, _, _, _| {},
+                        |_, _, _, _, _| {},
+                    )
+                })
+            },
+            (420.0, 640.0),
+            Env::new(false, 1.0),
+        );
+        rt.frame(1.0 / 60.0);
+        let tree = rt.accessibility_json();
+        assert!(has_state(
+            &tree,
+            "mission-cleanup-retry-old-del-1",
             "disabled"
         ));
     });

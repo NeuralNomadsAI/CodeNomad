@@ -250,7 +250,14 @@ pub(crate) fn poll(s: &mut State) -> bool {
     };
     #[cfg(not(target_arch = "wasm32"))]
     let changed = false;
-    let (reconnected, missions) = shared.mission_changes();
+    let (reconnected, missions) = if stream_state == Some(false) {
+        let _ = shared.mission_changes();
+        (false, Vec::new())
+    } else if still_offline {
+        (false, Vec::new())
+    } else {
+        shared.mission_changes()
+    };
     let locale = shared.locale().unwrap_or_else(strings::locale);
     let notify_failure = shared.take_notification_failure();
     let update = shared.notification_update.take();

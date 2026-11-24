@@ -25,12 +25,12 @@ pub(crate) fn cleanups(
     cleanup_view(panel, &owner.cleanup, occurrence, retry, orphaned_delete)
 }
 
-pub(crate) fn controls(
+pub(crate) fn controls<S: 'static>(
     panel: &Panel,
     owner: &Lifecycle,
     occurrence: &str,
     delete_managed_sessions: Option<bool>,
-    act: Act,
+    act: fn(&mut S, &Source, Gesture),
 ) -> El {
     let Some((source, header)) = panel.control_source(occurrence) else {
         return rune::el();
@@ -57,7 +57,7 @@ pub(crate) fn controls(
     let mut row = layout::action_row();
     let button = |label, disabled: bool, gesture: fn() -> Gesture, key| {
         let origin = source.clone();
-        layout::button_tx(label, false, move |s: &mut State, tx| {
+        layout::button_tx(label, false, move |s: &mut S, tx| {
             if !disabled {
                 act(s, &origin, gesture());
                 tx.instant();
@@ -84,6 +84,7 @@ pub(crate) fn controls(
         }
     } else if header.root.status == Status::Failed && recover_eligible {
         let disabled = !ready
+            || !panel.online()
             || delete_active
             || recovery_busy
             || recover_pending
@@ -108,6 +109,7 @@ pub(crate) fn controls(
         let pause_slot = matches!(header.root.run_state, None | Some(RunState::Running));
         if pause_slot && recover_eligible {
             let disabled = disabled
+                || !panel.online()
                 || recover_pending
                 || recover_admitted
                 || !owner.recovery.can_start(&recover_key);

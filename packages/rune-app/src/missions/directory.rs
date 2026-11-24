@@ -65,6 +65,7 @@ pub(crate) struct Panel {
     pub(super) selection_live: Arc<AtomicBool>,
     pub(super) cleanup_view_live: Arc<AtomicBool>,
     cleanup_tokens: HashMap<(String, String), Arc<AtomicBool>>,
+    remembered_document_pending: HashSet<(String, String)>,
     supported: Option<bool>,
     capability: Option<Receiver<Option<bool>>>,
     probe_attempted: bool,
@@ -79,6 +80,8 @@ pub(crate) struct Panel {
 }
 
 const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
+const CLEANUP_DISPLAY_CAP: usize = 2_000;
+const DOCUMENT_PENDING_CAP: usize = 64;
 
 impl Panel {
     pub(crate) fn new(backend: Backend, project: Option<String>, reads: Reads, wake: Wake) -> Self {
@@ -101,6 +104,7 @@ impl Panel {
             selection_live: Arc::new(AtomicBool::new(false)),
             cleanup_view_live: Arc::new(AtomicBool::new(false)),
             cleanup_tokens: HashMap::new(),
+            remembered_document_pending: HashSet::new(),
             supported: None,
             capability: None,
             probe_attempted: false,
@@ -127,7 +131,8 @@ impl Panel {
         if show {
             self.view_live = Arc::new(AtomicBool::new(self.online));
             self.selection_live = Arc::new(AtomicBool::new(self.online));
-            self.cleanup_view_live = Arc::new(AtomicBool::new(self.online));
+            self.cleanup_view_live =
+                Arc::new(AtomicBool::new(self.online && !self.cleanups_unavailable()));
             self.refresh();
         } else {
             self.refresh_due = None;
@@ -145,6 +150,22 @@ impl Panel {
 
     pub(crate) fn online(&self) -> bool {
         self.online
+    }
+
+    pub(super) fn cleanups_unavailable(&self) -> bool {
+        self.lanes[Kind::Cleanups as usize].failed.is_some()
+    }
+
+    fn remember_document_pending(&mut self, mission_id: &str, deletion_id: &str) {
+        let key = (mission_id.to_owned(), deletion_id.to_owned());
+        if !self.remembered_document_pending.contains(&key) {
+            if self.remembered_document_pending.len() >= DOCUMENT_PENDING_CAP
+                && let Some(evict) = self.remembered_document_pending.iter().next().cloned()
+            {
+                self.remembered_document_pending.remove(&evict);
+            }
+            self.remembered_document_pending.insert(key);
+        }
     }
 
     pub(crate) fn set_online(&mut self, online: bool) {
@@ -165,7 +186,7 @@ impl Panel {
             if !self.selection_live.load(Ordering::Acquire) {
                 self.selection_live = Arc::new(AtomicBool::new(true));
             }
-            if !self.cleanup_view_live.load(Ordering::Acquire) {
+            if !self.cleanup_view_live.load(Ordering::Acquire) && !self.cleanups_unavailable() {
                 self.cleanup_view_live = Arc::new(AtomicBool::new(true));
             }
             (self.wake)();
@@ -174,7 +195,7 @@ impl Panel {
 
     fn renew_cleanup_view(&mut self) {
         self.cleanup_view_live.store(false, Ordering::Release);
-        if self.visible && self.online {
+        if self.visible && self.online && !self.cleanups_unavailable() {
             self.cleanup_view_live = Arc::new(AtomicBool::new(true));
         }
     }
@@ -205,16 +226,41 @@ impl Panel {
 
     pub(super) fn adopt_settled_cleanup(&mut self, mut receipt: Cleanup) {
         self.cancel_lane(Kind::Cleanups);
+        let key = (receipt.mission_id.clone(), receipt.deletion_id.clone());
+        match receipt.document_pending {
+            Some(false) => {
+                self.remembered_document_pending.remove(&key);
+            }
+            Some(true) => {
+                self.remember_document_pending(&receipt.mission_id, &receipt.deletion_id);
+            }
+            None => {
+                if self.remembered_document_pending.contains(&key)
+                    || self.cleanups.iter().any(|row| {
+                        row.mission_id == receipt.mission_id
+                            && row.deletion_id == receipt.deletion_id
+                            && row.document_pending == Some(true)
+                    })
+                {
+                    receipt.document_pending = Some(true);
+                    self.remember_document_pending(&receipt.mission_id, &receipt.deletion_id);
+                }
+            }
+        }
         let before = pending_cleanup_keys(&self.cleanups);
         if let Some(existing) = self.cleanups.iter_mut().find(|row| {
             row.mission_id == receipt.mission_id && row.deletion_id == receipt.deletion_id
         }) {
-            if existing.document_pending == Some(true) && receipt.document_pending.is_none() {
-                receipt.document_pending = Some(true);
-            }
             *existing = receipt.clone();
         } else {
             self.cleanups.insert(0, receipt.clone());
+            while self.cleanups.len() > CLEANUP_DISPLAY_CAP {
+                if let Some(pos) = self.cleanups.iter().rposition(|row| !row.is_pending()) {
+                    self.cleanups.remove(pos);
+                } else {
+                    self.cleanups.pop();
+                }
+            }
         }
         if !receipt.is_pending()
             && let Some(token) = self
@@ -229,6 +275,7 @@ impl Panel {
     }
 
     pub(super) fn mark_cleanup_document_pending(&mut self, mission_id: &str, deletion_id: &str) {
+        self.remember_document_pending(mission_id, deletion_id);
         for row in &mut self.cleanups {
             if row.mission_id == mission_id
                 && row.deletion_id == deletion_id
@@ -330,7 +377,9 @@ impl Panel {
             if self.visible {
                 self.view_live = Arc::new(AtomicBool::new(true));
                 self.selection_live = Arc::new(AtomicBool::new(true));
-                self.cleanup_view_live = Arc::new(AtomicBool::new(true));
+                if !self.cleanups_unavailable() {
+                    self.cleanup_view_live = Arc::new(AtomicBool::new(true));
+                }
             }
             self.online = true;
             self.detail.cancel();
@@ -559,18 +608,34 @@ impl Panel {
                             Read::Refresh
                         }
                     });
+                    if done.kind == Kind::Cleanups
+                        && lane.failed.is_none()
+                        && self.visible
+                        && self.online
+                        && !self.cleanup_view_live.load(Ordering::Acquire)
+                    {
+                        self.cleanup_view_live = Arc::new(AtomicBool::new(true));
+                    }
                     if owed {
                         self.start(done.kind, Read::Refresh);
                     }
                 }
                 Err(error) if error.is::<DirectoryChanged>() => {
                     self.lanes[done.kind as usize].failed = Some(Read::Refresh);
+                    if done.kind == Kind::Cleanups {
+                        self.cleanup_view_live.store(false, Ordering::Release);
+                        self.revoke_all_cleanup_tokens();
+                    }
                     if owed {
                         self.start(done.kind, Read::Refresh);
                     }
                 }
                 _ => {
                     self.lanes[done.kind as usize].failed = Some(done.read);
+                    if done.kind == Kind::Cleanups {
+                        self.cleanup_view_live.store(false, Ordering::Release);
+                        self.revoke_all_cleanup_tokens();
+                    }
                     if owed {
                         self.start(done.kind, Read::Refresh);
                     }
@@ -665,11 +730,14 @@ impl Panel {
             (Kind::Cleanups, DirectoryRows::Cleanups(mut rows)) => {
                 for row in &mut rows {
                     if row.document_pending.is_none()
-                        && self.cleanups.iter().any(|old| {
-                            old.mission_id == row.mission_id
-                                && old.deletion_id == row.deletion_id
-                                && old.document_pending == Some(true)
-                        })
+                        && (self
+                            .remembered_document_pending
+                            .contains(&(row.mission_id.clone(), row.deletion_id.clone()))
+                            || self.cleanups.iter().any(|old| {
+                                old.mission_id == row.mission_id
+                                    && old.deletion_id == row.deletion_id
+                                    && old.document_pending == Some(true)
+                            }))
                     {
                         row.document_pending = Some(true);
                     }
@@ -691,6 +759,27 @@ impl Panel {
                 let covered = page.window.end == page.window.total;
                 self.project = Some(page.project_id);
                 lane.window = Some(page.window);
+                let doc_updates: Vec<(String, String, Option<bool>)> = self
+                    .cleanups
+                    .iter()
+                    .map(|row| {
+                        (
+                            row.mission_id.clone(),
+                            row.deletion_id.clone(),
+                            row.document_pending,
+                        )
+                    })
+                    .collect();
+                for (mission_id, deletion_id, doc_pending) in doc_updates {
+                    match doc_pending {
+                        Some(true) => self.remember_document_pending(&mission_id, &deletion_id),
+                        Some(false) => {
+                            self.remembered_document_pending
+                                .remove(&(mission_id, deletion_id));
+                        }
+                        None => {}
+                    }
+                }
                 self.sync_cleanup_tokens(covered);
                 if pending_cleanup_keys(&self.cleanups) != before_pending {
                     self.renew_cleanup_view();
@@ -745,7 +834,14 @@ impl Panel {
     }
 
     #[cfg(test)]
-    pub(super) fn accept_cleanups_for_test(&mut self, rows: Vec<Cleanup>) -> bool {
+    pub(crate) fn has_settled_cleanup_for_test(&self, deletion_id: &str) -> bool {
+        self.cleanups
+            .iter()
+            .any(|row| row.deletion_id == deletion_id && !row.is_pending())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn accept_cleanups_for_test(&mut self, rows: Vec<Cleanup>) -> bool {
         let len = rows.len() as u64;
         self.accept(
             Kind::Cleanups,

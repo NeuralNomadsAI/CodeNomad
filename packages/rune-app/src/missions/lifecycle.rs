@@ -100,7 +100,10 @@ impl Panel {
         scope: &WorkspaceScope,
         cleanup: Cleanup,
     ) {
-        if !self.online() || self.cleanup_scope().as_ref() != Some(scope) {
+        if !self.online()
+            || self.cleanups_unavailable()
+            || self.cleanup_scope().as_ref() != Some(scope)
+        {
             return;
         }
         if !self
@@ -252,6 +255,7 @@ impl Panel {
             }
             Gesture::RecoverCoordinator(witnessed)
                 if ready
+                    && self.online()
                     && !delete_active
                     && !recovery_busy
                     && witnessed == revision
@@ -336,6 +340,14 @@ impl Panel {
                 self.mark_cleanup_document_pending(mission_id, deletion_id);
             }
         }
+        for (settled_scope, receipt) in &settled.cleanup.settled_cleanups {
+            if settled_scope == &scope {
+                self.adopt_settled_cleanup(receipt.clone());
+            }
+        }
+        owner
+            .cleanup
+            .retire_settled_cleanups(&scope, &self.cleanups);
     }
 
     pub(crate) fn settle_controls(

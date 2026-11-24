@@ -138,6 +138,9 @@ test('Mission recovery, reconciliation and deletion are admitted only to the fix
       assert(!p.allows('DELETE',path,{...del,extra:true}))
       assert(!p.allows('DELETE',path.replace('/one/','/outside/'),del))
     }
+    assert(!p.allows('DELETE','/api/workspaces/one/missions/old',{expectedRevision:2,requestId:'request',deleteManagedSessions:false}))
+    assert(!p.allows('DELETE','/api/workspaces/one/missions/old',{expectedRevision:1,requestId:'other',deleteManagedSessions:false}))
+    assert(!p.allows('DELETE','/api/workspaces/one/missions/old',{expectedRevision:1,requestId:'request',deleteManagedSessions:true}))
     assert(!p.allows('GET','/api/workspaces/one/missions/other'))
     assert(!p.allows('DELETE','/api/workspaces/one/missions/other',{expectedRevision:1,requestId:'request',deleteManagedSessions:false}))
     assert.equal(p.allows('PATCH','/api/storage/config/ui',{settings:{missionDeleteSessions:true}}),missions)

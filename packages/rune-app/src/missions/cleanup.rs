@@ -55,17 +55,22 @@ pub(super) enum DeleteState {
 }
 
 pub(super) enum DeleteResult {
-    Deleted(Option<Box<Cleanup>>),
+    Deleted {
+        receipt: Option<Box<Cleanup>>,
+        dispatched: bool,
+    },
     Failed {
         key: &'static str,
         document_cleanup: bool,
         deletion_id: Option<String>,
+        created_at_bits: Option<u64>,
         tombstoned: bool,
     },
     Cancelled {
         dispatched: bool,
         document_cleanup: bool,
         deletion_id: Option<String>,
+        created_at_bits: Option<u64>,
         tombstoned: bool,
     },
 }
@@ -76,9 +81,11 @@ pub(super) struct DeleteIntent {
     target: LifecycleTarget,
     request: DeletionRequest,
     pub(super) flight: Option<Receiver<DeleteResult>>,
+    flight_live: Option<Arc<AtomicBool>>,
     pub(super) error: Option<&'static str>,
     document_cleanup: bool,
     deletion_id: Option<String>,
+    created_at_bits: Option<u64>,
     retired: bool,
 }
 
@@ -222,14 +229,16 @@ impl CleanupOwner {
                 target: target.clone(),
                 request: request.clone(),
                 flight: Some(inbox),
+                flight_live: None,
                 error: None,
                 document_cleanup: false,
                 deletion_id: None,
+                created_at_bits: None,
                 retired: false,
             },
         );
         platform::spawn(async move {
-            let result = run_delete(backend, target, request, false, false, None, None).await;
+            let result = run_delete(backend, target, request, false, false, None, None, None).await;
             if out.send(result).await.is_ok() {
                 wake();
             }
@@ -287,7 +296,9 @@ impl CleanupOwner {
         let request = intent.request.clone();
         let document_cleanup = intent.document_cleanup;
         let expected_deletion_id = intent.deletion_id.clone();
+        let expected_created_at = intent.created_at_bits;
         intent.flight = Some(inbox);
+        intent.flight_live = Some(live.clone());
         platform::spawn(async move {
             let result = run_delete(
                 backend,
@@ -296,6 +307,7 @@ impl CleanupOwner {
                 true,
                 document_cleanup,
                 expected_deletion_id,
+                expected_created_at,
                 Some(live),
             )
             .await;
@@ -369,30 +381,25 @@ impl CleanupOwner {
                             .deletion_id
                             .as_deref()
                             .is_none_or(|id| row.deletion_id == id)
+                        && intent
+                            .created_at_bits
+                            .is_none_or(|bits| row.created_at.to_bits() == bits)
                 })
                 .collect();
-            if intent.deletion_id.is_none()
-                && let Some(first) = matching.first()
-                && matching
-                    .iter()
-                    .all(|row| row.deletion_id == first.deletion_id)
-            {
-                intent.deletion_id = Some(first.deletion_id.clone());
+            if matching.len() != 1 {
+                return true;
             }
-            for row in matching {
-                if row.document_pending == Some(true) {
-                    intent.document_cleanup = true;
-                }
-                if intent
-                    .deletion_id
-                    .as_deref()
-                    .is_none_or(|id| row.deletion_id == id)
-                    && cleanup_settled_for(intent.document_cleanup, row)
-                {
-                    return false;
-                }
+            let row = matching[0];
+            if intent.deletion_id.is_none() {
+                intent.deletion_id = Some(row.deletion_id.clone());
             }
-            true
+            if intent.created_at_bits.is_none() {
+                intent.created_at_bits = Some(row.created_at.to_bits());
+            }
+            if row.document_pending == Some(true) {
+                intent.document_cleanup = true;
+            }
+            !cleanup_settled_for(intent.document_cleanup, row)
         });
         if let Some((mission_id, deletion_id, _)) = self.retry_errors.get(scope) {
             let still_pending = cleanups.iter().any(|row| {
@@ -481,12 +488,23 @@ impl CleanupOwner {
                 return true;
             };
             intent.flight = None;
+            let flight_live = intent.flight_live.take();
             polled.changed = true;
             if intent.retired {
                 return false;
             }
             match result {
-                DeleteResult::Deleted(receipt) => {
+                DeleteResult::Deleted {
+                    receipt,
+                    dispatched,
+                } => {
+                    if !dispatched
+                        && flight_live
+                            .as_ref()
+                            .is_some_and(|flag| !flag.load(Ordering::Acquire))
+                    {
+                        return true;
+                    }
                     polled
                         .refreshed_missions
                         .push((mission.clone(), intent.target.clone()));
@@ -507,12 +525,16 @@ impl CleanupOwner {
                     key,
                     document_cleanup,
                     deletion_id,
+                    created_at_bits,
                     tombstoned,
                 } => {
                     intent.error = Some(key);
                     intent.document_cleanup |= document_cleanup;
                     if intent.deletion_id.is_none() {
                         intent.deletion_id = deletion_id;
+                    }
+                    if intent.created_at_bits.is_none() {
+                        intent.created_at_bits = created_at_bits;
                     }
                     if tombstoned {
                         polled
@@ -531,11 +553,15 @@ impl CleanupOwner {
                     dispatched,
                     document_cleanup,
                     deletion_id,
+                    created_at_bits,
                     tombstoned,
                 } => {
                     intent.document_cleanup |= document_cleanup;
                     if intent.deletion_id.is_none() {
                         intent.deletion_id = deletion_id;
+                    }
+                    if intent.created_at_bits.is_none() {
+                        intent.created_at_bits = created_at_bits;
                     }
                     if tombstoned {
                         polled
@@ -595,6 +621,9 @@ impl CleanupOwner {
                     mutated,
                     document_cleanup,
                 } => {
+                    if !view_current && !mutated {
+                        continue;
+                    }
                     if receipt.document_pending == Some(false) {
                         self.document_cleanups.remove(&(
                             scope.clone(),
@@ -603,9 +632,6 @@ impl CleanupOwner {
                         ));
                     } else if document_cleanup {
                         record_doc(self, &mut polled, &scope, &mission_id, &deletion_id);
-                    }
-                    if !view_current && !mutated {
-                        continue;
                     }
                     self.deletes.retain(|_, intent| {
                         let matches = intent.scope == scope
@@ -618,11 +644,17 @@ impl CleanupOwner {
                             && intent
                                 .deletion_id
                                 .as_deref()
-                                .is_none_or(|id| id == receipt.deletion_id);
+                                .is_none_or(|id| id == receipt.deletion_id)
+                            && intent
+                                .created_at_bits
+                                .is_none_or(|bits| bits == receipt.created_at.to_bits());
                         if matches {
                             intent.document_cleanup |= document_cleanup;
                             if intent.deletion_id.is_none() {
                                 intent.deletion_id = Some(receipt.deletion_id.clone());
+                            }
+                            if intent.created_at_bits.is_none() {
+                                intent.created_at_bits = Some(receipt.created_at.to_bits());
                             }
                             !cleanup_settled_for(intent.document_cleanup, &receipt)
                         } else {
@@ -647,7 +679,7 @@ impl CleanupOwner {
                     mutated,
                     document_cleanup,
                 } => {
-                    if document_cleanup {
+                    if document_cleanup && (view_current || mutated) {
                         record_doc(self, &mut polled, &scope, &mission_id, &deletion_id);
                     }
                     if view_current {
@@ -670,7 +702,7 @@ impl CleanupOwner {
                     mutated,
                     document_cleanup,
                 } => {
-                    if document_cleanup {
+                    if document_cleanup && mutated {
                         record_doc(self, &mut polled, &scope, &mission_id, &deletion_id);
                     }
                     if mutated && !polled.refreshed_scopes.contains(&scope) {
@@ -694,6 +726,7 @@ async fn run_delete(
     reconcile_first: bool,
     mut require_document_settled: bool,
     mut expected_deletion_id: Option<String>,
+    mut expected_created_at: Option<u64>,
     live: Option<Arc<AtomicBool>>,
 ) -> DeleteResult {
     let still_live = || {
@@ -711,6 +744,7 @@ async fn run_delete(
                     key: "missions.cleanup.error.unconfirmed",
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
                     tombstoned,
                 }
             } else {
@@ -718,6 +752,7 @@ async fn run_delete(
                     dispatched: false,
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
                     tombstoned,
                 }
             };
@@ -728,6 +763,7 @@ async fn run_delete(
                     key: "missions.cleanup.error.unconfirmed",
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
                     tombstoned,
                 }
             } else {
@@ -735,28 +771,56 @@ async fn run_delete(
                     dispatched: false,
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
                     tombstoned,
                 }
             };
         }
-        let matching = snapshot.cleanups.iter().find(|item| {
-            request.matches_cleanup(&target.mission, item)
-                && expected_deletion_id
-                    .as_deref()
-                    .is_none_or(|id| item.deletion_id == id)
-        });
-        if matching.is_none()
-            && expected_deletion_id.as_deref().is_some_and(|pinned| {
-                snapshot.cleanups.iter().any(|item| {
-                    request.matches_cleanup(&target.mission, item) && item.deletion_id != pinned
-                })
+        let matches: Vec<&Cleanup> = snapshot
+            .cleanups
+            .iter()
+            .filter(|item| {
+                request.matches_cleanup(&target.mission, item)
+                    && expected_deletion_id
+                        .as_deref()
+                        .is_none_or(|id| item.deletion_id == id)
+                    && expected_created_at.is_none_or(|bits| item.created_at.to_bits() == bits)
             })
+            .collect();
+        if matches.len() > 1 {
+            return if still_live() {
+                DeleteResult::Failed {
+                    key: "missions.cleanup.error.unconfirmed",
+                    document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
+                    tombstoned: false,
+                }
+            } else {
+                DeleteResult::Cancelled {
+                    dispatched: false,
+                    document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
+                    tombstoned: false,
+                }
+            };
+        }
+        let matching = matches.first().copied();
+        if matching.is_none()
+            && expected_deletion_id.is_some()
+            && (snapshot.mission_revision.is_some()
+                || snapshot
+                    .cleanups
+                    .iter()
+                    .any(|item| request.matches_cleanup(&target.mission, item)))
         {
             return if still_live() {
                 DeleteResult::Failed {
                     key: "missions.cleanup.error.unconfirmed",
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
                     tombstoned: false,
                 }
             } else {
@@ -764,11 +828,21 @@ async fn run_delete(
                     dispatched: false,
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
                     tombstoned: false,
                 }
             };
         }
         if let Some(intent) = matching {
+            if !still_live() {
+                return DeleteResult::Cancelled {
+                    dispatched: false,
+                    document_cleanup: require_document_settled,
+                    deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
+                    tombstoned: false,
+                };
+            }
             if snapshot.mission_revision.is_none() {
                 tombstoned = true;
             }
@@ -778,21 +852,21 @@ async fn run_delete(
             if expected_deletion_id.is_none() {
                 expected_deletion_id = Some(intent.deletion_id.clone());
             }
+            if expected_created_at.is_none() {
+                expected_created_at = Some(intent.created_at.to_bits());
+            }
             if !intent.is_pending() {
                 return if cleanup_settled_for(require_document_settled, intent) {
-                    DeleteResult::Deleted(Some(Box::new(intent.clone())))
-                } else if still_live() {
+                    DeleteResult::Deleted {
+                        receipt: Some(Box::new(intent.clone())),
+                        dispatched: false,
+                    }
+                } else {
                     DeleteResult::Failed {
                         key: "missions.cleanup.error.unconfirmed",
                         document_cleanup: require_document_settled,
                         deletion_id: expected_deletion_id,
-                        tombstoned,
-                    }
-                } else {
-                    DeleteResult::Cancelled {
-                        dispatched: false,
-                        document_cleanup: require_document_settled,
-                        deletion_id: expected_deletion_id,
+                        created_at_bits: expected_created_at,
                         tombstoned,
                     }
                 };
@@ -808,6 +882,7 @@ async fn run_delete(
                     key: "missions.cleanup.error.revisionConflict",
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
                     tombstoned,
                 }
             } else {
@@ -815,6 +890,7 @@ async fn run_delete(
                     dispatched: false,
                     document_cleanup: require_document_settled,
                     deletion_id: expected_deletion_id,
+                    created_at_bits: expected_created_at,
                     tombstoned,
                 }
             };
@@ -824,7 +900,8 @@ async fn run_delete(
                 dispatched: false,
                 document_cleanup: require_document_settled,
                 deletion_id: expected_deletion_id,
-                tombstoned,
+                created_at_bits: expected_created_at,
+                tombstoned: false,
             };
         }
     }
@@ -833,18 +910,23 @@ async fn run_delete(
             &target.mission,
             &request,
             expected_deletion_id.as_deref(),
+            expected_created_at.map(f64::from_bits),
             require_document_settled,
         )
         .await
         .unwrap_or(DeletionOutcome::Unconfirmed);
     if let DeletionOutcome::Deleted(receipt) = outcome {
-        return DeleteResult::Deleted(receipt);
+        return DeleteResult::Deleted {
+            receipt,
+            dispatched: true,
+        };
     }
     if live.is_some() && !still_live() {
         return DeleteResult::Cancelled {
             dispatched: true,
             document_cleanup: require_document_settled,
             deletion_id: expected_deletion_id,
+            created_at_bits: expected_created_at,
             tombstoned,
         };
     }
@@ -857,31 +939,46 @@ async fn run_delete(
         .read_mission_reconciliation(&target.project, &target.mission)
         .await
         && !snapshot.cleanup_unavailable
-        && let Some(intent) = snapshot.cleanups.iter().find(|item| {
-            request.matches_cleanup(&target.mission, item)
-                && expected_deletion_id
-                    .as_deref()
-                    .is_none_or(|id| item.deletion_id == id)
-        })
     {
-        if snapshot.mission_revision.is_none() {
-            tombstoned = true;
-        }
-        if expected_deletion_id.is_none() {
-            expected_deletion_id = Some(intent.deletion_id.clone());
-        }
-        if intent.document_pending == Some(true) {
-            require_document_settled = true;
-        }
-        if cleanup_settled_for(require_document_settled, intent) {
-            return DeleteResult::Deleted(Some(Box::new(intent.clone())));
-        }
-        if !conflict {
-            key = if intent.document_pending == Some(true) {
-                "missions.cleanup.documentPending"
-            } else {
-                "missions.cleanup.error.pending"
-            };
+        let matches: Vec<&Cleanup> = snapshot
+            .cleanups
+            .iter()
+            .filter(|item| {
+                request.matches_cleanup(&target.mission, item)
+                    && expected_deletion_id
+                        .as_deref()
+                        .is_none_or(|id| item.deletion_id == id)
+                    && expected_created_at.is_none_or(|bits| item.created_at.to_bits() == bits)
+            })
+            .collect();
+        if matches.len() > 1 {
+            key = "missions.cleanup.error.unconfirmed";
+        } else if let Some(&intent) = matches.first() {
+            if snapshot.mission_revision.is_none() {
+                tombstoned = true;
+            }
+            if expected_deletion_id.is_none() {
+                expected_deletion_id = Some(intent.deletion_id.clone());
+            }
+            if expected_created_at.is_none() {
+                expected_created_at = Some(intent.created_at.to_bits());
+            }
+            if intent.document_pending == Some(true) {
+                require_document_settled = true;
+            }
+            if cleanup_settled_for(require_document_settled, intent) {
+                return DeleteResult::Deleted {
+                    receipt: Some(Box::new(intent.clone())),
+                    dispatched: true,
+                };
+            }
+            if !conflict {
+                key = if intent.document_pending == Some(true) {
+                    "missions.cleanup.documentPending"
+                } else {
+                    "missions.cleanup.error.pending"
+                };
+            }
         }
     }
     if live.is_some() && !still_live() {
@@ -889,6 +986,7 @@ async fn run_delete(
             dispatched: true,
             document_cleanup: require_document_settled,
             deletion_id: expected_deletion_id,
+            created_at_bits: expected_created_at,
             tombstoned,
         };
     }
@@ -896,6 +994,7 @@ async fn run_delete(
         key,
         document_cleanup: require_document_settled,
         deletion_id: expected_deletion_id,
+        created_at_bits: expected_created_at,
         tombstoned,
     }
 }
@@ -1000,13 +1099,16 @@ async fn run_cleanup_retry(
             &fresh.mission_id,
             &request,
             Some(&fresh.deletion_id),
+            Some(fresh.created_at),
             require_document_settled,
         )
         .await
         .unwrap_or(DeletionOutcome::Unconfirmed);
-    if let DeletionOutcome::Deleted(Some(receipt)) = outcome {
+    if let DeletionOutcome::Deleted(Some(ref receipt)) = outcome
+        && receipt.matches_saved(&saved)
+    {
         return CleanupRetryResult::Settled {
-            receipt,
+            receipt: receipt.clone(),
             mutated: true,
             document_cleanup: require_document_settled,
         };

@@ -35,12 +35,6 @@ pub(super) async fn relay(
     } else if own && value["type"] == "instance.eventStatus" && value["status"] == "connected" {
         b.client.children().invalidate(b, None);
     }
-    // A conversation move revokes its reader before any send and relays SessionMoved itself.
-    if !(own && native["type"] == "session.moved" && native["data"]["sessionID"] == b.session)
-        && let Some(event) = mission_events::decode(&b.workspace, b.session.is_empty(), value)
-    {
-        out.send(Input::Workspace(epoch, event)).await?;
-    }
     let catalogues = (own && value["type"] == "instance.event")
         .then(|| match native["type"].as_str() {
             Some("command.updated") => Some(WorkspaceEvent::CommandsChanged),
@@ -141,6 +135,12 @@ pub(super) async fn relay(
         && crate::content::FamilyChange::tracks(native)
     {
         out.send(Input::Native(epoch, 0, native.clone())).await?;
+    }
+    // Emit Mission notices after instance.eventStatus updates so Available precedes MissionsReconnected.
+    if !(own && native["type"] == "session.moved" && native["data"]["sessionID"] == b.session)
+        && let Some(event) = mission_events::decode(&b.workspace, b.session.is_empty(), value)
+    {
+        out.send(Input::Workspace(epoch, event)).await?;
     }
     Ok(())
 }

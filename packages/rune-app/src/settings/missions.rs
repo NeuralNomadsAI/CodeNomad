@@ -358,15 +358,42 @@ mod tests {
             assert!(req.header.contains("/api/storage/config/ui"));
             req.reply(200, json!({"settings": {"missionDeleteSessions": true}}))
                 .await;
-            for _ in 0..10 {
+            wait_until(|| {
                 prefs.poll();
-                platform::sleep(Duration::from_millis(10)).await;
-            }
+                prefs
+                    .saved(Owner::Config)
+                    .and_then(|doc| doc["settings"]["missionDeleteSessions"].as_bool())
+                    == Some(true)
+            })
+            .await;
             assert_eq!(
                 prefs.mission_delete_sessions(),
                 None,
                 "config GET during SSE handoff gap must not re-enable missionDeleteSessions"
             );
         });
+    }
+
+    #[test]
+    fn queued_mission_reconnect_does_not_rearm_offline_panel_before_available() {
+        let mut root = crate::init();
+        let wake: rune::Waker = std::sync::Arc::new(|| {});
+        let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:1/").unwrap();
+        let mut panel = crate::missions::Panel::new(
+            backend.clone(),
+            Some("project".into()),
+            Default::default(),
+            wake,
+        );
+        panel.show(true);
+        panel.set_online(false);
+        assert!(!panel.online());
+        root.settings.shared.borrow_mut().set_stream_online(false);
+        assert!(crate::settings::stream_offline(&root));
+        // Poll settings while stream_offline is true and no Available transition arrived:
+        // mission_changes must not be drained to re-arm the offline panel.
+        let _ = crate::settings::poll(&mut root);
+        assert!(crate::settings::stream_offline(&root));
+        assert!(!panel.online());
     }
 }

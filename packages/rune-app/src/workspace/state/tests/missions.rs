@@ -544,5 +544,68 @@ fn parked_tab_clears_saved_selection_on_tombstone_and_replacement_panel_inherits
             "tombstoned mission must clear saved.view.selected_mission on parked tabs"
         );
         assert!(ui.entries[1].missions.as_ref().unwrap().selected.is_none());
+
+        // 3. A confirmed direct deletion adopts its authoritative settled cleanup receipt on
+        // hidden and parked panels so reopening does not show the stale pending row.
+        let pending_cleanup: codenomad_client::missions::Cleanup = serde_json::from_value(json!({
+            "missionID": "msn-bg", "deletionID": "del-bg", "requestID": "req-bg",
+            "expectedRevision": 4, "deleteManagedSessions": true,
+            "objective": "Background", "createdAt": 1, "removed": 0, "retained": 0,
+            "pending": 1, "reasons": [], "documentPending": false
+        }))
+        .unwrap();
+        ui.entries[1]
+            .missions
+            .as_mut()
+            .unwrap()
+            .accept_cleanups_for_test(vec![pending_cleanup]);
+        assert!(
+            !ui.entries[1]
+                .missions
+                .as_ref()
+                .unwrap()
+                .has_settled_cleanup_for_test("del-bg")
+        );
+        ui.mission_lifecycle.start_delete_for_test(
+            "tab-active",
+            &http.backend,
+            "project",
+            "msn-bg",
+            4,
+            std::sync::Arc::new(|| {}),
+        );
+        let del_bg = http.accept().await;
+        let bg_req_id = del_bg.body["requestId"].as_str().unwrap().to_owned();
+        del_bg
+            .reply(
+                200,
+                json!({
+                    "deleted": true,
+                    "cleanup": {
+                        "missionID": "msn-bg", "deletionID": "del-bg", "requestID": bg_req_id,
+                        "expectedRevision": 4, "deleteManagedSessions": false,
+                        "objective": "Background", "createdAt": 1, "removed": 1, "retained": 0,
+                        "pending": 0, "reasons": [], "documentPending": false
+                    }
+                }),
+            )
+            .await;
+        let mut adopted = false;
+        for _ in 0..100 {
+            super::super::panel_state::poll_missions(&mut ui, &s, &mut tx);
+            if ui.entries[1]
+                .missions
+                .as_ref()
+                .is_some_and(|p| p.has_settled_cleanup_for_test("del-bg"))
+            {
+                adopted = true;
+                break;
+            }
+            crate::platform::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            adopted,
+            "confirmed direct deletion must adopt authoritative settled cleanup receipt on parked panels"
+        );
     });
 }
