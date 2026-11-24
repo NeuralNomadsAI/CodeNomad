@@ -28,9 +28,11 @@ pub(super) fn modal_open(s: &State) -> bool {
         || crate::files::modal_open(s)
         || workspace::mission_confirmation(s).is_some()
         || (!s.screen.is_launcher()
-            && s.transcript_display
+            && (s
+                .transcript_display
                 .messages
-                .confirmation_open(&s.input_scope))
+                .confirmation_open(&s.input_scope)
+                || s.transcript_display.pictures.preview_open()))
 }
 
 fn overlay_open(s: &State) -> bool {

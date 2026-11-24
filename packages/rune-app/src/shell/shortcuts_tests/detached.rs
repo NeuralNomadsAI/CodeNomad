@@ -218,9 +218,31 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
         crate::git::connected(&mut s, &backend);
         let mut rt = project_runtime(s);
 
-        // Close active session so Files and Git run in detached mode, then move it to a cached background tab.
+        // Close active session so Files and Git run in detached mode; consume the handoff refresh first,
+        // then move tab 0 to a cached background tab before verifying real SSE offline -> reconnect invalidation.
         send_key(&mut rt, Key::Command('w'), primary_mods(true));
         assert!(rt.state.screen.is_launcher());
+        let handoff = rt.state.files.as_mut().unwrap().tree.take_refresh();
+        assert!(!handoff.is_empty());
+        for read in handoff {
+            assert!(
+                rt.state
+                    .files
+                    .as_mut()
+                    .unwrap()
+                    .tree
+                    .complete(read, Ok(vec![]), Ok)
+            );
+        }
+        assert!(
+            rt.state
+                .files
+                .as_mut()
+                .unwrap()
+                .tree
+                .take_refresh()
+                .is_empty()
+        );
         rt.state.screen.launcher_mut().unwrap().pending = false;
         send_key(&mut rt, Key::Command(']'), primary_mods(false));
         assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
@@ -250,8 +272,39 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
         }
 
         wait_gen(&mut rt, 1).await;
+        // Consume the gen=1 connection revalidation on tab 0 before disconnecting.
+        send_key(&mut rt, Key::Command('['), primary_mods(false));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+        let gen1_reads = rt.state.files.as_mut().unwrap().tree.take_refresh();
+        assert!(!gen1_reads.is_empty());
+        for read in gen1_reads {
+            assert!(
+                rt.state
+                    .files
+                    .as_mut()
+                    .unwrap()
+                    .tree
+                    .complete(read, Ok(vec![]), Ok)
+            );
+        }
+        assert!(
+            rt.state
+                .files
+                .as_mut()
+                .unwrap()
+                .tree
+                .take_refresh()
+                .is_empty()
+        );
+        send_key(&mut rt, Key::Command(']'), primary_mods(false));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 1);
+
         let _ = drop_first_tx.send(());
         wait_gen(&mut rt, 2).await;
+        // Verify tab 0 actually transitioned offline on gen=2 before reconnecting.
+        send_key(&mut rt, Key::Command('['), primary_mods(false));
+        assert_eq!(crate::git::fixture_online(&rt.state), Some(false));
+        send_key(&mut rt, Key::Command(']'), primary_mods(false));
         let _ = allow_second_tx.send(());
         wait_gen(&mut rt, 3).await;
         rt.state.screen.launcher_mut().unwrap().pending = false;
@@ -426,12 +479,30 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
             "control char override must revert to default"
         );
 
-        // Remapping new-instance to Ctrl+F while disabling session-search runs new-instance instead of opening search.
+        // Enlarged attachment preview modal blocks tab switching.
+        rt.state.transcript_display.pictures.fixture_preview(true);
+        send_key(&mut rt, Key::Command('2'), primary_mods(false));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+        rt.state.transcript_display.pictures.fixture_preview(false);
+
+        // Remapping new-instance to Ctrl+F opens search when session-search is still active (matching Solid),
+        // and runs new-instance once session-search is disabled.
+        let tabs_before = rt.state.workspace.as_ref().unwrap().tab_count();
+        settings::fixture_shortcuts(
+            &rt.state,
+            json!({"new-instance": [{"key": "f", "mod": true}]}),
+        );
+        send_key(&mut rt, Key::Command('f'), primary_mods(false));
+        assert_eq!(
+            rt.state.workspace.as_ref().unwrap().tab_count(),
+            tabs_before
+        );
+        send_key(&mut rt, Key::Escape, Mods::default());
+
         settings::fixture_shortcuts(
             &rt.state,
             json!({"new-instance": [{"key": "f", "mod": true}], "session-search": []}),
         );
-        let tabs_before = rt.state.workspace.as_ref().unwrap().tab_count();
         send_key(&mut rt, Key::Command('f'), primary_mods(false));
         assert_eq!(
             rt.state.workspace.as_ref().unwrap().tab_count(),

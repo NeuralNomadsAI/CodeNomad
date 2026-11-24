@@ -163,10 +163,10 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
     }
-    if shortcuts::dispatch(s, event, tx) {
+    if crate::timeline::search::open_key(s, event, tx) {
         return true;
     }
-    if crate::timeline::search::open_key(s, event, tx) {
+    if shortcuts::dispatch(s, event, tx) {
         return true;
     }
     if event.mods == Mods::default()

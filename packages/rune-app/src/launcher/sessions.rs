@@ -175,18 +175,23 @@ pub fn create_blank(s: &mut State) {
         let directory = match target {
             crate::git::SessionDirectory::Root => p.path.clone(),
             crate::git::SessionDirectory::ResolveSession(session_id) => {
-                b.session_directory(&p, &session_id).await?
+                match b.session_directory(&p, &session_id).await {
+                    Ok(directory) => directory,
+                    Err(_) => return Ok(Reply::CreatePrecheckFailed),
+                }
             }
         };
         let session = b.create_untitled_session(&p, &directory).await?;
-        let (backend, _, slug) = b.bind_created_session(&p, &session.id, &directory).await?;
-        Ok(Reply::Created(
-            backend,
-            session.title,
-            slug,
-            String::new(),
-            dismiss,
-        ))
+        match b.bind_created_session(&p, &session.id, &directory).await {
+            Ok((backend, _, slug)) => Ok(Reply::Created(
+                backend,
+                session.title,
+                slug,
+                String::new(),
+                dismiss,
+            )),
+            Err(_) => Ok(Reply::CreatedUnbound(session, String::new())),
+        }
     });
 }
 pub fn create(s: &mut State, _: &mut Tx) {
@@ -212,8 +217,12 @@ pub fn create(s: &mut State, _: &mut Tx) {
     // A create request is never automatically retried. Refresh reconciles a lost response.
     l.job("rune.create_error", async move {
         let session = b.create_session(&p, &title).await?;
-        let (backend, _, slug) = b.bind_session_placed(&p, &session.id, true).await?;
-        Ok(Reply::Created(backend, session.title, slug, title, dismiss))
+        match b.bind_session_placed(&p, &session.id, true).await {
+            Ok((backend, _, slug)) => {
+                Ok(Reply::Created(backend, session.title, slug, title, dismiss))
+            }
+            Err(_) => Ok(Reply::CreatedUnbound(session, title)),
+        }
     });
 }
 pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
@@ -335,6 +344,8 @@ fn clear_conversation_only(s: &mut State) {
     s.attachments = Default::default();
     s.composer = Default::default();
     s.transcript_display.messages = Default::default();
+    s.transcript_display.pictures.clear();
+    s.status_permissions.attach(None);
     s.history_detached = false;
     s.messages.clear();
     s.chat_title.clear();

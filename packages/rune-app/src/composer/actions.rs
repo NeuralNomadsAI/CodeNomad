@@ -51,7 +51,8 @@ pub(crate) struct UnconfirmedPrompt {
 impl UnconfirmedPrompt {
     fn from_send(send: &Send) -> Self {
         let (text_len, text_hash) = hash_text(&send.edit.text);
-        let (attachments_len, attachments_hash) = hash_attachments(&send.draft.attachments);
+        let (attachments_len, attachments_hash) =
+            hash_attachments(&send.edit, &send.draft.attachments);
         Self {
             id: send.id.clone(),
             text_len,
@@ -60,9 +61,9 @@ impl UnconfirmedPrompt {
             attachments_hash,
         }
     }
-    fn matches(&self, text: &str, attachments: &[super::draft::Attachment]) -> bool {
-        (self.text_len, self.text_hash) == hash_text(text)
-            && (self.attachments_len, self.attachments_hash) == hash_attachments(attachments)
+    fn matches(&self, edit: &TextEdit, attachments: &[super::draft::Attachment]) -> bool {
+        (self.text_len, self.text_hash) == hash_text(&edit.text)
+            && (self.attachments_len, self.attachments_hash) == hash_attachments(edit, attachments)
     }
 }
 fn hash_text(text: &str) -> (usize, u64) {
@@ -71,24 +72,31 @@ fn hash_text(text: &str) -> (usize, u64) {
     text.hash(&mut hasher);
     (text.len(), hasher.finish())
 }
-fn hash_attachments(attachments: &[super::draft::Attachment]) -> (usize, u64) {
+fn hash_attachments(edit: &TextEdit, attachments: &[super::draft::Attachment]) -> (usize, u64) {
     use super::draft::Attachment;
+    use std::collections::BTreeSet;
     use std::hash::{DefaultHasher, Hash, Hasher};
+    let pasted: BTreeSet<_> = super::long_paste::active_tokens(edit)
+        .map(|(_, id)| id)
+        .collect();
     let mut hasher = DefaultHasher::new();
-    attachments.len().hash(&mut hasher);
+    let mut count = 0usize;
     for item in attachments {
         match item {
-            Attachment::Pasted { id, text } => {
+            Attachment::Pasted { id, text } if pasted.contains(id) => {
+                count += 1;
                 0u8.hash(&mut hasher);
                 id.hash(&mut hasher);
                 text.hash(&mut hasher);
             }
+            Attachment::Pasted { .. } => continue,
             Attachment::Device {
                 name,
                 mime,
                 bytes,
                 token,
             } => {
+                count += 1;
                 1u8.hash(&mut hasher);
                 name.hash(&mut hasher);
                 mime.hash(&mut hasher);
@@ -102,6 +110,7 @@ fn hash_attachments(attachments: &[super::draft::Attachment]) -> (usize, u64) {
                 uri,
                 directory,
             } => {
+                count += 1;
                 2u8.hash(&mut hasher);
                 name.hash(&mut hasher);
                 path.hash(&mut hasher);
@@ -109,21 +118,25 @@ fn hash_attachments(attachments: &[super::draft::Attachment]) -> (usize, u64) {
                 directory.hash(&mut hasher);
             }
             Attachment::Path(path) => {
+                count += 1;
                 3u8.hash(&mut hasher);
                 path.hash(&mut hasher);
             }
             Attachment::Agent(name) => {
+                count += 1;
                 4u8.hash(&mut hasher);
                 name.hash(&mut hasher);
             }
             Attachment::Skill { id, name } => {
+                count += 1;
                 5u8.hash(&mut hasher);
                 id.hash(&mut hasher);
                 name.hash(&mut hasher);
             }
         }
     }
-    (attachments.len(), hasher.finish())
+    count.hash(&mut hasher);
+    (count, hasher.finish())
 }
 struct Send {
     id: String,
@@ -352,7 +365,7 @@ pub fn reconcile(s: &mut State) {
             .iter()
             .any(|row| row.id == send.id && row.role == "user")
     }) && let Some(send) = s.composer.unconfirmed.take()
-        && send.matches(&s.draft.text, &s.composer.draft.attachments)
+        && send.matches(&s.draft, &s.composer.draft.attachments)
     {
         s.draft.clear();
         s.composer.draft = Draft::default();

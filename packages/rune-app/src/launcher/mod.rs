@@ -76,6 +76,8 @@ enum Reply {
     Opened(crate::workspace::opening::Opening, Sessions, Restored),
     Listed(Sessions, Option<String>),
     Created(Backend, String, String, String, Option<u64>),
+    CreatedUnbound(Session, String),
+    CreatePrecheckFailed,
     Selected(Vec<String>, Option<Selection>, Option<u64>),
     #[cfg(target_arch = "wasm32")]
     Reopened(crate::workspace::opening::Opening, Backend, String, String),
@@ -199,7 +201,6 @@ impl Launcher {
 
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let browser_changed = cfg!(target_arch = "wasm32") && (search::poll(s) | linked::poll(s));
-    let blocked = !can_change_session(s);
     let selected = crate::workspace::active_session(s).map(str::to_owned);
     let stream_update = s.screen.launcher_mut().and_then(|l| {
         let watch = l.catalogue_watch.as_ref()?;
@@ -230,10 +231,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         if generation != previous {
             if generation > 0 && generation % 2 == 0 {
                 relayed |= crate::workspace::set_detached_online(s, false);
+                #[cfg(target_arch = "wasm32")]
+                crate::platform::pairing::observe(s);
             } else if generation % 2 == 1 {
-                if generation > 1 || overflow {
-                    relayed |= crate::workspace::set_detached_online(s, false);
-                }
+                relayed |= crate::workspace::set_detached_online(s, false);
                 relayed |= crate::workspace::set_detached_online(s, true);
             }
         } else if overflow {
@@ -247,6 +248,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             relayed |= crate::settings::authentication_required(s, &expired);
         }
     }
+    let blocked = !can_change_session(s)
+        || s.screen
+            .launcher()
+            .is_some_and(|l| l.authentication_required);
     let Some(l) = s.screen.launcher_mut() else {
         return relayed;
     };
@@ -363,6 +368,33 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 bind(s, b, title, None, &slug, tx);
             }
         }
+        Ok(Reply::CreatedUnbound(session, submitted)) => {
+            if !submitted.is_empty() && l.title.text == submitted {
+                l.title = TextEdit::new("");
+                l.show_title = false;
+            }
+            if !l.sessions.iter().any(|row| row.id == session.id) {
+                l.sessions.insert(0, session);
+            }
+            l.error = Some("sessionList.reload.error");
+            crate::shell::notifications::emit_outcome(
+                s,
+                crate::shell::notifications::Category::Sessions,
+                None,
+                crate::strings::t("sessionList.reload.error"),
+                true,
+            );
+        }
+        Ok(Reply::CreatePrecheckFailed) => {
+            l.error = Some("sessionList.reload.error");
+            crate::shell::notifications::emit_outcome(
+                s,
+                crate::shell::notifications::Category::Sessions,
+                None,
+                crate::strings::t("sessionList.reload.error"),
+                true,
+            );
+        }
         Ok(Reply::Selected(missing, selection, dismiss)) => {
             l.sessions.retain(|row| !missing.contains(&row.id));
             if let Some(pages) = &mut l.linked.pages {
@@ -447,7 +479,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if matches!(key, "rune.restore_error" | "rune.open_error") {
                 use crate::shell::notifications::{Category, emit_outcome};
                 emit_outcome(s, Category::Projects, None, crate::strings::t(key), true);
-            } else if key == "sessionList.reload.error" {
+            } else if matches!(key, "sessionList.reload.error" | "rune.create_error") {
                 crate::shell::notifications::emit_outcome(
                     s,
                     crate::shell::notifications::Category::Sessions,
