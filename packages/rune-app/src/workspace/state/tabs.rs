@@ -81,6 +81,12 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
     if let Some(cache) = item.cache.take() {
         cache.apply(s);
         s.renew_scope();
+        if s.screen
+            .launcher()
+            .is_some_and(|l| l.rebind_after_send.is_some() && !l.authentication_required)
+        {
+            s.show_chat();
+        }
         if super::active_session(s).is_none()
             && s.screen
                 .launcher()

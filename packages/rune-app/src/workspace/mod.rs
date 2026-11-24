@@ -28,10 +28,10 @@ pub(crate) use state::{
 #[cfg(target_arch = "wasm32")]
 pub(crate) use state::{active_workspace, poll_cached_notifications};
 pub(crate) use state::{
-    deliver_detached_events, has_detached_panels, has_unopened_detached_panels,
-    mission_confirmation, mission_event, mission_observation_project, mission_panel,
-    mission_supported, missions_composing, reconcile_detached_online, right_panel_tab,
-    set_detached_online, set_right_panel_tab, suspend_missions,
+    deliver_detached_events, detached_workspace_ids, has_detached_panels,
+    has_unopened_detached_panels, mission_confirmation, mission_event, mission_observation_project,
+    mission_panel, mission_supported, missions_composing, reconcile_detached_online,
+    right_panel_tab, set_detached_online, set_right_panel_tab, suspend_missions,
 };
 
 use crate::composer::draft_storage::SavedParts;

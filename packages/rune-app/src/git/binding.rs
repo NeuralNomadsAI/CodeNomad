@@ -166,17 +166,17 @@ fn connect(s: &mut State, backend: &Backend, placement: Option<&str>) {
 }
 
 pub(crate) fn detach_session(s: &mut State) {
-    let stream_online = s
-        .screen
-        .launcher()
-        .is_some_and(crate::launcher::Launcher::workspace_stream_online);
     let backend = s.screen.launcher().and_then(|launcher| {
         let mut backend = launcher.connection.clone()?;
         backend.workspace.clone_from(&launcher.project.as_ref()?.id);
         backend.session.clear();
         Some(backend)
     });
-    let is_online = backend.is_some() && stream_online;
+    let is_online = backend.as_ref().is_some_and(|backend| {
+        s.screen
+            .launcher()
+            .is_some_and(|launcher| launcher.workspace_stream_online_for(&backend.workspace))
+    });
     if let Some(files) = &mut s.files {
         files.detach_session();
         files.online(is_online);
@@ -197,10 +197,6 @@ pub(crate) fn detach_session(s: &mut State) {
 }
 
 pub(crate) fn project_opened(s: &mut State) {
-    let stream_online = s
-        .screen
-        .launcher()
-        .is_some_and(crate::launcher::Launcher::workspace_stream_online);
     let Some(mut backend) = s.screen.launcher().and_then(|launcher| {
         let mut backend = launcher.connection.clone()?;
         backend.workspace.clone_from(&launcher.project.as_ref()?.id);
@@ -208,6 +204,10 @@ pub(crate) fn project_opened(s: &mut State) {
     }) else {
         return;
     };
+    let stream_online = s
+        .screen
+        .launcher()
+        .is_some_and(|launcher| launcher.workspace_stream_online_for(&backend.workspace));
     backend.session.clear();
     backend.session_directory = None;
     crate::files::bind(s, &backend);

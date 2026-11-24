@@ -68,7 +68,7 @@ pub struct Launcher {
     pub openings: crate::workspace::opening::Openings,
     result: Option<Receiver<Result<Reply>>>,
     detached_reconcile: Option<(u64, HashSet<String>, Receiver<Option<Vec<Project>>>)>,
-    detached_reconcile_failed: bool,
+    failed_detached_workspaces: HashSet<String>,
     pub(crate) rebind_after_send: Option<String>,
     selection_ticket: Option<u64>,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
@@ -79,7 +79,7 @@ enum Reply {
     Connected(Backend, Vec<Project>, String),
     Opened(crate::workspace::opening::Opening, Sessions, Restored),
     Listed(Sessions, Option<String>),
-    Created(Backend, String, String, String, Option<u64>),
+    Created(Backend, String, String, String, Option<u64>, Option<u64>),
     CreatedUnbound(Session, String),
     CreatePrecheckFailed,
     CreateUncertainLinked,
@@ -104,9 +104,17 @@ impl Launcher {
     pub fn blocks_prompt(&self) -> bool {
         self.pending && !self.listing
     }
+    #[cfg(test)]
     pub(crate) fn workspace_stream_online(&self) -> bool {
         self.detached_reconcile.is_none()
-            && !self.detached_reconcile_failed
+            && self.failed_detached_workspaces.is_empty()
+            && (self.catalogue_watch.is_none()
+                || self.workspace_stream_generation == 0
+                || self.workspace_stream_generation % 2 == 1)
+    }
+    pub(crate) fn workspace_stream_online_for(&self, workspace_id: &str) -> bool {
+        self.detached_reconcile.is_none()
+            && !self.failed_detached_workspaces.contains(workspace_id)
             && (self.catalogue_watch.is_none()
                 || self.workspace_stream_generation == 0
                 || self.workspace_stream_generation % 2 == 1)
@@ -179,7 +187,7 @@ impl Launcher {
             openings: Default::default(),
             result: None,
             detached_reconcile: None,
-            detached_reconcile_failed: false,
+            failed_detached_workspaces: HashSet::new(),
             rebind_after_send: None,
             selection_ticket: None,
             boot,
@@ -218,7 +226,7 @@ fn spawn_detached_reconcile(l: &mut Launcher, generation: u64) {
     };
     let (out, input) = bounded(1);
     l.detached_reconcile = Some((generation, HashSet::new(), input));
-    l.detached_reconcile_failed = false;
+    l.failed_detached_workspaces.clear();
     let wake = l.wake.clone();
     crate::platform::spawn(async move {
         let mut delay_ms = 1_000u64;
@@ -259,7 +267,7 @@ pub(super) fn retry_detached_reconcile(s: &mut State) {
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
-    if l.detached_reconcile_failed
+    if !l.failed_detached_workspaces.is_empty()
         && l.detached_reconcile.is_none()
         && !l.authentication_required
         && l.workspace_stream_generation % 2 == 1
@@ -317,7 +325,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if generation > 0 && generation % 2 == 0 {
                 if let Some(l) = s.screen.launcher_mut() {
                     l.detached_reconcile = None;
-                    l.detached_reconcile_failed = false;
+                    l.failed_detached_workspaces.clear();
                 }
                 relayed |= crate::workspace::set_detached_online(s, false);
             } else if generation % 2 == 1 {
@@ -375,20 +383,38 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             .detached_reconcile
             .take()
             .map(|(_, opened_after, _)| opened_after)?;
-        if reconcile_generation != current {
-            return None;
-        }
+        (reconcile_generation == current).then_some((opened_after, result))
+    });
+    if let Some((opened_after, result)) = reconciled {
         match result {
-            Some(projects) => Some((opened_after, projects)),
+            Some(projects) => {
+                let live: HashSet<&str> = projects.iter().map(|p| p.id.as_str()).collect();
+                relayed |=
+                    crate::workspace::reconcile_detached_online(s, &opened_after, Some(&live));
+            }
             None => {
-                l.detached_reconcile_failed = true;
-                None
+                let failed: HashSet<String> = crate::workspace::detached_workspace_ids(s)
+                    .into_iter()
+                    .filter(|id| !opened_after.contains(id))
+                    .collect();
+                if let Some(l) = s.screen.launcher_mut() {
+                    l.failed_detached_workspaces.extend(failed);
+                }
+                if !opened_after.is_empty() {
+                    relayed |= crate::workspace::reconcile_detached_online(s, &opened_after, None);
+                }
             }
         }
-    });
-    if let Some((opened_after, projects)) = reconciled {
-        let live: HashSet<&str> = projects.iter().map(|p| p.id.as_str()).collect();
-        relayed |= crate::workspace::reconcile_detached_online(s, &opened_after, &live);
+    }
+    if s.screen
+        .launcher()
+        .is_some_and(|l| !l.failed_detached_workspaces.is_empty())
+    {
+        let active_detached = crate::workspace::detached_workspace_ids(s);
+        if let Some(l) = s.screen.launcher_mut() {
+            l.failed_detached_workspaces
+                .retain(|id| active_detached.contains(id));
+        }
     }
     let deferred_rebind = s.screen.launcher().and_then(|l| {
         let id = l.rebind_after_send.as_ref()?;
@@ -445,7 +471,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.catalogue_watch = None;
             l.workspace_stream_generation = 0;
             l.detached_reconcile = None;
-            l.detached_reconcile_failed = false;
+            l.failed_detached_workspaces.clear();
             l.rebind_after_send = None;
             l.connection = Some(b);
             l.server_id = Some(server_id);
@@ -498,6 +524,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.creation_uncertain = false;
             l.creation_uncertain_linked = false;
             l.rebind_after_send = None;
+            l.failed_detached_workspaces.remove(&project.id);
             if let Some((_, opened_after, _)) = &mut l.detached_reconcile {
                 opened_after.insert(project.id.clone());
             }
@@ -545,12 +572,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 linked::load(s);
             }
         }
-        Ok(Reply::Created(b, title, slug, submitted, dismiss)) => {
+        Ok(Reply::Created(b, title, slug, submitted, dismiss, ticket)) => {
             if !submitted.is_empty() && l.title.text == submitted {
                 l.title = TextEdit::new("");
                 l.show_title = false;
             }
-            if blocked {
+            let superseded = ticket.is_some_and(|t| t != s.notifications.navigation_ticket());
+            if blocked || superseded {
                 l.sessions.insert(
                     0,
                     Session {
@@ -593,7 +621,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         Ok(Reply::CreateUncertainLinked) => {
             l.creation_uncertain = true;
             l.creation_uncertain_linked = true;
-            l.linked.cancel();
+            l.linked.reset();
             l.error = Some("rune.create_error");
             crate::shell::notifications::emit_outcome(
                 s,
@@ -648,6 +676,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         #[cfg(target_arch = "wasm32")]
         Ok(Reply::Reopened(opening, backend, title, slug)) => {
             if !l.authentication_required {
+                let id = opening.project.id.clone();
+                l.failed_detached_workspaces.remove(&id);
+                if let Some((_, opened_after, _)) = &mut l.detached_reconcile {
+                    opened_after.insert(id);
+                }
                 reopen::apply(s, opening, backend, title, &slug)
             }
         }

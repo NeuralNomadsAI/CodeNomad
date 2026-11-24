@@ -22,10 +22,10 @@ pub use panel_state::{
     capture_files_mode, file_wrap, files_tab, panel_width, restore_files_mode, toggle_file_wrap,
 };
 pub(crate) use panel_state::{
-    deliver_detached_events, has_detached_panels, has_unopened_detached_panels,
-    mission_confirmation, mission_event, mission_observation_project, mission_panel,
-    mission_supported, missions_composing, reconcile_detached_online, right_panel_tab,
-    set_detached_online, set_right_panel_tab, suspend_missions,
+    deliver_detached_events, detached_workspace_ids, has_detached_panels,
+    has_unopened_detached_panels, mission_confirmation, mission_event, mission_observation_project,
+    mission_panel, mission_supported, missions_composing, reconcile_detached_online,
+    right_panel_tab, set_detached_online, set_right_panel_tab, suspend_missions,
 };
 pub use polling::{poll, status};
 pub use strip::strip;
@@ -368,7 +368,7 @@ pub(crate) fn renew_connection(s: &mut State) {
         return;
     };
     if let Some(ui) = &mut s.workspace {
-        for item in &mut ui.entries {
+        for (index, item) in ui.entries.iter_mut().enumerate() {
             if let Some(backend) = &mut item.binding
                 && backend.base == current.base
                 && backend.client.server_identity().is_some()
@@ -376,6 +376,13 @@ pub(crate) fn renew_connection(s: &mut State) {
             {
                 backend.client = current.client.clone();
                 backend.client_id.clone_from(&current.client_id);
+                if index != ui.active
+                    && item.cache.is_some()
+                    && let Tab::Workspace(w) = &item.saved
+                    && let Some(id) = &w.active_session_id
+                {
+                    item.rebind_after_send = Some(id.clone());
+                }
             }
         }
     }

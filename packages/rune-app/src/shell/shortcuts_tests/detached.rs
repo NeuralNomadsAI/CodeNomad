@@ -363,13 +363,13 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
         assert!(crate::workspace::reconcile_detached_online(
             &mut rt.state,
             &opened_after,
-            &empty,
+            Some(&empty),
         ));
         assert!(!rt.state.files.as_ref().unwrap().stopped);
         assert!(crate::workspace::reconcile_detached_online(
             &mut rt.state,
             &no_opened,
-            &empty,
+            Some(&empty),
         ));
         assert!(rt.state.files.as_ref().unwrap().stopped);
 
@@ -928,5 +928,35 @@ fn message_actions_guards_unsupported_multi_overrides_and_shadowed_tooltips() {
         });
         settle(&mut rt);
         assert!(!crate::timeline::search::is_open(&rt.state));
+
+        // Repeat of a shadowed session-search shortcut is consumed and does not fall through to instance-next.
+        settings::fixture_shortcuts(
+            &rt.state,
+            json!({"instance-next": [{"key": "f", "mod": true}]}),
+        );
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+        rt.repeat_key(KeyEvent {
+            key: Key::Command('f'),
+            mods: primary_mods(false),
+        });
+        settle(&mut rt);
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_index(), 0);
+        assert!(!crate::timeline::search::is_open(&rt.state));
+
+        // Opening search then closing the session closes search so Escape does not hit an invisible search overlay.
+        crate::workspace::bound(&mut rt.state, &bound);
+        send_key(&mut rt, Key::Command('f'), primary_mods(false));
+        assert!(crate::timeline::search::is_open(&rt.state));
+        settings::fixture_shortcuts(&rt.state, json!({}));
+        send_key(&mut rt, Key::Command('w'), primary_mods(true));
+        assert!(rt.state.screen.is_launcher());
+        assert!(!crate::timeline::search::is_open(&rt.state));
+        rt.update(|s, tx| {
+            let esc = KeyEvent {
+                key: Key::Escape,
+                mods: Mods::default(),
+            };
+            assert!(!crate::timeline::search::close_key(s, &esc, tx));
+        });
     });
 }

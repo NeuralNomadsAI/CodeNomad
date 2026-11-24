@@ -372,7 +372,7 @@ pub(crate) fn has_unopened_detached_panels(
 pub(crate) fn reconcile_detached_online(
     s: &mut State,
     opened_after: &std::collections::HashSet<String>,
-    live: &std::collections::HashSet<&str>,
+    live: Option<&std::collections::HashSet<&str>>,
 ) -> bool {
     let mut changed = false;
     if s.screen.is_launcher() && s.incoming.is_none() {
@@ -382,25 +382,45 @@ pub(crate) fn reconcile_detached_online(
             .as_ref()
             .map(|git| git.workspace_id().to_owned())
         {
-            if !opened_after.contains(workspace_id.as_str())
-                && !live.contains(workspace_id.as_str())
-            {
-                crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
-            } else {
-                crate::git::online(s, true);
+            match live {
+                Some(live)
+                    if !opened_after.contains(workspace_id.as_str())
+                        && !live.contains(workspace_id.as_str()) =>
+                {
+                    crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
+                    changed = true;
+                }
+                Some(_) => {
+                    crate::git::online(s, true);
+                    changed = true;
+                }
+                None if opened_after.contains(workspace_id.as_str()) => {
+                    crate::git::online(s, true);
+                    changed = true;
+                }
+                None => {}
             }
-            changed = true;
         }
         if let Some(files) = &mut s.files {
             let workspace_id = files.workspace_id().to_owned();
-            if !opened_after.contains(workspace_id.as_str())
-                && !live.contains(workspace_id.as_str())
-            {
-                files.event(WorkspaceEvent::Stopped { workspace_id });
-            } else {
-                files.online(true);
+            match live {
+                Some(live)
+                    if !opened_after.contains(workspace_id.as_str())
+                        && !live.contains(workspace_id.as_str()) =>
+                {
+                    files.event(WorkspaceEvent::Stopped { workspace_id });
+                    changed = true;
+                }
+                Some(_) => {
+                    files.online(true);
+                    changed = true;
+                }
+                None if opened_after.contains(workspace_id.as_str()) => {
+                    files.online(true);
+                    changed = true;
+                }
+                None => {}
             }
-            changed = true;
         }
     }
     if let Some(ui) = &mut s.workspace {

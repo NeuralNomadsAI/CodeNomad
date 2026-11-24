@@ -92,7 +92,7 @@ impl Cache {
     pub(super) fn reconcile_detached_online(
         &mut self,
         opened_after: &std::collections::HashSet<String>,
-        live: &std::collections::HashSet<&str>,
+        live: Option<&std::collections::HashSet<&str>>,
     ) -> bool {
         if !self.is_detached() {
             return false;
@@ -100,23 +100,45 @@ impl Cache {
         let mut changed = false;
         if let Some(git) = &mut self.git.owner {
             let id = git.workspace_id();
-            if !opened_after.contains(id) && !live.contains(id) {
-                let workspace_id = id.to_owned();
-                git.event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
-            } else {
-                git.online(true);
+            match live {
+                Some(live) if !opened_after.contains(id) && !live.contains(id) => {
+                    let workspace_id = id.to_owned();
+                    git.event(&codenomad_client::transport::WorkspaceEvent::Stopped {
+                        workspace_id,
+                    });
+                    changed = true;
+                }
+                Some(_) => {
+                    git.online(true);
+                    changed = true;
+                }
+                None if opened_after.contains(id) => {
+                    git.online(true);
+                    changed = true;
+                }
+                None => {}
             }
-            changed = true;
         }
         if let Some(files) = &mut self.files {
             let id = files.workspace_id();
-            if !opened_after.contains(id) && !live.contains(id) {
-                let workspace_id = id.to_owned();
-                files.event(codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
-            } else {
-                files.online(true);
+            match live {
+                Some(live) if !opened_after.contains(id) && !live.contains(id) => {
+                    let workspace_id = id.to_owned();
+                    files.event(codenomad_client::transport::WorkspaceEvent::Stopped {
+                        workspace_id,
+                    });
+                    changed = true;
+                }
+                Some(_) => {
+                    files.online(true);
+                    changed = true;
+                }
+                None if opened_after.contains(id) => {
+                    files.online(true);
+                    changed = true;
+                }
+                None => {}
             }
-            changed = true;
         }
         changed
     }

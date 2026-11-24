@@ -593,6 +593,48 @@ fn failed_session_selection_reply_cannot_hide_authentication_required() {
     });
     assert!(rt.state.screen.is_launcher());
     assert!(rt.state.screen.launcher().unwrap().authentication_required);
+
+    // Reply::Created whose navigation ticket was superseded (e.g. a newer Files preview opened)
+    // inserts the created session into the list without stealing focus from the current screen.
+    let old_ticket = rt.state.notifications.navigation_ticket();
+    rt.state.notifications.supersede_navigation();
+    let (created_out, created_in) = bounded(1);
+    {
+        let l = rt.state.screen.launcher_mut().unwrap();
+        l.authentication_required = false;
+        l.result = Some(created_in);
+        l.pending = true;
+    }
+    let created_backend = Backend {
+        workspace: "proj-1".into(),
+        session: "ses-new".into(),
+        ..backend
+    };
+    assert!(
+        created_out
+            .try_send(Ok(Reply::Created(
+                created_backend,
+                "New".into(),
+                "root".into(),
+                String::new(),
+                None,
+                Some(old_ticket),
+            )))
+            .is_ok()
+    );
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(rt.state.screen.is_launcher());
+    assert!(
+        rt.state
+            .screen
+            .launcher()
+            .unwrap()
+            .sessions
+            .iter()
+            .any(|row| row.id == "ses-new")
+    );
 }
 
 #[test]

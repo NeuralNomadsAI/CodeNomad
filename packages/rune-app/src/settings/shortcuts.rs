@@ -284,6 +284,9 @@ fn logical_command(
             |key| physical_us_char(key) == Some(typed),
         )
     {
+        if event.mods.shift && base == Some('i') && typed != 'i' {
+            return 'İ';
+        }
         return base
             .filter(|c| {
                 !c.is_ascii() && !(event.mods.shift && c.to_uppercase().all(|u| u.is_ascii()))
@@ -647,4 +650,26 @@ fn turkish_shifted_i_does_not_substitute_dotless_base() {
     };
     assert!(matches(dotted_i, &shifted_dotted, None, None));
     assert!(matches(dotted_i_solid, &shifted_dotted, None, None));
+    if cfg!(not(target_os = "macos")) {
+        let ctrl_shift_dotted_i =
+            decode(&serde_json::json!({"key": "İ", "mod": true, "shift": true})).unwrap();
+        let ctrl_shift_quote =
+            decode(&serde_json::json!({"key": "'", "mod": true, "shift": true})).unwrap();
+        let turkish_quote_event = KeyEvent {
+            key: Key::Command('\''),
+            mods: shift_ctrl,
+        };
+        assert!(matches(
+            ctrl_shift_dotted_i,
+            &turkish_quote_event,
+            Some(PhysicalKeyCode::Quote),
+            Some('i'),
+        ));
+        assert!(!matches(
+            ctrl_shift_quote,
+            &turkish_quote_event,
+            Some(PhysicalKeyCode::Quote),
+            Some('i'),
+        ));
+    }
 }

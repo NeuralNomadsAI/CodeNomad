@@ -177,6 +177,7 @@ pub fn create_blank(s: &mut State) {
         return;
     };
     s.notifications.supersede_navigation();
+    let ticket = s.notifications.navigation_ticket();
     crate::timeline::search::cancel_destination(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;
@@ -205,6 +206,7 @@ pub fn create_blank(s: &mut State) {
                 slug,
                 String::new(),
                 dismiss,
+                Some(ticket),
             )),
             Err(_) => Ok(Reply::CreatedUnbound(session, String::new())),
         }
@@ -226,6 +228,7 @@ pub fn create(s: &mut State, _: &mut Tx) {
     };
     let title = l.title.text.clone();
     s.notifications.supersede_navigation();
+    let ticket = s.notifications.navigation_ticket();
     crate::timeline::search::cancel_destination(s);
     let Some(l) = s.screen.launcher_mut() else {
         return;
@@ -234,9 +237,14 @@ pub fn create(s: &mut State, _: &mut Tx) {
     l.job("rune.create_error", async move {
         let session = b.create_session(&p, &title).await?;
         match b.bind_session_placed(&p, &session.id, true).await {
-            Ok((backend, _, slug)) => {
-                Ok(Reply::Created(backend, session.title, slug, title, dismiss))
-            }
+            Ok((backend, _, slug)) => Ok(Reply::Created(
+                backend,
+                session.title,
+                slug,
+                title,
+                dismiss,
+                Some(ticket),
+            )),
             Err(_) => Ok(Reply::CreatedUnbound(session, title)),
         }
     });
@@ -402,14 +410,15 @@ pub fn close_session(s: &mut State, tx: &mut Tx) -> bool {
         return false;
     }
     s.notifications.supersede_navigation();
-    crate::timeline::search::cancel_destination(s);
+    crate::timeline::search::close(s);
     clear_conversation_only(s);
     s.show_launcher();
     crate::git::detach_session(s);
-    let stream_online = s
-        .screen
-        .launcher()
-        .is_some_and(Launcher::workspace_stream_online);
+    let stream_online = s.screen.launcher().is_some_and(|l| {
+        l.project
+            .as_ref()
+            .is_some_and(|p| l.workspace_stream_online_for(&p.id))
+    });
     if let Some(files) = &mut s.files {
         files.online(false);
         if stream_online {

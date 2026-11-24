@@ -161,7 +161,7 @@ pub(crate) fn close_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
 }
 
 pub(crate) fn open_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
-    if tx.key_repeat() || crate::shell::shortcut_blocked(s, event, tx) {
+    if crate::shell::shortcut_blocked(s, event, tx) {
         return false;
     }
     if state(s).open && matches!(event.key, Key::Text(_)) && (!event.mods.alt || event.mods.ctrl) {
@@ -173,9 +173,11 @@ pub(crate) fn open_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     .is_some()
         && visible(s)
     {
-        state(s).open = true;
-        state(s).query.focused = true;
-        tx.focus_when_shown(FOCUS, true);
+        if !tx.key_repeat() {
+            state(s).open = true;
+            state(s).query.focused = true;
+            tx.focus_when_shown(FOCUS, true);
+        }
         return true;
     }
     false

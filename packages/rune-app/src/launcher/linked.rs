@@ -43,8 +43,10 @@ impl Linked {
     pub fn pending(&self) -> bool {
         self.job.is_some()
     }
-    pub(super) fn cancel(&mut self) {
+    pub(super) fn reset(&mut self) {
         self.job = None;
+        self.pages = None;
+        self.failed = false;
     }
 }
 
@@ -153,7 +155,7 @@ pub(super) fn poll(s: &mut State) -> bool {
         Ok((pages, complete)) => {
             l.linked.pages = Some(pages);
             l.linked.failed = !complete;
-            if complete {
+            if complete && l.creation_uncertain_linked {
                 l.creation_uncertain = false;
                 l.creation_uncertain_linked = false;
             }
