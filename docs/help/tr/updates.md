@@ -34,7 +34,7 @@ Kurulum uygulamayı değiştirmeden/yeniden başlatmadan önce tüm uygulama pen
 
 ## Bağımsız bir sunucuyu güncelleme {#standalone-update}
 
-1.1 arayüzü, Görevler API'leri için CodeNomad sunucusunun **1.1.0 veya daha yeni** olmasını gerektirir. 1.0.x sunucuları uyumsuz arayüzü indirmek yerine önbellekteki veya birlikte gelen arayüzü korur.
+1.2 arayüzünde konuşma bazında izinler için CodeNomad sunucusunun **1.2.0 veya daha yeni** olması gerekir. Eski sunucular önbellekteki veya birlikte gelen arayüzü korur.
 
 1. CodeNomad'i nasıl başlattığınızı belirleyin ve bu arka uca bağlı tüm çalışmaları kaydedin.
 2. Bu CodeNomad sunucu işlemini normal işlem/hizmet kontrolünü kullanarak durdurun.

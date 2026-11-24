@@ -34,7 +34,7 @@ installation ले app बदल्नु/restart अघि सबै app windo
 
 ## standalone server update {#standalone-update}
 
-1.1 इन्टरफेसका Missions API का लागि CodeNomad server **1.1.0 वा पछिल्लो** चाहिन्छ। 1.0.x server ले नमिल्ने इन्टरफेस डाउनलोड गर्नुको सट्टा cache मा भएको वा साथमा आएको इन्टरफेस राख्छन्।
+1.2 इन्टरफेसमा कुराकानीअनुसार अनुमति मिलाउन CodeNomad server **1.2.0 वा पछिल्लो** चाहिन्छ। पुराना server ले cache मा भएको वा साथमा आएको इन्टरफेस राख्छन्।
 
 1. CodeNomad कसरी launch भयो पहिचान गरी backend मा निर्भर काम बचत गर्नुहोस्।
 2. सामान्य process/service नियन्त्रणबाट त्यो CodeNomad server process रोक्नुहोस्।
