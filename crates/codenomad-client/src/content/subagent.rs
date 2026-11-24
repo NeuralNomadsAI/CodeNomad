@@ -8,7 +8,7 @@ pub struct SubagentReport {
     pub created: u64,
 }
 
-pub(super) fn decode(native: &Value) -> Option<SubagentReport> {
+pub(crate) fn decode(native: &Value) -> Option<SubagentReport> {
     let raw = native["text"].as_str()?.trim_end();
     let (header, body) = raw.split_once('\n')?;
     let (closing, rest) = if let Some(rest) = header.strip_prefix("<subagent sessionID=\"") {

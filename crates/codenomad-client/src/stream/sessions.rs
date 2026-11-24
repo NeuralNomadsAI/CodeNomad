@@ -127,7 +127,15 @@ pub(super) async fn relay(
         && native["data"]["sessionID"] == b.session
     {
         let version = state.version.fetch_add(1, SeqCst) + 1;
-        out.send(Input::Hint(epoch, version)).await?;
+        if native["data"]["text"]
+            .as_str()
+            .is_some_and(|t| t.len() <= 256 * 1024)
+        {
+            out.send(Input::Native(epoch, version, native.clone()))
+                .await?;
+        } else {
+            out.send(Input::Hint(epoch, version)).await?;
+        }
     } else if own
         && value["type"] == "instance.event"
         && !matches!(

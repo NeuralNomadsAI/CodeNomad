@@ -11,6 +11,7 @@ mod usage;
 mod user;
 pub use reasoning::{Reasoning, ReasoningEvent, apply_window as apply_reasoning};
 pub use subagent::SubagentReport;
+pub(crate) use subagent::decode as decode_subagent_report;
 pub use tool_live::install as install_tool;
 pub(crate) use tool_live::{Fit as ToolFit, apply_at as apply_tool};
 
@@ -355,48 +356,59 @@ impl Tool {
     }
 
     pub fn with_budget(&self, budget: usize) -> Self {
-        let mut copy = self.clone();
-        if copy.retained_bytes() <= budget {
-            return copy;
+        if self.retained_bytes() <= budget {
+            return self.clone();
         }
-        let recompute = |tool: &mut Tool| {
-            let (in_n, in_b) = resident_json(&tool.input);
-            let (md_n, md_b) = resident_json(&tool.metadata);
-            tool.bytes = tool.id.len()
-                + tool.name.len()
-                + tool.status.len()
-                + size_of::<Tool>()
-                + in_n
-                + in_b
-                + md_n;
-            tool.output_bytes = md_b + tool.error.len() + tool.output.len();
+        let base_bytes = self.id.len() + self.name.len() + self.status.len() + size_of::<Tool>();
+        let mut rem = budget.saturating_sub(base_bytes);
+
+        let take_str = |src: &str, rem: &mut usize| -> String {
+            if src.is_empty() || *rem == 0 {
+                return String::new();
+            }
+            let keep = src.len().min(*rem);
+            let end = src.floor_char_boundary(keep);
+            *rem -= end;
+            src[..end].to_owned()
         };
-        if copy.retained_bytes() > budget && !copy.pictures.is_empty() {
-            copy.pictures.clear();
+
+        let (in_n, in_b) = resident_json(&self.input);
+        let input = if in_n.saturating_add(in_b) <= rem {
+            rem -= in_n + in_b;
+            self.input.clone()
+        } else {
+            Value::Null
+        };
+
+        let (md_n, md_b) = resident_json(&self.metadata);
+        let metadata = if md_n.saturating_add(md_b) <= rem {
+            rem -= md_n + md_b;
+            self.metadata.clone()
+        } else {
+            Value::Null
+        };
+
+        let error = take_str(&self.error, &mut rem);
+        let output = take_str(&self.output, &mut rem);
+
+        let (in_n, in_b) = resident_json(&input);
+        let (md_n, md_b) = resident_json(&metadata);
+        Self {
+            part_index: self.part_index,
+            id: self.id.clone(),
+            name: self.name.clone(),
+            status: self.status.clone(),
+            input,
+            metadata,
+            output_bytes: md_b + error.len() + output.len(),
+            output,
+            error,
+            started: self.started,
+            message_created: self.message_created,
+            ended: self.ended,
+            pictures: Vec::new(),
+            bytes: base_bytes + in_n + in_b + md_n,
         }
-        if copy.retained_bytes() > budget && !copy.output.is_empty() {
-            let excess = copy.retained_bytes().saturating_sub(budget);
-            let keep = copy.output.len().saturating_sub(excess);
-            let end = copy.output.floor_char_boundary(keep);
-            copy.output.truncate(end);
-            recompute(&mut copy);
-        }
-        if copy.retained_bytes() > budget && !copy.error.is_empty() {
-            let excess = copy.retained_bytes().saturating_sub(budget);
-            let keep = copy.error.len().saturating_sub(excess);
-            let end = copy.error.floor_char_boundary(keep);
-            copy.error.truncate(end);
-            recompute(&mut copy);
-        }
-        if copy.retained_bytes() > budget && !copy.metadata.is_null() {
-            copy.metadata = Value::Null;
-            recompute(&mut copy);
-        }
-        if copy.retained_bytes() > budget && !copy.input.is_null() {
-            copy.input = Value::Null;
-            recompute(&mut copy);
-        }
-        copy
     }
 
     fn media_bytes(&self) -> usize {

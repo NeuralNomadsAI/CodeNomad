@@ -322,6 +322,31 @@ pub(crate) async fn run_with_reading(
                 if v <= reader.fence || !reader.seen.insert(&native) {
                     continue;
                 }
+                if kind == "session.synthetic" {
+                    reader.dirty = true;
+                    reader.quiet = Instant::now() + Duration::from_millis(100);
+                    if !reader.historical
+                        && let Some(Event::Message(row)) = crate::wire::decode_native(&native)
+                        && reader.resident.len() < history::MAX_ROWS
+                        && reader.known.insert(row.id.clone())
+                    {
+                        reader.resident.push(row.clone().into());
+                        if history::check(&reader.resident).is_err() {
+                            reader.resident.pop();
+                            reader.known.remove(&row.id);
+                        } else {
+                            reader_event(
+                                reading,
+                                reader.generation,
+                                &out,
+                                &wake,
+                                Event::Message(row),
+                            )
+                            .await;
+                        }
+                    }
+                    continue;
+                }
                 if reader.historical {
                     continue;
                 }

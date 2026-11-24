@@ -268,7 +268,6 @@ pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Opt
         let path = string(file, &["relativePath", "filePath", "file", "path"]);
         let key = format!("{key}-patch-{index}");
         let label = label(s, file, display_idx);
-        let copy_text = file_copy_text(Some(s), file);
         let heading = if super::super::links::native_file(s, path).is_some() {
             let path = path.to_owned();
             layout::button(
@@ -296,8 +295,8 @@ pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Opt
         let mut units = patch.encode_utf16();
         let used = units.by_ref().take(remaining).count();
         let complete = units.next().is_none();
-        let fallback_copy = copy_text.clone();
         let fallback = || {
+            let snapshot = tool.clone();
             col()
                 .full_width()
                 .separate(Space::Sm)
@@ -307,7 +306,9 @@ pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Opt
                             t("toolCall.diff.copyPatch"),
                             screen::action_tx(&s.input_scope, move |s, tx| {
                                 s.transcript_display.children.cancel_copy();
-                                tx.copy(fallback_copy.as_str());
+                                if let Some(file) = files(&snapshot).get(index) {
+                                    tx.copy(self::patch(file));
+                                }
                             }),
                         )
                         .key(format!("{key}-copy-patch")),
@@ -323,16 +324,7 @@ pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Opt
         let body =
             if complete && !message.starts_with("child:") && tool_diff::structured_candidate(patch)
             {
-                tool_diff::body_with_copy(
-                    s,
-                    message,
-                    &key,
-                    tool,
-                    patch,
-                    path,
-                    Some(copy_text),
-                    fallback,
-                )
+                tool_diff::body(s, message, &key, tool, patch, path, fallback)
             } else {
                 fallback()
             };

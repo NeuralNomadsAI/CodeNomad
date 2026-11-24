@@ -84,7 +84,7 @@ fn cursor_fits(v: &Value) -> bool {
     serde_json::to_writer(Cap(4096), v).is_ok()
 }
 
-fn cursor(v: &Value, kind: &str) -> Result<Option<Value>> {
+pub(crate) fn cursor(v: &Value, kind: &str) -> Result<Option<Value>> {
     if v.is_null() {
         return Ok(None);
     }

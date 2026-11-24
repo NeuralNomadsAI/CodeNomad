@@ -57,13 +57,30 @@ pub(super) struct ReportCopyKey {
 }
 
 #[derive(Clone, PartialEq, Eq)]
+pub(super) struct ToolCopyKey {
+    pub key: String,
+    pub parent: Option<String>,
+    pub child: String,
+    pub row_id: String,
+    pub call: String,
+    pub section: u8,
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub(super) enum CopyKey {
     Report(ReportCopyKey),
+    ToolSection(ToolCopyKey),
     Steps {
         key: String,
         parent: Option<String>,
         child: String,
     },
+}
+
+enum NavOutcome {
+    Verified(String),
+    Missing,
+    Error,
 }
 
 #[derive(Clone, PartialEq)]
@@ -81,6 +98,7 @@ struct Snapshot {
     steps: Steps,
     steps_truncated: bool,
     steps_incomplete: bool,
+    truncated_tools: HashSet<(String, String)>,
     reports: Reports,
 }
 
@@ -100,6 +118,7 @@ enum ReportCopy {
     Loading {
         key: CopyKey,
         epoch: u64,
+        scope: Rc<()>,
         baseline: Rc<Cell<Option<u64>>>,
         lease: Option<Weak<()>>,
         _cancel: codenomad_client::Sender<()>,
@@ -158,11 +177,7 @@ pub(crate) struct Children {
     waiting: VecDeque<(ChildKey, String, Weak<()>)>,
     report_copy: ReportCopy,
     expanded_report: ReportExpand,
-    pending_nav: Option<(
-        ChildKey,
-        codenomad_client::Sender<()>,
-        Receiver<Option<String>>,
-    )>,
+    pending_nav: Option<(ChildKey, codenomad_client::Sender<()>, Receiver<NavOutcome>)>,
 }
 
 struct Watcher {
@@ -269,6 +284,8 @@ impl Children {
                 .strip_prefix("copy-")
                 .and_then(|rest| {
                     rest.strip_suffix("-output")
+                        .or_else(|| rest.strip_suffix("-input"))
+                        .or_else(|| rest.strip_suffix("-error"))
                         .or_else(|| rest.strip_suffix("-steps"))
                 })
                 .is_some_and(|card| card == key || card.starts_with(&prefix))
@@ -278,11 +295,13 @@ impl Children {
             | ReportCopy::Ready { key: current, .. }
             | ReportCopy::Failed { key: current } => match current {
                 CopyKey::Report(k) => matches_card(&k.key),
+                CopyKey::ToolSection(k) => matches_card(&k.key),
                 CopyKey::Steps { key: k, .. } => matches_card(k),
             },
             #[cfg(target_arch = "wasm32")]
             ReportCopy::Writing { key: current, .. } => match current {
                 CopyKey::Report(k) => matches_card(&k.key),
+                CopyKey::ToolSection(k) => matches_card(&k.key),
                 CopyKey::Steps { key: k, .. } => matches_card(k),
             },
             ReportCopy::Idle => false,
@@ -305,11 +324,20 @@ impl Children {
     fn card_lease(&self, ui_key: &str) -> Option<Weak<()>> {
         let card = ui_key.strip_prefix("copy-").and_then(|rest| {
             rest.strip_suffix("-output")
+                .or_else(|| rest.strip_suffix("-input"))
+                .or_else(|| rest.strip_suffix("-error"))
                 .or_else(|| rest.strip_suffix("-steps"))
         })?;
         self.entries
             .values()
-            .find_map(|entry| entry.cards.get(card).cloned())
+            .find_map(|entry| {
+                entry.cards.get(card).cloned().or_else(|| {
+                    entry
+                        .cards
+                        .iter()
+                        .find_map(|(k, w)| card.starts_with(&format!("{k}-")).then(|| w.clone()))
+                })
+            })
             .or_else(|| {
                 self.waiting
                     .iter()
@@ -388,6 +416,7 @@ impl Children {
             return;
         };
         let epoch = CLIPBOARD_EPOCH.load(Ordering::SeqCst);
+        let scope = s.input_scope.clone();
         let baseline = Rc::new(Cell::new(None));
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -401,11 +430,107 @@ impl Children {
         s.transcript_display.children.report_copy = ReportCopy::Loading {
             key: copy_key,
             epoch,
+            scope,
             baseline,
             lease,
             _cancel: cancel,
             rx,
         };
+    }
+
+    pub(super) fn copy_tool_section(s: &mut State, key: ToolCopyKey, tx: &mut rune::Tx) {
+        let lease = s.transcript_display.children.card_lease(&key.key);
+        let copy_key = CopyKey::ToolSection(key.clone());
+        if matches!(&s.transcript_display.children.report_copy, ReportCopy::Loading { key: current, .. } if current == &copy_key)
+        {
+            return;
+        }
+        let Some(backend) = s.transcript_display.children.backend.clone() else {
+            s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
+            return;
+        };
+        let (out, rx) = bounded(1);
+        let (cancel, cancelled) = bounded(1);
+        let epoch = CLIPBOARD_EPOCH.load(Ordering::SeqCst);
+        let scope = s.input_scope.clone();
+        let baseline = Rc::new(Cell::new(None));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let capture = baseline.clone();
+            tx.read_clipboard(move |_: &mut State, content, _| {
+                capture.set(Some(fnv1a64(content.text().as_bytes())));
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = tx;
+        s.transcript_display.children.report_copy = ReportCopy::Loading {
+            key: copy_key,
+            epoch,
+            scope,
+            baseline,
+            lease,
+            _cancel: cancel,
+            rx,
+        };
+        let wake = s.wake.clone();
+        let reads = s.reads.clone();
+        crate::platform::spawn(async move {
+            crate::platform::reads::cancellable(&cancelled, async {
+                let expected_parent = key.parent.as_deref().unwrap_or(&backend.session);
+                let body = with_timeout(COPY_BUDGET, async {
+                    let _slot = reads.background(&cancelled).await?;
+                    let page = backend
+                        .child_page_under(&key.child, expected_parent)
+                        .await
+                        .ok()??;
+                    let tool = page
+                        .rows
+                        .iter()
+                        .find(|row| row.id == key.row_id)
+                        .and_then(|row| {
+                            row.parts.iter().find_map(|part| match part {
+                                Part::Tool(tool) if tool.id == key.call => Some(tool.as_ref()),
+                                _ => None,
+                            })
+                        })
+                        .or_else(|| {
+                            page.rows
+                                .iter()
+                                .rev()
+                                .flat_map(|row| row.parts.iter().rev())
+                                .find_map(|part| match part {
+                                    Part::Tool(tool) if tool.id == key.call => Some(tool.as_ref()),
+                                    _ => None,
+                                })
+                        })?;
+                    match key.section {
+                        0 => super::format::bounded_json(&tool.input, MAX_COPY_BYTES),
+                        1 => {
+                            if let Some(value) = super::format::structured_output(tool) {
+                                match super::format::format_unknown(value, Some(MAX_COPY_BYTES)) {
+                                    super::format::Formatted::Text(source, _) => Some(source),
+                                    _ => None,
+                                }
+                            } else if tool.name == "todowrite" {
+                                super::todo::copy(tool)
+                            } else if tool.name == "apply_patch" {
+                                super::apply_patch::copy_all(tool)
+                            } else {
+                                let mut parts = [""; 4];
+                                super::output(tool, &mut parts);
+                                Some(parts.concat())
+                            }
+                        }
+                        _ => Some(super::error(tool).to_owned()),
+                    }
+                })
+                .await;
+                if out.send(body).await.is_ok() {
+                    wake();
+                }
+            })
+            .await;
+        });
     }
 
     pub(super) fn copy_steps(
@@ -432,6 +557,7 @@ impl Children {
         let (out, rx) = bounded(1);
         let (cancel, cancelled) = bounded(1);
         let epoch = CLIPBOARD_EPOCH.load(Ordering::SeqCst);
+        let scope = s.input_scope.clone();
         let baseline = Rc::new(Cell::new(None));
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -445,6 +571,7 @@ impl Children {
         s.transcript_display.children.report_copy = ReportCopy::Loading {
             key: copy_key,
             epoch,
+            scope,
             baseline,
             lease,
             _cancel: cancel,
@@ -488,14 +615,15 @@ impl Children {
                 let Some(_slot) = reads.background(&cancelled).await else {
                     return;
                 };
-                let target = matches!(
-                    backend
-                        .child_ownership_token(&child, &expected_parent)
-                        .await,
-                    Ok(Some(_))
-                )
-                .then_some(child);
-                if out.send(target).await.is_ok() {
+                let outcome = match backend
+                    .child_ownership_token(&child, &expected_parent)
+                    .await
+                {
+                    Ok(Some(_)) => NavOutcome::Verified(child),
+                    Ok(None) => NavOutcome::Missing,
+                    Err(_) => NavOutcome::Error,
+                };
+                if out.send(outcome).await.is_ok() {
                     wake();
                 }
             })
@@ -523,39 +651,52 @@ impl Children {
         let mut changed = Self::poll_copy(s, tx);
         let nav = match s.transcript_display.children.pending_nav.as_ref() {
             Some((_, _, rx)) => match rx.try_recv() {
-                Ok(target) => Some(target),
-                Err(error) if error.is_closed() => Some(None),
+                Ok(outcome) => Some(outcome),
+                Err(error) if error.is_closed() => Some(NavOutcome::Error),
                 Err(_) => None,
             },
             None => None,
         };
-        if let Some(target) = nav {
+        if let Some(outcome) = nav {
             let ck = s
                 .transcript_display
                 .children
                 .pending_nav
                 .take()
                 .map(|(ck, _, _)| ck);
-            if let Some(child_id) = target {
-                if let Some(ck) = ck {
-                    s.transcript_display.children.unavailable.remove(&ck);
+            match outcome {
+                NavOutcome::Verified(child_id) => {
+                    if let Some(ck) = ck {
+                        s.transcript_display.children.unavailable.remove(&ck);
+                    }
+                    if crate::launcher::can_open_child_session(s) {
+                        crate::launcher::choose_child(s, child_id, tx);
+                        changed = true;
+                    }
                 }
-                if crate::launcher::can_open_child_session(s) {
-                    crate::launcher::choose_child(s, child_id, tx);
+                NavOutcome::Missing => {
+                    if let Some(ck) = ck {
+                        s.transcript_display.children.mark_unavailable(ck);
+                    }
+                    crate::shell::notifications::emit_outcome(
+                        s,
+                        crate::shell::notifications::Category::Sessions,
+                        None,
+                        crate::strings::t("sessionList.reload.error"),
+                        true,
+                    );
                     changed = true;
                 }
-            } else {
-                if let Some(ck) = ck {
-                    s.transcript_display.children.mark_unavailable(ck);
+                NavOutcome::Error => {
+                    crate::shell::notifications::emit_outcome(
+                        s,
+                        crate::shell::notifications::Category::Sessions,
+                        None,
+                        crate::strings::t("sessionList.reload.error"),
+                        true,
+                    );
+                    changed = true;
                 }
-                crate::shell::notifications::emit_outcome(
-                    s,
-                    crate::shell::notifications::Category::Sessions,
-                    None,
-                    crate::strings::t("sessionList.reload.error"),
-                    true,
-                );
-                changed = true;
             }
         }
         changed
@@ -598,9 +739,14 @@ impl Children {
         }
         let outcome = match &s.transcript_display.children.report_copy {
             ReportCopy::Loading {
-                epoch, lease, rx, ..
+                epoch,
+                scope,
+                lease,
+                rx,
+                ..
             } => {
-                if lease.as_ref().is_some_and(|w| w.strong_count() == 0)
+                if !s.current_scope(scope)
+                    || lease.as_ref().is_some_and(|w| w.strong_count() == 0)
                     || CLIPBOARD_EPOCH.load(Ordering::SeqCst) != *epoch
                 {
                     s.transcript_display.children.report_copy = ReportCopy::Idle;
@@ -614,18 +760,20 @@ impl Children {
             }
             _ => return false,
         };
-        let (key, epoch, baseline, lease) =
+        let (key, epoch, scope, baseline, lease) =
             match std::mem::take(&mut s.transcript_display.children.report_copy) {
                 ReportCopy::Loading {
                     key,
                     epoch,
+                    scope,
                     baseline,
                     lease,
                     ..
-                } => (key, epoch, baseline, lease),
+                } => (key, epoch, scope, baseline, lease),
                 _ => return false,
             };
-        if lease.as_ref().is_some_and(|w| w.strong_count() == 0)
+        if !s.current_scope(&scope)
+            || lease.as_ref().is_some_and(|w| w.strong_count() == 0)
             || CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch
         {
             return false;
@@ -635,8 +783,11 @@ impl Children {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let expected = baseline.get();
-                    tx.read_clipboard(move |_: &mut State, current, tx| {
-                        if CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch {
+                    tx.read_clipboard(move |s: &mut State, current, tx| {
+                        if !s.current_scope(&scope)
+                            || lease.as_ref().is_some_and(|w| w.strong_count() == 0)
+                            || CLIPBOARD_EPOCH.load(Ordering::SeqCst) != epoch
+                        {
                             return;
                         }
                         if let Some(before) = expected
@@ -1203,6 +1354,17 @@ impl Children {
                                     last_exec_end = None;
                                 }
                             }
+                            if !pending_events.is_empty() {
+                                let mut kept = Vec::new();
+                                pending_bytes = 0;
+                                for (age, ev) in pending_events.drain(..) {
+                                    if age < 2 {
+                                        pending_bytes = pending_bytes.saturating_add(ev.bytes);
+                                        kept.push((age + 1, ev));
+                                    }
+                                }
+                                pending_events = kept;
+                            }
                             (ChildUpdate::Failed, false, false, true)
                         }
                     };
@@ -1238,6 +1400,10 @@ impl Children {
                             break;
                         }
                         wake();
+                    }
+                    if !last_running && !last_failed && pending_events.is_empty() {
+                        // Release full HTTP page buffer while idle; next wake re-fetches fresh.
+                        live_page = None;
                     }
                     if !wait_wake(&dirty, &retry_rx).await {
                         break;
@@ -1410,6 +1576,23 @@ impl Children {
             .is_some_and(|entry| entry.snapshot.steps_truncated)
     }
 
+    pub(super) fn tool_truncated(
+        &self,
+        parent: Option<&str>,
+        id: &str,
+        row_id: &str,
+        call: &str,
+    ) -> bool {
+        self.entries
+            .get(&child_key(parent, id))
+            .is_some_and(|entry| {
+                entry
+                    .snapshot
+                    .truncated_tools
+                    .contains(&(row_id.to_owned(), call.to_owned()))
+            })
+    }
+
     pub(super) fn steps_incomplete(&self, parent: Option<&str>, id: &str) -> bool {
         self.entries
             .get(&child_key(parent, id))
@@ -1510,6 +1693,7 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
         .iter()
         .map(|(_, tool)| tool.retained_bytes())
         .sum();
+    let mut truncated_tools = HashSet::new();
     let mut tools: Steps = if total_tool_bytes <= STEP_BYTES {
         kept_tools
             .into_iter()
@@ -1537,6 +1721,7 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
                 let bounded = if tool.retained_bytes() <= cap {
                     tool.clone()
                 } else {
+                    truncated_tools.insert((row.id.clone(), tool.id.clone()));
                     Arc::new(tool.with_budget(cap))
                 };
                 (row.id.clone(), bounded)
@@ -1599,6 +1784,7 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
         steps: tools,
         steps_truncated,
         steps_incomplete: steps_truncated || page.older.is_some(),
+        truncated_tools,
         reports,
     }
 }
@@ -1676,80 +1862,23 @@ async fn copy_child_steps_bounded(
         if !seen_cursors.insert(cursor_key) {
             return None;
         }
-        let page = {
+        let (rows, newer) = {
             let _slot = reads.background(cancelled).await?;
-            backend.child_page_request(child, request).await.ok()?
+            backend.child_raw_tools_request(child, request).await.ok()?
         };
-        for row in &page.rows {
-            if !seen_rows.insert(row.id.clone()) {
+        for (row_id, tools) in rows {
+            if !seen_rows.insert(row_id) {
                 continue;
             }
-            for part in &row.parts {
-                let Part::Tool(tool) = part else {
-                    continue;
-                };
+            for part in tools {
                 if count > 0 {
                     io::Write::write_all(&mut out, b",\n").ok()?;
                 }
-                let mut state = serde_json::json!({
-                    "status": tool.status,
-                    "input": tool.input,
-                    "output": tool.output,
-                    "error": tool.error,
-                    "metadata": tool.metadata,
-                });
-                if !tool.pictures.is_empty() {
-                    let mut content = Vec::new();
-                    if !tool.output.is_empty() {
-                        content.push(serde_json::json!({
-                            "type": "text",
-                            "text": tool.output,
-                        }));
-                    }
-                    for pic in &tool.pictures {
-                        let mut item = serde_json::Map::new();
-                        item.insert("type".into(), serde_json::json!("image"));
-                        item.insert("mimeType".into(), serde_json::json!(pic.mime));
-                        if let Some(name) = pic.name.as_deref() {
-                            item.insert("name".into(), serde_json::json!(name));
-                        }
-                        match &pic.source {
-                            crate::content::PictureSource::Inline(data) => {
-                                item.insert("data".into(), serde_json::json!(data.as_ref()));
-                            }
-                            crate::content::PictureSource::Http(url) => {
-                                item.insert("url".into(), serde_json::json!(url.as_ref()));
-                            }
-                            _ => {}
-                        }
-                        content.push(serde_json::Value::Object(item));
-                    }
-                    state["content"] = serde_json::Value::Array(content);
-                }
-                if tool.started.is_some() || tool.ended.is_some() {
-                    let mut time = serde_json::Map::new();
-                    if let Some(start) = tool.started {
-                        time.insert("start".into(), serde_json::json!(start));
-                    }
-                    if let Some(end) = tool.ended {
-                        time.insert("end".into(), serde_json::json!(end));
-                    }
-                    state["time"] = serde_json::Value::Object(time);
-                }
-                let entry = serde_json::json!({
-                    "type": "tool",
-                    "id": tool.id,
-                    "callID": tool.id,
-                    "sessionID": child,
-                    "messageID": row.id,
-                    "tool": tool.name,
-                    "state": state,
-                });
-                serde_json::to_writer_pretty(&mut out, &entry).ok()?;
+                serde_json::to_writer_pretty(&mut out, &part).ok()?;
                 count += 1;
             }
         }
-        cursor = page.newer;
+        cursor = newer;
     }
     if cursor.is_some() || runtime::Instant::now() >= deadline {
         return None;

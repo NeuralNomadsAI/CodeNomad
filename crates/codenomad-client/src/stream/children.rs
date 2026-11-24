@@ -344,6 +344,19 @@ impl Backend {
         target.session = child.into();
         target.page(request).await
     }
+
+    pub async fn child_raw_tools_request(
+        &self,
+        child: &str,
+        request: Value,
+    ) -> history::Result<(Vec<(String, Vec<Value>)>, Option<Value>)> {
+        if child == self.session || !history::valid_id(child) {
+            return Err("invalid task child".into());
+        }
+        let mut target = self.clone();
+        target.session = child.into();
+        target.page_raw_tools(request).await
+    }
 }
 
 pub(super) fn observe(b: &Backend, event: &Value) {

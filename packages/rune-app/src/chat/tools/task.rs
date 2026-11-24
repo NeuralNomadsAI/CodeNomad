@@ -810,7 +810,7 @@ pub(super) fn body(
         let list_segment = format!("/{list_key}/");
         result = result.child(super::duration::observe_clip(
             s,
-            markdown::follow_tool_pane(list, true, !is_detached && revealed_steps == 0)
+            markdown::follow_tool_pane(list, true, !is_detached)
                 .drawn_rect_into(&pane_clip)
                 .on_scroll_offset(move |pos| {
                     let detached = pos.max[1] > 0.0

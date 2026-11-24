@@ -105,6 +105,55 @@ impl Backend {
             &target,
         )
     }
+    pub(crate) async fn page_raw_tools(
+        &self,
+        target: Value,
+    ) -> Result<(Vec<(String, Vec<Value>)>, Option<Value>)> {
+        let v = read_json_limited(
+            self.client
+                .post(format!(
+                    "{}api/workspaces/{}/session-history/window",
+                    self.base, self.workspace
+                ))
+                .header(
+                    "x-codenomad-user-files",
+                    crate::attachments::USER_FILES_REFERENCE,
+                )
+                .json(&json!({"sessionID":self.session,"target":target}))
+                .send()
+                .await?
+                .error_for_status()?,
+            history::WINDOW_BYTES,
+        )
+        .await?;
+        if v["status"] != "window" {
+            return Err("history unavailable or anchor changed".into());
+        }
+        let newer = history::cursor(&v["cursors"]["newer"], "newer")?;
+        let rows = v["messages"]
+            .as_array()
+            .filter(|rows| rows.len() <= 200)
+            .ok_or("invalid history window")?;
+        let mut out = Vec::new();
+        for row in rows {
+            let row_id = row["id"]
+                .as_str()
+                .filter(|id| history::valid_id(id))
+                .ok_or("invalid history row id")?;
+            let Some(parts) = row["content"].as_array() else {
+                continue;
+            };
+            let tools: Vec<Value> = parts
+                .iter()
+                .filter(|part| part["type"] == "tool")
+                .cloned()
+                .collect();
+            if !tools.is_empty() {
+                out.push((row_id.to_owned(), tools));
+            }
+        }
+        Ok((out, newer))
+    }
     pub async fn empty(&self) -> Result<Page> {
         let page = self.page(json!({"kind":"latest"})).await?;
         if !page.rows.is_empty() {

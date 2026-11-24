@@ -429,17 +429,20 @@ fn diagram_fence(
     Some((start..start + word.len(), replacement))
 }
 
-fn strip_blockquotes(mut s: &str) -> &str {
-    loop {
+fn strip_blockquotes(mut s: &str, max: usize) -> (&str, usize) {
+    let mut depth = 0;
+    while depth < max {
         let trimmed = s.trim_start_matches(' ');
         if s.len() - trimmed.len() <= 3
             && let Some(rest) = trimmed.strip_prefix('>')
         {
             s = rest.strip_prefix(' ').unwrap_or(rest);
+            depth += 1;
             continue;
         }
-        return s;
+        break;
     }
+    (s, depth)
 }
 
 fn commonmark_closed(
@@ -456,7 +459,7 @@ fn commonmark_closed(
     let Some(last) = lines.last() else {
         return false;
     };
-    let prefix_after_quotes = strip_blockquotes(line_prefix);
+    let (prefix_after_quotes, quote_depth) = strip_blockquotes(line_prefix, usize::MAX);
     let container_indent = if in_list_item
         || prefix_after_quotes
             .bytes()
@@ -466,7 +469,7 @@ fn commonmark_closed(
     } else {
         0
     };
-    let tail = strip_blockquotes(last);
+    let (tail, _) = strip_blockquotes(last, quote_depth);
     let indent = tail.bytes().take_while(|&b| b == b' ').count();
     if indent > container_indent + 3 {
         return false;

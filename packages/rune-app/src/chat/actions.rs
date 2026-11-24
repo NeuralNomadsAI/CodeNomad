@@ -302,6 +302,7 @@ impl Display {
         if let Some(anchor) = anchor {
             s.transcript_display.pin_step_anchor(key, anchor);
         }
+        s.transcript_display.step_scroll_state(key).set((true, 0.0));
         Self::reveal_next(s, key);
     }
 

@@ -251,6 +251,7 @@ fn render_body(
         && has_output
         && !is_task
         && !skill
+        && tool.name != "apply_patch"
         && !is_patch(tool)
         && result_list.is_none()
         && !rich_diff
@@ -506,7 +507,7 @@ fn render_body(
         {
             block = block.child(patch);
         }
-        if skill {
+        if skill || (tool.name == "apply_patch" && has_output) {
             let output_key = format!("{key}-tool_output");
             if probe {
                 if let Some(q) = query

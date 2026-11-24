@@ -260,15 +260,19 @@ fn choose_from_inner(
         Ok(Reply::Selected(missing, None, dismiss, allow_streaming))
     });
 }
-pub fn can_change_session(s: &State) -> bool {
-    s.phase != Phase::Streaming && can_open_child_session(s)
-}
-
-pub fn can_open_child_session(s: &State) -> bool {
+fn session_switch_allowed(s: &State) -> bool {
     !s.composer.pending()
         && !s.status_permissions.settling()
         && crate::workspace::input_ready(s)
         && !crate::agent::navigation_blocked(s)
+}
+
+pub fn can_change_session(s: &State) -> bool {
+    s.phase != Phase::Streaming && session_switch_allowed(s)
+}
+
+pub fn can_open_child_session(s: &State) -> bool {
+    s.screen.launcher().is_some() && session_switch_allowed(s)
 }
 
 pub(super) fn can_rebind(s: &State, id: &str) -> bool {
