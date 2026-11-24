@@ -322,6 +322,8 @@ export async function readPluginProviderUsage(
       if (body?._tag === "LocationNotFoundError" || body?._tag === "SessionNotFoundError") {
         throw new Error("Plugin usage location not found")
       }
+      // RPC envelopes never travel as 404: only generic missing-route bodies mean "absent".
+      if (body?._tag === "RpcError" || body?._tag === "RpcInternalError") throw new Error("Plugin usage RPC status mismatch")
       return null
     }
 
