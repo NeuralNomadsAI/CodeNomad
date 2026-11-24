@@ -175,13 +175,68 @@ mod native {
             result
         }
     }
+    struct PendingFileDraft {
+        generation: u64,
+        bytes: Vec<u8>,
+        reply: tokio::sync::oneshot::Sender<Result<bool>>,
+    }
+
+    #[derive(Default)]
+    struct FileDraftQueue {
+        running: bool,
+        generation: u64,
+        pending: Option<PendingFileDraft>,
+    }
+
+    fn spawn_file_draft_worker(
+        files: std::sync::Arc<Files>,
+        file_drafts_lock: std::sync::Arc<std::sync::Mutex<()>>,
+        queue: std::sync::Arc<std::sync::Mutex<FileDraftQueue>>,
+    ) {
+        tokio::task::spawn_blocking(move || {
+            loop {
+                let task = {
+                    let Ok(mut state) = queue.lock() else {
+                        return;
+                    };
+                    match state.pending.take() {
+                        Some(task) => task,
+                        None => {
+                            state.running = false;
+                            return;
+                        }
+                    }
+                };
+                let current = || {
+                    queue
+                        .lock()
+                        .is_ok_and(|state| state.generation == task.generation)
+                };
+                let outcome = if !current() {
+                    Ok(false)
+                } else {
+                    match file_drafts_lock.lock() {
+                        Ok(_guard) => files.save_file_if(
+                            "workspace-file-drafts.json",
+                            FILE_DRAFT_BYTES,
+                            &task.bytes,
+                            current,
+                        ),
+                        Err(_) => Err("state store unavailable".into()),
+                    }
+                };
+                let _ = task.reply.send(outcome);
+            }
+        });
+    }
+
     #[derive(Clone)]
     pub struct Store {
         files: std::sync::Arc<Files>,
         state_lock: std::sync::Arc<std::sync::Mutex<()>>,
         file_drafts_lock: std::sync::Arc<std::sync::Mutex<()>>,
         staged: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
-        file_drafts_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        file_drafts_queue: std::sync::Arc<std::sync::Mutex<FileDraftQueue>>,
     }
     impl Store {
         pub(crate) fn memory_seen(&self) -> Result<std::collections::BTreeMap<String, i64>> {
@@ -238,7 +293,7 @@ mod native {
                 state_lock: Default::default(),
                 file_drafts_lock: Default::default(),
                 staged: Default::default(),
-                file_drafts_generation: Default::default(),
+                file_drafts_queue: Default::default(),
             })
         }
         pub async fn load(&self) -> Result<Option<Vec<u8>>> {
@@ -263,8 +318,12 @@ mod native {
         }
         #[cfg(test)]
         pub fn save_file_drafts(&self, bytes: &[u8]) -> Result<()> {
-            self.file_drafts_generation
-                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            if let Ok(mut state) = self.file_drafts_queue.lock() {
+                state.generation += 1;
+                if let Some(evicted) = state.pending.take() {
+                    let _ = evicted.reply.send(Ok(false));
+                }
+            }
             let _guard = self
                 .file_drafts_lock
                 .lock()
@@ -283,52 +342,79 @@ mod native {
             bytes: Vec<u8>,
             timeout: std::time::Duration,
         ) -> impl std::future::Future<Output = Result<bool>> + Send + 'static {
-            // Claim generation synchronously at admission so an unpolled background task
-            // can never outrank a later save or exit flush.
-            let generation = self
-                .file_drafts_generation
-                .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
-                + 1;
+            // Enqueue and claim generation synchronously at admission so an unpolled task
+            // cannot outrank a later save or exit flush, and repeated retries share one worker.
+            let (tx, rx) = tokio::sync::oneshot::channel();
             let files = self.files.clone();
             let file_drafts_lock = self.file_drafts_lock.clone();
-            let latest = self.file_drafts_generation.clone();
-            async move {
-                let latest_for_blocking = latest.clone();
-                let task = tokio::task::spawn_blocking(move || {
-                    let current = || {
-                        latest_for_blocking.load(std::sync::atomic::Ordering::Acquire) == generation
-                    };
-                    if !current() {
-                        return Ok(false);
+            let queue = self.file_drafts_queue.clone();
+            let generation = match queue.lock() {
+                Ok(mut state) => {
+                    state.generation += 1;
+                    let generation = state.generation;
+                    if let Some(evicted) = state.pending.replace(PendingFileDraft {
+                        generation,
+                        bytes,
+                        reply: tx,
+                    }) {
+                        let _ = evicted.reply.send(Ok(false));
                     }
-                    let _guard = file_drafts_lock
-                        .lock()
-                        .map_err(|_| "state store unavailable")?;
-                    files.save_file_if(
-                        "workspace-file-drafts.json",
-                        FILE_DRAFT_BYTES,
-                        &bytes,
-                        current,
-                    )
-                });
-                match tokio::time::timeout(timeout, task).await {
-                    Ok(joined) => joined?,
+                    Some(generation)
+                }
+                Err(_) => {
+                    let _ = tx.send(Err("state store unavailable".into()));
+                    None
+                }
+            };
+            async move {
+                let Some(generation) = generation else {
+                    return Err("state store unavailable".into());
+                };
+                let start_worker = queue
+                    .lock()
+                    .map(|mut state| {
+                        if !state.running && state.pending.is_some() {
+                            state.running = true;
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
+                if start_worker {
+                    spawn_file_draft_worker(files, file_drafts_lock, queue.clone());
+                }
+                match tokio::time::timeout(timeout, rx).await {
+                    Ok(Ok(outcome)) => outcome,
+                    Ok(Err(_)) => Err("state store unavailable".into()),
                     Err(elapsed) => {
-                        // Invalidate a timed-out generation so a late lock acquisition or
-                        // post-sync_all step skips rename and removes its temporary file.
-                        let _ = latest.compare_exchange(
-                            generation,
-                            generation + 1,
-                            std::sync::atomic::Ordering::AcqRel,
-                            std::sync::atomic::Ordering::Acquire,
-                        );
+                        if let Ok(mut state) = queue.lock() {
+                            if state.generation == generation {
+                                state.generation += 1;
+                            }
+                            if state
+                                .pending
+                                .as_ref()
+                                .is_some_and(|pending| pending.generation == generation)
+                            {
+                                state.pending = None;
+                            }
+                        }
                         Err(elapsed.into())
                     }
                 }
             }
         }
+        #[cfg(test)]
         pub fn save_file_drafts_exit(&self, bytes: Vec<u8>) -> Result<()> {
-            let write = self.start_file_drafts_save(bytes);
+            self.save_file_drafts_exit_within(bytes, std::time::Duration::from_secs(5))
+        }
+        pub fn save_file_drafts_exit_within(
+            &self,
+            bytes: Vec<u8>,
+            timeout: std::time::Duration,
+        ) -> Result<()> {
+            let write = self.start_file_drafts_save_with_timeout(bytes, timeout);
             match crate::platform::block_on(write)? {
                 true => Ok(()),
                 false => Err("file draft write superseded".into()),
@@ -341,6 +427,18 @@ mod native {
         #[cfg(test)]
         pub(super) fn files_refcount(&self) -> usize {
             std::sync::Arc::strong_count(&self.files)
+        }
+        #[cfg(test)]
+        pub(super) fn file_draft_worker_running(&self) -> bool {
+            self.file_drafts_queue
+                .lock()
+                .is_ok_and(|state| state.running)
+        }
+        #[cfg(test)]
+        pub(super) fn file_draft_pending(&self) -> bool {
+            self.file_drafts_queue
+                .lock()
+                .is_ok_and(|state| state.pending.is_some())
         }
         pub async fn load_outlines(&self) -> Result<Option<Vec<u8>>> {
             let files = self.files.clone();

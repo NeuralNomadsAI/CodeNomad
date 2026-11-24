@@ -275,23 +275,31 @@ impl Persistence {
             self.saving_file_drafts = None;
             self.file_draft_retry_requested = false;
             self.file_drafts_first_dirty = None;
-            let Some((revision, bytes)) = documents.file_draft_snapshot(self.saved_file_drafts)
-            else {
-                return !self.file_draft_error;
-            };
-            self.attempted_file_drafts = revision;
-            if self.file_draft_read_error
-                || self
-                    .store
-                    .as_ref()
-                    .is_none_or(|store| store.save_file_drafts_exit(bytes).is_err())
-            {
-                self.file_draft_error = true;
-                return false;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                let Some((revision, bytes)) = documents.file_draft_snapshot(self.saved_file_drafts)
+                else {
+                    return !self.file_draft_error;
+                };
+                self.attempted_file_drafts = revision;
+                let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now())
+                else {
+                    self.file_draft_error = true;
+                    return false;
+                };
+                if self.file_draft_read_error
+                    || self.store.as_ref().is_none_or(|store| {
+                        store
+                            .save_file_drafts_exit_within(bytes, remaining)
+                            .is_err()
+                    })
+                {
+                    self.file_draft_error = true;
+                    return false;
+                }
+                self.saved_file_drafts = revision;
+                self.file_draft_error = false;
             }
-            self.saved_file_drafts = revision;
-            self.file_draft_error = false;
-            true
         }
     }
     pub fn poll_file_drafts(
@@ -646,56 +654,81 @@ mod tests {
         assert!(rt.state.0.file_draft_error);
         assert_eq!(rt.state.0.saved_file_drafts, 0);
         assert_eq!(wakes.load(Ordering::SeqCst), 1);
-        // Even a new edit past both debounce (2.25) and max-wait (4.0) does not trigger
-        // automatic retries while file_draft_error is active.
-        rt.state
-            .1
-            .insert_test_file_draft("src/main.rs", "edited after failure");
-        let after_failure_wake = wake.clone();
-        rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 2.0, tx, after_failure_wake));
-        for _ in 0..10 {
-            let wake = wake.clone();
-            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 4.5, tx, wake));
-        }
-        assert!(rt.state.0.saving_file_drafts.is_none());
-        assert_eq!(wakes.load(Ordering::SeqCst), 1);
-        // Retry keeps file_draft_error visible until the write confirms.
+        // Retry recovers the exact failed revision without needing a new edit.
         fs::remove_dir(root.0.join("rune/workspace-file-drafts.json")).unwrap();
         rt.state.0.retry();
         assert!(rt.state.0.file_draft_error);
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !(rt.state.0.saved_file_drafts == 2 && wakes.load(Ordering::SeqCst) == 2) {
+        while !(rt.state.0.saved_file_drafts == 1 && wakes.load(Ordering::SeqCst) == 2) {
             let wake = wake.clone();
-            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 5.0, tx, wake));
+            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 2.0, tx, wake));
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
         assert!(!rt.state.0.file_draft_error);
-        assert_eq!(rt.state.0.saved_file_drafts, 2);
-        assert_eq!(wakes.load(Ordering::SeqCst), 2);
+        assert_eq!(rt.state.0.saved_file_drafts, 1);
+        // A second failure followed by a new edit past both debounce and max-wait does not
+        // trigger automatic retries while file_draft_error is active.
+        fs::remove_file(root.0.join("rune/workspace-file-drafts.json")).unwrap();
+        fs::create_dir(root.0.join("rune/workspace-file-drafts.json")).unwrap();
+        rt.state
+            .1
+            .insert_test_file_draft("src/main.rs", "blocked second revision");
+        let second_wake = wake.clone();
+        rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 3.0, tx, second_wake));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !(rt.state.0.file_draft_error && wakes.load(Ordering::SeqCst) == 3) {
+            let wake = wake.clone();
+            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 3.25, tx, wake));
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        rt.state
+            .1
+            .insert_test_file_draft("src/main.rs", "edited after failure");
+        let after_failure_wake = wake.clone();
+        rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 4.0, tx, after_failure_wake));
+        for _ in 0..10 {
+            let wake = wake.clone();
+            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 6.5, tx, wake));
+        }
+        assert!(rt.state.0.saving_file_drafts.is_none());
+        assert_eq!(wakes.load(Ordering::SeqCst), 3);
+        fs::remove_dir(root.0.join("rune/workspace-file-drafts.json")).unwrap();
+        rt.state.0.retry();
+        assert!(rt.state.0.file_draft_error);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !(rt.state.0.saved_file_drafts == 3 && wakes.load(Ordering::SeqCst) == 4) {
+            let wake = wake.clone();
+            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 7.0, tx, wake));
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!rt.state.0.file_draft_error);
+        assert_eq!(rt.state.0.saved_file_drafts, 3);
         // A Retry clicked while a failing write is still queued triggers a fresh write on the next poll.
         let (stale_tx, stale_rx) = bounded(1);
-        stale_tx.try_send((3, false)).unwrap();
+        stale_tx.try_send((4, false)).unwrap();
         rt.state.0.saving_file_drafts = Some(stale_rx);
         rt.state
             .1
             .insert_test_file_draft("src/main.rs", "retried after in-flight failure");
         rt.state.0.retry();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !(rt.state.0.saved_file_drafts == 3 && wakes.load(Ordering::SeqCst) == 3) {
+        while !(rt.state.0.saved_file_drafts == 4 && wakes.load(Ordering::SeqCst) == 5) {
             let wake = wake.clone();
-            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 6.0, tx, wake));
+            rt.update(move |(p, docs), tx| p.poll_file_drafts(docs, 8.0, tx, wake));
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
         assert!(!rt.state.0.file_draft_error);
-        // Fourth edit flushed synchronously on exit.
+        // Fifth edit flushed synchronously on exit.
         rt.state
             .1
             .insert_test_file_draft("src/main.rs", "flushed on exit");
-        let exit_expected = rt.state.1.file_draft_snapshot(3).unwrap().1;
+        let exit_expected = rt.state.1.file_draft_snapshot(4).unwrap().1;
         assert!(rt.state.0.flush_file_drafts(&rt.state.1));
-        assert_eq!(rt.state.0.saved_file_drafts, 4);
+        assert_eq!(rt.state.0.saved_file_drafts, 5);
         assert!(!rt.state.0.file_draft_error);
         drop(rt);
         let loaded = crate::platform::block_on(async {

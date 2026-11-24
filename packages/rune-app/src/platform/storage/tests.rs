@@ -129,8 +129,16 @@ fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
         }
         let older = store.start_file_drafts_save(b"older".to_vec());
         let older_task = tokio::spawn(older);
-        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !store.file_draft_worker_running() || store.file_draft_pending() {
+            assert!(std::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        // Submitting multiple writes while the single worker is blocked replaces the pending slot
+        // without spawning extra blocking tasks; the displaced middle write resolves immediately.
+        let middle = store.start_file_drafts_save(b"middle".to_vec());
         let newer = store.start_file_drafts_save(b"newer".to_vec());
+        assert!(!middle.await.unwrap());
         let newer_task = tokio::spawn(newer);
         drop(guard);
         assert!(!older_task.await.unwrap().unwrap());
@@ -145,7 +153,7 @@ fn stale_async_file_draft_write_cannot_overwrite_newer_write() {
         assert!(timed_out.await.is_err());
         drop(guard);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        while store.files_refcount() > 1 {
+        while store.file_draft_worker_running() || store.files_refcount() > 1 {
             assert!(std::time::Instant::now() < deadline);
             tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         }
