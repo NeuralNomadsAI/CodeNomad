@@ -25,6 +25,8 @@ pub struct Display {
     pub(super) pictures: super::media::Pictures,
     pub(crate) receipts: super::receipts::Receipts,
     pub(crate) messages: super::message_actions::Actions,
+    focused_key: Option<String>,
+    step_scroll: RefCell<HashMap<String, std::rc::Rc<std::cell::Cell<bool>>>>,
 }
 
 #[derive(Default)]
@@ -40,7 +42,7 @@ struct SessionDisplay {
     toggled: HashSet<String>,
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
-    step_anchors: HashMap<String, String>,
+    step_anchors: RefCell<HashMap<String, String>>,
     search_revealed: VecDeque<String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     diagram_sources: HashMap<String, BTreeSet<usize>>,
@@ -169,8 +171,33 @@ impl Display {
         self.active.revealed.get(key).copied().unwrap_or_default()
     }
 
-    pub(super) fn step_anchor(&self, key: &str) -> Option<&str> {
-        self.active.step_anchors.get(key).map(String::as_str)
+    pub(super) fn step_anchor(&self, key: &str) -> Option<String> {
+        self.active.step_anchors.borrow().get(key).cloned()
+    }
+
+    pub(super) fn focused_key(&self) -> Option<&str> {
+        self.focused_key.as_deref()
+    }
+
+    pub(super) fn step_scroll_detached(&self, key: &str) -> std::rc::Rc<std::cell::Cell<bool>> {
+        let mut map = self.step_scroll.borrow_mut();
+        if map.len() >= 64 && !map.contains_key(key) {
+            map.retain(|_, flag| std::rc::Rc::strong_count(flag) > 1);
+        }
+        map.entry(key.into())
+            .or_insert_with(|| std::rc::Rc::new(std::cell::Cell::new(false)))
+            .clone()
+    }
+
+    pub(super) fn pin_step_anchor(&self, key: &str, anchor: String) {
+        self.active
+            .step_anchors
+            .borrow_mut()
+            .insert(key.into(), anchor);
+    }
+
+    pub(super) fn unpin_step_anchor(&self, key: &str) {
+        self.active.step_anchors.borrow_mut().remove(key);
     }
 
     pub(super) fn reveal_steps(s: &mut State, key: &str, anchor: Option<String>) {
@@ -178,8 +205,8 @@ impl Display {
             s.transcript_display
                 .active
                 .step_anchors
-                .entry(key.into())
-                .or_insert(anchor);
+                .borrow_mut()
+                .insert(key.into(), anchor);
         }
         Self::reveal_next(s, key);
     }
@@ -188,6 +215,10 @@ impl Display {
         let nested = format!("{prefix}-");
         self.active
             .step_anchors
+            .get_mut()
+            .retain(|key, _| key != prefix && !key.starts_with(&nested));
+        self.step_scroll
+            .get_mut()
             .retain(|key, _| key != prefix && !key.starts_with(&nested));
     }
 
@@ -220,6 +251,11 @@ impl Display {
     }
 
     pub fn poll(s: &mut State, changed: bool, now: f64, tx: &mut rune::Tx) -> bool {
+        let next_focus = tx.focused().map(str::to_owned);
+        let focus_changed = s.transcript_display.focused_key != next_focus;
+        if focus_changed {
+            s.transcript_display.focused_key = next_focus;
+        }
         let clock = if !s.history_detached
             && matches!(s.phase, crate::Phase::Ready | crate::Phase::Streaming)
         {

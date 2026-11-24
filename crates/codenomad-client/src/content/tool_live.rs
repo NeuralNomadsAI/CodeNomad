@@ -22,6 +22,7 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
             .zip(fetched.input.as_str())
             .is_some_and(|(live, fetched)| live.len() > fetched.len() && live.starts_with(fetched)),
         ("running", "streaming") => true,
+        ("completed" | "error", "streaming" | "running") => true,
         ("running", "running")
             if no_progress(&fetched.metadata) && !no_progress(&live.metadata) =>
         {
@@ -72,8 +73,13 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
     };
     if replace {
         let index = fetched.part_index;
+        let fetched_started = fetched.started;
         *fetched = live.clone();
-        Arc::make_mut(fetched).part_index = index;
+        let merged = Arc::make_mut(fetched);
+        merged.part_index = index;
+        if merged.started.is_none() {
+            merged.started = fetched_started;
+        }
     } else if matches!(fetched.status.as_str(), "streaming" | "running") {
         if live.status == "running" && fetched.started.is_none() && live.started.is_some() {
             Arc::make_mut(fetched).started = live.started;
@@ -193,8 +199,55 @@ pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u
             let Some(ended) = at.or(tool.ended) else {
                 return Fit::Repair;
             };
-            // Freeze the live timer now while keeping live preview output until HTTP settles.
             tool.ended = Some(ended);
+            if kind == "session.tool.success" {
+                tool.status = "completed".into();
+                if let Some(items) = data["content"].as_array() {
+                    let mut out = String::new();
+                    let mut fits = true;
+                    for text in items
+                        .iter()
+                        .filter(|item| item["type"] == "text")
+                        .filter_map(|item| item["text"].as_str())
+                    {
+                        let add = text.len() + usize::from(!out.is_empty());
+                        if out.len().saturating_add(add) > LIVE_BYTES {
+                            fits = false;
+                            break;
+                        }
+                        if !out.is_empty() {
+                            out.push('\n');
+                        }
+                        out.push_str(text);
+                    }
+                    if fits {
+                        tool.output = out;
+                    }
+                }
+            } else {
+                tool.status = "error".into();
+                if let Some(msg) = data["error"]["message"]
+                    .as_str()
+                    .or_else(|| data["error"].as_str())
+                    && msg.len() <= LIVE_BYTES
+                {
+                    tool.error = msg.into();
+                }
+            }
+            if let Some(meta) = data.get("metadata").filter(|m| !m.is_null()) {
+                let (nodes, bytes) = resident_json(meta);
+                if nodes.saturating_add(bytes) <= LIVE_BYTES {
+                    tool.metadata = meta.clone();
+                }
+            }
+            measure(&mut tool);
+            if tool.bytes.saturating_add(tool.output_bytes) > LIVE_BYTES {
+                // Keep settled status and frozen timer even when payload awaits HTTP.
+                tool.output.clear();
+                tool.error.clear();
+                tool.metadata = Value::Null;
+                measure(&mut tool);
+            }
             let tool = Arc::new(tool);
             *prior = tool.clone();
             return Fit::Settled(tool);
@@ -444,17 +497,18 @@ mod tests {
         let Fit::Settled(done) = apply_at(
             &mut live,
             "session.tool.success",
-            &json!({"id":"a"}),
+            &json!({"id":"a","content":[{"type":"text","text":"hi"}]}),
             Some(5_000),
         ) else {
             panic!("expected Settled")
         };
-        assert_eq!(done.status, "running");
+        assert_eq!(done.status, "completed");
         assert_eq!(done.started, Some(2_000));
         assert_eq!(done.ended, Some(5_000));
+        assert_eq!(done.output, "hi");
         assert_eq!(done.metadata["output"], "hi");
 
-        // A stale running HTTP page must not restart the settled tool timer.
+        // A stale running HTTP page must not revert a settled SSE tool or restart its timer.
         let mut stale = [Arc::new(
             crate::history::decode_message(&json!({
                 "id":"row","type":"assistant","content":[
@@ -467,9 +521,9 @@ mod tests {
         let Part::Tool(merged) = &stale[0].parts[0] else {
             panic!("tool part")
         };
-        assert_eq!(merged.status, "running");
+        assert_eq!(merged.status, "completed");
         assert_eq!(merged.ended, Some(5_000));
-        assert_eq!(merged.metadata["output"], "hi");
+        assert_eq!(merged.output, "hi");
 
         assert!(matches!(
             apply_at(
@@ -492,12 +546,13 @@ mod tests {
         let Fit::Settled(failed) = apply_at(
             &mut live,
             "session.tool.failed",
-            &json!({"id":"b"}),
+            &json!({"id":"b","error":{"message":"exit 1"}}),
             Some(8_000),
         ) else {
             panic!("expected Settled")
         };
-        assert_eq!(failed.status, "running");
+        assert_eq!(failed.status, "error");
+        assert_eq!(failed.error, "exit 1");
         assert_eq!(failed.ended, Some(8_000));
 
         // Even if `called` was missed and live stayed `streaming`, a running HTTP page inherits `ended`.

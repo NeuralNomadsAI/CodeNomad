@@ -13,6 +13,14 @@ use std::{
     time::Duration,
 };
 
+pub(super) struct ActiveClip(Option<Rc<Clip>>);
+
+impl Clone for ActiveClip {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
 struct Clip {
     rect: Rc<DrawnRect>,
     parent: Option<Rc<Clip>>,
@@ -94,6 +102,14 @@ impl Clock {
 
     pub(in crate::chat) fn stack_bounds(&self) -> &DrawnRect {
         &self.stack_bounds
+    }
+
+    pub(super) fn current_clip(&self) -> ActiveClip {
+        ActiveClip(self.active_clip.borrow().clone())
+    }
+
+    pub(super) fn rect_in_view(&self, rect: [f32; 4], bounds: [f32; 4], clip: &ActiveClip) -> bool {
+        in_bounds(rect, bounds, self.stack_bounds.get(), clip.0.as_deref())
     }
 
     pub(in crate::chat) fn clip_rect(&self, key: &str) -> Rc<DrawnRect> {

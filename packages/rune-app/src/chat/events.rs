@@ -471,7 +471,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
         s.phase = Phase::Failed;
         changed = true;
     }
-    if s.transcript_display.children.poll()
+    if super::tools::children::Children::poll_and_promote(s)
         | s.transcript_display.pictures.poll(&s.reads, &s.wake)
         | super::receipts::Receipts::poll(s, visible)
     {

@@ -1,5 +1,5 @@
 //! Passive Code Mode transcript details.
-use super::{bounded_json, input_json, window};
+use super::{TOOL_LIMIT, bounded_json, input_json, window};
 use crate::{
     State,
     chat::document::{self, HIGHLIGHT_LIMIT},
@@ -110,27 +110,46 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
         .role("list")
         .label(t("toolCall.execute.calls"))
         .separate(Space::Sm);
+    let search_id = active
+        .then(|| {
+            s.transcript_display
+                .search_highlight
+                .as_ref()
+                .map(|hit| hit.id)
+        })
+        .flatten()
+        .unwrap_or(0);
     for (index, (name, status, input)) in calls.take(CALL_LIMIT).enumerate() {
         let call = format!("{key}-execute-call-{index}");
         let manual = s.transcript_display.toggled(&call);
         let rendered_input = (input.is_object() && (manual || active))
-            .then(|| input_json(input, limit, active))
+            .then(|| input_json(input, TOOL_LIMIT, false))
             .flatten();
-        let expanded = manual
-            || active
-                && rendered_input
-                    .as_deref()
-                    .is_some_and(|text| query.is_some_and(|q| q.matches(text)));
+        let search_match = active
+            && rendered_input
+                .as_deref()
+                .is_some_and(|text| query.is_some_and(|q| q.matches(text)));
+        let search_toggle = format!("{call}-search-{search_id}");
+        let expanded = if search_match {
+            s.transcript_display.expanded(&search_toggle, true)
+        } else {
+            manual
+        };
         let name: String = name.chars().take(250).collect();
         let mut row = col().key(call.clone()).role("listitem").child(
             layout::action_row()
                 .child(if input.is_object() {
                     let toggle = call.clone();
+                    let search_key = search_toggle.clone();
                     layout::button(
                         &name,
                         false,
                         screen::action(&s.input_scope, move |s| {
-                            super::Display::toggle(s, &toggle);
+                            if search_match {
+                                super::Display::set_expanded(s, &search_key, !expanded);
+                            } else {
+                                super::Display::toggle(s, &toggle);
+                            }
                         }),
                     )
                     .key(format!("toggle-{call}"))
@@ -147,7 +166,7 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
                         s,
                         format!("{call}-input"),
                         &[&input],
-                        limit,
+                        TOOL_LIMIT,
                         |shown, units| {
                             markdown::search_code(
                                 shown,

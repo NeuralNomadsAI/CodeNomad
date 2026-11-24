@@ -501,9 +501,6 @@ pub(crate) async fn run_with_reading(
                         }
                     }
                     kind if kind.starts_with("session.tool.") => {
-                        if kind == "session.tool.called" {
-                            reader.execution_settlement = 0;
-                        }
                         let fit = reader.resident.iter_mut().find(|row| row.id == id).map_or(
                             content::ToolFit::Repair,
                             |row| {
@@ -517,6 +514,9 @@ pub(crate) async fn run_with_reading(
                         );
                         match fit {
                             content::ToolFit::Applied(tool) => {
+                                if kind == "session.tool.called" {
+                                    reader.execution_settlement = 0;
+                                }
                                 history::check(&reader.resident)?;
                                 reader_event(
                                     reading,

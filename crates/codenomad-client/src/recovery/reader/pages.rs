@@ -53,6 +53,7 @@ impl Reader {
                     if advances(&page, edge, &target)
                         && history::edge_page(&page, &self.resident, edge).is_ok()
                     {
+                        let raw_rows = page.rows.clone();
                         let mut merged = page.rows.clone();
                         if crate::content::merge_page(&self.resident, &mut merged).is_ok() {
                             page.rows = merged;
@@ -71,10 +72,10 @@ impl Reader {
                             self.known = self.resident.iter().map(|r| r.id.clone()).collect();
                             self.owed.retain(|(id, _)| self.known.contains(id));
                             self.owed_tools.retain(|(id, call), _| {
-                                self.known.contains(id) && !tool_settled(&self.resident, id, call)
+                                self.known.contains(id) && !tool_settled(&raw_rows, id, call)
                             });
                             self.failed_tools.retain(|(id, call)| {
-                                self.known.contains(id) && !tool_settled(&self.resident, id, call)
+                                self.known.contains(id) && !tool_settled(&raw_rows, id, call)
                             });
                             if !self.historical && !self.owed_tools.is_empty() && !self.dirty {
                                 self.dirty = true;

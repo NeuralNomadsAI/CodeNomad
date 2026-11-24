@@ -178,6 +178,40 @@ impl Reader {
             };
             match snapshot {
                 Ok(mut page) if wire.valid(stamp) && rx.is_empty() => {
+                    // Check server HTTP settlement on raw rows before merging SSE terminal state.
+                    self.owed_tools
+                        .retain(|(id, call), _| !tool_settled(&page.rows, id, call));
+                    let raw_known: HashSet<&str> =
+                        page.rows.iter().map(|r| r.id.as_str()).collect();
+                    self.failed_tools.retain(|(id, call)| {
+                        raw_known.contains(id.as_str()) && !tool_settled(&page.rows, id, call)
+                    });
+                    if self.execution_settlement > 0
+                        && !page.running
+                        && !(self.anchored.is_some() && page.newer.is_some())
+                    {
+                        self.execution_settlement = 0;
+                        let turn_start = page
+                            .rows
+                            .iter()
+                            .rposition(|r| r.role == "user")
+                            .map_or(0, |idx| idx + 1);
+                        for row in &page.rows[turn_start..] {
+                            for part in &row.parts {
+                                if let Part::Tool(tool) = part
+                                    && matches!(
+                                        tool.status.as_str(),
+                                        "pending" | "streaming" | "running"
+                                    )
+                                    && self.owed_tools.len() < 64
+                                {
+                                    self.owed_tools
+                                        .entry((row.id.clone(), tool.id.clone()))
+                                        .or_insert(0);
+                                }
+                            }
+                        }
+                    }
                     let mut merged = page.rows.clone();
                     if content::merge_page(&self.resident, &mut merged).is_ok() {
                         page.rows = merged;
@@ -198,8 +232,6 @@ impl Reader {
                             })
                             .is_some_and(|t| t.provenance == TextProvenance::Closed)
                     });
-                    self.owed_tools
-                        .retain(|(id, call), _| !tool_settled(&page.rows, id, call));
                     self.fence = stamp;
                     *connection_lost = false;
                     self.dirty = false;
@@ -211,44 +243,16 @@ impl Reader {
                     self.newer = page.newer.clone();
                     self.known = page.rows.iter().map(|r| r.id.clone()).collect();
                     self.resident = page.rows.clone();
-                    self.failed_tools.retain(|(id, call)| {
-                        self.known.contains(id) && !tool_settled(&page.rows, id, call)
-                    });
                     if self.historical {
                         self.execution_settlement = 0;
                         self.owed_tools.retain(|(id, _), _| self.known.contains(id));
                     } else {
-                        if self.execution_settlement > 0 {
-                            if !page.running {
-                                self.execution_settlement = 0;
-                                let turn_start = page
-                                    .rows
-                                    .iter()
-                                    .rposition(|r| r.role == "user")
-                                    .map_or(0, |idx| idx + 1);
-                                for row in &page.rows[turn_start..] {
-                                    for part in &row.parts {
-                                        if let Part::Tool(tool) = part
-                                            && matches!(
-                                                tool.status.as_str(),
-                                                "pending" | "streaming" | "running"
-                                            )
-                                            && self.owed_tools.len() < 64
-                                        {
-                                            self.owed_tools
-                                                .entry((row.id.clone(), tool.id.clone()))
-                                                .or_insert(0);
-                                        }
-                                    }
-                                }
-                            } else {
-                                self.execution_settlement -= 1;
-                                if self.execution_settlement > 0 {
-                                    self.dirty = true;
-                                    let attempt = u64::from(3 - self.execution_settlement);
-                                    self.quiet =
-                                        Instant::now() + Duration::from_millis(100 * attempt);
-                                }
+                        if self.execution_settlement > 0 && page.running {
+                            self.execution_settlement -= 1;
+                            if self.execution_settlement > 0 {
+                                self.dirty = true;
+                                let attempt = u64::from(3 - self.execution_settlement);
+                                self.quiet = Instant::now() + Duration::from_millis(100 * attempt);
                             }
                         }
                         if !self.owed_tools.is_empty() {

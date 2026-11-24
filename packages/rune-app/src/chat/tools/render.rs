@@ -260,7 +260,7 @@ fn render_body(
                 screen::action(&s.input_scope, move |s| {
                     Display::set_expanded(s, &toggle, !expanded);
                     if is_task && expanded {
-                        s.transcript_display.children.release(&toggle);
+                        super::children::Children::release(s, &toggle);
                         s.transcript_display.clear_step_anchors(&toggle);
                     }
                 }),
@@ -326,6 +326,7 @@ fn render_body(
                 key,
                 tool,
                 parts[0],
+                task_delivery.as_ref().and_then(|d| d.report_location),
                 report_truncated,
                 ancestors,
                 query,
@@ -444,7 +445,7 @@ fn render_body(
     } else {
         lang
     };
-    let apply_patch_body = (!pending && query.is_none() && tool.name == "apply_patch")
+    let apply_patch_body = (!pending && !active && tool.name == "apply_patch")
         .then(|| apply_patch::view(s, message, key, tool))
         .flatten();
     let has_apply_patch_body = apply_patch_body.is_some();
@@ -480,19 +481,23 @@ fn render_body(
                 ));
             }
         } else if has_output && !specialized_task {
-            let structured_json = structured.map(|value| input_json(value, TOOL_LIMIT, false));
-            if matches!(structured_json, Some(None)) {
+            let structured_out =
+                structured.map(|value| super::format::format_unknown(value, Some(TOOL_LIMIT)));
+            if matches!(structured_out, Some(None)) {
                 block = block.child(text(t("toolCall.output.tooLarge")));
             } else {
-                let formatted = if structured_json.is_some() {
-                    structured_json.flatten()
+                let (formatted, formatted_lang) = if let Some(Some((text, lang))) = structured_out {
+                    (Some(text), lang)
                 } else {
-                    (tool.name == "execute" && tool.status == "completed")
-                        .then(|| execute::formatted_output(parts[0]))
-                        .flatten()
+                    (
+                        (tool.name == "execute" && tool.status == "completed")
+                            .then(|| execute::formatted_output(parts[0]))
+                            .flatten(),
+                        "json",
+                    )
                 };
                 let (parts, lang) = if let Some(formatted) = formatted.as_deref() {
-                    ([formatted, "", "", ""], "json")
+                    ([formatted, "", "", ""], formatted_lang)
                 } else {
                     (parts, lang)
                 };

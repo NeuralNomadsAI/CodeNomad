@@ -1,4 +1,8 @@
-use super::{Tool, apply_patch, children::Children, error, output, task, todo, tool_key};
+use super::{
+    Tool, apply_patch,
+    children::{Children, ReportCopyKey},
+    error, output, task, todo, tool_key,
+};
 use crate::{State, content::Part, screen, strings::t};
 use rune::El;
 use rune_theme_codenomad::markdown;
@@ -47,12 +51,13 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
                                 && let Some(parent) = task::parent_child(&message)
                                 && let Some((row_id, part_idx)) = d.report_location
                             {
-                                Some((
-                                    parent.to_owned(),
-                                    row_id.to_owned(),
-                                    part_idx,
-                                    task::child(tool).to_owned(),
-                                ))
+                                Some(ReportCopyKey {
+                                    key: copy_key.clone(),
+                                    parent: parent.to_owned(),
+                                    row_id: row_id.to_owned(),
+                                    part_index: part_idx,
+                                    child: task::child(tool).to_owned(),
+                                })
                             } else {
                                 tx.copy(task::output(
                                     tool,
@@ -61,7 +66,7 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
                                 None
                             }
                         } else if let Some(value) = super::format::structured_output(tool) {
-                            if let Ok(source) = serde_json::to_string_pretty(value) {
+                            if let Some((source, _)) = super::format::format_unknown(value, None) {
                                 tx.copy(source);
                             }
                             None
@@ -88,11 +93,11 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
                     }
                 }
             };
-            if let Some((parent, row_id, part_idx, child)) = async_report {
-                if let Some(ready) = s.transcript_display.children.take_ready_report(&copy_key) {
+            if let Some(report_key) = async_report {
+                if let Some(ready) = s.transcript_display.children.take_ready_report(&report_key) {
                     tx.copy(ready);
                 } else {
-                    Children::copy_report(s, &copy_key, &parent, &row_id, part_idx, &child);
+                    Children::copy_report(s, report_key);
                 }
             } else {
                 s.transcript_display.children.cancel_copy();

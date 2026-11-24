@@ -246,13 +246,30 @@ fn map_inline_code(
                     ti += 1;
                 }
                 runs.push((r0, ti, s0, inner_start + si));
-            } else if tb[ti] == b' ' && ib[si] == b'\r' && ib.get(si + 1) == Some(&b'\n') {
-                runs.push((ti, ti + 1, inner_start + si, inner_start + si + 2));
-                si += 2;
-                ti += 1;
             } else if tb[ti] == b' ' && matches!(ib[si], b'\n' | b'\r') {
-                runs.push((ti, ti + 1, inner_start + si, inner_start + si + 1));
-                si += 1;
+                let s0 = inner_start + si;
+                if ib[si] == b'\r' && ib.get(si + 1) == Some(&b'\n') {
+                    si += 2;
+                } else {
+                    si += 1;
+                }
+                // Consume Markdown blockquote continuation prefixes (`> `) on wrapped inline code lines.
+                loop {
+                    let save = si;
+                    while si < ib.len() && matches!(ib[si], b' ' | b'\t') {
+                        si += 1;
+                    }
+                    if ib.get(si) == Some(&b'>') {
+                        si += 1;
+                        if ib.get(si) == Some(&b' ') {
+                            si += 1;
+                        }
+                    } else {
+                        si = save;
+                        break;
+                    }
+                }
+                runs.push((ti, ti + 1, s0, inner_start + si));
                 ti += 1;
             } else {
                 return None;

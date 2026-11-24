@@ -1,6 +1,6 @@
 use super::{
     Display, Tool,
-    children::{Children, STEP_LIMIT},
+    children::{Children, ReportCopyKey, STEP_LIMIT},
     input_json, string, window,
 };
 use crate::{
@@ -10,11 +10,11 @@ use crate::{
 use rune::{El, col, text};
 use rune_theme_codenomad::{
     Space, TextRole, catalogue,
-    layout::{self, Layout},
+    layout::{self, DrawnRect, Layout},
     markdown,
     timeline::search::Query,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 pub(super) const PANE_LIMIT: usize = 20_000;
 pub(super) const MAX_DEPTH: usize = 4;
@@ -278,6 +278,7 @@ pub(super) fn body(
     key: &str,
     tool: &Tool,
     output: &str,
+    report_location: Option<(&str, usize)>,
     output_truncated: bool,
     ancestors: &[&str],
     query: Option<Query<'_>>,
@@ -288,6 +289,8 @@ pub(super) fn body(
         .flatten()
         .filter(|id| !ancestors.contains(id));
     let child_steps = child_id.map_or(&[][..], |id| s.transcript_display.children.steps(id));
+    let live_truncated =
+        child_id.is_some_and(|id| s.transcript_display.children.steps_truncated(id));
     let visible_steps = child_steps
         .iter()
         .filter(|(message, step)| super::visible(s, message, step));
@@ -301,6 +304,7 @@ pub(super) fn body(
     };
     if prompt.trim().is_empty()
         && step_count == 0
+        && !live_truncated
         && output.trim().is_empty()
         && !output_truncated
         && child_id.is_none()
@@ -365,33 +369,67 @@ pub(super) fn body(
             }
             if truncated {
                 result = result.child(text(t("toolCall.output.tooLarge")).role("status"));
-                let copy_key = format!("copy-{key}-output");
-                if s.transcript_display.children.copy_failed(&copy_key) {
-                    result = result.child(text(t("sessionList.loadError.retry")).role("status"));
-                } else if s.transcript_display.children.copy_ready(&copy_key) {
-                    result =
-                        result.child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
+                if let Some(parent) = parent_child(message)
+                    && let Some((row_id, part_index)) = report_location
+                {
+                    let copy_key = ReportCopyKey {
+                        key: format!("copy-{key}-output"),
+                        parent: parent.to_owned(),
+                        row_id: row_id.to_owned(),
+                        part_index,
+                        child: child(tool).to_owned(),
+                    };
+                    if s.transcript_display.children.copy_failed(&copy_key) {
+                        result =
+                            result.child(text(t("sessionList.loadError.retry")).role("status"));
+                    } else if s.transcript_display.children.copy_ready(&copy_key) {
+                        result =
+                            result.child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
+                    }
                 }
             }
         }
     }
-    if step_count > 0 {
+    if step_count > 0 || live_truncated {
         let step_key = format!("{key}-task-steps");
-        let count = (INITIAL_STEPS + REVEAL.saturating_mul(s.transcript_display.steps(&step_key)))
-            .min(STEP_LIMIT);
+        let revealed_steps = s.transcript_display.steps(&step_key);
+        let detached = s.transcript_display.step_scroll_detached(&step_key);
+        let count = (INITIAL_STEPS + REVEAL.saturating_mul(revealed_steps)).min(STEP_LIMIT);
         let mut start = step_count.saturating_sub(count);
         let visible_live: Vec<_> = if child_steps.is_empty() {
             Vec::new()
         } else {
             visible_steps.collect()
         };
-        if !visible_live.is_empty()
-            && let Some(anchor) = s.transcript_display.step_anchor(&step_key)
-            && let Some(pos) = visible_live
-                .iter()
-                .position(|(msg, step)| format!("{msg}:{}", step.id) == anchor)
-        {
-            start = start.min(pos);
+        if !visible_live.is_empty() {
+            if revealed_steps == 0 && !detached.get() {
+                s.transcript_display.unpin_step_anchor(&step_key);
+            }
+            if let Some(anchor) = s.transcript_display.step_anchor(&step_key)
+                && let Some(pos) = visible_live
+                    .iter()
+                    .position(|(msg, step)| format!("{msg}:{}", step.id) == anchor)
+            {
+                start = start.min(pos);
+            }
+            if let Some(cid) = child_id {
+                let focused = s.transcript_display.focused_key();
+                if let Some(protected) = visible_live.iter().position(|(msg, step)| {
+                    let owner = format!("child:{cid}:{msg}");
+                    let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
+                    s.transcript_display.expanded(&child_key, false)
+                        || focused.is_some_and(|f| f.contains(&child_key))
+                }) {
+                    start = start.min(protected);
+                }
+            }
+            if detached.get()
+                && s.transcript_display.step_anchor(&step_key).is_none()
+                && let Some((msg, step)) = visible_live.get(start)
+            {
+                s.transcript_display
+                    .pin_step_anchor(&step_key, format!("{msg}:{}", step.id));
+            }
         }
         let mut list = col()
             .role("list")
@@ -505,9 +543,14 @@ pub(super) fn body(
                 .role("status"),
             );
         }
+        let scroll_detached = detached.clone();
         result = result.child(super::duration::observe_clip(
             s,
-            markdown::tool_pane(list, true).drawn_rect_into(&pane_clip),
+            markdown::tool_pane(list, true)
+                .drawn_rect_into(&pane_clip)
+                .on_scroll_offset(move |pos| {
+                    scroll_detached.set(pos.max[1] > 0.0 && pos.offset[1] + 24.0 < pos.max[1]);
+                }),
         ));
     }
     Some(result)
@@ -525,14 +568,48 @@ pub(super) fn observe(s: &State, key: &str, tool: &Tool, card: El) -> El {
         return card;
     };
     let lease = s.transcript_display.children.lease(id, key);
+    let drawn = Rc::new(DrawnRect::new([0.0; 4]));
+    let clip = s.transcript_display.tool_clock.current_clip();
     let (id, key, scope) = (id.to_owned(), key.to_owned(), s.input_scope.clone());
+    let layout_id = id.clone();
+    let layout_key = key.clone();
+    let layout_scope = scope.clone();
+    let layout_lease = lease.clone();
+    let layout_drawn = drawn.clone();
+    let layout_clip = clip.clone();
+    let visible_drawn = drawn.clone();
+    let visible_clip = clip;
     col()
         .full_width()
         .key(format!("{key}-watch-{id}"))
+        .drawn_rect_into(&drawn)
         .child(card)
+        .on_drawn_layout_tx(move |s: &mut State, _, tx| {
+            if s.current_scope(&layout_scope) {
+                let rect = layout_drawn.get();
+                if rect[2] > 0.0 && rect[3] > 0.0 {
+                    let bounds = s.tool_diff_preferences.history_bounds.get();
+                    let in_view =
+                        s.transcript_display
+                            .tool_clock
+                            .rect_in_view(rect, bounds, &layout_clip);
+                    Children::demand(s, &layout_id, &layout_key, &layout_lease, in_view);
+                }
+            }
+            tx.live_only();
+        })
         .on_visible(move |s: &mut State, visible, tx| {
             if s.current_scope(&scope) {
-                Children::demand(s, &id, &key, &lease, visible);
+                let rect = visible_drawn.get();
+                let effective = visible
+                    && (rect[2] <= 0.0
+                        || rect[3] <= 0.0
+                        || s.transcript_display.tool_clock.rect_in_view(
+                            rect,
+                            s.tool_diff_preferences.history_bounds.get(),
+                            &visible_clip,
+                        ));
+                Children::demand(s, &id, &key, &lease, effective);
             }
             tx.live_only();
         })

@@ -5,7 +5,7 @@ use crate::{
 };
 use codenomad_client::{Receiver, bounded, runtime};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     rc::{Rc, Weak},
     sync::Arc,
     time::Duration,
@@ -13,8 +13,18 @@ use std::{
 
 pub(super) const STEP_LIMIT: usize = 200;
 const CHILD_LIMIT: usize = 4;
+const WAITING_LIMIT: usize = 32;
 const STEP_BYTES: usize = 2 << 20;
 type Steps = Vec<(String, Arc<Tool>)>;
+
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct ReportCopyKey {
+    pub key: String,
+    pub parent: String,
+    pub row_id: String,
+    pub part_index: usize,
+    pub child: String,
+}
 
 #[derive(Clone, PartialEq)]
 pub(super) struct ChildReport {
@@ -36,16 +46,17 @@ struct Snapshot {
 enum ReportCopy {
     Idle,
     Loading {
-        key: String,
+        key: ReportCopyKey,
         _cancel: codenomad_client::Sender<()>,
         rx: Receiver<Option<String>>,
     },
+    #[allow(dead_code)]
     Ready {
-        key: String,
+        key: ReportCopyKey,
         text: String,
     },
     Failed {
-        key: String,
+        key: ReportCopyKey,
     },
 }
 
@@ -59,6 +70,7 @@ impl Default for ReportCopy {
 pub(crate) struct Children {
     backend: Option<Backend>,
     entries: HashMap<String, Entry>,
+    waiting: VecDeque<(String, String, Weak<()>)>,
     report_copy: ReportCopy,
 }
 
@@ -77,6 +89,7 @@ impl Children {
 
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
+        self.waiting.clear();
         self.report_copy = ReportCopy::Idle;
     }
 
@@ -84,7 +97,7 @@ impl Children {
         self.report_copy = ReportCopy::Idle;
     }
 
-    pub(super) fn take_ready_report(&mut self, key: &str) -> Option<String> {
+    pub(super) fn take_ready_report(&mut self, key: &ReportCopyKey) -> Option<String> {
         match &self.report_copy {
             ReportCopy::Ready { key: current, .. } if current == key => {
                 match std::mem::take(&mut self.report_copy) {
@@ -96,44 +109,47 @@ impl Children {
         }
     }
 
-    pub(super) fn copy_failed(&self, key: &str) -> bool {
+    pub(super) fn copy_failed(&self, key: &ReportCopyKey) -> bool {
         matches!(&self.report_copy, ReportCopy::Failed { key: current } if current == key)
     }
 
-    pub(super) fn copy_ready(&self, key: &str) -> bool {
+    pub(super) fn copy_ready(&self, key: &ReportCopyKey) -> bool {
         matches!(&self.report_copy, ReportCopy::Ready { key: current, .. } if current == key)
     }
 
-    pub(super) fn release(&mut self, key: &str) {
+    pub(super) fn release(s: &mut State, key: &str) {
         let prefix = format!("{key}-");
-        self.entries.retain(|_, entry| {
+        let children = &mut s.transcript_display.children;
+        children.entries.retain(|_, entry| {
             entry
                 .cards
                 .retain(|card, _| card != key && !card.starts_with(&prefix));
             !entry.cards.is_empty()
         });
+        children
+            .waiting
+            .retain(|(_, card, _)| card != key && !card.starts_with(&prefix));
+        Self::promote_waiting(s);
     }
 
-    pub(super) fn copy_report(
-        s: &mut State,
-        key: &str,
-        parent: &str,
-        row_id: &str,
-        part_index: usize,
-        child: &str,
-    ) {
+    pub(super) fn copy_report(s: &mut State, key: ReportCopyKey) {
         let Some(backend) = s.transcript_display.children.backend.clone() else {
-            s.transcript_display.children.report_copy = ReportCopy::Failed { key: key.into() };
+            s.transcript_display.children.report_copy = ReportCopy::Failed { key };
             return;
         };
         let (out, rx) = bounded(1);
         let (cancel, cancelled) = bounded(1);
+        let (parent, row_id, part_index, child) = (
+            key.parent.clone(),
+            key.row_id.clone(),
+            key.part_index,
+            key.child.clone(),
+        );
         s.transcript_display.children.report_copy = ReportCopy::Loading {
-            key: key.into(),
+            key,
             _cancel: cancel,
             rx,
         };
-        let (parent, row_id, child) = (parent.to_owned(), row_id.to_owned(), child.to_owned());
         let wake = s.wake.clone();
         let reads = s.reads.clone();
         crate::platform::spawn(async move {
@@ -217,31 +233,87 @@ impl Children {
             .get(id)
             .and_then(|entry| entry.cards.get(key))
             .and_then(Weak::upgrade)
+            .or_else(|| {
+                self.waiting
+                    .iter()
+                    .find(|(wid, wkey, _)| wid == id && wkey == key)
+                    .and_then(|(_, _, lease)| lease.upgrade())
+            })
             .unwrap_or_default()
     }
 
     pub(super) fn demand(s: &mut State, id: &str, key: &str, lease: &Rc<()>, visible: bool) {
         let children = &mut s.transcript_display.children;
-        children.prune();
-        if let Some(entry) = children.entries.get_mut(id) {
-            if visible {
-                entry.cards.insert(key.into(), Rc::downgrade(lease));
-            } else {
+        let freed = children.prune();
+        if !visible {
+            let mut removed = false;
+            if let Some(entry) = children.entries.get_mut(id) {
                 entry.cards.remove(key);
                 if entry.cards.is_empty() {
                     children.entries.remove(id);
+                    removed = true;
                 }
+            }
+            children
+                .waiting
+                .retain(|(wid, wkey, _)| !(wid == id && wkey == key));
+            if freed || removed {
+                Self::promote_waiting(s);
             }
             return;
         }
-        if !visible || children.entries.len() >= CHILD_LIMIT {
+        if let Some(entry) = children.entries.get_mut(id) {
+            entry.cards.insert(key.into(), Rc::downgrade(lease));
+            if freed {
+                Self::promote_waiting(s);
+            }
             return;
         }
-        let Some(backend) = children.backend.clone() else {
+        if children.entries.len() >= CHILD_LIMIT {
+            children.waiting.retain(|(_, _, w)| w.strong_count() > 0);
+            if let Some(existing) = children
+                .waiting
+                .iter_mut()
+                .find(|(wid, wkey, _)| wid == id && wkey == key)
+            {
+                existing.2 = Rc::downgrade(lease);
+            } else if children.waiting.len() < WAITING_LIMIT {
+                children
+                    .waiting
+                    .push_back((id.into(), key.into(), Rc::downgrade(lease)));
+            }
             return;
+        }
+        Self::start_entry(s, id, key, lease);
+    }
+
+    fn promote_waiting(s: &mut State) {
+        while s.transcript_display.children.entries.len() < CHILD_LIMIT {
+            let next = loop {
+                let Some((id, key, weak)) = s.transcript_display.children.waiting.pop_front()
+                else {
+                    return;
+                };
+                if let Some(lease) = weak.upgrade() {
+                    break (id, key, lease);
+                }
+            };
+            let (id, key, lease) = next;
+            if let Some(entry) = s.transcript_display.children.entries.get_mut(&id) {
+                entry.cards.insert(key, Rc::downgrade(&lease));
+            } else if !Self::start_entry(s, &id, &key, &lease) {
+                break;
+            }
+        }
+    }
+
+    fn start_entry(s: &mut State, id: &str, key: &str, lease: &Rc<()>) -> bool {
+        let children = &mut s.transcript_display.children;
+        let Some(backend) = children.backend.clone() else {
+            return false;
         };
         let Some((dirty, settlement)) = backend.watch_child(id) else {
-            return;
+            return false;
         };
         let (out, result) = bounded(1);
         let (cancel, cancelled) = bounded(1);
@@ -261,11 +333,17 @@ impl Children {
             crate::platform::reads::cancellable(&cancelled, async {
                 let mut owed_calls: HashMap<(Option<String>, String), (u8, Option<u64>)> =
                     HashMap::new();
+                let mut frozen_ends: HashMap<(Option<String>, String), u64> = HashMap::new();
                 let mut execution_owed = 0u8;
                 loop {
                     let (ended_calls, exec_ended) = settlement.take();
                     for end in ended_calls {
                         let key = (end.message, end.call);
+                        if let Some(ts) = end.ended
+                            && (frozen_ends.contains_key(&key) || frozen_ends.len() < 128)
+                        {
+                            frozen_ends.entry(key.clone()).or_insert(ts);
+                        }
                         if owed_calls.contains_key(&key) || owed_calls.len() < 64 {
                             let entry = owed_calls.entry(key).or_insert((0, end.ended));
                             if entry.1.is_none() {
@@ -285,6 +363,9 @@ impl Children {
                     let snap = match fetched {
                         Ok(Some(page)) => {
                             owed_calls.retain(|(msg, call), _| {
+                                !child_tool_settled(&page.rows, msg.as_deref(), call)
+                            });
+                            frozen_ends.retain(|(msg, call), _| {
                                 !child_tool_settled(&page.rows, msg.as_deref(), call)
                             });
                             if execution_owed > 0 {
@@ -315,10 +396,7 @@ impl Children {
                                 }
                             }
                             let mut snap = snapshot(page);
-                            for ((msg, call), (_, ended)) in &owed_calls {
-                                let Some(ts) = *ended else {
-                                    continue;
-                                };
+                            for ((msg, call), &ts) in &frozen_ends {
                                 let target = if let Some(msg) = msg.as_deref() {
                                     snap.steps
                                         .iter_mut()
@@ -340,6 +418,7 @@ impl Children {
                         }
                         Ok(None) => {
                             owed_calls.clear();
+                            frozen_ends.clear();
                             execution_owed = 0;
                             Some(Snapshot::default())
                         }
@@ -380,6 +459,13 @@ impl Children {
             })
             .await;
         });
+        true
+    }
+
+    pub(crate) fn poll_and_promote(s: &mut State) -> bool {
+        let changed = s.transcript_display.children.poll();
+        Self::promote_waiting(s);
+        changed
     }
 
     pub(crate) fn poll(&mut self) -> bool {
