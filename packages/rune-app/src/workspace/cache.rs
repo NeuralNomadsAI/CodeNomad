@@ -58,12 +58,19 @@ impl Cache {
         {
             return false;
         }
+        let Some(target) = super::state::event_workspace_id(event) else {
+            return false;
+        };
         let mut delivered = false;
-        if let Some(git) = &mut self.git.owner {
+        if let Some(git) = &mut self.git.owner
+            && git.workspace_id() == target
+        {
             git.event(event);
             delivered = true;
         }
-        if let Some(files) = &mut self.files {
+        if let Some(files) = &mut self.files
+            && files.workspace_id() == target
+        {
             files.event(event.clone());
             delivered = true;
         }

@@ -37,6 +37,15 @@ impl std::fmt::Display for LocationUnavailable {
 }
 impl std::error::Error for LocationUnavailable {}
 
+#[derive(Debug)]
+pub struct CreateRejected;
+impl std::fmt::Display for CreateRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("session creation rejected before admission")
+    }
+}
+impl std::error::Error for CreateRejected {}
+
 async fn creation_response(response: reqwest::Response) -> Result<Value> {
     if response.status() != reqwest::StatusCode::BAD_REQUEST {
         return read_json(response.error_for_status()?).await;
@@ -367,18 +376,21 @@ impl Backend {
         if title.trim().is_empty() || title.len() > 512 {
             return Err("session title required".into());
         }
-        let data = read_json(
-            self.client
-                .post(format!(
-                    "{}workspaces/{}/instance/api/session",
-                    self.base, project.id
-                ))
-                .json(&json!({"title":title.trim(),"location":{"directory":project.path}}))
-                .send()
-                .await?
-                .error_for_status()?,
-        )
-        .await?;
+        let response = self
+            .client
+            .post(format!(
+                "{}workspaces/{}/instance/api/session",
+                self.base, project.id
+            ))
+            .json(&json!({"title":title.trim(),"location":{"directory":project.path}}))
+            .send()
+            .await?;
+        if response.status().is_client_error()
+            && response.status() != reqwest::StatusCode::REQUEST_TIMEOUT
+        {
+            return Err(CreateRejected.into());
+        }
+        let data = read_json(response.error_for_status()?).await?;
         session(&data["data"], project)
     }
     pub async fn create_untitled_session(
@@ -399,14 +411,16 @@ impl Backend {
         if !same_root {
             request = request.query(&[("directory", location)]);
         }
-        let data = read_json(
-            request
-                .json(&json!({"location":{"directory":location}}))
-                .send()
-                .await?
-                .error_for_status()?,
-        )
-        .await?;
+        let response = request
+            .json(&json!({"location":{"directory":location}}))
+            .send()
+            .await?;
+        if response.status().is_client_error()
+            && response.status() != reqwest::StatusCode::REQUEST_TIMEOUT
+        {
+            return Err(CreateRejected.into());
+        }
+        let data = read_json(response.error_for_status()?).await?;
         session_at(&data["data"], location)
     }
 }

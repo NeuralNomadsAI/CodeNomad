@@ -216,7 +216,7 @@ pub(super) fn load(s: &mut State) {
                         }
                     };
                     let kept_all = pages.keep(page.rows, &mut ids);
-                    if kept_all && matches_target && page.next.is_none() {
+                    if matches_target && (kept_all && page.next.is_none() || !kept_all) {
                         target_verified = true;
                     }
                     if !kept_all {

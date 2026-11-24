@@ -862,3 +862,39 @@ fn linked_session_page_marks_403_as_location_unavailable() {
         assert!(forbidden.is::<crate::catalog::LocationUnavailable>());
     });
 }
+
+#[test]
+fn create_untitled_session_distinguishes_explicit_4xx_rejection_from_ambiguous_errors() {
+    run(async {
+        let route = "POST /workspaces/workspace/instance/api/session?directory=%2Flinked";
+        let body = Some(json!({"location":{"directory":"/linked"}}));
+        let server = Server::start(vec![
+            reply(route, body.clone(), 403, json!({"error":"forbidden"})),
+            reply(route, body.clone(), 408, json!({})),
+            reply(route, body, 503, json!({})),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        let project = crate::catalog::Project {
+            id: "workspace".into(),
+            path: "/trial".into(),
+        };
+        let rejected = backend
+            .create_untitled_session(&project, "/linked")
+            .await
+            .err()
+            .unwrap();
+        assert!(rejected.is::<crate::catalog::CreateRejected>());
+        let timeout = backend
+            .create_untitled_session(&project, "/linked")
+            .await
+            .err()
+            .unwrap();
+        assert!(!timeout.is::<crate::catalog::CreateRejected>());
+        let unavailable = backend
+            .create_untitled_session(&project, "/linked")
+            .await
+            .err()
+            .unwrap();
+        assert!(!unavailable.is::<crate::catalog::CreateRejected>());
+    });
+}

@@ -86,6 +86,7 @@ enum Reply {
     Created(Backend, String, String, String, Option<u64>, Option<u64>),
     CreatedUnbound(Session, String),
     CreatePrecheckFailed,
+    CreateRejected,
     CreateUncertainLinked(String),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
     #[cfg(target_arch = "wasm32")]
@@ -779,6 +780,16 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 true,
             );
         }
+        Ok(Reply::CreateRejected) => {
+            l.error = Some("rune.create_error");
+            crate::shell::notifications::emit_outcome(
+                s,
+                crate::shell::notifications::Category::Sessions,
+                None,
+                crate::strings::t("rune.create_error"),
+                true,
+            );
+        }
         Ok(Reply::CreateUncertainLinked(directory)) => {
             l.creation_uncertain = true;
             l.creation_uncertain_linked = Some(directory);
@@ -893,6 +904,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.error = (!confirmed).then_some("sessionList.worktreeMove.error");
                 crate::workspace::schedule_catalogue(s);
                 if !auth_required
+                    && !stopped_during_pending.contains(&backend.workspace)
                     && (attempted
                         || crate::git::placement(s) != Some(slug.as_str())
                         || s.phase == Phase::Failed)
@@ -911,6 +923,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             crate::git::release_placement(s, &backend.base, &family);
             crate::workspace::schedule_catalogue(s);
             if !auth_required
+                && !stopped_during_pending.contains(&backend.workspace)
                 && (crate::git::placement(s) != Some(slug.as_str()) || s.phase == Phase::Failed)
             {
                 bind(s, backend, title, None, &slug, tx);

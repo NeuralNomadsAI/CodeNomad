@@ -287,6 +287,17 @@ pub(crate) fn mission_event(s: &mut State, event: Option<&WorkspaceEvent>) {
     }
 }
 
+pub(crate) fn event_workspace_id(event: &WorkspaceEvent) -> Option<&str> {
+    match event {
+        WorkspaceEvent::NativeFilesystemChanged { workspace_id }
+        | WorkspaceEvent::FilesChanged { workspace_id, .. }
+        | WorkspaceEvent::WorktreesChanged { workspace_id }
+        | WorkspaceEvent::SessionMoved { workspace_id, .. }
+        | WorkspaceEvent::Stopped { workspace_id } => Some(workspace_id.as_str()),
+        _ => None,
+    }
+}
+
 pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) -> bool {
     if events.is_empty() {
         return false;
@@ -294,12 +305,21 @@ pub(crate) fn deliver_detached_events(s: &mut State, events: &[WorkspaceEvent]) 
     let mut delivered = false;
     let active_detached = s.screen.is_launcher() && s.incoming.is_none();
     for event in events {
+        let Some(target) = event_workspace_id(event) else {
+            continue;
+        };
         if active_detached || matches!(event, WorkspaceEvent::Stopped { .. }) {
-            if s.git.owner.is_some() {
+            if s.git
+                .owner
+                .as_ref()
+                .is_some_and(|git| git.workspace_id() == target)
+            {
                 crate::git::event(s, event);
                 delivered = true;
             }
-            if let Some(files) = &mut s.files {
+            if let Some(files) = &mut s.files
+                && files.workspace_id() == target
+            {
                 files.event(event.clone());
                 delivered = true;
             }

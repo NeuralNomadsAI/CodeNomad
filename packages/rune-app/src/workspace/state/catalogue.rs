@@ -47,6 +47,9 @@ async fn load_linked_target_all(
                     return Some(Err("linked target text budget reached".into()));
                 }
                 rows.push(row);
+                if rows.len() >= 2_000 {
+                    return Some(Ok(Sessions { rows, next: None }));
+                }
             }
         }
         let Some(next) = page.next else {

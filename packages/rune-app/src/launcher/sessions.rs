@@ -56,9 +56,26 @@ impl Launcher {
         for id in &listed {
             self.visits.verified(id, published);
         }
-        page.rows.extend(self.sessions.drain(..).filter(|row| {
-            (!complete || selected == Some(row.id.as_str())) && !listed.contains(&row.id)
-        }));
+        let mut bytes: usize = page
+            .rows
+            .iter()
+            .map(|row| row.id.len() + row.title.len())
+            .sum();
+        for row in self.sessions.drain(..) {
+            if listed.contains(&row.id) {
+                continue;
+            }
+            let is_selected = selected == Some(row.id.as_str());
+            if complete && !is_selected {
+                continue;
+            }
+            let row_bytes = row.id.len() + row.title.len();
+            if !is_selected && bytes.saturating_add(row_bytes) > 24 * 1024 * 1024 {
+                continue;
+            }
+            bytes = bytes.saturating_add(row_bytes);
+            page.rows.push(row);
+        }
         self.sessions = page.rows;
         self.visits.observe_listing(&listed);
         let root_page = authoritative || !includes_linked;
@@ -201,6 +218,9 @@ pub fn create_blank(s: &mut State) {
         let linked = !codenomad_client::same_server_path(&p.path, &directory);
         let session = match b.create_untitled_session(&p, &directory).await {
             Ok(session) => session,
+            Err(error) if error.is::<codenomad_client::catalog::CreateRejected>() => {
+                return Ok(Reply::CreateRejected);
+            }
             Err(_) if linked => return Ok(Reply::CreateUncertainLinked(directory)),
             Err(error) => return Err(error),
         };
@@ -240,7 +260,13 @@ pub fn create(s: &mut State, _: &mut Tx) {
     };
     // A create request is never automatically retried. Refresh reconciles a lost response.
     l.job("rune.create_error", async move {
-        let session = b.create_session(&p, &title).await?;
+        let session = match b.create_session(&p, &title).await {
+            Ok(session) => session,
+            Err(error) if error.is::<codenomad_client::catalog::CreateRejected>() => {
+                return Ok(Reply::CreateRejected);
+            }
+            Err(error) => return Err(error),
+        };
         match b.bind_session_placed(&p, &session.id, true).await {
             Ok((backend, _, slug)) => Ok(Reply::Created(
                 backend,
