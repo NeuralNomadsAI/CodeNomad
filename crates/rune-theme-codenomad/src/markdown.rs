@@ -461,13 +461,17 @@ pub fn hold_frame(key: String, stamp: impl std::hash::Hash, build: impl FnOnce()
     rune::memo(key, stamp, build)
 }
 
+pub const STEP_DETACH_THRESHOLD: f32 = 24.0;
+
 pub fn tool_pane(content: El, large: bool) -> El {
+    follow_tool_pane(content, large, false)
+}
+
+pub fn follow_tool_pane(content: El, large: bool, stick_bottom: bool) -> El {
     rune::col()
         .w_full()
         .max_h(tool_lines(if large { 30 } else { 15 }))
-        .scroll(ScrollSpec {
-            stick_bottom: false,
-        })
+        .scroll(ScrollSpec { stick_bottom })
         .child(content)
 }
 

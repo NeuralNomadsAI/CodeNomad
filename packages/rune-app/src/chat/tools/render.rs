@@ -128,12 +128,8 @@ pub(in crate::chat) fn match_hidden_by_inputs(
         .as_str()
         .map(std::borrow::Cow::Borrowed)
         .or_else(|| {
-            input_json(
-                &tool.input,
-                document::search_limit_for(s, &key, Some(query)),
-                true,
-            )
-            .map(std::borrow::Cow::Owned)
+            input_json(&tool.input, document::search_limit(Some(query)), true)
+                .map(std::borrow::Cow::Owned)
         })
         .is_some_and(|input| query.matches(&input))
     {
@@ -295,13 +291,14 @@ fn render_body(
         && let Some(child_id) = task::watched_child(tool)
         && crate::workspace::active_session(s) != Some(child_id)
     {
+        let parent = task::parent_child(message).map(str::to_owned);
         let target = child_id.to_owned();
         header = header.child(
             layout::button_tx(
                 t("messageBlock.tool.goToSession.label"),
                 false,
                 screen::action_tx(&s.input_scope, move |s, tx| {
-                    crate::launcher::choose(s, target.clone(), tx);
+                    super::children::Children::open_child(s, parent.as_deref(), &target, tx);
                 }),
             )
             .key(format!("goto-{key}"))
@@ -412,25 +409,30 @@ fn render_body(
         let allow_search_reveal = input_mode != "hidden";
         let input = (show || (active && allow_search_reveal))
             .then(|| {
-                tool.input
-                    .as_str()
-                    .map(std::borrow::Cow::Borrowed)
-                    .or_else(|| {
-                        input_json(
-                            &tool.input,
-                            document::search_limit_for(s, key, query),
-                            active && allow_search_reveal,
-                        )
-                        .map(std::borrow::Cow::Owned)
-                    })
+                if let Some(raw) = tool.input.as_str() {
+                    return Some((std::borrow::Cow::Borrowed(raw), false));
+                }
+                if let Some(small) = input_json(&tool.input, TOOL_LIMIT, false) {
+                    return Some((std::borrow::Cow::Owned(small), false));
+                }
+                if active && allow_search_reveal {
+                    let expanded = input_json(&tool.input, document::search_limit(query), true)?;
+                    if query.is_some_and(|q| q.matches(&expanded)) {
+                        return Some((std::borrow::Cow::Owned(expanded), true));
+                    }
+                }
+                None
             })
             .flatten();
-        let show = show
-            || (active
-                && allow_search_reveal
-                && input
-                    .as_deref()
-                    .is_some_and(|text| query.is_some_and(|q| q.matches(text))));
+        let (input, input_matched) = match input {
+            Some((text, matched)) => {
+                let matched = matched
+                    || (active && allow_search_reveal && query.is_some_and(|q| q.matches(&text)));
+                (Some(text), matched)
+            }
+            None => (None, false),
+        };
+        let show = show || input_matched;
         let toggle = input_key.clone();
         block = block.child(
             layout::button(
@@ -450,22 +452,15 @@ fn render_body(
         if show {
             block = block.child(copy(s, message, key, &tool.id, Section::Input, ancestors));
             if let Some(input) = input {
+                let limit = if input_matched {
+                    document::search_limit(query)
+                } else {
+                    TOOL_LIMIT
+                };
                 block = block.child(markdown::tool_pane(
-                    window(
-                        s,
-                        input_key,
-                        &[&input],
-                        document::search_limit_for(s, key, query),
-                        |shown, units| {
-                            markdown::search_code(
-                                shown,
-                                "json",
-                                units <= HIGHLIGHT_LIMIT,
-                                true,
-                                query,
-                            )
-                        },
-                    ),
+                    window(s, input_key, &[&input], limit, |shown, units| {
+                        markdown::search_code(shown, "json", units <= HIGHLIGHT_LIMIT, true, query)
+                    }),
                     false,
                 ));
             } else {

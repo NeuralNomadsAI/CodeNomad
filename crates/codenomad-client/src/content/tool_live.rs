@@ -74,11 +74,15 @@ pub(super) fn merge(live: &Arc<Tool>, fetched: &mut Arc<Tool>) {
     if replace {
         let index = fetched.part_index;
         let fetched_started = fetched.started;
+        let fetched_message_created = fetched.message_created;
         *fetched = live.clone();
         let merged = Arc::make_mut(fetched);
         merged.part_index = index;
         if merged.started.is_none() {
             merged.started = fetched_started;
+        }
+        if merged.message_created.is_none() {
+            merged.message_created = fetched_message_created;
         }
     } else if matches!(fetched.status.as_str(), "streaming" | "running") {
         if live.status == "running" && fetched.started.is_none() && live.started.is_some() {
@@ -138,6 +142,7 @@ pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u
             output: String::new(),
             error: String::new(),
             started: at,
+            message_created: None,
             ended: None,
             pictures: Vec::new(),
             bytes: 0,

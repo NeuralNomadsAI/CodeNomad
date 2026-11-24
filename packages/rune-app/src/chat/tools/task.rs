@@ -52,7 +52,7 @@ impl DeliveryCache {
                     Part::Tool(tool) if is_task(tool) => {
                         fp = fp.wrapping_mul(0x9e37_79b9_7f4a_7c15)
                             ^ (Arc::as_ptr(tool) as usize as u64)
-                            ^ tool.started.unwrap_or(0)
+                            ^ launch_at(tool).unwrap_or(0)
                             ^ ((child(tool).len() as u64) << 4)
                             ^ (tool.status.len() as u64);
                     }
@@ -78,7 +78,7 @@ impl DeliveryCache {
                     Part::Tool(other) if is_task(other) => {
                         let cid = child(other);
                         if !cid.is_empty()
-                            && let Some(started) = other.started
+                            && let Some(started) = launch_at(other)
                         {
                             self.by_child
                                 .entry(cid.to_owned())
@@ -140,6 +140,10 @@ pub(super) fn parent_child(message: &str) -> Option<&str> {
         .map(|(parent, _)| parent)
 }
 
+fn launch_at(tool: &Tool) -> Option<u64> {
+    tool.started.or(tool.message_created)
+}
+
 fn resolve_delivery<'a>(
     tool: &Tool,
     launches: &[u64],
@@ -151,7 +155,7 @@ fn resolve_delivery<'a>(
         bool,
     )],
 ) -> Delivery<'a> {
-    let report = tool.started.and_then(|from| {
+    let report = launch_at(tool).and_then(|from| {
         let mut boundaries: Vec<_> = launches.iter().copied().filter(|at| *at > from).collect();
         boundaries.sort_unstable();
         let first = reports
@@ -171,7 +175,7 @@ fn resolve_delivery<'a>(
                 (*row_id, *part_idx, *report, *truncated)
             })
     });
-    let newest = launches.iter().copied().max().or(tool.started);
+    let newest = launches.iter().copied().max().or_else(|| launch_at(tool));
     let latest = newest.and_then(|from| {
         reports
             .iter()
@@ -237,7 +241,7 @@ pub(super) fn delivery<'a>(
             .iter()
             .filter_map(|(_, other)| {
                 (is_task(other) && child(other) == child_id)
-                    .then_some(other.started)
+                    .then_some(launch_at(other))
                     .flatten()
             })
             .collect();
@@ -711,10 +715,11 @@ pub(super) fn body(
         let scroll_cell = scroll_state.clone();
         result = result.child(super::duration::observe_clip(
             s,
-            markdown::tool_pane(list, true)
+            markdown::follow_tool_pane(list, true, !is_detached && revealed_steps == 0)
                 .drawn_rect_into(&pane_clip)
                 .on_scroll_offset(move |pos| {
-                    let detached = pos.max[1] > 0.0 && pos.offset[1] + 24.0 < pos.max[1];
+                    let detached = pos.max[1] > 0.0
+                        && pos.offset[1] + markdown::STEP_DETACH_THRESHOLD < pos.max[1];
                     let ratio = if pos.max[1] > 0.0 {
                         (pos.offset[1] / pos.max[1]).clamp(0.0, 1.0)
                     } else {

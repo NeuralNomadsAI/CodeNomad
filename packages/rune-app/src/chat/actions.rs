@@ -306,7 +306,7 @@ impl Display {
         };
         let timeline = crate::timeline::poll(s, tx)
             | crate::timeline::search::poll(s, now, tx)
-            | s.transcript_display.children.poll_copy(tx)
+            | super::tools::children::Children::poll_actions(s, tx)
             | clock;
         let stream = &mut s.transcript_display.stream;
         if changed {

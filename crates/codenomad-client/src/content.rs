@@ -335,6 +335,7 @@ pub struct Tool {
     pub output: String,
     pub error: String,
     pub started: Option<u64>,
+    pub message_created: Option<u64>,
     pub ended: Option<u64>,
     pub pictures: Vec<Picture>,
     bytes: usize,
@@ -466,12 +467,8 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                     .as_u64()
                     .filter(|at| *at > 0)
                     .or_else(|| part["time"]["created"].as_u64())
-                    .filter(|at| *at > 0)
-                    .or_else(|| {
-                        matches!(name, "task" | "subagent")
-                            .then(|| v["time"]["created"].as_u64().filter(|at| *at > 0))
-                            .flatten()
-                    }),
+                    .filter(|at| *at > 0),
+                message_created: v["time"]["created"].as_u64().filter(|at| *at > 0),
                 ended: part["time"]["completed"].as_u64().filter(|at| *at > 0),
                 bytes,
                 output_bytes,

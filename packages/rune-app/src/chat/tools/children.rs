@@ -13,8 +13,14 @@ use std::{
 
 pub(super) const STEP_LIMIT: usize = 200;
 const CHILD_LIMIT: usize = 4;
+const RETAINED_LIMIT: usize = 16;
 const WAITING_LIMIT: usize = 32;
 const STEP_BYTES: usize = 2 << 20;
+const MAX_COPY_PAGES: usize = 64;
+const MAX_COPY_BYTES: usize = 8 * 1024 * 1024;
+const COPY_BUDGET: Duration = Duration::from_secs(30);
+const MAX_PENDING_EVENTS: usize = 32;
+const MAX_PENDING_BYTES: usize = 256 * 1024;
 type Steps = Vec<(String, Arc<Tool>)>;
 type ChildKey = (Option<String>, String);
 
@@ -60,7 +66,12 @@ struct Snapshot {
 }
 
 enum ChildUpdate {
-    Loaded(Snapshot),
+    Loaded {
+        snapshot: Snapshot,
+        verified: bool,
+        settled: bool,
+    },
+    Unverified,
     Failed,
 }
 
@@ -117,15 +128,22 @@ pub(crate) struct Children {
     waiting: VecDeque<(ChildKey, String, Weak<()>)>,
     report_copy: ReportCopy,
     expanded_report: ReportExpand,
+    pending_nav: Option<(codenomad_client::Sender<()>, Receiver<Option<String>>)>,
+}
+
+struct Watcher {
+    _cancel: codenomad_client::Sender<()>,
+    retry: codenomad_client::Sender<()>,
+    result: Receiver<ChildUpdate>,
 }
 
 struct Entry {
     cards: HashMap<String, Weak<()>>,
-    _cancel: codenomad_client::Sender<()>,
-    retry: codenomad_client::Sender<()>,
-    result: Receiver<ChildUpdate>,
+    watcher: Option<Watcher>,
     snapshot: Snapshot,
     load_error: bool,
+    verified: bool,
+    settled: bool,
 }
 
 impl Children {
@@ -139,6 +157,7 @@ impl Children {
         self.waiting.clear();
         self.report_copy = ReportCopy::Idle;
         self.expanded_report = ReportExpand::Idle;
+        self.pending_nav = None;
     }
 
     pub(crate) fn cancel_copy(&mut self) {
@@ -338,16 +357,56 @@ impl Children {
         let reads = s.reads.clone();
         crate::platform::spawn(async move {
             crate::platform::reads::cancellable(&cancelled, async {
+                let expected_parent = parent.as_deref().unwrap_or(&backend.session);
+                let body =
+                    copy_child_steps_bounded(&backend, &reads, &cancelled, &child, expected_parent)
+                        .await;
+                if out.send(body).await.is_ok() {
+                    wake();
+                }
+            })
+            .await;
+        });
+    }
+
+    pub(super) fn open_child(s: &mut State, parent: Option<&str>, child: &str, tx: &mut rune::Tx) {
+        if !crate::launcher::can_change_session(s) {
+            return;
+        }
+        let ck = child_key(parent, child);
+        if s.transcript_display
+            .children
+            .entries
+            .get(&ck)
+            .is_some_and(|entry| entry.verified)
+        {
+            s.transcript_display.children.pending_nav = None;
+            crate::launcher::choose(s, child.to_owned(), tx);
+            return;
+        }
+        let Some(backend) = s.transcript_display.children.backend.clone() else {
+            return;
+        };
+        let (out, rx) = bounded(1);
+        let (cancel, cancelled) = bounded(1);
+        s.transcript_display.children.pending_nav = Some((cancel, rx));
+        let expected_parent = parent.map_or_else(|| backend.session.clone(), str::to_owned);
+        let child = child.to_owned();
+        let wake = s.wake.clone();
+        let reads = s.reads.clone();
+        crate::platform::spawn(async move {
+            crate::platform::reads::cancellable(&cancelled, async {
                 let Some(_slot) = reads.background(&cancelled).await else {
                     return;
                 };
-                let expected_parent = parent.as_deref().unwrap_or(&backend.session);
-                let body = backend
-                    .child_steps_json_under(&child, expected_parent)
-                    .await
-                    .ok()
-                    .flatten();
-                if out.send(body).await.is_ok() {
+                let target = matches!(
+                    backend
+                        .child_ownership_token(&child, &expected_parent)
+                        .await,
+                    Ok(Some(_))
+                )
+                .then_some(child);
+                if out.send(target).await.is_ok() {
                     wake();
                 }
             })
@@ -371,7 +430,29 @@ impl Children {
         };
     }
 
-    pub(crate) fn poll_copy(&mut self, tx: &mut rune::Tx) -> bool {
+    pub(crate) fn poll_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
+        let mut changed = s.transcript_display.children.poll_copy(tx);
+        let nav = match s.transcript_display.children.pending_nav.as_ref() {
+            Some((_, rx)) => match rx.try_recv() {
+                Ok(target) => Some(target),
+                Err(error) if error.is_closed() => Some(None),
+                Err(_) => None,
+            },
+            None => None,
+        };
+        if let Some(target) = nav {
+            s.transcript_display.children.pending_nav = None;
+            if let Some(child_id) = target
+                && crate::launcher::can_change_session(s)
+            {
+                crate::launcher::choose(s, child_id, tx);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn poll_copy(&mut self, tx: &mut rune::Tx) -> bool {
         let outcome = match &self.report_copy {
             ReportCopy::Loading { lease, rx, .. } => {
                 if lease.as_ref().is_some_and(|w| w.strong_count() == 0) {
@@ -463,7 +544,7 @@ impl Children {
             }
             return;
         }
-        if children.entries.len() >= CHILD_LIMIT {
+        if children.active_watchers() >= CHILD_LIMIT && !children.demote_settled() {
             children.waiting.retain(|(_, _, w)| w.strong_count() > 0);
             if let Some(existing) = children
                 .waiting
@@ -485,12 +566,53 @@ impl Children {
         let ck = child_key(parent, id);
         if let Some(entry) = s.transcript_display.children.entries.get_mut(&ck) {
             entry.load_error = false;
-            let _ = entry.retry.try_send(());
+            if let Some(watcher) = &entry.watcher {
+                let _ = watcher.retry.try_send(());
+                return;
+            }
+            if let Some((card, lease)) = entry
+                .cards
+                .iter()
+                .find_map(|(k, w)| w.upgrade().map(|l| (k.clone(), l)))
+            {
+                s.transcript_display.children.entries.remove(&ck);
+                Self::demand(s, parent, id, &card, &lease, true);
+            }
         }
     }
 
+    fn active_watchers(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|e| e.watcher.is_some())
+            .count()
+    }
+
+    fn demote_settled(&mut self) -> bool {
+        let candidate = self
+            .entries
+            .iter()
+            .find(|(_, e)| e.watcher.is_some() && e.settled)
+            .map(|(k, _)| k.clone());
+        let Some(key) = candidate else {
+            return false;
+        };
+        if let Some(entry) = self.entries.get_mut(&key) {
+            entry.watcher = None;
+            return true;
+        }
+        false
+    }
+
     fn promote_waiting(s: &mut State) {
-        while s.transcript_display.children.entries.len() < CHILD_LIMIT {
+        loop {
+            let children = &mut s.transcript_display.children;
+            if children.waiting.is_empty() {
+                return;
+            }
+            if children.active_watchers() >= CHILD_LIMIT && !children.demote_settled() {
+                return;
+            }
             let next = loop {
                 let Some((ck, key, weak)) = s.transcript_display.children.waiting.pop_front()
                 else {
@@ -517,6 +639,17 @@ impl Children {
         let Some((dirty, settlement)) = backend.watch_child(&ck.1) else {
             return false;
         };
+        while children.entries.len() >= RETAINED_LIMIT {
+            let evict = children
+                .entries
+                .iter()
+                .find(|(_, e)| e.watcher.is_none())
+                .map(|(k, _)| k.clone());
+            let Some(evict) = evict else {
+                break;
+            };
+            children.entries.remove(&evict);
+        }
         let (out, result) = bounded(2);
         let (cancel, cancelled) = bounded(1);
         let (retry, retry_rx) = bounded(1);
@@ -525,11 +658,15 @@ impl Children {
             ck,
             Entry {
                 cards: HashMap::from([(key.into(), Rc::downgrade(lease))]),
-                _cancel: cancel,
-                retry,
-                result,
+                watcher: Some(Watcher {
+                    _cancel: cancel,
+                    retry,
+                    result,
+                }),
                 snapshot: Snapshot::default(),
                 load_error: false,
+                verified: false,
+                settled: false,
             },
         );
         let wake = s.wake.clone();
@@ -539,6 +676,8 @@ impl Children {
                 let mut owed_calls: HashMap<(Option<String>, String), (u8, Option<u64>)> =
                     HashMap::new();
                 let mut frozen_ends: HashMap<(Option<String>, String), u64> = HashMap::new();
+                let mut pending_events = Vec::new();
+                let mut pending_bytes = 0usize;
                 let mut execution_owed = 0u8;
                 let mut last_exec_end: Option<u64> = None;
                 let mut live_page: Option<crate::history::Page> = None;
@@ -548,9 +687,12 @@ impl Children {
                     if revoked {
                         owed_calls.clear();
                         frozen_ends.clear();
+                        pending_events.clear();
+                        pending_bytes = 0;
                         execution_owed = 0;
                         last_exec_end = None;
                         live_page = None;
+                        let _ = out.try_send(ChildUpdate::Unverified);
                     } else {
                         for end in ended_calls {
                             let key = (end.message, end.call);
@@ -571,27 +713,54 @@ impl Children {
                             last_exec_end =
                                 exec_ended_at.or(Some(crate::platform::storage::unix_millis()));
                         }
-                        if !tool_events.is_empty()
-                            && let Some(page) = live_page.as_mut()
-                        {
+                        if !tool_events.is_empty() {
                             let mut changed = false;
-                            for ev in &tool_events {
-                                changed |= codenomad_client::content::apply_tool_event(
-                                    &mut page.rows,
-                                    ev.message.as_deref(),
-                                    &ev.kind,
-                                    &ev.data,
-                                    ev.at,
-                                );
+                            let mut overflowed = false;
+                            for ev in tool_events {
+                                let applied = live_page.as_mut().is_some_and(|page| {
+                                    codenomad_client::content::apply_tool_event(
+                                        &mut page.rows,
+                                        ev.message.as_deref(),
+                                        &ev.kind,
+                                        &ev.data,
+                                        ev.at,
+                                    )
+                                });
+                                if applied {
+                                    if live_page.as_ref().is_some_and(|page| {
+                                        codenomad_client::history::check(&page.rows).is_err()
+                                    }) {
+                                        live_page = None;
+                                        overflowed = true;
+                                        break;
+                                    }
+                                    changed = true;
+                                } else if pending_events.len() < MAX_PENDING_EVENTS
+                                    && pending_bytes.saturating_add(ev.bytes) <= MAX_PENDING_BYTES
+                                {
+                                    pending_bytes = pending_bytes.saturating_add(ev.bytes);
+                                    pending_events.push((0, ev));
+                                }
                             }
-                            if changed {
+                            if !overflowed
+                                && changed
+                                && let Some(page) = live_page.as_ref()
+                            {
                                 let snap = snapshot_with_frozen(page.clone(), &frozen_ends);
-                                if out.try_send(ChildUpdate::Loaded(snap)).is_ok() {
+                                if out
+                                    .try_send(ChildUpdate::Loaded {
+                                        snapshot: snap,
+                                        verified: true,
+                                        settled: false,
+                                    })
+                                    .is_ok()
+                                {
                                     wake();
                                 }
                             }
                         }
                     }
+                    let rev_before = settlement.revocation_gen();
                     let fetched = {
                         let Some(_slot) = reads.background(&cancelled).await else {
                             break;
@@ -599,6 +768,18 @@ impl Children {
                         let parent_id = expected_parent.as_deref().unwrap_or(&backend.session);
                         backend.child_page_under(&child, parent_id).await
                     };
+                    if settlement.revocation_gen() != rev_before {
+                        owed_calls.clear();
+                        frozen_ends.clear();
+                        pending_events.clear();
+                        pending_bytes = 0;
+                        execution_owed = 0;
+                        last_exec_end = None;
+                        live_page = None;
+                        let _ = out.try_send(ChildUpdate::Unverified);
+                        let _ = dirty.try_recv();
+                        continue;
+                    }
                     let update = match fetched {
                         Ok(Some(mut page)) => {
                             owed_calls.retain(|(msg, call), _| {
@@ -675,16 +856,54 @@ impl Children {
                                     page.rows = merged;
                                 }
                             }
+                            if !pending_events.is_empty() {
+                                let mut kept = Vec::new();
+                                pending_bytes = 0;
+                                for (age, ev) in pending_events.drain(..) {
+                                    let applied = codenomad_client::content::apply_tool_event(
+                                        &mut page.rows,
+                                        ev.message.as_deref(),
+                                        &ev.kind,
+                                        &ev.data,
+                                        ev.at,
+                                    );
+                                    if !applied && age < 2 {
+                                        pending_bytes = pending_bytes.saturating_add(ev.bytes);
+                                        kept.push((age + 1, ev));
+                                    }
+                                }
+                                pending_events = kept;
+                                if codenomad_client::history::check(&page.rows).is_err() {
+                                    live_page = None;
+                                    pending_events.clear();
+                                    pending_bytes = 0;
+                                    continue;
+                                }
+                            }
+                            let settled = !page.running
+                                && owed_calls.is_empty()
+                                && execution_owed == 0
+                                && pending_events.is_empty();
                             live_page = Some(page.clone());
-                            ChildUpdate::Loaded(snapshot_with_frozen(page, &frozen_ends))
+                            ChildUpdate::Loaded {
+                                snapshot: snapshot_with_frozen(page, &frozen_ends),
+                                verified: true,
+                                settled,
+                            }
                         }
                         Ok(None) => {
                             owed_calls.clear();
                             frozen_ends.clear();
+                            pending_events.clear();
+                            pending_bytes = 0;
                             execution_owed = 0;
                             last_exec_end = None;
                             live_page = None;
-                            ChildUpdate::Loaded(Snapshot::default())
+                            ChildUpdate::Loaded {
+                                snapshot: Snapshot::default(),
+                                verified: false,
+                                settled: true,
+                            }
                         }
                         Err(_) => {
                             if execution_owed > 0 {
@@ -740,12 +959,28 @@ impl Children {
     pub(crate) fn poll(&mut self) -> bool {
         let mut changed = self.prune();
         for entry in self.entries.values_mut() {
-            while let Ok(update) = entry.result.try_recv() {
+            let Some(watcher) = entry.watcher.as_mut() else {
+                continue;
+            };
+            while let Ok(update) = watcher.result.try_recv() {
                 match update {
-                    ChildUpdate::Loaded(next) => {
-                        changed |= entry.load_error || entry.snapshot != next;
+                    ChildUpdate::Loaded {
+                        snapshot: next,
+                        verified,
+                        settled,
+                    } => {
+                        changed |= entry.load_error
+                            || entry.verified != verified
+                            || entry.settled != settled
+                            || entry.snapshot != next;
                         entry.load_error = false;
+                        entry.verified = verified;
+                        entry.settled = settled;
                         entry.snapshot = next;
+                    }
+                    ChildUpdate::Unverified => {
+                        entry.verified = false;
+                        entry.settled = false;
                     }
                     ChildUpdate::Failed => {
                         changed |= !entry.load_error;
@@ -959,23 +1194,126 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
     }
 }
 
+async fn copy_child_steps_bounded(
+    backend: &Backend,
+    reads: &crate::platform::reads::Reads,
+    cancelled: &Receiver<()>,
+    child: &str,
+    expected_parent: &str,
+) -> Option<String> {
+    use std::{collections::HashSet, io};
+    struct Limited(Vec<u8>, usize);
+    impl io::Write for Limited {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.0.len().saturating_add(bytes.len()) > self.1 {
+                return Err(io::ErrorKind::FileTooLarge.into());
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let deadline = runtime::Instant::now() + COPY_BUDGET;
+    let location = {
+        let _slot = reads.background(cancelled).await?;
+        backend
+            .child_ownership_token(child, expected_parent)
+            .await
+            .ok()??
+    };
+    let mut out = Limited(Vec::new(), MAX_COPY_BYTES);
+    io::Write::write_all(&mut out, b"[\n").ok()?;
+    let mut count = 0usize;
+    let mut seen_rows = HashSet::new();
+    let mut cursor = Some(serde_json::json!({"kind": "oldest"}));
+    let mut seen_cursors = HashSet::new();
+    for _ in 0..MAX_COPY_PAGES {
+        if runtime::Instant::now() >= deadline {
+            return None;
+        }
+        let Some(request) = cursor.take() else {
+            break;
+        };
+        if !seen_cursors.insert(request.to_string()) {
+            return None;
+        }
+        let page = {
+            let _slot = reads.background(cancelled).await?;
+            backend.child_page_request(child, request).await.ok()?
+        };
+        for row in &page.rows {
+            if !seen_rows.insert(row.id.clone()) {
+                continue;
+            }
+            for part in &row.parts {
+                let Part::Tool(tool) = part else {
+                    continue;
+                };
+                if count > 0 {
+                    io::Write::write_all(&mut out, b",\n").ok()?;
+                }
+                let entry = serde_json::json!({
+                    "type": "tool",
+                    "id": tool.id,
+                    "name": tool.name,
+                    "state": {
+                        "status": tool.status,
+                        "input": tool.input,
+                        "output": tool.output,
+                        "error": tool.error,
+                        "metadata": tool.metadata,
+                    }
+                });
+                serde_json::to_writer_pretty(&mut out, &entry).ok()?;
+                count += 1;
+            }
+        }
+        cursor = page.newer;
+    }
+    if cursor.is_some() || runtime::Instant::now() >= deadline {
+        return None;
+    }
+    io::Write::write_all(&mut out, if count > 0 { b"\n]" } else { b"]" }).ok()?;
+    let still_owned = {
+        let _slot = reads.background(cancelled).await?;
+        backend
+            .child_ownership_token(child, expected_parent)
+            .await
+            .ok()?
+    };
+    (still_owned == Some(location))
+        .then(|| String::from_utf8(out.0).ok())
+        .flatten()
+}
+
 #[cfg(test)]
 impl Children {
     pub(super) fn install(&mut self, child: &str, page: crate::history::Page) -> Rc<()> {
         let lease = Rc::default();
         let (out, result) = bounded(1);
-        out.try_send(ChildUpdate::Loaded(snapshot(page))).unwrap();
+        out.try_send(ChildUpdate::Loaded {
+            snapshot: snapshot(page),
+            verified: true,
+            settled: true,
+        })
+        .unwrap();
         let (cancel, _) = bounded(1);
         let (retry, _) = bounded(1);
         self.entries.insert(
             child_key(None, child),
             Entry {
                 cards: HashMap::from([("test".into(), Rc::downgrade(&lease))]),
-                _cancel: cancel,
-                retry,
-                result,
+                watcher: Some(Watcher {
+                    _cancel: cancel,
+                    retry,
+                    result,
+                }),
                 snapshot: Snapshot::default(),
                 load_error: false,
+                verified: true,
+                settled: true,
             },
         );
         lease

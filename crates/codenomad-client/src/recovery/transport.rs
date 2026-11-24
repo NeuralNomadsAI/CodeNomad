@@ -517,32 +517,39 @@ pub(crate) async fn run_with_reading(
                                 if kind == "session.tool.called" {
                                     reader.execution_settlement = 0;
                                 }
-                                history::check(&reader.resident)?;
-                                reader_event(
-                                    reading,
-                                    reader.generation,
-                                    &out,
-                                    &wake,
-                                    Event::Tool(id.into(), tool),
-                                )
-                                .await;
+                                if history::check(&reader.resident).is_err() {
+                                    if !reader.dirty {
+                                        reader.dirty = true;
+                                        reader.quiet = Instant::now() + Duration::from_millis(100);
+                                    }
+                                } else {
+                                    reader_event(
+                                        reading,
+                                        reader.generation,
+                                        &out,
+                                        &wake,
+                                        Event::Tool(id.into(), tool),
+                                    )
+                                    .await;
+                                }
                             }
                             content::ToolFit::Settled(tool) => {
-                                history::check(&reader.resident)?;
                                 if history::valid_id(id) && reader.owed_tools.len() < 64 {
                                     reader
                                         .owed_tools
                                         .entry((id.into(), tool.id.clone()))
                                         .or_insert(0);
                                 }
-                                reader_event(
-                                    reading,
-                                    reader.generation,
-                                    &out,
-                                    &wake,
-                                    Event::Tool(id.into(), tool),
-                                )
-                                .await;
+                                if history::check(&reader.resident).is_ok() {
+                                    reader_event(
+                                        reading,
+                                        reader.generation,
+                                        &out,
+                                        &wake,
+                                        Event::Tool(id.into(), tool),
+                                    )
+                                    .await;
+                                }
                                 if !reader.dirty {
                                     reader.dirty = true;
                                     reader.quiet = Instant::now() + Duration::from_millis(100);

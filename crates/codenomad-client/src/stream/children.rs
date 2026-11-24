@@ -3,7 +3,10 @@ use crate::{Receiver, Sender, backend::Backend, history, http::Http, runtime::In
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering::SeqCst},
+    },
     time::Duration,
 };
 
@@ -12,8 +15,6 @@ const MAX_OWED_CALLS: usize = 64;
 const MAX_LIVE_EVENTS: usize = 64;
 const MAX_EVENT_BYTES: usize = 256 * 1024;
 const MAX_QUEUE_BYTES: usize = 512 * 1024;
-const MAX_COPY_PAGES: usize = 64;
-const MAX_COPY_BYTES: usize = 8 * 1024 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const OWNERSHIP_BUDGET: Duration = Duration::from_secs(10);
 
@@ -30,11 +31,14 @@ pub struct ChildToolEvent {
     pub kind: String,
     pub data: Value,
     pub at: Option<u64>,
-    bytes: usize,
+    pub bytes: usize,
 }
 
 #[derive(Default)]
-pub struct ChildSettlement(Mutex<SettlementState>);
+pub struct ChildSettlement {
+    state: Mutex<SettlementState>,
+    revocation_gen: AtomicU64,
+}
 
 #[derive(Default)]
 struct SettlementState {
@@ -47,13 +51,18 @@ struct SettlementState {
 }
 
 impl ChildSettlement {
+    pub fn revocation_gen(&self) -> u64 {
+        self.revocation_gen.load(SeqCst)
+    }
+
     fn record(&self, signal: &ChildSignal) {
-        let Ok(mut state) = self.0.lock() else {
+        let Ok(mut state) = self.state.lock() else {
             return;
         };
         match signal {
             ChildSignal::Dirty => {}
             ChildSignal::Revoked => {
+                self.revocation_gen.fetch_add(1, SeqCst);
                 state.revoked = true;
                 state.events.clear();
                 state.event_bytes = 0;
@@ -98,21 +107,29 @@ impl ChildSettlement {
         }
         if ev.kind == "session.tool.progress"
             && let Some(call) = ev.data["id"].as_str()
-            && let Some(existing) = state.events.iter_mut().rev().find(|prev| {
+        {
+            let already_ended = state
+                .calls
+                .keys()
+                .any(|(msg, c)| c == call && (msg.is_none() || *msg == ev.message))
+                || state.events.iter().any(|prev| {
+                    matches!(
+                        prev.kind.as_str(),
+                        "session.tool.success" | "session.tool.failed"
+                    ) && prev.message == ev.message
+                        && prev.data["id"].as_str() == Some(call)
+                });
+            if already_ended {
+                return;
+            }
+            if let Some(pos) = state.events.iter().rposition(|prev| {
                 prev.kind == "session.tool.progress"
                     && prev.message == ev.message
                     && prev.data["id"].as_str() == Some(call)
-            })
-        {
-            let next_bytes = state
-                .event_bytes
-                .saturating_sub(existing.bytes)
-                .saturating_add(ev.bytes);
-            if next_bytes <= MAX_QUEUE_BYTES {
-                *existing = ev.clone();
-                state.event_bytes = next_bytes;
+            }) {
+                let removed = state.events.remove(pos);
+                state.event_bytes = state.event_bytes.saturating_sub(removed.bytes);
             }
-            return;
         }
         let next_bytes = state.event_bytes.saturating_add(ev.bytes);
         if state.events.len() < MAX_LIVE_EVENTS && next_bytes <= MAX_QUEUE_BYTES {
@@ -130,7 +147,7 @@ impl ChildSettlement {
         Option<u64>,
         bool,
     ) {
-        let Ok(mut state) = self.0.lock() else {
+        let Ok(mut state) = self.state.lock() else {
             return (Vec::new(), Vec::new(), false, None, false);
         };
         let calls = state
@@ -302,79 +319,30 @@ impl Backend {
         )
     }
 
-    pub async fn child_steps_json_under(
+    pub async fn child_ownership_token(
         &self,
         child: &str,
         expected_parent: &str,
-    ) -> history::Result<Option<String>> {
+    ) -> history::Result<Option<Value>> {
         if child == self.session || !history::valid_id(child) || !history::valid_id(expected_parent)
         {
             return Err("invalid task child".into());
         }
-        let Some(location) = self
-            .verify_child_ownership(child, Some(expected_parent))
-            .await?
-        else {
-            return Ok(None);
-        };
+        self.verify_child_ownership(child, Some(expected_parent))
+            .await
+    }
+
+    pub async fn child_page_request(
+        &self,
+        child: &str,
+        request: Value,
+    ) -> history::Result<history::Page> {
+        if child == self.session || !history::valid_id(child) {
+            return Err("invalid task child".into());
+        }
         let mut target = self.clone();
         target.session = child.into();
-        let mut out = String::from("[\n");
-        let mut count = 0usize;
-        let mut seen_rows = HashSet::new();
-        let mut cursor = Some(serde_json::json!({"kind": "oldest"}));
-        let mut seen_cursors = HashSet::new();
-        for _ in 0..MAX_COPY_PAGES {
-            let Some(request) = cursor.take() else {
-                break;
-            };
-            let key = request.to_string();
-            if !seen_cursors.insert(key) {
-                return Err("child steps history incomplete".into());
-            }
-            let page = target.page(request).await?;
-            for row in &page.rows {
-                if !seen_rows.insert(row.id.clone()) {
-                    continue;
-                }
-                for part in &row.parts {
-                    let crate::content::Part::Tool(tool) = part else {
-                        continue;
-                    };
-                    let entry = serde_json::json!({
-                        "type": "tool",
-                        "id": tool.id,
-                        "name": tool.name,
-                        "state": {
-                            "status": tool.status,
-                            "input": tool.input,
-                            "output": tool.output,
-                            "error": tool.error,
-                            "metadata": tool.metadata,
-                        }
-                    });
-                    let serialized = serde_json::to_string_pretty(&entry)?;
-                    if out.len().saturating_add(serialized.len() + 4) > MAX_COPY_BYTES {
-                        return Err("child steps copy budget reached".into());
-                    }
-                    if count > 0 {
-                        out.push_str(",\n");
-                    }
-                    out.push_str(&serialized);
-                    count += 1;
-                }
-            }
-            cursor = page.newer;
-        }
-        if cursor.is_some() {
-            return Err("child steps history incomplete".into());
-        }
-        out.push_str(if count > 0 { "\n]" } else { "]" });
-        Ok((self
-            .verify_child_ownership(child, Some(expected_parent))
-            .await?
-            == Some(location))
-        .then_some(out))
+        target.page(request).await
     }
 }
 
