@@ -117,7 +117,11 @@ fn run() -> io::Result<i32> {
     // SAFETY: single-threaded process before spawning the child; clears the internal
     // supervisor variable so inherited Windows/Unix child environments never receive it.
     unsafe { std::env::remove_var("CODENOMAD_FIXTURE_PARENT_PID") };
-    let mut args = std::env::args_os().skip(1);
+    let mut args = std::env::args_os().skip(1).peekable();
+    let inherit_console = args.peek().is_some_and(|arg| arg == "--inherit-console");
+    if inherit_console {
+        args.next();
+    }
     let program = args
         .next()
         .ok_or_else(|| io::Error::other("Expected a fixture executable and its arguments"))?;
@@ -128,9 +132,13 @@ fn run() -> io::Result<i32> {
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    let mut child = OwnedProcess::spawn_inherited(&mut command, |pid| {
-        eprintln!("CODENOMAD_FIXTURE_PID={pid}")
-    })?;
+    let mut child = if inherit_console {
+        OwnedProcess::spawn_inherited_console(&mut command, |pid| {
+            eprintln!("CODENOMAD_FIXTURE_PID={pid}")
+        })?
+    } else {
+        OwnedProcess::spawn_inherited(&mut command, |pid| eprintln!("CODENOMAD_FIXTURE_PID={pid}"))?
+    };
     let pause = Duration::from_millis(10);
     let status = loop {
         if let Some(status) = child.try_wait()? {
@@ -146,9 +154,28 @@ fn run() -> io::Result<i32> {
         sleep(pause);
     };
     if status.is_none() || !child.family_is_empty()? {
-        child.terminate()?;
+        #[cfg(unix)]
+        {
+            // Give nested fixture supervisors a short grace window to stop their own subgroups.
+            child.request_terminate()?;
+            let grace = Instant::now() + Duration::from_millis(300);
+            while Instant::now() < grace {
+                let _ = child.try_wait();
+                if child.family_is_empty()? {
+                    break;
+                }
+                sleep(pause);
+            }
+        }
+        if !child.family_is_empty()? {
+            child.terminate()?;
+        }
         let deadline = Instant::now() + Duration::from_secs(5);
         while !child.family_is_empty()? {
+            let _ = child.try_wait();
+            if child.family_is_empty()? {
+                break;
+            }
             if Instant::now() >= deadline {
                 return Err(io::Error::other("Fixture job did not finish terminating"));
             }

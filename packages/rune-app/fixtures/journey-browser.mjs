@@ -3,6 +3,7 @@ import {readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {mobileClientHints, mobileContext} from '../../../scripts/rune/web-mobile.mjs'
 import {activateControl,launchOwnedChromium} from '../../../scripts/rune/web-chromium.mjs'
+import {redactSecrets} from '../../../scripts/native-fixture-http.mjs'
 import {commit, edited, filename, initial, prompt, reply, title, assertPrivateChild} from './journey-host.mjs'
 import {signInFixture,until} from './fixture-host.mjs'
 import {guardJourney} from './journey-web-policy.mjs'
@@ -96,7 +97,7 @@ export async function journeyBrowser(host, web, report, executablePath){
         await action()
         assert.deepEqual(refused,[],'No unadmitted browser request')
         assert.deepEqual(errors,[])
-      }catch(error){entry.error=error.message}
+      }catch(error){entry.error=redactSecrets(error.message,[password])}
       entry.touch=await page.evaluate(()=>{
         const trace=window.__journeyTouch
         if(!trace)return []
@@ -110,7 +111,7 @@ export async function journeyBrowser(host, web, report, executablePath){
         page.screenshot({path:`${base}.png`,scale:'css',timeout:20000}),
       ])
       const failures=proof.filter(result=>result.status==='rejected')
-      if(failures.length)entry.evidenceError=failures.map(result=>result.reason.message).join('\n')
+      if(failures.length)entry.evidenceError=redactSecrets(failures.map(result=>result.reason.message).join('\n'),[password])
       entry.durationMs=Math.round(performance.now()-start)
       if(entry.error||entry.evidenceError)throw Error(entry.error??entry.evidenceError)
       entry.ok=true

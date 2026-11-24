@@ -24,9 +24,15 @@ impl Family {
         query_error(io::Error::last_os_error())
     }
     pub fn terminate(&self) -> io::Result<()> {
+        self.signal(libc::SIGKILL)
+    }
+    pub fn signal_term(&self) -> io::Result<()> {
+        self.signal(libc::SIGTERM)
+    }
+    fn signal(&self, sig: libc::c_int) -> io::Result<()> {
         // SAFETY: the child was created as this group leader before exec, and
         // this handle never attaches to any pre-existing process group.
-        if unsafe { libc::kill(-self.leader, libc::SIGKILL) } == 0 {
+        if unsafe { libc::kill(-self.leader, sig) } == 0 {
             return Ok(());
         }
         let error = io::Error::last_os_error();

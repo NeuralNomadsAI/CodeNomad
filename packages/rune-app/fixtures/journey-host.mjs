@@ -5,7 +5,7 @@ import {mkdir, mkdtemp, realpath, rm, writeFile} from 'node:fs/promises'
 import {createServer} from 'node:http'
 import path from 'node:path'
 import {privatePath, runDirectory} from '../../../scripts/perf/isolation.mjs'
-import {fixtureFetch, redactSecrets} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedRelay,fixtureFetch,redactSecrets} from '../../../scripts/native-fixture-http.mjs'
 import {assertNoSystemOpenCodeConfig, attestNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
@@ -105,16 +105,20 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
     const authorization=`Basic ${Buffer.from(`opencode:${privatePassword}`).toString('base64')}`
     const pid=await native.pid()
     assert(Number.isSafeInteger(pid)&&pid>0,'Private OpenCode child PID unavailable')
+    let nativeRelay
     attested=await attestNative(daemon,native.child,authorization,fixtureFetch,pid)
     report.openCodePID=pid
     await pruning.activate({project,url:daemon,authorization,send:attested.send},()=>assert.equal(native.child.exitCode,null))
+    nativeRelay=await createAttestedRelay(daemon,pid)
     const ownedRust={CNRS_FIXTURE_PASSWORD:privatePassword,CNRS_SERVER_PASSWORD:password}
-    server=launchFixture(rust,[profile,path.join(profile,'backend.json'),'0','fixture-only'],{cwd:profile,shutdown:'shutdown\n',redact:[privatePassword,password,marker],env:assertPrivateChild({
-      ...env,...ownedRust,CNRS_FIXTURE_URL:daemon,CNRS_FIXTURE_STDIN_STOP:'1',
-      ...(mode==='web'?{CNRS_FIXTURE_UI_DIR:web}:{}),
-    },ownedRust)})
-    const origin=await server.ready(rustOrigin)
-    await run({profile,project,origin,password,env})
+    try{
+      server=launchFixture(rust,[profile,path.join(profile,'backend.json'),'0','fixture-only'],{cwd:profile,shutdown:'shutdown\n',redact:[privatePassword,password,marker],env:assertPrivateChild({
+        ...env,...ownedRust,CNRS_FIXTURE_URL:nativeRelay.origin,CNRS_FIXTURE_STDIN_STOP:'1',
+        ...(mode==='web'?{CNRS_FIXTURE_UI_DIR:web}:{}),
+      },ownedRust)})
+      const origin=await server.ready(rustOrigin)
+      await run({profile,project,origin,password,env})
+    }finally{await nativeRelay.close().catch(()=>{})}
     report.stage='verify-model-and-git'
     model.prove()
     assert.equal(git('log','-1','--format=%s'),commit)
@@ -123,6 +127,10 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
     assert.equal(git('show',`HEAD:${filename}`),edited.trimEnd())
     assert.equal(git('status','--porcelain'),'')
   }catch(error){
+    for(const step of report.steps??[]){
+      if(step.error)step.error=redactSecrets(step.error,secrets)
+      if(step.evidenceError)step.evidenceError=redactSecrets(step.evidenceError,secrets)
+    }
     const safe=redactSecrets(error?.message??String(error),secrets)
     throw safe===error?.message?error:Error(safe)
   }finally{

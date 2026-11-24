@@ -9,6 +9,9 @@ on:
       - 'packages/rune-app/**'
       - 'crates/**'
       - 'scripts/rune/**'
+      - 'scripts/native-fixture-*'
+      - 'scripts/native-product-fixture.mjs'
+      - 'scripts/perf/**'
       - 'packages/ui/src/**'
       - 'packages/ui/tests/**'
       - '.github/workflows/rune-native.yml'
@@ -95,6 +98,7 @@ jobs:
           cargo run --locked -p rune-style-policy -- packages/rune-app/src
           cargo build --locked -p codenomad-rune-app --bin codenomad-rune
           cargo build --locked -p codenomad-host-process --bin codenomad-fixture-job
+          node --test scripts/native-fixture-guards.test.mjs
           node --test packages/rune-app/fixtures/*.test.mjs
       - name: Build shared client, state and views for WebAssembly
         run: |

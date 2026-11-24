@@ -18,10 +18,9 @@ export async function launchOwnedChromium({executablePath=chromium.executablePat
     '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',
     `--proxy-server=http://127.0.0.1:${guard.port}`,
     '--proxy-bypass-list=<-loopback>',
-    '--webrtc-ip-handling-policy=disable_non_proxied_udp',
-    '--force-webrtc-ip-handling-policy',
+    '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
   ]:[]
-  let host,browser
+  let host,browser,pid
   try{
     host=launchFixture(executablePath,[
       ...graphics,...networkArgs,'--headless=new','--disable-background-networking','--disable-component-update',
@@ -38,11 +37,13 @@ export async function launchOwnedChromium({executablePath=chromium.executablePat
       return null
     },'DevToolsActivePort matching announced port',15000)
     browser=await chromium.connectOverCDP(`ws://127.0.0.1:${port}${id}`,{timeout:15000})
+    pid=await host.pid()
   }catch(error){
+    try{await browser?.close()}catch{}
     try{await host?.stop()}finally{await guard?.close()}
     throw error
   }
-  return {browser,pid:await host.pid(),async close(){
+  return {browser,pid,async close(){
     try{
       try{
         await host.stop(async()=>{const session=await browser.newBrowserCDPSession();await session.send('Browser.close')})

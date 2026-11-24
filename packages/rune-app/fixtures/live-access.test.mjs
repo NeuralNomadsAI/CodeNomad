@@ -3,7 +3,7 @@ import {link,mkdtemp,mkdir,readFile,realpath,rm,symlink,writeFile} from 'node:fs
 import os from 'node:os'
 import path from 'node:path'
 import {test} from 'node:test'
-import {attestNative,fixtureTarget,isLocalAbsolutePath,privateManifest,requirePrivateCli,validatePrivateTree} from './live-access.mjs'
+import {acquireProfileLock,attestNative,fixtureTarget,isLocalAbsolutePath,privateManifest,requirePrivateCli,validatePrivateTree} from './live-access.mjs'
 import {launchFixture,onFixtureSignal} from './fixture-host.mjs'
 import {seedRealHistory} from './real-history-seed.mjs'
 import {redactSecrets,resolveWorktreePackage} from '../../../scripts/native-fixture-http.mjs'
@@ -211,7 +211,9 @@ test('signal teardown closes admission, stops owned children and removes running
     })
     try{
       const childPid=Number(await runner.ready(out=>out.match(/^RUNNER_READY:(\d+)/m)?.[1]))
-      if(process.platform!=='win32')process.kill(runner.child.pid,'SIGTERM')
+      const runnerPid=await runner.pid()
+      assert(Number.isSafeInteger(runnerPid)&&runnerPid>0,'Runner PID must be reported by fixture supervisor')
+      if(process.platform!=='win32')process.kill(runnerPid,'SIGTERM')
       const code=await runner.closed
       assert.equal(code,143)
       let lockExists=true
@@ -219,6 +221,27 @@ test('signal teardown closes admission, stops owned children and removes running
       assert.equal(lockExists,false,'running.lock must be removed by signal cleanup')
       assert.throws(()=>process.kill(childPid,0),'Owned child must be stopped by signal teardown')
     }finally{await runner.stop()}
+  }finally{await rm(temp,{recursive:true,force:true})}
+})
+
+test('acquireProfileLock rejects live owners and recovers stale crash locks',{timeout:15000},async()=>{
+  const temp=await mkdtemp(path.join(os.tmpdir(),'rune-live-lock-'))
+  try{
+    const lock=path.join(temp,'running.lock')
+    const live=await acquireProfileLock(lock)
+    try{
+      await assert.rejects(acquireProfileLock(lock),{code:'EEXIST'})
+    }finally{await live.close()}
+    // Spawn and wait for a short-lived process to obtain a guaranteed dead PID.
+    const short=launchFixture(process.execPath,['-e','process.exit(0)'],{cwd:process.cwd(),env:{PATH:process.env.PATH}})
+    const deadPid=await short.pid()
+    await short.closed
+    await short.stop()
+    await writeFile(lock,JSON.stringify({pid:deadPid})+'\n')
+    const recovered=await acquireProfileLock(lock)
+    try{
+      assert.equal(JSON.parse(await readFile(lock,'utf8')).pid,process.pid)
+    }finally{await recovered.close()}
   }finally{await rm(temp,{recursive:true,force:true})}
 })
 

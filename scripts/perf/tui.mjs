@@ -1,25 +1,29 @@
 import { createRequire } from "node:module"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { fixtureJobExecutable } from "../native-fixture-guards.mjs"
-import { withoutFixtureProxy } from "../native-fixture-http.mjs"
+import { resolveWorktreePackage, withoutFixtureProxy } from "../native-fixture-http.mjs"
 import { registerFixtureChild } from "../../packages/rune-app/fixtures/fixture-host.mjs"
 import { MARKER, now } from "./lib.mjs"
 
 const require = createRequire(import.meta.url)
+const toolsNodeModules = path.resolve(fileURLToPath(new URL("./tools/node_modules", import.meta.url)))
+const posixSupervisor = fileURLToPath(new URL("../native-fixture-posix-supervisor.mjs", import.meta.url))
 
 export async function withTui(cli, daemon, session, run) {
-  const pty = require("./tools/node_modules/@lydell/node-pty")
-  const { Terminal } = require("./tools/node_modules/@xterm/headless")
+  const pty = require(fileURLToPath(resolveWorktreePackage("@lydell/node-pty", toolsNodeModules)))
+  const { Terminal } = require(fileURLToPath(resolveWorktreePackage("@xterm/headless", toolsNodeModules)))
   const cols = 200, rows = 60
-  const useJob = process.platform === "win32"
-  const command = useJob ? fixtureJobExecutable() : cli
-  const args = useJob
-    ? [cli, "--server", daemon.url, "--session", session, daemon.project]
-    : ["--server", daemon.url, "--session", session, daemon.project]
+  const isWin = process.platform === "win32"
+  const command = isWin ? fixtureJobExecutable() : process.execPath
+  const args = isWin
+    ? ["--inherit-console", cli, "--server", daemon.url, "--session", session, daemon.project]
+    : [posixSupervisor, "--same-group", cli, "--server", daemon.url, "--session", session, daemon.project]
   const p = pty.spawn(command, args, {
     name: "xterm-256color", cols, rows, cwd: daemon.project,
     env: withoutFixtureProxy({
       ...daemon.env,
-      ...(useJob ? { CODENOMAD_FIXTURE_PARENT_PID: String(process.pid) } : {}),
+      CODENOMAD_FIXTURE_PARENT_PID: String(process.pid),
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
     }),

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import {execFile} from 'node:child_process'
 import {Agent,createServer,request} from 'node:http'
+import net from 'node:net'
 import {test} from 'node:test'
 import {promisify} from 'node:util'
-import {createAttestedFetch,fixtureFetch,relayTarget,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,fixtureFetch,relayTarget,verifyLoopbackConnectionPeer,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {sseReader} from '../../../scripts/perf/lib.mjs'
 
 async function listen(t,handler){
@@ -97,9 +98,12 @@ test('sseReader bounds silent opens and cancels an idle open SSE body cleanly',{
 })
 
 test('createAttestedFetch serves concurrent POST while an SSE stream stays open and closes immediately',{timeout:15000},async t=>{
-  let ownerChecks=0
+  let ownerChecks=0,peerChecks=0,markSseClosed
+  const sseClosedOnServer=new Promise(resolve=>{markSseClosed=resolve})
   const srv=await listen(t,(req,res)=>{
     if(req.url==='/api/event'){
+      req.on('close',markSseClosed)
+      res.on('close',markSseClosed)
       res.writeHead(200,{'content-type':'text/event-stream'})
       res.write('data: {"type":"server.connected"}\n\n')
       return
@@ -112,14 +116,41 @@ test('createAttestedFetch serves concurrent POST while an SSE stream stays open 
     res.writeHead(404);res.end()
   })
   const port=Number(new URL(srv.origin).port)
-  const bound=createAttestedFetch(srv.origin,port,process.pid,async()=>{ownerChecks++})
+  const bound=createAttestedFetch(srv.origin,port,process.pid,async()=>{ownerChecks++},async(localPort,remotePort,pid)=>{
+    peerChecks++
+    await verifyLoopbackConnectionPeer(localPort,remotePort,pid)
+  })
   try{
     const sse=await bound(new URL('/api/event',srv.origin),{signal:AbortSignal.timeout(5000)})
     assert.equal(sse.status,200)
     const post=await bound(new URL('/api/session',srv.origin),{method:'POST',body:'{}',signal:AbortSignal.timeout(5000)})
     assert.equal(post.status,200)
     assert.deepEqual(await post.json(),{id:'ses_concurrent'})
-    assert(ownerChecks>=4,'each opened socket must verify ownership before and after connect')
+    assert(ownerChecks>=2,'each opened socket must verify listener ownership before connect')
+    assert(peerChecks>=2,'each opened socket must verify peer ownership after connect')
+    const closingAt=Date.now()
     await bound.close()
+    await Promise.race([sseClosedOnServer,new Promise((_,reject)=>setTimeout(()=>reject(Error('SSE socket did not close promptly on server')),1000))])
+    assert(Date.now()-closingAt<1000,'bound.close() must terminate active SSE sockets immediately')
   }finally{await bound.close()}
+})
+
+test('verifyLoopbackConnectionPeer rejects mismatched PID and pool close aborts in-flight peer checks',{timeout:15000},async t=>{
+  const srv=await listen(t,(_req,res)=>{res.writeHead(200);res.end('ok')})
+  const port=Number(new URL(srv.origin).port)
+  const socket=net.createConnection({host:'127.0.0.1',port})
+  t.after(()=>socket.destroy())
+  await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject)})
+  await verifyLoopbackConnectionPeer(socket.localPort,port,process.pid)
+  await assert.rejects(verifyLoopbackConnectionPeer(socket.localPort,port,process.pid+999999),/not owned by fixture PID/)
+
+  let peerEntered,releasePeer
+  const inPeer=new Promise(resolve=>{peerEntered=resolve})
+  const peerGate=new Promise(resolve=>{releasePeer=resolve})
+  const bound=createAttestedFetch(srv.origin,port,process.pid,async()=>{},async()=>{peerEntered();await peerGate})
+  const pending=bound(new URL('/',srv.origin))
+  await inPeer
+  await bound.close()
+  releasePeer()
+  await assert.rejects(pending,error=>/closed|destroyed|Attested/i.test(error?.cause?.message??error?.message??''))
 })

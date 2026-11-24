@@ -240,6 +240,28 @@ async function removeExecutable(file){
   }
 }
 
+export async function acquireProfileLock(lease){
+  const writeOwner=async fh=>{
+    await fh.writeFile(JSON.stringify({pid:process.pid})+'\n')
+    return fh
+  }
+  try{
+    return await writeOwner(await open(lease,'wx'))
+  }catch(error){
+    if(error.code!=='EEXIST')throw error
+    let stale=false
+    try{
+      const raw=JSON.parse(await readFile(lease,'utf8'))
+      if(Number.isSafeInteger(raw?.pid)&&raw.pid>0&&raw.pid!==process.pid){
+        try{process.kill(raw.pid,0)}catch(probe){if(probe.code==='ESRCH')stale=true}
+      }
+    }catch{}
+    if(!stale)throw error
+    try{await unlink(lease)}catch(unlinkErr){if(unlinkErr.code!=='ENOENT')throw unlinkErr}
+    return await writeOwner(await open(lease,'wx'))
+  }
+}
+
 export async function withNative(run,{profile,pruning=true,denyAllTools=false}={}){
   const cli=resolveLocalExecutable(requirePrivateCli(),'OpenCode binary')
   await assertNoSystemOpenCodeConfig()
@@ -254,7 +276,7 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
   if(!fresh)await validatePrivateTree(profile)
   assert.equal(await readFile(path.join(profile,marker),'utf8'),'Rune private OpenCode v1\n')
   const lease=path.join(profile,'running.lock')
-  const lock=await open(lease,'wx')
+  const lock=await acquireProfileLock(lease)
   let daemon,model,plugin,password,executable,config,runtime,attested,aborted=false,executionFinished=false
   const checkActive=()=>{if(aborted)throw Error('Private fixture interrupted during startup')}
   const owned=name=>{
@@ -263,10 +285,10 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
     return expected
   }
   let cleaned,leaseRemoved=false
-  const tryRemoveLease=async()=>{
+  const tryRemoveLease=async(force=false)=>{
     if(leaseRemoved)return
     const daemonStopped=!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null
-    if(executionFinished&&daemonStopped){
+    if((executionFinished||force)&&daemonStopped){
       leaseRemoved=true
       try{await unlink(lease)}catch(error){if(error.code!=='ENOENT')throw error}
     }
@@ -359,6 +381,7 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
     await daemon?.stop().catch(()=>{})
     await Promise.race([execution.catch(()=>{}),delay(8000,undefined,{ref:false})])
     await cleanup()
+    await tryRemoveLease(true)
   },()=>{aborted=true})
   try{return await execution}finally{untrackSignal()}
 }

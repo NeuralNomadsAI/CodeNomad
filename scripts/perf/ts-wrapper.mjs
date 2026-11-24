@@ -2,10 +2,10 @@
 import assert from "node:assert/strict"
 import dgram from "node:dgram"
 import net from "node:net"
-import { register } from "node:module"
+import { register, syncBuiltinESMExports } from "node:module"
 import { pathToFileURL, fileURLToPath } from "node:url"
 import { privatePath } from "./isolation.mjs"
-import { fixtureFetch, resolveWorktreePackage, verifyLoopbackListenerOwner } from "../native-fixture-http.mjs"
+import { createAttestedFetch, createAttestedPool, resolveWorktreePackage } from "../native-fixture-http.mjs"
 
 const { Agent, setGlobalDispatcher } = await import(resolveWorktreePackage("undici"))
 
@@ -21,24 +21,33 @@ const url = new URL(process.env.PERF_DAEMON_URL)
 assert.equal(url.hostname, "127.0.0.1")
 const password = process.env.OPENCODE_SERVER_PASSWORD
 const expectedPid = Number(process.env.PERF_DAEMON_PID)
-const endpoint = { url: url.origin, auth: { type: "basic", username: "opencode", password } }
-await verifyLoopbackListenerOwner(Number(url.port), expectedPid)
-const info = await (await fixtureFetch(new URL("/api/info", url), { headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` } })).json()
+const allowedOrigin = url.origin
+const allowedPort = Number(url.port)
+const endpoint = { url: allowedOrigin, auth: { type: "basic", username: "opencode", password } }
+const probeFetch = createAttestedFetch(allowedOrigin, allowedPort, expectedPid)
+let info
+try {
+  const response = await probeFetch(new URL("/api/info", url), {
+    headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` },
+  })
+  assert.equal(response.status, 200)
+  info = await response.json()
+} finally {
+  await probeFetch.close()
+}
 assert.equal(info.pid, expectedPid)
-await verifyLoopbackListenerOwner(Number(url.port), expectedPid)
 rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
 OpenCodeCliService.prototype.discover = async () => endpoint
 for (const action of ["ensure", "restart"]) OpenCodeCliService.prototype[action] = async () => { throw Error(`Bench forbids service ${action}`) }
 const entry = new URL("index.js", dist)
-const allowedOrigin = url.origin
-const allowedPort = Number(url.port)
 dgram.createSocket = () => { throw Error("Benchmark server cannot create UDP sockets") }
+syncBuiltinESMExports()
 const originalConnect = net.Socket.prototype.connect
 net.Socket.prototype.connect = function guardedConnect(...args) {
   let host, port, ipcPath
   if (Array.isArray(args[0])) args = args[0]
   if (typeof args[0] === "object" && args[0] !== null) {
-    host = args[0].host ?? args[0].hostname
+    host = args[0].host
     port = Number(args[0].port)
     ipcPath = args[0].path
   } else if (typeof args[0] === "string" && Number.isNaN(Number(args[0]))) {
@@ -52,6 +61,7 @@ net.Socket.prototype.connect = function guardedConnect(...args) {
   }
   return originalConnect.apply(this, args)
 }
+const { pool: attestedPool } = createAttestedPool(allowedOrigin, allowedPort, expectedPid)
 const originalAgentDispatch = Agent.prototype.dispatch
 Agent.prototype.dispatch = function guardedDispatch(opts, handler) {
   const origin = typeof opts.origin === "string" ? opts.origin : opts.origin?.origin
@@ -59,10 +69,9 @@ Agent.prototype.dispatch = function guardedDispatch(opts, handler) {
     handler.onError?.(Error(`Benchmark server cannot contact external origin: ${origin}`))
     return false
   }
-  return originalAgentDispatch.call(this, opts, handler)
+  return attestedPool.dispatch(opts, handler)
 }
-const innerDispatcher = new Agent()
-setGlobalDispatcher(innerDispatcher)
+setGlobalDispatcher(attestedPool)
 const baseFetch = globalThis.fetch
 globalThis.fetch = (input, init = {}) => {
   const target = new URL(input instanceof Request ? input.url : String(input))

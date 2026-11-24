@@ -3,36 +3,56 @@ import { spawn } from "node:child_process"
 
 const parentPid = Number(process.env.CODENOMAD_FIXTURE_PARENT_PID || 0)
 delete process.env.CODENOMAD_FIXTURE_PARENT_PID
-const [command, ...args] = process.argv.slice(2)
+const rawArgs = process.argv.slice(2)
+const sameGroup = rawArgs[0] === "--same-group"
+const [command, ...args] = sameGroup ? rawArgs.slice(1) : rawArgs
 if (!command) {
   console.error("Fixture supervisor: expected an executable and its arguments")
   process.exit(1)
 }
 
-const child = spawn(command, args, { detached: true, stdio: "inherit", env: process.env })
+const child = spawn(command, args, { detached: !sameGroup, stdio: "inherit", env: process.env })
 let terminating = false
+let childExited = false
 
-function killGroup() {
+function signalFamily(signal) {
   if (!child.pid) return
-  try { process.kill(-child.pid, "SIGKILL") } catch {}
+  if (sameGroup) {
+    try { process.kill(child.pid, signal) } catch {}
+    return
+  }
+  try { process.kill(-child.pid, signal) } catch {}
+}
+
+function familyAlive() {
+  if (!child.pid) return false
+  if (sameGroup) {
+    if (childExited) return false
+    try { process.kill(child.pid, 0); return true } catch (error) { return error.code === "EPERM" }
+  }
+  try { process.kill(-child.pid, 0); return true } catch (error) { return error.code === "EPERM" }
 }
 
 function shutdown(code) {
   if (terminating) return
   terminating = true
   clearInterval(watch)
-  killGroup()
+  signalFamily("SIGTERM")
+  const graceUntil = Date.now() + 300
   const deadline = Date.now() + 5000
+  let escalated = false
   const wait = setInterval(() => {
-    let alive = false
-    if (child.pid) {
-      try { process.kill(-child.pid, 0); alive = true } catch (error) { alive = error.code === "EPERM" }
-    }
+    const alive = familyAlive()
     if (!alive || Date.now() >= deadline) {
       clearInterval(wait)
       process.exit(code)
     }
-    killGroup()
+    if (!escalated && Date.now() >= graceUntil) {
+      escalated = true
+      signalFamily("SIGKILL")
+    } else if (escalated) {
+      signalFamily("SIGKILL")
+    }
   }, 20)
 }
 
@@ -45,9 +65,8 @@ child.once("error", error => {
   process.exit(1)
 })
 child.once("exit", (code, signal) => {
-  clearInterval(watch)
-  killGroup()
-  process.exit(code ?? (signal ? 1 : 0))
+  childExited = true
+  shutdown(code ?? (signal ? 1 : 0))
 })
 
 for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {

@@ -5,7 +5,7 @@ import path from "node:path"
 import { createHash } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import { fixtureChildPid, stopFixtureHandle } from "./native-fixture-guards.mjs"
-import { verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
+import { createAttestedFetch, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { projectFailureSQL } from "./native-fixture-sql-projection.mjs"
 
 const REGISTRATION = 32 * 1024, LOGS = 256 * 1024, OUTPUT = 512 * 1024
@@ -129,9 +129,11 @@ const ownerCheck = () => new Promise(resolve => {
 async function infoProbe(input, credentials) {
   if (!await ownerCheck()) return failure("owned-child-unavailable")
   const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 2000)
+  const targetUrl = new URL("/api/info", credentials.info.url)
+  const attested = createAttestedFetch(targetUrl.origin, Number(targetUrl.port), input.expected.pid)
   let response, reader
   try {
-    response = await fetch(new URL("/api/info", credentials.info.url), { method: "GET", redirect: "error",
+    response = await attested(targetUrl, { method: "GET", redirect: "error",
       headers: { authorization: `Basic ${credentials.basic}` }, signal: abort.signal })
     reader = response.body?.getReader()
     const chunks = []; let size = 0
@@ -147,7 +149,7 @@ async function infoProbe(input, credentials) {
     const version = pid === input.expected.pid && raw.version === input.expected.version ? input.expected.version : null
     return { status: response.status, pid, version, ...(pid !== input.expected.pid || version !== input.expected.version ? failure("http-identity-mismatch") : {}) }
   } catch { return failure(abort.signal.aborted ? "http-timeout" : "http-transport-unavailable") }
-  finally { clearTimeout(timer); abort.abort(); void reader?.cancel().catch(() => {}) }
+  finally { clearTimeout(timer); abort.abort(); void reader?.cancel().catch(() => {}); await attested.close() }
 }
 
 function logs(input) {

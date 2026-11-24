@@ -3,8 +3,9 @@ import {execFile} from 'node:child_process'
 import {existsSync,realpathSync} from 'node:fs'
 import {readdir,readFile,readlink} from 'node:fs/promises'
 import {Agent as HttpAgent,createServer,request as httpRequest} from 'node:http'
+import net from 'node:net'
 import path from 'node:path'
-import {fileURLToPath} from 'node:url'
+import {fileURLToPath,pathToFileURL} from 'node:url'
 import {promisify} from 'node:util'
 
 const execFileAsync=promisify(execFile)
@@ -35,7 +36,7 @@ export function resolveWorktreePackage(specifier,nodeModulesDir=worktreeNodeModu
   const pkgDir=path.join(nodeModulesDir,...pkg.split('/'))
   assert(existsSync(path.join(pkgDir,'package.json')),
     `Worktree node_modules is missing ${pkg}; parent checkout dependencies are forbidden`)
-  const resolvedUrl=import.meta.resolve(specifier)
+  const resolvedUrl=import.meta.resolve(specifier,pathToFileURL(path.join(nodeModulesDir,'_')).href)
   assert(resolvedUrl.startsWith('file://'),`Dependency ${specifier} must resolve to a local file`)
   const resolvedPath=realpathSync(fileURLToPath(resolvedUrl))
   assert(isWithin(rootReal,resolvedPath)&&resolvedPath!==rootReal,
@@ -108,6 +109,48 @@ export async function verifyLoopbackListenerOwner(port,pid,forbidden='the shared
   assert(owners.size===1&&owners.has(pid),`Loopback port 127.0.0.1:${port} is not owned by fixture PID ${pid}; ${forbidden}`)
 }
 
+export async function verifyLoopbackConnectionPeer(localPort,remotePort,pid,forbidden='the shared OpenCode service is forbidden'){
+  assert(Number.isSafeInteger(localPort)&&localPort>0&&localPort<=65535,'Invalid local loopback port')
+  assert(Number.isSafeInteger(remotePort)&&remotePort>0&&remotePort<=65535,'Invalid remote loopback port')
+  assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID')
+  if(process.platform==='win32'){
+    const {stdout}=await execFileAsync('netstat.exe',['-ano','-p','tcp'],{timeout:10000,windowsHide:true,maxBuffer:8*1024*1024})
+    const owners=new Set()
+    for(const line of stdout.split(/\r?\n/)){
+      const match=/^\s*TCP\s+127\.0\.0\.1:(\d+)\s+127\.0\.0\.1:(\d+)\s+ESTABLISHED\s+(\d+)\s*$/i.exec(line)
+      if(match&&Number(match[1])===remotePort&&Number(match[2])===localPort)owners.add(Number(match[3]))
+    }
+    assert(owners.size===1&&owners.has(pid),`Established loopback connection 127.0.0.1:${localPort}->127.0.0.1:${remotePort} is not owned by fixture PID ${pid}; ${forbidden}`)
+    return
+  }
+  if(process.platform==='linux'){
+    const localHex=`0100007F:${remotePort.toString(16).toUpperCase().padStart(4,'0')}`
+    const peerHex=`0100007F:${localPort.toString(16).toUpperCase().padStart(4,'0')}`
+    const table=await readFile('/proc/net/tcp','utf8')
+    const inodes=new Set()
+    for(const line of table.split('\n').slice(1)){
+      const cols=line.trim().split(/\s+/)
+      if(cols[1]===localHex&&cols[2]===peerHex&&cols[3]==='01'&&cols[9])inodes.add(`socket:[${cols[9]}]`)
+    }
+    assert.equal(inodes.size,1,`Established loopback connection 127.0.0.1:${localPort}->127.0.0.1:${remotePort} must have a single peer socket; ${forbidden}`)
+    const [inode]=inodes
+    const fds=await readdir(`/proc/${pid}/fd`)
+    for(const fd of fds){
+      try{if(await readlink(`/proc/${pid}/fd/${fd}`)===inode)return}catch{}
+    }
+    throw Error(`Established loopback connection 127.0.0.1:${localPort}->127.0.0.1:${remotePort} is not owned by fixture PID ${pid}; ${forbidden}`)
+  }
+  const {stdout}=await execFileAsync('lsof',['-nP',`-iTCP:${remotePort}`,'-sTCP:ESTABLISHED','-Fpn'],{timeout:10000})
+  const owners=new Set()
+  let currentPid=null
+  const expected=`127.0.0.1:${remotePort}->127.0.0.1:${localPort}`
+  for(const line of stdout.split(/\r?\n/)){
+    if(line.startsWith('p'))currentPid=Number(line.slice(1))
+    else if(line.startsWith('n')&&line.slice(1)===expected&&Number.isSafeInteger(currentPid))owners.add(currentPid)
+  }
+  assert(owners.size===1&&owners.has(pid),`Established loopback connection 127.0.0.1:${localPort}->127.0.0.1:${remotePort} is not owned by fixture PID ${pid}; ${forbidden}`)
+}
+
 export async function originGuardProxy(localOrigin){
   const server=createServer((req,res)=>{
     let target
@@ -143,16 +186,39 @@ export async function originGuardProxy(localOrigin){
   }
 }
 
-export function createAttestedFetch(origin,port,pid,verifyOwner=verifyLoopbackListenerOwner){
+export function createAttestedPool(origin,port,pid,verifyOwner=verifyLoopbackListenerOwner,verifyPeer){
+  const checkPeer=verifyPeer??(verifyOwner===verifyLoopbackListenerOwner?verifyLoopbackConnectionPeer:(_local,remote,expectedPid)=>verifyOwner(remote,expectedPid))
   const connector=buildConnector({})
+  let closed=false
+  const pendingSockets=new Set()
   const pool=new Pool(origin,{
     connections:8,
     keepAliveTimeout:60_000,
     connect(opts,cb){
+      if(closed){cb(Error('Attested pool is closed'),null);return}
       verifyOwner(port,pid).then(()=>{
+        if(closed){cb(Error('Attested pool is closed'),null);return}
         connector(opts,(error,socket)=>{
-          if(error||!socket){cb(error??Error('Socket connection failed'),null);return}
-          verifyOwner(port,pid).then(()=>cb(null,socket),postError=>{
+          if(closed||error||!socket||socket.destroyed||!socket.localPort){
+            try{socket?.destroy()}catch{}
+            cb(error??Error('Socket connection closed before peer attestation'),null)
+            return
+          }
+          pendingSockets.add(socket)
+          const onEarlyClose=()=>{pendingSockets.delete(socket)}
+          socket.once('close',onEarlyClose)
+          checkPeer(socket.localPort,port,pid).then(()=>{
+            socket.off('close',onEarlyClose)
+            pendingSockets.delete(socket)
+            if(closed||socket.destroyed){
+              try{socket.destroy()}catch{}
+              cb(Error('Socket closed during peer attestation'),null)
+              return
+            }
+            cb(null,socket)
+          },postError=>{
+            socket.off('close',onEarlyClose)
+            pendingSockets.delete(socket)
             try{socket.destroy()}catch{}
             cb(postError,null)
           })
@@ -160,6 +226,17 @@ export function createAttestedFetch(origin,port,pid,verifyOwner=verifyLoopbackLi
       },error=>cb(error,null))
     },
   })
+  const close=()=>{
+    closed=true
+    for(const socket of pendingSockets)try{socket.destroy()}catch{}
+    pendingSockets.clear()
+    return pool.destroy().catch(()=>{})
+  }
+  return {pool,close}
+}
+
+export function createAttestedFetch(origin,port,pid,verifyOwner=verifyLoopbackListenerOwner,verifyPeer){
+  const {pool,close}=createAttestedPool(origin,port,pid,verifyOwner,verifyPeer)
   const fetchBound=(input,init={})=>{
     if(input instanceof Request){
       const {url,method,headers,body,signal}=input
@@ -167,8 +244,77 @@ export function createAttestedFetch(origin,port,pid,verifyOwner=verifyLoopbackLi
     }
     return undiciFetch(input,{...init,duplex:'half',dispatcher:pool,redirect:'error'})
   }
-  fetchBound.close=()=>pool.destroy().catch(()=>{})
+  fetchBound.close=close
   return fetchBound
+}
+
+export function createAttestedHttpAgent(port,pid,verifyOwner=verifyLoopbackListenerOwner,verifyPeer){
+  const checkPeer=verifyPeer??(verifyOwner===verifyLoopbackListenerOwner?verifyLoopbackConnectionPeer:(_local,remote,expectedPid)=>verifyOwner(remote,expectedPid))
+  let closed=false
+  const pending=new Set()
+  const agent=new HttpAgent({keepAlive:true,proxyEnv:{}})
+  const originalDestroy=agent.destroy.bind(agent)
+  agent.createConnection=(options,callback)=>{
+    const host=options.host??options.hostname
+    const targetPort=Number(options.port)
+    if(closed||host!=='127.0.0.1'||targetPort!==port){
+      const err=Error(`Attested HTTP agent refused connection to ${host}:${targetPort}`)
+      if(callback){queueMicrotask(()=>callback(err));return undefined}
+      throw err
+    }
+    verifyOwner(port,pid).then(()=>{
+      if(closed){callback?.(Error('Attested HTTP agent is closed'));return}
+      const socket=net.createConnection({host:'127.0.0.1',port})
+      pending.add(socket)
+      const fail=err=>{
+        pending.delete(socket)
+        try{socket.destroy()}catch{}
+        callback?.(err)
+      }
+      socket.once('error',fail)
+      socket.once('connect',()=>{
+        socket.off('error',fail)
+        if(closed||socket.destroyed||!socket.localPort){fail(Error('Socket closed before peer attestation'));return}
+        checkPeer(socket.localPort,port,pid).then(()=>{
+          pending.delete(socket)
+          if(closed||socket.destroyed){fail(Error('Socket closed during peer attestation'));return}
+          callback?.(null,socket)
+        },fail)
+      })
+    },err=>callback?.(err))
+    return undefined
+  }
+  agent.destroy=()=>{
+    closed=true
+    for(const socket of pending)try{socket.destroy()}catch{}
+    pending.clear()
+    originalDestroy()
+  }
+  return agent
+}
+
+export async function createAttestedRelay(targetOrigin,pid,onRequest){
+  const base=new URL(targetOrigin)
+  assert(base.protocol==='http:'&&base.hostname==='127.0.0.1'&&base.port,'Expected a loopback HTTP target for attested relay')
+  const agent=createAttestedHttpAgent(Number(base.port),pid)
+  const server=createServer((req,res)=>{
+    const url=relayTarget(req,res,base.origin)
+    if(!url)return
+    if(onRequest&&onRequest(req,res,url)===false)return
+    const upstream=httpRequest(url,{agent,method:req.method,headers:{...req.headers,host:url.host}},response=>{
+      res.writeHead(response.statusCode,response.headers)
+      response.pipe(res)
+    })
+    upstream.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end()})
+    req.on('aborted',()=>upstream.destroy())
+    res.on('close',()=>upstream.destroy())
+    req.pipe(upstream)
+  })
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
+  return {
+    origin:`http://127.0.0.1:${server.address().port}`,
+    close:()=>{agent.destroy();server.closeAllConnections();return new Promise(resolve=>server.close(resolve))},
+  }
 }
 
 export function withoutFixtureProxy(env){

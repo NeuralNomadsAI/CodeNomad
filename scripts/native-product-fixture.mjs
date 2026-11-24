@@ -1,27 +1,66 @@
 import assert from "node:assert/strict"
+import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, readFile, realpath, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { lstat, mkdtemp, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
+import { promisify } from "node:util"
 import { createAttestedFetch, redactSecrets, resolveWorktreePackage, verifyLoopbackListenerOwner } from "./native-fixture-http.mjs"
 import { fixtureChildPid, spawnFixtureChild, stopFixtureChild } from "./native-fixture-guards.mjs"
 
+const execFileAsync = promisify(execFile)
 const { OpenCode } = await import(resolveWorktreePackage("@opencode/client"))
 const { Service } = await import(resolveWorktreePackage("@opencode/client/service"))
 
+async function assertNoSystemOpenCodeConfig() {
+  if (process.platform === "win32") return
+  const paths = process.platform === "darwin"
+    ? ["/Library/Application Support/opencode",
+       path.join("/Library/Managed Preferences", os.userInfo().username, "ai.opencode.managed.plist"),
+       "/Library/Managed Preferences/ai.opencode.managed.plist"]
+    : ["/etc/opencode"]
+  for (const candidate of paths) {
+    let stat
+    try { stat = await lstat(candidate) } catch (error) { if (error.code === "ENOENT") continue; throw error }
+    if (stat.isDirectory()) {
+      const entries = await readdir(candidate)
+      assert.equal(entries.length, 0, `Host system OpenCode config must be empty for private fixtures: ${candidate}`)
+    } else {
+      throw Error(`Host system OpenCode config must be absent for private fixtures: ${candidate}`)
+    }
+  }
+}
+
+function assertNoAncestorProjectConfig(directory) {
+  let current = directory
+  for (;;) {
+    for (const marker of [".opencode", "opencode.json", "opencode.jsonc"]) {
+      assert(!existsSync(path.join(current, marker)),
+        `Project-config fixture ancestor must not contain ${marker}: ${current}`)
+    }
+    const parent = path.dirname(current)
+    if (parent === current) break
+    current = parent
+  }
+}
+
 /** The resolved `opencode` folder fixtures are created in. With `projectConfig` the daemon reads
- * every ancestor's `.opencode/`, so outside CI it must lie outside the user's home. */
+ * every ancestor's `.opencode/`, so it must lie outside the user's home and have no ancestor config. */
 export async function fixtureParent({ projectConfig = false } = {}) {
   const requested = path.join(projectConfig && process.env.CODENOMAD_NATIVE_FIXTURE_PARENT || os.tmpdir(), "opencode")
   await mkdir(requested, { recursive: true })
   // The resolved path is both checked and used, so a link out of the home cannot reintroduce its ancestors.
   const parent = await realpath(requested)
-  if (projectConfig && !process.env.CI) {
-    const relative = path.relative(await realpath(os.homedir()), parent)
-    assert(path.isAbsolute(relative) || relative.split(path.sep)[0] === "..",
-      "Project-config fixtures read every ancestor directory: set CODENOMAD_NATIVE_FIXTURE_PARENT outside your home")
+  if (projectConfig) {
+    if (!process.env.CI) {
+      const relative = path.relative(await realpath(os.homedir()), parent)
+      assert(path.isAbsolute(relative) || relative.split(path.sep)[0] === "..",
+        "Project-config fixtures read every ancestor directory: set CODENOMAD_NATIVE_FIXTURE_PARENT outside your home")
+    }
+    assertNoAncestorProjectConfig(parent)
   }
   return parent
 }
@@ -80,6 +119,7 @@ export async function writeFixtureServiceRegistration(env, { url, pid, version, 
 export async function withProductRuntime(cli, prepare, run, { projectConfig = false, registry, service = false, flags, respond } = {}) {
   assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
   assert(!registry || /^http:\/\/127\.0\.0\.1:\d+\/?$/.test(registry), "A fixture registry must be loopback")
+  await assertNoSystemOpenCodeConfig()
   const root = await mkdtemp(path.join(await fixtureParent({ projectConfig }), "product-native-"))
   const password = randomUUID()
   const env = await fixtureEnvironment(root, {
@@ -88,7 +128,19 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     ...(projectConfig ? {} : { OPENCODE_CONFIG_PROJECT_DISABLE: "1" }), OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
     OPENCODE_SERVER_PASSWORD: password, ...(flags === undefined ? {} : { OPENCODE_FLAGS: flags }) })
   await mkdir(env.OPENCODE_CONFIG_DIR)
+  const daemonEnv = {
+    ...env,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: path.join(root, "empty.gitconfig"),
+    GIT_TEMPLATE_DIR: "",
+    GIT_CEILING_DIRECTORIES: path.dirname(root),
+  }
   const configuration = await prepare({ root, configDirectory: env.OPENCODE_CONFIG_DIR })
+  if (!existsSync(path.join(root, ".git"))) {
+    await execFileAsync("git", ["-c", "core.hooksPath=", "init", "--quiet", "--template=", root], {
+      windowsHide: true, timeout: 30_000, env: daemonEnv,
+    })
+  }
   const requests = []
   let providerError
   const provider = createServer(async (req, res) => {
@@ -108,13 +160,15 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     } catch (error) { providerError = error; res.destroy(error) }
   })
   await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
-  env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ ...configuration, model: "fixture/fixture", providers: { ...configuration?.providers, fixture: {
+  const configContent = JSON.stringify({ ...configuration, model: "fixture/fixture", providers: { ...configuration?.providers, fixture: {
     package: "@opencode/ai/providers/openai-compatible", settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: {} },
   } } })
+  env.OPENCODE_CONFIG_CONTENT = configContent
+  daemonEnv.OPENCODE_CONFIG_CONTENT = configContent
   let output = "", spawnError
   let child, stopped, attestedFetch
   try {
-    child = spawnFixtureChild(cli, ["serve", ...(service ? ["--service"] : []), "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env, windowsHide: true })
+    child = spawnFixtureChild(cli, ["serve", ...(service ? ["--service"] : []), "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env: daemonEnv, windowsHide: true })
     stopped = new Promise(resolve => child.once("close", resolve))
     child.on("error", error => { spawnError = error })
     child.stdout.on("data", data => { output += data })
@@ -125,6 +179,7 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
       if (child.exitCode !== null || Date.now() > deadline) throw new Error(redactSecrets(output.slice(-3000), [password]))
       await delay(25)
     }
+    const announcedUrl = output.match(/http:\/\/127\.0\.0\.1:\d+/)[0]
     let endpoint
     const pid = await fixtureChildPid(child)
     assert(Number.isSafeInteger(pid) && pid > 0, "Private OpenCode did not report its PID")
@@ -134,12 +189,17 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
         if (spawnError) throw spawnError
         assert.equal(child.exitCode, null, "Owned service exited before registration")
         try {
-          if (JSON.parse(await readFile(file, "utf8")).pid === pid) endpoint = await Service.discover({ file })
+          // Read registration locally without calling Service.discover(), which sends /api/info before OS attestation.
+          const raw = JSON.parse(await readFile(file, "utf8"))
+          if (raw.pid === pid && raw.url === announcedUrl) {
+            const auth = raw.auth ?? { type: "basic", username: "opencode", password: raw.password ?? password }
+            endpoint = { url: raw.url, auth }
+          }
         } catch { /* Registration publication and readiness may still be in flight. */ }
         if (!endpoint) await delay(25)
       }
-    } else endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password } }
-    assert(endpoint && endpoint.url === output.match(/http:\/\/127\.0\.0\.1:\d+/)[0])
+    } else endpoint = { url: announcedUrl, auth: { type: "basic", username: "opencode", password } }
+    assert(endpoint && endpoint.url === announcedUrl)
     const port = Number(new URL(endpoint.url).port)
     await verifyLoopbackListenerOwner(port, pid)
     attestedFetch = createAttestedFetch(new URL(endpoint.url).origin, port, pid)

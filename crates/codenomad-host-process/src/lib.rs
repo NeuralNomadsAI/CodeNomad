@@ -62,7 +62,7 @@ impl OwnedProcess {
     /// Start a managed backend with piped stdio and only the environment on `command`.
     pub fn spawn(command: &mut Command) -> io::Result<Self> {
         #[cfg(windows)]
-        return windows::launch(command, None);
+        return windows::launch(command, None, false);
         #[cfg(unix)]
         {
             let envs: Vec<_> = command
@@ -82,10 +82,27 @@ impl OwnedProcess {
 
     /// Start a fixture in the launcher's working directory, environment and stdio.
     pub fn spawn_inherited(command: &mut Command, started: impl FnOnce(u32)) -> io::Result<Self> {
+        Self::spawn_inherited_with_console(command, false, started)
+    }
+
+    /// Start a fixture attached to the launcher's console (e.g. a headless ConPTY).
+    pub fn spawn_inherited_console(
+        command: &mut Command,
+        started: impl FnOnce(u32),
+    ) -> io::Result<Self> {
+        Self::spawn_inherited_with_console(command, true, started)
+    }
+
+    fn spawn_inherited_with_console(
+        command: &mut Command,
+        inherit_console: bool,
+        started: impl FnOnce(u32),
+    ) -> io::Result<Self> {
         #[cfg(windows)]
-        return windows::launch(command, Some(Box::new(started)));
+        return windows::launch(command, Some(Box::new(started)), inherit_console);
         #[cfg(unix)]
         {
+            let _ = inherit_console;
             let process = Self::spawn_unix(command)?;
             started(process.id());
             Ok(process)
@@ -126,6 +143,10 @@ impl OwnedProcess {
     }
     pub fn terminate(&mut self) -> io::Result<()> {
         self.family.terminate()
+    }
+    #[cfg(unix)]
+    pub fn request_terminate(&mut self) -> io::Result<()> {
+        self.family.signal_term()
     }
 }
 impl Drop for OwnedProcess {
