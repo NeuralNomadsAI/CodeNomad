@@ -206,79 +206,107 @@ pub(super) async fn route(
             .map_err(|_| unavailable())?
             .clear()
             .extend(["api", "session", &r.session, "message", &r.message]);
-        let response = app
-            .native
-            .client
-            .get(url)
-            .basic_auth("opencode", Some(&placement.endpoint.password))
-            .send()
-            .await
-            .map_err(|_| unavailable())?;
-        if !placement.operation_current(&app, &r.workspace) {
-            return Ok(crate::shared::abort_response());
-        }
-        if !response.status().is_success() {
-            return Err(unavailable());
-        }
-        if !placement.live(&app, &r.workspace) {
-            return Err(error(Status::CONFLICT, "Session location changed"));
-        }
-        let raw = crate::opencode::read_bytes(response, MESSAGE_LIMIT).await.map_err(|_| unavailable())?;
-        if !placement.operation_current(&app, &r.workspace) {
-            return Ok(crate::shared::abort_response());
-        }
-        // Matches TS `session-media.ts:61-76` (3 native GETs: session1, message, session2).
-        // Checking both initial and latest revert boundaries catches staged-then-committed undos;
-        // a full stage+commit strictly between `message` and `session2` needs a native existence
-        // check without re-reading the up-to-16 MiB message (shared TS/Rust limit).
-        let newest = match placement.latest(&app, &r.workspace, &r.session).await {
-            Ok(newest) => newest,
-            Err(_) if !placement.operation_current(&app, &r.workspace) => {
+        let after_capture = async {
+            let response = match app
+                .native
+                .client
+                .get(url)
+                .basic_auth("opencode", Some(&placement.endpoint.password))
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(_) if !placement.operation_current(&app, &r.workspace) => {
+                    return Ok(crate::shared::abort_response());
+                }
+                Err(_) => return Err(unavailable()),
+            };
+            if !placement.operation_current(&app, &r.workspace) {
                 return Ok(crate::shared::abort_response());
             }
-            Err(failure) if failure.0 == Status::CONFLICT => return Err(failure),
-            Err(_) => return Err(unavailable()),
+            if !response.status().is_success() {
+                return Err(unavailable());
+            }
+            if !placement.live(&app, &r.workspace) {
+                return Err(error(Status::CONFLICT, "Session location changed"));
+            }
+            let raw = match crate::opencode::read_bytes(response, MESSAGE_LIMIT).await {
+                Ok(raw) => raw,
+                Err(_) if !placement.operation_current(&app, &r.workspace) => {
+                    return Ok(crate::shared::abort_response());
+                }
+                Err(_) => return Err(unavailable()),
+            };
+            if !placement.operation_current(&app, &r.workspace) {
+                return Ok(crate::shared::abort_response());
+            }
+            // Matches TS `session-media.ts:61-76` (3 native GETs: session1, message, session2).
+            // Checking both initial and latest revert boundaries catches staged-then-committed undos;
+            // a full stage+commit strictly between `message` and `session2` needs a native existence
+            // check without re-reading the up-to-16 MiB message (shared TS/Rust limit).
+            let newest = match placement.latest(&app, &r.workspace, &r.session).await {
+                Ok(newest) => newest,
+                Err(_) if !placement.operation_current(&app, &r.workspace) => {
+                    return Ok(crate::shared::abort_response());
+                }
+                Err(failure) if failure.0 == Status::CONFLICT => return Err(failure),
+                Err(_) => return Err(unavailable()),
+            };
+            let initial_revert = placement.revert_boundary().map(str::to_owned);
+            let revert = newest["revert"]["messageID"].as_str().map(str::to_owned);
+            let (mime, bytes, slot) = if raw.len() > INLINE_LIMIT {
+                let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.to_owned());
+                let (decoded, slot) = tokio::task::spawn_blocking(move || {
+                    let decoded = extract_media(
+                        &message_id,
+                        part,
+                        index,
+                        &digest,
+                        initial_revert.as_deref(),
+                        revert.as_deref(),
+                        &raw,
+                    );
+                    (decoded, slot)
+                })
+                .await
+                .map_err(|_| unavailable())?;
+                let (mime, bytes) = decoded?;
+                (mime, bytes, slot)
+            } else {
+                let (mime, bytes) = extract_media(
+                    &r.message,
+                    r.part,
+                    r.index,
+                    r.digest,
+                    initial_revert.as_deref(),
+                    revert.as_deref(),
+                    &raw,
+                )?;
+                (mime, bytes, slot)
+            };
+            principal.live()?;
+            if !placement.operation_current(&app, &r.workspace) {
+                return Ok(crate::shared::abort_response());
+            }
+            if !placement.live(&app, &r.workspace) {
+                return Err(error(Status::CONFLICT, "Session location changed"));
+            }
+            Ok((
+                [
+                    (header::CONTENT_TYPE, HeaderValue::from_str(mime).map_err(|_| missing())?),
+                    (header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=31536000, immutable")),
+                    (header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")),
+                    (header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'none'; sandbox")),
+                ],
+                crate::shared::permit_body(bytes.into(), slot),
+            )
+                .into_response())
         };
-        let initial_revert = placement.revert_boundary().map(str::to_owned);
-        let revert = newest["revert"]["messageID"].as_str().map(str::to_owned);
-        let (mime, bytes) = if raw.len() > INLINE_LIMIT {
-            let (message_id, part, index, digest) = (r.message.clone(), r.part, r.index, r.digest.to_owned());
-            tokio::task::spawn_blocking(move || {
-                let _slot = slot;
-                extract_media(&message_id, part, index, &digest, initial_revert.as_deref(), revert.as_deref(), &raw)
-            })
-            .await
-            .map_err(|_| unavailable())??
-        } else {
-            let decoded = extract_media(
-                &r.message,
-                r.part,
-                r.index,
-                r.digest,
-                initial_revert.as_deref(),
-                revert.as_deref(),
-                &raw,
-            );
-            drop(slot);
-            decoded?
-        };
-        principal.live()?;
-        if !placement.operation_current(&app, &r.workspace) {
-            return Ok(crate::shared::abort_response());
+        tokio::select! {
+            biased;
+            _ = app.native.wait_retired(&placement.endpoint) => Ok(crate::shared::abort_response()),
+            result = after_capture => result,
         }
-        if !placement.live(&app, &r.workspace) {
-            return Err(error(Status::CONFLICT, "Session location changed"));
-        }
-        Ok((
-            [
-                (header::CONTENT_TYPE, HeaderValue::from_str(mime).map_err(|_| missing())?),
-                (header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=31536000, immutable")),
-                (header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")),
-                (header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'none'; sandbox")),
-            ],
-            bytes,
-        )
-            .into_response())
     };
     let closed = async {
         loop {

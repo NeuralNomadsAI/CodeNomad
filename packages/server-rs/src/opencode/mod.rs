@@ -46,6 +46,7 @@ pub struct Native {
     /// When the current endpoint was last confirmed; `None` once invalidated.
     validated: Mutex<Option<Instant>>,
     acquiring: tokio::sync::Mutex<()>,
+    retired: tokio::sync::Notify,
 }
 
 /// Port 0 refuses every connection: before the first acquisition, native requests fail
@@ -79,7 +80,14 @@ impl Native {
             (None, Some(daemon::Lifecycle::new(binary.into(), client.clone())))
         };
         let validated = Mutex::new(endpoint.as_ref().map(|_| Instant::now()));
-        Ok(Self { client, endpoint: RwLock::new(endpoint), lifecycle, validated, acquiring: Default::default() })
+        Ok(Self {
+            client,
+            endpoint: RwLock::new(endpoint),
+            lifecycle,
+            validated,
+            acquiring: Default::default(),
+            retired: tokio::sync::Notify::new(),
+        })
     }
     pub fn endpoint(&self) -> Option<Arc<Endpoint>> {
         self.endpoint.read().unwrap().clone()
@@ -87,6 +95,15 @@ impl Native {
     pub fn current(&self, endpoint: &Arc<Endpoint>) -> bool {
         let live = self.endpoint.read().unwrap();
         live.as_ref().is_some_and(|current| Arc::ptr_eq(current, endpoint)) && self.validated.lock().unwrap().is_some()
+    }
+    pub async fn wait_retired(&self, endpoint: &Arc<Endpoint>) {
+        loop {
+            let notified = self.retired.notified();
+            if !self.current(endpoint) {
+                return;
+            }
+            notified.await;
+        }
     }
     pub fn url(&self) -> Url {
         self.endpoint().map_or_else(|| UNCONNECTED.clone(), |e| e.url.clone())
@@ -128,6 +145,8 @@ impl Native {
         let mut endpoint = self.endpoint.write().unwrap();
         *endpoint = Some(found.clone());
         *self.validated.lock().unwrap() = Some(Instant::now());
+        drop(endpoint);
+        self.retired.notify_waiters();
         Ok(found)
     }
     /// `lifecycle.discover()`: the running daemon, never started. The bench's fixture endpoint
@@ -155,6 +174,8 @@ impl Native {
         let live = self.endpoint.read().unwrap();
         if self.lifecycle.is_some() && live.as_ref().is_some_and(|e| Arc::ptr_eq(e, endpoint)) {
             *self.validated.lock().unwrap() = None;
+            drop(live);
+            self.retired.notify_waiters();
         }
     }
 
@@ -231,10 +252,11 @@ pub async fn session_record_at(app: &App, endpoint: &Endpoint, id: &str) -> Resu
     if !valid_id(id) {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    session_record_segment_at(app, endpoint, id).await
+    session_record_segment_at(app, endpoint, id, Duration::from_secs(4)).await
 }
 
 /// Variant for opaque media/history-media session IDs (TS `session-media-contract.ts`).
+/// Uses the full 30 s route budget rather than the 4 s control probe timeout.
 pub async fn session_record_media_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {
     if id.is_empty()
         || id.encode_utf16().nth(256).is_some()
@@ -243,10 +265,15 @@ pub async fn session_record_media_at(app: &App, endpoint: &Endpoint, id: &str) -
     {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    session_record_segment_at(app, endpoint, id).await
+    session_record_segment_at(app, endpoint, id, Duration::from_secs(30)).await
 }
 
-async fn session_record_segment_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {
+async fn session_record_segment_at(
+    app: &App,
+    endpoint: &Endpoint,
+    id: &str,
+    timeout: Duration,
+) -> Result<Value, Error> {
     let mut url = endpoint.url.clone();
     url.path_segments_mut().map_err(|_| upstream_error())?.clear().extend(["api", "session", id]);
     let response = app
@@ -254,7 +281,7 @@ async fn session_record_segment_at(app: &App, endpoint: &Endpoint, id: &str) -> 
         .client
         .get(url)
         .basic_auth("opencode", Some(&endpoint.password))
-        .timeout(Duration::from_secs(4))
+        .timeout(timeout)
         .send()
         .await
         .map_err(|e| {

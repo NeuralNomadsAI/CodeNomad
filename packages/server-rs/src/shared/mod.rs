@@ -86,6 +86,17 @@ pub fn abortable_service(
     })
 }
 
+pub fn permit_body(bytes: axum::body::Bytes, slot: tokio::sync::SemaphorePermit<'static>) -> axum::body::Body {
+    axum::body::Body::from_stream(futures_util::stream::unfold((bytes, Some(slot)), |(mut bytes, slot)| async move {
+        if bytes.is_empty() {
+            drop(slot);
+            return None;
+        }
+        let chunk = bytes.split_to(bytes.len().min(64 * 1024));
+        Some((Ok::<_, std::convert::Infallible>(chunk), (bytes, slot)))
+    }))
+}
+
 pub async fn serve_local(
     listener: tokio::net::TcpListener,
     router: axum::Router,
@@ -94,11 +105,13 @@ pub async fn serve_local(
 ) -> std::io::Result<()> {
     let mut tasks = tokio::task::JoinSet::new();
     loop {
+        while tasks.try_join_next().is_some() {}
         tokio::select! {
             _ = shutdown.cancelled() => {
                 on_shutdown();
                 break;
             }
+            Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
             accepted = listener.accept() => {
                 let Ok((stream, _)) = accepted else { continue };
                 let _ = stream.set_nodelay(true);

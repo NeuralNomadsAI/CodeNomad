@@ -31,7 +31,7 @@ pub(super) struct Placement {
     anchor: std::path::PathBuf,
     physical: same_file::Handle,
     workspace_physical: Option<same_file::Handle>,
-    checkout: Option<crate::worktrees::ownership::DirectoryProof>,
+    checkout: crate::worktrees::ownership::DirectoryProof,
     displays: Vec<Arc<AtomicBool>>,
     media: bool,
 }
@@ -64,50 +64,72 @@ impl Placement {
         } else {
             app.native.endpoint().ok_or_else(crate::opencode::upstream_error)?
         };
-        let current = |displays: &[Arc<AtomicBool>]| {
-            app.native.current(&endpoint)
-                && app.workspace(id).is_ok()
-                && same_identity(&workspace.path, workspace_physical.as_ref())
-                && displays.iter().all(|d| d.load(Relaxed))
+        let capture = async {
+            let current = |displays: &[Arc<AtomicBool>]| {
+                app.native.current(&endpoint)
+                    && app.workspace(id).is_ok()
+                    && same_identity(&workspace.path, workspace_physical.as_ref())
+                    && displays.iter().all(|d| d.load(Relaxed))
+            };
+            if media && !current(&displays) {
+                return Err(error(Status::GONE, "Media operation stale"));
+            }
+            let source = if media {
+                crate::opencode::session_record_media_at(app, &endpoint, session).await?
+            } else {
+                crate::opencode::session_record_at(app, &endpoint, session).await?
+            };
+            if media && !current(&displays) {
+                return Err(error(Status::GONE, "Media operation stale"));
+            }
+            // Reference: `ownsLocation(id, session.location)`, linked worktrees included.
+            let forbidden = || error(Status::FORBIDDEN, "Session does not belong to workspace");
+            let location = &source["location"];
+            if location.get("workspaceID").is_some() {
+                return Err(forbidden());
+            }
+            let directory = location["directory"]
+                .as_str()
+                .filter(|d| crate::files::paths::local_absolute(d))
+                .ok_or_else(unavailable)?;
+            if !crate::files::paths::under(&app.scope, std::path::Path::new(directory)) {
+                return Err(forbidden());
+            }
+            let path = crate::worktrees::ownership::resolve_exact_directory(directory).ok_or_else(unavailable)?;
+            let anchor = directory_anchor(&path).map_err(|_| unavailable())?.ok_or_else(forbidden)?.to_owned();
+            let physical = same_file::Handle::from_path(&anchor).map_err(|_| unavailable())?;
+            if fenced && path != workspace.path {
+                displays.push(display(&path));
+            }
+            let proof = crate::worktrees::ownership::media_directory(app, &workspace, &endpoint, &path, &anchor)
+                .await
+                .map_err(|_| crate::opencode::upstream_error())?;
+            if media && !current(&displays) {
+                return Err(error(Status::GONE, "Media operation stale"));
+            }
+            let checkout = proof.ok_or_else(forbidden)?;
+            Ok(Self {
+                workspace,
+                endpoint: endpoint.clone(),
+                source,
+                path,
+                anchor,
+                physical,
+                workspace_physical,
+                checkout,
+                displays,
+                media,
+            })
         };
-        if media && !current(&displays) {
-            return Err(error(Status::GONE, "Media operation stale"));
-        }
-        let source = if media {
-            crate::opencode::session_record_media_at(app, &endpoint, session).await?
+        if media {
+            tokio::select! {
+                biased;
+                _ = app.native.wait_retired(&endpoint) => Err(error(Status::GONE, "Media operation stale")),
+                result = capture => result,
+            }
         } else {
-            crate::opencode::session_record_at(app, &endpoint, session).await?
-        };
-        if media && !current(&displays) {
-            return Err(error(Status::GONE, "Media operation stale"));
+            capture.await
         }
-        // Reference: `ownsLocation(id, session.location)`, linked worktrees included.
-        let forbidden = || error(Status::FORBIDDEN, "Session does not belong to workspace");
-        let location = &source["location"];
-        if location.get("workspaceID").is_some() {
-            return Err(forbidden());
-        }
-        let directory = location["directory"]
-            .as_str()
-            .filter(|d| crate::files::paths::local_absolute(d))
-            .ok_or_else(unavailable)?;
-        if !crate::files::paths::under(&app.scope, std::path::Path::new(directory)) {
-            return Err(forbidden());
-        }
-        let path = crate::worktrees::ownership::resolve_exact_directory(directory).ok_or_else(unavailable)?;
-        let anchor = directory_anchor(&path).map_err(|_| unavailable())?.ok_or_else(forbidden)?.to_owned();
-        let physical = same_file::Handle::from_path(&anchor).map_err(|_| unavailable())?;
-        if fenced && path != workspace.path {
-            displays.push(display(&path));
-        }
-        let proof = crate::worktrees::ownership::media_directory(app, &workspace, &endpoint, &path, &anchor)
-            .await
-            .map_err(|_| crate::opencode::upstream_error())?;
-        if media && !current(&displays) {
-            return Err(error(Status::GONE, "Media operation stale"));
-        }
-        let checkout = Some(proof.ok_or_else(forbidden)?);
-        Ok(Self { workspace, endpoint, source, path, anchor, physical, workspace_physical, checkout, displays, media })
     }
     pub(super) fn revert_boundary(&self) -> Option<&str> {
         self.source["revert"]["messageID"].as_str()
@@ -165,7 +187,7 @@ impl Placement {
                 return Err(crate::opencode::upstream_error());
             }
             let current = current.ok_or_else(changed)?;
-            if !self.checkout.as_ref().is_some_and(|proof| proof.same_checkout(&current)) || !self.live(app, id) {
+            if !self.checkout.same_checkout(&current) || !self.live(app, id) {
                 return Err(changed());
             }
         }
@@ -181,7 +203,7 @@ impl Placement {
                 == Some(&self.path)
             && directory_anchor(&self.path) == Ok(Some(self.anchor.as_path()))
             && same_file::Handle::from_path(&self.anchor).is_ok_and(|physical| physical == self.physical)
-            && self.checkout.as_ref().is_none_or(|checkout| checkout.live(&self.path))
+            && self.checkout.live(&self.path)
             && self.displays.iter().all(|display| display.load(Relaxed))
     }
 
@@ -312,6 +334,7 @@ fn project_history_response(
     session: &str,
     reference: bool,
     defer: bool,
+    slot: Option<tokio::sync::SemaphorePermit<'static>>,
 ) -> Response {
     let Ok(envelope) = serde_json::from_slice::<Envelope>(&body) else { return blocked("unavailable") };
     let Some(raw) = envelope.output else { return blocked("unavailable") };
@@ -333,7 +356,7 @@ fn project_history_response(
     }
     let deferred = defer && output["status"] == "window" && media::defer(id, session, &mut output["messages"]);
     let referenced = reference && output["status"] == "window";
-    if referenced || deferred {
+    let payload: Bytes = if referenced || deferred {
         if referenced {
             output["userFiles"] = user_files::REFERENCE.into();
         }
@@ -341,10 +364,15 @@ fn project_history_response(
         if referenced && projected.len() > 24 * 1024 * 1024 {
             return blocked("unsupported_storage");
         }
-        ([(header::CONTENT_TYPE, "application/json")], projected).into_response()
+        projected.into()
     } else {
-        ([(header::CONTENT_TYPE, "application/json")], body.slice_ref(raw.get().as_bytes())).into_response()
-    }
+        body.slice_ref(raw.get().as_bytes())
+    };
+    let response_body = match slot {
+        Some(slot) => crate::shared::permit_body(payload, slot),
+        None => axum::body::Body::from(payload),
+    };
+    ([(header::CONTENT_TYPE, "application/json")], response_body).into_response()
 }
 
 pub async fn handle(
@@ -424,8 +452,7 @@ pub async fn handle(
         let response = if defer && body.len() > 32 * 1024 {
             let (action, id, session) = (action.clone(), id.clone(), session.to_owned());
             match tokio::task::spawn_blocking(move || {
-                let _slot = slot;
-                project_history_response(status, body, &action, &id, &session, reference, defer)
+                project_history_response(status, body, &action, &id, &session, reference, defer, slot)
             })
             .await
             {
@@ -433,9 +460,7 @@ pub async fn handle(
                 Err(_) => return blocked("unavailable"),
             }
         } else {
-            let response = project_history_response(status, body, &action, &id, session, reference, defer);
-            drop(slot);
-            response
+            project_history_response(status, body, &action, &id, session, reference, defer, slot)
         };
         match placement.current(&app, &id, session).await {
             Recheck::Current => {}

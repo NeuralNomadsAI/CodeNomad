@@ -158,14 +158,14 @@ fn is_json_content_type(headers: &axum::http::HeaderMap) -> bool {
     })
 }
 
-fn defer_message_list(id: &str, session: &str, bytes: Vec<u8>) -> (Body, bool) {
+fn defer_message_list(id: &str, session: &str, bytes: Vec<u8>) -> (axum::body::Bytes, bool) {
     if let Ok(mut native) = serde_json::from_slice::<Value>(&bytes)
         && native.get_mut("data").is_some_and(|data| crate::sessions::media::defer(id, session, data))
     {
         drop(bytes);
-        return (Body::from(native.to_string()), true);
+        return (axum::body::Bytes::from(native.to_string()), true);
     }
-    (Body::from(bytes), false)
+    (axum::body::Bytes::from(bytes), false)
 }
 
 fn one_location(location: &Value, directory: &str) -> Result<(), Error> {
@@ -249,6 +249,22 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         });
     let defer_media =
         (message_list && crate::sessions::media::wants_deferred(&head.headers)).then_some(session).flatten();
+    static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+    let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
+    let defer_guard = if defer_media.is_some() {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let slot = tokio::select! {
+            biased;
+            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+            permit = tokio::time::timeout_at(deadline, DEFER_SLOTS.acquire()) => {
+                permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
+            }
+        };
+        Some((deadline, slot))
+    } else {
+        None
+    };
+    let defer_deadline = defer_guard.as_ref().map(|(deadline, _)| *deadline);
     let resolve_media_path = |raw: &str| {
         if !crate::files::paths::local_absolute(raw) {
             return None;
@@ -277,11 +293,17 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             let Some((resolved, anchor)) = resolve_media_path(req) else {
                 return Err(foreign());
             };
-            let proof = crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor)
-                .await
-                .ok()
-                .flatten()
-                .ok_or_else(foreign)?;
+            let work = crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor);
+            let proof = if let Some(deadline) = defer_deadline {
+                tokio::select! {
+                    biased;
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    res = tokio::time::timeout_at(deadline, work) => res.map_err(|_| interrupted())?.ok().flatten(),
+                }
+            } else {
+                work.await.ok().flatten()
+            }
+            .ok_or_else(foreign)?;
             requested_checkout = Some(proof);
         } else if send_input {
             let Some(physical) = crate::files::paths::canonical(&app.scope, req) else {
@@ -297,7 +319,16 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     let actual = if let Some(session) = session {
         Some(if message_list {
-            super::session_record_media_at(&app, &endpoint, session).await?
+            let work = super::session_record_media_at(&app, &endpoint, session);
+            if let Some(deadline) = defer_deadline {
+                tokio::select! {
+                    biased;
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    res = tokio::time::timeout_at(deadline, work) => res.map_err(|_| interrupted())??,
+                }
+            } else {
+                work.await?
+            }
         } else {
             super::session_record_at(&app, &endpoint, session).await?
         })
@@ -323,10 +354,16 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     } else {
         match &initial_identity {
             Some((resolved, anchor, _)) if message_list => {
-                crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor)
-                    .await
-                    .ok()
-                    .flatten()
+                let work = crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, resolved, anchor);
+                if let Some(deadline) = defer_deadline {
+                    tokio::select! {
+                        biased;
+                        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                        res = tokio::time::timeout_at(deadline, work) => res.map_err(|_| interrupted())?.ok().flatten(),
+                    }
+                } else {
+                    work.await.ok().flatten()
+                }
             }
             Some((_, physical, _)) => {
                 crate::worktrees::ownership::capture_directory_with_refresh(&app, &workspace, physical, true).await
@@ -336,7 +373,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     };
     // TS checks the session's own location first and names a proven
     // departure, so the UI can drop a conversation moved out of the project.
+    // For `message_list`, reuse the already-verified `input_checkout` instead of
+    // running a second worktree inventory (`list_slug` is only used on session GET).
     let list_slug = match &actual {
+        Some(record) if message_list && input_checkout.is_some() && record["location"].get("workspaceID").is_none() => {
+            None
+        }
         Some(record) => match crate::worktrees::placement(&app, &workspace, &record["location"]).await {
             Ok(slug) => Some(slug),
             Err(elsewhere) => {
@@ -382,6 +424,40 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 || target.query_pairs().any(|(key, value)| {
                     matches!(key.as_ref(), "directory" | "location[directory]") && value != context.as_str()
                 })
+            {
+                return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
+            }
+        } else if message_list {
+            // TS checks ambient `x-codenomad-location` independently of a subfolder session's directory
+            // (`http-server.ts:1224-1269, 1375-1408, 1662-1676`).
+            let ctx_dir = context
+                .as_object()
+                .filter(|o| o.len() == 1)
+                .and_then(|o| o.get("directory"))
+                .and_then(Value::as_str)
+                .ok_or_else(foreign)?;
+            if Some(ctx_dir) != native_directory && Some(ctx_dir) != requested.as_deref() {
+                let Some((resolved, anchor)) = resolve_media_path(ctx_dir) else {
+                    return Err(foreign());
+                };
+                let work =
+                    crate::worktrees::ownership::media_directory(&app, &workspace, &endpoint, &resolved, &anchor);
+                let owned = if let Some(deadline) = defer_deadline {
+                    tokio::select! {
+                        biased;
+                        _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                        res = tokio::time::timeout_at(deadline, work) => res.map_err(|_| interrupted())?.ok().flatten(),
+                    }
+                } else {
+                    work.await.ok().flatten()
+                };
+                if owned.is_none() {
+                    return Err(foreign());
+                }
+            }
+            if target
+                .query_pairs()
+                .any(|(key, value)| matches!(key.as_ref(), "directory" | "location[directory]") && value != ctx_dir)
             {
                 return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
             }
@@ -442,7 +518,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     if let Some(session) = session {
         let record = actual.as_ref().ok_or_else(upstream_error)?;
-        if record["location"]["directory"] != directory || record["location"].get("workspaceID").is_some() {
+        if (!message_list && record["location"]["directory"] != directory)
+            || record["location"].get("workspaceID").is_some()
+        {
             return Err(error(Status::FORBIDDEN, "Session does not belong to workspace"));
         }
         if head.method != Method::GET {
@@ -730,16 +808,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         return Err(upstream_error());
     }
     if let Some(session) = defer_media {
-        static DEFER_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
-        let interrupted = || error(Status::BAD_GATEWAY, "OpenCode response was interrupted");
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        let slot = tokio::select! {
-            biased;
-            _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
-            permit = tokio::time::timeout_at(deadline, DEFER_SLOTS.acquire()) => {
-                permit.map_err(|_| interrupted())?.map_err(|_| interrupted())?
-            }
-        };
+        let (deadline, slot) = defer_guard.ok_or_else(interrupted)?;
         let response = tokio::select! {
             biased;
             _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
@@ -762,7 +831,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     read.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                 }
             };
-            let (body, changed) = if bytes.len() > 32 * 1024 {
+            let (payload, changed, slot) = if bytes.len() > 32 * 1024 {
                 let (id, session) = (id.to_owned(), session.to_owned());
                 tokio::select! {
                     biased;
@@ -770,16 +839,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     rewritten = tokio::time::timeout_at(
                         deadline,
                         tokio::task::spawn_blocking(move || {
-                            let _slot = slot;
-                            defer_message_list(&id, &session, bytes)
+                            let (payload, changed) = defer_message_list(&id, &session, bytes);
+                            (payload, changed, slot)
                         }),
                     ) => {
                         rewritten.map_err(|_| interrupted())?.map_err(|_| interrupted())?
                     }
                 }
             } else {
-                drop(slot);
-                (Body::from(bytes), false)
+                (axum::body::Bytes::from(bytes), false, slot)
             };
             let fresh = tokio::select! {
                 biased;
@@ -806,17 +874,21 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             app.workspace(id)?;
             if !current_checkout.as_ref().is_some_and(|proof| admitted.same_checkout(proof))
                 || !actual.as_ref().is_some_and(|initial| same_target(initial, &fresh))
-                || fresh["location"]["directory"] != directory
                 || !input_location_live()
             {
                 return Err(foreign());
             }
             principal.live()?;
+            // Drop the upstream strong ETag only when the JSON body was actually rewritten
+            // (RFC 9110: never reuse the original validator for a modified representation).
             let builder = headers
                 .into_iter()
                 .filter(|(name, _)| !(changed && *name == "etag"))
                 .fold(Response::builder().status(status), |builder, (name, value)| builder.header(name, value));
-            return builder.extension(NativeBody).body(body).map_err(|_| upstream_error());
+            return builder
+                .extension(NativeBody)
+                .body(crate::shared::permit_body(payload, slot))
+                .map_err(|_| upstream_error());
         }
         drop(slot);
         let builder = relayed(&response);
@@ -953,9 +1025,8 @@ fn ordinary_input_refuses_reserved_metadata_even_with_null_values() {
     assert!(!schedule_input(json!({"metadata":{"other":"automation"}}).as_object().unwrap()));
 }
 
-#[tokio::test]
-async fn deferred_message_list_preserves_non_object_and_unchanged_json() {
-    use axum::body::to_bytes;
+#[test]
+fn deferred_message_list_preserves_non_object_and_unchanged_json() {
     let mut headers = axum::http::HeaderMap::new();
     for (ct, expected) in [
         ("application/json", true),
@@ -970,16 +1041,14 @@ async fn deferred_message_list_preserves_non_object_and_unchanged_json() {
         assert_eq!(is_json_content_type(&headers), expected, "{ct}");
     }
     for raw in [b"[]".as_slice(), b"{}", b"null", b"not json", b"{\"data\":[]}"] {
-        let (body, changed) = defer_message_list("ws_1", "ses_1", raw.to_vec());
+        let (out, changed) = defer_message_list("ws_1", "ses_1", raw.to_vec());
         assert!(!changed);
-        let out = to_bytes(body, 1024).await.unwrap();
         assert_eq!(out.as_ref(), raw);
     }
     let large = format!("data:image/png;base64,{}", "A".repeat(32 * 1024));
     let payload = json!({"data":[{"id":"msg_1","type":"assistant","content":[{"type":"tool","state":{"content":[{"type":"file","mime":"image/png","uri":large}]}}]}]});
-    let (body, changed) = defer_message_list("ws_1", "ses_1", payload.to_string().into_bytes());
+    let (out, changed) = defer_message_list("ws_1", "ses_1", payload.to_string().into_bytes());
     assert!(changed);
-    let out = to_bytes(body, 1024 * 1024).await.unwrap();
     let rewritten: Value = serde_json::from_slice(&out).unwrap();
     let uri = rewritten["data"][0]["content"][0]["state"]["content"][0]["uri"].as_str().unwrap();
     assert!(uri.starts_with("/api/workspaces/ws_1/session-media/ses_1/msg_1/0/0/"), "{uri}");

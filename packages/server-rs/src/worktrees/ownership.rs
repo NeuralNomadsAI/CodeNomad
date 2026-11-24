@@ -264,12 +264,10 @@ pub(crate) async fn media_directory(
     if !current() {
         return Err(native_error());
     }
-    // Refresh on a miss; an invalidated snapshot cannot grant ownership.
-    let mut refresh = false;
-    let mut refreshed = false;
+    // TS `listNativeWorktrees` refreshes on every strict media ownership check (`location -> refresh -> list`).
     for _ in 0..4 {
         let revision = inventory::revision(app);
-        let catalogue = inventory::catalogue_at(app, workspace, refresh, Some(endpoint)).await?;
+        let catalogue = inventory::catalogue_at(app, workspace, true, Some(endpoint)).await?;
         if !current() {
             return Err(native_error());
         }
@@ -277,11 +275,7 @@ pub(crate) async fn media_directory(
         if inventory::revision(app) != revision {
             continue;
         }
-        refreshed |= refresh;
-        if proof.is_some() || refreshed {
-            return Ok(proof);
-        }
-        refresh = true;
+        return Ok(proof);
     }
     Err(native_error())
 }
