@@ -18,44 +18,60 @@ pub(super) fn on_open(scope: Rc<()>) -> impl Fn(&mut State, &str, &mut Tx) {
     }
 }
 
-pub(super) fn on_menu(scope: Rc<()>) -> impl Fn(&mut State, &str, (f32, f32), &mut Tx) {
+pub(super) fn on_menu(
+    scope: Rc<()>,
+    locale: &'static str,
+) -> impl Fn(&mut State, &str, (f32, f32), &mut Tx) {
     move |s, href, press, tx| {
         if s.current_scope(&scope) {
-            menu(href, press, &scope, tx);
+            menu(href, press, &scope, locale, tx);
         }
     }
 }
 
 pub(super) fn help(href: &str) -> Option<String> {
-    #[cfg(target_arch = "wasm32")]
-    if codenomad_client::http::is_loopback_http_url(href)
-        && web_sys::window()
-            .and_then(|window| web_sys::Location::origin(&window.location()).ok())
-            .is_some_and(|base| !codenomad_client::http::is_loopback_http_url(&base))
-    {
-        return Some(crate::strings::t("markdown.link.loopbackOnHost").into());
-    }
-    let _ = href;
-    None
+    help_for_origin(href, crate::platform::web_origin().as_deref())
+}
+
+fn help_for_origin(href: &str, origin: Option<&str>) -> Option<String> {
+    (codenomad_client::http::is_loopback_http_url(href)
+        && origin.is_some_and(|base| !codenomad_client::http::is_loopback_http_url(base)))
+    .then(|| crate::strings::t("markdown.link.loopbackOnHost").into())
 }
 
 pub(super) fn open_external(href: &str, tx: &mut Tx) {
-    let _ = tx.open_url(&external(href));
-}
-
-fn menu(href: &str, point: (f32, f32), scope: &Rc<()>, tx: &mut Tx) {
-    use crate::strings::t;
-    if codenomad_client::http::external_http_url(href).is_none() {
+    if let Some(url) = openable_http(href) {
+        let _ = tx.open_url(&url);
         return;
     }
-    let help = help(href);
-    let href = href.to_owned();
+    let trimmed = href.trim();
+    if trimmed
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mailto:"))
+    {
+        let _ = tx.open_url(trimmed);
+    }
+}
+
+fn menu(href: &str, point: (f32, f32), scope: &Rc<()>, locale: &'static str, tx: &mut Tx) {
+    use crate::strings::{t, with_locale};
+    if openable_http(href).is_none() {
+        return;
+    }
+    let (open, copy, help) = with_locale(locale, || {
+        (
+            t("remoteAccess.address.open"),
+            t("remoteControl.pairing.copy"),
+            help(href),
+        )
+    });
+    let href = href.trim().to_owned();
     let scope = scope.clone();
     rune_theme_codenomad::markdown::link_menu(
         tx,
         point,
-        t("remoteAccess.address.open"),
-        t("remoteControl.pairing.copy"),
+        open,
+        copy,
         help,
         move |s: &mut State, picked, tx| {
             if s.current_scope(&scope) {
@@ -75,23 +91,68 @@ pub(super) fn open(s: &mut State, href: &str, tx: &mut Tx) {
     }
 }
 
+fn openable_http(href: &str) -> Option<String> {
+    let (url, _) = codenomad_client::http::external_http_url(href)?;
+    let url = external(&url).into_owned();
+    (url.len() <= 8192
+        && valid_percent(url.as_bytes())
+        && !url.chars().any(|c| {
+            c.is_whitespace()
+                || c.is_control()
+                || matches!(c, '\\' | '"' | '<' | '>' | '`' | '^' | '{' | '|' | '}')
+        }))
+    .then_some(url)
+}
+
+fn valid_percent(bytes: &[u8]) -> bool {
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let (Some(&a), Some(&b)) = (bytes.get(i + 1), bytes.get(i + 2)) else {
+                return false;
+            };
+            if !a.is_ascii_hexdigit() || !b.is_ascii_hexdigit() || (a == b'0' && b == b'0') {
+                return false;
+            }
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    true
+}
+
 pub(super) fn external(url: &str) -> Cow<'_, str> {
-    let Some((scheme, rest)) = url.split_once("://").filter(|(scheme, _)| {
+    let trimmed = url.trim();
+    let Some((scheme, rest)) = trimmed.split_once("://").filter(|(scheme, _)| {
         scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
     }) else {
-        return Cow::Borrowed(url);
+        return Cow::Borrowed(trimmed);
     };
     let Some(tail) = rest.find(['/', '?', '#']) else {
-        return Cow::Borrowed(url);
+        return Cow::Borrowed(trimmed);
     };
     let (host, path) = rest.split_at(tail);
-    if !path.contains(['[', ']']) {
-        return Cow::Borrowed(url);
+    if !path.contains(['[', ']', '{', '}', '|', '^', '\\']) {
+        return Cow::Borrowed(trimmed);
     }
-    Cow::Owned(format!(
-        "{scheme}://{host}{}",
-        path.replace('[', "%5B").replace(']', "%5D")
-    ))
+    let mut encoded = String::with_capacity(trimmed.len() + 8);
+    encoded.push_str(scheme);
+    encoded.push_str("://");
+    encoded.push_str(host);
+    for ch in path.chars() {
+        match ch {
+            '[' => encoded.push_str("%5B"),
+            ']' => encoded.push_str("%5D"),
+            '{' => encoded.push_str("%7B"),
+            '}' => encoded.push_str("%7D"),
+            '|' => encoded.push_str("%7C"),
+            '^' => encoded.push_str("%5E"),
+            '\\' => encoded.push_str("%5C"),
+            _ => encoded.push(ch),
+        }
+    }
+    Cow::Owned(encoded)
 }
 
 #[cfg(test)]
@@ -102,18 +163,83 @@ fn only_encode_brackets_after_authority() {
         "https://[::1]:8080/?filter%5B%5D=open"
     );
     assert_eq!(
+        external(" https://[::1]:8080/?filter[]=open&q={id} "),
+        "https://[::1]:8080/?filter%5B%5D=open&q=%7Bid%7D"
+    );
+    assert_eq!(
         external("https://example.org/?filter%5B%5D=open"),
         "https://example.org/?filter%5B%5D=open"
     );
+    assert_eq!(
+        openable_http(" http://127.0.0.1:8123/a b?q={id} ").as_deref(),
+        Some("http://127.0.0.1:8123/a%20b?q=%7Bid%7D")
+    );
+    for rejected in [
+        "http://alice:demo@localhost:8123/",
+        "http:localhost:8123/",
+        "http://127.0.0.1:8123/%ZZ",
+        "http://127.0.0.1:8123/%00",
+    ] {
+        assert!(openable_http(rejected).is_none(), "{rejected}");
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn loopback_help_applies_only_to_loopback_links_on_remote_origins() {
+    let expected =
+        crate::strings::with_locale("en", || crate::strings::t("markdown.link.loopbackOnHost"));
+    crate::strings::with_locale("en", || {
+        assert_eq!(
+            help_for_origin(
+                " http://127.0.0.1:8123/view ",
+                Some("https://code.example.test")
+            )
+            .as_deref(),
+            Some(expected)
+        );
+        assert_eq!(
+            help_for_origin("https://[::1]:8123/view", Some("https://code.example.test"))
+                .as_deref(),
+            Some(expected)
+        );
+        assert!(
+            help_for_origin(
+                "https://127.0.0.1.example.org/",
+                Some("https://code.example.test")
+            )
+            .is_none()
+        );
+        assert!(
+            help_for_origin(
+                "http://alice:demo@localhost:8123/",
+                Some("https://code.example.test")
+            )
+            .is_none()
+        );
+        assert!(
+            help_for_origin("http://127.0.0.1:8123/view", Some("http://127.0.0.1:4173")).is_none()
+        );
+        assert!(help_for_origin("http://127.0.0.1:8123/view", None).is_none());
+    });
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[test]
 fn native_transcript_dispatches_link_and_context_actions_without_a_window() {
     use rune::{Env, Runtime};
+    const SOURCE: &str = "[IPv4](http://127.0.0.1:8123/view?a=1#top) · \
+        [IPv6](https://[::1]:8123/view?a=1#top) · [Name](http://localhost:8123/view?a=1#top)\n\n\
+        Bare http://localhost:8123/bare · [Ordinary](https://127.0.0.1.example.org/)\n\n\
+        [Creds](http://alice:demo@localhost:8123/) · [Mail](mailto:local@example.org)";
+    assert!(SOURCE.starts_with(SAMPLE));
     let mut rt = Runtime::new(
         crate::init(),
-        |s, _| super::document::prose(s, "links".into(), SAMPLE, false),
+        |s, _| {
+            crate::strings::with_locale("fr", || {
+                super::document::prose(s, "links".into(), SOURCE, false)
+            })
+        },
         (800.0, 360.0),
         Env::new(false, 1.0),
     );
@@ -125,6 +251,7 @@ fn native_transcript_dispatches_link_and_context_actions_without_a_window() {
         "http://127.0.0.1:8123/view?a=1#top",
         "https://[::1]:8123/view?a=1#top",
         "http://localhost:8123/view?a=1#top",
+        "http://localhost:8123/bare",
     ] {
         let [x, y, w, h] = rt
             .elements()
@@ -141,7 +268,13 @@ fn native_transcript_dispatches_link_and_context_actions_without_a_window() {
             rt.secondary_down(x, y);
             rt.secondary_up(x, y);
             rt.frame(0.02);
-            assert!(rt.popup_menu().is_some());
+            let menu = rt.popup_menu().expect("missing link context menu");
+            assert!(menu.find("link-help").is_none());
+            assert_eq!(menu.find("open").map(|item| item.title()), Some("Ouvrir"));
+            assert_eq!(
+                menu.find("copy-link").map(|item| item.title()),
+                Some("Copier le lien")
+            );
             rt.resolve_popup(choice).unwrap();
             if choice == Some("copy-link") {
                 assert_eq!(
@@ -159,4 +292,37 @@ fn native_transcript_dispatches_link_and_context_actions_without_a_window() {
             );
         }
     }
+    let creds = "http://alice:demo@localhost:8123/";
+    let [x, y, w, h] = rt
+        .elements()
+        .into_iter()
+        .find(|node| node.role == "link" && node.key.as_deref() == Some(creds))
+        .expect("missing credential link")
+        .rect;
+    let (x, y) = ((x + w / 2.0) as f32, (y + h / 2.0) as f32);
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(rt.take_url_requests().is_empty());
+    rt.secondary_down(x, y);
+    rt.secondary_up(x, y);
+    rt.frame(0.02);
+    assert!(rt.popup_menu().is_none());
+
+    let mail = "mailto:local@example.org";
+    let [x, y, w, h] = rt
+        .elements()
+        .into_iter()
+        .find(|node| node.role == "link" && node.key.as_deref() == Some(mail))
+        .expect("missing mailto link")
+        .rect;
+    let (x, y) = ((x + w / 2.0) as f32, (y + h / 2.0) as f32);
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert_eq!(rt.take_url_requests(), [mail]);
+    rt.secondary_down(x, y);
+    rt.secondary_up(x, y);
+    rt.frame(0.02);
+    assert!(rt.popup_menu().is_none());
 }

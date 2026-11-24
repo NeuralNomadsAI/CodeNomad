@@ -190,6 +190,16 @@ pub fn locale() -> String {
             .unwrap_or_else(|| "fr".into())
     }
 }
+pub fn web_origin() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window().and_then(|window| web_sys::Location::origin(&window.location()).ok())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
+}
 pub fn default_backend() -> String {
     if let Some(base) = setting("RUNE_BACKEND") {
         return base;
@@ -200,8 +210,7 @@ pub fn default_backend() -> String {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        web_sys::window()
-            .and_then(|window| web_sys::Location::origin(&window.location()).ok())
+        web_origin()
             .map(|origin| format!("{origin}/"))
             .unwrap_or_default()
     }

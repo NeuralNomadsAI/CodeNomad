@@ -157,7 +157,12 @@ pub fn external_http_url(raw: &str) -> Option<(String, String)> {
 }
 
 fn credential_free_http_url(raw: &str) -> Option<reqwest::Url> {
-    let url = reqwest::Url::parse(raw).ok()?;
+    let trimmed = raw.trim();
+    let (scheme, _) = trimmed.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    let url = reqwest::Url::parse(trimmed).ok()?;
     if !matches!(url.scheme(), "http" | "https")
         || !url.username().is_empty()
         || url.password().is_some()
@@ -169,12 +174,6 @@ fn credential_free_http_url(raw: &str) -> Option<reqwest::Url> {
 
 /// Match Solid's explicit HTTP(S) conversation links, using the parsed host.
 pub fn is_loopback_http_url(raw: &str) -> bool {
-    let Some((scheme, _)) = raw.split_once("://") else {
-        return false;
-    };
-    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
-        return false;
-    }
     credential_free_http_url(raw).is_some_and(|url| {
         url.host_str().is_some_and(|host| {
             matches!(host, "localhost" | "0.0.0.0" | "[::1]")
@@ -193,9 +192,11 @@ fn loopback_requires_an_explicit_http_scheme_and_literal_host() {
             "http://{host}:9200/a%2Fb?mode=1#target"
         )));
     }
+    assert!(is_loopback_http_url(" http://127.0.0.1:8123/view "));
     for raw in [
         "https://127.0.0.1.example.org/",
         "//localhost:8080/",
+        "http:localhost:8123/",
         "mailto:local@example.org",
         "http://alice:demo@localhost:8123/",
         "http://alice@127.0.0.1:8123/",
@@ -203,5 +204,6 @@ fn loopback_requires_an_explicit_http_scheme_and_literal_host() {
     ] {
         assert!(!is_loopback_http_url(raw));
     }
+    assert!(external_http_url("http:localhost:8123/").is_none());
     assert!(external_http_url("http://alice:demo@localhost:8123/").is_none());
 }

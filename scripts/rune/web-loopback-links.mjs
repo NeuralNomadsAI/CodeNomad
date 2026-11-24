@@ -12,7 +12,12 @@ await mkdir(output,{recursive:true})
 const assets=await bundleAssetPaths(bundle)
 const host='rune-transcript.test'
 const origin=`https://${host}`
-const mime={'.html':'text/html','.js':'text/javascript','.wasm':'application/wasm','.css':'text/css','.json':'application/json','.woff2':'font/woff2'}
+const localOrigin='http://127.0.0.1:4173'
+const loopbackHelp='This address opens on your device. For the server’s service, open it on the server.'
+const mime={
+    '.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.wasm':'application/wasm',
+    '.css':'text/css','.json':'application/json','.svg':'image/svg+xml','.ttf':'font/ttf','.woff2':'font/woff2',
+}
 const profile=await mkdtemp(path.join(output,'profile-'))
 let browser
 try{
@@ -29,7 +34,7 @@ try{
     const destinations=[],refused=[]
     await context.route('**/*',async route=>{
         const url=new URL(route.request().url())
-        if(url.origin===origin&&assets.has(url.pathname)){
+        if((url.origin===origin||url.origin===localOrigin)&&['GET','HEAD'].includes(route.request().method())&&assets.has(url.pathname)){
             const name=url.pathname==='/'?'/index.html':decodeURIComponent(url.pathname)
             return route.fulfill({path:path.join(bundle,name),contentType:mime[path.extname(name)]})
         }
@@ -58,44 +63,58 @@ try{
         assert.equal(await link.getAttribute('target'),'_blank')
         assert.match(await link.getAttribute('rel'),/\bnoopener\b/)
     }
-    assert.equal(await history.getByRole('link',{name:'Ordinary'}).getAttribute('href'),'https://127.0.0.1.example.org/')
+    const ordinary=history.getByRole('link',{name:'Ordinary',exact:true})
+    assert.equal(await ordinary.getAttribute('href'),'https://127.0.0.1.example.org/')
     assert.deepEqual(destinations,[],'Rendering must not open a link')
     for(const [name,target] of cases){
         const link=history.getByRole('link',{name,exact:true})
         const box=await link.boundingBox()
         assert(box)
-        const popup=page.waitForEvent('popup')
-        await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
-        const tab=await popup
+        const [tab]=await Promise.all([
+            page.waitForEvent('popup'),
+            page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2),
+        ])
         await tab.waitForURL(target)
         await tab.close()
         assert.equal(new URL(page.url()).origin,origin,'The transcript stays open')
     }
-    assert.equal(destinations.length,cases.length)
-    const box=await history.getByRole('link',{name:'IPv6',exact:true}).boundingBox()
-    assert(box)
-    const choose=async name=>{
+    const requestUrl=target=>target.split('#')[0]
+    assert.deepEqual(destinations,cases.map(([,target])=>requestUrl(target)))
+    const choose=async(link,name,expectHelp)=>{
+        const box=await link.boundingBox()
+        assert(box)
         const action=page.getByRole('menuitem',{name,exact:true})
         await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:box.x+box.width/2,y:box.y+box.height/2}]})
         try{
             await action.waitFor({timeout:10000})
-            await page.getByText('This address opens on your device. For the server’s service, open it on the server.',{exact:true}).waitFor()
+            const help=page.getByText(loopbackHelp,{exact:true})
+            if(expectHelp){await help.waitFor()}
+            else{assert.equal(await help.count(),0,'Unexpected loopback host help')}
         }
-        finally{await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]})}
+        finally{await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]}).catch(()=>{})}
         await action.click()
     }
-    await choose('Copy link')
+    const ipv6=history.getByRole('link',{name:'IPv6',exact:true})
+    await choose(ipv6,'Copy link',true)
     await page.waitForFunction(expected=>navigator.clipboard.readText().then(value=>value===expected),cases[1][1])
     assert.equal(destinations.length,cases.length,'Copy does not open the destination')
-    const pending=page.waitForEvent('popup')
-    await choose('Open')
-    const fromMenu=await pending
+    const [fromMenu]=await Promise.all([
+        page.waitForEvent('popup'),
+        choose(ipv6,'Open',true),
+    ])
     await fromMenu.waitForURL(cases[1][1])
     await fromMenu.close()
-    assert.equal(destinations.length,cases.length+1)
-    assert.deepEqual(refused,[])
+    assert.deepEqual(destinations,[...cases.map(([,target])=>requestUrl(target)),requestUrl(cases[1][1])])
+    await choose(ordinary,'Copy link',false)
+    await page.waitForFunction(expected=>navigator.clipboard.readText().then(value=>value===expected),'https://127.0.0.1.example.org/')
+    assert.equal(destinations.length,cases.length+1,'Copy on ordinary link does not open the destination')
     await writeFile(path.join(output,'transcript.aria.yml'),await history.ariaSnapshot())
     await page.screenshot({path:path.join(output,'transcript.png'),scale:'css'})
+    await page.goto(`${localOrigin}/?locale=en&scene=transcript-loopback`,{waitUntil:'domcontentloaded'})
+    await page.waitForFunction(()=>globalThis.__codenomadRuneBoot?.state==='ready')
+    await choose(history.getByRole('link',{name:'IPv6',exact:true}),'Copy link',false)
+    await page.waitForFunction(expected=>navigator.clipboard.readText().then(value=>value===expected),cases[1][1])
+    assert.deepEqual(refused,[])
     console.log(JSON.stringify({mobile:true,destinations,output}))
 }finally{
     try{await browser?.close()}finally{await rm(profile,{recursive:true,force:true,maxRetries:5,retryDelay:200})}

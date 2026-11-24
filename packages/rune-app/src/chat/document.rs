@@ -32,11 +32,12 @@ pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, li
     let version = s.transcript_display.stream_version();
     let memo_key = format!("{group}-markdown");
     window(s, key, &[source], limit, |shown, units| {
+        let active_locale = locale();
         let stamp = (
             version,
             steps,
             std::rc::Rc::as_ptr(&scope) as usize,
-            locale(),
+            active_locale,
             &unwrapped,
             &diagram_sources,
         );
@@ -52,7 +53,7 @@ pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, li
                         HIGHLIGHT_LIMIT
                     },
                 links::on_open(link_scope.clone()),
-                links::on_menu(link_scope),
+                links::on_menu(link_scope, active_locale),
                 links::help,
                 {
                     let unwrapped = unwrapped.clone();
