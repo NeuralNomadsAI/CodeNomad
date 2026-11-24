@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { nativeScheduleCarrierHooks } from "./native-schedule-carrier"
-import { readNativeScheduleCarrierOwnership, NATIVE_SCHEDULE_CARRIER_SIGNAL, type NativeScheduleCarrierOwnership } from "./native-schedule-carrier-binding"
+import { assertNativeScheduleCarrierArtifacts, readNativeScheduleCarrierOwnership, NATIVE_SCHEDULE_CARRIER_SIGNAL, type NativeScheduleCarrierOwnership } from "./native-schedule-carrier-binding"
 import { MISSION_SCHEDULE_CARRIER_SESSION_PREFIX } from "../../missions/mission-schedule-carrier-identity"
 import { nativeMissionScheduleWakeContext } from "./native-mission-schedule-wake-context"
 import { nativeMissionSchedulePreparePrompt } from "./native-mission-schedule-wake-prepare"
@@ -28,7 +28,9 @@ export const registerNativeMissionScheduleCarrierHooks = Effect.fn("missions.reg
     const value = missionWakeMetadata(event.metadata, event.messageID)
     if (!ownership.legacyModel || !value || event.prompt.text !== NATIVE_SCHEDULE_CARRIER_SIGNAL) throw new Error("schedule-carrier-prompt")
     const owner = ownership.document!.calendarOwner
-    const slots = [...owner?.slots ?? [], ...owner?.retired.map(item => item.descriptor) ?? []]
+    if (!owner) throw new Error("schedule-carrier-prompt")
+    assertNativeScheduleCarrierArtifacts(owner.installation, { requireProvider: true })
+    const slots = [...owner.slots, ...owner.retired.map(item => item.descriptor)]
     if (!slots.some(slot => slot.sessionID === event.sessionID && (slot.scheduleID === null ? slot.creation === "attempted" : sameMissionAutomation(slot.scheduleID, value.id))))
       throw new Error("schedule-carrier-prompt-mapping")
     if (ownership.reference.role === "principal") yield* nativeMissionSchedulePreparePrompt(ctx, event)

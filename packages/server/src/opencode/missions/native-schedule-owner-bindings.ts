@@ -34,23 +34,28 @@ export async function readNativeScheduleAuxiliaryWakeBinding(ctx: Plugin.Context
   if (!slot || slot.scheduleID !== null && slot.scheduleID !== wake.scheduleID) return undefined
   assertMissionCalendarPlacement(doc.calendarOwner!.placement, doc.configuration.roots)
   assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation)
-  const rows = await native.list({ missionID: doc.id, descriptor: slot }, current)
+  const matchRow = (list: Awaited<ReturnType<NativeScheduleCalendarService["list"]>>) =>
+    list.length === 1 && list[0].id === wake.scheduleID && nativeScheduleCalendarMatches(list[0], slot)
+      && (list[0].runCount >= wake.run || list[0].code && list[0].runCount === wake.run - 1 && missionCodeWakeRunning(wake.scheduleID, wake.run))
+      ? list[0] : undefined
+  const row = matchRow(await native.list({ missionID: doc.id, descriptor: slot }, current))
   // A code run is counted only after its program returns: an uncounted run must be live in this process.
-  if (rows.length !== 1 || rows[0].id !== wake.scheduleID || !nativeScheduleCalendarMatches(rows[0], slot) || rows[0].runCount < wake.run
-    && !(rows[0].code && rows[0].runCount === wake.run - 1 && missionCodeWakeRunning(wake.scheduleID, wake.run))) return undefined
-  if (!rows[0].code) {
+  if (!row) return undefined
+  if (!row.code) {
     assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation, { requireProvider: true })
     await native.qualifyLegacyProvider(current)
+    const reread = matchRow(await native.list({ missionID: doc.id, descriptor: slot }, current))
+    if (!reread || reread.code) return undefined
   }
   const fresh = await run(readNativeScheduleCarrierOwnership(ctx, wake.sessionID))
   guard()
   if (!fresh?.verified || fresh.document?.revision !== doc.revision || canonicalAuthority(fresh.reference) !== canonicalAuthority(ownership.reference)
-    || !rows[0].code && !fresh.legacyModel) return undefined
-  if (!rows[0].code) assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation, { requireProvider: true })
+    || !row.code && !fresh.legacyModel) return undefined
+  if (!row.code) assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation, { requireProvider: true })
   assertMissionCalendarPlacement(doc.calendarOwner!.placement, doc.configuration.roots)
   const calendar = doc.calendars.find(item => item.sessionID === slot.sessionID)
   if (calendar && (calendar.scheduleID !== wake.scheduleID || calendar.role !== "reconciliation" || calendar.timeGeneration !== doc.timeGeneration)) return undefined
-  return { document: doc, calendar: calendar ?? { role: "reconciliation", slot: 0, timeGeneration: doc.timeGeneration,
+  return { document: doc, legacyPrompt: !row.code, calendar: calendar ?? { role: "reconciliation", slot: 0, timeGeneration: doc.timeGeneration,
     sessionID: slot.sessionID, scheduleID: wake.scheduleID, highWater: 0, pendingWake: null, wakePreparing: null } }
 }
 export function nativeScheduleOwnerBindings(ctx: Plugin.Context, run: <A>(effect: Effect.Effect<A, unknown>) => Promise<A>): NativeScheduleOwnerBindings {

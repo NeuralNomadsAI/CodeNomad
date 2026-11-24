@@ -59,9 +59,11 @@ export const acquireNativeScheduledPassageCapability = Effect.fn("missions.acqui
       throw new Error("Scheduled passage native capabilities unavailable")
     const id = missionAutomationID(proof.descriptor.scheduleID!)
     const info = yield* schedule.get(id).pipe(Effect.flatMap(readMissionAutomation))
-    const carrier = yield* session.get(proof.descriptor.sessionID).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(Session.Info))))
     const code = missionCodeWake(info)
     if (!code) yield* assertNativeScheduleProviderAvailable(ctx, proof.owner.installation)
+    const flag = schedule.enabled(ctx.location.directory)
+    if (!Effect.isEffect(flag) || (yield* flag) !== true) throw new Error("Scheduled passage native flag disabled")
+    const carrier = yield* session.get(proof.descriptor.sessionID).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.toType(Session.Info))))
     if (info.id !== id || info.status !== "active" || info.nextDueAt === undefined || !matchMissionAutomation(info, proof.descriptor,
       { directory: ctx.location.directory, projectID: doc.projectID }, NATIVE_SCHEDULE_CARRIER_SIGNAL)
       || carrier.id !== proof.descriptor.sessionID || carrier.parentID
@@ -71,8 +73,6 @@ export const acquireNativeScheduledPassageCapability = Effect.fn("missions.acqui
       || canonicalAuthority(carrier.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER])
         !== canonicalAuthority({ missionID: doc.id, timeGeneration: doc.timeGeneration, role: "reconciliation", slot: 0 }))
       throw new Error("Scheduled passage auxiliary differs")
-    const flag = schedule.enabled(ctx.location.directory)
-    if (!Effect.isEffect(flag) || (yield* flag) !== true) throw new Error("Scheduled passage native flag disabled")
     identity(doc)
     if (!code) assertNativeScheduleCarrierArtifacts(proof.owner.installation, { requireProvider: true })
     current()

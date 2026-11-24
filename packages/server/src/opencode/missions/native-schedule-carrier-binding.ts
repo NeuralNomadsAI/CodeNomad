@@ -24,7 +24,7 @@ export type NativeScheduleCarrierArtifact = { file: string; sha256: string }
 export type NativeScheduleCarrierInstallation = {
   registrationFile: string; provider?: NativeScheduleCarrierArtifact; runtime: NativeScheduleCarrierArtifact
 }
-export type NativeScheduleCarrierBinding = { document: MissionDocument; calendar: MissionCalendar }
+export type NativeScheduleCarrierBinding = { document: MissionDocument; calendar: MissionCalendar; legacyPrompt?: boolean }
 type Context = Pick<Plugin.Context, "session" | "storage" | "location">
 type Run = <A>(effect: Effect.Effect<A, unknown>) => Promise<A>
 type Claim = { version: 1; key: string; wake: NativeScheduleWake; incarnation: NativeScheduleIncarnation;

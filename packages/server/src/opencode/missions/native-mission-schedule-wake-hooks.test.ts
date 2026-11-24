@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { unlinkSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import test from "node:test"
 import type { Plugin } from "@opencode/plugin/effect"
@@ -47,6 +48,9 @@ test("model-less Code Mode carriers refuse prompts and LLM context turns while b
   const validPrompt = { sessionID, messageID: `msg_${scheduleID}_1`,
     prompt: { text: NATIVE_SCHEDULE_CARRIER_SIGNAL }, metadata: { schedule: { id: scheduleID, run: 1, dueAt: 1000, late: false } } }
   await Effect.runPromise(hooks.get("prompt")!(validPrompt))
+  unlinkSync(f.installation.provider.file)
+  await assert.rejects(Effect.runPromise(hooks.get("prompt")!(validPrompt)), /ENOENT|artifact/)
+  writeFileSync(f.installation.provider.file, "export const owned = true")
   delete f.sessions.get(sessionID).model
   await assert.rejects(Effect.runPromise(hooks.get("prompt")!(validPrompt)), /carrier-prompt/)
   await assert.rejects(Effect.runPromise(hooks.get("context")!({ sessionID, model: { providerID: "remote", id: "chat" }, messages: [], tools: {} })), /carrier-model/)

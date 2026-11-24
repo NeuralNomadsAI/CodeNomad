@@ -111,11 +111,11 @@ export function nativeMissionScheduleWakeHandlers(ctx: Plugin.Context, _artifact
     const ownership = yield* readNativeScheduleCarrierOwnership(ctx, input.wake.sessionID), doc = ownership?.document
     if (!ownership?.verified || !doc?.calendarOwner || doc.id !== input.wake.missionID || doc.timeGeneration !== input.wake.generation
       || input.registrationFile !== doc.calendarOwner.installation.registrationFile) throw new Error("schedule-wake-owner")
-    let active = true, consumed = false
+    let active = true, consumed = false, requireProvider = false
     yield* Effect.addFinalizer(() => Effect.sync(() => { active = false }))
     const current = (): true => {
       if (!active) throw new Error("schedule-wake-retired")
-      processCurrent(); assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation)
+      processCurrent(); assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation, { requireProvider })
       if (mode === "wake" && !consumed) assertNativeSchedulePreflight(input.preflight, input.wake, input.incarnation.id)
       return assertMissionCalendarPlacement(doc.calendarOwner!.placement, doc.configuration.roots)
     }
@@ -144,7 +144,10 @@ export function nativeMissionScheduleWakeHandlers(ctx: Plugin.Context, _artifact
       const descriptor = binding.document.calendarOwner!.slots.find(item => item.sessionID === input.wake.sessionID)
       if (!descriptor) throw new Error("schedule-wake-current-slot")
       const info = await native.get({ missionID: doc.id, descriptor }, input.wake.scheduleID, current)
-      if (info && !info.code) assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation, { requireProvider: true })
+      if (info && !info.code) {
+        requireProvider = true
+        assertNativeScheduleCarrierArtifacts(doc.calendarOwner!.installation, { requireProvider: true })
+      }
       const wake = info?.code ? missionCodeWakeProof(binding.calendar, info, input.wake.run) : await reader.message(input.wake)
       if (!info || !info.code && info.runCount < input.wake.run || !wake) throw new Error("schedule-wake-proof")
       current(); return { binding, wake }

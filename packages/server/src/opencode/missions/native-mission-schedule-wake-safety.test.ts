@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { writeFileSync } from "node:fs"
+import { unlinkSync, writeFileSync } from "node:fs"
 import test from "node:test"
 import type { Plugin } from "@opencode/plugin/effect"
 import type { SessionPrompt } from "@opencode/plugin/effect/session"
@@ -24,6 +24,14 @@ test("native principal prompt commits preparation before inbox/ACK, survives a c
   await assert.rejects(f.store.change(prepared.id, prepared.revision, f.current, value => missionDocumentChanges.configure(value,
     { ...value.configuration, launch: { ...value.configuration.launch, timing: { kind: "every", intervalMs: 1_800_000 } } }, f.now)), /configuration locked|wake unresolved/)
   assert.deepEqual(await f.read(), prepared)
+
+  const missingProvider = await ownerFixture(t), mpDoc = await missingProvider.control("play")
+  const mpPrincipal = mpDoc.calendars.find(item => item.role === "principal")!
+  unlinkSync(missingProvider.installation.provider.file)
+  const mpEvent = { sessionID: mpPrincipal.sessionID, messageID: `msg_${mpPrincipal.scheduleID}_1`, delivery: "queue", prompt: { text: NATIVE_SCHEDULE_CARRIER_SIGNAL },
+    metadata: { schedule: { id: mpPrincipal.scheduleID, run: 1, dueAt: missingProvider.now, late: false } } } as unknown as SessionPrompt
+  await assert.rejects(prepareNativeMissionSchedulePrincipalPrompt(missingProvider.ctx, mpEvent, missingProvider.store, Effect.runPromise, missingProvider.current), /ENOENT|artifact/)
+  assert.equal((await missingProvider.read()).calendars.find(item => item.role === "principal")!.wakePreparing, null)
 })
 
 test("Pause or temporal-edit winner rejects a principal before native prompt returns, with no preparation/count", async t => {

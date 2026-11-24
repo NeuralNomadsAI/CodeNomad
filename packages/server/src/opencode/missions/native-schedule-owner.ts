@@ -300,8 +300,13 @@ export class NativeScheduleCalendarOwner {
       if (!binding) throw new Error("Mission auxiliary adoption unqualified")
       doc = await this.required(locked, wake.missionID)
       if (doc.revision !== binding.document.revision) throw new Error("Mission auxiliary adoption changed")
-      assertMissionCalendarPlacement(doc.calendarOwner!.placement, doc.configuration.roots)
-      return locked.change(doc.id, doc.revision, guard, value => {
+      const commitGuard = (): true => {
+        guard()
+        if (binding.legacyPrompt) assertNativeScheduleCarrierArtifacts(doc!.calendarOwner!.installation, { requireProvider: true })
+        return true
+      }
+      commitGuard()
+      return locked.change(doc.id, doc.revision, commitGuard, value => {
         const slot = value.calendarOwner!.slots.find(item => item.sessionID === wake.sessionID)!
         slot.creation = "adopted"; slot.scheduleID = wake.scheduleID; slot.ambiguous = []
         publishAuxiliary(value, slot)

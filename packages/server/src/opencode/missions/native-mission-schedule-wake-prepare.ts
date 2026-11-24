@@ -6,7 +6,7 @@ import { missionDocumentChanges } from "../../missions/mission-document-state"
 import { assertMissionCalendarPlacement } from "../../missions/mission-calendar-placement"
 import { nativeInvocation } from "./native-invocation"
 import { acquireNativeMissionDocumentStore, type NativeMissionDocumentRunner } from "./native-mission-document-storage"
-import { readNativeScheduleCarrierOwnership, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
+import { assertNativeScheduleCarrierArtifacts, readNativeScheduleCarrierOwnership, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
 import { assertNativeScheduleWake } from "./native-schedule-transport-contract"
 import { missionWakeMessageID, missionWakeMetadata, sameMissionAutomation } from "./native-mission-automation"
 
@@ -35,7 +35,12 @@ export async function prepareNativeMissionSchedulePrincipalPrompt(ctx: Plugin.Co
     const wake = { missionID: doc.id, generation: doc.timeGeneration, sessionID, scheduleID: calendar.scheduleID,
       run: metadata.run, messageID: missionWakeMessageID(calendar.scheduleID, metadata.run) }
     assertNativeScheduleWake(wake)
-    const guard = (): true => { current(); locked.assertActive(); return assertMissionCalendarPlacement(fresh.calendarOwner!.placement, fresh.configuration.roots) }
+    const guard = (): true => {
+      current(); locked.assertActive()
+      assertNativeScheduleCarrierArtifacts(fresh.calendarOwner!.installation, { requireProvider: true })
+      return assertMissionCalendarPlacement(fresh.calendarOwner!.placement, fresh.configuration.roots)
+    }
+    guard()
     return locked.change(fresh.id, fresh.revision, guard, value => missionDocumentChanges.prepareWake(value,
       { scheduleID: wake.scheduleID, run: wake.run, messageID: wake.messageID, dueAt: Number(metadata.dueAt) }))
   })

@@ -635,7 +635,8 @@ immutable runtime artifact bytes, the ready auxiliary's adopted mapping and acti
 native row, its technical carrier identity, and a positive native schedule flag;
 legacy prompt auxiliaries also require the exact local provider/model contribution
 and `provider.mjs` bytes. The synchronous initial/business fence rechecks the fresh
-document's installation and runtime artifact bytes. Observation authority uses the
+document's installation and runtime artifact bytes (and `provider.mjs` bytes for a
+qualified legacy prompt auxiliary). Observation authority uses the
 original passage identity and whole-family terminal proof, allowing controls and
 settlement while technical artifacts are unavailable. Human Check keeps an
 unadmitted original pending when mutation qualification fails.

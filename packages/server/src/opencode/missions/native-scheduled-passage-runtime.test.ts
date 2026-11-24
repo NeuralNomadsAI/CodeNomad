@@ -371,11 +371,13 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       const auxSession = sessions.get("ses_reconciliation")!
       sessions.set("ses_reconciliation", { ...auxSession, metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: {
         missionID: promptDoc.id, timeGeneration: 1, role: "reconciliation", slot: 0 } } } as Session.Info)
-      let unlinkDuringFlag = false
+      let flagAction: (() => void) | undefined
       const schedulesWithHook = {
         get: (id: string) => Effect.succeed(infos.get(id)),
         enabled: () => Effect.sync(() => {
-          if (unlinkDuringFlag) { unlinkDuringFlag = false; unlinkSync(installation.provider.file) }
+          const action = flagAction
+          flagAction = undefined
+          action?.()
           return enabled
         }),
       }
@@ -387,15 +389,34 @@ test("real SQLite factory fences broken initial/business capabilities but observ
           Effect.provideService(Context.Service<never, unknown>("@opencode/Automation"), schedulesWithHook),
           Effect.provideService(Context.Service<never, unknown>("@opencode/Session"), { get: (id: string) => Effect.succeed(sessions.get(id)) }),
         )))
-      unlinkDuringFlag = true
-      await assert.rejects(runCapability(cap => cap.prepare(promptDoc)))
+      await runCapability(cap => Effect.gen(function* () {
+        yield* cap.prepare(promptDoc)
+        assert.equal(cap.assertCurrent(promptDoc), true)
+      }))
+      let removedDuringFlag = false
+      flagAction = () => { removedDuringFlag = true; unlinkSync(installation.provider.file) }
+      await assert.rejects(runCapability(cap => cap.prepare(promptDoc)), /ENOENT|artifact/)
+      assert.equal(removedDuringFlag, true)
       writeFileSync(installation.provider.file, "provider.mjs")
+      let preparedIntact = false
       await assert.rejects(runCapability(cap => Effect.gen(function* () {
         yield* cap.prepare(promptDoc)
+        preparedIntact = true
         unlinkSync(installation.provider.file)
         cap.assertCurrent(promptDoc)
-      })))
+      })), /ENOENT|artifact/)
+      assert.equal(preparedIntact, true)
       writeFileSync(installation.provider.file, "provider.mjs")
+      let driftedModel = false
+      flagAction = () => {
+        driftedModel = true
+        const { model: _old, ...withoutModel } = sessions.get("ses_reconciliation")!
+        sessions.set("ses_reconciliation", withoutModel as Session.Info)
+      }
+      await assert.rejects(runCapability(cap => cap.prepare(promptDoc)), /auxiliary differs/)
+      assert.equal(driftedModel, true)
+      sessions.set("ses_reconciliation", { ...auxSession, metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: {
+        missionID: promptDoc.id, timeGeneration: 1, role: "reconciliation", slot: 0 } } } as Session.Info)
     })
     await t.test("Code Mode scheduled passage admits and runs business without local provider or provider.mjs", async () => {
       enabled = true

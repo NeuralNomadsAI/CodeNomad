@@ -589,6 +589,45 @@ test("legacy prompt resume and lost-ACK auxiliary adoption recheck provider arti
   await assert.rejects(aux.owner.adoptAuxiliary(wake), /unqualified/)
   assert.equal((await aux.read()).calendarOwner?.slots.find(item => item.role === "reconciliation")?.creation, "attempted")
 
+  const deletedRow = await ownerFixture(t)
+  deletedRow.loseCreateACK("reconciliation")
+  const deletedDoc = await deletedRow.control("play"), deletedInfo = [...deletedRow.calendars.values()][0]
+  deletedInfo.runCount = 1
+  const qDeleted = deletedRow.native.qualifyLegacyProvider
+  deletedRow.native.qualifyLegacyProvider = async guard => { await qDeleted(guard); deletedRow.calendars.delete(deletedInfo.id) }
+  const deletedWake = { missionID: deletedDoc.id, generation: deletedDoc.timeGeneration, sessionID: deletedInfo.sessionID,
+    scheduleID: deletedInfo.id, run: 1, messageID: `msg_${deletedInfo.id}_1` }
+  assert.equal(await readNativeScheduleAuxiliaryWakeBinding(deletedRow.ctx, deletedWake, deletedRow.native, Effect.runPromise, deletedRow.current), undefined)
+  await assert.rejects(deletedRow.owner.adoptAuxiliary(deletedWake), /unqualified/)
+  assert.equal((await deletedRow.read()).calendarOwner?.slots.find(item => item.role === "reconciliation")?.creation, "attempted")
+
+  const vanishingAdopt = await ownerFixture(t)
+  vanishingAdopt.loseCreateACK("reconciliation")
+  const vanishingDoc = await vanishingAdopt.control("play"), vanishingInfo = [...vanishingAdopt.calendars.values()][0]
+  vanishingInfo.runCount = 1
+  const origRead = vanishingAdopt.store.read.bind(vanishingAdopt.store)
+  let unlinked = false
+  const vanishingOwner = vanishingAdopt.makeOwner(new Proxy(vanishingAdopt.store, {
+    get(target, prop, receiver) {
+      if (prop === "withExclusion") return (fn: (locked: any) => Promise<any>) => target.withExclusion(locked => fn(new Proxy(locked, {
+        get(lTarget, lProp, lReceiver) {
+          if (lProp === "read") return async (id: string) => {
+            const value = await lTarget.read(id)
+            if (!unlinked) { unlinked = true; unlinkSync(vanishingAdopt.installation.provider.file) }
+            return value
+          }
+          return Reflect.get(lTarget, lProp, lReceiver)
+        },
+      })))
+      return Reflect.get(target, prop, receiver)
+    },
+  }))
+  const vanishingWake = { missionID: vanishingDoc.id, generation: vanishingDoc.timeGeneration, sessionID: vanishingInfo.sessionID,
+    scheduleID: vanishingInfo.id, run: 1, messageID: `msg_${vanishingInfo.id}_1` }
+  await assert.rejects(vanishingOwner.adoptAuxiliary(vanishingWake), /ENOENT|artifact/)
+  assert.equal(unlinked, true)
+  assert.equal((await origRead(vanishingDoc.id) as any).calendarOwner?.slots.find((item: any) => item.role === "reconciliation")?.creation, "attempted")
+
   for (const drift of ["provider-removed", "row-lost"] as const) {
     const ordinary = await ownerFixture(t)
     ordinary.loseCreateACK("reconciliation")

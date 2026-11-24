@@ -201,8 +201,8 @@ transport discovery and internal RPC themselves use loopback HTTP.
 
 ## Native document composition and packaging
 
-The production `native-mission-schedule-runtime.ts` composes the provider and exact
-local hooks with its fresh wake/status receivers. Context-side dispatch first
+The production `native-mission-schedule-runtime.ts` composes the optional legacy
+local provider and exact local hooks with its fresh wake/status receivers. Context-side dispatch first
 reads signed native readiness and freezes a fan-in cutoff; its outer eight-second
 deadline spans both preflight and wake. Incomplete coverage and prior uncertain
 dispatches retain their original durable preparations and stay read-only. The
@@ -224,8 +224,8 @@ and temporary debounce fibers belong to the plugin Scope.
 
 The registered runtime resolves the exact session marker into its point-read
 unified Mission document and current calendar, checks its project, Location and
-allowed carrier model (omitted for Code Mode, or the local noop model for legacy
-prompt rows), and rejects stale generations. It keeps one native KV dispatch claim per
+allowed carrier model (omitted or the retained local noop model for Code Mode, or the
+local noop model for legacy prompt rows), and rejects stale generations. It keeps one native KV dispatch claim per
 Mission (32 KiB), serialized with document mutations across bundle incarnations.
 An unresolved claim holds newer wakes; a current high-water proof permits replacing
 the single slot. `closeNativeScheduleCarrierClaim` persists a monotone
