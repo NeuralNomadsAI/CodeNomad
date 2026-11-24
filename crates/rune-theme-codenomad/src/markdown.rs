@@ -549,6 +549,52 @@ pub fn follow_tool_pane(content: El, large: bool, stick_bottom: bool) -> El {
         .child(content)
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn steps_pane<S: 'static>(
+    key: String,
+    label: &str,
+    count: usize,
+    version: u64,
+    row_key: impl for<'a> Fn(&'a S, usize) -> std::borrow::Cow<'a, str> + 'static,
+    build: impl Fn(&S, usize) -> El + 'static,
+    on_visible: impl Fn(&mut S, std::ops::Range<usize>) -> bool + 'static,
+    on_at_bottom: impl Fn(&mut S, bool) -> bool + 'static,
+    on_selection: impl Fn(&mut S, &rune::SelectionChange, &mut rune::Tx) + 'static,
+) -> El {
+    let appearance = dark();
+    let palette = crate::palettes::current();
+    let t = tokens(appearance);
+    let gap = t.space(Space::Sm).px();
+    let list = rune::col()
+        .key(format!("{key}-list"))
+        .w_full()
+        .role("list")
+        .label(label)
+        .gap(gap)
+        .growth(rune::GrowthSpec::default())
+        .virtual_rows(
+            count,
+            t.length(crate::Length::TouchTarget).px(),
+            row_key,
+            move |state, index| {
+                crate::palettes::with_palette(palette, || {
+                    crate::layout::with_appearance(appearance, || build(state, index))
+                })
+            },
+        )
+        .virtual_rows_version(version)
+        .on_visible_rows(on_visible);
+    rune::col()
+        .key(key)
+        .w_full()
+        .max_h(tool_lines(30))
+        .scroll(ScrollSpec { stick_bottom: true })
+        .scroll_anchor()
+        .on_at_bottom_if(on_at_bottom)
+        .on_selection_change(on_selection)
+        .child(list)
+}
+
 pub fn diff_pane(content: El, lines: usize) -> El {
     rune::col()
         .w_full()

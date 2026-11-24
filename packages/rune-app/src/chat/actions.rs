@@ -6,6 +6,25 @@ use std::{
 };
 
 const RENDER_INTERVAL: f64 = 0.2;
+const TASK_ANCHOR_LIMIT: usize = 64;
+
+struct TaskStepsState {
+    visible: Vec<String>,
+    selected: Vec<String>,
+    at_bottom: bool,
+    revealed: usize,
+}
+
+impl Default for TaskStepsState {
+    fn default() -> Self {
+        Self {
+            visible: Vec::new(),
+            selected: Vec::new(),
+            at_bottom: true,
+            revealed: 0,
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct Display {
@@ -26,11 +45,8 @@ pub struct Display {
     pub(crate) receipts: super::receipts::Receipts,
     pub(crate) messages: super::message_actions::Actions,
     focused_key: Option<String>,
-    step_scroll: RefCell<HashMap<String, std::rc::Rc<std::cell::Cell<(bool, f32)>>>>,
-    step_row_rects: RefCell<
-        HashMap<String, Vec<(String, std::rc::Rc<rune_theme_codenomad::layout::DrawnRect>)>>,
-    >,
-    step_selected: HashMap<String, Vec<String>>,
+    #[cfg(test)]
+    pub(crate) task_row_builds: std::cell::Cell<usize>,
 }
 
 #[derive(Default)]
@@ -46,8 +62,7 @@ struct SessionDisplay {
     toggled: HashSet<String>,
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
-    step_anchors: RefCell<(VecDeque<String>, HashMap<String, String>)>,
-    step_mount_anchors: RefCell<(VecDeque<String>, HashMap<String, String>)>,
+    task_anchors: VecDeque<(String, TaskStepsState)>,
     search_revealed: VecDeque<String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     diagram_sources: HashMap<String, BTreeSet<usize>>,
@@ -71,8 +86,7 @@ impl Display {
         self.usage_family.close();
         self.pictures.clear();
         self.receipts.suspend();
-        self.step_row_rects.get_mut().clear();
-        self.step_selected.clear();
+        self.active.task_anchors.clear();
     }
     pub(crate) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
@@ -109,8 +123,6 @@ impl Display {
             self.pictures.clear();
             self.receipts.clear();
             self.diffs = Default::default();
-            self.step_row_rects.get_mut().clear();
-            self.step_selected.clear();
         }
     }
 
@@ -209,155 +221,91 @@ impl Display {
         self.active.revealed.get(key).copied().unwrap_or_default()
     }
 
-    pub(super) fn step_anchor(&self, key: &str) -> Option<String> {
-        self.active.step_anchors.borrow().1.get(key).cloned()
-    }
-
-    pub(super) fn step_mount_anchor(&self, key: &str) -> Option<String> {
-        self.active.step_mount_anchors.borrow().1.get(key).cloned()
-    }
-
     pub(super) fn focused_key(&self) -> Option<&str> {
         self.focused_key.as_deref()
     }
 
-    pub(super) fn step_scroll_state(&self, key: &str) -> std::rc::Rc<std::cell::Cell<(bool, f32)>> {
-        let mut map = self.step_scroll.borrow_mut();
-        if map.len() >= 64 && !map.contains_key(key) {
-            map.retain(|_, flag| std::rc::Rc::strong_count(flag) > 1);
-        }
-        map.entry(key.into())
-            .or_insert_with(|| std::rc::Rc::new(std::cell::Cell::new((false, 1.0))))
-            .clone()
+    pub(super) fn task_anchors(&self, key: &str) -> &[String] {
+        self.active
+            .task_anchors
+            .iter()
+            .find(|(id, _)| id == key)
+            .filter(|(_, state)| !state.at_bottom)
+            .map_or(&[], |(_, state)| state.visible.as_slice())
     }
 
-    pub(super) fn first_visible_step(&self, key: &str, pane: [f32; 4]) -> Option<String> {
-        if pane[3] <= 0.0 {
-            return None;
-        }
-        let top = pane[1];
-        let bottom = pane[1] + pane[3];
-        self.step_row_rects.borrow().get(key).and_then(|rows| {
-            rows.iter()
-                .find(|(_, rect)| {
-                    let r = rect.get();
-                    r[3] > 0.0 && r[1] + r[3] > top && r[1] < bottom
-                })
-                .map(|(anchor, _)| anchor.clone())
-        })
+    pub(super) fn task_selected(&self, key: &str) -> &[String] {
+        self.active
+            .task_anchors
+            .iter()
+            .find(|(id, _)| id == key)
+            .map_or(&[], |(_, state)| state.selected.as_slice())
     }
 
-    pub(super) fn set_step_row_rects(
-        &self,
-        key: &str,
-        rows: Vec<(String, std::rc::Rc<rune_theme_codenomad::layout::DrawnRect>)>,
-    ) {
-        let mut map = self.step_row_rects.borrow_mut();
-        if map.len() >= 64 && !map.contains_key(key) {
-            map.clear();
-        }
-        map.insert(key.into(), rows);
+    pub(super) fn task_revealed(&self, key: &str) -> usize {
+        self.active
+            .task_anchors
+            .iter()
+            .find(|(id, _)| id == key)
+            .map_or(0, |(_, state)| state.revealed)
     }
 
-    pub(super) fn step_selected(&self, key: &str) -> &[String] {
-        self.step_selected.get(key).map_or(&[], Vec::as_slice)
+    pub(super) fn set_task_visible(&mut self, key: &str, visible: Vec<String>) {
+        let state = self.task_steps_entry(key);
+        state.visible = visible;
     }
 
-    pub(super) fn set_step_selected(&mut self, key: &str, selected: Vec<String>) -> bool {
-        if selected.is_empty() {
-            return self.step_selected.remove(key).is_some();
-        }
-        if self
-            .step_selected
-            .get(key)
-            .is_some_and(|cur| *cur == selected)
+    pub(super) fn set_task_selected(&mut self, key: &str, selected: Vec<String>) -> bool {
+        let state = self.task_steps_entry(key);
+        let released = !state.selected.is_empty() && selected.is_empty() && state.at_bottom;
+        state.selected = selected;
+        released
+    }
+
+    pub(super) fn set_task_at_bottom(&mut self, key: &str, at_bottom: bool) -> bool {
+        let state = self.task_steps_entry(key);
+        let returned_to_bottom = !state.at_bottom && at_bottom;
+        state.at_bottom = at_bottom;
+        returned_to_bottom
+    }
+
+    pub(super) fn reveal_task_at_least(s: &mut State, key: &str, count: usize) {
+        let state = s.transcript_display.task_steps_entry(key);
+        state.revealed = state.revealed.max(count);
+        s.revision += 1;
+    }
+
+    fn task_steps_entry(&mut self, key: &str) -> &mut TaskStepsState {
+        if let Some(pos) = self
+            .active
+            .task_anchors
+            .iter()
+            .position(|(id, _)| id == key)
         {
-            return false;
-        }
-        if self.step_selected.len() >= 64 && !self.step_selected.contains_key(key) {
-            self.step_selected.clear();
-        }
-        self.step_selected.insert(key.into(), selected);
-        true
-    }
-
-    pub(super) fn pin_step_anchor(&self, key: &str, anchor: String) {
-        let mut anchors = self.active.step_anchors.borrow_mut();
-        if !anchors.1.contains_key(key) {
-            while anchors.1.len() >= 64 {
-                if let Some(oldest) = anchors.0.pop_front() {
-                    anchors.1.remove(&oldest);
-                } else {
-                    break;
-                }
+            if let Some(entry) = self.active.task_anchors.remove(pos) {
+                self.active.task_anchors.push_back(entry);
             }
-            anchors.0.push_back(key.into());
-        }
-        anchors.1.insert(key.into(), anchor);
-    }
-
-    pub(super) fn unpin_step_anchor(&self, key: &str) {
-        let mut anchors = self.active.step_anchors.borrow_mut();
-        if anchors.1.remove(key).is_some() {
-            anchors.0.retain(|k| k != key);
-        }
-    }
-
-    pub(super) fn pin_step_mount_anchor(&self, key: &str, anchor: String) {
-        let mut anchors = self.active.step_mount_anchors.borrow_mut();
-        if !anchors.1.contains_key(key) {
-            while anchors.1.len() >= 64 {
-                if let Some(oldest) = anchors.0.pop_front() {
-                    anchors.1.remove(&oldest);
-                } else {
-                    break;
-                }
+        } else {
+            if self.active.task_anchors.len() >= TASK_ANCHOR_LIMIT {
+                self.active.task_anchors.pop_front();
             }
-            anchors.0.push_back(key.into());
+            self.active
+                .task_anchors
+                .push_back((key.into(), TaskStepsState::default()));
         }
-        anchors.1.insert(key.into(), anchor);
-    }
-
-    pub(super) fn unpin_step_mount_anchor(&self, key: &str) {
-        let mut anchors = self.active.step_mount_anchors.borrow_mut();
-        if anchors.1.remove(key).is_some() {
-            anchors.0.retain(|k| k != key);
-        }
-    }
-
-    pub(super) fn reveal_steps(s: &mut State, key: &str, anchor: Option<String>) {
-        if let Some(anchor) = anchor {
-            s.transcript_display.pin_step_anchor(key, anchor.clone());
-            s.transcript_display.pin_step_mount_anchor(key, anchor);
-        }
-        s.transcript_display.step_scroll_state(key).set((true, 0.0));
-        Self::reveal_next(s, key);
+        &mut self
+            .active
+            .task_anchors
+            .back_mut()
+            .expect("entry pushed above")
+            .1
     }
 
     pub(super) fn clear_step_anchors(&mut self, prefix: &str) {
         let nested = format!("{prefix}-");
-        let anchors = self.active.step_anchors.get_mut();
-        anchors
-            .1
-            .retain(|key, _| key != prefix && !key.starts_with(&nested));
-        anchors
-            .0
-            .retain(|key| key != prefix && !key.starts_with(&nested));
-        let mount_anchors = self.active.step_mount_anchors.get_mut();
-        mount_anchors
-            .1
-            .retain(|key, _| key != prefix && !key.starts_with(&nested));
-        mount_anchors
-            .0
-            .retain(|key| key != prefix && !key.starts_with(&nested));
-        self.step_scroll
-            .get_mut()
-            .retain(|key, _| key != prefix && !key.starts_with(&nested));
-        self.step_row_rects
-            .get_mut()
-            .retain(|key, _| key != prefix && !key.starts_with(&nested));
-        self.step_selected
-            .retain(|key, _| key != prefix && !key.starts_with(&nested));
+        self.active
+            .task_anchors
+            .retain(|(key, _)| key != prefix && !key.starts_with(&nested));
     }
 
     pub(super) fn live_ansi(

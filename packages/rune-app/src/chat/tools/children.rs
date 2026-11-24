@@ -38,7 +38,7 @@ pub(super) const STEP_LIMIT: usize = 200;
 const CHILD_LIMIT: usize = 12;
 const RETAINED_LIMIT: usize = 24;
 const WAITING_LIMIT: usize = 32;
-const STEP_BYTES: usize = 2 << 20;
+pub(super) const STEP_BYTES: usize = 2 << 20;
 const MAX_COPY_PAGES: usize = 64;
 pub(super) const MAX_COPY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_EXPANDED_REPORTS: usize = 8;
@@ -2530,6 +2530,15 @@ fn same_synthetic_report(a: &crate::history::Row, b: &crate::history::Row) -> bo
 #[cfg(test)]
 impl Children {
     pub(super) fn install(&mut self, child: &str, page: crate::history::Page) -> Rc<()> {
+        self.install_under(None, child, page)
+    }
+
+    pub(super) fn install_under(
+        &mut self,
+        parent: Option<&str>,
+        child: &str,
+        page: crate::history::Page,
+    ) -> Rc<()> {
         let lease = Rc::default();
         let (out, result) = bounded(1);
         out.try_send(ChildUpdate::Loaded {
@@ -2541,7 +2550,7 @@ impl Children {
         let (cancel, _) = bounded(1);
         let (retry, _) = bounded(1);
         self.entries.insert(
-            child_key(None, child),
+            child_key(parent, child),
             Entry {
                 cards: HashMap::from([("test".into(), Rc::downgrade(&lease))]),
                 watch: WatchState::Active(Watcher {
@@ -2555,5 +2564,11 @@ impl Children {
             },
         );
         lease
+    }
+
+    pub(super) fn has_visible_card(&self, parent: Option<&str>, id: &str, card: &str) -> bool {
+        self.entries
+            .get(&child_key(parent, id))
+            .is_some_and(|entry| entry.cards.get(card).is_some_and(|w| w.strong_count() > 0))
     }
 }
