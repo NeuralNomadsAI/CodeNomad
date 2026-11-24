@@ -33,6 +33,32 @@ async fn deliver(b: &Backend, out: &Sender<Input>, state: &State, value: Value) 
 }
 
 #[test]
+fn permissions_of_an_owned_streams_parent_reach_its_status_section() {
+    run(async {
+        let b = backend().await;
+        let (out, input) = bounded(4);
+        let state = State::default();
+        for workspace in ["foreign", "owner"] {
+            deliver(
+                &b,
+                &out,
+                &state,
+                json!({
+                    "type":"instance.event","instanceId":workspace,
+                    "event":{"type":"session.permissions","data":{"sessionID":"ses_parent"}}
+                }),
+            )
+            .await;
+        }
+        assert!(matches!(
+            input.try_recv().unwrap(),
+            Input::Workspace(7, WorkspaceEvent::PermissionModeChanged { root: Some(root) }) if root == "ses_parent"
+        ));
+        assert!(input.is_empty());
+    });
+}
+
+#[test]
 fn an_upstream_reconnect_invalidates_picker_catalogues_without_a_new_sse_connection() {
     run(async {
         let b = backend().await;

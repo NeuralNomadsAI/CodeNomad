@@ -56,6 +56,8 @@ struct Envelope {
     mission_id: Option<String>,
     revision: Option<u64>,
     header: Option<bool>,
+    field: Option<String>,
+    part: Option<String>,
     phase: Option<Phase>,
     observed_at: Option<f64>,
     page: Page,
@@ -227,7 +229,7 @@ impl PageRead {
         )
     }
 
-    fn new(
+    pub(super) fn new(
         backend: &Backend,
         project: Option<&str>,
         source: Source,
@@ -299,7 +301,7 @@ impl PageRead {
 
     async fn transfer(&self) -> Result<(Value, usize)> {
         let mut request = self.selector.clone();
-        if self.mission.is_none() {
+        if self.mission.is_none() || self.selector.get("part").is_some() {
             let mut window = json!({ "offset": self.offset });
             if let Some(order) = self.order.as_ref().or_else(|| {
                 self.first
@@ -360,6 +362,7 @@ impl PageRead {
         let envelope: Envelope = serde_json::from_value(value)?;
         let window = &envelope.window;
         let page = &envelope.page;
+        let field = self.selector["field"].as_str();
         if !envelope.available
             || envelope.version != 1
             || envelope.source != self.source
@@ -371,14 +374,20 @@ impl PageRead {
             || !digest_id(&page.digest)
             || page.pieces.len() > ROWS
             || envelope.mission_id != self.mission
-            || envelope.header != (self.source == Source::Mission).then_some(true)
+            || envelope.header
+                != (self.source == Source::Mission && field.is_none()).then_some(true)
+            || envelope.field.as_deref() != field
+            || envelope.part.as_deref() != self.selector["part"].as_str()
             || envelope.phase != (self.source == Source::Activity).then_some(Phase::Observed)
             || (self.source == Source::Activity) != envelope.observed_at.is_some()
             || envelope
                 .observed_at
                 .is_some_and(|time| !time.is_finite() || time < 0.0)
             || !match (window, &self.mission, envelope.revision) {
-                (Some(window), None, None) => {
+                (Some(window), _, revision)
+                    if (field.is_some() && revision.is_some_and(|r| r <= JS_MAX))
+                        || (self.mission.is_none() && revision.is_none()) =>
+                {
                     digest_id(&window.order)
                         && window.total <= JS_MAX
                         && window.offset == self.offset.min(window.total)
@@ -389,7 +398,7 @@ impl PageRead {
                             .as_ref()
                             .is_none_or(|order| order == &window.order)
                 }
-                (None, Some(_), Some(revision)) => {
+                (None, Some(_), Some(revision)) if field.is_none() => {
                     revision <= JS_MAX && page.total == 1 && !page.pieces.is_empty()
                 }
                 _ => false,
@@ -428,9 +437,9 @@ impl PageRead {
         }
         let units_limit: usize = match self.source {
             Source::Summaries => 256 * 1024,
-            Source::Mission => 1024 * 1024,
+            Source::Mission if field.is_none() => 1024 * 1024,
             Source::Activity => 24 * 1024 * 1024,
-            Source::Cleanups | Source::Tasks => 8 * 1024 * 1024,
+            Source::Mission | Source::Cleanups | Source::Tasks => 8 * 1024 * 1024,
         };
         for piece in &page.pieces {
             let units = piece.text.encode_utf16().count();

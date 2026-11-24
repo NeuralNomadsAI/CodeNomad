@@ -304,11 +304,15 @@ pub async fn put(
         (None, other) => other.map(str::to_owned),
     };
     use crate::worktrees::fence;
+    let checkout = fence::identity(&fence::checkout_root(&app.scope, &w.path));
+    if fence::is_blocked(&checkout) {
+        return Err(error(Status::CONFLICT, "Worktree deletion is in progress"));
+    }
     root(&w)?;
     links::guard(&w.path, &p)?;
-    let target = links::write_target(links::target(&w.path, &p))?;
+    let target = links::write_target(links::target(&w.path, &p), true)?;
     let key = fence::identity(&target);
-    let admitted = fence::admit(&[fence::identity(&w.path), key.clone()])?;
+    let admitted = fence::admit(&[checkout, key.clone()])?;
     let write = fence::serialize(format!("file\n{key}")).await;
     // Physical aliases have distinct paths but must share the version check.
     let identity = save::file_identity(&target, expected.is_some())?;
@@ -324,7 +328,7 @@ pub async fn put(
             app.workspace(&id)?;
             root(&w)?;
             links::guard(&w.path, &p)?;
-            if links::write_target(links::target(&w.path, &p))? != target {
+            if links::write_target(links::target(&w.path, &p), true)? != target {
                 return Err(error(Status::CONFLICT, "File changed on disk"));
             }
             if save::file_identity(&target, expected.is_some())? != identity {

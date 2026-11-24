@@ -50,6 +50,20 @@ pub(super) async fn dispatch(
         signals.observe(&value);
         return Ok(());
     }
+    if value["instanceId"] == b.workspace
+        && state.provider_usage.is_some()
+        && value["type"] == "instance.event"
+        && value["event"]["type"] == "provider.updated"
+    {
+        let directory = value["event"]["location"]["directory"]
+            .as_str()
+            .map(str::to_owned);
+        out.send(Input::Workspace(
+            epoch,
+            WorkspaceEvent::ProviderUsageRefresh(directory),
+        ))
+        .await?;
+    }
     if let Some(owner) = storage_owner(&value) {
         return state.storage_changed(epoch, owner, out).await;
     }

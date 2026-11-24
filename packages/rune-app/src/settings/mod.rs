@@ -53,7 +53,7 @@ pub(crate) use delivery::{notification_fixture, notification_test_config};
 pub(crate) use shortcuts::matches_shortcut;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
-pub(crate) use window::{close, direct_entry, entries};
+pub(crate) use window::{close, direct_entry, entries, open_providers};
 #[cfg(not(target_arch = "wasm32"))]
 use window::{launch_preferences, settle_close, warn_save_failed};
 
@@ -198,11 +198,14 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             }
         }
     }
-    if crate::workspace::has_conversation_stream(s)
-        || s.screen
-            .launcher()
-            .is_some_and(|launcher| launcher.authentication_required)
+    if s.screen
+        .launcher()
+        .is_some_and(|launcher| launcher.authentication_required)
     {
+        shared.unwatch();
+    } else if let Some(project) = crate::workspace::mission_observation_project(s) {
+        shared.watch_project(Some(project), &s.wake);
+    } else if crate::workspace::has_conversation_stream(s) {
         shared.unwatch();
     } else {
         shared.watch(&s.wake);
@@ -211,9 +214,20 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     if preferences_changed && let Some(wake) = &shared.window_wake {
         wake();
     }
+    let locale = shared.locale().unwrap_or_else(strings::locale);
+    #[cfg(target_arch = "wasm32")]
+    if s.settings
+        .last_display
+        .is_none_or(|(last, _)| last[0] != locale)
+        && let Some(root) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.document_element())
+    {
+        let _ = root.set_attribute("lang", locale);
+    }
     let display = Some((
         [
-            shared.locale().unwrap_or_else(strings::locale),
+            locale,
             shared.mode(),
             shared.palette(false).map_or("", |p| p.id),
             shared.palette(true).map_or("", |p| p.id),
@@ -304,6 +318,14 @@ pub(crate) fn with_shortcut<T>(
     read: impl FnOnce(Option<&[serde_json::Value]>) -> T,
 ) -> T {
     read(s.settings.shared.borrow().shortcut(action))
+}
+
+pub(crate) fn show_provider_usage_credit_balance(s: &State) -> bool {
+    s.settings
+        .shared
+        .borrow()
+        .saved(codenomad_client::settings::Owner::Config)
+        .is_some_and(|config| config["settings"]["showProviderUsageCreditBalance"] == true)
 }
 
 #[cfg(target_arch = "wasm32")]

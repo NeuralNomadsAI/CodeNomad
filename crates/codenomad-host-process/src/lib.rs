@@ -24,12 +24,32 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use date::local_month_day;
+pub use date::{local_clock, local_month_day};
 pub use date::{local_date_time, local_time_zone};
 #[cfg(unix)]
 use unix::Family;
 #[cfg(windows)]
 use windows::Family;
+
+#[cfg(unix)]
+pub fn local_clock(seconds: i64) -> Option<(i32, i32, i32, i32, i32)> {
+    let time = libc::time_t::try_from(seconds).ok()?;
+    let mut out = std::mem::MaybeUninit::<libc::tm>::uninit();
+    // localtime_r writes the caller's buffer on success without sharing mutable calendar state.
+    let local = unsafe {
+        if libc::localtime_r(&time, out.as_mut_ptr()).is_null() {
+            return None;
+        }
+        out.assume_init()
+    };
+    Some((
+        local.tm_year + 1900,
+        local.tm_mon + 1,
+        local.tm_mday,
+        local.tm_hour,
+        local.tm_min,
+    ))
+}
 
 pub struct OwnedProcess {
     #[cfg(unix)]

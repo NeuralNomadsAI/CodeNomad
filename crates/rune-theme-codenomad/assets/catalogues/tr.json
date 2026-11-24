@@ -1270,6 +1270,7 @@
   "missions.control.run.start": "Görevi başlat",
   "missions.control.run.stop": "Görevi kalıcı olarak durdur",
   "missions.control.run.stopConfirm": "Bu görev kalıcı olarak durdurulsun mu?",
+  "missions.control.run.superseded": "Bu işlemin yerini daha yeni bir işlem aldı.",
   "missions.control.save": "Kaydet",
   "missions.control.status.active": "Etkin",
   "missions.control.status.completed": "Tamamlandı",

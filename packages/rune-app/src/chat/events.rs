@@ -44,6 +44,8 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
+                s.status_permissions.bind(&backend);
+                s.status_usage.bind(&backend);
                 s.transcript_display.children.bind(backend.clone());
                 s.transcript_display.usage_family.bind(backend.clone());
                 s.transcript_display.pictures.bind(backend.clone());
@@ -61,6 +63,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             Event::AgentHint(catalog) => {
                 if catalog {
                     s.transcript_display.messages.refresh();
+                    s.status_permissions.online(true);
                     workspace::mission_event(s, None);
                     s.transcript_display.receipts.reconnect();
                     s.transcript_display.pictures.retry_interrupted();
@@ -94,6 +97,11 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::MentionsChanged) => {
                 s.composer.picker.mentions_changed(&s.reads, &s.wake);
+            }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::PermissionModeChanged { root },
+            ) => {
+                s.status_permissions.invalidate(root.as_deref());
             }
             Event::Workspace(
                 codenomad_client::transport::WorkspaceEvent::ComposerCataloguesChanged,
@@ -168,11 +176,19 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 s.transcript_display.receipts.invalidate(message);
                 continue;
             }
+            Event::ProviderUsageWatch(watch) => s.status_usage.watch(watch),
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::ProviderUsageRefresh(directory),
+            ) => {
+                s.status_usage.refresh(directory.as_deref());
+            }
             Event::Workspace(event) => {
                 if matches!(
                     event,
                     codenomad_client::transport::WorkspaceEvent::SessionMoved { .. }
                 ) {
+                    s.status_permissions.online(false);
+                    s.status_usage.disconnect();
                     chat::reader::suspend(s);
                     s.composer.picker.set_attachments_supported(false);
                     s.attachments.cancel();
@@ -192,6 +208,10 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::Preferences(owner) => settings::invalidate(s, owner),
             Event::Sync(page) | Event::ReaderSync { page, .. } => {
+                if s.reader.is_none() {
+                    // Direct startup also uses Reconnecting to stage a fresh transcript read.
+                    s.status_permissions.synchronized();
+                }
                 chat::reader::reconcile_bookmark(s, &page.rows);
                 if let Some(reader) = &mut s.reader {
                     reader.install(page.newer.is_some());
@@ -249,6 +269,7 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             Event::Reconnecting | Event::ConnectionLost => {
                 let stream_lost = matches!(event, Event::ConnectionLost);
                 s.transcript_display.messages.offline();
+                s.status_permissions.online(false);
                 if !stream_lost {
                     s.composer.picker.set_attachments_supported(false);
                 }
@@ -311,6 +332,8 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::WorkspaceMissing => {
                 s.transcript_display.receipts.clear();
+                s.status_permissions.online(false);
+                s.status_usage.disconnect();
                 s.transcript_display.children.clear();
                 s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
@@ -411,6 +434,8 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                     continue;
                 }
                 s.composer.picker.set_attachments_supported(false);
+                s.status_permissions.online(false);
+                s.status_usage.disconnect();
                 chat::reader::suspend(s);
                 git::online(s, false);
                 if let Some(files) = &mut s.files {

@@ -100,8 +100,13 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
         &&body.messageIDs.every(id=>typeof id==='string'&&/^(message-\d{5}|timeline-(compaction|system))$/.test(id))
       if(method==='POST'&&owned[2]==='session-history/query')return body?.sessionID==='ses_existing'&&body.purpose==='search'
       if(method==='POST'&&owned[2]==='session-history/ranked')return body?.version===1&&body.limit===40
+      if(missions&&method==='POST'&&owned[2]==='missions/gamma/control')return ['start','pause','stop'].includes(body?.action)&&
+        Number.isSafeInteger(body.expectedRevision)&&body.expectedRevision>0&&typeof body.requestId==='string'&&/^[a-f0-9-]{36}$/.test(body.requestId)&&
+        Object.keys(body).every(key=>['action','expectedRevision','requestId','graceful'].includes(key))&&
+        (body.graceful===undefined||body.action==='pause'&&body.graceful===true)
       if(missions&&method==='POST'&&owned[2]==='missions/panel-page'){
-        if(body?.source==='mission')return body.header===true&&['alpha','beta','gamma'].includes(body.missionID)
+        if(body?.source==='mission')return body.header===true&&['alpha','beta','gamma'].includes(body.missionID)||
+          body.missionID==='gamma'&&body.field==='control'&&['receipts','pending'].includes(body.part)&&[0,50].includes(body.window?.offset)
         if(body?.source==='activity')return body.actorOffset===0&&['alpha','beta','gamma'].includes(body.missionID)
         if(body?.source==='tasks')return body.task?.missionID==='gamma'&&
           ([0,50].includes(body.task.offset)||body.task.attention===0||body.task.ids?.length===1&&body.task.ids[0]==='tsk-51')

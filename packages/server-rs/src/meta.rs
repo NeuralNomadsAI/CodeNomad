@@ -57,6 +57,7 @@ pub fn document(
         "sidecars",
         "service-usage",
         "provider-usage",
+        "conversation-permissions",
     ];
     if bench::missions_run() {
         capabilities.push("missions");

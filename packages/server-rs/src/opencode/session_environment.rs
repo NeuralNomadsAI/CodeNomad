@@ -17,9 +17,15 @@ pub(super) fn unavailable() -> Error {
 pub(super) async fn snapshot(file: PathBuf) -> Result<BTreeMap<String, String>, Error> {
     static READER: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
     tokio::time::timeout(Duration::from_secs(2), async {
+        #[cfg(test)]
+        crate::worktrees::fence_test_trace::record("environment semaphore", "waiting");
         let slot = READER.acquire().await.ok()?;
+        #[cfg(test)]
+        let trace = crate::worktrees::fence_test_trace::held("environment semaphore");
         tokio::task::spawn_blocking(move || {
             let _slot = slot;
+            #[cfg(test)]
+            let _trace = trace;
             read(&file)
         })
         .await

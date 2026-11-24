@@ -8,6 +8,7 @@ export const missionMessages = {
   "missions.control.reader.loading": "İçerik okunuyor…",
   "missions.control.form.loading": "Form yükleniyor…",
   "missions.control.run.checking": "İşlem durumu denetleniyor…",
+  "missions.control.run.superseded": "Bu işlemin yerini daha yeni bir işlem aldı.",
   "missions.control.run.pending.start": "Görev başlatılıyor…",
   "missions.control.run.pending.pause": "Görev duraklatılıyor…",
   "missions.control.run.pending.interrupt": "Görev kesiliyor…",
