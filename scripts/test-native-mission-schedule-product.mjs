@@ -29,6 +29,7 @@ const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: tr
   "diagnose-product-stop": { type: "boolean" },
   "convert-preparation": { type: "boolean" },
   "existing-coordinator": { type: "boolean" },
+  "runtime-only": { type: "boolean" },
   // Absolute plugin.mjs of an earlier release: arm with it, then wake on the current bundle.
   "legacy-bundle": { type: "string" },
 } })
@@ -95,7 +96,8 @@ async function journey(kind) {
   ])
   const bundled = new URL("../packages/server/dist/plugins/missions/plugin.mjs", import.meta.url)
   const providerBundle = new URL("../packages/server/dist/plugins/missions/provider.mjs", import.meta.url)
-  const result = { kind, root, status: "running", armOnly: !!values["arm-only"], firstAdmissionRaceMode: !!values["first-admission-race"], crashPendingMode: !!values["crash-pending"], productBundleSHA256: hash(await readFile(values["legacy-bundle"] ?? bundled)), providerBundleSHA256: hash(await readFile(providerBundle)), serviceStarts: [], http: [] }
+  const runtimeOnly = !!values["runtime-only"]
+  const result = { kind, root, status: "running", armOnly: !!values["arm-only"], firstAdmissionRaceMode: !!values["first-admission-race"], crashPendingMode: !!values["crash-pending"], runtimeOnly, productBundleSHA256: hash(await readFile(values["legacy-bundle"] ?? bundled)), providerBundleSHA256: runtimeOnly ? null : hash(await readFile(providerBundle)), serviceStarts: [], http: [] }
   if (values["diagnose-stop"]) assert.equal(result.productBundleSHA256, "3578b0357396e1834221a0f37159a8fe2d6a8a63f81fcad11b3d364b1dca0c10", "Diagnostic requires the unchanged failing qualification bundle")
   receipt.cases.push(result)
   const prefix = `plugin:${Array.from("codenomad.missions").map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
@@ -463,8 +465,15 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     await app.listen({ host: "127.0.0.1", port: 0 }); baseURL = `http://127.0.0.1:${app.server.address().port}`; assert.notEqual(app.server.address().port, 28894)
     registration.url = `${baseURL}/api/opencode-plugin/automation`; removeBridge = await publishAutomationBridge(registration)
     const legacy = values["legacy-bundle"]
-    plugin = controlTrace ? new DesktopPluginLifecycle("missions", () => readFile(controlTrace.file))
-      : legacy ? new DesktopPluginLifecycle("missions", () => readFile(legacy)) : new DesktopPluginLifecycle("missions"); await plugin.start(paths)
+    const readProvider = runtimeOnly ? async () => undefined : undefined
+    plugin = controlTrace ? new DesktopPluginLifecycle("missions", () => readFile(controlTrace.file), readProvider)
+      : legacy ? new DesktopPluginLifecycle("missions", () => readFile(legacy), readProvider)
+      : new DesktopPluginLifecycle("missions", undefined, readProvider); await plugin.start(paths)
+    if (runtimeOnly) {
+      const { readdir } = await import("node:fs/promises")
+      const files = await readdir(path.join(paths.data, "missions"))
+      assert.equal(files.some(name => name.endsWith(".provider.mjs")), false, "runtime-only provisioning must not install provider.mjs")
+    }
     await until(async () => (await client.plugin.list({ location: { directory: project } })).data.some(item => item.id === "codenomad.missions" && item.state.status === "active"))
     if (controlsKinds.includes(kind)) {
       if (kind === "paused-manual" && values["existing-coordinator"]) {

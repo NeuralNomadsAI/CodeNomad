@@ -20,6 +20,7 @@ import { NativeMissionDocumentStore } from "../../missions/mission-document-stor
 import type { MissionDocument } from "../../missions/mission-document"
 import { acquireNativeMissionDocumentStore } from "./native-mission-document-storage"
 import { acquireNativeScheduledPassageRuntime, type NativeScheduledPassageRuntime } from "./native-scheduled-passage-runtime"
+import { acquireNativeScheduledPassageCapability } from "./native-scheduled-passage-capability"
 import type { NativeCreateInput, NativeDocumentPassageCommand } from "./native-service-adapter"
 import { registerNativeScheduleProvider } from "./native-schedule-provider-registration"
 import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
@@ -356,6 +357,45 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       await assert.rejects(immediate(runtime => runtime.runNow({ ...entry, missionID: converted.id,
         requestID: "second_immediate", expectedRevision: converted.revision })))
       assert.equal(sends, 2); assert.equal(sessions.size, beforeSessions + 1)
+    })
+    await t.test("legacy prompt passage capability rechecks provider.mjs after schedule.enabled() and at assertCurrent", async () => {
+      enabled = true
+      writeFileSync(installation.provider.file, "provider.mjs")
+      let promptDoc = await owner!.create("prompt_capability_fence", configuration, at, current)
+      promptDoc = await owner!.change(promptDoc.id, promptDoc.revision, current, next => {
+        next.calendarOwner = { ...doc.calendarOwner!, installation }
+        changes.play(next, "play_prompt", at, [])
+        changes.synchronized(next, "play_prompt", calendars)
+        changes.reserve(next, { kind: "manual", requestID: "manual_prompt" }, at + 1, [])
+      })
+      const auxSession = sessions.get("ses_reconciliation")!
+      sessions.set("ses_reconciliation", { ...auxSession, metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: {
+        missionID: promptDoc.id, timeGeneration: 1, role: "reconciliation", slot: 0 } } } as Session.Info)
+      let unlinkDuringFlag = false
+      const schedulesWithHook = {
+        get: (id: string) => Effect.succeed(infos.get(id)),
+        enabled: () => Effect.sync(() => {
+          if (unlinkDuringFlag) { unlinkDuringFlag = false; unlinkSync(installation.provider.file) }
+          return enabled
+        }),
+      }
+      const runCapability = async (use: (cap: { prepare(doc: MissionDocument): Effect.Effect<void, unknown>; assertCurrent(doc: MissionDocument): true }) => Effect.Effect<void, unknown>) =>
+        Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+          const cap = yield* acquireNativeScheduledPassageCapability(ctx, current)
+          yield* use(cap)
+        }).pipe(
+          Effect.provideService(Context.Service<never, unknown>("@opencode/Automation"), schedulesWithHook),
+          Effect.provideService(Context.Service<never, unknown>("@opencode/Session"), { get: (id: string) => Effect.succeed(sessions.get(id)) }),
+        )))
+      unlinkDuringFlag = true
+      await assert.rejects(runCapability(cap => cap.prepare(promptDoc)))
+      writeFileSync(installation.provider.file, "provider.mjs")
+      await assert.rejects(runCapability(cap => Effect.gen(function* () {
+        yield* cap.prepare(promptDoc)
+        unlinkSync(installation.provider.file)
+        cap.assertCurrent(promptDoc)
+      })))
+      writeFileSync(installation.provider.file, "provider.mjs")
     })
     await t.test("Code Mode scheduled passage admits and runs business without local provider or provider.mjs", async () => {
       enabled = true

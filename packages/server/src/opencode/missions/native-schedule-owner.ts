@@ -318,29 +318,39 @@ export class NativeScheduleCalendarOwner {
       if (doc.state === "running" && !doc.blocked) assertNativeScheduleCarrierArtifacts(doc.calendarOwner.installation)
       return assertMissionCalendarPlacement(doc.calendarOwner.placement, doc.configuration.roots)
     }
-    const change = async (update: (value: MissionDocument) => void) => { doc = await locked.change(doc.id, doc.revision, guard, update) }
+    const change = async (update: (value: MissionDocument) => void, commitGuard = guard) => {
+      doc = await locked.change(doc.id, doc.revision, commitGuard, update)
+    }
     const owner = () => doc.calendarOwner!
-    const updateSlot = async (index: number, update: (slot: MissionCalendarOwnerSlot) => void) => change(value => update(value.calendarOwner!.slots[index]))
+    const updateSlot = async (index: number, update: (slot: MissionCalendarOwnerSlot) => void, commitGuard = guard) =>
+      change(value => update(value.calendarOwner!.slots[index]), commitGuard)
     const legacyGuard = (): true => {
       guard()
       return assertNativeScheduleCarrierArtifacts(owner().installation, { requireProvider: true })
     }
     const resumeSlot = (slot: MissionCalendarOwnerSlot, info: NativeScheduleCalendarInfo) =>
       native.resume(target(doc, slot), info.id, info.code ? guard : legacyGuard)
-    const qualifyLegacy = async (info: NativeScheduleCalendarInfo) => {
-      if (info.code) return
+    const qualifyLegacy = async (slot: MissionCalendarOwnerSlot, info: NativeScheduleCalendarInfo) => {
+      if (info.code) return info
       assertNativeScheduleCarrierArtifacts(owner().installation, { requireProvider: true })
       await native.qualifyLegacyProvider(guard)
+      const fresh = await native.get(target(doc, slot), info.id, legacyGuard)
+      if (!fresh || !exact(fresh, slot) || fresh.code) throw new OwnerPending("native-uncertain")
+      return fresh
     }
     const ensure = async (index: number, qualifyActive = false) => {
       let slot = owner().slots[index]
       await this.options.bindings.register(locked, doc.id, slot, guard)
       await native.ensureCarrier(target(doc, slot), guard)
       let info: NativeScheduleCalendarInfo | undefined
+      let commitGuard = guard
       if (slot.creation === "adopted") {
         info = await native.get(target(doc, slot), slot.scheduleID!, guard)
         if (!info || !exact(info, slot)) throw new OwnerPending("native-uncertain")
-        if (qualifyActive && info.status !== "done") await qualifyLegacy(info)
+        if (qualifyActive && info.status !== "done") {
+          info = await qualifyLegacy(slot, info)
+          if (!info.code) commitGuard = legacyGuard
+        }
       } else {
         const list = await native.list(target(doc, slot), guard), matches = list.filter(item => exact(item, slot))
         if (list.length !== matches.length) throw new OwnerPending("native-uncertain")
@@ -357,11 +367,14 @@ export class NativeScheduleCalendarOwner {
           info = await native.create(target(doc, slot), guard)
         }
         if (!exact(info, slot)) throw new OwnerPending("native-uncertain")
-        if (qualifyActive && info.status !== "done") await qualifyLegacy(info)
+        if (qualifyActive && info.status !== "done") {
+          info = await qualifyLegacy(slot, info)
+          if (!info.code) commitGuard = legacyGuard
+        }
         const id = info.id
-        await updateSlot(index, value => { value.creation = "adopted"; value.scheduleID = id; value.ambiguous = [] })
+        await updateSlot(index, value => { value.creation = "adopted"; value.scheduleID = id; value.ambiguous = [] }, commitGuard)
       }
-      if (owner().slots[index].role === "reconciliation") await change(value => publishAuxiliary(value, value.calendarOwner!.slots[index]))
+      if (owner().slots[index].role === "reconciliation") await change(value => publishAuxiliary(value, value.calendarOwner!.slots[index]), commitGuard)
       return info
     }
     const running = () => doc.state === "running" && !doc.blocked && (missionLaunchLimit(doc.configuration.launch) === null

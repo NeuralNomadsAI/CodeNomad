@@ -588,4 +588,20 @@ test("legacy prompt resume and lost-ACK auxiliary adoption recheck provider arti
   assert.equal(await readNativeScheduleAuxiliaryWakeBinding(aux.ctx, wake, aux.native, Effect.runPromise, aux.current), undefined)
   await assert.rejects(aux.owner.adoptAuxiliary(wake), /unqualified/)
   assert.equal((await aux.read()).calendarOwner?.slots.find(item => item.role === "reconciliation")?.creation, "attempted")
+
+  for (const drift of ["provider-removed", "row-lost"] as const) {
+    const ordinary = await ownerFixture(t)
+    ordinary.loseCreateACK("reconciliation")
+    const pending = await ordinary.control("play")
+    const auxInfo = [...ordinary.calendars.values()][0]
+    const qualify = ordinary.native.qualifyLegacyProvider
+    ordinary.native.qualifyLegacyProvider = async guard => {
+      await qualify(guard)
+      if (drift === "provider-removed") unlinkSync(ordinary.installation.provider.file)
+      else ordinary.calendars.delete(auxInfo.id)
+    }
+    const reconciled = await ordinary.owner.reconcile(pending.id)
+    assert.equal(reconciled.calendarOwner?.operation.pending, true, `${drift} must prevent ordinary lost-ACK adoption`)
+    assert.equal(reconciled.calendarOwner?.slots.find(item => item.role === "reconciliation")?.creation, "attempted")
+  }
 })

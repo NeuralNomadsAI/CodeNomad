@@ -19,7 +19,7 @@ export const acquireNativeScheduledPassageCapability = Effect.fn("missions.acqui
   ctx: Plugin.Context, current: () => true,
 ) {
   const schedules = yield* Effect.serviceOption(missionAutomationService), sessions = yield* Effect.serviceOption(sessionTag)
-  const qualified = new Set<string>()
+  const qualified = new Map<string, boolean>()
   const identity = (doc: MissionDocument) => {
     current()
     const owner = doc.calendarOwner
@@ -43,13 +43,15 @@ export const acquireNativeScheduledPassageCapability = Effect.fn("missions.acqui
   }
   const assertCurrent = (doc: MissionDocument): true => {
     const proof = identity(doc)
-    if (!qualified.has(proof.key)) throw new Error("Scheduled passage capability unqualified")
+    const requireProvider = qualified.get(proof.key)
+    if (requireProvider === undefined) throw new Error("Scheduled passage capability unqualified")
+    if (requireProvider) assertNativeScheduleCarrierArtifacts(proof.owner.installation, { requireProvider: true })
     return current()
   }
   const prepare = (doc: MissionDocument) => Effect.gen(function* () {
     const proof = identity(doc)
     qualified.delete(proof.key)
-    if (!proof.descriptor) { qualified.add(proof.key); return }
+    if (!proof.descriptor) { qualified.set(proof.key, false); return }
     if (Option.isNone(schedules) || Option.isNone(sessions)) throw new Error("Scheduled passage native capabilities unavailable")
     const schedule = schedules.value as MissionAutomationReader
     const session = sessions.value as { get(id: string): NativeEffect }
@@ -71,8 +73,10 @@ export const acquireNativeScheduledPassageCapability = Effect.fn("missions.acqui
       throw new Error("Scheduled passage auxiliary differs")
     const flag = schedule.enabled(ctx.location.directory)
     if (!Effect.isEffect(flag) || (yield* flag) !== true) throw new Error("Scheduled passage native flag disabled")
-    identity(doc); current()
-    qualified.add(proof.key)
+    identity(doc)
+    if (!code) assertNativeScheduleCarrierArtifacts(proof.owner.installation, { requireProvider: true })
+    current()
+    qualified.set(proof.key, !code)
   })
   return { prepare, assertCurrent }
 })

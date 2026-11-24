@@ -109,14 +109,14 @@ export const acquireNativeScheduleCalendarService = Effect.fn("missions.acquireS
   })
   const carrier = Effect.fnUntraced(function* (target: Target) {
     yield* enabled()
+    const effect = schedules.enabled(location.directory)
+    if (!Effect.isEffect(effect) || (yield* effect) !== true) throw new Error("Native calendar schedules disabled")
     const session = yield* ctx.session.get({ sessionID: Session.ID.make(target.descriptor.sessionID) })
     if (session.id !== target.descriptor.sessionID || session.parentID || session.projectID !== location.project.id
       || session.location.directory !== location.directory || session.location.workspaceID !== location.workspaceID
       || canonicalAuthority(session.metadata?.[NATIVE_SCHEDULE_CARRIER_MARKER]) !== canonicalAuthority(marker(target))
       || !isAllowedScheduleCarrierModel(session.model))
       throw new Error("Native calendar carrier differs")
-    const effect = schedules.enabled(location.directory)
-    if (!Effect.isEffect(effect) || (yield* effect) !== true) throw new Error("Native calendar schedules disabled")
     assertCurrent()
     return session
   })

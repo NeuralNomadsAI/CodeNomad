@@ -29,7 +29,7 @@ const readPayload = (feature: DesktopPluginFeature, file: string) => readFile(ne
     return readFile(new URL(`../../dist/plugins/${feature}/${file}`, import.meta.url))
   })
 
-const readOptionalPayload = (feature: DesktopPluginFeature, file: string) => readPayload(feature, file)
+export const readOptionalDesktopPluginPayload = (feature: DesktopPluginFeature, file: string, reader = readPayload) => reader(feature, file)
   .catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined
     throw error
@@ -56,7 +56,7 @@ export class DesktopPluginLifecycle {
   constructor(
     private readonly feature: DesktopPluginFeature,
     private readonly readBundle = () => readPayload(feature, "plugin.mjs"),
-    private readonly readProvider: () => Promise<Uint8Array | undefined> = () => readOptionalPayload("missions", "provider.mjs"),
+    private readonly readProvider: () => Promise<Uint8Array | undefined> = () => readOptionalDesktopPluginPayload("missions", "provider.mjs"),
   ) {}
 
   async start(paths: DesktopPluginPaths): Promise<void> {

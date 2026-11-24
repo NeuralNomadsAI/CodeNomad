@@ -223,8 +223,9 @@ resends a prior dispatch claim. The subscription, its maximum 128 pending hints
 and temporary debounce fibers belong to the plugin Scope.
 
 The registered runtime resolves the exact session marker into its point-read
-unified Mission document and current calendar, checks its project/Location/local
-model, and rejects stale generations. It keeps one native KV dispatch claim per
+unified Mission document and current calendar, checks its project, Location and
+allowed carrier model (omitted for Code Mode, or the local noop model for legacy
+prompt rows), and rejects stale generations. It keeps one native KV dispatch claim per
 Mission (32 KiB), serialized with document mutations across bundle incarnations.
 An unresolved claim holds newer wakes; a current high-water proof permits replacing
 the single slot. `closeNativeScheduleCarrierClaim` persists a monotone

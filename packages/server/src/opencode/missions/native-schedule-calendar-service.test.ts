@@ -15,6 +15,7 @@ import { matchMissionAutomation, MISSION_WAKE_CODE, MISSION_WAKE_PERMISSIONS, ru
 
 async function facade(t: test.TestContext, availability: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void, unknown>,
   options: { model?: { providerID: string; id: string }; onSessionGet?: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void>;
+    onSchedulesEnabled?: (state: { enabled: boolean; closed: boolean }) => Effect.Effect<void>;
     assertLegacyProviderArtifacts?: () => true } = { model: { ...NATIVE_SCHEDULE_CARRIER_MODEL } }) {
   const state: { enabled: boolean; closed: boolean; row?: string; duplicate?: boolean; runCount?: number; action?: Automation.Info["action"]
     status?: Automation.Info["status"]; permissions?: unknown[]; present?: boolean; model?: { providerID: string; id: string } } = {
@@ -38,7 +39,11 @@ async function facade(t: test.TestContext, availability: (state: { enabled: bool
       name: selected.descriptor.name, when: selected.descriptor.when, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount ?? 0 }) }),
     resume: (id: string) => Effect.sync(() => { resumes.push(id); state.status = "active"; return info({ sessionID: selected.descriptor.sessionID,
       name: selected.descriptor.name, when: selected.descriptor.when, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL }, runCount: state.runCount ?? 0 }) }),
-    remove: () => Effect.void, enabled: () => Effect.succeed(state.enabled) }
+    remove: () => Effect.void,
+    enabled: () => Effect.gen(function* () {
+      if (options.onSchedulesEnabled) yield* options.onSchedulesEnabled(state)
+      return state.enabled
+    }) }
   const carrierID = selected.descriptor.sessionID
   const ctx = { location, session: {
     get: () => Effect.gen(function* () {
@@ -168,6 +173,24 @@ test("Code Mode calendar create validates ownership, model and permissions on th
   foreign.state.permissions = MISSION_WAKE_PERMISSIONS.map(rule => ({ ...rule }))
   await assert.rejects(foreign.native.create(foreign.selected, current), /carrier differs/)
   assert.deepEqual(foreign.created, [])
+
+  let enabledCalls = 0
+  const postFlagResume = await facade(t, () => Effect.void, {
+    model: { ...NATIVE_SCHEDULE_CARRIER_MODEL },
+    onSchedulesEnabled: () => Effect.sync(() => { if (++enabledCalls === 2) postFlagResume.state.model = undefined }),
+  })
+  postFlagResume.state.runCount = 0; postFlagResume.state.status = "paused"
+  await assert.rejects(postFlagResume.native.resume(postFlagResume.selected, "sch_scope", current), /carrier differs/)
+  assert.deepEqual(postFlagResume.resumes, [])
+
+  let pauseFlagCalls = 0
+  const postFlagPause = await facade(t, () => Effect.void, {
+    model: { ...NATIVE_SCHEDULE_CARRIER_MODEL },
+    onSchedulesEnabled: () => Effect.sync(() => { if (++pauseFlagCalls === 2) postFlagPause.state.model = { providerID: "remote", id: "paid" } }),
+  })
+  postFlagPause.state.runCount = 0; postFlagPause.state.status = "active"
+  await assert.rejects(postFlagPause.native.pause(postFlagPause.selected, "sch_scope", current), /carrier differs/)
+  assert.deepEqual(postFlagPause.pauses, [])
 })
 
 test("prepared wake ACK decodes encoded native SQL timestamps and keeps partial or absent proof closed", async t => {

@@ -7,7 +7,7 @@ import path from "node:path"
 import type { OpenCodeClient } from "@opencode/client"
 import type { Endpoint } from "@opencode/client/service"
 import { OpenCodeSharedService, type OpenCodeSharedServiceDependencies } from "../workspaces/opencode-service"
-import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./desktop-plugin-lifecycle"
+import { DesktopPluginLifecycle, prepareDesktopPluginPresence, readOptionalDesktopPluginPayload } from "./desktop-plugin-lifecycle"
 import { installDesktopPluginPresence } from "./desktop-plugin-installation"
 import { resolveDesktopPluginPaths } from "./desktop-plugin-paths"
 
@@ -192,7 +192,7 @@ test("Missions provider acquisition must finish on a current connection before p
   await assert.rejects(readdir(leasesFor(root, "missions")), { code: "ENOENT" })
 })
 
-test("a missing packaged provider fails Missions provisioning before installing its runtime", async t => {
+test("a provider read failure fails Missions provisioning before installing its runtime", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-provider-missing-"))
   const lifecycle = new DesktopPluginLifecycle("missions", async () => bundle, async () => { throw new Error("provider missing") })
   t.after(async () => { await lifecycle.stop(); await rm(root, { recursive: true, force: true }) })
@@ -202,8 +202,13 @@ test("a missing packaged provider fails Missions provisioning before installing 
 })
 
 test("Missions provisions a runtime-only artifact manifest when the optional legacy provider is absent", async t => {
+  const enoent = Object.assign(new Error("not found"), { code: "ENOENT" })
+  assert.equal(await readOptionalDesktopPluginPayload("missions", "provider.mjs", async () => { throw enoent }), undefined)
+  const eacces = Object.assign(new Error("denied"), { code: "EACCES" })
+  await assert.rejects(readOptionalDesktopPluginPayload("missions", "provider.mjs", async () => { throw eacces }), /denied/)
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-provider-optional-"))
-  const lifecycle = new DesktopPluginLifecycle("missions", async () => bundle, async () => undefined)
+  const lifecycle = new DesktopPluginLifecycle("missions", async () => bundle,
+    () => readOptionalDesktopPluginPayload("missions", "provider.mjs", async () => { throw enoent }))
   t.after(async () => { await lifecycle.stop(); await rm(root, { recursive: true, force: true }) })
   await lifecycle.start(pathsFor(root))
   const source = await readFile(entryFor(root, "missions"), "utf8")
