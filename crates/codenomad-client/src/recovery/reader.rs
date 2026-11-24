@@ -234,15 +234,32 @@ impl Reader {
                         page.rows = merged;
                     }
                     if !self.owed_synthetics.is_empty() && page.newer.is_none() {
-                        self.owed_synthetics
-                            .retain(|id, _| !page.rows.iter().any(|r| &r.id == id));
+                        self.owed_synthetics.retain(|id, _| {
+                            if page.rows.iter().any(|r| &r.id == id) {
+                                return false;
+                            }
+                            let Some(resident_row) = self
+                                .resident
+                                .iter()
+                                .find(|r| &r.id == id && r.role == "synthetic")
+                            else {
+                                return true;
+                            };
+                            !page
+                                .rows
+                                .iter()
+                                .any(|p| same_synthetic_report(p, resident_row))
+                        });
                         let pending_rows: Vec<_> = self
                             .resident
                             .iter()
                             .filter(|r| {
                                 r.role == "synthetic"
                                     && self.owed_synthetics.contains_key(&r.id)
-                                    && !page.rows.iter().any(|p| p.id == r.id)
+                                    && !page
+                                        .rows
+                                        .iter()
+                                        .any(|p| p.id == r.id || same_synthetic_report(p, r))
                             })
                             .cloned()
                             .collect();
@@ -568,6 +585,27 @@ pub(super) async fn reader_event(
 pub(super) fn can_restart(row: &crate::Message) -> bool {
     !row.completed && row.body.is_empty() && row.parts.iter().all(|part|
         matches!(part,Part::Text(text) if text.text.is_empty() && text.provenance==TextProvenance::Live))
+}
+
+fn same_synthetic_report(a: &crate::history::Row, b: &crate::history::Row) -> bool {
+    if a.role != "synthetic" || b.role != "synthetic" {
+        return false;
+    }
+    fn report(row: &crate::history::Row) -> Option<&crate::content::SubagentReport> {
+        row.parts.iter().find_map(|part| match part {
+            Part::SubagentReport(r) => Some(r),
+            _ => None,
+        })
+    }
+    match (report(a), report(b)) {
+        (Some(ra), Some(rb)) => {
+            ra.child == rb.child
+                && ra.state == rb.state
+                && ra.body == rb.body
+                && ra.created.abs_diff(rb.created) <= 60_000
+        }
+        _ => false,
+    }
 }
 fn read_diagnostic(error: &history::Error) -> String {
     if let Some(http) = error.downcast_ref::<reqwest::Error>() {

@@ -45,9 +45,22 @@ struct SettlementState {
     calls: HashMap<(Option<String>, String), Option<u64>>,
     events: Vec<ChildToolEvent>,
     event_bytes: usize,
+    synthetics: Vec<crate::history::Row>,
+    synthetic_dirty: bool,
     execution_ended: bool,
     execution_ended_at: Option<u64>,
     revoked: bool,
+}
+
+#[derive(Default)]
+pub struct ChildDrain {
+    pub calls: Vec<ChildToolEnd>,
+    pub events: Vec<ChildToolEvent>,
+    pub synthetics: Vec<crate::history::Row>,
+    pub synthetic_dirty: bool,
+    pub execution_ended: bool,
+    pub execution_ended_at: Option<u64>,
+    pub revoked: bool,
 }
 
 impl ChildSettlement {
@@ -67,6 +80,8 @@ impl ChildSettlement {
                 state.events.clear();
                 state.event_bytes = 0;
                 state.calls.clear();
+                state.synthetics.clear();
+                state.synthetic_dirty = false;
                 state.execution_ended = false;
                 state.execution_ended_at = None;
             }
@@ -87,6 +102,20 @@ impl ChildSettlement {
                         }
                     } else {
                         state.execution_ended = true;
+                    }
+                }
+            }
+            ChildSignal::Synthetic(row) => {
+                if !state.revoked {
+                    state.synthetic_dirty = true;
+                    if let Some(row) = row
+                        && state.synthetics.len() < 16
+                        && !state
+                            .synthetics
+                            .iter()
+                            .any(|existing| existing.id == row.id)
+                    {
+                        state.synthetics.push(row.clone());
                     }
                 }
             }
@@ -138,17 +167,9 @@ impl ChildSettlement {
         }
     }
 
-    pub fn take(
-        &self,
-    ) -> (
-        Vec<ChildToolEnd>,
-        Vec<ChildToolEvent>,
-        bool,
-        Option<u64>,
-        bool,
-    ) {
+    pub fn take(&self) -> ChildDrain {
         let Ok(mut state) = self.state.lock() else {
-            return (Vec::new(), Vec::new(), false, None, false);
+            return ChildDrain::default();
         };
         let calls = state
             .calls
@@ -161,10 +182,20 @@ impl ChildSettlement {
             .collect();
         let events = std::mem::take(&mut state.events);
         state.event_bytes = 0;
+        let synthetics = std::mem::take(&mut state.synthetics);
+        let synthetic_dirty = std::mem::take(&mut state.synthetic_dirty);
         let execution_ended = std::mem::take(&mut state.execution_ended);
         let execution_ended_at = state.execution_ended_at.take();
         let revoked = std::mem::take(&mut state.revoked);
-        (calls, events, execution_ended, execution_ended_at, revoked)
+        ChildDrain {
+            calls,
+            events,
+            synthetics,
+            synthetic_dirty,
+            execution_ended,
+            execution_ended_at,
+            revoked,
+        }
     }
 }
 
@@ -173,6 +204,7 @@ pub(crate) enum ChildSignal {
     Revoked,
     ToolEvent(ChildToolEvent),
     ToolEnded(Option<ChildToolEnd>, Option<ChildToolEvent>),
+    Synthetic(Option<crate::history::Row>),
     ExecutionEnded(Option<u64>),
 }
 
@@ -375,6 +407,8 @@ pub(super) fn observe(b: &Backend, event: &Value) {
             | "session.moved"
             | "session.deleted"
             | "session.revert.committed"
+            | "session.revert.staged"
+            | "session.revert.cleared"
             | "session.execution.succeeded"
             | "session.execution.failed"
             | "session.execution.interrupted",
@@ -403,8 +437,19 @@ pub(super) fn observe(b: &Backend, event: &Value) {
                     })
                 };
                 let signal = match kind {
-                    Some("session.moved" | "session.deleted" | "session.revert.committed") => {
-                        ChildSignal::Revoked
+                    Some(
+                        "session.moved"
+                        | "session.deleted"
+                        | "session.revert.committed"
+                        | "session.revert.staged"
+                        | "session.revert.cleared",
+                    ) => ChildSignal::Revoked,
+                    Some("session.synthetic") => {
+                        let row = match crate::wire::decode_native(event) {
+                            Some(crate::transport::Event::Message(row)) => Some(Arc::new(row)),
+                            _ => None,
+                        };
+                        ChildSignal::Synthetic(row)
                     }
                     Some(
                         k @ ("session.tool.input.started"

@@ -329,6 +329,8 @@ pub(super) fn body(
         child_id.is_some_and(|id| s.transcript_display.children.steps_incomplete(parent, id));
     let child_load_error =
         child_id.is_some_and(|id| s.transcript_display.children.load_error(parent, id));
+    let child_waiting =
+        child_id.is_some_and(|id| s.transcript_display.children.is_waiting(parent, id));
     let visible_steps = child_steps
         .iter()
         .filter(|(message, step)| super::visible(s, message, step));
@@ -345,6 +347,7 @@ pub(super) fn body(
         && !live_truncated
         && !live_incomplete
         && !child_load_error
+        && !child_waiting
         && output.trim().is_empty()
         && !output_truncated
         && child_id.is_none()
@@ -408,11 +411,7 @@ pub(super) fn body(
                 .as_ref()
                 .and_then(|k| s.transcript_display.children.loaded_report(k));
             let shown_value = expanded_full.unwrap_or(value);
-            let pane_limit = if expanded_full.is_some() {
-                shown_value.encode_utf16().count().max(PANE_LIMIT)
-            } else {
-                PANE_LIMIT
-            };
+            let pane_limit = PANE_LIMIT;
             result = result.child(text(t(label)).text_role(TextRole::Label));
             if !shown_value.trim().is_empty() {
                 result = result.child(markdown::tool_pane(
@@ -434,12 +433,14 @@ pub(super) fn body(
                     layout::action_row().child(text(t("toolCall.output.tooLarge")).role("status"));
                 if let Some(copy_key) = copy_key {
                     let expand_key = copy_key.clone();
+                    let reveal_key = format!("{key}-task-output");
                     status_row = status_row.child(
                         layout::button(
                             t("messageBlock.hiddenText.showAll"),
                             false,
                             screen::action(&s.input_scope, move |s| {
                                 Children::expand_report(s, expand_key.clone());
+                                Display::reveal_next(s, &reveal_key);
                             }),
                         )
                         .key(format!("expand-{key}-output")),
@@ -478,6 +479,10 @@ pub(super) fn body(
                     .key(format!("retry-{key}")),
                 ),
         );
+    } else if child_waiting && step_count == 0 && !live_truncated && !live_incomplete {
+        result = result
+            .child(text(t("toolCall.task.sections.steps")).text_role(TextRole::Label))
+            .child(text(t("toolCall.status.running")).role("status"));
     }
     if step_count > 0 || live_truncated || live_incomplete {
         let step_key = format!("{key}-task-steps");
@@ -505,6 +510,7 @@ pub(super) fn body(
         if !visible_live.is_empty() {
             if revealed_steps == 0 && !is_detached {
                 s.transcript_display.unpin_step_anchor(&step_key);
+                s.transcript_display.unpin_step_mount_anchor(&step_key);
             }
             if is_detached
                 && let Some(measured) = s
@@ -512,6 +518,16 @@ pub(super) fn body(
                     .first_visible_step(&step_key, pane_clip.get())
             {
                 s.transcript_display.pin_step_anchor(&step_key, measured);
+            }
+            if is_detached && let Some(mount) = s.transcript_display.step_mount_anchor(&step_key) {
+                if let Some(pos) = visible_live
+                    .iter()
+                    .position(|(msg, step)| format!("{msg}:{}", step.id) == mount)
+                {
+                    start = start.min(pos).max(min_start);
+                } else {
+                    start = min_start;
+                }
             }
             if let Some(anchor) = s.transcript_display.step_anchor(&step_key) {
                 if let Some(pos) = visible_live
@@ -554,9 +570,14 @@ pub(super) fn body(
                         .pin_step_anchor(&step_key, format!("{msg}:{}", step.id));
                 }
             }
+            if is_detached && let Some((msg, step)) = visible_live.get(start) {
+                s.transcript_display
+                    .pin_step_mount_anchor(&step_key, format!("{msg}:{}", step.id));
+            }
         } else if !legacy.is_empty() {
             if revealed_steps == 0 && !is_detached {
                 s.transcript_display.unpin_step_anchor(&step_key);
+                s.transcript_display.unpin_step_mount_anchor(&step_key);
             }
             if is_detached
                 && let Some(measured) = s
@@ -564,6 +585,18 @@ pub(super) fn body(
                     .first_visible_step(&step_key, pane_clip.get())
             {
                 s.transcript_display.pin_step_anchor(&step_key, measured);
+            }
+            if is_detached && let Some(mount) = s.transcript_display.step_mount_anchor(&step_key) {
+                if let Some(pos) = legacy
+                    .iter()
+                    .enumerate()
+                    .skip(min_start)
+                    .find_map(|(i, step)| (legacy_anchor(i, step) == mount).then_some(i))
+                {
+                    start = start.min(pos).max(min_start);
+                } else {
+                    start = min_start;
+                }
             }
             if let Some(anchor) = s.transcript_display.step_anchor(&step_key) {
                 if let Some(pos) = legacy
@@ -599,6 +632,10 @@ pub(super) fn body(
                     s.transcript_display
                         .pin_step_anchor(&step_key, legacy_anchor(reading, step));
                 }
+            }
+            if is_detached && let Some(step) = legacy.get(start) {
+                s.transcript_display
+                    .pin_step_mount_anchor(&step_key, legacy_anchor(start, step));
             }
         }
         let list_key = format!("list-{step_key}");

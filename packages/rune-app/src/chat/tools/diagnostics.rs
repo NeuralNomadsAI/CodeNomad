@@ -14,6 +14,7 @@ use serde_json::Value;
 
 const SCAN_LIMIT: usize = 10_000;
 const ENTRY_LIMIT: usize = 100;
+const FILE_LIMIT: usize = 20;
 
 pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
     let mode = transcript_mode(s, TranscriptRow::Diagnostics);
@@ -21,7 +22,7 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
         return None;
     }
     let files = tool.metadata["diagnostics"].as_object()?;
-    let preferred = [
+    let mut preferred: Vec<String> = [
         &tool.input["filePath"],
         &tool.metadata["filePath"],
         &tool.metadata["filepath"],
@@ -31,37 +32,81 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
     .filter_map(Value::as_str)
     .filter(|p| !p.is_empty() && p.len() <= 4096)
     .map(|p| p.replace('\\', "/"))
-    .collect::<Vec<_>>();
-    let selected = preferred
-        .iter()
-        .find_map(|path| files.get_key_value(path))
-        .or_else(|| {
-            for suffix in [false, true] {
-                for path in &preferred {
-                    if let Some(pair) = files.iter().take(SCAN_LIMIT).find(|(candidate, _)| {
-                        if candidate.len() > 4096 {
-                            return false;
-                        }
-                        let candidate = candidate.replace('\\', "/");
-                        candidate == *path
-                            || suffix
-                                && candidate
-                                    .strip_suffix(path)
-                                    .is_some_and(|base| base.ends_with('/'))
-                    }) {
-                        return Some(pair);
+    .collect();
+    let multi_file = tool.name == "apply_patch";
+    if let Some(patch_files) = tool.metadata["files"].as_array() {
+        for file in patch_files.iter().take(FILE_LIMIT) {
+            for field in ["filePath", "relativePath", "file", "path"] {
+                if let Some(p) = file[field]
+                    .as_str()
+                    .filter(|p| !p.is_empty() && p.len() <= 4096)
+                {
+                    let norm = p.replace('\\', "/");
+                    if !preferred.contains(&norm) && preferred.len() < FILE_LIMIT * 2 {
+                        preferred.push(norm);
                     }
                 }
             }
-            None
-        });
-    let (path, entries) = selected?;
-    let entries = entries.as_array()?;
-    if !entries
+        }
+    }
+    let normalized_keys: Vec<(&String, &Value, String)> = files
         .iter()
         .take(SCAN_LIMIT)
-        .any(|entry| entry["message"].is_string())
-    {
+        .filter(|(candidate, _)| candidate.len() <= 4096)
+        .map(|(candidate, value)| (candidate, value, candidate.replace('\\', "/")))
+        .collect();
+    let mut selected: Vec<(&String, &Vec<Value>)> = Vec::new();
+    for path in &preferred {
+        if !multi_file && !selected.is_empty() {
+            break;
+        }
+        if selected.len() >= FILE_LIMIT {
+            break;
+        }
+        let matched = files
+            .get_key_value(path)
+            .or_else(|| {
+                normalized_keys
+                    .iter()
+                    .find(|(_, _, norm)| norm == path)
+                    .map(|(candidate, value, _)| (*candidate, *value))
+            })
+            .or_else(|| {
+                normalized_keys
+                    .iter()
+                    .find(|(_, _, norm)| {
+                        norm.strip_suffix(path)
+                            .is_some_and(|base| base.ends_with('/'))
+                    })
+                    .map(|(candidate, value, _)| (*candidate, *value))
+            });
+        if let Some((candidate, value)) = matched
+            && let Some(entries) = value.as_array()
+            && !selected.iter().any(|(existing, _)| *existing == candidate)
+        {
+            selected.push((candidate, entries));
+        }
+    }
+    if selected.is_empty() {
+        return None;
+    }
+    let mut flat: Vec<(&str, &Value, &str)> = Vec::new();
+    let mut scanned = 0usize;
+    for (path, entries) in &selected {
+        for entry in entries.iter() {
+            if scanned >= SCAN_LIMIT {
+                break;
+            }
+            scanned += 1;
+            if let Some(message) = entry["message"].as_str() {
+                flat.push((path.as_str(), entry, message));
+            }
+        }
+        if scanned >= SCAN_LIMIT {
+            break;
+        }
+    }
+    if flat.is_empty() {
         return None;
     }
     let key = format!("{key}-diagnostics");
@@ -86,15 +131,13 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool) -> Option<El> {
     if expanded {
         let rendered = (0..3)
             .flat_map(|rank| {
-                entries
-                    .iter()
-                    .take(SCAN_LIMIT)
-                    .filter(move |entry| severity(entry) == rank)
+                flat.iter()
+                    .copied()
+                    .filter(move |(_, entry, _)| severity(entry) == rank)
             })
-            .filter_map(|entry| Some((entry, entry["message"].as_str()?)))
             .take(ENTRY_LIMIT)
             .enumerate()
-            .map(|(i, (entry, message))| {
+            .map(|(i, (path, entry, message))| {
                 let kind = t(match severity(entry) {
                     0 => "toolCall.diagnostics.severity.error.short",
                     1 => "toolCall.diagnostics.severity.warning.short",

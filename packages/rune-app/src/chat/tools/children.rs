@@ -40,7 +40,7 @@ const RETAINED_LIMIT: usize = 16;
 const WAITING_LIMIT: usize = 32;
 const STEP_BYTES: usize = 2 << 20;
 const MAX_COPY_PAGES: usize = 64;
-const MAX_COPY_BYTES: usize = 32 * 1024 * 1024;
+pub(super) const MAX_COPY_BYTES: usize = 32 * 1024 * 1024;
 const MAX_EXPANDED_REPORTS: usize = 8;
 const MAX_EXPANDED_REPORT_BYTES: usize = 4 * 1024 * 1024;
 const COPY_BUDGET: Duration = Duration::from_secs(30);
@@ -153,21 +153,37 @@ impl Default for ReportCopy {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+enum ExpandKey {
+    Report(ReportCopyKey),
+    ToolOutput(ToolCopyKey),
+}
+
+impl ExpandKey {
+    fn ui_key(&self) -> &str {
+        match self {
+            Self::Report(k) => &k.key,
+            Self::ToolOutput(k) => &k.key,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Children {
     backend: Option<Backend>,
     entries: HashMap<ChildKey, Entry>,
     unavailable: HashSet<ChildKey>,
+    unavailable_catalogue_gen: u64,
     waiting: VecDeque<(ChildKey, String, Weak<()>)>,
     report_copy: ReportCopy,
-    expanded_reports: VecDeque<(ReportCopyKey, String)>,
+    expanded_reports: VecDeque<(ExpandKey, String)>,
     expanded_report_bytes: usize,
     loading_report: Option<(
-        ReportCopyKey,
+        ExpandKey,
         codenomad_client::Sender<()>,
         Receiver<Option<String>>,
     )>,
-    failed_report: Option<ReportCopyKey>,
+    failed_report: Option<ExpandKey>,
     pending_nav: Option<(
         ChildKey,
         u64,
@@ -222,6 +238,13 @@ impl Children {
         self.unavailable.contains(&child_key(parent, id))
     }
 
+    pub(super) fn is_waiting(&self, parent: Option<&str>, id: &str) -> bool {
+        let ck = child_key(parent, id);
+        self.waiting
+            .iter()
+            .any(|(wck, _, lease)| *wck == ck && lease.strong_count() > 0)
+    }
+
     fn mark_unavailable(&mut self, ck: ChildKey) {
         if self.unavailable.len() >= 64 && !self.unavailable.contains(&ck) {
             self.unavailable.clear();
@@ -256,14 +279,27 @@ impl Children {
     }
 
     pub(super) fn loaded_report(&self, key: &ReportCopyKey) -> Option<&str> {
+        let target = ExpandKey::Report(key.clone());
         self.expanded_reports
             .iter()
-            .find(|(current, _)| current == key)
+            .find(|(current, _)| current == &target)
             .map(|(_, text)| text.as_str())
     }
 
     pub(super) fn expand_failed(&self, key: &ReportCopyKey) -> bool {
-        self.failed_report.as_ref() == Some(key)
+        self.failed_report.as_ref() == Some(&ExpandKey::Report(key.clone()))
+    }
+
+    pub(super) fn loaded_tool_output(&self, key: &ToolCopyKey) -> Option<&str> {
+        let target = ExpandKey::ToolOutput(key.clone());
+        self.expanded_reports
+            .iter()
+            .find(|(current, _)| current == &target)
+            .map(|(_, text)| text.as_str())
+    }
+
+    pub(super) fn expand_tool_failed(&self, key: &ToolCopyKey) -> bool {
+        self.failed_report.as_ref() == Some(&ExpandKey::ToolOutput(key.clone()))
     }
 
     pub(super) fn release(s: &mut State, key: &str) {
@@ -309,7 +345,7 @@ impl Children {
             children.report_copy = ReportCopy::Idle;
         }
         children.expanded_reports.retain(|(current, text)| {
-            let drop = matches_card(&current.key);
+            let drop = matches_card(current.ui_key());
             if drop {
                 children.expanded_report_bytes =
                     children.expanded_report_bytes.saturating_sub(text.len());
@@ -319,14 +355,14 @@ impl Children {
         if children
             .loading_report
             .as_ref()
-            .is_some_and(|(current, _, _)| matches_card(&current.key))
+            .is_some_and(|(current, _, _)| matches_card(current.ui_key()))
         {
             children.loading_report = None;
         }
         if children
             .failed_report
             .as_ref()
-            .is_some_and(|current| matches_card(&current.key))
+            .is_some_and(|current| matches_card(current.ui_key()))
         {
             children.failed_report = None;
         }
@@ -376,39 +412,128 @@ impl Children {
         crate::platform::spawn(async move {
             crate::platform::reads::cancellable(&cancelled, async {
                 let body = with_timeout(COPY_BUDGET, async {
+                    let (_watch_rx, settlement) = backend.watch_child(&parent)?;
+                    let rev_before = settlement.revocation_gen();
                     let _slot = reads.background(&cancelled).await?;
-                    backend
-                        .child_page(&parent)
-                        .await
-                        .ok()
-                        .flatten()
-                        .and_then(|page| {
-                            page.rows
-                                .iter()
-                                .find(|row| row.id == row_id)
-                                .and_then(|row| {
-                                    row.parts
-                                        .get(part_index)
-                                        .and_then(|part| match part {
-                                            Part::SubagentReport(report)
-                                                if report.child == child =>
-                                            {
-                                                Some(report.body.clone())
-                                            }
-                                            _ => None,
-                                        })
-                                        .or_else(|| {
-                                            row.parts.iter().rev().find_map(|part| match part {
-                                                Part::SubagentReport(report)
-                                                    if report.child == child =>
-                                                {
-                                                    Some(report.body.clone())
-                                                }
-                                                _ => None,
-                                            })
-                                        })
+                    let page = backend.child_page(&parent).await.ok().flatten()?;
+                    if settlement.revocation_gen() != rev_before {
+                        return None;
+                    }
+                    page.rows
+                        .iter()
+                        .find(|row| row.id == row_id)
+                        .and_then(|row| {
+                            row.parts
+                                .get(part_index)
+                                .and_then(|part| match part {
+                                    Part::SubagentReport(report) if report.child == child => {
+                                        Some(report.body.clone())
+                                    }
+                                    _ => None,
+                                })
+                                .or_else(|| {
+                                    row.parts.iter().rev().find_map(|part| match part {
+                                        Part::SubagentReport(report) if report.child == child => {
+                                            Some(report.body.clone())
+                                        }
+                                        _ => None,
+                                    })
                                 })
                         })
+                })
+                .await;
+                if out.send(body).await.is_ok() {
+                    wake();
+                }
+            })
+            .await;
+        });
+        Some((cancel, rx))
+    }
+
+    fn fetch_tool_section(
+        s: &State,
+        key: &ToolCopyKey,
+    ) -> Option<(codenomad_client::Sender<()>, Receiver<Option<String>>)> {
+        let backend = s.transcript_display.children.backend.clone()?;
+        let (out, rx) = bounded(1);
+        let (cancel, cancelled) = bounded(1);
+        let key = key.clone();
+        let wake = s.wake.clone();
+        let reads = s.reads.clone();
+        crate::platform::spawn(async move {
+            crate::platform::reads::cancellable(&cancelled, async {
+                let expected_parent = key.parent.as_deref().unwrap_or(&backend.session);
+                let body = with_timeout(COPY_BUDGET, async {
+                    let (_watch_rx, settlement) = backend.watch_child(&key.child)?;
+                    let rev_before = settlement.revocation_gen();
+                    let location = {
+                        let _slot = reads.background(&cancelled).await?;
+                        backend
+                            .child_ownership_token(&key.child, expected_parent)
+                            .await
+                            .ok()??
+                    };
+                    let page = {
+                        let _slot = reads.background(&cancelled).await?;
+                        backend
+                            .child_page_request(
+                                &key.child,
+                                serde_json::json!({"kind": "around", "messageID": key.row_id}),
+                            )
+                            .await
+                            .ok()
+                    };
+                    let page = match page {
+                        Some(page) => page,
+                        None => {
+                            let _slot = reads.background(&cancelled).await?;
+                            backend
+                                .child_page_under(&key.child, expected_parent)
+                                .await
+                                .ok()??
+                        }
+                    };
+                    let still_owned = {
+                        let _slot = reads.background(&cancelled).await?;
+                        backend
+                            .child_ownership_token(&key.child, expected_parent)
+                            .await
+                            .ok()?
+                    };
+                    if still_owned != Some(location) || settlement.revocation_gen() != rev_before {
+                        return None;
+                    }
+                    let tool =
+                        page.rows
+                            .iter()
+                            .find(|row| row.id == key.row_id)
+                            .and_then(|row| {
+                                row.parts.iter().find_map(|part| match part {
+                                    Part::Tool(tool) if tool.id == key.call => Some(tool.as_ref()),
+                                    _ => None,
+                                })
+                            })?;
+                    match key.section {
+                        0 => super::format::bounded_json(&tool.input, MAX_COPY_BYTES),
+                        1 => {
+                            if let Some(value) = super::format::structured_output(tool) {
+                                match super::format::format_unknown(value, Some(MAX_COPY_BYTES)) {
+                                    super::format::Formatted::Text(source, _) => Some(source),
+                                    _ => None,
+                                }
+                            } else if tool.name == "todowrite" {
+                                super::todo::copy(tool)
+                            } else if tool.name == "apply_patch" {
+                                super::apply_patch::copy_all(tool)
+                            } else {
+                                let mut parts = [""; 4];
+                                super::output(tool, &mut parts);
+                                Some(parts.concat())
+                            }
+                        }
+                        _ => Some(super::error(tool).to_owned()),
+                    }
                 })
                 .await;
                 if out.send(body).await.is_ok() {
@@ -457,12 +582,10 @@ impl Children {
         {
             return;
         }
-        let Some(backend) = s.transcript_display.children.backend.clone() else {
+        let Some((cancel, rx)) = Self::fetch_tool_section(s, &key) else {
             s.transcript_display.children.report_copy = ReportCopy::Failed { key: copy_key };
             return;
         };
-        let (out, rx) = bounded(1);
-        let (cancel, cancelled) = bounded(1);
         let epoch = next_clipboard_epoch();
         let scope = s.input_scope.clone();
         let baseline = Rc::new(Cell::new(None));
@@ -484,87 +607,6 @@ impl Children {
             _cancel: cancel,
             rx,
         };
-        let wake = s.wake.clone();
-        let reads = s.reads.clone();
-        crate::platform::spawn(async move {
-            crate::platform::reads::cancellable(&cancelled, async {
-                let expected_parent = key.parent.as_deref().unwrap_or(&backend.session);
-                let body = with_timeout(COPY_BUDGET, async {
-                    let location = {
-                        let _slot = reads.background(&cancelled).await?;
-                        backend
-                            .child_ownership_token(&key.child, expected_parent)
-                            .await
-                            .ok()??
-                    };
-                    let page = {
-                        let _slot = reads.background(&cancelled).await?;
-                        backend
-                            .child_page_request(
-                                &key.child,
-                                serde_json::json!({"kind": "around", "messageID": key.row_id}),
-                            )
-                            .await
-                            .ok()
-                    };
-                    let page = match page {
-                        Some(page) => page,
-                        None => {
-                            let _slot = reads.background(&cancelled).await?;
-                            backend
-                                .child_page_under(&key.child, expected_parent)
-                                .await
-                                .ok()??
-                        }
-                    };
-                    let still_owned = {
-                        let _slot = reads.background(&cancelled).await?;
-                        backend
-                            .child_ownership_token(&key.child, expected_parent)
-                            .await
-                            .ok()?
-                    };
-                    if still_owned != Some(location) {
-                        return None;
-                    }
-                    let tool =
-                        page.rows
-                            .iter()
-                            .find(|row| row.id == key.row_id)
-                            .and_then(|row| {
-                                row.parts.iter().find_map(|part| match part {
-                                    Part::Tool(tool) if tool.id == key.call => Some(tool.as_ref()),
-                                    _ => None,
-                                })
-                            })?;
-                    match key.section {
-                        0 => super::format::bounded_json(&tool.input, MAX_COPY_BYTES),
-                        1 => {
-                            if let Some(value) = super::format::structured_output(tool) {
-                                match super::format::format_unknown(value, Some(MAX_COPY_BYTES)) {
-                                    super::format::Formatted::Text(source, _) => Some(source),
-                                    _ => None,
-                                }
-                            } else if tool.name == "todowrite" {
-                                super::todo::copy(tool)
-                            } else if tool.name == "apply_patch" {
-                                super::apply_patch::copy_all(tool)
-                            } else {
-                                let mut parts = [""; 4];
-                                super::output(tool, &mut parts);
-                                Some(parts.concat())
-                            }
-                        }
-                        _ => Some(super::error(tool).to_owned()),
-                    }
-                })
-                .await;
-                if out.send(body).await.is_ok() {
-                    wake();
-                }
-            })
-            .await;
-        });
     }
 
     pub(super) fn copy_steps(
@@ -668,31 +710,65 @@ impl Children {
     }
 
     pub(super) fn expand_report(s: &mut State, key: ReportCopyKey) {
+        let expand_key = ExpandKey::Report(key.clone());
         if s.transcript_display
             .children
             .expanded_reports
             .iter()
-            .any(|(current, _)| current == &key)
+            .any(|(current, _)| current == &expand_key)
             || s.transcript_display
                 .children
                 .loading_report
                 .as_ref()
-                .is_some_and(|(current, _, _)| current == &key)
+                .is_some_and(|(current, _, _)| current == &expand_key)
         {
             return;
         }
-        if s.transcript_display.children.failed_report.as_ref() == Some(&key) {
+        if s.transcript_display.children.failed_report.as_ref() == Some(&expand_key) {
             s.transcript_display.children.failed_report = None;
         }
         let Some((cancel, rx)) = Self::fetch_report(s, &key) else {
-            s.transcript_display.children.failed_report = Some(key);
+            s.transcript_display.children.failed_report = Some(expand_key);
             return;
         };
-        s.transcript_display.children.loading_report = Some((key, cancel, rx));
+        s.transcript_display.children.loading_report = Some((expand_key, cancel, rx));
+    }
+
+    pub(super) fn expand_tool_output(s: &mut State, key: ToolCopyKey) {
+        let expand_key = ExpandKey::ToolOutput(key.clone());
+        if s.transcript_display
+            .children
+            .expanded_reports
+            .iter()
+            .any(|(current, _)| current == &expand_key)
+            || s.transcript_display
+                .children
+                .loading_report
+                .as_ref()
+                .is_some_and(|(current, _, _)| current == &expand_key)
+        {
+            return;
+        }
+        if s.transcript_display.children.failed_report.as_ref() == Some(&expand_key) {
+            s.transcript_display.children.failed_report = None;
+        }
+        let Some((cancel, rx)) = Self::fetch_tool_section(s, &key) else {
+            s.transcript_display.children.failed_report = Some(expand_key);
+            return;
+        };
+        s.transcript_display.children.loading_report = Some((expand_key, cancel, rx));
     }
 
     pub(crate) fn poll_actions(s: &mut State, tx: &mut rune::Tx) -> bool {
         let mut changed = Self::poll_copy(s, tx);
+        let cat_gen = s.screen.launcher().map_or(0, |l| l.catalogue_generation);
+        if s.transcript_display.children.unavailable_catalogue_gen != cat_gen {
+            s.transcript_display.children.unavailable_catalogue_gen = cat_gen;
+            if !s.transcript_display.children.unavailable.is_empty() {
+                s.transcript_display.children.unavailable.clear();
+                changed = true;
+            }
+        }
         let nav = match s.transcript_display.children.pending_nav.as_ref() {
             Some((_, _, _, rx)) => match rx.try_recv() {
                 Ok(outcome) => Some(outcome),
@@ -717,7 +793,9 @@ impl Children {
                     }
                 }
                 NavOutcome::Missing => {
-                    s.transcript_display.children.mark_unavailable(ck);
+                    if s.transcript_display.children.entries.contains_key(&ck) {
+                        s.transcript_display.children.mark_unavailable(ck);
+                    }
                     crate::shell::notifications::emit_outcome(
                         s,
                         crate::shell::notifications::Category::Sessions,
@@ -994,7 +1072,7 @@ impl Children {
         crate::platform::spawn(async move {
             crate::platform::reads::cancellable(&cancelled, async {
                 while dirty.recv().await.is_ok() {
-                    let (_, _, _, _, revoked) = settlement.take();
+                    let revoked = settlement.take().revoked;
                     if revoked {
                         if out.send(true).await.is_err() {
                             break;
@@ -1129,17 +1207,20 @@ impl Children {
                 let mut frozen_ends: HashMap<(Option<String>, String), u64> = HashMap::new();
                 let mut pending_events = Vec::new();
                 let mut pending_bytes = 0usize;
+                let mut owed_synthetics: Vec<(u8, crate::history::Row)> = Vec::new();
+                let mut synthetic_owed = 0u8;
                 let mut execution_owed = 0u8;
                 let mut last_exec_end: Option<u64> = None;
                 let mut live_page: Option<crate::history::Page> = None;
                 loop {
-                    let (ended_calls, tool_events, exec_ended, exec_ended_at, revoked) =
-                        settlement.take();
-                    if revoked {
+                    let drain = settlement.take();
+                    if drain.revoked {
                         owed_calls.clear();
                         frozen_ends.clear();
                         pending_events.clear();
                         pending_bytes = 0;
+                        owed_synthetics.clear();
+                        synthetic_owed = 0;
                         execution_owed = 0;
                         last_exec_end = None;
                         live_page = None;
@@ -1148,7 +1229,7 @@ impl Children {
                         }
                         wake();
                     } else {
-                        for end in ended_calls {
+                        for end in drain.calls {
                             let key = (end.message, end.call);
                             if let Some(ts) = end.ended
                                 && (frozen_ends.contains_key(&key) || frozen_ends.len() < 128)
@@ -1162,15 +1243,44 @@ impl Children {
                                 }
                             }
                         }
-                        if exec_ended {
+                        if drain.execution_ended {
                             execution_owed = 3;
-                            last_exec_end =
-                                exec_ended_at.or(Some(crate::platform::storage::unix_millis()));
+                            last_exec_end = drain
+                                .execution_ended_at
+                                .or(Some(crate::platform::storage::unix_millis()));
                         }
-                        if !tool_events.is_empty() {
-                            let mut changed = false;
+                        let mut live_changed = false;
+                        if drain.synthetic_dirty {
+                            if drain.synthetics.is_empty() {
+                                synthetic_owed = 3;
+                            }
+                            for row in drain.synthetics {
+                                if owed_synthetics.len() < 16
+                                    && !owed_synthetics.iter().any(|(_, r)| {
+                                        r.id == row.id || same_synthetic_report(r, &row)
+                                    })
+                                {
+                                    owed_synthetics.push((0, row.clone()));
+                                }
+                                if let Some(page) = live_page.as_mut()
+                                    && page.rows.len() < codenomad_client::history::MAX_ROWS
+                                    && !page
+                                        .rows
+                                        .iter()
+                                        .any(|p| p.id == row.id || same_synthetic_report(p, &row))
+                                {
+                                    page.rows.push(row);
+                                    if codenomad_client::history::check(&page.rows).is_err() {
+                                        page.rows.pop();
+                                    } else {
+                                        live_changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        if !drain.events.is_empty() {
                             let mut overflowed = false;
-                            for ev in tool_events {
+                            for ev in drain.events {
                                 let outcome = live_page.as_mut().map_or(
                                     codenomad_client::content::ToolEventOutcome::Pending,
                                     |page| {
@@ -1192,7 +1302,7 @@ impl Children {
                                             overflowed = true;
                                             break;
                                         }
-                                        changed = true;
+                                        live_changed = true;
                                     }
                                     codenomad_client::content::ToolEventOutcome::Drop => {}
                                     codenomad_client::content::ToolEventOutcome::Pending => {
@@ -1206,21 +1316,21 @@ impl Children {
                                     }
                                 }
                             }
-                            if !overflowed
-                                && changed
-                                && let Some(page) = live_page.as_ref()
+                            if overflowed {
+                                live_changed = false;
+                            }
+                        }
+                        if live_changed && let Some(page) = live_page.as_ref() {
+                            let snap = snapshot_with_frozen(page.clone(), &frozen_ends);
+                            if out
+                                .try_send(ChildUpdate::Loaded {
+                                    snapshot: snap,
+                                    settled: false,
+                                    unavailable: false,
+                                })
+                                .is_ok()
                             {
-                                let snap = snapshot_with_frozen(page.clone(), &frozen_ends);
-                                if out
-                                    .try_send(ChildUpdate::Loaded {
-                                        snapshot: snap,
-                                        settled: false,
-                                        unavailable: false,
-                                    })
-                                    .is_ok()
-                                {
-                                    wake();
-                                }
+                                wake();
                             }
                         }
                     }
@@ -1237,6 +1347,8 @@ impl Children {
                         frozen_ends.clear();
                         pending_events.clear();
                         pending_bytes = 0;
+                        owed_synthetics.clear();
+                        synthetic_owed = 0;
                         execution_owed = 0;
                         last_exec_end = None;
                         live_page = None;
@@ -1351,8 +1463,34 @@ impl Children {
                                     continue;
                                 }
                             }
+                            if !owed_synthetics.is_empty() && page.newer.is_none() {
+                                owed_synthetics.retain(|(_, r)| {
+                                    !page
+                                        .rows
+                                        .iter()
+                                        .any(|p| p.id == r.id || same_synthetic_report(p, r))
+                                });
+                                for (_, row) in &owed_synthetics {
+                                    if page.rows.len() < codenomad_client::history::MAX_ROWS
+                                        && !page.rows.iter().any(|p| {
+                                            p.id == row.id || same_synthetic_report(p, row)
+                                        })
+                                    {
+                                        page.rows.push(row.clone());
+                                        if codenomad_client::history::check(&page.rows).is_err() {
+                                            page.rows.pop();
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if synthetic_owed > 0 {
+                                synthetic_owed -= 1;
+                            }
                             let settled = !page.running
                                 && owed_calls.is_empty()
+                                && owed_synthetics.is_empty()
+                                && synthetic_owed == 0
                                 && execution_owed == 0
                                 && pending_events.is_empty();
                             let running = page.running;
@@ -1373,6 +1511,8 @@ impl Children {
                             frozen_ends.clear();
                             pending_events.clear();
                             pending_bytes = 0;
+                            owed_synthetics.clear();
+                            synthetic_owed = 0;
                             execution_owed = 0;
                             last_exec_end = None;
                             live_page = None;
@@ -1393,6 +1533,9 @@ impl Children {
                                 if execution_owed == 0 {
                                     last_exec_end = None;
                                 }
+                            }
+                            if synthetic_owed > 0 {
+                                synthetic_owed -= 1;
                             }
                             if !pending_events.is_empty() {
                                 let mut kept = Vec::new();
@@ -1422,7 +1565,21 @@ impl Children {
                             false
                         }
                     });
-                    if !owed_calls.is_empty() || execution_owed > 0 || !pending_events.is_empty() {
+                    owed_synthetics.retain_mut(|(attempts, _)| {
+                        *attempts = attempts.saturating_add(1);
+                        if *attempts <= 3 {
+                            max_attempt = max_attempt.max(*attempts);
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                    if !owed_calls.is_empty()
+                        || !owed_synthetics.is_empty()
+                        || synthetic_owed > 0
+                        || execution_owed > 0
+                        || !pending_events.is_empty()
+                    {
                         let step = max_attempt.max(1);
                         let delay = Duration::from_millis(100 * u64::from(step));
                         runtime::sleep(delay).await;
@@ -1886,6 +2043,8 @@ async fn copy_child_steps_bounded(
         }
     }
     let deadline = runtime::Instant::now() + COPY_BUDGET;
+    let (_watch_rx, settlement) = backend.watch_child(child)?;
+    let rev_before = settlement.revocation_gen();
     let location = {
         let _slot = reads.background(cancelled).await?;
         backend
@@ -1900,7 +2059,7 @@ async fn copy_child_steps_bounded(
     let mut cursor = Some(serde_json::json!({"kind": "oldest"}));
     let mut seen_cursors = HashSet::new();
     for _ in 0..MAX_COPY_PAGES {
-        if runtime::Instant::now() >= deadline {
+        if runtime::Instant::now() >= deadline || settlement.revocation_gen() != rev_before {
             return None;
         }
         let Some(request) = cursor.take() else {
@@ -1922,6 +2081,9 @@ async fn copy_child_steps_bounded(
             let _slot = reads.background(cancelled).await?;
             backend.child_raw_tools_request(child, request).await.ok()?
         };
+        if settlement.revocation_gen() != rev_before {
+            return None;
+        }
         for (row_id, tools) in rows {
             if !seen_rows.insert(row_id) {
                 continue;
@@ -1936,7 +2098,10 @@ async fn copy_child_steps_bounded(
         }
         cursor = newer;
     }
-    if cursor.is_some() || runtime::Instant::now() >= deadline {
+    if cursor.is_some()
+        || runtime::Instant::now() >= deadline
+        || settlement.revocation_gen() != rev_before
+    {
         return None;
     }
     io::Write::write_all(&mut out, if count > 0 { b"\n]" } else { b"]" }).ok()?;
@@ -1947,9 +2112,30 @@ async fn copy_child_steps_bounded(
             .await
             .ok()?
     };
-    (still_owned == Some(location))
+    (still_owned == Some(location) && settlement.revocation_gen() == rev_before)
         .then(|| String::from_utf8(out.0).ok())
         .flatten()
+}
+
+fn same_synthetic_report(a: &crate::history::Row, b: &crate::history::Row) -> bool {
+    if a.role != "synthetic" || b.role != "synthetic" {
+        return false;
+    }
+    fn report(row: &crate::history::Row) -> Option<&SubagentReport> {
+        row.parts.iter().find_map(|part| match part {
+            Part::SubagentReport(r) => Some(r),
+            _ => None,
+        })
+    }
+    match (report(a), report(b)) {
+        (Some(ra), Some(rb)) => {
+            ra.child == rb.child
+                && ra.state == rb.state
+                && ra.body == rb.body
+                && ra.created.abs_diff(rb.created) <= 60_000
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]

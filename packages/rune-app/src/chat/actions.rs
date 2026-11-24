@@ -47,6 +47,7 @@ struct SessionDisplay {
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
     step_anchors: RefCell<(VecDeque<String>, HashMap<String, String>)>,
+    step_mount_anchors: RefCell<(VecDeque<String>, HashMap<String, String>)>,
     search_revealed: VecDeque<String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     diagram_sources: HashMap<String, BTreeSet<usize>>,
@@ -212,6 +213,10 @@ impl Display {
         self.active.step_anchors.borrow().1.get(key).cloned()
     }
 
+    pub(super) fn step_mount_anchor(&self, key: &str) -> Option<String> {
+        self.active.step_mount_anchors.borrow().1.get(key).cloned()
+    }
+
     pub(super) fn focused_key(&self) -> Option<&str> {
         self.focused_key.as_deref()
     }
@@ -298,9 +303,32 @@ impl Display {
         }
     }
 
+    pub(super) fn pin_step_mount_anchor(&self, key: &str, anchor: String) {
+        let mut anchors = self.active.step_mount_anchors.borrow_mut();
+        if !anchors.1.contains_key(key) {
+            while anchors.1.len() >= 64 {
+                if let Some(oldest) = anchors.0.pop_front() {
+                    anchors.1.remove(&oldest);
+                } else {
+                    break;
+                }
+            }
+            anchors.0.push_back(key.into());
+        }
+        anchors.1.insert(key.into(), anchor);
+    }
+
+    pub(super) fn unpin_step_mount_anchor(&self, key: &str) {
+        let mut anchors = self.active.step_mount_anchors.borrow_mut();
+        if anchors.1.remove(key).is_some() {
+            anchors.0.retain(|k| k != key);
+        }
+    }
+
     pub(super) fn reveal_steps(s: &mut State, key: &str, anchor: Option<String>) {
         if let Some(anchor) = anchor {
-            s.transcript_display.pin_step_anchor(key, anchor);
+            s.transcript_display.pin_step_anchor(key, anchor.clone());
+            s.transcript_display.pin_step_mount_anchor(key, anchor);
         }
         s.transcript_display.step_scroll_state(key).set((true, 0.0));
         Self::reveal_next(s, key);
@@ -313,6 +341,13 @@ impl Display {
             .1
             .retain(|key, _| key != prefix && !key.starts_with(&nested));
         anchors
+            .0
+            .retain(|key| key != prefix && !key.starts_with(&nested));
+        let mount_anchors = self.active.step_mount_anchors.get_mut();
+        mount_anchors
+            .1
+            .retain(|key, _| key != prefix && !key.starts_with(&nested));
+        mount_anchors
             .0
             .retain(|key| key != prefix && !key.starts_with(&nested));
         self.step_scroll

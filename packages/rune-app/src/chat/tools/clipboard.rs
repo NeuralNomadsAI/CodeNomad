@@ -72,10 +72,19 @@ pub(super) fn copy(
                         if let Some(async_key) = make_tool_key(0) {
                             Some(async_key)
                         } else {
-                            if let Some(source) =
-                                super::format::bounded_json(&tool.input, 8 * 1024 * 1024)
-                            {
+                            if let Some(source) = super::format::bounded_json(
+                                &tool.input,
+                                super::children::MAX_COPY_BYTES,
+                            ) {
                                 tx.copy(source);
+                            } else {
+                                crate::shell::notifications::emit_outcome(
+                                    s,
+                                    crate::shell::notifications::Category::Sessions,
+                                    None,
+                                    t("sessionList.reload.error"),
+                                    true,
+                                );
                             }
                             None
                         }
@@ -111,9 +120,20 @@ pub(super) fn copy(
                             Some(async_key)
                         } else if let Some(value) = super::format::structured_output(tool) {
                             if let super::format::Formatted::Text(source, _) =
-                                super::format::format_unknown(value, Some(8 * 1024 * 1024))
+                                super::format::format_unknown(
+                                    value,
+                                    Some(super::children::MAX_COPY_BYTES),
+                                )
                             {
                                 tx.copy(source);
+                            } else {
+                                crate::shell::notifications::emit_outcome(
+                                    s,
+                                    crate::shell::notifications::Category::Sessions,
+                                    None,
+                                    t("sessionList.reload.error"),
+                                    true,
+                                );
                             }
                             None
                         } else if tool.name == "todowrite"

@@ -330,6 +330,22 @@ fn render_body(
     {
         header = header.child(copy(s, message, key, &tool.id, Section::Output, ancestors));
     }
+    let input_key = format!("{key}-tool_input");
+    if !expanded && has_tool_input(tool) {
+        let open_card = key.to_owned();
+        let open_input = input_key.clone();
+        header = header.child(
+            layout::button(
+                t("toolCall.header.showInputTitle"),
+                false,
+                screen::action(&s.input_scope, move |s| {
+                    Display::set_expanded(s, &open_card, true);
+                    Display::set_expanded(s, &open_input, true);
+                }),
+            )
+            .key(format!("header-input-{key}")),
+        );
+    }
     let mut block = col()
         .full_width()
         .pad(Space::Sm)
@@ -412,9 +428,9 @@ fn render_body(
     let execute_details = (tool.name == "execute")
         .then(|| execute::view(s, key, tool, query))
         .flatten();
+    let mut input_visible = false;
     if has_tool_input(tool) {
         let input_mode = settings::transcript_mode(s, TranscriptRow::Inputs);
-        let input_key = format!("{key}-tool_input");
         let show = s
             .transcript_display
             .expanded(&input_key, input_mode == "expanded");
@@ -445,6 +461,7 @@ fn render_body(
             None => (None, false),
         };
         let show = show || input_matched;
+        input_visible = show;
         let toggle = input_key.clone();
         block = block.child(
             layout::button(
@@ -488,145 +505,229 @@ fn render_body(
     } else {
         lang
     };
-    let apply_patch_body = (!pending && !active && tool.name == "apply_patch")
-        .then(|| apply_patch::view(s, message, key, tool))
+    let apply_patch_body = (!pending && tool.name == "apply_patch")
+        .then(|| apply_patch::view(s, message, key, tool, query))
         .flatten();
     let has_apply_patch_body = apply_patch_body.is_some();
     let patch_native_fallback = has_apply_patch_body
         && tool.status == "completed"
         && !apply_patch::has_patch(tool)
         && !parts[0].trim().is_empty();
-    if let Some(patch) = apply_patch_body {
-        block = block.child(patch);
-    }
-    if patch_native_fallback || !has_apply_patch_body {
-        if !patch_native_fallback
-            && !pending
-            && is_patch(tool)
-            && let Some(patch) = tool_patch::view(s, tool, key, query)
-        {
+    let has_collapsible_output = has_apply_patch_body || skill || (has_output && !specialized_task);
+    let output_section_key = format!("{key}-tool_output_section");
+    let output_expanded = if input_visible && has_collapsible_output && !active {
+        let expanded = s.transcript_display.expanded(&output_section_key, true);
+        let toggle = output_section_key.clone();
+        block = block.child(
+            layout::button(
+                t("toolCall.io.output"),
+                false,
+                screen::action(&s.input_scope, move |s| {
+                    Display::set_expanded(s, &toggle, !expanded);
+                }),
+            )
+            .key(format!("toggle-{key}-tool_output"))
+            .expanded(expanded),
+        );
+        expanded
+    } else {
+        true
+    };
+    if output_expanded {
+        if let Some(patch) = apply_patch_body {
             block = block.child(patch);
         }
-        if skill {
-            let output_key = format!("{key}-tool_output");
-            if probe {
-                if let Some(q) = query
-                    && let Some(claimed) = q.claimed
-                    && !claimed.get()
-                    && document::skill_prose_matches(s, key, &output_key, parts[0], q)
-                {
-                    claimed.set(true);
-                }
-            } else {
-                block = block.child(markdown::tool_pane(
-                    document::prose_search(s, message, key, output_key, parts[0], query),
-                    false,
-                ));
+        if patch_native_fallback || !has_apply_patch_body {
+            if !patch_native_fallback
+                && !pending
+                && is_patch(tool)
+                && let Some(patch) = tool_patch::view(s, tool, key, query)
+            {
+                block = block.child(patch);
             }
-        } else if tool.name == "apply_patch" && has_output {
-            let output_key = format!("{key}-tool_output");
-            if probe {
-                if let Some(q) = query
-                    && let Some(claimed) = q.claimed
-                    && !claimed.get()
-                    && document::bounded_prose_matches_for(
-                        s,
-                        key,
-                        &output_key,
-                        parts[0],
-                        TOOL_LIMIT,
-                        q,
-                    )
-                {
-                    claimed.set(true);
+            if skill {
+                let output_key = format!("{key}-tool_output");
+                if probe {
+                    if let Some(q) = query
+                        && let Some(claimed) = q.claimed
+                        && !claimed.get()
+                        && document::skill_prose_matches(s, key, &output_key, parts[0], q)
+                    {
+                        claimed.set(true);
+                    }
+                } else {
+                    block = block.child(markdown::tool_pane(
+                        document::prose_search(s, message, key, output_key, parts[0], query),
+                        false,
+                    ));
                 }
-            } else {
-                block = block.child(markdown::tool_pane(
-                    document::prose_pane_search(
-                        s,
-                        message,
-                        key,
-                        output_key,
-                        parts[0],
-                        tool.status == "running",
-                        TOOL_LIMIT,
-                        query,
-                    ),
-                    false,
-                ));
-            }
-        } else if has_output && !specialized_task {
-            let structured_out =
-                structured.map(|value| super::format::format_unknown(value, Some(TOOL_LIMIT)));
-            if matches!(structured_out, Some(super::format::Formatted::TooLarge)) {
-                block = block.child(text(t("toolCall.output.tooLarge")));
-            } else if !matches!(structured_out, Some(super::format::Formatted::Empty)) {
-                let (formatted, formatted_lang) =
-                    if let Some(super::format::Formatted::Text(text, lang)) = structured_out {
-                        (Some(text), lang)
-                    } else {
-                        (
-                            (tool.name == "execute" && tool.status == "completed")
+            } else if tool.name == "apply_patch" && has_output {
+                let output_key = format!("{key}-tool_output");
+                if probe {
+                    if let Some(q) = query
+                        && let Some(claimed) = q.claimed
+                        && !claimed.get()
+                        && document::bounded_prose_matches_for(
+                            s,
+                            key,
+                            &output_key,
+                            parts[0],
+                            TOOL_LIMIT,
+                            q,
+                        )
+                    {
+                        claimed.set(true);
+                    }
+                } else {
+                    block = block.child(markdown::tool_pane(
+                        document::prose_pane_search(
+                            s,
+                            message,
+                            key,
+                            output_key,
+                            parts[0],
+                            tool.status == "running",
+                            TOOL_LIMIT,
+                            query,
+                        ),
+                        false,
+                    ));
+                }
+            } else if has_output && !specialized_task {
+                let owner_parent = ancestors.len().checked_sub(2).map(|i| ancestors[i]);
+                let tool_expand_key = message
+                    .strip_prefix("child:")
+                    .and_then(|v| v.split_once(':'))
+                    .and_then(|(child, row_id)| {
+                        s.transcript_display
+                            .children
+                            .tool_truncated(owner_parent, child, row_id, &tool.id)
+                            .then(|| super::children::ToolCopyKey {
+                                key: format!("copy-{key}-output"),
+                                parent: owner_parent.map(str::to_owned),
+                                child: child.to_owned(),
+                                row_id: row_id.to_owned(),
+                                call: tool.id.clone(),
+                                section: 1,
+                            })
+                    });
+                let expanded_tool_output = tool_expand_key
+                    .as_ref()
+                    .and_then(|k| s.transcript_display.children.loaded_tool_output(k));
+                let structured_out = if expanded_tool_output.is_some() {
+                    None
+                } else {
+                    structured.map(|value| super::format::format_unknown(value, Some(TOOL_LIMIT)))
+                };
+                if matches!(structured_out, Some(super::format::Formatted::TooLarge)) {
+                    block = block.child(text(t("toolCall.output.tooLarge")));
+                } else if !matches!(structured_out, Some(super::format::Formatted::Empty)) {
+                    let (formatted, formatted_lang) =
+                        if let Some(super::format::Formatted::Text(text, lang)) = structured_out {
+                            (Some(text), lang)
+                        } else {
+                            (
+                                (tool.name == "execute"
+                                    && tool.status == "completed"
+                                    && expanded_tool_output.is_none())
                                 .then(|| execute::formatted_output(parts[0]))
                                 .flatten(),
-                            "json",
-                        )
+                                "json",
+                            )
+                        };
+                    let (parts, lang) = if let Some(full) = expanded_tool_output {
+                        ([full, "", "", ""], lang)
+                    } else if let Some(formatted) = formatted.as_deref() {
+                        ([formatted, "", "", ""], formatted_lang)
+                    } else {
+                        (parts, lang)
                     };
-                let (parts, lang) = if let Some(formatted) = formatted.as_deref() {
-                    ([formatted, "", "", ""], formatted_lang)
-                } else {
-                    (parts, lang)
-                };
-                let terminal = shell::matches(tool) && parts.iter().any(|text| ansi::present(text));
-                let highlight = tool.status != "running"
-                    && (lang != "diff"
-                        || parts
-                            .iter()
-                            .flat_map(|text| text.encode_utf16())
-                            .nth(TOOL_LIMIT)
-                            .is_none());
-                let output_key = format!("{key}-tool_output");
-                let fallback = || {
-                    col()
-                        .full_width()
-                        .separate(Space::Sm)
-                        .children((!shared_wrap).then(|| {
+                    let terminal =
+                        shell::matches(tool) && parts.iter().any(|text| ansi::present(text));
+                    let highlight = tool.status != "running"
+                        && (lang != "diff"
+                            || parts
+                                .iter()
+                                .flat_map(|text| text.encode_utf16())
+                                .nth(TOOL_LIMIT)
+                                .is_none());
+                    let output_key = format!("{key}-tool_output");
+                    let fallback = || {
+                        col()
+                            .full_width()
+                            .separate(Space::Sm)
+                            .children((!shared_wrap).then(|| {
+                                layout::action_row()
+                                    .child(wrap_control(s, &wrap_key, wrap))
+                                    .child(text(lang).text_role(TextRole::Label))
+                            }))
+                            .child(markdown::tool_pane(
+                                window(
+                                    s,
+                                    output_key.clone(),
+                                    &parts,
+                                    document::search_limit_for(s, key, query),
+                                    |shown, units| {
+                                        if !probe
+                                            && tool.status == "running"
+                                            && shell::matches(tool)
+                                        {
+                                            s.transcript_display.live_ansi(key, shown, wrap, query)
+                                        } else if terminal {
+                                            ansi::search_code(shown, wrap, query)
+                                        } else {
+                                            markdown::search_code(
+                                                shown,
+                                                lang,
+                                                highlight && units <= HIGHLIGHT_LIMIT,
+                                                wrap,
+                                                query,
+                                            )
+                                        }
+                                    },
+                                ),
+                                matches!(tool.name.as_str(), "edit" | "write"),
+                            ))
+                    };
+                    block = block.child(if let Some(results) = result_list {
+                        results
+                    } else if rich_diff {
+                        tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
+                    } else {
+                        fallback()
+                    });
+                    if let Some(expand_key) = tool_expand_key
+                        && expanded_tool_output.is_none()
+                    {
+                        let failed = s
+                            .transcript_display
+                            .children
+                            .expand_tool_failed(&expand_key);
+                        let reveal_key = output_key;
+                        block = block.child(
                             layout::action_row()
-                                .child(wrap_control(s, &wrap_key, wrap))
-                                .child(text(lang).text_role(TextRole::Label))
-                        }))
-                        .child(markdown::tool_pane(
-                            window(
-                                s,
-                                output_key,
-                                &parts,
-                                document::search_limit_for(s, key, query),
-                                |shown, units| {
-                                    if !probe && tool.status == "running" && shell::matches(tool) {
-                                        s.transcript_display.live_ansi(key, shown, wrap, query)
-                                    } else if terminal {
-                                        ansi::search_code(shown, wrap, query)
-                                    } else {
-                                        markdown::search_code(
-                                            shown,
-                                            lang,
-                                            highlight && units <= HIGHLIGHT_LIMIT,
-                                            wrap,
-                                            query,
-                                        )
-                                    }
-                                },
-                            ),
-                            matches!(tool.name.as_str(), "edit" | "write"),
-                        ))
-                };
-                block = block.child(if let Some(results) = result_list {
-                    results
-                } else if rich_diff {
-                    tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
-                } else {
-                    fallback()
-                });
+                                .child(text(t("toolCall.output.tooLarge")).role("status"))
+                                .child(
+                                    layout::button(
+                                        t("messageBlock.hiddenText.showAll"),
+                                        false,
+                                        screen::action(&s.input_scope, move |s| {
+                                            super::children::Children::expand_tool_output(
+                                                s,
+                                                expand_key.clone(),
+                                            );
+                                            Display::reveal_next(s, &reveal_key);
+                                        }),
+                                    )
+                                    .key(format!("expand-{key}-output")),
+                                ),
+                        );
+                        if failed {
+                            block =
+                                block.child(text(t("sessionList.loadError.retry")).role("status"));
+                        }
+                    }
+                }
             }
         }
     }

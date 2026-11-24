@@ -151,7 +151,11 @@ impl Backend {
             for part in parts.iter_mut() {
                 if part["type"] == "tool" {
                     let mut raw = std::mem::take(part);
-                    if let Some(items) = raw["state"]["content"].as_array_mut() {
+                    if let Some(items) = raw
+                        .get_mut("state")
+                        .and_then(|state| state.get_mut("content"))
+                        .and_then(Value::as_array_mut)
+                    {
                         for item in items.iter_mut() {
                             if item["type"] == "image"
                                 && let Some(obj) = item.as_object_mut()

@@ -448,19 +448,45 @@ fn diagram_fence(
     Some((start..start + word.len(), replacement))
 }
 
-fn strip_blockquotes(mut s: &str, max: usize, max_leading_indent: usize) -> &str {
-    for i in 0..max {
-        let trimmed = s.trim_start_matches(' ');
-        let limit = if i == 0 { max_leading_indent } else { 3 };
-        if s.len() - trimmed.len() <= limit
-            && let Some(rest) = trimmed.strip_prefix('>')
-        {
-            s = rest.strip_prefix(' ').unwrap_or(rest);
-            continue;
-        }
-        break;
+fn strip_container_prefix<'a>(
+    line_prefix: &str,
+    last: &'a str,
+    in_list_item: bool,
+    quote_depth: usize,
+) -> Option<(&'a str, usize)> {
+    if quote_depth == 0 {
+        let indent = if in_list_item || line_prefix.bytes().any(|b| !matches!(b, b' ' | b'\t')) {
+            line_prefix.chars().count()
+        } else {
+            0
+        };
+        return Some((last, indent));
     }
-    s
+    let mut lp = line_prefix;
+    let mut cur = last;
+    for _ in 0..quote_depth {
+        let pos = lp.find('>')?;
+        let before = &lp[..pos];
+        let before_limit = if before.bytes().any(|b| !matches!(b, b' ' | b'\t')) {
+            before.chars().count() + 3
+        } else {
+            3
+        };
+        let trimmed = cur.trim_start_matches(' ');
+        if cur.len() - trimmed.len() > before_limit {
+            return None;
+        }
+        let rest = trimmed.strip_prefix('>')?;
+        cur = rest.strip_prefix(' ').unwrap_or(rest);
+        let after_lp = &lp[pos + 1..];
+        lp = after_lp.strip_prefix(' ').unwrap_or(after_lp);
+    }
+    let after_indent = if in_list_item || lp.bytes().any(|b| !matches!(b, b' ' | b'\t')) {
+        lp.chars().count()
+    } else {
+        0
+    };
+    Some((cur, after_indent))
 }
 
 fn commonmark_closed(
@@ -478,16 +504,11 @@ fn commonmark_closed(
     let Some(last) = lines.last() else {
         return false;
     };
-    let container_indent = if in_list_item
-        || line_prefix
-            .bytes()
-            .any(|b| !matches!(b, b' ' | b'\t' | b'>'))
-    {
-        line_prefix.chars().count()
-    } else {
-        0
+    let Some((tail, container_indent)) =
+        strip_container_prefix(line_prefix, last, in_list_item, quote_depth)
+    else {
+        return false;
     };
-    let tail = strip_blockquotes(last, quote_depth, container_indent + 3);
     let indent = tail.bytes().take_while(|&b| b == b' ').count();
     if indent > container_indent + 3 {
         return false;

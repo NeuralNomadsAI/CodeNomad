@@ -148,6 +148,8 @@ pub(super) fn format_unknown(value: &Value, limit: Option<usize>) -> Formatted {
         Value::String(s) => {
             if s.is_empty() {
                 Formatted::Empty
+            } else if limit.is_some_and(|max| s.len() > max) {
+                Formatted::TooLarge
             } else {
                 Formatted::Text(s.clone(), "text")
             }
@@ -157,7 +159,9 @@ pub(super) fn format_unknown(value: &Value, limit: Option<usize>) -> Formatted {
         Value::Array(items) => {
             let mut out = String::new();
             for item in items {
-                let piece = match format_unknown(item, limit) {
+                let sep = usize::from(!out.is_empty());
+                let remaining = limit.map(|max| max.saturating_sub(out.len().saturating_add(sep)));
+                let piece = match format_unknown(item, remaining) {
                     Formatted::Empty => continue,
                     Formatted::TooLarge => return Formatted::TooLarge,
                     Formatted::Text(piece, _) => piece,
@@ -165,7 +169,7 @@ pub(super) fn format_unknown(value: &Value, limit: Option<usize>) -> Formatted {
                 if piece.is_empty() {
                     continue;
                 }
-                let add = piece.len() + usize::from(!out.is_empty());
+                let add = piece.len() + sep;
                 if limit.is_some_and(|max| out.len().saturating_add(add) > max) {
                     return Formatted::TooLarge;
                 }
@@ -254,5 +258,13 @@ fn format_unknown_skips_empty_nested_arrays_instead_of_marking_too_large() {
     assert_eq!(
         format_unknown(&serde_json::json!([[null, ""]]), Some(1024)),
         Formatted::Empty
+    );
+    assert_eq!(
+        format_unknown(&serde_json::json!("abcdef"), Some(4)),
+        Formatted::TooLarge
+    );
+    assert_eq!(
+        format_unknown(&serde_json::json!(["ab", "cde"]), Some(4)),
+        Formatted::TooLarge
     );
 }

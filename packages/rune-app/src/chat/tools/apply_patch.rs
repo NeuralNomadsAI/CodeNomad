@@ -229,7 +229,13 @@ fn matches_diagnostic_path(file: &Value, diagnostics: &[String]) -> bool {
     })
 }
 
-pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Option<El> {
+pub(super) fn view(
+    s: &State,
+    message: &str,
+    key: &str,
+    tool: &Arc<Tool>,
+    query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
+) -> Option<El> {
     let changes = files(tool);
     let diagnostics: Vec<String> = tool.metadata["diagnostics"]
         .as_object()
@@ -260,7 +266,8 @@ pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Opt
             selected.push((index, file));
         }
     }
-    let mut remaining = TOOL_LIMIT;
+    let search_active = query.is_some_and(|q| q.active);
+    let mut remaining = super::super::document::search_limit_for(s, key, query);
     let mut rendered = 0;
     let mut view = col().full_width().separate(Space::Sm);
     for (display_idx, (index, file)) in selected.into_iter().enumerate() {
@@ -316,18 +323,20 @@ pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Opt
                 )
                 .child(markdown::tool_pane(
                     window(s, key.clone(), &[patch], remaining, |shown, units| {
-                        markdown::code(shown, "diff", units <= TOOL_LIMIT, true)
+                        markdown::search_code(shown, "diff", units <= TOOL_LIMIT, true, query)
                     }),
                     true,
                 ))
         };
-        let body =
-            if complete && !message.starts_with("child:") && tool_diff::structured_candidate(patch)
-            {
-                tool_diff::body(s, message, &key, tool, patch, path, fallback)
-            } else {
-                fallback()
-            };
+        let body = if !search_active
+            && complete
+            && !message.starts_with("child:")
+            && tool_diff::structured_candidate(patch)
+        {
+            tool_diff::body(s, message, &key, tool, patch, path, fallback)
+        } else {
+            fallback()
+        };
         view = view.child(card.child(body));
         remaining -= used;
     }
