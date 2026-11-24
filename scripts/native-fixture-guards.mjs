@@ -33,8 +33,11 @@ export function spawnFixtureChild(command, args, options) {
     throw new Error("The fixture launcher accepts executable arguments and standard streams only")
   }
   const env = { ...(options?.env ?? process.env), CODENOMAD_FIXTURE_PARENT_PID: String(process.pid) }
-  if (options?.graceMs != null && !env.CODENOMAD_FIXTURE_GRACE_MS) {
-    env.CODENOMAD_FIXTURE_GRACE_MS = String(Math.max(50, Math.min(2000, Math.floor(options.graceMs / 2))))
+  const inheritedGrace = Number(process.env.CODENOMAD_FIXTURE_GRACE_MS || 0)
+  const requestedGrace = options?.graceMs != null ? Math.floor(options.graceMs / 2) : 0
+  const graceCandidates = [inheritedGrace, requestedGrace].filter(v => Number.isFinite(v) && v >= 50 && v <= 2000)
+  if (graceCandidates.length && !env.CODENOMAD_FIXTURE_GRACE_MS) {
+    env.CODENOMAD_FIXTURE_GRACE_MS = String(Math.min(...graceCandidates))
   }
   const { detached: _detached, graceMs: _graceMs, ...restOptions } = options ?? {}
   const supervisor = exe
@@ -128,18 +131,33 @@ async function stopOwnedTree(child, stopped, graceMs, { close, group, startedBy 
 
 export async function stopFixtureChild(child, stopped, graceMs = 1_000, forceMs = 2_000, options = {}) {
   let treeError
-  if (jobs.has(child)) {
+  const isJob = jobs.has(child)
+  if (isJob) {
     if (options.close && child.exitCode === null && child.signalCode === null) {
       await completesWithin(Promise.resolve().then(options.close).catch(() => {}), graceMs)
       if (await completesWithin(stopped, graceMs)) return
     }
-    // Node holds the wrapper handle; terminating it closes the kernel job.
+    // Node holds the wrapper handle; on Windows terminating it closes the kernel job,
+    // while on POSIX the supervisor needs its full 5 s family verification window before outer SIGKILL.
   } else if (process.platform === "win32" && child.spawnfile) {
     throw new Error("Windows fixture children must be spawned in an owned Job Object")
   } else if (child.pid && child.spawnfile && (options.group || (child.exitCode === null && child.signalCode === null))) {
     try { await stopOwnedTree(child, stopped, graceMs, options) } catch (error) { treeError = error }
   }
-  await stopFixtureHandle(child, stopped, graceMs, forceMs)
+  const handleGrace = isJob && process.platform !== "win32" ? Math.max(graceMs, 5_500) : graceMs
+  await stopFixtureHandle(child, stopped, handleGrace, forceMs)
+  if (isJob && process.platform !== "win32" && child.signalCode === "SIGKILL") {
+    const innerPid = await fixtureChildPid(child, 200).catch(() => undefined)
+    if (Number.isSafeInteger(innerPid) && innerPid > 0) {
+      let alive = false
+      try { process.kill(innerPid, 0); alive = true } catch (e) { alive = e.code === "EPERM" }
+      if (alive) {
+        try { process.kill(-innerPid, "SIGKILL") } catch {}
+        try { process.kill(innerPid, "SIGKILL") } catch {}
+        throw new Error(`Fixture supervisor was force-killed while child PID ${innerPid} remained alive`)
+      }
+    }
+  }
   if (treeError) throw treeError
 }
 

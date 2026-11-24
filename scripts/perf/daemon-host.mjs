@@ -7,7 +7,7 @@ import path from "node:path"
 import { fixtureEnvironment } from "../native-product-fixture.mjs"
 import { launchFixture } from "../../packages/rune-app/fixtures/fixture-host.mjs"
 import { assertNoSystemOpenCodeConfig, attestNative } from "../../packages/rune-app/fixtures/live-access.mjs"
-import { createAttestedRelay, fixtureFetch, redactSecrets, resolveLocalExecutable } from "../native-fixture-http.mjs"
+import {createAttestedRelay,fixtureFetch,redactSecrets,RELAY_PLACEHOLDER_PASSWORD,resolveLocalExecutable} from "../native-fixture-http.mjs"
 import { privatePath } from "./isolation.mjs"
 import { json, now, sleep } from "./lib.mjs"
 
@@ -105,20 +105,18 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
     if(pruningEnabled){const {preparePruning}=await import('./pruning.mjs');pruning=await preparePruning(root,env.OPENCODE_CONFIG_DIR,gitEnv)}
   } catch(error){provider.closeAllConnections();await new Promise(resolve=>provider.close(resolve));throw error}
   let daemon, attested, nativeRelay
-  const relayPassword = randomUUID()
-  const relayAuthorization = `Basic ${Buffer.from(`opencode:${relayPassword}`).toString("base64")}`
   try {
     const childEnv = { ...env, ...gitEnv }
     const daemonEnv = { ...childEnv, OPENCODE_SERVER_PASSWORD: password }
-    daemon = launchFixture(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], {cwd: project, env: daemonEnv, redact: [password, relayPassword]})
-    const url = await daemon.ready(stdout => stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1], 60_000)
+    daemon = launchFixture(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], {cwd: project, env: daemonEnv, redact: [password]})
+    const url = await daemon.ready(stdout => stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m)?.[1], 60_000)
     const pid = await daemon.pid()
     attested = await attestNative(url, daemon.child, authorization, fixtureFetch, pid)
-    nativeRelay = await createAttestedRelay(url, pid, { expectAuthorization: relayAuthorization, injectAuthorization: authorization })
+    nativeRelay = await createAttestedRelay(url, pid, { requireClientAttestation: true, injectAuthorization: authorization })
     const {send} = attested
     const call = (method, route, body) => json(send, route, {method, body})
     await pruning?.activate({project,url,authorization,send},()=>assert.equal(daemon.child.exitCode,null,'Owned pruning daemon exited'))
-    await run({ project, env: childEnv, url, relayUrl: nativeRelay.origin, relayPassword, password, authorization, call, send, markers, pid, cli, pruning,
+    await run({ project, env: childEnv, url, relayUrl: nativeRelay.origin, relayPassword: RELAY_PLACEHOLDER_PASSWORD, allowRelayClient: nativeRelay.allowClientPid, password, authorization, call, send, markers, pid, cli, pruning,
       arm(pass, size) {
         const { promise: start, resolve: release } = Promise.withResolvers()
         batch = { pass, size, start, release, ready: new Set() }

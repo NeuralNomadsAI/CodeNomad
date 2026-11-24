@@ -2,7 +2,6 @@
 import assert from 'node:assert/strict'
 import {randomUUID,createHash} from 'node:crypto'
 import {mkdir,copyFile,readFile,writeFile} from 'node:fs/promises'
-import {createServer,request} from 'node:http'
 import path from 'node:path'
 import {parseArgs} from 'node:util'
 import {privateEnvironment} from './private-profile.mjs'
@@ -11,7 +10,7 @@ import {preparePruning} from '../../../scripts/perf/pruning.mjs'
 import {privatePath} from '../../../scripts/perf/isolation.mjs'
 import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 import {assertNoSystemOpenCodeConfig,attestNative,ensurePrivateGitRepo} from './live-access.mjs'
-import {createAttestedFetch,createAttestedHttpAgent,fixtureFetch,redactSecrets,relayTarget,resolveLocalExecutable,resolveWorktreePackage,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedRelay,createStreamRedactor,fixtureFetch,redactSecrets,RELAY_PLACEHOLDER_PASSWORD,resolveLocalExecutable,resolveWorktreePackage,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {onFixtureSignal,registerFixtureChild,rustOrigin} from './fixture-host.mjs'
 
 const {OpenCode}=await import(resolveWorktreePackage('@opencode/client'))
@@ -29,9 +28,8 @@ await copyFile(resolveLocalExecutable(clientBinary,'Rune client binary'),rune)
 await copyFile(resolveLocalExecutable(serverBinary,'Rust server binary'),rust)
 requireTestSupport(rune)
 const permissions=[{action:'*',resource:'*',effect:'deny'}]
-const opencodePassword=randomUUID(),relayPassword=randomUUID()
+const opencodePassword=randomUUID()
 const opencodeAuthorization=`Basic ${Buffer.from(`opencode:${opencodePassword}`).toString('base64')}`
-const relayAuthorization=`Basic ${Buffer.from(`opencode:${relayPassword}`).toString('base64')}`
 const baseEnv={...await privateEnvironment(root),OPENCODE_TEST_HOME:path.join(root,'home'),
   OPENCODE_CONFIG_DIR:config,OPENCODE_DB:path.join(root,'opencode.db'),
   OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_PROJECT_CONFIG:'1',OPENCODE_DISABLE_MODELS_FETCH:'1',OPENCODE_DISABLE_FFF:'1',OPENCODE_DISABLE_AUTOUPDATE:'true',
@@ -47,62 +45,50 @@ const proof={root,project,opencode:values.opencode,ownedIDs,stages,requests,clea
 let pruning,native,server,client,failure,rustPassword,attested,rustFetch
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))
 const group=process.platform!=='win32'
-function launch(name,binary,args,childEnv,cwd=root){
+function launch(name,binary,args,childEnv,cwd=root,redact=[]){
   const child=spawnFixtureChild(binary,args,{cwd,env:withoutFixtureProxy(childEnv),detached:group,windowsHide:true,stdio:['pipe','pipe','pipe']})
-  const entry={name,child,error:null,stopped:null,startedBy:new Date()};logs[name]=''
-  entry.stopped=new Promise(resolve=>{child.once('close',resolve);child.once('error',error=>{entry.error=error;resolve()})})
+  const outRedactor=createStreamRedactor(redact)
+  const errRedactor=createStreamRedactor(redact)
+  const append=chunk=>{if(chunk)logs[name]=(logs[name]+chunk).slice(-1048576)}
+  const entry={name,child,error:null,stopped:null,startedBy:new Date(),currentOutput:()=>logs[name]+outRedactor.peek()+errRedactor.peek()};logs[name]=''
+  entry.stopped=new Promise(resolve=>{
+    child.once('close',code=>{append(outRedactor.flush());append(errRedactor.flush());resolve(code)})
+    child.once('error',error=>{entry.error=error;resolve()})
+  })
   const untrack=registerFixtureChild(()=>stopFixtureChild(child,entry.stopped,1_000,2_000,{group,startedBy:entry.startedBy}))
   void entry.stopped.finally(untrack)
-  for(const pipe of [child.stdout,child.stderr])pipe.on('data',data=>{logs[name]=(logs[name]+data).slice(-1048576)})
+  child.stdout.on('data',data=>{append(outRedactor.push(data))})
+  child.stderr.on('data',data=>{append(errRedactor.push(data))})
   children.push(entry);return entry
 }
 async function origin(entry){
   for(const end=Date.now()+60000;;){
     if(entry.error)throw entry.error
     assert(entry.child.exitCode===null&&entry.child.signalCode===null&&Date.now()<end,`${entry.name} startup failed`)
-    const output=logs[entry.name]
-    const url=entry.name==='opencode'?output.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1]:rustOrigin(output)
+    const output=entry.currentOutput()
+    const url=entry.name==='opencode'?output.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m)?.[1]:rustOrigin(output)
     if(url)return url
     await sleep(25)
   }
 }
 const forbidden=route=>/(?:^|\/)(?:prompt|command|generate|synthetic|shell)(?:\/|$)/i.test(route)
 const createsSession=route=>/(?:^|\/)(?:experimental\/)?session(?:\/(?:import|[^/]+\/fork))?\/?$/i.test(route)
-async function auditedProxy(base,lane,targetPid,{expectAuthorization,injectAuthorization}={}){
-  const agent=createAttestedHttpAgent(Number(new URL(base).port),targetPid)
-  const proxy=createServer((req,res)=>{
-    const url=relayTarget(req,res,base)
-    if(!url)return
-    if(expectAuthorization&&req.headers.authorization!==expectAuthorization){
-      res.writeHead(401);res.end('Attested relay token required');return
-    }
-    const row={lane,stage:proof.stage??'setup',method:req.method,path:url.pathname,query:url.search}
-    requests.push(row)
-    let decoded=null
-    try{decoded=decodeURIComponent(url.pathname)}catch{}
-    if(req.method==='POST'&&(decoded===null||forbidden(url.pathname)||forbidden(decoded)||createsSession(url.pathname)||createsSession(decoded))){
-      row.blocked=true;res.writeHead(403);res.end('Fixture mutation denied');return
-    }
-    const headers={...req.headers,host:url.host}
-    if(injectAuthorization)headers.authorization=injectAuthorization
-    const upstream=request(url,{agent,method:req.method,headers},response=>{
-      if(response.statusCode>=300&&response.statusCode<400){
-        response.destroy()
-        row.status=502
-        if(!res.headersSent)res.writeHead(502)
-        res.end('Upstream redirect forbidden in attested relay')
-        return
+async function auditedProxy(base,lane,targetPid,{requireClientAttestation=false,injectAuthorization}={}){
+  const relay=await createAttestedRelay(base,targetPid,{
+    requireClientAttestation,
+    injectAuthorization,
+    onRequest(req,res,url){
+      const row={lane,stage:proof.stage??'setup',method:req.method,path:url.pathname,query:url.search}
+      requests.push(row)
+      let decoded=null
+      try{decoded=decodeURIComponent(url.pathname)}catch{}
+      if(req.method==='POST'&&(decoded===null||forbidden(url.pathname)||forbidden(decoded)||createsSession(url.pathname)||createsSession(decoded))){
+        row.blocked=true;res.writeHead(403);res.end('Fixture mutation denied');return false
       }
-      row.status=response.statusCode;res.writeHead(response.statusCode,response.headers)
-      response.on('close',()=>{if(!response.complete)res.destroy()})
-      response.on('error',()=>res.destroy())
-      response.pipe(res)
-    })
-    upstream.on('error',()=>{row.failed=true;if(!res.headersSent)res.writeHead(502);res.end()})
-    req.on('aborted',()=>upstream.destroy());res.on('close',()=>upstream.destroy());req.pipe(upstream)
+      res.once('finish',()=>{row.status=res.statusCode})
+    },
   })
-  await new Promise((resolve,reject)=>{proxy.once('error',reject);proxy.listen(0,'127.0.0.1',resolve)})
-  proxies.push({proxy,agent});return `http://127.0.0.1:${proxy.address().port}`
+  proxies.push(relay);return relay
 }
 async function assertExport(id,messages){
   const stored=await native.experimental.session.export({sessionID:id})
@@ -121,7 +107,7 @@ const untrackSignalCleanup=onFixtureSignal(async()=>{
 try{
   await ensurePrivateGitRepo(project,root,baseEnv)
   pruning=await preparePruning(root,config,baseEnv)
-  const daemon=launch('opencode',opencodeExecutable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],opencodeEnv,project)
+  const daemon=launch('opencode',opencodeExecutable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],opencodeEnv,project,[opencodePassword])
   const endpoint=await origin(daemon)
   const opencodePid=await fixtureChildPid(daemon.child)
   attested=await attestNative(endpoint,daemon.child,opencodeAuthorization,fixtureFetch,opencodePid)
@@ -156,12 +142,13 @@ try{
   proof.longSession=long.id;proof.emptySession=empty.id;proof.seedIDs=messages.map(m=>m.id)
   const seedFile=path.join(root,'seed.json')
   await writeFile(seedFile,JSON.stringify(messages.map(({id,text})=>({id,text})))+'\n')
-  const nativeProxy=await auditedProxy(endpoint,'rust-native',opencodePid,{expectAuthorization:relayAuthorization,injectAuthorization:opencodeAuthorization})
+  const nativeProxy=await auditedProxy(endpoint,'rust-native',opencodePid,{requireClientAttestation:true,injectAuthorization:opencodeAuthorization})
   rustPassword=randomUUID()
-  const rustEnv={...baseEnv,CNRS_FIXTURE_URL:nativeProxy,CNRS_FIXTURE_PASSWORD:relayPassword,
+  const rustEnv={...baseEnv,CNRS_FIXTURE_URL:nativeProxy.origin,CNRS_FIXTURE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,
     CNRS_SERVER_PASSWORD:rustPassword,CNRS_FIXTURE_STDIN_STOP:'1',CLI_CONFIG:path.join(root,'rust-config')}
   await mkdir(rustEnv.CLI_CONFIG)
-  server=launch('rust',rust,[project,path.join(root,'identity.json'),'0',values.opencode],rustEnv)
+  server=launch('rust',rust,[project,path.join(root,'identity.json'),'0',values.opencode],rustEnv,root,[opencodePassword,rustPassword])
+  nativeProxy.allowClientPid(fixtureChildPid(server.child))
   const backend=await origin(server)
   const rustPid=await fixtureChildPid(server.child)
   const appProxy=await auditedProxy(backend,'rune-rust',rustPid)
@@ -176,9 +163,9 @@ try{
   }
   for(const stage of ['prepare','resume','verify']){
     proof.stage=stage
-    client=launch(`rune-${stage}`,rune,['--probe-native-store'],{...baseEnv,RUNE_BACKEND:`${appProxy}/`,RUNE_PASSWORD:rustEnv.CNRS_SERVER_PASSWORD,
+    client=launch(`rune-${stage}`,rune,['--probe-native-store'],{...baseEnv,RUNE_BACKEND:`${appProxy.origin}/`,RUNE_PASSWORD:rustEnv.CNRS_SERVER_PASSWORD,
       RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',RUNE_STATE_DIR:path.join(root,'rune-state'),RUNE_TEST_RESTORE_STAGE:stage,
-      RUNE_STORE_LONG_SESSION:long.id,RUNE_STORE_EMPTY_SESSION:empty.id,RUNE_STORE_SEED_FILE:seedFile})
+      RUNE_STORE_LONG_SESSION:long.id,RUNE_STORE_EMPTY_SESSION:empty.id,RUNE_STORE_SEED_FILE:seedFile},root,[opencodePassword,rustPassword])
     let timeout
     try{await Promise.race([client.stopped,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error(`Rune ${stage} exceeded 120s`)),120000)})])}
     finally{clearTimeout(timeout)}
@@ -202,7 +189,7 @@ try{
   }
   assert(!requests.some(r=>r.blocked),'No generation, tool dispatch or native session creation during app restoration')
   proof.result='ok'
-}catch(error){failure=error;proof.error=redactSecrets(error?.message??String(error),[opencodePassword,relayPassword,rustPassword])}
+}catch(error){failure=error;proof.error=redactSecrets(error?.message??String(error),[opencodePassword,rustPassword])}
 finally{
   untrackSignalCleanup()
   const errors=[]
@@ -219,13 +206,13 @@ finally{
     proof.rustGraceful=server.child.exitCode===0
     if(!proof.rustGraceful)errors.push(Error('Owned Rust server did not exit cleanly after shutdown'))
   }
-  for(const {proxy,agent} of proxies){agent.destroy();proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve))}
+  for(const relay of proxies)await relay.close()
   try{await rustFetch?.close()}catch(error){errors.push(error)}
   try{await attested?.close()}catch(error){errors.push(error)}
   try{await pruning?.close()}catch(error){errors.push(error)}
   for(const entry of children.slice().reverse())if(group||entry.child.exitCode===null&&entry.child.signalCode===null)
     try{await stopFixtureChild(entry.child,entry.stopped,1_000,2_000,{group,startedBy:entry.startedBy})}catch(error){errors.push(error)}
-  const secrets=[opencodePassword,relayPassword,rustPassword].filter(Boolean)
+  const secrets=[opencodePassword,rustPassword].filter(Boolean)
   for(const [name,log]of Object.entries(logs))await writeFile(path.join(root,`${name}.log`),redactSecrets(log,secrets))
   if(proof.error)proof.error=redactSecrets(proof.error,secrets)
   if(errors.length){proof.result='failed';proof.cleanupErrors=errors.map(error=>redactSecrets(error.message,secrets));failure??=Error(`Owned fixture cleanup failed: ${proof.cleanupErrors.join('; ')}`)}
@@ -233,4 +220,4 @@ finally{
   await writeFile(path.join(root,'proof.json'),JSON.stringify(proof,null,2)+'\n')
 }
 console.log(JSON.stringify({type:'native-store-fixture',result:proof.result,root,stages:stages.map(s=>s.stage),rows:600,ownedSessions:ownedIDs.length}))
-if(failure)throw Error(redactSecrets(failure.message??String(failure),[opencodePassword,relayPassword,rustPassword]))
+if(failure)throw Error(redactSecrets(failure.message??String(failure),[opencodePassword,rustPassword]))

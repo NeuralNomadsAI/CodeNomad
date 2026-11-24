@@ -12,6 +12,10 @@ import {privatePath} from './isolation.mjs'
 export async function preparePruning(root, config, buildEnv) {
   const {repoRootReal,nodeModulesReal}=worktreeDependencyRoots()
   const esbuildUrl = resolveWorktreePackage('esbuild')
+  const esbuildBinSpec = process.platform === 'win32'
+    ? `@esbuild/win32-${process.arch}/esbuild.exe`
+    : `@esbuild/${process.platform}-${process.arch}/bin/esbuild`
+  const esbuildBinaryPath = fileURLToPath(resolveWorktreePackage(esbuildBinSpec))
   const openCodeUrl = resolveWorktreePackage('@opencode/client')
   const tsxUrl = resolveWorktreePackage('tsx/esm/api')
   const navigationContractPath = fileURLToPath(new URL('../../packages/server/src/opencode/session-pruning/navigation-contract.ts', import.meta.url))
@@ -56,7 +60,7 @@ export async function preparePruning(root, config, buildEnv) {
       banner: { js: '// CodeNomad plugin IDs: ["codenomad-session-pruning"]\\nimport { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);' },
     })
   `
-  const isolatedBuildEnv = withoutFixtureProxy({ ...(buildEnv ?? fixtureSystemEnvironment()) })
+  const isolatedBuildEnv = withoutFixtureProxy({ ...(buildEnv ?? fixtureSystemEnvironment()), ESBUILD_BINARY_PATH: esbuildBinaryPath })
   const builder = spawnFixtureChild(process.execPath, ['--input-type=module', '-e', buildScript, esbuildUrl, pluginBuildUrl, entryPoint, outfile, repoRootReal, nodeModulesReal], {
     cwd: root, env: isolatedBuildEnv, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   })

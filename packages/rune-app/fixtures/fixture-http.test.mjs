@@ -4,7 +4,7 @@ import {Agent,createServer,request} from 'node:http'
 import net from 'node:net'
 import {test} from 'node:test'
 import {promisify} from 'node:util'
-import {createAttestedFetch,createAttestedHttpAgent,createAttestedRelay,createStreamRedactor,fixtureFetch,relayTarget,verifyLoopbackConnectionPeer,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedHttpAgent,createAttestedRelay,createAttestedTcpRelay,createStreamRedactor,fixtureFetch,relayTarget,verifyLoopbackConnectionPeer,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {sseReader} from '../../../scripts/perf/lib.mjs'
 
 async function listen(t,handler){
@@ -277,6 +277,36 @@ test('createStreamRedactor redacts split secrets and never leaks partial secret 
   assert.equal(out.includes(secret),false)
   assert.equal(out.includes(basic),false)
   assert.equal(out.split('<fixture password>').length-1,2)
+  // Truncated stream ending mid-secret must not leak the partial prefix on flush().
+  const truncated=createStreamRedactor([secret])
+  let tOut=truncated.push('cut=fixture-secret-val')
+  tOut+=truncated.flush()
+  assert.equal(tOut.includes('fixture-secret'),false,'flush must redact truncated trailing secret prefix')
+  assert.equal(tOut.includes('<truncated>'),true)
+})
+
+test('createAttestedRelay client PID attestation and createAttestedTcpRelay enforce OS peer identity',{timeout:15000},async t=>{
+  let seenAuth=null
+  const target=await listen(t,(req,res)=>{seenAuth=req.headers.authorization??null;res.end('ok')})
+  const relay=await createAttestedRelay(target.origin,process.pid,{
+    requireClientAttestation:true,
+    injectAuthorization:'Basic real-secret',
+  })
+  t.after(()=>relay.close())
+  // Without allowing process.pid, the relay rejects the client with 403 before touching upstream.
+  const denied=await fixtureFetch(new URL('/denied',relay.origin),{signal:AbortSignal.timeout(5000)})
+  assert.equal(denied.status,403)
+  assert.equal(seenAuth,null)
+  relay.allowClientPid(process.pid)
+  const allowed=await fixtureFetch(new URL('/allowed',relay.origin),{signal:AbortSignal.timeout(5000)})
+  assert.equal(allowed.status,200)
+  assert.equal(await allowed.text(),'ok')
+  assert.equal(seenAuth,'Basic real-secret')
+  const tcpRelay=await createAttestedTcpRelay(target.server.address().port,process.pid)
+  t.after(()=>tcpRelay.close())
+  const viaTcp=await fixtureFetch(`http://127.0.0.1:${tcpRelay.port}/tcp`,{signal:AbortSignal.timeout(5000)})
+  assert.equal(viaTcp.status,200)
+  assert.equal(await viaTcp.text(),'ok')
 })
 
 test('acquireProfileLock enforces cross-process SQLite exclusion and live daemon_pid blocking',{timeout:20000},async t=>{
@@ -326,7 +356,8 @@ test('acquireProfileLock enforces cross-process SQLite exclusion and live daemon
   await new Promise((resolve,reject)=>{survivor.once('spawn',resolve);survivor.once('error',reject)})
   const crashed=await runChild(0,survivor.pid)
   assert.equal(crashed.code,0)
-  // Another process must be blocked by SQLite daemon_pid even after the launcher exited.
+  // Remove running.lock JSON so the test proves SQLite daemon_pid alone blocks takeover.
+  await unlink(lockPath)
   const blocked=await runChild(0)
   assert.equal(blocked.code,42,'live daemon_pid in SQLite must block takeover after launcher crash')
   survivor.kill('SIGKILL')

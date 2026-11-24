@@ -20,18 +20,21 @@ export async function withTui(cli, daemon, session, run) {
   const args = isWin
     ? ["--inherit-console", cli, "--server", serverUrl, "--session", session, daemon.project]
     : [posixSupervisor, "--same-group", cli, "--server", serverUrl, "--session", session, daemon.project]
+  const tuiPid = Promise.withResolvers()
+  let tuiPidSettled = false
+  const settleTuiPid = value => { if (!tuiPidSettled) { tuiPidSettled = true; tuiPid.resolve(value) } }
+  daemon.allowRelayClient?.(tuiPid.promise)
   const p = pty.spawn(command, args, {
     name: "xterm-256color", cols, rows, cwd: daemon.project,
     env: withoutFixtureProxy({
       ...daemon.env,
-      OPENCODE_SERVER_PASSWORD: daemon.relayPassword ?? daemon.password,
       CODENOMAD_FIXTURE_PARENT_PID: String(process.pid),
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
     }),
   })
   let didExit = false
-  const exited = new Promise(resolve => p.onExit(info => { didExit = true; resolve(info) }))
+  const exited = new Promise(resolve => p.onExit(info => { didExit = true; settleTuiPid(null); resolve(info) }))
   const stopTui = async () => {
     if (didExit) return
     if (process.platform === "win32") {
@@ -49,8 +52,13 @@ export async function withTui(cli, daemon, session, run) {
   const untrack = registerFixtureChild(() => stopTui())
   void exited.finally(untrack)
   const term = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 0 })
-  let screen = "", seen, waiter
+  let screen = "", seen, waiter, pidProbe = ""
   const data = p.onData(raw => {
+    if (!tuiPidSettled) {
+      pidProbe = (pidProbe + String(raw).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")).slice(-4096)
+      const match = /CODENOMAD_FIXTURE_PID=(\d+)/.exec(pidProbe)
+      if (match) settleTuiPid(Number(match[1]))
+    }
     term.write(raw, () => {
       const b = term.buffer.active
       screen = ""

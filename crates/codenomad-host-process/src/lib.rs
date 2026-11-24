@@ -53,7 +53,7 @@ pub fn local_clock(seconds: i64) -> Option<(i32, i32, i32, i32, i32)> {
 
 pub struct OwnedProcess {
     #[cfg(unix)]
-    child: Child,
+    child: Option<Child>,
     #[cfg(windows)]
     child: windows::Process,
     family: Family,
@@ -114,7 +114,10 @@ impl OwnedProcess {
         Family::prepare(command);
         let mut child = command.spawn()?;
         match Family::adopt(&mut child) {
-            Ok(family) => Ok(Self { child, family }),
+            Ok(family) => Ok(Self {
+                child: Some(child),
+                family,
+            }),
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -123,19 +126,37 @@ impl OwnedProcess {
         }
     }
     pub fn id(&self) -> u32 {
-        self.child.id()
+        #[cfg(unix)]
+        return self.child.as_ref().map_or(0, Child::id);
+        #[cfg(windows)]
+        return self.child.id();
     }
     pub fn take_stdin(&mut self) -> Option<impl io::Write + Send + use<>> {
-        self.child.stdin.take()
+        #[cfg(unix)]
+        return self.child.as_mut()?.stdin.take();
+        #[cfg(windows)]
+        return self.child.stdin.take();
     }
     pub fn take_stdout(&mut self) -> Option<impl io::Read + Send + use<>> {
-        self.child.stdout.take()
+        #[cfg(unix)]
+        return self.child.as_mut()?.stdout.take();
+        #[cfg(windows)]
+        return self.child.stdout.take();
     }
     pub fn take_stderr(&mut self) -> Option<impl io::Read + Send + use<>> {
-        self.child.stderr.take()
+        #[cfg(unix)]
+        return self.child.as_mut()?.stderr.take();
+        #[cfg(windows)]
+        return self.child.stderr.take();
     }
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        self.child.try_wait()
+        #[cfg(unix)]
+        return match self.child.as_mut() {
+            Some(child) => child.try_wait(),
+            None => Ok(None),
+        };
+        #[cfg(windows)]
+        return self.child.try_wait();
     }
     /// Includes remaining owned descendants after the direct child has exited.
     pub fn family_is_empty(&self) -> io::Result<bool> {
@@ -158,10 +179,19 @@ impl Drop for OwnedProcess {
         }
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
         while std::time::Instant::now() < deadline {
-            if matches!(self.child.try_wait(), Ok(Some(_)) | Err(_)) {
+            if matches!(self.try_wait(), Ok(Some(_)) | Err(_)) {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        #[cfg(unix)]
+        if let Some(mut child) = self.child.take() {
+            // Transfer reaping off the host thread so a slow-exiting child never remains a zombie.
+            let _ = std::thread::Builder::new()
+                .name("codenomad-reaper".into())
+                .spawn(move || {
+                    let _ = child.wait();
+                });
         }
     }
 }

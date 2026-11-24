@@ -20,7 +20,8 @@ assert.deepEqual(current.permissions,[{action:'*',resource:'*',effect:'deny'}])
 const env={...live.runtimeEnv,CNRS_FIXTURE_URL:live.relay,CNRS_FIXTURE_PASSWORD:live.relayPassword,
   CNRS_SERVER_PASSWORD:'rune-live-private-backend',CNRS_FIXTURE_STDIN_STOP:'1'}
 const server=launchFixture(serverBinary,
-  [path.dirname(project),path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[live.password,live.relayPassword,'rune-live-private-backend']})
+  [path.dirname(project),path.join(profile,'backend.json'),'0','existing-opencode'],{cwd:profile,env,shutdown:'shutdown\n',redact:[live.password,'rune-live-private-backend']})
+live.allowRelayClient(server.pid())
 let child
 let observed,stream,observeTask,rustFetch,rustRelay
 try {

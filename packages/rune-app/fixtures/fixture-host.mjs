@@ -103,7 +103,7 @@ export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000,redact=
   }}
 }
 
-export const rustOrigin=stdout=>stdout.match(/^http:\/\/127\.0\.0\.1:\d+(?=\r?$)/m)?.[0]
+export const rustOrigin=stdout=>stdout.match(/^(http:\/\/127\.0\.0\.1:\d+)\r?\n/m)?.[1]
 
 export async function signInFixture(origin,password,targetPid){
   assert.match(origin,/^http:\/\/127\.0\.0\.1:\d+$/)

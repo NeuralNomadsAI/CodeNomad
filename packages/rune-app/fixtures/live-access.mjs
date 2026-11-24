@@ -12,7 +12,7 @@ import {promisify} from 'node:util'
 import {privatePath, runDirectory} from '../../../scripts/perf/isolation.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {launchFixture,onFixtureSignal} from './fixture-host.mjs'
-import {createAttestedFetch,createAttestedRelay,fixtureFetch,fixtureTarget,isLocalAbsolutePath,redactSecrets,resolveLocalExecutable,verifyLoopbackListenerOwner} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedRelay,fixtureFetch,fixtureTarget,isLocalAbsolutePath,redactSecrets,RELAY_PLACEHOLDER_PASSWORD,resolveLocalExecutable,verifyLoopbackListenerOwner} from '../../../scripts/native-fixture-http.mjs'
 export {fixtureTarget,isLocalAbsolutePath,verifyLoopbackListenerOwner}
 
 export const args=process.argv.slice(2).filter((arg,i,all)=>arg!=='--opencode'&&all[i-1]!=='--opencode')
@@ -252,8 +252,8 @@ function leaseBusyError(lease){
   return Object.assign(Error(`EEXIST: profile lease already held: ${lease}`),{code:'EEXIST'})
 }
 
-function withLeaseDb(dbPath,run){
-  const db=new DatabaseSync(dbPath,{timeout:0})
+function withLeaseDb(dbPath,run,timeout=0){
+  const db=new DatabaseSync(dbPath,{timeout})
   try{
     db.exec('PRAGMA journal_mode=DELETE; BEGIN EXCLUSIVE;')
     try{
@@ -269,6 +269,12 @@ function withLeaseDb(dbPath,run){
   }finally{db.close()}
 }
 
+async function assertSafeLeaseTarget(filePath){
+  let info
+  try{info=await lstat(filePath)}catch(error){if(error.code==='ENOENT')return;throw error}
+  assert(!info.isSymbolicLink()&&info.isFile()&&info.nlink===1,`Unsafe fixture lease path: ${filePath}`)
+}
+
 export async function acquireProfileLock(lease){
   const key=path.resolve(lease)
   if(heldLeases.has(key))throw leaseBusyError(lease)
@@ -281,6 +287,8 @@ export async function acquireProfileLock(lease){
   let trackedSupervisorPid=null
   let trackedDaemonPid=null
   try{
+    await assertSafeLeaseTarget(lease)
+    await assertSafeLeaseTarget(dbPath)
     let existingFile=null
     let existingStat=null
     try{
@@ -312,7 +320,7 @@ export async function acquireProfileLock(lease){
         }
       }
       db.prepare('INSERT OR REPLACE INTO lease (id, pid, supervisor_pid, daemon_pid, nonce, updated_at) VALUES (1, ?, NULL, NULL, ?, ?)').run(process.pid,nonce,now)
-    })
+    },0)
     dbCommitted=true
     await writeFile(lease,JSON.stringify({pid:process.pid,supervisorPid:null,daemonPid:null,nonce})+'\n')
     acquired=true
@@ -321,7 +329,7 @@ export async function acquireProfileLock(lease){
       try{
         withLeaseDb(dbPath,db=>{
           db.prepare('DELETE FROM lease WHERE id = 1 AND nonce = ?').run(nonce)
-        })
+        },5000)
       }catch{}
     }
     heldLeases.delete(key)
@@ -335,7 +343,7 @@ export async function acquireProfileLock(lease){
       trackedSupervisorPid=supervisorPid
       withLeaseDb(dbPath,db=>{
         db.prepare('UPDATE lease SET supervisor_pid = ?, updated_at = ? WHERE id = 1 AND nonce = ?').run(supervisorPid,Date.now(),nonce)
-      })
+      },5000)
       await writeFile(lease,JSON.stringify({pid:process.pid,supervisorPid:trackedSupervisorPid,daemonPid:trackedDaemonPid,nonce})+'\n').catch(()=>{})
     },
     async setDaemonPid(daemonPid){
@@ -343,21 +351,18 @@ export async function acquireProfileLock(lease){
       trackedDaemonPid=daemonPid
       withLeaseDb(dbPath,db=>{
         db.prepare('UPDATE lease SET daemon_pid = ?, updated_at = ? WHERE id = 1 AND nonce = ?').run(daemonPid,Date.now(),nonce)
-      })
+      },5000)
       await writeFile(lease,JSON.stringify({pid:process.pid,supervisorPid:trackedSupervisorPid,daemonPid:trackedDaemonPid,nonce})+'\n').catch(()=>{})
     },
     async close(){
       if(closed)return
-      closed=true
-      try{
-        if(acquired){
-          withLeaseDb(dbPath,db=>{
-            db.prepare('DELETE FROM lease WHERE id = 1 AND nonce = ?').run(nonce)
-          })
-        }
-      }finally{
-        heldLeases.delete(key)
+      if(acquired){
+        withLeaseDb(dbPath,db=>{
+          db.prepare('DELETE FROM lease WHERE id = 1 AND nonce = ?').run(nonce)
+        },5000)
       }
+      closed=true
+      heldLeases.delete(key)
     },
   }
 }
@@ -382,21 +387,28 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
   if(fresh){
     await mkdir(path.dirname(profile),{recursive:true});await mkdir(profile)
     await writeFile(path.join(profile,marker),'Rune private OpenCode v1\n',{flag:'wx'})
+  }else{
+    const profileStat=await lstat(profile)
+    assert(profileStat.isDirectory()&&!profileStat.isSymbolicLink(),'Resumed fixture profile must be a real directory')
+    await validatePrivateTree(profile)
   }
   const lease=path.join(profile,'running.lock')
   const lock=await acquireProfileLock(lease)
-  let daemon,model,plugin,password,executable,config,runtime,attested,nativeRelay,aborted=false,executionFinished=false
+  let daemon,model,plugin,password,executable,config,runtime,attested,nativeRelay,trackedSupervisorPid=null,trackedDaemonPid=null,aborted=false,executionFinished=false
   const checkActive=()=>{if(aborted)throw Error('Private fixture interrupted during startup')}
   const owned=name=>{
     const expected=path.join(profile,name)
     assert.equal(privatePath(expected),expected,'A private fixture path was redirected')
     return expected
   }
+  const isDaemonStopped=()=>
+    (!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null)
+    &&(trackedSupervisorPid==null||!pidAlive(trackedSupervisorPid))
+    &&(trackedDaemonPid==null||!pidAlive(trackedDaemonPid))
   let cleaned,leaseRemoved=false
   const tryRemoveLease=async(force=false)=>{
     if(leaseRemoved)return
-    const daemonStopped=!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null
-    if((executionFinished||force)&&daemonStopped){
+    if((executionFinished||force)&&isDaemonStopped()){
       leaseRemoved=true
       try{await unlink(lease)}catch(error){if(error.code!=='ENOENT')throw error}
     }
@@ -413,8 +425,13 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
         model?.closeAllConnections()
         if(model)await new Promise(resolve=>model.close(resolve))
         try{
-          const log=daemon?.output()??''
-          try{await writeFile(path.join(profile,'daemon.log'),redactSecrets(log,[password]))}
+          try{
+            if(daemon){
+              const daemonLogPath=owned('daemon.log')
+              await assertSafeLeaseTarget(daemonLogPath)
+              await writeFile(daemonLogPath,redactSecrets(daemon.output(),[password]))
+            }
+          }
           finally{
             try{if(executable)await removeExecutable(executable)}
             finally{
@@ -423,8 +440,7 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
             }
           }
         } finally {
-          const daemonStopped=!daemon?.child.pid||daemon.child.exitCode!==null||daemon.child.signalCode!==null
-          if(daemonStopped){
+          if(isDaemonStopped()){
             await lock.close()
             await tryRemoveLease()
           }
@@ -479,23 +495,22 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
       if(pruning){const {preparePruning}=await import('../../../scripts/perf/pruning.mjs');plugin=await preparePruning(profile,config,runtimeEnv)}
       checkActive()
       daemon=launchFixture(executable,['serve','--hostname','127.0.0.1','--port','0','--print-logs'],{cwd:project,env,redact:[password]})
-      if(daemon.child.pid)await lock.setSupervisorPid(daemon.child.pid)
-      const origin=await daemon.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1])
+      if(daemon.child.pid){trackedSupervisorPid=daemon.child.pid;await lock.setSupervisorPid(daemon.child.pid)}
+      const origin=await daemon.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m)?.[1])
       checkActive()
       const pid=await Promise.race([
         daemon.pid(),
         delay(10000,undefined,{ref:false}).then(()=>{throw Error('Timed out reading fixture child PID')}),
       ])
+      trackedDaemonPid=pid
       await lock.setDaemonPid(pid)
       attested=await attestNative(origin,daemon.child,authorization,fixtureFetch,pid)
-      const relayPassword=randomUUID()
-      const relayAuthorization=`Basic ${Buffer.from(`opencode:${relayPassword}`).toString('base64')}`
-      nativeRelay=await createAttestedRelay(origin,pid,{expectAuthorization:relayAuthorization,injectAuthorization:authorization})
+      nativeRelay=await createAttestedRelay(origin,pid,{requireClientAttestation:true,injectAuthorization:authorization})
       const {read,send}=attested
       checkActive()
       await plugin?.activate({project,url:origin,authorization,send},()=>assert.equal(daemon.child.exitCode,null))
       checkActive()
-      return await run({profile,project,origin:`${origin}/`,relay:nativeRelay.origin,relayPassword,password,read,send,env,runtimeEnv,pid})
+      return await run({profile,project,origin:`${origin}/`,relay:nativeRelay.origin,relayPassword:RELAY_PLACEHOLDER_PASSWORD,allowRelayClient:nativeRelay.allowClientPid,password,read,send,env,runtimeEnv,pid})
     } finally {
       executionFinished=true
       await cleanup()

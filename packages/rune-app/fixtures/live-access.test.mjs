@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import {link,mkdtemp,mkdir,readFile,realpath,rm,symlink,writeFile} from 'node:fs/promises'
+import {existsSync} from 'node:fs'
+import {link,mkdtemp,mkdir,readFile,realpath,rm,rmdir,symlink,writeFile} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {test} from 'node:test'
@@ -83,6 +84,7 @@ test('resumed profiles must own every file, including a config nested below CLI_
 })
 
 test('privateManifest rejects missing sessionID and seedRealHistory omits runtime secrets',async()=>{
+  const hadRunDir=existsSync(runDirectory)
   await mkdir(runDirectory,{recursive:true})
   const profile=await mkdtemp(path.join(runDirectory,'trial-rune-live-unit-'))
   try{
@@ -114,7 +116,10 @@ test('privateManifest rejects missing sessionID and seedRealHistory omits runtim
     assert.equal(persisted.pluginActive,true)
     const validated=await privateManifest(path.join(profile,'seeded.json'))
     assert.equal(validated.sessionID,persisted.sessionID)
-  }finally{await rm(profile,{recursive:true,force:true})}
+  }finally{
+    await rm(profile,{recursive:true,force:true})
+    if(!hadRunDir)await rmdir(runDirectory).catch(()=>{})
+  }
 })
 
 test('resumed profiles reject unattested config files, Git hooks and parent package resolution',{timeout:15000},async()=>{

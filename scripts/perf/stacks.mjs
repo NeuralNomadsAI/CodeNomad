@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { fixtureChildPid, spawnFixtureChild, stopFixtureChild } from "../native-fixture-guards.mjs"
-import { createAttestedFetch, redactSecrets, resolveLocalExecutable, withoutFixtureProxy } from "../native-fixture-http.mjs"
+import { createAttestedFetch, createStreamRedactor, redactSecrets, resolveLocalExecutable, withoutFixtureProxy } from "../native-fixture-http.mjs"
 import { registerFixtureChild } from "../../packages/rune-app/fixtures/fixture-host.mjs"
 import { privatePath } from "./isolation.mjs"
 import { sleep } from "./lib.mjs"
@@ -30,21 +30,31 @@ export async function withBackend(daemon, tree, root, followLongReplies, run, {r
       ? {CNRS_FIXTURE_URL: daemon.relayUrl ?? daemon.url, CNRS_FIXTURE_PASSWORD: daemon.relayPassword ?? daemon.password, CNRS_SERVER_PASSWORD: password, CNRS_FIXTURE_STDIN_STOP: "1"}
       : {OPENCODE_SERVER_PASSWORD: daemon.password}),
     CODENOMAD_REMOTE_CONTROL: "disabled" }), cwd: root, detached: group, windowsHide: true, stdio: [resolvedRust ? "pipe" : "ignore", "pipe", "pipe"] })
+  if (resolvedRust) daemon.allowRelayClient?.(fixtureChildPid(child))
   const startedBy = new Date()
-  const stopped = new Promise(resolve => child.once("close", resolve))
+  const outRedactor = createStreamRedactor([password, daemon.password])
+  const errRedactor = createStreamRedactor([password, daemon.password])
+  let output = "", spawnError, completed = false, backendFetch
+  const appendOutput = chunk => { if (chunk) output = (output + chunk).slice(-500_000) }
+  const currentOutput = () => output + outRedactor.peek() + errRedactor.peek()
+  const stopped = new Promise(resolve => child.once("close", code => {
+    appendOutput(outRedactor.flush())
+    appendOutput(errRedactor.flush())
+    resolve(code)
+  }))
   const untrack = registerFixtureChild(() => stopFixtureChild(child, stopped, 1_000, 2_000, { group, startedBy }))
   void stopped.finally(untrack)
-  let output = "", spawnError, completed = false, backendFetch
-  const sanitize = text => redactSecrets(text, [password, daemon.password, daemon.relayPassword])
+  const sanitize = text => redactSecrets(text, [password, daemon.password])
   child.on("error", error => { spawnError = error })
-  for (const pipe of [child.stdout, child.stderr]) pipe.on("data", bytes => { output = (output + bytes).slice(-500_000) })
+  child.stdout.on("data", bytes => appendOutput(outRedactor.push(bytes)))
+  child.stderr.on("data", bytes => appendOutput(errRedactor.push(bytes)))
   try {
     const deadline = Date.now() + 60_000
     let origin
-    while (!(origin = output.match(resolvedRust ? /^(http:\/\/127\.0\.0\.1:\d+)\r?$/m : /Local Connection URL\s*:\s*(http:\/\/127\.0\.0\.1:\d+)/)?.[1])) {
+    while (!(origin = currentOutput().match(resolvedRust ? /^(http:\/\/127\.0\.0\.1:\d+)\r?\n/m : /Local Connection URL\s*:\s*(http:\/\/127\.0\.0\.1:\d+)\r?\n/)?.[1])) {
       if (spawnError) throw spawnError
       if (child.exitCode !== null || child.signalCode !== null || Date.now() >= deadline) {
-        throw Error(`CodeNomad failed to start (${child.exitCode ?? child.signalCode ?? "timeout"}): ${sanitize(output.slice(-3000))}`)
+        throw Error(`CodeNomad failed to start (${child.exitCode ?? child.signalCode ?? "timeout"}): ${sanitize(currentOutput().slice(-3000))}`)
       }
       await sleep(50)
     }

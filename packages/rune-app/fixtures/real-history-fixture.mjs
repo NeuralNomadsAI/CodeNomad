@@ -21,7 +21,8 @@ const env={...native.runtimeEnv,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSW
   CNRS_SERVER_PASSWORD:'real-history-private-backend',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:manifest.profile}
 const server=launchFixture(serverBinary,
   [path.dirname(manifest.project),path.join(manifest.profile,'real-backend.json'),'0','existing-opencode'],
-  {cwd:manifest.profile,env,shutdown:'shutdown\n',redact:[native.password,native.relayPassword,'real-history-private-backend']})
+  {cwd:manifest.profile,env,shutdown:'shutdown\n',redact:[native.password,'real-history-private-backend']})
+native.allowRelayClient(server.pid())
 let child,proxy,observer,stream,watchTask,proxyError=null,rustFetch,rustAgent
 let result=1
 try{

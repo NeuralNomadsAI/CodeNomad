@@ -23,7 +23,7 @@ import {launchFixture,rustOrigin,signInFixture} from './fixture-host.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
 const mobileSessionSearch=process.argv.includes('--mobile-session-search')
 assert(!mobileSessionSearch||webMobile&&!webAndroid,'Session search isolation requires the Chromium mobile smoke')
-if(process.platform==='win32'&&webMobile&&!process.argv.includes('--owned-mobile-worker')){
+if(webMobile&&!process.argv.includes('--owned-mobile-worker')){
   const worker=spawnFixtureChild(process.execPath,[...process.execArgv,...process.argv.slice(1),'--owned-mobile-worker'],{windowsHide:true,stdio:'inherit'})
   const closed=new Promise(resolve=>worker.once('close',resolve))
   const stop=()=>void stopFixtureChild(worker,closed).catch(error=>console.error(error.message))

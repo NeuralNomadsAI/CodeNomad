@@ -47,7 +47,7 @@ function hidesFixtureThinking(body){
 
 export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,missions=false,mobilePreferences=false,markerFilters=false,allowOwned}){
   const workspaces=new Set(),claims=new Map(),owners=new Map()
-  const historyKeys=new Set([project,path.join(path.dirname(project),'linked')])
+  const historyKeys=new Set(project?[project,path.join(path.dirname(project),'linked')]:[])
   const claim=body=>typeof body?.requestId==='string'&&body.requestId.length>0&&body.requestId.length<=128&&body.requestId.trim()===body.requestId
   const creation=body=>body?.path===project&&claim(body)&&Object.keys(body).every(key=>['path','requestId'].includes(key))
   return {workspaces,

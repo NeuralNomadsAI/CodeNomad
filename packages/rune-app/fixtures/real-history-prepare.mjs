@@ -1,14 +1,12 @@
 // Prepare a session in the disposable daemon used by the history probes.
 import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
-import {execFile} from 'node:child_process'
-import {promisify} from 'node:util'
 import path from 'node:path'
-import {args,withNative} from './live-access.mjs'
+import {args,ensurePrivateGitRepo,withNative} from './live-access.mjs'
 
 export async function prepareRealHistory(native) {
   const {profile,project}=native
-  await promisify(execFile)('git',['-c','core.hooksPath=','init','--quiet','--template=',project],{windowsHide:true,timeout:30000,env:{...native.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig'),GIT_TEMPLATE_DIR:''}})
+  await ensurePrivateGitRepo(project,profile,native.runtimeEnv)
   const query=new URLSearchParams({'location[directory]':project})
   await native.read(`/api/location?${query}`)
   const catalogue=await native.read(`/api/plugin?${query}`)

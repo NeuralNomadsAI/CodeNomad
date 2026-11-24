@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {execFile} from 'node:child_process'
 import {createHash} from 'node:crypto'
-import {existsSync,readFileSync,realpathSync} from 'node:fs'
+import {existsSync,lstatSync,readFileSync,realpathSync} from 'node:fs'
 import {readdir,readFile,readlink} from 'node:fs/promises'
 import {Agent as HttpAgent,createServer,request as httpRequest} from 'node:http'
 import {createRequire} from 'node:module'
@@ -33,11 +33,16 @@ function sameLockfile(dirA,dirB){
   return hash(lockA)===hash(lockB)
 }
 
+export const RELAY_PLACEHOLDER_PASSWORD='attested-loopback-relay'
+
 export function worktreeDependencyRoots(nodeModulesDir=worktreeNodeModules){
   assert(existsSync(nodeModulesDir),'Worktree node_modules is required; parent checkout dependencies are forbidden')
   const rootReal=realpathSync(nodeModulesDir)
   const inWorktree=isWithin(repoRootReal,rootReal)
+  // Worktrees created under .codenomad/worktrees may mount node_modules as a read-only junction/symlink
+  // to a lockfile-identical sibling worktree (never the parent checkout).
   const inLockMatchedSibling=nodeModulesDir===worktreeNodeModules
+    && lstatSync(worktreeNodeModules).isSymbolicLink()
     && path.basename(worktreesDir)==='worktrees'
     && path.basename(path.dirname(worktreesDir))==='.codenomad'
     && path.basename(rootReal)==='node_modules'
@@ -51,10 +56,15 @@ export function worktreeDependencyRoots(nodeModulesDir=worktreeNodeModules){
 export function assertWorktreeModuleResolution(specifier,fromFile,nodeModulesDir=worktreeNodeModules){
   const {nodeModulesReal}=worktreeDependencyRoots(nodeModulesDir)
   const scopedRequire=createRequire(fromFile)
-  const resolvedPath=realpathSync(scopedRequire.resolve(specifier))
-  assert(isWithin(nodeModulesReal,resolvedPath)&&resolvedPath!==nodeModulesReal,
-    `Dependency ${specifier} from ${fromFile} resolved outside worktree node_modules: ${resolvedPath}`)
-  return pathToFileURL(resolvedPath).href
+  const cjsResolved=realpathSync(scopedRequire.resolve(specifier))
+  assert(isWithin(nodeModulesReal,cjsResolved)&&cjsResolved!==nodeModulesReal,
+    `Dependency ${specifier} (CJS) from ${fromFile} resolved outside worktree node_modules: ${cjsResolved}`)
+  const esmUrl=import.meta.resolve(specifier,pathToFileURL(fromFile).href)
+  assert(esmUrl.startsWith('file://'),`Dependency ${specifier} (ESM) from ${fromFile} must resolve to a local file`)
+  const esmResolved=realpathSync(fileURLToPath(esmUrl))
+  assert(isWithin(nodeModulesReal,esmResolved)&&esmResolved!==nodeModulesReal,
+    `Dependency ${specifier} (ESM) from ${fromFile} resolved outside worktree node_modules: ${esmResolved}`)
+  return pathToFileURL(esmResolved).href
 }
 
 export function resolveWorktreePackage(specifier,nodeModulesDir=worktreeNodeModules){
@@ -98,12 +108,12 @@ export function redactSecrets(text,secrets=[]){
   return value
 }
 
-function safePrefixLength(text,tokens){
+function safePrefixLength(text,tokens,minLen=1){
   if(!text||!tokens.length)return text.length
   let unsafeSuffix=0
   for(const token of tokens){
     const maxCheck=Math.min(text.length,token.length-1)
-    for(let len=maxCheck;len>unsafeSuffix;len--){
+    for(let len=maxCheck;len>=minLen&&len>unsafeSuffix;len--){
       if(text.endsWith(token.slice(0,len))){
         unsafeSuffix=len
         break
@@ -134,13 +144,14 @@ export function createStreamRedactor(secrets=[]){
       return combined.slice(0,cut)
     },
     flush(){
-      const remaining=redactSecrets(tail,secrets)
+      const redacted=redactSecrets(tail,secrets)
       tail=''
-      return remaining
+      const safeLen=safePrefixLength(redacted,tokens,4)
+      return safeLen<redacted.length?`${redacted.slice(0,safeLen)}<truncated>`:redacted
     },
     peek(){
       const redacted=redactSecrets(tail,secrets)
-      return redacted.slice(0,safePrefixLength(redacted,tokens))
+      return redacted.slice(0,safePrefixLength(redacted,tokens,1))
     },
   }
 }
@@ -430,15 +441,94 @@ export function createAttestedHttpAgent(port,pid,verifyOwner=verifyLoopbackListe
   return agent
 }
 
+export async function createAttestedTcpRelay(port,pid,verifyOwner=verifyLoopbackListenerOwner,verifyPeer=verifyLoopbackConnectionPeer){
+  assert(Number.isSafeInteger(port)&&port>0&&port<=65535,'Invalid loopback port for TCP relay')
+  assert(Number.isSafeInteger(pid)&&pid>0,'Invalid fixture PID for TCP relay')
+  let closed=false
+  const sockets=new Set()
+  const server=net.createServer(client=>{
+    if(closed){client.destroy();return}
+    client.pause()
+    sockets.add(client)
+    client.once('close',()=>sockets.delete(client))
+    let upstream
+    verifyOwner(port,pid).then(()=>{
+      if(closed||client.destroyed){client.destroy();return}
+      upstream=net.createConnection({host:'127.0.0.1',port})
+      sockets.add(upstream)
+      upstream.once('close',()=>sockets.delete(upstream))
+      upstream.once('error',()=>{client.destroy();upstream.destroy()})
+      client.once('error',()=>{upstream?.destroy();client.destroy()})
+      upstream.once('connect',()=>{
+        if(closed||client.destroyed||upstream.destroyed||!upstream.localPort){
+          client.destroy();upstream.destroy();return
+        }
+        attestPeerWithRetry(upstream.localPort,port,pid,verifyPeer,()=>closed||client.destroyed||upstream.destroyed).then(()=>{
+          if(closed||client.destroyed||upstream.destroyed){client.destroy();upstream.destroy();return}
+          client.pipe(upstream)
+          upstream.pipe(client)
+          client.resume()
+        },()=>{client.destroy();upstream.destroy()})
+      })
+    },()=>{client.destroy()})
+  })
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
+  return {
+    port:server.address().port,
+    close:()=>{
+      closed=true
+      for(const s of [...sockets]){try{s.destroy()}catch{}}
+      sockets.clear()
+      return new Promise(resolve=>server.close(resolve))
+    },
+  }
+}
+
 export async function createAttestedRelay(targetOrigin,pid,options){
   const opts=typeof options==='function'?{onRequest:options}:(options??{})
-  const {onRequest,expectAuthorization,injectAuthorization}=opts
+  const {onRequest,expectAuthorization,injectAuthorization,requireClientAttestation=false}=opts
   const base=new URL(targetOrigin)
   assert(base.protocol==='http:'&&base.hostname==='127.0.0.1'&&base.port,'Expected a loopback HTTP target for attested relay')
   const agent=createAttestedHttpAgent(Number(base.port),pid)
-  const server=createServer((req,res)=>{
+  const allowedClientPids=new Set()
+  const pendingClientPids=new Set()
+  const attestedClientSockets=new WeakSet()
+  const allowClientPid=pidOrPromise=>{
+    const task=Promise.resolve(pidOrPromise).then(resolved=>{
+      if(Number.isSafeInteger(resolved)&&resolved>0)allowedClientPids.add(resolved)
+    },()=>{})
+    pendingClientPids.add(task)
+    void task.finally(()=>pendingClientPids.delete(task))
+    return task
+  }
+  let relayPort=0
+  const verifyClientSocket=async socket=>{
+    if(attestedClientSockets.has(socket))return true
+    if(pendingClientPids.size>0)await Promise.allSettled([...pendingClientPids])
+    const remotePort=socket.remotePort
+    if(!remotePort||!allowedClientPids.size)return false
+    for(const clientPid of [...allowedClientPids]){
+      try{
+        await attestPeerWithRetry(relayPort,remotePort,clientPid,verifyLoopbackConnectionPeer,()=>socket.destroyed)
+        attestedClientSockets.add(socket)
+        return true
+      }catch{}
+    }
+    return false
+  }
+  const server=createServer(async(req,res)=>{
     const url=relayTarget(req,res,base.origin)
     if(!url)return
+    if(requireClientAttestation){
+      req.pause()
+      const ok=await verifyClientSocket(req.socket)
+      if(res.destroyed||req.destroyed)return
+      if(!ok){
+        res.writeHead(403)
+        res.end('Attested client PID required')
+        return
+      }
+    }
     if(expectAuthorization&&req.headers.authorization!==expectAuthorization){
       res.writeHead(401)
       res.end('Attested relay token required')
@@ -465,8 +555,10 @@ export async function createAttestedRelay(targetOrigin,pid,options){
     req.pipe(upstream)
   })
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
+  relayPort=server.address().port
   return {
-    origin:`http://127.0.0.1:${server.address().port}`,
+    origin:`http://127.0.0.1:${relayPort}`,
+    allowClientPid,
     close:()=>{agent.destroy();server.closeAllConnections();return new Promise(resolve=>server.close(resolve))},
   }
 }

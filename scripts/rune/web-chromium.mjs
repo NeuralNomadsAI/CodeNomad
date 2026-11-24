@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {readFile} from 'node:fs/promises'
 import path from 'node:path'
-import {originGuardProxy,resolveWorktreePackage} from '../native-fixture-http.mjs'
+import {createAttestedTcpRelay,originGuardProxy,resolveWorktreePackage} from '../native-fixture-http.mjs'
 import {launchFixture,until} from '../../packages/rune-app/fixtures/fixture-host.mjs'
 
 const {chromium}=await import(resolveWorktreePackage('playwright'))
@@ -20,7 +20,7 @@ export async function launchOwnedChromium({executablePath=chromium.executablePat
     '--proxy-bypass-list=<-loopback>',
     '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
   ]:[]
-  let host,browser,pid
+  let host,browser,pid,cdpRelay
   try{
     host=launchFixture(executablePath,[
       ...graphics,...networkArgs,'--headless=new','--disable-background-networking','--disable-component-update',
@@ -36,10 +36,12 @@ export async function launchOwnedChromium({executablePath=chromium.executablePat
       }catch{}
       return null
     },'DevToolsActivePort matching announced port',15000)
-    browser=await chromium.connectOverCDP(`ws://127.0.0.1:${port}${id}`,{timeout:15000})
     pid=await host.pid()
+    cdpRelay=await createAttestedTcpRelay(Number(port),pid)
+    browser=await chromium.connectOverCDP(`ws://127.0.0.1:${cdpRelay.port}${id}`,{timeout:15000})
   }catch(error){
     try{await browser?.close()}catch{}
+    try{await cdpRelay?.close()}catch{}
     try{await host?.stop()}finally{await guard?.close()}
     throw error
   }
@@ -47,7 +49,9 @@ export async function launchOwnedChromium({executablePath=chromium.executablePat
     try{
       try{
         await host.stop(async()=>{const session=await browser.newBrowserCDPSession();await session.send('Browser.close')})
-      }finally{await browser.close()}
+      }finally{
+        try{await browser.close()}finally{await cdpRelay?.close()}
+      }
     }finally{await guard?.close()}
     return host.child.exitCode===0
   }}

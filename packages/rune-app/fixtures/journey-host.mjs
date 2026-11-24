@@ -5,7 +5,7 @@ import {mkdir, mkdtemp, realpath, rm, writeFile} from 'node:fs/promises'
 import {createServer} from 'node:http'
 import path from 'node:path'
 import {privatePath, runDirectory} from '../../../scripts/perf/isolation.mjs'
-import {createAttestedRelay,fixtureFetch,redactSecrets} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedRelay,fixtureFetch,redactSecrets,RELAY_PLACEHOLDER_PASSWORD} from '../../../scripts/native-fixture-http.mjs'
 import {assertNoSystemOpenCodeConfig, attestNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {launchFixture,onFixtureSignal,rustOrigin} from './fixture-host.mjs'
@@ -59,9 +59,9 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
   await mkdir(runDirectory,{recursive:true})
   const profile=await mkdtemp(privatePath(path.join(runDirectory,'trial-rune-journey-')))
   const project=path.join(profile,'project')
-  const privatePassword=randomUUID(), relayPassword=randomUUID(), password=randomUUID(), marker=randomUUID()
+  const privatePassword=randomUUID(), password=randomUUID(), marker=randomUUID()
   let native, server, pruning, model, attested, nativeRelay
-  const secrets=[privatePassword,relayPassword,password,marker]
+  const secrets=[privatePassword,password,marker]
   try{
     await mkdir(project)
     const env=await privateEnvironment(profile)
@@ -100,7 +100,7 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
       npm_config_cache:path.join(profile,'npm-cache'),
       ...ownedNative,
     },ownedNative)})
-    const daemon=await native.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1])
+    const daemon=await native.ready(stdout=>stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?\n/m)?.[1])
     assert.notEqual(new URL(daemon).port,'4096','Default OpenCode port is forbidden')
     const authorization=`Basic ${Buffer.from(`opencode:${privatePassword}`).toString('base64')}`
     const pid=await native.pid()
@@ -114,14 +114,14 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
     attested=await attestNative(daemon,native.child,authorization,fixtureFetch,pid)
     report.openCodePID=pid
     await pruning.activate({project,url:daemon,authorization,send:attested.send},()=>assert.equal(native.child.exitCode,null))
-    const relayAuthorization=`Basic ${Buffer.from(`opencode:${relayPassword}`).toString('base64')}`
-    nativeRelay=await createAttestedRelay(daemon,pid,{expectAuthorization:relayAuthorization,injectAuthorization:authorization})
-    const ownedRust={CNRS_FIXTURE_PASSWORD:relayPassword,CNRS_SERVER_PASSWORD:password}
+    nativeRelay=await createAttestedRelay(daemon,pid,{requireClientAttestation:true,injectAuthorization:authorization})
+    const ownedRust={CNRS_FIXTURE_PASSWORD:RELAY_PLACEHOLDER_PASSWORD,CNRS_SERVER_PASSWORD:password}
     try{
       server=launchFixture(rust,[profile,path.join(profile,'backend.json'),'0','fixture-only'],{cwd:profile,shutdown:'shutdown\n',redact:secrets,env:assertPrivateChild({
         ...env,...ownedRust,CNRS_FIXTURE_URL:nativeRelay.origin,CNRS_FIXTURE_STDIN_STOP:'1',
         ...(mode==='web'?{CNRS_FIXTURE_UI_DIR:web}:{}),
       },ownedRust)})
+      nativeRelay.allowClientPid(server.pid())
       const origin=await server.ready(rustOrigin)
       const rustPid=await server.pid()
       await run({profile,project,origin,rustPid,password,env})
