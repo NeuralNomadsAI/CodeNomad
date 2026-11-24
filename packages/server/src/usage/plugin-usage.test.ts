@@ -167,6 +167,20 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     assert.equal(older, null)
   }
 
+  // Invalid UTF-8 in a 200 body is rejected instead of being published with replacement characters.
+  const invalidUtf8 = Buffer.concat([
+    Buffer.from('{"output":{"providerName":"Sample'), Buffer.from([0xff]),
+    Buffer.from('","configured":true,"ok":true,"windows":{"5h":{"usedPercent":1}}}}'),
+  ])
+  const decoded = await readPluginProviderUsage(
+    makeConnection(async () => new Response(invalidUtf8, { headers: { "content-type": "application/json" } })),
+    { providerId: "agy-agent", location: { directory: "/repo" } },
+    new AbortController().signal,
+  )
+  assert.equal(decoded?.supported, true)
+  assert.equal(decoded?.ok, false)
+  assert.deepEqual(decoded?.windows, {})
+
   // Non-route failures (plain-text 500, untagged 400 {}, LocationNotFoundError 404, 502, fetch rejection) propagate -> 503.
   for (const [label, responder] of [
     ["plain-text 500", async () => new Response("Internal Server Error", { status: 500 })],
@@ -179,6 +193,7 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     ["whitespace-only JSON 404", async () => new Response("   ", { status: 404, headers: { "content-type": "application/json" } })],
     ["SessionNotFoundError 404", async () => Response.json({ _tag: "SessionNotFoundError", message: "gone" }, { status: 404 })],
     ["incomplete RpcInternalError 500", async () => Response.json({ _tag: "RpcInternalError" }, { status: 500 })],
+    ["unknown RpcInternalError type 500", async () => Response.json({ _tag: "RpcInternalError", type: "quota.unknown", message: "x" }, { status: 500 })],
     ["contract error 500", async () => Response.json({ _tag: "OpenCodeContractError", status: 500 }, { status: 500 })],
     ["bad gateway 502", async () => new Response("Bad Gateway", { status: 502 })],
     ["transport error", async () => { throw new TypeError("fetch failed") }],
@@ -332,25 +347,29 @@ test("readPluginProviderUsage preserves HTTP status, bounds ignored signals and 
     ),
   )
 
-  // Through the real createRuntimeTransport adapter, 404 problem+json LocationNotFoundError fails closed
-  // and a plain-text 502 with a never-settling body cancel rejects immediately rather than timing out.
+  // Through the real createRuntimeTransport adapter, non-`application/json` error bodies stay replaced by a
+  // generic contract error (a 404 then reads as an absent RPC; the route re-verifies ownership before any
+  // fallback), and a plain-text 502 with a never-settling body cancel rejects immediately rather than timing out.
   {
     const endpoint = { url: "http://127.0.0.1:4321" }
     const transportProblem = createRuntimeTransport(endpoint, async (input) => {
       const target = new URL(input instanceof Request ? input.url : String(input))
       if (target.pathname === "/api/info") return Response.json({ version: "2.4.1" })
-      return new Response(JSON.stringify({ _tag: "LocationNotFoundError", message: "gone" }), {
-        status: 404,
+      return new Response(JSON.stringify({ _tag: "LocationNotFoundError", detail: "private diagnostic" }), {
+        status: target.pathname === "/api/location" ? 502 : 404,
         headers: { "content-type": "application/problem+json" },
       })
     })
-    await assert.rejects(
-      readPluginProviderUsage(
+    const proxied = await transportProblem.fetch(new URL("/api/location", endpoint.url))
+    assert.equal(proxied.status, 502)
+    assert.equal((await proxied.json())._tag, "OpenCodeContractError")
+    assert.equal(
+      await readPluginProviderUsage(
         { endpoint, fetch: transportProblem.fetch },
         { providerId: "agy-agent", location: { directory: "/repo" } },
         new AbortController().signal,
       ),
-      Error,
+      null,
     )
 
     const transport502 = createRuntimeTransport(endpoint, async (input) => {

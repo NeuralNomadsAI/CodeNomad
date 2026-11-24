@@ -85,7 +85,7 @@ const registeredRpcErrorSchema = z.object({
 
 const registeredRpcInternalErrorSchema = z.object({
   _tag: z.literal("RpcInternalError"),
-  type: z.string().min(1),
+  type: z.enum(["rpc.internal", "rpc.invalid_output"]),
   message: z.string(),
   data: z.unknown().optional(),
 }).strict()
@@ -228,8 +228,7 @@ async function readBoundedJson(response: Response, signal: AbortSignal): Promise
   } finally {
     reader.releaseLock()
   }
-  const text = Buffer.concat(chunks, total).toString("utf8")
-  try { return { ok: true, value: JSON.parse(text) } }
+  try { return { ok: true, value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, total))) } }
   catch { return { ok: false, reason: "malformed" } }
 }
 

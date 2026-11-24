@@ -56,8 +56,7 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     }
     let response = await fetcher(url, options)
     if (mediaResponseProcessor) response = await mediaResponseProcessor(response, signal)
-    const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? ""
-    if (!response.ok && mediaType !== "application/json" && !mediaType.endsWith("+json")) {
+    if (!response.ok && !response.headers.get("content-type")?.includes("application/json")) {
       void response.body?.cancel().catch(() => {})
       return Response.json({
         _tag: "OpenCodeContractError", message: `OpenCode ${identity?.version ?? profile}: ${request.method} ${url.pathname} returned HTTP ${response.status}`,
