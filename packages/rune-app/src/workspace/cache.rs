@@ -74,8 +74,24 @@ impl Cache {
         self.is_detached() && (self.git.owner.is_some() || self.files.is_some())
     }
 
+    pub(super) fn collect_detached_workspace_ids(
+        &self,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        if !self.is_detached() {
+            return;
+        }
+        if let Some(git) = &self.git.owner {
+            out.insert(git.workspace_id().to_owned());
+        }
+        if let Some(files) = &self.files {
+            out.insert(files.workspace_id().to_owned());
+        }
+    }
+
     pub(super) fn reconcile_detached_online(
         &mut self,
+        targets: &std::collections::HashSet<String>,
         live: &std::collections::HashSet<&str>,
     ) -> bool {
         if !self.is_detached() {
@@ -83,20 +99,22 @@ impl Cache {
         }
         let mut changed = false;
         if let Some(git) = &mut self.git.owner {
-            if live.contains(git.workspace_id()) {
-                git.online(true);
-            } else {
-                let workspace_id = git.workspace_id().to_owned();
+            let id = git.workspace_id();
+            if targets.contains(id) && !live.contains(id) {
+                let workspace_id = id.to_owned();
                 git.event(&codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+            } else {
+                git.online(true);
             }
             changed = true;
         }
         if let Some(files) = &mut self.files {
-            if live.contains(files.workspace_id()) {
-                files.online(true);
-            } else {
-                let workspace_id = files.workspace_id().to_owned();
+            let id = files.workspace_id();
+            if targets.contains(id) && !live.contains(id) {
+                let workspace_id = id.to_owned();
                 files.event(codenomad_client::transport::WorkspaceEvent::Stopped { workspace_id });
+            } else {
+                files.online(true);
             }
             changed = true;
         }

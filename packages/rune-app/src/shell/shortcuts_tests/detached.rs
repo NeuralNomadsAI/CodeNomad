@@ -137,6 +137,7 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
             let mut allow_second = Some(allow_second_rx);
             let mut drop_second = Some(drop_second_rx);
             let mut sse_count = 0usize;
+            let mut workspaces_count = 0usize;
             while let Ok((mut stream, _)) = listener.accept().await {
                 let header = read_http_head(&mut stream).await;
                 if header.starts_with("GET /api/events") {
@@ -179,15 +180,25 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
                         let _ = stream.flush().await;
                     }
                 } else if header.starts_with("GET /api/workspaces ") {
-                    let body =
-                        b"[{\"id\":\"header-windows\",\"location\":{\"directory\":\"/repo\"}}]";
-                    let resp = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                        body.len()
-                    );
-                    let _ = stream.write_all(resp.as_bytes()).await;
-                    let _ = stream.write_all(body).await;
-                    let _ = stream.shutdown().await;
+                    workspaces_count += 1;
+                    if workspaces_count == 1 {
+                        let _ = stream
+                            .write_all(
+                                b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            )
+                            .await;
+                        let _ = stream.shutdown().await;
+                    } else {
+                        let body =
+                            b"[{\"id\":\"header-windows\",\"location\":{\"directory\":\"/repo\"}}]";
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = stream.write_all(resp.as_bytes()).await;
+                        let _ = stream.write_all(body).await;
+                        let _ = stream.shutdown().await;
+                    }
                 } else {
                     let body = b"{\"data\":[]}";
                     let resp = format!(
@@ -344,11 +355,21 @@ fn detached_files_and_git_invalidate_after_stream_reconnect() {
         files.activate(true);
         assert!(!files.tree.take_refresh().is_empty());
 
-        // Reconciling with a workspace omitted from the server stops detached Files/Git instead of bringing them online.
+        // Reconciling with an older target set that omits a newly opened workspace does not stop it,
+        // whereas omitting a targeted workspace stops detached Files/Git.
         let empty = std::collections::HashSet::new();
+        let other_targets: std::collections::HashSet<String> = ["other-workspace".into()].into();
         assert!(crate::workspace::reconcile_detached_online(
             &mut rt.state,
-            &empty
+            &other_targets,
+            &empty,
+        ));
+        assert!(!rt.state.files.as_ref().unwrap().stopped);
+        let targets: std::collections::HashSet<String> = ["header-windows".into()].into();
+        assert!(crate::workspace::reconcile_detached_online(
+            &mut rt.state,
+            &targets,
+            &empty,
         ));
         assert!(rt.state.files.as_ref().unwrap().stopped);
 

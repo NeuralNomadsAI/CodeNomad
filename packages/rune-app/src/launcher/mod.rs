@@ -67,7 +67,8 @@ pub struct Launcher {
     pub creation_uncertain_linked: bool,
     pub openings: crate::workspace::opening::Openings,
     result: Option<Receiver<Result<Reply>>>,
-    detached_reconcile: Option<(u64, Receiver<Option<Vec<Project>>>)>,
+    detached_reconcile: Option<(u64, HashSet<String>, Receiver<Vec<Project>>)>,
+    rebind_after_send: Option<String>,
     selection_ticket: Option<u64>,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
@@ -176,6 +177,7 @@ impl Launcher {
             openings: Default::default(),
             result: None,
             detached_reconcile: None,
+            rebind_after_send: None,
             selection_ticket: None,
             boot,
             host: None,
@@ -269,17 +271,46 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 start_reconcile = Some(generation);
             }
         }
-        if let Some(reconcile_generation) = start_reconcile
-            && let Some(l) = s.screen.launcher_mut()
-            && let Some(backend) = l.connection.clone()
-        {
-            let (out, input) = bounded(1);
-            l.detached_reconcile = Some((reconcile_generation, input));
-            let wake = l.wake.clone();
-            crate::platform::spawn(async move {
-                let _ = out.send(backend.projects().await.ok()).await;
-                wake();
-            });
+        if let Some(reconcile_generation) = start_reconcile {
+            let targets = crate::workspace::detached_workspace_ids(s);
+            if !targets.is_empty()
+                && let Some(l) = s.screen.launcher_mut()
+                && !l.authentication_required
+                && let Some(backend) = l.connection.clone()
+            {
+                let (out, input) = bounded(1);
+                l.detached_reconcile = Some((reconcile_generation, targets, input));
+                let wake = l.wake.clone();
+                crate::platform::spawn(async move {
+                    let mut delay_ms = 1_000u64;
+                    loop {
+                        match codenomad_client::runtime::until_closed(&out, backend.projects())
+                            .await
+                        {
+                            None => return,
+                            Some(Ok(projects)) => {
+                                let _ = out.send(projects).await;
+                                wake();
+                                return;
+                            }
+                            Some(Err(_)) => {
+                                if codenomad_client::runtime::until_closed(
+                                    &out,
+                                    crate::platform::sleep(std::time::Duration::from_millis(
+                                        delay_ms,
+                                    )),
+                                )
+                                .await
+                                .is_none()
+                                {
+                                    return;
+                                }
+                                delay_ms = (delay_ms * 2).min(10_000);
+                            }
+                        }
+                    }
+                });
+            }
         }
         if !other.is_empty() {
             relayed |= crate::workspace::deliver_detached_events(s, &other);
@@ -288,19 +319,48 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             relayed |= crate::settings::authentication_required(s, &expired);
         }
     }
+    if s.screen.launcher().is_some_and(|l| {
+        l.detached_reconcile.is_some()
+            && (l.authentication_required || !crate::workspace::has_detached_panels(s))
+    }) && let Some(l) = s.screen.launcher_mut()
+    {
+        l.detached_reconcile = None;
+    }
     let reconciled = s.screen.launcher_mut().and_then(|l| {
-        let (reconcile_generation, rx) = l.detached_reconcile.as_ref()?;
-        let result = rx.try_recv().ok()?;
+        let (reconcile_generation, _, rx) = l.detached_reconcile.as_ref()?;
+        let projects = rx.try_recv().ok()?;
         let current = l.workspace_stream_generation;
         let reconcile_generation = *reconcile_generation;
-        l.detached_reconcile = None;
-        (reconcile_generation == current)
-            .then_some(result)
-            .flatten()
+        let targets = l.detached_reconcile.take().map(|(_, targets, _)| targets)?;
+        (reconcile_generation == current).then_some((targets, projects))
     });
-    if let Some(projects) = reconciled {
+    if let Some((targets, projects)) = reconciled {
         let live: HashSet<&str> = projects.iter().map(|p| p.id.as_str()).collect();
-        relayed |= crate::workspace::reconcile_detached_online(s, &live);
+        relayed |= crate::workspace::reconcile_detached_online(s, &targets, &live);
+    }
+    let deferred_rebind = s.screen.launcher().and_then(|l| {
+        let id = l.rebind_after_send.as_ref()?;
+        if l.authentication_required
+            || s.screen.is_launcher()
+            || crate::workspace::active_session(s) != Some(id.as_str())
+        {
+            return Some(None);
+        }
+        if !s.composer.pending() && !l.pending && !s.status_permissions.writing() {
+            return Some(Some(id.clone()));
+        }
+        None
+    });
+    if let Some(action) = deferred_rebind {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.rebind_after_send = None;
+        }
+        if let Some(id) = action {
+            s.incoming = None;
+            s.phase = Phase::Failed;
+            choose_destination(s, id, None, tx);
+            relayed = true;
+        }
     }
     let blocked = !can_change_session(s)
         || s.screen
@@ -333,6 +393,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.catalogue_watch = None;
             l.workspace_stream_generation = 0;
             l.detached_reconcile = None;
+            l.rebind_after_send = None;
             l.connection = Some(b);
             l.server_id = Some(server_id);
             l.projects = projects;
@@ -344,16 +405,24 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if reauthenticated {
                 crate::workspace::renew_connection(s);
                 if let Some(id) = selected {
-                    if s.composer.pending() {
-                        crate::composer::settle_pending(
-                            s,
-                            codenomad_client::transport::PromptOutcome::Unconfirmed,
-                        );
+                    if s.composer.pending() && s.incoming.is_some() {
+                        if let Some(l) = s.screen.launcher_mut() {
+                            l.rebind_after_send = Some(id);
+                        }
+                        s.phase = Phase::Failed;
+                        s.show_chat();
+                    } else {
+                        if s.composer.pending() {
+                            crate::composer::settle_pending(
+                                s,
+                                codenomad_client::transport::PromptOutcome::Unconfirmed,
+                            );
+                        }
+                        s.incoming = None;
+                        s.phase = Phase::Failed;
+                        s.show_chat();
+                        choose_destination(s, id, None, tx);
                     }
-                    s.incoming = None;
-                    s.phase = Phase::Failed;
-                    s.show_chat();
-                    choose_destination(s, id, None, tx);
                 } else {
                     crate::git::project_opened(s);
                     crate::workspace::restore_files_mode(s);
@@ -373,14 +442,19 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.folder = TextEdit::new(&project.path);
             set_project(l, Some(project.clone()));
             l.linked = Default::default();
+            l.creation_uncertain = false;
+            l.creation_uncertain_linked = false;
+            l.rebind_after_send = None;
             connection::watch_catalogue(l);
             l.apply_listing(rows, false, None);
             l.search = TextEdit::new("");
+            let auth_required = l.authentication_required;
             crate::workspace::opened(s, &project);
             match restored {
-                Restored::Bound(backend, title, slug) => {
+                Restored::Bound(backend, title, slug) if !auth_required => {
                     bind(s, backend, title, None, &slug, tx);
                 }
+                Restored::Bound(_, _, _) => {}
                 Restored::Missing(id) => {
                     retire_session(s, &id);
                     crate::git::project_opened(s);
@@ -401,7 +475,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 if l.next.is_none() {
                     l.check_omitted_visits();
                 }
-            } else if cfg!(target_os = "windows") {
+            } else if cfg!(target_os = "windows")
+                || l.creation_uncertain_linked && cfg!(not(target_arch = "wasm32"))
+            {
                 l.apply_directory_refresh(rows, selected.as_deref());
                 crate::workspace::schedule_catalogue(s);
             } else {
@@ -514,15 +590,19 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         #[cfg(target_arch = "wasm32")]
         Ok(Reply::Reopened(opening, backend, title, slug)) => {
-            reopen::apply(s, opening, backend, title, &slug)
+            if !l.authentication_required {
+                reopen::apply(s, opening, backend, title, &slug)
+            }
         }
         Ok(Reply::Placed(backend, title, slug, confirmed, attempted)) => {
             if selected.as_deref() == Some(backend.session.as_str()) {
+                let auth_required = l.authentication_required;
                 l.error = (!confirmed).then_some("sessionList.worktreeMove.error");
                 crate::workspace::schedule_catalogue(s);
-                if attempted
-                    || crate::git::placement(s) != Some(slug.as_str())
-                    || s.phase == Phase::Failed
+                if !auth_required
+                    && (attempted
+                        || crate::git::placement(s) != Some(slug.as_str())
+                        || s.phase == Phase::Failed)
                 {
                     bind(s, backend, title, None, &slug, tx);
                 }
@@ -534,9 +614,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             crate::workspace::schedule_catalogue(s);
         }
         Ok(Reply::PlacementReconciled(backend, title, slug, family)) => {
+            let auth_required = l.authentication_required;
             crate::git::release_placement(s, &backend.base, &family);
             crate::workspace::schedule_catalogue(s);
-            if crate::git::placement(s) != Some(slug.as_str()) || s.phase == Phase::Failed {
+            if !auth_required
+                && (crate::git::placement(s) != Some(slug.as_str()) || s.phase == Phase::Failed)
+            {
                 bind(s, backend, title, None, &slug, tx);
             }
         }

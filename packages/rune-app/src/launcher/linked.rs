@@ -150,6 +150,10 @@ pub(super) fn poll(s: &mut State) -> bool {
         Ok((pages, complete)) => {
             l.linked.pages = Some(pages);
             l.linked.failed = !complete;
+            if complete {
+                l.creation_uncertain = false;
+                l.creation_uncertain_linked = false;
+            }
         }
         Err(_) => l.linked.failed = true,
     }

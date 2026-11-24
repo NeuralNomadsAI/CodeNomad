@@ -43,6 +43,7 @@ pub(in crate::settings) fn active(id: &str) -> bool {
             | "session-new"
             | "session-prev"
             | "session-next"
+            | "session-search"
             | "close-session"
             | FILE_SAVE
     ) || id == "browse-folder" && crate::platform::folder_picker_available()
@@ -65,7 +66,23 @@ fn is_valid_rule(rule: &Value) -> bool {
         return false;
     };
     if !obj.get("key").and_then(Value::as_str).is_some_and(|key| {
-        !key.chars().any(char::is_control) && (key == " " || !key.trim().is_empty())
+        let lower = key.to_lowercase();
+        !key.is_empty()
+            && key.len() <= 40
+            && !key.chars().any(char::is_control)
+            && (key == " " || !key.trim().is_empty())
+            && !matches!(
+                lower.as_str(),
+                "control"
+                    | "ctrl"
+                    | "meta"
+                    | "shift"
+                    | "alt"
+                    | "altgraph"
+                    | "unidentified"
+                    | "dead"
+                    | "process"
+            )
     }) {
         return false;
     }
@@ -200,7 +217,7 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
     assert_eq!(keys.len(), 75);
     assert_eq!(
         keys.iter().filter(|id| active(id)).count(),
-        18 + usize::from(crate::platform::folder_picker_available())
+        19 + usize::from(crate::platform::folder_picker_available())
     );
     for def in defs {
         for defaults in def["defaults"].as_array().unwrap() {
@@ -236,10 +253,24 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
             .is_empty()
     );
     assert!(
-        !rows
-            .iter()
+        rows.iter()
             .find(|row| row.id == "session-search")
             .unwrap()
             .active
     );
+    assert!(
+        !rows
+            .iter()
+            .find(|row| row.id == "session-tab-1")
+            .unwrap()
+            .active
+    );
+
+    let mut invalid = Preferences::default();
+    invalid.fixture_shortcuts(serde_json::json!({
+        "close-session": [{"key": "Dead"}],
+        "new-instance": [],
+    }));
+    assert!(!resolve(&invalid, "close-session").is_empty());
+    assert!(resolve(&invalid, "new-instance").is_empty());
 }

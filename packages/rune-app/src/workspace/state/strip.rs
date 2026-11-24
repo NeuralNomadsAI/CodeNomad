@@ -47,7 +47,7 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
     let (new_shadowed, close_shadowed): (&[&str], &[&str]) =
         if crate::platform::folder_picker_available() && crate::shell::launcher_replaces_project(s)
         {
-            (&["browse-folder"], &["browse-folder", "new-instance"])
+            (&[], &["browse-folder", "new-instance"])
         } else if !crate::shell::launcher_replaces_project(s)
             && s.screen.launcher().is_some_and(|l| l.project.is_some())
         {

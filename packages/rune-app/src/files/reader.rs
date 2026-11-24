@@ -195,7 +195,7 @@ impl Drop for Reader {
     }
 }
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 impl Reader {
     pub fn scene(&mut self, preview: Result<Preview>) {
         self.cancel();

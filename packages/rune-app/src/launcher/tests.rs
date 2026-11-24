@@ -436,10 +436,10 @@ fn reauthentication_settles_pending_prompt_and_rebinds_active_session() {
         crate::workspace::bound(&mut s, &bound);
         let (_cmd_tx, _cmd_rx) = bounded::<crate::transport::Command>(1);
         s.commands = Some(_cmd_tx);
-        let (_ev_tx, ev_rx) = bounded::<crate::transport::Event>(1);
+        let (ev_tx, ev_rx) = bounded::<crate::transport::Event>(4);
         s.incoming = Some(ev_rx);
         s.draft = TextEdit::new("unsent prompt");
-        let (send_tx, _send_rx) = bounded(1);
+        let (send_tx, send_rx) = bounded(1);
         s.commands = Some(send_tx);
         s.phase = Phase::Ready;
         let mut rt =
@@ -449,6 +449,10 @@ fn reauthentication_settles_pending_prompt_and_rebinds_active_session() {
         });
         assert!(rt.state.composer.pending());
         assert!(rt.state.draft.text.is_empty());
+        let attempted = match send_rx.try_recv().expect("sent prompt command") {
+            crate::transport::Command::Prompt(prompt) => prompt.id.expect("prompt id"),
+            other => panic!("unexpected command: {other:?}"),
+        };
 
         rt.state.phase = Phase::Reconnecting;
         let (out, input) = bounded(1);
@@ -467,10 +471,44 @@ fn reauthentication_settles_pending_prompt_and_rebinds_active_session() {
         rt.update(|s, tx| {
             assert!(poll(s, tx));
         });
+        // Re-authentication keeps the old receiver alive until the in-flight prompt settles.
+        assert!(rt.state.composer.pending());
+        assert!(!rt.state.screen.is_launcher());
+        assert!(!rt.state.screen.launcher().unwrap().pending);
+
+        // When the old transport reports an explicit 401 rejection, the draft restores without locking sends
+        // and the launcher automatically rebinds the session on the renewed connection.
+        assert!(
+            ev_tx
+                .try_send(crate::transport::Event::PromptAcknowledged {
+                    attempted,
+                    outcome: crate::transport::PromptOutcome::Rejected,
+                })
+                .is_ok()
+        );
+        assert!(
+            ev_tx
+                .try_send(crate::transport::Event::AuthenticationRequired(
+                    codenomad_client::transport::Authentication {
+                        backend: bound,
+                        confirmed: true,
+                    },
+                ))
+                .is_ok()
+        );
+        rt.update(|s, tx| {
+            assert!(crate::chat::events::poll_chat(s, 32));
+            assert!(poll(s, tx));
+        });
         assert!(!rt.state.composer.pending());
         assert_eq!(rt.state.draft.text, "unsent prompt");
         assert!(!rt.state.screen.is_launcher());
+        assert!(!rt.state.screen.launcher().unwrap().authentication_required);
         assert!(rt.state.screen.launcher().unwrap().pending);
+        // Once the rebind completes (Ready + not pending), sending is unlocked (not stuck in Unconfirmed).
+        rt.state.screen.launcher_mut().unwrap().pending = false;
+        rt.state.phase = Phase::Ready;
+        assert!(crate::composer::can_send(&rt.state));
     });
 }
 
@@ -505,12 +543,42 @@ fn failed_session_selection_reply_cannot_hide_authentication_required() {
     assert!(
         out.try_send(Ok(Reply::Selected(
             vec![],
-            Some((bound, "Retry".into(), None, Instant::now(), "root".into())),
+            Some((
+                bound.clone(),
+                "Retry".into(),
+                None,
+                Instant::now(),
+                "root".into()
+            )),
             None,
         )))
         .is_ok()
     );
     let mut rt = rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+    rt.update(|s, tx| {
+        assert!(poll(s, tx));
+    });
+    assert!(rt.state.screen.is_launcher());
+    assert!(rt.state.screen.launcher().unwrap().authentication_required);
+
+    // Late Reply::Placed while authentication_required must also stay on the login screen.
+    let (placed_out, placed_in) = bounded(1);
+    {
+        let l = rt.state.screen.launcher_mut().unwrap();
+        l.result = Some(placed_in);
+        l.pending = true;
+    }
+    assert!(
+        placed_out
+            .try_send(Ok(Reply::Placed(
+                bound,
+                "Moved".into(),
+                "wt-1".into(),
+                true,
+                true,
+            )))
+            .is_ok()
+    );
     rt.update(|s, tx| {
         assert!(poll(s, tx));
     });
@@ -528,6 +596,16 @@ fn linked_creation_uncertain_survives_root_refresh_until_authoritative_inventory
             rows: vec![row("root")],
             next: None,
         },
+        None,
+    );
+    assert!(launcher.creation_uncertain);
+    assert!(launcher.creation_uncertain_linked);
+    launcher.apply_listing(
+        Sessions {
+            rows: vec![row("root")],
+            next: None,
+        },
+        false,
         None,
     );
     assert!(launcher.creation_uncertain);

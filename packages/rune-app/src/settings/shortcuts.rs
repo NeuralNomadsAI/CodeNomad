@@ -271,7 +271,11 @@ fn logical_command(
             |key| physical_us_char(key) == Some(typed),
         )
     {
-        return base.filter(|c| !c.is_ascii()).unwrap_or(typed);
+        return base
+            .filter(|c| {
+                !c.is_ascii() && !(event.mods.shift && c.to_uppercase().all(|u| u.is_ascii()))
+            })
+            .unwrap_or(typed);
     }
     typed
 }
@@ -567,4 +571,56 @@ fn bracket_and_digit_slots_match_physical_and_shifted_logical_keys() {
         None,
         None
     ));
+}
+
+#[cfg(test)]
+#[test]
+fn turkish_shifted_i_does_not_substitute_dotless_base() {
+    let shift_ctrl = rune::Mods {
+        ctrl: !cfg!(target_os = "macos"),
+        cmd: true,
+        logo: cfg!(target_os = "macos"),
+        shift: true,
+        alt: false,
+    };
+    let ctrl = rune::Mods {
+        shift: false,
+        ..shift_ctrl
+    };
+    let mut prefs = Preferences::default();
+    prefs.fixture_shortcuts(serde_json::json!({
+        "instance-next": [{"key": "i", "mod": true, "shift": true}],
+        "instance-prev": [{"key": "ı", "mod": true, "shift": true}],
+        "session-next": [{"key": "ı", "mod": true}],
+    }));
+    let next = catalog::resolve(&prefs, "instance-next");
+    let prev = catalog::resolve(&prefs, "instance-prev");
+    let session_next = catalog::resolve(&prefs, "session-next");
+    let shifted_event = KeyEvent {
+        key: Key::Command('i'),
+        mods: shift_ctrl,
+    };
+    assert!(matches(
+        next[0],
+        &shifted_event,
+        Some(PhysicalKeyCode::KeyI),
+        Some('ı'),
+    ));
+    assert!(!matches(
+        prev[0],
+        &shifted_event,
+        Some(PhysicalKeyCode::KeyI),
+        Some('ı'),
+    ));
+    if cfg!(not(target_os = "macos")) {
+        assert!(matches(
+            session_next[0],
+            &KeyEvent {
+                key: Key::Command('i'),
+                mods: ctrl,
+            },
+            Some(PhysicalKeyCode::KeyI),
+            Some('ı'),
+        ));
+    }
 }

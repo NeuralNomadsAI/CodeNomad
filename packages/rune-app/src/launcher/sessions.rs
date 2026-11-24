@@ -82,8 +82,9 @@ impl Launcher {
             );
         } else {
             self.consumed_cursors.clear();
-            self.creation_uncertain = false;
-            self.creation_uncertain_linked = false;
+            if !self.creation_uncertain_linked {
+                self.creation_uncertain = false;
+            }
             if let Some(old) = self
                 .sessions
                 .iter()

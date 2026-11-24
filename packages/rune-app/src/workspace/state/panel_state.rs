@@ -337,8 +337,32 @@ pub(crate) fn has_detached_panels(s: &State) -> bool {
         })
 }
 
+pub(crate) fn detached_workspace_ids(s: &State) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    if s.screen.is_launcher() && s.incoming.is_none() {
+        if let Some(git) = &s.git.owner {
+            ids.insert(git.workspace_id().to_owned());
+        }
+        if let Some(files) = &s.files {
+            ids.insert(files.workspace_id().to_owned());
+        }
+    }
+    if let Some(ui) = &s.workspace {
+        for (index, entry) in ui.entries.iter().enumerate() {
+            if index == ui.active {
+                continue;
+            }
+            if let Some(cache) = entry.cache.as_ref() {
+                cache.collect_detached_workspace_ids(&mut ids);
+            }
+        }
+    }
+    ids
+}
+
 pub(crate) fn reconcile_detached_online(
     s: &mut State,
+    targets: &std::collections::HashSet<String>,
     live: &std::collections::HashSet<&str>,
 ) -> bool {
     let mut changed = false;
@@ -349,19 +373,19 @@ pub(crate) fn reconcile_detached_online(
             .as_ref()
             .map(|git| git.workspace_id().to_owned())
         {
-            if live.contains(workspace_id.as_str()) {
-                crate::git::online(s, true);
-            } else {
+            if targets.contains(workspace_id.as_str()) && !live.contains(workspace_id.as_str()) {
                 crate::git::event(s, &WorkspaceEvent::Stopped { workspace_id });
+            } else {
+                crate::git::online(s, true);
             }
             changed = true;
         }
         if let Some(files) = &mut s.files {
             let workspace_id = files.workspace_id().to_owned();
-            if live.contains(workspace_id.as_str()) {
-                files.online(true);
-            } else {
+            if targets.contains(workspace_id.as_str()) && !live.contains(workspace_id.as_str()) {
                 files.event(WorkspaceEvent::Stopped { workspace_id });
+            } else {
+                files.online(true);
             }
             changed = true;
         }
@@ -372,7 +396,7 @@ pub(crate) fn reconcile_detached_online(
                 continue;
             }
             if let Some(cache) = entry.cache.as_mut() {
-                changed |= cache.reconcile_detached_online(live);
+                changed |= cache.reconcile_detached_online(targets, live);
             }
         }
     }
