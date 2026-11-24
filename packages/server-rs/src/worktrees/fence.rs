@@ -43,6 +43,9 @@ pub fn identity(directory: &std::path::Path) -> String {
     let s = crate::files::node_path::Style::host().normalize(&directory.to_string_lossy());
     if cfg!(windows) { s.to_lowercase() } else { s }
 }
+pub(crate) fn session(id: &str) -> String {
+    format!("session:{id}")
+}
 /// `isBlocked`: a deletion in progress overlaps `directory`.
 pub fn is_blocked(directory: &str) -> bool {
     let target = normalize(directory);
@@ -97,12 +100,29 @@ pub fn enter(directories: &[String]) -> Option<Entered> {
     Some(Entered(normalized))
 }
 
+pub(crate) fn admit(directories: &[String]) -> Result<Entered, crate::Error> {
+    enter(directories).ok_or_else(|| crate::error(axum::http::StatusCode::CONFLICT, "Worktree deletion is in progress"))
+}
+
 /// A deletion in progress; dropping it unblocks its directories.
 pub struct Blocked(Vec<String>);
 impl Drop for Blocked {
     fn drop(&mut self) {
         release(&mut STATE.lock().unwrap().blocked, &self.0);
     }
+}
+
+/// Placement changes cannot overtake an admitted session request.
+pub(crate) fn try_block(directories: &[String]) -> Option<Blocked> {
+    let keys = normalized(directories);
+    let mut state = STATE.lock().unwrap();
+    if keys.iter().any(|key| state.active.keys().chain(state.blocked.keys()).any(|p| overlap(p, key))) {
+        return None;
+    }
+    for key in &keys {
+        *state.blocked.entry(key.clone()).or_default() += 1;
+    }
+    Some(Blocked(keys))
 }
 /// `run` before its operation: block new overlapping admissions, then drain the admitted ones
 /// (the reference rejects after 30 s, unblocking again).
@@ -140,12 +160,17 @@ pub async fn block(directories: &[String]) -> Result<Blocked, &'static str> {
 
 /// `serializeMutation`: one write at a time per target key, idle keys pruned.
 pub async fn serialize(key: String) -> tokio::sync::OwnedMutexGuard<()> {
-    let queue = {
-        let mut q = QUEUES.lock().unwrap();
-        q.retain(|_, m| Arc::strong_count(m) > 1);
-        q.entry(key).or_default().clone()
-    };
-    queue.lock_owned().await
+    queue(key).lock_owned().await
+}
+
+pub(crate) fn try_serialize(key: String) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    queue(key).try_lock_owned().ok()
+}
+
+fn queue(key: String) -> Arc<tokio::sync::Mutex<()>> {
+    let mut q = QUEUES.lock().unwrap();
+    q.retain(|_, m| Arc::strong_count(m) > 1);
+    q.entry(key).or_default().clone()
 }
 /// The reference's project queue key.
 pub fn project_key(workspace: &str, directory: &str) -> String {

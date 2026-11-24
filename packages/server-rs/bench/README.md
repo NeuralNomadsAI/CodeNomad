@@ -44,6 +44,7 @@ node roundtrip.mjs $OpenCode
 | `receipt-worktree` | Anchored receipts in linked checkouts, including outside the browse root. Covers missing and file-valued project projections, refusal in an unrelated workspace, and inventory calls and elapsed time for repeated reads. |
 | `receipt-reconnect` | Reconnect snapshots across two projects. A native reply during a held snapshot retains its original source and resources; the other project recovers before the hold is released. |
 | `meta-update` | Isolated release listing: preview offers through `/api/meta`, readiness and installed-release lookup, feed changes, and stale-offer suppression. |
+| `mutation-fence` | While one native POST waits in project A, project B can stop a session, save a file and stage it. |
 | `files` | Files and Git on a rich repository (rename, gitlink, conflict, CRLF, large and binary files), mutations, refusals, watches. |
 | `contract` | Session placement header, foreign sessions, outline in a worktree, `pending-requests`. |
 | `history-bytes` | Validated history JSON across the HTTP broker with a native RPC response at exactly 24 MiB, including numbers that expand when serialized again. |
