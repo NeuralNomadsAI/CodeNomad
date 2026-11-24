@@ -362,6 +362,60 @@ fn prompt_during_stream_gap(with_reading: bool) {
             assert!(matches!(events.recv().await.unwrap(), Event::PromptAcknowledged {
                 attempted, outcome: crate::transport::PromptOutcome::Confirmed(confirmed)
             } if attempted == id && confirmed == id));
+            if !with_reading {
+                // Re-establish SSE after the prompt and verify no Reconnecting regression or replay.
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut reconnected = BufReader::new(socket);
+                let mut first = String::new();
+                assert!(reconnected.read_line(&mut first).await.unwrap() > 0);
+                assert!(first.starts_with("GET /api/events?"));
+                loop {
+                    let mut line = String::new();
+                    assert!(reconnected.read_line(&mut line).await.unwrap() > 0);
+                    if line == "\r\n" { break; }
+                }
+                reconnected.get_mut().write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.eventStatus\",\"status\":\"connected\"}\n\n"
+                ).await.unwrap();
+                loop {
+                    tokio::select! {
+                        event = events.recv() => {
+                            match event.unwrap() {
+                                Event::Reconnecting | Event::Failed => {
+                                    panic!("reopening SSE after a stream gap must not emit Reconnecting or Failed");
+                                }
+                                Event::Sync(_) => break,
+                                _ => {}
+                            }
+                        }
+                        accepted = listener.accept() => {
+                            let (socket, _) = accepted.unwrap();
+                            let mut req = BufReader::new(socket);
+                            let mut req_line = String::new();
+                            assert!(req.read_line(&mut req_line).await.unwrap() > 0);
+                            assert!(
+                                !req_line.starts_with("POST "),
+                                "reconnecting SSE must not replay the prompt: {req_line}"
+                            );
+                            loop {
+                                let mut line = String::new();
+                                assert!(req.read_line(&mut line).await.unwrap() > 0);
+                                if line == "\r\n" { break; }
+                            }
+                            let body = if req_line.contains("/message") {
+                                r#"{"data":[],"cursor":{}}"#
+                            } else if req_line.contains("/api/session/session ") {
+                                r#"{"data":{"id":"session","time":{}}}"#
+                            } else {
+                                r#"{"data":{}}"#
+                            };
+                            let ok = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+                            req.get_mut().write_all(ok.as_bytes()).await.unwrap();
+                        }
+                    }
+                }
+                drop(reconnected);
+            }
             commands.send(Command::Close).await.unwrap();
             task.await.unwrap().unwrap();
             assert!(tokio::time::timeout(Duration::from_millis(30), listener.accept()).await.is_err());

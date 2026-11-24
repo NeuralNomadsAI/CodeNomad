@@ -87,7 +87,6 @@ pub(crate) async fn run_with_reading(
             }
             Some(Input::Opened(e)) if e == epoch => {
                 opened = true;
-                stream_gap = false;
                 attempts = 0;
                 publish(&out, &wake, Event::AgentHint(true)).await;
                 reader.dirty = true;
@@ -107,12 +106,35 @@ pub(crate) async fn run_with_reading(
                 attempts = attempts.saturating_add(1);
                 retry =
                     Some(Instant::now() + Duration::from_millis(250 * (1u64 << attempts.min(4))));
-                if attempts == 7 && reading.is_none() {
-                    // Keep the same subscription owner after showing the outage.
-                    publish(&out, &wake, Event::Failed).await;
+                if !stream_gap {
+                    if attempts <= 6 {
+                        publish(&out, &wake, Event::Reconnecting).await;
+                    } else if attempts == 7 && reading.is_none() {
+                        // Keep the same subscription owner after showing the outage.
+                        publish(&out, &wake, Event::Failed).await;
+                    }
                 }
             }
             Some(Input::AuthenticationRequired(e)) if e == epoch => {
+                stream_gap = false;
+                while let Ok(queued) = rx.try_recv() {
+                    let attempted = match queued {
+                        Input::Command(Command::Prompt(prompt)) => prompt.id,
+                        Input::Command(Command::Slash { attempt, .. }) => Some(attempt),
+                        _ => None,
+                    };
+                    if let Some(attempted) = attempted {
+                        publish(
+                            &out,
+                            &wake,
+                            Event::PromptAcknowledged {
+                                attempted,
+                                outcome: PromptOutcome::Rejected,
+                            },
+                        )
+                        .await;
+                    }
+                }
                 publish(&out, &wake, Event::authentication_required(backend.clone())).await;
                 return Ok(());
             }
@@ -127,7 +149,7 @@ pub(crate) async fn run_with_reading(
             Some(Input::Available(e, v)) if e == epoch => {
                 if reading.is_some() {
                     publish(&out, &wake, Event::AgentHint(true)).await;
-                } else if v > reader.fence && !reader.historical {
+                } else if !stream_gap && v > reader.fence && !reader.historical {
                     publish(&out, &wake, Event::Reconnecting).await;
                 }
                 reader.dirty = true;
@@ -137,7 +159,7 @@ pub(crate) async fn run_with_reading(
             Some(Input::Hint(e, v)) if e == epoch && v > reader.fence => {
                 reader.dirty = true;
                 reader.quiet = Instant::now() + Duration::from_millis(100);
-                if reading.is_none() && !reader.historical {
+                if !stream_gap && reading.is_none() && !reader.historical {
                     publish(&out, &wake, Event::Reconnecting).await;
                 }
             }
@@ -545,6 +567,9 @@ pub(crate) async fn run_with_reading(
             Turn::Stop
         ) {
             return Ok(());
+        }
+        if opened && !reader.dirty {
+            stream_gap = false;
         }
     }
 }

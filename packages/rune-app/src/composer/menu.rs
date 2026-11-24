@@ -62,6 +62,8 @@ pub(crate) fn view(s: &State) -> (El, Option<El>) {
         screen::action_tx(scope, |s, tx| {
             if can_queue(s) {
                 send(s, tx, true);
+            } else {
+                super::actions::refuse_send(s, tx);
             }
         }),
     );

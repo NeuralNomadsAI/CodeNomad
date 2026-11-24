@@ -527,6 +527,17 @@ fn assert_direct_recovery(prompt_reply: Option<u16>) {
             drop(stream.take());
             let reconnect = request(&listener).await;
             assert!(reconnect.first.starts_with("GET /api/events?"));
+            wait_until(|| {
+                runtime.update(|s, _| {
+                    crate::poll_chat(s, 8);
+                });
+                matches!(
+                    runtime.state.phase,
+                    crate::Phase::StreamDisconnected { running: false }
+                )
+            })
+            .await;
+            assert!(crate::composer::can_send(&runtime.state));
             Some(reconnect)
         } else {
             None

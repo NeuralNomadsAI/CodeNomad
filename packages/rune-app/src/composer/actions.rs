@@ -86,12 +86,20 @@ pub fn can_send(s: &State) -> bool {
             .is_none_or(|a| !a.blocks_prompt(stream_disconnected))
 }
 
+pub(crate) fn refuse_send(s: &mut State, tx: &mut Tx) {
+    s.composer.send_error = true;
+    rune_theme_codenomad::layout::announce_alert(
+        tx,
+        crate::strings::t("promptInput.send.errorTitle"),
+    );
+}
+
 pub(crate) fn send_button(s: &mut State, tx: &mut Tx) {
     if can_send(s) {
         send(s, tx, false);
     } else {
         // An enabled control can deliver its click after the frame's poll revoked admission.
-        s.composer.send_error = true;
+        refuse_send(s, tx);
     }
 }
 

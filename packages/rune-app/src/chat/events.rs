@@ -111,9 +111,17 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
             }
             Event::ObservedRunning { running, version } => {
                 if let Some(reader) = &mut s.reader {
-                    reader.observed_running(running, version, s.phase == Phase::Streaming);
+                    reader.observed_running(running, version, s.phase.running());
                 }
-                if !s.phase.reconnecting()
+                if let Phase::StreamDisconnected { running: prev } = &mut s.phase {
+                    if running
+                        || s.reader
+                            .as_ref()
+                            .is_none_or(chat::reader::Reader::independent_status)
+                    {
+                        *prev = running;
+                    }
+                } else if !s.phase.reconnecting()
                     && s.phase != Phase::Failed
                     && (running
                         || s.reader
@@ -428,10 +436,12 @@ fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
                     platform::pairing::observe(s);
                 }
-                if let Event::AuthenticationRequired(auth) = event
-                    && !settings::conversation_authentication(s, auth)
-                {
-                    continue;
+                if let Event::AuthenticationRequired(auth) = event {
+                    if !settings::conversation_authentication(s, auth) {
+                        continue;
+                    }
+                    // A pending send without a prior receipt was queued before the transport exited on 401.
+                    composer::settle_pending(s, transport::PromptOutcome::Rejected);
                 }
                 s.composer.picker.set_attachments_supported(false);
                 s.status_permissions.online(false);
