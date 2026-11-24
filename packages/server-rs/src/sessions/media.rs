@@ -150,12 +150,12 @@ fn extract_media(
         return Err(missing());
     }
     let prefix = format!("data:{mime};base64,");
-    let payload = uri.get(prefix.len()..).ok_or_else(missing)?;
+    let payload = uri.strip_prefix(&prefix).ok_or_else(missing)?;
     if payload.len() % 4 != 0 {
         return Err(missing());
     }
     let bytes = STANDARD.decode(payload).map_err(|_| missing())?;
-    let mime = raster(&bytes).filter(|detected| detected.eq_ignore_ascii_case(mime)).ok_or_else(missing)?;
+    let mime = raster(&bytes).filter(|&detected| detected == mime).ok_or_else(missing)?;
     Ok((mime, bytes))
 }
 
@@ -224,7 +224,7 @@ pub(super) async fn route(
             .await
             .map_err(|_| unavailable())??
         } else {
-            let decoded = extract_media(&r.message, r.part, r.index, &r.digest, revert.as_deref(), &raw);
+            let decoded = extract_media(&r.message, r.part, r.index, r.digest, revert.as_deref(), &raw);
             drop(slot);
             decoded?
         };
@@ -393,9 +393,9 @@ mod tests {
     }
 
     #[test]
-    fn extract_media_matches_mixed_case_mime_and_uri_prefix() {
+    fn extract_media_matches_ts_exact_lowercase_mime_and_prefix() {
         let png = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 0];
-        let uri = format!("DATA:IMAGE/PNG;BASE64,{}", STANDARD.encode(png));
+        let uri = format!("data:image/png;base64,{}", STANDARD.encode(png));
         let digest = user_files::digest(uri.as_bytes());
         let raw = serde_json::to_vec(&json!({
             "data": {
@@ -403,7 +403,7 @@ mod tests {
                 "type": "assistant",
                 "content": [{
                     "type": "tool",
-                    "state": { "content": [{ "type": "file", "mime": "IMAGE/PNG", "uri": uri }] }
+                    "state": { "content": [{ "type": "file", "mime": "image/png", "uri": uri }] }
                 }]
             }
         }))
@@ -411,5 +411,20 @@ mod tests {
         let (mime, bytes) = extract_media("msg_1", 0, 0, &digest, None, &raw).unwrap();
         assert_eq!(mime, "image/png");
         assert_eq!(bytes, png);
+
+        let upper_uri = format!("DATA:IMAGE/PNG;BASE64,{}", STANDARD.encode(png));
+        let upper_digest = user_files::digest(upper_uri.as_bytes());
+        let upper_raw = serde_json::to_vec(&json!({
+            "data": {
+                "id": "msg_1",
+                "type": "assistant",
+                "content": [{
+                    "type": "tool",
+                    "state": { "content": [{ "type": "file", "mime": "IMAGE/PNG", "uri": upper_uri }] }
+                }]
+            }
+        }))
+        .unwrap();
+        assert_eq!(extract_media("msg_1", 0, 0, &upper_digest, None, &upper_raw).unwrap_err().0, Status::NOT_FOUND);
     }
 }

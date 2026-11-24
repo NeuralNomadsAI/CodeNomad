@@ -154,7 +154,7 @@ fn is_json_content_type(headers: &axum::http::HeaderMap) -> bool {
         let rest = ct.as_bytes();
         rest.len() >= 16
             && rest[..16].eq_ignore_ascii_case(b"application/json")
-            && rest.get(16).is_none_or(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+            && rest.get(16).is_none_or(|b| matches!(b, b';' | b' ' | b'\t'))
     })
 }
 
@@ -253,13 +253,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         .map(|(_, v)| v.into_owned());
     let session_path = route.strip_prefix("/api/session/").or_else(|| route.strip_prefix("/api/experimental/session/"));
     let session = session_path.and_then(|path| path.split('/').next()).filter(|v| !matches!(*v, "active" | "global"));
-    let defer_media = (head.method == Method::GET && crate::sessions::media::wants_deferred(&head.headers))
-        .then(|| {
-            session.filter(|s| {
-                route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(*s)
-            })
-        })
-        .flatten();
+    let message_list = head.method == Method::GET
+        && session.is_some_and(|s| {
+            route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
+        });
+    let defer_media =
+        (message_list && crate::sessions::media::wants_deferred(&head.headers)).then(|| session).flatten();
     let actual = if let Some(session) = session {
         Some(super::session_record_at(&app, &endpoint, session).await?)
     } else {
@@ -268,11 +267,24 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let native_directory = actual.as_ref().and_then(|r| r["location"]["directory"].as_str());
     let directory = requested.as_deref().or(native_directory).unwrap_or(opened);
     let identity_now = || {
-        let path = crate::files::paths::canonical(&app.scope, native_directory?)?;
+        let raw = native_directory?;
+        let path = if message_list {
+            let resolved = crate::worktrees::ownership::resolve_directory(raw).filter(|p| p.starts_with(&app.scope))?;
+            let mut cur = resolved.as_path();
+            loop {
+                match std::fs::symlink_metadata(cur) {
+                    Ok(meta) => break meta.is_dir().then(|| cur.to_path_buf())?,
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => cur = cur.parent()?,
+                    Err(_) => return None,
+                }
+            }
+        } else {
+            crate::files::paths::canonical(&app.scope, raw)?
+        };
         let identity = crate::files::host_identity(&path).ok()?;
         Some((path, identity))
     };
-    let allow_subfolder = send_input || defer_media.is_some();
+    let allow_subfolder = send_input || message_list;
     let initial_identity = allow_subfolder.then(&identity_now).flatten();
     let input_checkout = match &initial_identity {
         Some((physical, _)) => {

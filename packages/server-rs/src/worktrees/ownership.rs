@@ -272,56 +272,15 @@ pub async fn common_directory(dir: &Path) -> Option<PathBuf> {
     read_common_directory(dir).await.ok().flatten()
 }
 
-fn read_common_directory_fs(dir: &Path) -> Result<Option<PathBuf>, ()> {
-    let mut cur = dir;
-    loop {
-        let dot_git = cur.join(".git");
-        match std::fs::symlink_metadata(&dot_git) {
-            Ok(meta) if meta.is_dir() => return dunce::canonicalize(&dot_git).map(Some).map_err(|_| ()),
-            Ok(meta) if meta.is_file() => {
-                let text = std::fs::read_to_string(&dot_git).map_err(|_| ())?;
-                let target = text.lines().next().and_then(|l| l.strip_prefix("gitdir:")).map(str::trim).ok_or(())?;
-                if target.is_empty() {
-                    return Err(());
-                }
-                let admin = Path::new(target);
-                let admin = if admin.is_absolute() { admin.to_path_buf() } else { cur.join(admin) };
-                let admin = dunce::canonicalize(&admin).map_err(|_| ())?;
-                let common_file = admin.join("commondir");
-                return match std::fs::read_to_string(&common_file) {
-                    Ok(common) => {
-                        let rel = common.trim();
-                        if rel.is_empty() {
-                            return Err(());
-                        }
-                        let path = Path::new(rel);
-                        let path = if path.is_absolute() { path.to_path_buf() } else { admin.join(path) };
-                        dunce::canonicalize(&path).map(Some).map_err(|_| ())
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Some(admin)),
-                    Err(_) => Err(()),
-                };
-            }
-            Ok(_) => return Err(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => match cur.parent() {
-                Some(parent) => cur = parent,
-                None => return Ok(None),
-            },
-            Err(_) => return Err(()),
-        }
-    }
-}
-
 async fn read_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
-    match crate::git::run(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"], 16 * 1024).await {
-        Ok(out) if out.not_a_repository() => Ok(None),
-        Ok(out) => {
-            let out = out.ok().map_err(|_| ())?;
-            dunce::canonicalize(out.text().trim()).map(Some).map_err(|_| ())
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => read_common_directory_fs(dir),
-        Err(_) => Err(()),
+    let out = crate::git::run(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"], 16 * 1024)
+        .await
+        .map_err(|_| ())?;
+    if out.not_a_repository() {
+        return Ok(None);
     }
+    let out = out.ok().map_err(|_| ())?;
+    dunce::canonicalize(out.text().trim()).map(Some).map_err(|_| ())
 }
 async fn shares_common_directory(left: &Path, right: &Path) -> Result<bool, ()> {
     let (a, b) = tokio::join!(read_common_directory(left), read_common_directory(right));
