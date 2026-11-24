@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import {execFile} from 'node:child_process'
+import {execFile,spawn} from 'node:child_process'
 import {Agent,createServer,request} from 'node:http'
 import net from 'node:net'
 import {test} from 'node:test'
 import {promisify} from 'node:util'
-import {createAttestedFetch,fixtureFetch,relayTarget,verifyLoopbackConnectionPeer,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedHttpAgent,createAttestedRelay,fixtureFetch,relayTarget,verifyLoopbackConnectionPeer,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 import {sseReader} from '../../../scripts/perf/lib.mjs'
 
 async function listen(t,handler){
@@ -135,14 +135,22 @@ test('createAttestedFetch serves concurrent POST while an SSE stream stays open 
   }finally{await bound.close()}
 })
 
-test('verifyLoopbackConnectionPeer rejects mismatched PID and pool close aborts in-flight peer checks',{timeout:15000},async t=>{
+test('verifyLoopbackConnectionPeer rejects live foreign and dead PIDs, and attested pool/agent/relay close cleanly',{timeout:15000},async t=>{
   const srv=await listen(t,(_req,res)=>{res.writeHead(200);res.end('ok')})
   const port=Number(new URL(srv.origin).port)
   const socket=net.createConnection({host:'127.0.0.1',port})
   t.after(()=>socket.destroy())
   await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject)})
   await verifyLoopbackConnectionPeer(socket.localPort,port,process.pid)
-  await assert.rejects(verifyLoopbackConnectionPeer(socket.localPort,port,process.pid+999999),/not owned by fixture PID/)
+  // Live foreign process: exercises actual /proc/<pid>/fd mismatch on Linux as well as Windows/macOS.
+  const foreign=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true})
+  t.after(()=>{try{foreign.kill('SIGKILL')}catch{}})
+  await new Promise((resolve,reject)=>{foreign.once('spawn',resolve);foreign.once('error',reject)})
+  await assert.rejects(verifyLoopbackConnectionPeer(socket.localPort,port,foreign.pid),/not owned by fixture PID/)
+  foreign.kill('SIGKILL')
+  await new Promise(resolve=>foreign.once('close',resolve))
+  // Dead PID: Linux must also convert missing /proc/<pid>/fd into the same ownership error.
+  await assert.rejects(verifyLoopbackConnectionPeer(socket.localPort,port,foreign.pid),/not owned by fixture PID/)
 
   let peerEntered,releasePeer
   const inPeer=new Promise(resolve=>{peerEntered=resolve})
@@ -153,4 +161,27 @@ test('verifyLoopbackConnectionPeer rejects mismatched PID and pool close aborts 
   await bound.close()
   releasePeer()
   await assert.rejects(pending,error=>/closed|destroyed|Attested/i.test(error?.cause?.message??error?.message??''))
+
+  // Attested HTTP agent settles pending callbacks when destroyed mid-attestation.
+  let agentEntered,releaseAgent
+  const agentInPeer=new Promise(resolve=>{agentEntered=resolve})
+  const agentGate=new Promise(resolve=>{releaseAgent=resolve})
+  const agent=createAttestedHttpAgent(port,process.pid,async()=>{},async()=>{agentEntered();await agentGate})
+  const agentReq=new Promise((resolve,reject)=>{
+    const req=request(srv.origin,{agent},res=>{res.resume();resolve(res.statusCode)})
+    req.once('error',reject)
+    req.end()
+  })
+  await agentInPeer
+  agent.destroy()
+  releaseAgent()
+  await assert.rejects(agentReq,/closed|Attested|hang up/i)
+
+  // Attested relay forwards traffic to the owned loopback target and closes cleanly.
+  const relay=await createAttestedRelay(srv.origin,process.pid)
+  try{
+    const res=await fixtureFetch(new URL('/hello',relay.origin),{signal:AbortSignal.timeout(5000)})
+    assert.equal(res.status,200)
+    assert.equal(await res.text(),'ok')
+  }finally{await relay.close()}
 })

@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict'
 import {setTimeout as delay} from 'node:timers/promises'
 import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
-import {redactSecrets,resolveWorktreePackage,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,redactSecrets,resolveWorktreePackage,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
 
 const {request}=await import(resolveWorktreePackage('playwright'))
 
 const activeChildren=new Set()
 const signalAborts=new Set()
+const signalPreCleanups=new Set()
 const signalCleanups=new Set()
 let cleaningSignals=false,signalHooked=false
 function updateSignalHooks(){
-  const active=activeChildren.size+signalAborts.size+signalCleanups.size>0
+  const active=activeChildren.size+signalAborts.size+signalPreCleanups.size+signalCleanups.size>0
   if(active&&!signalHooked){signalHooked=true;process.on('SIGINT',onSignal);process.on('SIGTERM',onSignal)}
   else if(!active&&signalHooked){signalHooked=false;process.off('SIGINT',onSignal);process.off('SIGTERM',onSignal)}
 }
@@ -19,6 +20,7 @@ function onSignal(signal){
   cleaningSignals=true
   for(const abort of [...signalAborts])try{abort()}catch{}
   const teardown=(async()=>{
+    await Promise.allSettled([...signalPreCleanups].map(cleanup=>cleanup()))
     while(activeChildren.size>0){
       const batch=[...activeChildren]
       for(const stop of batch)activeChildren.delete(stop)
@@ -39,11 +41,12 @@ export function registerFixtureChild(stop){
   updateSignalHooks()
   return ()=>{activeChildren.delete(stop);updateSignalHooks()}
 }
-export function onFixtureSignal(cleanup,abort){
+export function onFixtureSignal(cleanup,abort,{beforeChildren=false}={}){
   if(abort)signalAborts.add(abort)
-  signalCleanups.add(cleanup)
+  const target=beforeChildren?signalPreCleanups:signalCleanups
+  target.add(cleanup)
   updateSignalHooks()
-  return ()=>{if(abort)signalAborts.delete(abort);signalCleanups.delete(cleanup);updateSignalHooks()}
+  return ()=>{if(abort)signalAborts.delete(abort);target.delete(cleanup);updateSignalHooks()}
 }
 
 export async function until(check,label,ms=20000){
@@ -92,8 +95,28 @@ export function launchFixture(binary,args,{cwd,env,shutdown,graceMs=3000,redact=
 
 export const rustOrigin=stdout=>stdout.match(/^http:\/\/127\.0\.0\.1:\d+(?=\r?$)/m)?.[0]
 
-export async function signInFixture(origin,password){
+export async function signInFixture(origin,password,targetPid){
   assert.match(origin,/^http:\/\/127\.0\.0\.1:\d+$/)
+  if(targetPid){
+    const port=Number(new URL(origin).port)
+    const attested=createAttestedFetch(origin,port,targetPid)
+    try{
+      const unauth=await attested(`${origin}/api/workspaces`,{signal:AbortSignal.timeout(15000)})
+      assert.equal(unauth.status,401,'Workspace inventory requires authentication')
+      const login=await attested(`${origin}/api/auth/login`,{
+        method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({username:'codenomad',password}),signal:AbortSignal.timeout(15000),
+      })
+      assert.equal(login.status,200)
+      const setCookie=login.headers.get('set-cookie')
+      assert(setCookie,'Expected authenticated session cookie')
+      const [pair]=setCookie.split(';')
+      const eq=pair.indexOf('=')
+      assert(eq>0,'Expected valid cookie pair')
+      const state={cookies:[{name:pair.slice(0,eq).trim(),value:pair.slice(eq+1).trim(),domain:'127.0.0.1',path:'/',expires:-1,httpOnly:true,secure:false,sameSite:'Lax'}],origins:[]}
+      return {storageState:async()=>state,dispose:async()=>{}}
+    }finally{await attested.close()}
+  }
   const http=await request.newContext({baseURL:origin,timeout:15000})
   try{
     assert.equal((await http.get('/api/workspaces',{maxRedirects:0})).status(),401,'Workspace inventory requires authentication')

@@ -224,7 +224,7 @@ test('signal teardown closes admission, stops owned children and removes running
   }finally{await rm(temp,{recursive:true,force:true})}
 })
 
-test('acquireProfileLock rejects live owners and recovers stale crash locks',{timeout:15000},async()=>{
+test('acquireProfileLock rejects live owners and atomically recovers stale crash locks',{timeout:15000},async()=>{
   const temp=await mkdtemp(path.join(os.tmpdir(),'rune-live-lock-'))
   try{
     const lock=path.join(temp,'running.lock')
@@ -238,10 +238,15 @@ test('acquireProfileLock rejects live owners and recovers stale crash locks',{ti
     await short.closed
     await short.stop()
     await writeFile(lock,JSON.stringify({pid:deadPid})+'\n')
-    const recovered=await acquireProfileLock(lock)
+    // Concurrent stale-lock reclaimers: exactly one wins; the loser never unlinks the winner's fresh lock.
+    const results=await Promise.allSettled([acquireProfileLock(lock),acquireProfileLock(lock)])
+    const won=results.filter(r=>r.status==='fulfilled')
+    const lost=results.filter(r=>r.status==='rejected')
+    assert.equal(won.length,1,'Exactly one concurrent reclaimer must acquire the stale lock')
+    assert.equal(lost.length,1,'The concurrent loser must fail without deleting the winner lock')
     try{
       assert.equal(JSON.parse(await readFile(lock,'utf8')).pid,process.pid)
-    }finally{await recovered.close()}
+    }finally{await won[0].value.close()}
   }finally{await rm(temp,{recursive:true,force:true})}
 })
 

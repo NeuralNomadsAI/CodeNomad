@@ -156,9 +156,9 @@ fn run() -> io::Result<i32> {
     if status.is_none() || !child.family_is_empty()? {
         #[cfg(unix)]
         {
-            // Give nested fixture supervisors a short grace window to stop their own subgroups.
+            // Give nested fixture supervisors enough time to stop their own subgroups before SIGKILL.
             child.request_terminate()?;
-            let grace = Instant::now() + Duration::from_millis(300);
+            let grace = Instant::now() + Duration::from_millis(800);
             while Instant::now() < grace {
                 let _ = child.try_wait();
                 if child.family_is_empty()? {

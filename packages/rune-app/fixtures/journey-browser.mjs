@@ -3,30 +3,31 @@ import {readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {mobileClientHints, mobileContext} from '../../../scripts/rune/web-mobile.mjs'
 import {activateControl,launchOwnedChromium} from '../../../scripts/rune/web-chromium.mjs'
-import {redactSecrets} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,redactSecrets} from '../../../scripts/native-fixture-http.mjs'
 import {commit, edited, filename, initial, prompt, reply, title, assertPrivateChild} from './journey-host.mjs'
 import {signInFixture,until} from './fixture-host.mjs'
 import {guardJourney} from './journey-web-policy.mjs'
 import {traceJourneyTouch} from './journey-touch-trace.mjs'
 
 export async function journeyBrowser(host, web, report, executablePath){
-  const {origin,password,profile,project,env}=host
+  const {origin,rustPid,password,profile,project,env}=host
   const labels=JSON.parse(await readFile(new URL('../../../crates/rune-theme-codenomad/assets/catalogues/en.json',import.meta.url),'utf8'))
   const manifest=JSON.parse(await readFile(path.join(web,'bundle-manifest.json'),'utf8'))
   assert.equal(manifest.testSupport,false,'Use a product WASM artifact')
-  const http=await signInFixture(origin,password)
+  const http=await signInFixture(origin,password,rustPid)
   let storageState
   try{
     storageState=await http.storageState()
   }finally{await http.dispose()}
-  const owned=await launchOwnedChromium({executablePath,profile,env:assertPrivateChild(env),origin})
+  const rustFetch=rustPid?createAttestedFetch(origin,Number(new URL(origin).port),rustPid):null
+  const owned=await launchOwnedChromium({executablePath,profile,env:assertPrivateChild(env),origin,targetPid:rustPid})
   const {browser}=owned
   report.chromiumPID=owned.pid
   try{
     const context=await browser.newContext({...mobileContext(browser),storageState,serviceWorkers:'block',colorScheme:'light'})
     const refused=[], errors=[]
     report.refused=refused
-    const reads=await guardJourney(context,{origin,project,web,refused})
+    const reads=await guardJourney(context,{origin,project,web,refused,attestedFetch:rustFetch})
     const page=await context.newPage()
     await traceJourneyTouch(page,[
       labels['instanceShell.rightPanel.tabs.files'],labels['instanceShell.rightPanel.tabs.status'],
@@ -251,7 +252,9 @@ export async function journeyBrowser(host, web, report, executablePath){
       await text(reply).waitFor()
     })
   }finally{
-    try{report.chromiumClosedGracefully=await owned.close()}
-    catch(error){report.stage='browser-cleanup';throw error}
+    try{await rustFetch?.close()}finally{
+      try{report.chromiumClosedGracefully=await owned.close()}
+      catch(error){report.stage='browser-cleanup';throw error}
+    }
   }
 }

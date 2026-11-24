@@ -16,9 +16,10 @@ export async function withTui(cli, daemon, session, run) {
   const cols = 200, rows = 60
   const isWin = process.platform === "win32"
   const command = isWin ? fixtureJobExecutable() : process.execPath
+  const serverUrl = daemon.relayUrl ?? daemon.url
   const args = isWin
-    ? ["--inherit-console", cli, "--server", daemon.url, "--session", session, daemon.project]
-    : [posixSupervisor, "--same-group", cli, "--server", daemon.url, "--session", session, daemon.project]
+    ? ["--inherit-console", cli, "--server", serverUrl, "--session", session, daemon.project]
+    : [posixSupervisor, "--same-group", cli, "--server", serverUrl, "--session", session, daemon.project]
   const p = pty.spawn(command, args, {
     name: "xterm-256color", cols, rows, cwd: daemon.project,
     env: withoutFixtureProxy({

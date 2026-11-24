@@ -11,9 +11,9 @@ export function launchChromium(executablePath,env){
   return chromium.launch({headless:true,executablePath,env,args:graphics})
 }
 
-export async function launchOwnedChromium({executablePath=chromium.executablePath(),profile,env,origin}){
+export async function launchOwnedChromium({executablePath=chromium.executablePath(),profile,env,origin,targetPid}){
   const data=path.join(profile,'chromium')
-  const guard=origin?await originGuardProxy(new URL(origin).origin):null
+  const guard=origin?await originGuardProxy(new URL(origin).origin,targetPid):null
   const networkArgs=guard?[
     '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',
     `--proxy-server=http://127.0.0.1:${guard.port}`,

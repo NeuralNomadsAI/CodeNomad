@@ -2,8 +2,30 @@ import assert from 'node:assert/strict'
 import {bundleAssetPaths,fulfillWorkspaceCreation,workspacePolicy} from '../../../scripts/rune/web-workspace-policy.mjs'
 import {commit,filename,prompt,title} from './journey-host.mjs'
 
-export async function guardJourney(context,{origin,project,web,refused}){
+export async function guardJourney(context,{origin,project,web,refused,attestedFetch}){
   let session, preview
+  const fetchOwned=async(route,timeout)=>{
+    if(!attestedFetch){
+      const response=await route.fetch({maxRedirects:0,timeout})
+      assert.equal(new URL(response.url()).origin,origin)
+      const loc=response.headers()['location']
+      if(loc)assert.equal(new URL(loc,origin).origin,origin,'Cross-origin redirect forbidden')
+      const bytes=await response.body()
+      return {status:response.status(),headers:response.headers(),ok:response.ok(),bytes,fulfill:()=>route.fulfill({response})}
+    }
+    const req=route.request()
+    const headers={...req.headers()}
+    delete headers['host']
+    delete headers['content-length']
+    const response=await attestedFetch(req.url(),{
+      method:req.method(),headers,body:req.postDataBuffer()??undefined,signal:AbortSignal.timeout(timeout),
+    })
+    const loc=response.headers.get('location')
+    if(loc)assert.equal(new URL(loc,origin).origin,origin,'Cross-origin redirect forbidden')
+    const bytes=Buffer.from(await response.arrayBuffer())
+    const outHeaders=Object.fromEntries(response.headers.entries())
+    return {status:response.status,headers:outHeaders,ok:response.ok,bytes,fulfill:()=>route.fulfill({status:response.status,headers:outHeaders,body:bytes})}
+  }
   const policy=workspacePolicy({origin,project,assets:await bundleAssetPaths(web),allowOwned({method,path,body,query,native}){
     if(native){
       if(query.has('directory')&&query.get('directory')!==project)return false
@@ -39,30 +61,22 @@ export async function guardJourney(context,{origin,project,web,refused}){
           return
         }
         if(req.method()==='POST'&&/^\/workspaces\/[^/]+\/instance\/api\/session$/.test(url.pathname)){
-          const response=await route.fetch({maxRedirects:0,timeout:20000})
-          assert.equal(new URL(response.url()).origin,origin)
-          const loc=response.headers()['location']
-          if(loc)assert.equal(new URL(loc,origin).origin,origin,'Cross-origin redirect forbidden')
-          if(response.ok()){
-            const bytes=await response.body()
-            assert(bytes.length<64*1024,'Bounded session creation response required')
-            const result=JSON.parse(bytes.toString()).data
+          const response=await fetchOwned(route,20000)
+          if(response.ok){
+            assert(response.bytes.length<64*1024,'Bounded session creation response required')
+            const result=JSON.parse(response.bytes.toString()).data
             assert.match(result?.id,/^ses_[\w-]+$/)
             assert.equal(result.title,title)
             session=result.id
           }
-          await route.fulfill({response})
+          await response.fulfill()
           return
         }
         if(req.method()==='GET'&&url.pathname.endsWith('/files/preview')){
-          const response=await route.fetch({maxRedirects:0,timeout:15000})
-          assert.equal(new URL(response.url()).origin,origin)
-          const loc=response.headers()['location']
-          if(loc)assert.equal(new URL(loc,origin).origin,origin,'Cross-origin redirect forbidden')
-          const bytes=await response.body()
-          assert(bytes.length<64*1024,'Bounded fixture file preview required')
-          preview={status:response.status(),file:JSON.parse(bytes)}
-          await route.fulfill({response})
+          const response=await fetchOwned(route,15000)
+          assert(response.bytes.length<64*1024,'Bounded fixture file preview required')
+          preview={status:response.status,file:JSON.parse(response.bytes.toString())}
+          await response.fulfill()
           return
         }
         await route.continue()

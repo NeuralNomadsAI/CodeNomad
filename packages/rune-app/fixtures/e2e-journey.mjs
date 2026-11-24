@@ -10,6 +10,7 @@ import {journeyBrowser} from './journey-browser.mjs'
 import {withJourneyHost,assertPrivateChild,credentialVariable} from './journey-host.mjs'
 import {fixtureSystemEnvironment} from './private-profile.mjs'
 import {launchFixture} from './fixture-host.mjs'
+import {redactSecrets} from '../../../scripts/native-fixture-http.mjs'
 
 const {values}=parseArgs({options:{opencode:{type:'string'},mode:{type:'string',default:'both'}}})
 assert(values.opencode&&path.isAbsolute(values.opencode),'Pass --opencode <absolute executable>; the shared service is forbidden')
@@ -41,15 +42,15 @@ async function journeyDesktop({origin,password,project,profile,env},report){
   const state=path.join(profile,'rune-state')
   const session=path.join(profile,'session.txt')
   for(const phase of ['start','reopen']){
-    const child=launchFixture(clientBinary,[probe],{cwd:profile,env:assertPrivateChild({
+    const child=launchFixture(clientBinary,[probe],{cwd:profile,redact:[password],env:assertPrivateChild({
       ...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:password,RUNE_TEST_FOLDER:project,RUNE_LOCALE:'en',
       RUNE_STATE_DIR:state,RUNE_JOURNEY_OUTPUT:report.output,RUNE_JOURNEY_PHASE:phase,RUNE_JOURNEY_SESSION_FILE:session,
     },{RUNE_PASSWORD:password})})
     let windowClosed=false
     try{
       const result=await Promise.race([child.closed,delay(220000,124,{ref:false})])
-      await writeFile(path.join(report.output,`windows-${phase}.log`),child.output().replaceAll(password,'<private>'))
-      for(const line of child.stdout().split(/\r?\n/)){
+      await writeFile(path.join(report.output,`windows-${phase}.log`),redactSecrets(child.output(),[password]))
+      for(const line of redactSecrets(child.stdout(),[password]).split(/\r?\n/)){
         let event
         try{event=JSON.parse(line)}catch{continue}
         if(event.step)report.steps.push(event)

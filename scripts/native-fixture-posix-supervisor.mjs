@@ -19,6 +19,10 @@ function signalFamily(signal) {
   if (!child.pid) return
   if (sameGroup) {
     try { process.kill(child.pid, signal) } catch {}
+    // In a PTY session, this supervisor is the process group leader; avoid killing self on SIGKILL.
+    if (signal === "SIGTERM") {
+      try { process.kill(-process.pid, "SIGTERM") } catch {}
+    }
     return
   }
   try { process.kill(-child.pid, signal) } catch {}
@@ -33,19 +37,27 @@ function familyAlive() {
   try { process.kill(-child.pid, 0); return true } catch (error) { return error.code === "EPERM" }
 }
 
-function shutdown(code) {
+function shutdown(code, graceMs = 150) {
   if (terminating) return
   terminating = true
   clearInterval(watch)
   signalFamily("SIGTERM")
-  const graceUntil = Date.now() + 300
+  const graceUntil = Date.now() + graceMs
   const deadline = Date.now() + 5000
   let escalated = false
   const wait = setInterval(() => {
     const alive = familyAlive()
-    if (!alive || Date.now() >= deadline) {
+    if (!alive) {
       clearInterval(wait)
+      if (sameGroup) {
+        // Ensure any remaining same-group descendants in the PTY session receive SIGKILL as we exit.
+        try { process.kill(-process.pid, "SIGKILL") } catch {}
+      }
       process.exit(code)
+    }
+    if (Date.now() >= deadline) {
+      clearInterval(wait)
+      process.exit(1)
     }
     if (!escalated && Date.now() >= graceUntil) {
       escalated = true
@@ -66,11 +78,14 @@ child.once("error", error => {
 })
 child.once("exit", (code, signal) => {
   childExited = true
-  shutdown(code ?? (signal ? 1 : 0))
+  shutdown(code ?? (signal ? 1 : 0), 250)
 })
 
 for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
-  process.on(sig, () => shutdown(1))
+  process.on(sig, () => {
+    if (terminating) return
+    shutdown(1, 150)
+  })
 }
 
 const watch = setInterval(() => {

@@ -5,7 +5,7 @@ import net from "node:net"
 import { register, syncBuiltinESMExports } from "node:module"
 import { pathToFileURL, fileURLToPath } from "node:url"
 import { privatePath } from "./isolation.mjs"
-import { createAttestedFetch, createAttestedPool, resolveWorktreePackage } from "../native-fixture-http.mjs"
+import { createAttestedFetch, createAttestedPool, isInsideAttestedConnect, resolveWorktreePackage } from "../native-fixture-http.mjs"
 
 const { Agent, setGlobalDispatcher } = await import(resolveWorktreePackage("undici"))
 
@@ -58,6 +58,9 @@ net.Socket.prototype.connect = function guardedConnect(...args) {
   }
   if (ipcPath || port !== allowedPort || host !== "127.0.0.1") {
     throw Error(`Benchmark server cannot connect outside ${allowedOrigin}: ${ipcPath ?? `${host ?? "<unspecified>"}:${port}`}`)
+  }
+  if (!isInsideAttestedConnect()) {
+    throw Error(`Benchmark server must use the attested HTTP pool for ${allowedOrigin}`)
   }
   return originalConnect.apply(this, args)
 }

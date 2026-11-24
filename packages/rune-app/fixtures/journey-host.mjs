@@ -8,7 +8,7 @@ import {privatePath, runDirectory} from '../../../scripts/perf/isolation.mjs'
 import {createAttestedRelay,fixtureFetch,redactSecrets} from '../../../scripts/native-fixture-http.mjs'
 import {assertNoSystemOpenCodeConfig, attestNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
-import {launchFixture,rustOrigin} from './fixture-host.mjs'
+import {launchFixture,onFixtureSignal,rustOrigin} from './fixture-host.mjs'
 
 export const title = 'Rune private journey'
 export const filename = 'journey.txt'
@@ -84,7 +84,7 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
     pruning=await preparePruning(profile,config)
     const ownedNative={
       OPENCODE_TEST_HOME:env.HOME,OPENCODE_CONFIG_DIR:config,
-      OPENCODE_DB:path.join(profile,'opencode.db'),OPENCODE_CONFIG_PROJECT_DISABLE:'1',
+      OPENCODE_DB:path.join(profile,'opencode.db'),OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_PROJECT_CONFIG:'1',
       OPENCODE_DISABLE_MODELS_FETCH:'1',OPENCODE_DISABLE_FFF:'1',OPENCODE_DISABLE_AUTOUPDATE:'true',
       OPENCODE_SERVER_PASSWORD:privatePassword,
       OPENCODE_CONFIG_CONTENT:JSON.stringify({
@@ -105,6 +105,12 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
     const authorization=`Basic ${Buffer.from(`opencode:${privatePassword}`).toString('base64')}`
     const pid=await native.pid()
     assert(Number.isSafeInteger(pid)&&pid>0,'Private OpenCode child PID unavailable')
+    const untrackSignalCleanup=onFixtureSignal(async()=>{
+      for(const [name,proc] of [['rust',server],['opencode',native]]){
+        if(proc)try{await writeFile(path.join(report.output,`${name}.log`),redactSecrets(proc.output(),secrets))}catch{}
+      }
+      try{await rm(profile,{recursive:true,force:true,maxRetries:4,retryDelay:100});report.profileRemoved=true}catch{}
+    })
     let nativeRelay
     attested=await attestNative(daemon,native.child,authorization,fixtureFetch,pid)
     report.openCodePID=pid
@@ -117,8 +123,9 @@ export async function withJourneyHost({cli,rust,web,mode},report,run){
         ...(mode==='web'?{CNRS_FIXTURE_UI_DIR:web}:{}),
       },ownedRust)})
       const origin=await server.ready(rustOrigin)
-      await run({profile,project,origin,password,env})
-    }finally{await nativeRelay.close().catch(()=>{})}
+      const rustPid=await server.pid()
+      await run({profile,project,origin,rustPid,password,env})
+    }finally{untrackSignalCleanup();await nativeRelay.close().catch(()=>{})}
     report.stage='verify-model-and-git'
     model.prove()
     assert.equal(git('log','-1','--format=%s'),commit)

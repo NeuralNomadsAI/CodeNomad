@@ -7,7 +7,7 @@ import path from "node:path"
 import { fixtureEnvironment } from "../native-product-fixture.mjs"
 import { launchFixture } from "../../packages/rune-app/fixtures/fixture-host.mjs"
 import { assertNoSystemOpenCodeConfig, attestNative } from "../../packages/rune-app/fixtures/live-access.mjs"
-import { fixtureFetch, redactSecrets, resolveLocalExecutable } from "../native-fixture-http.mjs"
+import { createAttestedRelay, fixtureFetch, redactSecrets, resolveLocalExecutable } from "../native-fixture-http.mjs"
 import { privatePath } from "./isolation.mjs"
 import { json, now, sleep } from "./lib.mjs"
 
@@ -24,7 +24,8 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
   const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
   const env = await fixtureEnvironment(root, {
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
-    OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
+    OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+    OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
     OPENCODE_DISABLE_AUTOUPDATE: "true", OPENCODE_SERVER_PASSWORD: password,
   })
   await mkdir(env.OPENCODE_CONFIG_DIR)
@@ -103,17 +104,18 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
   try {
     if(pruningEnabled){const {preparePruning}=await import('./pruning.mjs');pruning=await preparePruning(root,env.OPENCODE_CONFIG_DIR)}
   } catch(error){provider.closeAllConnections();await new Promise(resolve=>provider.close(resolve));throw error}
-  let daemon, attested
+  let daemon, attested, nativeRelay
   try {
     const daemonEnv = { ...env, ...gitEnv }
     daemon = launchFixture(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], {cwd: project, env: daemonEnv, redact: [password]})
     const url = await daemon.ready(stdout => stdout.match(/^server listening on (http:\/\/127\.0\.0\.1:\d+)\/?\r?$/m)?.[1], 60_000)
     const pid = await daemon.pid()
     attested = await attestNative(url, daemon.child, authorization, fixtureFetch, pid)
+    nativeRelay = await createAttestedRelay(url, pid)
     const {send} = attested
     const call = (method, route, body) => json(send, route, {method, body})
     await pruning?.activate({project,url,authorization,send},()=>assert.equal(daemon.child.exitCode,null,'Owned pruning daemon exited'))
-    await run({ project, env, url, password, authorization, call, send, markers, pid, cli, pruning,
+    await run({ project, env: daemonEnv, url, relayUrl: nativeRelay.origin, password, authorization, call, send, markers, pid, cli, pruning,
       arm(pass, size) {
         const { promise: start, resolve: release } = Promise.withResolvers()
         batch = { pass, size, start, release, ready: new Set() }
@@ -121,7 +123,7 @@ export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnable
     })
     if (providerError) throw providerError
   } finally {
-    try {try{await daemon?.stop()}finally{try{await attested?.close()}finally{await pruning?.close()}}} finally {
+    try {try{await nativeRelay?.close()}finally{try{await daemon?.stop()}finally{try{await attested?.close()}finally{await pruning?.close()}}}} finally {
       provider.closeAllConnections()
       batch?.release()
       await new Promise(resolve => provider.close(resolve))

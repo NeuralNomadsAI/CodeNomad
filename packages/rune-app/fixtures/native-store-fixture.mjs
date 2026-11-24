@@ -12,7 +12,7 @@ import {privatePath} from '../../../scripts/perf/isolation.mjs'
 import {fixtureChildPid,spawnFixtureChild,stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 import {assertNoSystemOpenCodeConfig,attestNative,ensurePrivateGitRepo} from './live-access.mjs'
 import {createAttestedFetch,createAttestedHttpAgent,fixtureFetch,redactSecrets,relayTarget,resolveLocalExecutable,resolveWorktreePackage,withoutFixtureProxy} from '../../../scripts/native-fixture-http.mjs'
-import {registerFixtureChild,rustOrigin} from './fixture-host.mjs'
+import {onFixtureSignal,registerFixtureChild,rustOrigin} from './fixture-host.mjs'
 
 const {OpenCode}=await import(resolveWorktreePackage('@opencode/client'))
 const {values}=parseArgs({options:{opencode:{type:'string'}}})
@@ -31,7 +31,7 @@ requireTestSupport(rune)
 const permissions=[{action:'*',resource:'*',effect:'deny'}]
 const env={...await privateEnvironment(root),OPENCODE_TEST_HOME:path.join(root,'home'),
   OPENCODE_CONFIG_DIR:config,OPENCODE_DB:path.join(root,'opencode.db'),
-  OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_MODELS_FETCH:'1',OPENCODE_DISABLE_FFF:'1',OPENCODE_DISABLE_AUTOUPDATE:'true',
+  OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_PROJECT_CONFIG:'1',OPENCODE_DISABLE_MODELS_FETCH:'1',OPENCODE_DISABLE_FFF:'1',OPENCODE_DISABLE_AUTOUPDATE:'true',
   OPENCODE_SERVER_PASSWORD:randomUUID(),OPENCODE_CONFIG_CONTENT:'{}',
   GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(root,'empty.gitconfig'),GIT_TEMPLATE_DIR:'',GIT_CEILING_DIRECTORIES:root,
   ProgramData:path.join(root,'ProgramData'),npm_config_userconfig:path.join(root,'npmrc'),
@@ -92,6 +92,13 @@ async function assertExport(id,messages){
   assert.deepEqual(stored.messages.map(m=>({id:m.id,type:m.type,text:m.text})),messages.map(m=>({id:m.id,type:m.type,text:m.text})))
   return stored
 }
+const untrackSignalCleanup=onFixtureSignal(async()=>{
+  const cleanupSignal=AbortSignal.timeout(5000)
+  if(native)for(const sessionID of ownedIDs.splice(0).reverse()){
+    try{await native.session.remove({sessionID},{signal:cleanupSignal});proof.cleanup.push({sessionID,removed:true})}
+    catch{proof.cleanup.push({sessionID,removed:false})}
+  }
+},undefined,{beforeChildren:true})
 try{
   await ensurePrivateGitRepo(project,root,env)
   pruning=await preparePruning(root,config)
@@ -179,6 +186,7 @@ try{
   proof.result='ok'
 }catch(error){failure=error;proof.error=redactSecrets(error?.message??String(error),[env.OPENCODE_SERVER_PASSWORD,rustPassword])}
 finally{
+  untrackSignalCleanup()
   const errors=[]
   if(client&&client.child.exitCode===null&&client.child.signalCode===null)try{await stopFixtureChild(client.child,client.stopped,1_000,2_000,{group,startedBy:client.startedBy})}catch(error){errors.push(error)}
   // Keep native alive while exact test-owned session cleanup runs.

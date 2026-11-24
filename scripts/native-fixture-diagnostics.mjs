@@ -97,12 +97,28 @@ export async function runNativeFixture(script, args, { directory = path.join(os.
   const receipt = path.join(root, "child.jsonl")
   console.log(`Native fixture runner diagnostics at ${root}`)
   const child = spawn(process.execPath, [script, ...args], { env: { ...env, CODENOMAD_NATIVE_TEST_RECEIPT: receipt }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true })
+  const maxSecretLen = allSecrets.reduce((max, s) => Math.max(max, s.length, Buffer.from(`opencode:${s}`).toString("base64").length), 0)
+  const overlap = Math.max(0, maxSecretLen - 1)
+  const flushers = []
   for (const [stream, name, target] of [[child.stdout, "stdout.log", process.stdout], [child.stderr, "stderr.log", process.stderr]]) {
-    stream.on("data", chunk => { const safe = sanitize(chunk.toString("utf8")); appendFileSync(path.join(root, name), safe); target.write(safe) })
+    let carry = ""
+    const emit = text => { if (!text) return; appendFileSync(path.join(root, name), text); target.write(text) }
+    stream.on("data", chunk => {
+      const combined = sanitize(carry + chunk.toString("utf8"))
+      if (overlap > 0 && combined.length > overlap) {
+        emit(combined.slice(0, combined.length - overlap))
+        carry = combined.slice(combined.length - overlap)
+      } else if (overlap === 0) {
+        emit(combined)
+      } else {
+        carry = combined
+      }
+    })
+    flushers.push(() => { if (carry) { emit(sanitize(carry)); carry = "" } })
   }
   let error
   child.on("error", value => { error = sanitize(String(value.stack ?? value)) })
-  const status = await new Promise(resolve => child.on("close", (code, signal) => resolve({ code, signal, error })))
+  const status = await new Promise(resolve => child.on("close", (code, signal) => { for (const flush of flushers) flush(); resolve({ code, signal, error }) }))
   const { readFile } = await import("node:fs/promises")
   let completed = false
   try { completed = (await readFile(receipt, "utf8")).split("\n").filter(Boolean).some(line => JSON.parse(line).event === "completed") } catch { /* Missing/malformed receipt is incomplete, not success. */ }

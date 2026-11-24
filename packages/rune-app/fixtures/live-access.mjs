@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {execFile} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
 import {existsSync} from 'node:fs'
-import {copyFile, lstat, mkdir, open, readdir, readFile, realpath, rm, unlink, writeFile} from 'node:fs/promises'
+import {copyFile, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, unlink, writeFile} from 'node:fs/promises'
 import {createServer} from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -11,7 +11,7 @@ import {promisify} from 'node:util'
 import {privatePath, runDirectory} from '../../../scripts/perf/isolation.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {launchFixture,onFixtureSignal} from './fixture-host.mjs'
-import {createAttestedFetch,fixtureFetch,fixtureTarget,isLocalAbsolutePath,redactSecrets,resolveLocalExecutable,verifyLoopbackListenerOwner} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,createAttestedRelay,fixtureFetch,fixtureTarget,isLocalAbsolutePath,redactSecrets,resolveLocalExecutable,verifyLoopbackListenerOwner} from '../../../scripts/native-fixture-http.mjs'
 export {fixtureTarget,isLocalAbsolutePath,verifyLoopbackListenerOwner}
 
 export const args=process.argv.slice(2).filter((arg,i,all)=>arg!=='--opencode'&&all[i-1]!=='--opencode')
@@ -257,8 +257,21 @@ export async function acquireProfileLock(lease){
       }
     }catch{}
     if(!stale)throw error
-    try{await unlink(lease)}catch(unlinkErr){if(unlinkErr.code!=='ENOENT')throw unlinkErr}
+    // Atomically claim the stale lock via rename so concurrent reclaimers cannot unlink a fresh lock.
+    const claimed=`${lease}.stale-${randomUUID()}`
+    try{await rename(lease,claimed)}catch(renameErr){if(renameErr.code==='ENOENT')throw error;throw renameErr}
+    try{await unlink(claimed)}catch(unlinkErr){if(unlinkErr.code!=='ENOENT')throw unlinkErr}
     return await writeOwner(await open(lease,'wx'))
+  }
+}
+
+async function purgeCrashResidues(profile){
+  for(const name of await readdir(profile)){
+    if(!/^(?:native-(?:runtime|config)-[0-9a-f-]+|opencode-[0-9a-f-]+(?:\.exe)?|running\.lock\.stale-[0-9a-f-]+)$/i.test(name))continue
+    const target=path.join(profile,name)
+    const stat=await lstat(target)
+    if(stat.isSymbolicLink())continue
+    await rm(target,{recursive:true,force:true,maxRetries:4,retryDelay:100})
   }
 }
 
@@ -273,11 +286,9 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
     await mkdir(path.dirname(profile),{recursive:true});await mkdir(profile)
     await writeFile(path.join(profile,marker),'Rune private OpenCode v1\n',{flag:'wx'})
   }
-  if(!fresh)await validatePrivateTree(profile)
-  assert.equal(await readFile(path.join(profile,marker),'utf8'),'Rune private OpenCode v1\n')
   const lease=path.join(profile,'running.lock')
   const lock=await acquireProfileLock(lease)
-  let daemon,model,plugin,password,executable,config,runtime,attested,aborted=false,executionFinished=false
+  let daemon,model,plugin,password,executable,config,runtime,attested,nativeRelay,aborted=false,executionFinished=false
   const checkActive=()=>{if(aborted)throw Error('Private fixture interrupted during startup')}
   const owned=name=>{
     const expected=path.join(profile,name)
@@ -296,8 +307,10 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
   const cleanup=()=>{
     cleaned??=(async()=>{
       try{
-        try{await daemon?.stop()}finally{
-          try{await attested?.close()}finally{await plugin?.close()}
+        try{await nativeRelay?.close()}finally{
+          try{await daemon?.stop()}finally{
+            try{await attested?.close()}finally{await plugin?.close()}
+          }
         }
       }finally{
         model?.closeAllConnections()
@@ -322,6 +335,11 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
   }
   const execution=(async()=>{
     try{
+      if(!fresh){
+        await purgeCrashResidues(profile)
+        await validatePrivateTree(profile)
+      }
+      assert.equal(await readFile(path.join(profile,marker),'utf8'),'Rune private OpenCode v1\n')
       checkActive()
       const project=owned('project')
       config=owned(`native-config-${randomUUID()}`)
@@ -342,11 +360,12 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
         models:{fixture:{},alternate:{variants:[{id:'low'}]}},
       }}}
       if(denyAllTools)configContent.permissions=[{action:'*',resource:'*',effect:'deny'}]
-      const programData=path.join(runtime,'ProgramData')
+      const programData=path.join(runtime,'win-program-data')
       const runtimeEnv=await privateEnvironment(runtime)
       const env={...runtimeEnv,OPENCODE_TEST_HOME:path.join(runtime,'home'),
         OPENCODE_CONFIG_DIR:config,OPENCODE_DB:database,
-        OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_MODELS_FETCH:'1',OPENCODE_DISABLE_FFF:'1',
+        OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_PROJECT_CONFIG:'1',
+        OPENCODE_DISABLE_MODELS_FETCH:'1',OPENCODE_DISABLE_FFF:'1',
         OPENCODE_DISABLE_AUTOUPDATE:'true',OPENCODE_SERVER_PASSWORD:password,
         GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(runtime,'empty.gitconfig'),GIT_TEMPLATE_DIR:'',
         GIT_CEILING_DIRECTORIES:profile,
@@ -367,11 +386,12 @@ export async function withNative(run,{profile,pruning=true,denyAllTools=false}={
         delay(10000,undefined,{ref:false}).then(()=>{throw Error('Timed out reading fixture child PID')}),
       ])
       attested=await attestNative(origin,daemon.child,authorization,fixtureFetch,pid)
+      nativeRelay=await createAttestedRelay(origin,pid)
       const {read,send}=attested
       checkActive()
       await plugin?.activate({project,url:origin,authorization,send},()=>assert.equal(daemon.child.exitCode,null))
       checkActive()
-      return await run({profile,project,origin:`${origin}/`,password,read,send,env,runtimeEnv,pid})
+      return await run({profile,project,origin:`${origin}/`,relay:nativeRelay.origin,password,read,send,env,runtimeEnv,pid})
     } finally {
       executionFinished=true
       await cleanup()

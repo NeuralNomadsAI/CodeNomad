@@ -37,7 +37,7 @@ async function assertNoSystemOpenCodeConfig() {
 function assertNoAncestorProjectConfig(directory) {
   let current = directory
   for (;;) {
-    for (const marker of [".opencode", "opencode.json", "opencode.jsonc"]) {
+    for (const marker of [".opencode", "opencode.json", "opencode.jsonc", "AGENTS.md", "CLAUDE.md"]) {
       assert(!existsSync(path.join(current, marker)),
         `Project-config fixture ancestor must not contain ${marker}: ${current}`)
     }
@@ -125,7 +125,7 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
   const env = await fixtureEnvironment(root, {
     ...(registry ? { npm_config_registry: registry, npm_config_audit: "false", npm_config_fund: "false" } : {}),
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
-    ...(projectConfig ? {} : { OPENCODE_CONFIG_PROJECT_DISABLE: "1" }), OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
+    ...(projectConfig ? {} : { OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_PROJECT_CONFIG: "1" }), OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
     OPENCODE_SERVER_PASSWORD: password, ...(flags === undefined ? {} : { OPENCODE_FLAGS: flags }) })
   await mkdir(env.OPENCODE_CONFIG_DIR)
   const daemonEnv = {

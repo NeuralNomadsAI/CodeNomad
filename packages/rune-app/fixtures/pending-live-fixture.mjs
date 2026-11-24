@@ -7,7 +7,7 @@ import {setTimeout as delay} from 'node:timers/promises'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 import {fixtureTarget,requirePrivateCli,withNative} from './live-access.mjs'
 import {launchFixture,rustOrigin} from './fixture-host.mjs'
-import {fixtureFetch,redactSecrets,resolveWorktreePackage} from '../../../scripts/native-fixture-http.mjs'
+import {createAttestedFetch,redactSecrets,resolveWorktreePackage} from '../../../scripts/native-fixture-http.mjs'
 
 const {OpenCode}=await import(resolveWorktreePackage('@opencode/client'))
 requirePrivateCli();requireTestSupport()
@@ -15,7 +15,7 @@ await withNative(async native=>{
 const {profile:root,project,password}=native
 const secrets=[password,'fixture-rune-native-pending']
 const env=native.runtimeEnv,proof={root,project,native:true,ui:'Rune Runtime, offscreen',modelCalls:0,tools:0,requests:[],events:[],stages:[],visible:[],cases:[],cleaned:false,result:1}
-let rust,ui,client,observer,watch,session,origin,cookie,uiLines='',protocolError
+let rust,ui,client,observer,watch,session,origin,cookie,uiLines='',protocolError,rustFetch
 const ids=['once','always','reject'].map(decision=>`per_rune_live_${decision}_${randomUUID().replaceAll('-','')}`),forms=new Map()
 const expected=['once','always','reject','typed-question','cancel-question'];let position=0,awaiting='ready',protocol=Promise.resolve()
 const post=body=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
@@ -23,7 +23,7 @@ async function until(check,label){const end=Date.now()+30000;while(Date.now()<en
 async function relay(route,init={},timeoutMs=15000){
   const target=fixtureTarget(route,origin)
   assert(target,'Foreign fixture origin forbidden')
-  const response=await fixtureFetch(target,{...init,headers:{cookie,...init.headers},signal:AbortSignal.timeout(timeoutMs)})
+  const response=await rustFetch(target,{...init,headers:{cookie,...init.headers},signal:AbortSignal.timeout(timeoutMs)})
   const text=await response.text(),body=text?JSON.parse(text):null;proof.requests.push({host:'rust',method:init.method??'GET',path:route,status:response.status});return{status:response.status,body}
 }
 async function stage(event){
@@ -51,9 +51,10 @@ try{
   observer=new AbortController();watch=(async()=>{for await(const event of client.event.subscribe({signal:observer.signal})){proof.events.push({type:event.type,sessionID:event.data?.sessionID,id:event.data?.id});assert(proof.events.length<256)}})();void watch.catch(()=>{})
   await until(()=>proof.events.some(e=>e.type==='server.connected'),'native SSE')
   session=await client.session.create({location:{directory:project},title:'Rune private native pending UI',permissions:[{action:'*',resource:'*',effect:'deny'},{action:'rune_fixture',resource:'*',effect:'ask'}]});assert.equal(path.resolve(session.location.directory),project);proof.session=session.id
-  rust=launchFixture(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{cwd:root,shutdown:'shutdown\n',redact:[password,'fixture-rune-native-pending'],env:{...env,CNRS_FIXTURE_URL:native.origin,CNRS_FIXTURE_PASSWORD:password,CNRS_SERVER_PASSWORD:'fixture-rune-native-pending',CNRS_FIXTURE_STDIN_STOP:'1'}})
+  rust=launchFixture(serverBinary,[path.dirname(project),path.join(root,'rust-identity.json'),'0','private-rune-native-pending'],{cwd:root,shutdown:'shutdown\n',redact:[password,'fixture-rune-native-pending'],env:{...env,CNRS_FIXTURE_URL:native.relay,CNRS_FIXTURE_PASSWORD:password,CNRS_SERVER_PASSWORD:'fixture-rune-native-pending',CNRS_FIXTURE_STDIN_STOP:'1'}})
   origin=await rust.ready(rustOrigin)
-  const login=await fixtureFetch(`${origin}/api/auth/login`,{...post({username:'codenomad',password:'fixture-rune-native-pending'}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
+  rustFetch=createAttestedFetch(origin,Number(new URL(origin).port),await rust.pid())
+  const login=await rustFetch(`${origin}/api/auth/login`,{...post({username:'codenomad',password:'fixture-rune-native-pending'}),signal:AbortSignal.timeout(15000)});assert.equal(login.status,200);cookie=login.headers.get('set-cookie').split(';')[0]
   const opened=await relay('/api/workspaces',post({path:project,requestId:`rune-native-ui-${randomUUID()}`}));assert.equal(opened.status,201);assert.equal(path.resolve(opened.body.path),project);proof.workspace=opened.body.id
   await until(async remaining=>{
     const window=await relay(`/api/workspaces/${proof.workspace}/session-history/window`,{
@@ -82,7 +83,7 @@ finally{
   observer?.abort();if(watch)await Promise.race([watch.catch(()=>{}),delay(2000,undefined,{ref:false})])
   try{await ui?.stop();if(client&&session){await client.session.remove({sessionID:session.id});proof.cleaned=true;assert(!(await client.session.list({location:{directory:project}})).data.some(s=>s.id===session.id))}}
   catch(error){proof.result=1;proof.cleanupError=redactSecrets(String(error),secrets);process.exitCode=1}
-  finally{await rust?.stop();proof.rustExit=rust?.child.exitCode??null
+  finally{try{await rustFetch?.close()}finally{await rust?.stop()};proof.rustExit=rust?.child.exitCode??null
     if(rust&&proof.rustExit!==0){proof.result=1;proof.cleanupError??='Rust did not stop cleanly';process.exitCode=1}
     await writeFile(path.join(root,'proof.json'),JSON.stringify(proof,null,2));await writeFile(path.join(root,'rust.log'),rust?.output()??'');await writeFile(path.join(root,'rune.log'),ui?.output()??'')
     console.log(JSON.stringify({result:proof.result,version:proof.version,cases:proof.cases.length,cleaned:proof.cleaned,rustExit:proof.rustExit,root,error:proof.error?.split('\n')[0]}))}

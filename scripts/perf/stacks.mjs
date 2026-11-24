@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { spawnFixtureChild, stopFixtureChild } from "../native-fixture-guards.mjs"
-import { fixtureFetch, redactSecrets, resolveLocalExecutable, withoutFixtureProxy } from "../native-fixture-http.mjs"
+import { fixtureChildPid, spawnFixtureChild, stopFixtureChild } from "../native-fixture-guards.mjs"
+import { createAttestedFetch, redactSecrets, resolveLocalExecutable, withoutFixtureProxy } from "../native-fixture-http.mjs"
 import { registerFixtureChild } from "../../packages/rune-app/fixtures/fixture-host.mjs"
 import { privatePath } from "./isolation.mjs"
 import { sleep } from "./lib.mjs"
@@ -26,13 +26,13 @@ export async function withBackend(daemon, tree, root, followLongReplies, run, {r
   const group = process.platform !== "win32"
   const child = spawnFixtureChild(...command, { env: withoutFixtureProxy({ ...daemon.env, CLI_CONFIG: config, PERF_SERVER_DIST: fileURLToPath(new URL("../../packages/server/dist", import.meta.url)),
     PERF_DAEMON_URL: daemon.url, PERF_DAEMON_PID: String(daemon.pid), CODENOMAD_SERVER_PASSWORD: password,
-    ...(resolvedRust && {CNRS_FIXTURE_URL: daemon.url, CNRS_FIXTURE_PASSWORD: daemon.password, CNRS_SERVER_PASSWORD: password, CNRS_FIXTURE_STDIN_STOP: "1"}),
+    ...(resolvedRust && {CNRS_FIXTURE_URL: daemon.relayUrl ?? daemon.url, CNRS_FIXTURE_PASSWORD: daemon.password, CNRS_SERVER_PASSWORD: password, CNRS_FIXTURE_STDIN_STOP: "1"}),
     CODENOMAD_REMOTE_CONTROL: "disabled" }), cwd: root, detached: group, windowsHide: true, stdio: [resolvedRust ? "pipe" : "ignore", "pipe", "pipe"] })
   const startedBy = new Date()
   const stopped = new Promise(resolve => child.once("close", resolve))
   const untrack = registerFixtureChild(() => stopFixtureChild(child, stopped, 1_000, 2_000, { group, startedBy }))
   void stopped.finally(untrack)
-  let output = "", spawnError, completed = false
+  let output = "", spawnError, completed = false, backendFetch
   const sanitize = text => redactSecrets(text, [password, daemon.password])
   child.on("error", error => { spawnError = error })
   for (const pipe of [child.stdout, child.stderr]) pipe.on("data", bytes => { output = (output + bytes).slice(-500_000) })
@@ -46,7 +46,9 @@ export async function withBackend(daemon, tree, root, followLongReplies, run, {r
       }
       await sleep(50)
     }
-    const request = (route, method, body, cookie) => fixtureFetch(`${origin}${route}`, {
+    const backendPid = await fixtureChildPid(child)
+    backendFetch = createAttestedFetch(origin, Number(new URL(origin).port), backendPid)
+    const request = (route, method, body, cookie) => backendFetch(`${origin}${route}`, {
       method, headers: { origin, "content-type": "application/json", ...(cookie ? { cookie } : {}) },
       body: JSON.stringify(body), signal: AbortSignal.timeout(30_000),
     })
@@ -64,6 +66,7 @@ export async function withBackend(daemon, tree, root, followLongReplies, run, {r
     await run(origin, cookie.slice(cookie.indexOf("=") + 1), {password})
     completed = true
   } finally {
+    await backendFetch?.close().catch(() => {})
     let graceful = false
     if (resolvedRust && child.exitCode === null) {
       child.stdin.on("error", () => {})
