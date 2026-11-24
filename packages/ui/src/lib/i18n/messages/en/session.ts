@@ -15,6 +15,7 @@ export const sessionMessages = {
   "sessionList.filter.includeSubsessions": "Subsessions",
   "session.pruning.maintenance_required": "Wait for the current operation to finish, then retry cleanup.",
   "session.pruning.unavailable": "Reopen CodeNomad and retry.",
+  "session.messageActions.serverUnavailable": "This server doesn’t support this action.",
   "session.pruning.conflict": "Reload the message and select the content again.",
   "session.pruning.not_deletable": "Only completed tools and reasoning in this session can be removed.",
   "session.pruning.unsupported_storage": "The cleanup plugin could not validate this session's storage. Cleanup was refused.",

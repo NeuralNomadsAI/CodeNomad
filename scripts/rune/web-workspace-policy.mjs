@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {readFile,realpath} from 'node:fs/promises'
+import {readFile,realpath,lstat} from 'node:fs/promises'
 import path from 'node:path'
 
 const inside=(parent,value)=>{const relative=path.relative(parent,value);return relative&&!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith(`..${path.sep}`)}
@@ -11,7 +11,11 @@ export async function privateWebFixture({root,project,storageState,out,origin}){
   assert(inside(profile,storage),'Cookies must come from this private fixture profile')
   const auth=JSON.parse(await readFile(storage,'utf8'))
   assert(auth.cookies.length>0&&auth.cookies.every(c=>['127.0.0.1','localhost','::1'].includes(c.domain))&&(auth.origins??[]).every(o=>o.origin===origin),'Private loopback cookie state only')
-  assert(inside(profile,path.resolve(out)),'Output must stay in the private fixture profile')
+  const output=path.resolve(out)
+  const parent=await realpath(path.dirname(output))
+  const leaf=await lstat(output).catch(error=>{if(error.code!=='ENOENT')throw error})
+  assert((parent===profile||inside(profile,parent))&&(!leaf||leaf.isDirectory()&&!leaf.isSymbolicLink()),
+    'Output must stay in the private fixture profile')
   return {profile,storage,project:directory,inside}
 }
 export async function bundleAssetPaths(directory){
@@ -27,7 +31,21 @@ export async function bundleAssetPaths(directory){
   }
   return paths
 }
-export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,missions=false,mobilePreferences=false}){
+function hidesFixtureThinking(body){
+  const settings=body?.settings, defaults=settings?.toolCallExpansionDefaults
+  const expanded=mode=>mode==='expanded'||mode==='collapsed'
+  const visibility=mode=>expanded(mode)||mode==='hidden'
+  return settings?.showThinkingBlocks===false&&Object.keys(body).length===1&&
+    Object.keys(settings).every(key=>['showThinkingBlocks','toolCallExpansionDefaults',
+      'toolGroupVisibility','usageMetricsExpansion'].includes(key))&&
+    (!Object.hasOwn(settings,'toolGroupVisibility')||visibility(settings.toolGroupVisibility))&&
+    (!Object.hasOwn(settings,'usageMetricsExpansion')||expanded(settings.usageMetricsExpansion))&&
+    defaults?.preset==='custom'&&expanded(defaults.thinking)&&Object.keys(defaults).length===3&&
+    defaults.tools&&Object.entries(defaults.tools).every(([key,mode])=>
+      /^(bash|read|write|edit|patch|webfetch|websearch|glob|grep|task|execute|skill|question|invalid|other)$/.test(key)&&visibility(mode))
+}
+
+export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,missions=false,mobilePreferences=false,markerFilters=false}){
   const workspaces=new Set(),claims=new Map(),owners=new Map()
   const claim=body=>typeof body?.requestId==='string'&&body.requestId.length>0&&body.requestId.length<=128&&body.requestId.trim()===body.requestId
   const creation=body=>body?.path===project&&claim(body)&&Object.keys(body).every(key=>['path','requestId'].includes(key))
@@ -45,17 +63,25 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
       if(method==='GET'&&['/api/workspaces','/api/meta','/api/events','/api/auth/status'].includes(p))return true
       if(method==='GET'&&(p==='/api/storage/config/ui'||p==='/api/storage/state/ui'))return true
       if(mobilePreferences&&method==='GET'&&p==='/api/memory/settings')return true
+      if(markerFilters&&method==='PATCH'&&p==='/api/storage/config/ui')
+        return !!hidesFixtureThinking(body)
       if(method==='POST'&&p==='/api/client-connections/pong')return true
       if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
       if(method==='POST'&&p==='/api/workspaces/creation/cancel')return claim(body)&&claims.has(body.requestId)
       const scoped=p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(.*)$/)
+      if(scoped&&workspaces.has(scoped[1])&&method==='GET'&&/^session\/ses_another\/message\/message-0000[01]$/.test(scoped[2]))return true
       if(scoped&&workspaces.has(scoped[1])&&method==='POST'&&scoped[2]==='session/ses_existing/prompt')
         return typeof androidPrompt==='string'&&body?.text===androidPrompt&&Object.keys(body).length===1
       if(scoped&&workspaces.has(scoped[1])&&method==='GET')return /^(command|model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another|ses_linked|ses_linked_next)(?:\/(permission|form))?$/.test(scoped[2])
       const owned=p.match(/^\/api\/workspaces\/([^/]+)(?:\/(.*))?$/)
       if(!owned||!workspaces.has(owned[1]))return false
       if(method==='GET'&&owned[2]==='worktrees')return true
-      if(method==='POST'&&owned[2]==='session-history/window')return ['ses_existing','ses_another','ses_linked','ses_linked_next'].includes(body?.sessionID)
+      if(method==='POST'&&['session-history/window','session-history/outline'].includes(owned[2]))return ['ses_existing','ses_another','ses_linked','ses_linked_next'].includes(body?.sessionID)
+      if(method==='POST'&&owned[2]==='session-history/outlinePreview')return body?.sessionID==='ses_existing'
+        &&Array.isArray(body.messageIDs)&&body.messageIDs.length>0&&body.messageIDs.length<=12
+        &&body.messageIDs.every(id=>typeof id==='string'&&/^(message-\d{5}|timeline-(compaction|system))$/.test(id))
+      if(method==='POST'&&owned[2]==='session-history/query')return body?.sessionID==='ses_existing'&&body.purpose==='search'
+      if(method==='POST'&&owned[2]==='session-history/ranked')return body?.version===1&&body.limit===40
       if(missions&&method==='POST'&&owned[2]==='missions/panel-page'){
         if(body?.source==='mission')return body.header===true&&['alpha','beta','gamma'].includes(body.missionID)
         if(body?.source==='activity')return body.actorOffset===0&&['alpha','beta','gamma'].includes(body.missionID)

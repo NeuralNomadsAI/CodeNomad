@@ -52,6 +52,9 @@ pub enum WorkspaceEvent {
     MissionActivityChanged {
         workspace_id: String,
     },
+    PermissionReceiptsChanged {
+        message: Option<String>,
+    },
     NativeFilesystemChanged {
         workspace_id: String,
     },
@@ -79,9 +82,18 @@ pub enum Command {
         text: String,
     },
     Older,
+    Page(HistoryEdge, Receiver<()>),
+    Anchor(crate::timeline::Jump),
     Latest,
     Retry,
     Close,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HistoryEdge {
+    Before,
+    After,
+    Oldest,
 }
 #[derive(Debug)]
 pub enum PromptOutcome {
@@ -113,6 +125,18 @@ pub enum Event {
         version: u64,
     },
     Older(Page),
+    PageOffered {
+        page: Page,
+        admit: crate::timeline::Admission,
+        cancelled: Receiver<()>,
+    },
+    PageFailed(Receiver<()>),
+    Anchor {
+        ticket: u64,
+        page: Page,
+        admit: crate::timeline::Admission,
+    },
+    AnchorFailed(u64),
     Message(Message),
     PromptAcknowledged {
         attempted: String,
@@ -129,6 +153,7 @@ pub enum Event {
     WorkspaceMissing,
     Reconnecting,
     HistoryInvalidated,
+    RevertChanged,
     PagingFailed,
 }
 

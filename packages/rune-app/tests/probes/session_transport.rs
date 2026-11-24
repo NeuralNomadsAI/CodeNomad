@@ -134,8 +134,13 @@ pub fn contract() {
             | Event::ReaderSync { .. }
             | Event::History(_)
             | Event::Older(_)
+            | Event::PageOffered { .. }
+            | Event::PageFailed(_)
+            | Event::Anchor { .. }
+            | Event::AnchorFailed(_)
             | Event::Reconnecting
             | Event::HistoryInvalidated
+            | Event::RevertChanged
             | Event::ConnectionLost
             | Event::WorkspaceMissing
             | Event::Connected(_)

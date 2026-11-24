@@ -139,7 +139,9 @@ pub(crate) async fn run_with_reading(
                 }
                 publish(&out, &wake, Event::Reconnecting).await;
             }
-            Some(Input::Command(Command::Older)) => {
+            Some(Input::Command(
+                command @ (Command::Older | Command::Page(..) | Command::Anchor(_)),
+            )) => {
                 let lane = Lane {
                     backend: &backend,
                     reading,
@@ -148,7 +150,18 @@ pub(crate) async fn run_with_reading(
                     out: &out,
                     wake: &wake,
                 };
-                match reader.older(&lane, opened).await? {
+                let (edge, cancellation) = match command {
+                    Command::Anchor(jump) => {
+                        reader.anchor(&lane, opened, jump).await;
+                        continue;
+                    }
+                    Command::Page(edge, signal) => (edge, Some(signal)),
+                    _ => (crate::transport::HistoryEdge::Before, None),
+                };
+                match reader
+                    .page(&lane, opened, edge, cancellation.as_ref())
+                    .await?
+                {
                     Turn::Process => {}
                     Turn::Next => continue,
                     Turn::Stop => return Ok(()),
@@ -243,6 +256,14 @@ pub(crate) async fn run_with_reading(
                     if let Some(usage) = content::Usage::decode(&native["data"]) {
                         publish(&out, &wake, Event::SessionUsage(usage)).await;
                     }
+                    continue;
+                }
+                if matches!(kind, "session.revert.staged" | "session.revert.cleared") {
+                    publish(&out, &wake, Event::RevertChanged).await;
+                    reader.clear_window_on_revert();
+                    reader.parked = false;
+                    reader.dirty = reader.active_reader;
+                    reader.quiet = Instant::now();
                     continue;
                 }
                 if matches!(kind, "session.deleted" | "session.revert.committed") {

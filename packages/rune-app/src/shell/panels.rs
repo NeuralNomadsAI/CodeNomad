@@ -327,7 +327,7 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
         [
             shell::spacer(),
             shell::panel_title(title).key("chat-title").role("heading"),
-            shell::spacer(),
+            crate::timeline::search::trigger(s).unwrap_or_else(shell::spacer),
             crate::files::view::toggle(s),
             connection_warning(s).unwrap_or_else(col),
         ],

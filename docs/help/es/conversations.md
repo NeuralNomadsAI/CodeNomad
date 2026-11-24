@@ -49,6 +49,8 @@ Son elecciones de ejecución para los envíos posteriores, no modificaciones de 
 
 ## Borradores y adjuntos {#drafts-attachments}
 
+En Rune, pasa el puntero por una imagen adjunta para verla o elige **Ampliar imagen**.
+
 1. Escribe en la conversación seleccionada. Cambiar de conversación conserva su borrador en lugar de enviarlo.
 2. Elige **Adjuntar archivo…** en el menú **Más acciones** del editor, o arrastra o pega, para archivos de este dispositivo; o escribe `@` para seleccionar archivos del proyecto, agentes o habilidades.
 3. Revisa las etiquetas de adjuntos y quita lo que no quieras incluir en el próximo envío.
@@ -116,6 +118,8 @@ Cerrar cancela la solicitud aparte pendiente sin interrumpir la sesión principa
 Un objetivo pertenece a su conversación: las subsesiones y las bifurcaciones empiezan sin ninguno. OpenCode también pausa un objetivo por sí mismo cuando detienes la sesión, cuando una ejecución falla, cuando deja de avanzar, al llegar a su límite de rondas o cuando el servicio se reinicia; reanúdalo para continuar. Pausar o borrar no deshace el trabajo ya hecho. Sin objetivo, o con un servicio de OpenCode sin soporte de objetivos, la línea no aparece.
 
 ## Bifurcar, deshacer y recuperar una ejecución fallida {#fork-errors}
+
+En Rune, deshacer rellena el cuadro de redacción vacío con el texto original. Usa **Rehacer último mensaje** encima de la conversación para recuperar el historial. Deshacer y eliminar herramientas y razonamientos requieren compatibilidad del servidor.
 
 1. En un mensaje, elige **Bifurcar después de este mensaje** para crear una conversación después de ese punto sin reemplazar la original.
 2. Para deshacer, revisa cuidadosamente **Deshacer cambios hasta aquí (elimina mensajes)**. La paleta ofrece **Deshacer último mensaje** y **Rehacer último mensaje** para la operación de deshacer preparada. Deshacer se desactiva si no hay un mensaje de usuario que se pueda deshacer; Rehacer se desactiva si no hay una operación de deshacer preparada.

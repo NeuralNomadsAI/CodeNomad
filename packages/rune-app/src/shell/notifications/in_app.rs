@@ -169,11 +169,14 @@ pub(crate) fn tick(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed
 }
 
-pub(crate) fn measure(s: &mut State, [_, _, width, height]: [f32; 4], tx: &mut Tx) {
+pub(crate) fn measure(s: &mut State, [_, _, width, height]: [f32; 4], tx: &mut Tx) -> bool {
     let viewport = &mut s.notifications.in_app.viewport;
     if *viewport != (width, height) {
         *viewport = (width, height);
         tx.instant();
+        true
+    } else {
+        false
     }
 }
 

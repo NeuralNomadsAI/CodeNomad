@@ -1,5 +1,15 @@
 use std::borrow::Cow;
 
+mod project;
+
+pub(super) use project::{native_file, open_native};
+
+pub(super) fn open(s: &mut crate::State, href: &str, tx: &mut rune::Tx) {
+    if !project::open(s, href) {
+        let _ = tx.open_url(&external(href));
+    }
+}
+
 pub(super) fn external(url: &str) -> Cow<'_, str> {
     let Some((scheme, rest)) = url.split_once("://").filter(|(scheme, _)| {
         scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")

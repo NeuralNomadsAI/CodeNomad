@@ -49,6 +49,14 @@ pub fn view(s: &State, compact: bool, worktree: Option<El>) -> El {
                 )
             }),
         )
+        .children((!s.messages.is_empty()).then(|| {
+            crate::components::button_tx(
+                "oldest",
+                t("messageSection.scroll.toFirstAriaLabel"),
+                s.paging || s.phase == Phase::Reconnecting || s.phase == Phase::Failed,
+                screen::action_tx(&scope, crate::chat::reader::oldest),
+            )
+        }))
         .child(crate::components::button_tx(
             "latest",
             t("rune.latest"),

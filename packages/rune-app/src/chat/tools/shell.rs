@@ -1,4 +1,24 @@
 use super::{Tool, string};
+use crate::strings::locale;
+use rune_theme_codenomad::catalogue;
+
+pub(super) fn summary(tool: &Tool) -> &str {
+    string(&tool.input, &["description"])
+}
+
+pub(super) fn detail(tool: &Tool, title: &mut String) {
+    if let Some(timeout) = tool.input["timeout"]
+        .as_number()
+        .filter(|n| n.as_f64().is_some_and(|v| v > 0.0))
+    {
+        title.push_str(" · ");
+        title.push_str(&catalogue::format(
+            locale(),
+            "toolCall.renderer.bash.title.timeout",
+            &[("timeout", &format!("{timeout}ms"))],
+        ));
+    }
+}
 
 pub(super) fn matches(tool: &Tool) -> bool {
     matches!(tool.name.as_str(), "bash" | "shell")

@@ -1,6 +1,6 @@
 use super::Preferences;
 #[cfg(target_arch = "wasm32")]
-use super::{conversation, web, web_contrast};
+use super::{web, web_contrast};
 use crate::{State, strings};
 use rune::{Cx, El};
 
@@ -23,9 +23,11 @@ pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<St
         {
             use rune_theme_codenomad::layout::Layout;
             // Opening or closing a modal must keep the shell at the same Rune path.
-            rune::col().full_width().full_height().child(body).children(
-                conversation::web_view(s, &prefs).or_else(|| web::view(s, &prefs, more, cx)),
-            )
+            rune::col()
+                .full_width()
+                .full_height()
+                .child(body)
+                .children(web::view(s, &prefs, more, cx))
         }
         #[cfg(not(target_arch = "wasm32"))]
         body

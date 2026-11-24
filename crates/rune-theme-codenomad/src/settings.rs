@@ -186,6 +186,145 @@ pub fn build_picker(control: Select, layers: &mut Vec<El>) -> El {
     kit.c.layer_01 = tokens(dark).color("surface-overlay");
     control.build(&kit, layers)
 }
+
+pub fn transcript_popup<S: 'static>(
+    trigger: &str,
+    label: &str,
+    content: El,
+    viewport: &layout::DrawnRect,
+    dismiss: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
+    let dark = layout::dark();
+    let theme = tokens(dark);
+    let body = col()
+        .key("transcript-filters")
+        .role("dialog")
+        .label(label)
+        .focus_return(trigger)
+        .modal_tx(true, dismiss)
+        // transcript-filters.css: width 18rem, an independently scrolling list.
+        .w(288.0)
+        .fill(theme.color("surface-overlay"))
+        .border(1.0, theme.color("border-base"))
+        .child(heading(label))
+        .child(
+            col()
+                .max_h(400.0)
+                .drawn_rect_into(viewport)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(content),
+        );
+    rune_kit::popover::anchored(
+        crate::kit(dark),
+        body,
+        trigger,
+        rune_kit::Placement::BottomEnd,
+        6.0,
+    )
+}
+
+pub fn transcript_preset_picker(key: &str, label: &str, options: &[&str]) -> Select {
+    picker(key, label, options).width(272.0)
+}
+
+pub enum FilterDrag {
+    Start([f32; 2]),
+    Move([f32; 2]),
+    Release([f32; 2]),
+    Cancel,
+}
+
+pub fn filter_drag<S: 'static>(
+    button: El,
+    change: impl Fn(&mut S, FilterDrag, &mut rune::Tx) + 'static,
+) -> El {
+    button.on_drag(move |s, drag, tx| {
+        let point = drag.window_point();
+        change(
+            s,
+            match drag.phase {
+                rune::Phase::Down => FilterDrag::Start(point),
+                rune::Phase::Move => FilterDrag::Move(point),
+                rune::Phase::Up if drag.cancelled() => FilterDrag::Cancel,
+                rune::Phase::Up => FilterDrag::Release(point),
+            },
+            tx,
+        );
+    })
+}
+
+pub fn transcript_filter_row<S: 'static>(
+    label: &str,
+    visibility: (&str, bool, impl Fn(&mut S, &mut rune::Tx) + 'static),
+    expansion: (&str, bool, impl Fn(&mut S, &mut rune::Tx) + 'static),
+    disabled: bool,
+    decorate: impl Fn(El, bool) -> El,
+) -> El {
+    use crate::git_panel::{CHEVRON_DOWN, CHEVRON_RIGHT, EYE};
+    fn filter_button<S: 'static>(
+        glyph: &'static rune::Icon,
+        label: &str,
+        disabled: bool,
+        active: bool,
+        press: impl Fn(&mut S, &mut rune::Tx) + 'static,
+    ) -> El {
+        let press = std::rc::Rc::new(press);
+        let by_pointer = press.clone();
+        let button =
+            crate::git_panel::icon_button(glyph, label, disabled, Some(active), move |s, tx| {
+                by_pointer(s, tx)
+            });
+        if disabled {
+            button
+        } else {
+            button.on_key(move |s, key, tx| {
+                if key.key != rune::Key::Enter {
+                    return false;
+                }
+                press(s, tx);
+                true
+            })
+        }
+    }
+    let (visibility_name, visible, set_visibility) = visibility;
+    let (expansion_name, expanded, set_expansion) = expansion;
+    row()
+        .role("group")
+        .label(label)
+        .full_width()
+        .center_y()
+        .pad(Space::Xs)
+        .child(
+            text(label)
+                .text_role(TextRole::Label)
+                .grow(1.0)
+                .shrink()
+                .truncate(),
+        )
+        .child(decorate(
+            filter_button(&EYE, visibility_name, disabled, visible, set_visibility)
+                .key("visibility"),
+            false,
+        ))
+        .child(decorate(
+            filter_button(
+                if expanded {
+                    &CHEVRON_DOWN
+                } else {
+                    &CHEVRON_RIGHT
+                },
+                expansion_name,
+                disabled || !visible,
+                expanded,
+                set_expansion,
+            )
+            .key("expansion"),
+            true,
+        ))
+}
+
 pub fn render<S, T>(
     cx: &mut Cx<S>,
     dark: bool,

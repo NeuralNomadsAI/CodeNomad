@@ -1,5 +1,5 @@
 use crate::{Space, TextRole, kit, layout::dark, tokens};
-use pulldown_cmark::{Event, Options, Parser};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 use rune::{El, ScrollSpec, rich};
 use rune_kit::{CodeFrame, Markdown, MarkdownStyle, syntax};
 use std::borrow::Cow;
@@ -8,6 +8,7 @@ pub fn prose<S: 'static>(
     source: &str,
     streaming: bool,
     highlight: bool,
+    query: Option<(&[String], bool)>,
     link: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
     wrapped: impl Fn(usize, &str) -> bool + 'static,
     frame: impl Fn(El, &CodeFrame<'_>) -> El + 'static,
@@ -17,8 +18,23 @@ pub fn prose<S: 'static>(
         .code_block(kit.c.bg_deep, kit.c.border_base)
         .link(kit.c.text_accent)
         .syntax_highlight(highlight);
-    Markdown::new(literal_breaks(source).into_owned())
+    let source = literal_breaks(source).into_owned();
+    let matches = match query {
+        Some((terms, true)) => crate::timeline::search::ranges(&source, terms)
+            .into_iter()
+            .map(|range| vec![range])
+            .collect(),
+        Some((terms, false)) => terms.first().map_or_else(Vec::new, |phrase| {
+            Markdown::find(&source, phrase, rune_kit::markdown::Case::Insensitive)
+                .into_iter()
+                .take(512)
+                .collect()
+        }),
+        None => Vec::new(),
+    };
+    Markdown::new(source)
         .style(style)
+        .highlights(matches)
         .selectable(true)
         .tasks_read_only()
         .scroll_wide(true)
@@ -29,8 +45,9 @@ pub fn prose<S: 'static>(
         .build(kit)
 }
 
-// Normalize only parsed HTML and soft breaks so fences, inline code and link URLs stay intact.
-fn literal_breaks(source: &str) -> Cow<'_, str> {
+// Normalize only parsed events. Diagram fences stay on Kit's source path so the
+// transcript can gate preview on completion and keep source actions on one frame.
+pub(crate) fn literal_breaks(source: &str) -> Cow<'_, str> {
     if !source.contains(['<', '\n']) {
         return Cow::Borrowed(source);
     }
@@ -39,6 +56,15 @@ fn literal_breaks(source: &str) -> Cow<'_, str> {
     let mut last = 0;
     let mut result = String::new();
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
+        if let Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) = &event
+            && let Some((word, replacement)) = diagram_fence(info, &source[range.clone()])
+        {
+            let start = range.start + word.start;
+            result.push_str(&source[last..start]);
+            result.push_str(replacement);
+            last = range.start + word.end;
+            continue;
+        }
         match event {
             Event::SoftBreak => {
                 result.push_str(&source[last..range.start]);
@@ -67,6 +93,27 @@ fn literal_breaks(source: &str) -> Cow<'_, str> {
     }
     result.push_str(&source[last..]);
     Cow::Owned(result)
+}
+
+fn diagram_fence(info: &str, block: &str) -> Option<(std::ops::Range<usize>, &'static str)> {
+    let kit_word = info.split(|c: char| c.is_whitespace() || c == ',').next()?;
+    if !(kit_word.eq_ignore_ascii_case("mermaid") || kit_word.eq_ignore_ascii_case("mmd")) {
+        return None;
+    }
+    let line = block.lines().next()?;
+    let opening = line.trim_start();
+    let marker = opening.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let language = opening.trim_start_matches(marker).trim_start();
+    let word = language.split_whitespace().next()?;
+    let start = line.len() - language.len();
+    // Kit recognizes comma modifiers; Solid only admits a whitespace-delimited language.
+    // Route both forms through the ordinary code frame, retaining Copy even for plain source.
+    let replacement = if word.eq_ignore_ascii_case("mermaid") || word.eq_ignore_ascii_case("mmd") {
+        "mmd"
+    } else {
+        "text"
+    };
+    Some((start..start + word.len(), replacement))
 }
 
 pub fn language_for_path(path: &str) -> &str {
@@ -109,6 +156,16 @@ fn tool_lines(lines: usize) -> f32 {
 }
 
 pub fn code(source: &str, language: &str, highlight: bool, wrap: bool) -> El {
+    search_code(source, language, highlight, wrap, None)
+}
+
+pub fn search_code(
+    source: &str,
+    language: &str,
+    highlight: bool,
+    wrap: bool,
+    query: Option<crate::timeline::search::Query<'_>>,
+) -> El {
     let dark = dark();
     let spans = if highlight {
         syntax::SyntaxTheme::from_kit(kit(dark))
@@ -116,7 +173,10 @@ pub fn code(source: &str, language: &str, highlight: bool, wrap: bool) -> El {
     } else {
         Vec::new()
     };
-    code_body(rich(source, spans), wrap)
+    code_body(
+        crate::timeline::search::ink(rich(source, spans), source, query),
+        wrap,
+    )
 }
 
 pub(crate) fn code_body(body: El, wrap: bool) -> El {

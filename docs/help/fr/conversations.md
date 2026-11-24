@@ -49,6 +49,8 @@ Ces choix d’exécution concernent les envois suivants, pas les réponses anté
 
 ## Brouillons et pièces jointes {#drafts-attachments}
 
+Dans Rune, survolez une image jointe pour l’aperçu ou choisissez **Agrandir l’image**.
+
 1. Rédigez dans la conversation sélectionnée. Changer de conversation conserve son brouillon au lieu de l’envoyer.
 2. Choisissez **Joindre un fichier…** dans le menu **Plus d'actions** de la zone de saisie, ou déposez ou collez, pour des fichiers de cet appareil ; ou tapez `@` pour sélectionner des fichiers du projet, agents ou compétences.
 3. Vérifiez les étiquettes des pièces jointes et retirez tout ce qui n’est pas destiné au prochain envoi.
@@ -116,6 +118,8 @@ Fermer annule la demande annexe en attente sans interrompre la session principal
 Un objectif appartient à sa conversation : les sous-sessions et les bifurcations commencent sans objectif. OpenCode met aussi un objectif en pause de lui-même quand vous arrêtez la session, quand une exécution échoue, quand il ne progresse plus, à sa limite de tours ou au redémarrage du service ; reprenez-le pour continuer. Mettre en pause ou effacer n’annule pas le travail déjà fait. Sans objectif, ou avec un service OpenCode qui ne prend pas en charge les objectifs, la ligne n’apparaît pas.
 
 ## Bifurquer, annuler et récupérer une exécution échouée {#fork-errors}
+
+Dans Rune, l’annulation place le texte d’origine dans le composeur s’il est vide. **Rétablir le dernier message**, au-dessus de la conversation, restaure l’historique. Le serveur doit prendre en charge l’annulation et la suppression des outils et raisonnements.
 
 1. Sur un message, choisissez **Bifurquer après ce message** pour créer une conversation après ce point sans remplacer l’originale.
 2. Pour annuler, examinez attentivement **Annuler les changements jusqu'ici (supprime les messages)**. La palette propose **Annuler le dernier message** et **Rétablir le dernier message** pour l’annulation en cours. Annuler est désactivé sans message utilisateur annulable ; Rétablir est désactivé sans annulation en cours.

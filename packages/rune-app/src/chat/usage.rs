@@ -159,7 +159,11 @@ fn disclosure(
     open: bool,
     included: bool,
 ) -> El {
-    let expanded = open ^ s.transcript_display.toggled(&key);
+    let expanded = if session {
+        s.transcript_display.toggled(&key)
+    } else {
+        s.transcript_display.expanded(&key, open)
+    };
     let toggle = key.clone();
     let mut entries = vec![
         token("input", usage.input, session),
@@ -208,7 +212,11 @@ fn disclosure(
             .into_iter()
             .map(|(label, value, full)| theme::metric(label, &value, &full)),
         screen::action(&s.input_scope, move |s| {
-            super::actions::Display::toggle(s, &toggle)
+            if session {
+                super::actions::Display::toggle(s, &toggle);
+            } else {
+                super::actions::Display::set_expanded(s, &toggle, !expanded);
+            }
         }),
     )
 }

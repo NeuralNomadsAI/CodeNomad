@@ -17,6 +17,8 @@ pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;
 #[cfg(target_arch = "wasm32")]
+pub(crate) mod web_alert;
+#[cfg(target_arch = "wasm32")]
 mod web_attachment;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use web_attachment::download as download_file;

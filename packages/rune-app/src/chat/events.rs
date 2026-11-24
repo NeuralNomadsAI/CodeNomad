@@ -7,6 +7,14 @@ use crate::{
 };
 
 pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
+    drain_chat(s, limit, true)
+}
+
+pub(crate) fn poll_hidden_chat(s: &mut State, limit: usize) -> bool {
+    drain_chat(s, limit, false)
+}
+
+fn drain_chat(s: &mut State, limit: usize, visible: bool) -> bool {
     let mut changed = s.agent.as_mut().is_some_and(|a| a.poll());
     if changed
         && s.reader
@@ -29,6 +37,7 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         let content = observation.is_none();
         let event = observation.or_else(|| s.reader.as_ref().and_then(chat::reader::Reader::next));
         let Some(event) = event else { break };
+        crate::timeline::observe(s, &event);
         let stale_activity = matches!(&event, Event::ReaderSync { version, .. }
             if s.reader.as_ref().is_some_and(|reader| reader.activity_after(*version)));
         settings::connection_event(s, &event);
@@ -37,6 +46,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.renew_scope();
                 s.transcript_display.children.bind(backend.clone());
                 s.transcript_display.usage_family.bind(backend.clone());
+                s.transcript_display.pictures.bind(backend.clone());
+                s.transcript_display.receipts.bind(backend.clone());
+                s.transcript_display.messages.bind(backend.clone());
                 s.attachments.bind(backend.clone());
                 s.composer.picker.bind(backend.clone());
                 git::connected(s, &backend);
@@ -48,7 +60,10 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::AgentHint(catalog) => {
                 if catalog {
+                    s.transcript_display.messages.refresh();
                     workspace::mission_event(s, None);
+                    s.transcript_display.receipts.reconnect();
+                    s.transcript_display.pictures.retry_interrupted();
                     s.transcript_display.usage_family.refresh();
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
                     s.composer.picker.mentions_changed(&s.reads, &s.wake);
@@ -147,6 +162,12 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     crate::shell::notifications::relay_notice(s, event);
                 }
             }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::PermissionReceiptsChanged { message },
+            ) => {
+                s.transcript_display.receipts.invalidate(message);
+                continue;
+            }
             Event::Workspace(event) => {
                 if matches!(
                     event,
@@ -190,11 +211,16 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
                 s.messages = page.rows;
+                crate::timeline::restore_search(s);
                 s.history_detached = s.reader.is_some() && page.newer.is_some();
                 composer::reconcile(s);
                 s.can_older = page.older.is_some();
-                s.paging = false;
-                s.history_error = false;
+                // An earlier snapshot may already have been queued before the gesture.
+                // The page offer or its cancellation alone settles that gesture.
+                if s.transcript_display.timeline.paging.is_none() {
+                    s.paging = false;
+                    s.history_error = false;
+                }
                 // A newer activity event can run ahead of a snapshot in the content lane.
                 let running = if stale_activity {
                     s.reader.as_ref().is_some_and(|reader| {
@@ -209,21 +235,18 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     Phase::Ready
                 };
             }
-            Event::Older(page) => {
-                if !page.rows.is_empty() {
-                    s.attachments.cancel();
-                    s.history_detached = page.newer.is_some();
-                    if let Some(reader) = &mut s.reader {
-                        reader.install(s.history_detached);
-                    }
-                    s.messages = page.rows;
-                    composer::reconcile(s);
+            Event::Older(page) => chat::reader::install_page(s, page, None),
+            Event::PageOffered {
+                page,
+                admit,
+                cancelled,
+            } => {
+                if let Some(edge) = chat::reader::admit_page(s, &cancelled, || admit.accept()) {
+                    chat::reader::install_page(s, page, Some(edge));
                 }
-                s.can_older = page.older.is_some();
-                s.history_error = false;
-                s.paging = false;
             }
             Event::Reconnecting | Event::ConnectionLost => {
+                s.transcript_display.messages.offline();
                 s.composer.picker.set_attachments_supported(false);
                 chat::reader::reconnecting(s);
                 #[cfg(target_arch = "wasm32")]
@@ -244,11 +267,28 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::PagingFailed => {
+                chat::reader::cancel_page(s);
                 s.paging = false;
                 s.history_error = true;
             }
+            Event::RevertChanged => s.transcript_display.messages.invalidate_boundary(),
+            Event::PageFailed(cancelled) => {
+                chat::reader::admit_page(s, &cancelled, || false);
+            }
+            Event::Anchor {
+                ticket,
+                page,
+                admit,
+            } => {
+                crate::timeline::admit(s, ticket, page, admit);
+            }
+            Event::AnchorFailed(ticket) => crate::timeline::failed(s, ticket),
             Event::HistoryInvalidated => {
+                s.transcript_display.messages.invalidate_boundary();
+                chat::reader::cancel_page(s);
+                s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
+                s.transcript_display.pictures.clear();
                 chat::reader::invalidate(s);
                 s.composer.picker.set_attachments_supported(false);
                 s.attachments.cancel();
@@ -259,7 +299,9 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.phase = Phase::Reconnecting;
             }
             Event::WorkspaceMissing => {
+                s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
+                s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -287,14 +329,30 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Text(id, event) => {
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
+                    let new_text = matches!(&event, content::TextEvent::Delta { text, .. } if !text.trim().is_empty())
+                        && m.parts
+                            .iter()
+                            .rev()
+                            .find_map(|part| match part {
+                                content::Part::Text(t) => Some(t.text.trim().is_empty()),
+                                _ => None,
+                            })
+                            .unwrap_or(true);
                     match content::apply_text(std::sync::Arc::make_mut(m), &event) {
                         Ok(content::TextFit::Repair) | Err(_) => s.history_error = true,
                         _ => {}
                     }
+                    if new_text {
+                        crate::timeline::structure_changed(s);
+                    }
                 }
             }
             Event::Reasoning(id, event) => {
+                let changed = chat::anchors::reasoning_changed(&s.messages, &id, &event);
                 content::apply_reasoning(&mut s.messages, &id, &event);
+                if changed {
+                    crate::timeline::structure_changed(s);
+                }
             }
             Event::StepUsage(id, usage) => {
                 if let Some(row) = s
@@ -311,7 +369,11 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                     .iter_mut()
                     .find(|row| row.id == id && !row.completed)
                 {
+                    let inserted = !row.parts.iter().any(|part| matches!(part, content::Part::Tool(existing) if existing.id == tool.id));
                     content::install_tool(std::sync::Arc::make_mut(row), tool);
+                    if inserted {
+                        crate::timeline::structure_changed(s);
+                    }
                 }
             }
             Event::Done => s.phase = Phase::Ready,
@@ -319,11 +381,14 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if let Some(reader) = &mut s.reader {
                     reader.failed();
                 }
+                chat::reader::cancel_page(s);
                 s.paging = false;
                 s.history_error = true;
             }
             Event::AuthenticationRequired(..) | Event::Failed => {
+                s.transcript_display.receipts.clear();
                 s.transcript_display.children.clear();
+                s.transcript_display.pictures.clear();
                 s.transcript_display.usage_family.close();
                 #[cfg(target_arch = "wasm32")]
                 if matches!(&event, Event::Failed) && !platform::pairing::required(s) {
@@ -359,7 +424,10 @@ pub(crate) fn poll_chat(s: &mut State, limit: usize) -> bool {
         s.phase = Phase::Failed;
         changed = true;
     }
-    if s.transcript_display.children.poll() {
+    if s.transcript_display.children.poll()
+        | s.transcript_display.pictures.poll(&s.reads, &s.wake)
+        | super::receipts::Receipts::poll(s, visible)
+    {
         s.revision += 1;
         changed = true;
     }

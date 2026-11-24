@@ -23,6 +23,7 @@ test-support = ["rune-theme-codenomad/test-support"]
 base64 = "0.22"
 async-lock = "3.5.0"
 codenomad-client = { path = "../../crates/codenomad-client" }
+percent-encoding = "2"
 rune = { workspace = true }
 rune-kit = { workspace = true, features = ["syntax"] }
 rune-theme-codenomad = { workspace = true }

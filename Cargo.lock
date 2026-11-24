@@ -652,7 +652,9 @@ name = "codenomad-client"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "avif-parse",
  "base64 0.22.1",
+ "bitreader",
  "futures-lite",
  "getrandom 0.4.3",
  "imagesize",
@@ -689,6 +691,7 @@ dependencies = [
  "icu_collator",
  "icu_locale_core",
  "js-sys",
+ "percent-encoding",
  "reqwest",
  "rune",
  "rune-kit",
