@@ -117,6 +117,7 @@ pub(crate) fn apply_at(row: &mut Message, kind: &str, data: &Value, at: Option<u
             error: String::new(),
             started: at,
             ended: None,
+            message_created: None,
             pictures: Vec::new(),
             bytes: 0,
             output_bytes: 0,

@@ -36,13 +36,12 @@ impl Clock {
     }
 }
 
-pub(super) fn tool(s: &State, key: &str, tool: &Tool, header: El) -> El {
-    let timing = match tool.status.as_str() {
+pub(super) fn tool_timing(tool: &Tool) -> Option<(u64, Option<u64>)> {
+    match tool.status.as_str() {
         "running" => tool.started.map(|start| (start, None)),
         "completed" | "error" => tool.started.zip(tool.ended.map(Some)),
         _ => None,
-    };
-    view(s, key, timing, header)
+    }
 }
 
 pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, header: El) -> El {

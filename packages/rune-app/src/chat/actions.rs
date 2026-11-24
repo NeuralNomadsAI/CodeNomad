@@ -38,6 +38,7 @@ struct SessionDisplay {
     toggled: HashSet<String>,
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
+    task_anchors: HashMap<String, String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     diagram_sources: HashMap<String, BTreeSet<usize>>,
     compact_diffs: (u64, HashSet<String>),
@@ -136,6 +137,21 @@ impl Display {
 
     pub fn steps(&self, key: &str) -> usize {
         self.active.revealed.get(key).copied().unwrap_or_default()
+    }
+
+    pub(super) fn task_anchor(&self, key: &str) -> Option<&str> {
+        self.active.task_anchors.get(key).map(String::as_str)
+    }
+
+    pub(super) fn set_task_anchor(&mut self, key: &str, id: Option<String>) {
+        match id {
+            Some(id) => {
+                self.active.task_anchors.insert(key.into(), id);
+            }
+            None => {
+                self.active.task_anchors.remove(key);
+            }
+        }
     }
 
     pub(super) fn live_ansi(

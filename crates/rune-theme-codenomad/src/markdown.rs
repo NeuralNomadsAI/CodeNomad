@@ -143,6 +143,36 @@ pub fn tool_pane(content: El, large: bool) -> El {
         .child(content)
 }
 
+pub fn steps_pane<S: 'static>(
+    key: String,
+    label: &str,
+    header: Option<El>,
+    rows: Vec<El>,
+    on_visible: impl Fn(&mut S, std::ops::Range<usize>) -> bool + 'static,
+) -> El {
+    let t = tokens(dark());
+    let gap = t.space(Space::Sm).px();
+    let list = rune::col()
+        .key(format!("{key}-list"))
+        .w_full()
+        .role("list")
+        .label(label)
+        .gap(gap)
+        .growth(rune::GrowthSpec::default())
+        .virtualize(t.length(crate::Length::TouchTarget).px())
+        .on_visible_rows(on_visible)
+        .children(rows);
+    rune::col()
+        .key(key)
+        .w_full()
+        .max_h(tool_lines(30))
+        .scroll(ScrollSpec { stick_bottom: true })
+        .scroll_anchor()
+        .gap(gap)
+        .children(header)
+        .child(list)
+}
+
 pub fn diff_pane(content: El, lines: usize) -> El {
     rune::col()
         .w_full()

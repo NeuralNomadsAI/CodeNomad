@@ -16,6 +16,13 @@ const CHILD_LIMIT: usize = 4;
 const STEP_BYTES: usize = 2 << 20;
 type Steps = Vec<(String, Arc<Tool>)>;
 
+#[derive(Clone, Default, PartialEq)]
+pub(super) struct Snapshot {
+    pub steps: Steps,
+    pub truncated: bool,
+    pub byte_truncated: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct Children {
     backend: Option<Backend>,
@@ -25,8 +32,8 @@ pub(crate) struct Children {
 struct Entry {
     cards: HashMap<String, Weak<()>>,
     _cancel: codenomad_client::Sender<()>,
-    result: Receiver<Option<Steps>>,
-    steps: Steps,
+    result: Receiver<Option<Snapshot>>,
+    snapshot: Option<Snapshot>,
 }
 
 impl Children {
@@ -85,7 +92,7 @@ impl Children {
                 cards: HashMap::from([(key.into(), Rc::downgrade(lease))]),
                 _cancel: cancel,
                 result,
-                steps: Vec::new(),
+                snapshot: None,
             },
         );
         let child = id.to_owned();
@@ -102,7 +109,7 @@ impl Children {
                             .child_page(&child)
                             .await
                             .ok()
-                            .map(|page| page.map_or_else(Vec::new, steps))
+                            .map(|page| page.map_or_else(Snapshot::default, snapshot))
                     };
                     if out.send(snapshot).await.is_err() {
                         break;
@@ -122,9 +129,9 @@ impl Children {
     pub(crate) fn poll(&mut self) -> bool {
         let mut changed = self.prune();
         for entry in self.entries.values_mut() {
-            if let Ok(Some(steps)) = entry.result.try_recv() {
-                changed |= entry.steps != steps;
-                entry.steps = steps;
+            if let Ok(Some(next)) = entry.result.try_recv() {
+                changed |= entry.snapshot.as_ref() != Some(&next);
+                entry.snapshot = Some(next);
             }
         }
         changed
@@ -140,33 +147,47 @@ impl Children {
         before != self.entries.len()
     }
 
+    pub(super) fn snapshot(&self, id: &str) -> Option<&Snapshot> {
+        self.entries.get(id)?.snapshot.as_ref()
+    }
+
     pub(super) fn steps(&self, id: &str) -> &[(String, Arc<Tool>)] {
-        self.entries
-            .get(id)
-            .map_or(&[], |entry| entry.steps.as_slice())
+        self.snapshot(id)
+            .map_or(&[], |snapshot| snapshot.steps.as_slice())
     }
 }
 
-fn steps(page: crate::history::Page) -> Steps {
+fn snapshot(page: crate::history::Page) -> Snapshot {
     let mut remaining = STEP_BYTES;
-    let mut tools: Steps = page
-        .rows
-        .iter()
-        .rev()
-        .flat_map(|row| {
-            row.parts.iter().rev().filter_map(move |part| match part {
-                Part::Tool(tool) => Some((row, tool)),
-                _ => None,
-            })
-        })
-        .take(STEP_LIMIT)
-        .map_while(|(row, tool)| {
-            remaining = remaining.checked_sub(tool.retained_bytes())?;
-            Some((row.id.clone(), tool.clone()))
-        })
-        .collect();
+    let mut tools = Vec::new();
+    let mut count_truncated = false;
+    let mut byte_truncated = false;
+    for row in page.rows.iter().rev() {
+        for part in row.parts.iter().rev() {
+            let Part::Tool(tool) = part else {
+                continue;
+            };
+            if tools.len() >= STEP_LIMIT {
+                count_truncated = true;
+                break;
+            }
+            let Some(left) = remaining.checked_sub(tool.retained_bytes()) else {
+                byte_truncated = true;
+                break;
+            };
+            remaining = left;
+            tools.push((row.id.clone(), tool.clone()));
+        }
+        if count_truncated || byte_truncated {
+            break;
+        }
+    }
     tools.reverse();
-    tools
+    Snapshot {
+        steps: tools,
+        truncated: page.older.is_some() || count_truncated || byte_truncated,
+        byte_truncated,
+    }
 }
 
 #[cfg(test)]
@@ -174,7 +195,7 @@ impl Children {
     pub(super) fn install(&mut self, child: &str, page: crate::history::Page) -> Rc<()> {
         let lease = Rc::default();
         let (out, result) = bounded(1);
-        out.try_send(Some(steps(page))).unwrap();
+        out.try_send(Some(snapshot(page))).unwrap();
         let (cancel, _) = bounded(1);
         self.entries.insert(
             child.into(),
@@ -182,7 +203,7 @@ impl Children {
                 cards: HashMap::from([("test".into(), Rc::downgrade(&lease))]),
                 _cancel: cancel,
                 result,
-                steps: Vec::new(),
+                snapshot: None,
             },
         );
         lease

@@ -159,8 +159,9 @@ fn render_body(
     let is_task = task::is_task(tool);
     let nested = message.starts_with("child:");
     let report = is_task.then(|| task::report(s, tool)).flatten();
-    let status = task::status(s, tool)
-        .filter(|_| is_task)
+    let task_status = is_task.then(|| task::header_status(s, tool)).flatten();
+    let status = task_status
+        .map(|override_status| override_status.status)
         .unwrap_or(match tool.status.as_str() {
             "completed" if tool.name == "execute" && tool.metadata["error"] == true => {
                 "toolCall.status.error"
@@ -221,9 +222,16 @@ fn render_body(
             .expanded(expanded),
         )
         .child(text(t(status)).text_role(TextRole::Label));
-    if !is_task || tool.metadata["status"] != "running" {
-        header = super::duration::tool(s, key, tool, header);
-    }
+    let timing = if let Some(override_status) = task_status {
+        if override_status.running {
+            tool.started.map(|start| (start, None))
+        } else {
+            tool.started.zip(override_status.ended.map(Some))
+        }
+    } else {
+        super::duration::tool_timing(tool)
+    };
+    header = super::duration::view(s, key, timing, header);
     if shared_wrap {
         header = header.child(wrap_control(s, &wrap_key, wrap));
     }
