@@ -203,7 +203,8 @@ export interface MissionBriefSaveTrigger {
  * the command lives elsewhere (the selected toolbar's overflow menu) and only the name
   * field shows here; otherwise a labelled button opens it (a window
  * footer passes its own template for the field's buttons). */
-export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; selected?: UserMissionModel; buttonClass?: string
+export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; baselines?: readonly UserMissionModel[]; buttonClass?: string
+  captureDraft?: () => () => boolean
   onOpen?: (open: boolean) => void; onSaved?: (model: UserMissionModel) => void
   reading?: () => { failed: boolean; changed?: boolean; onRetry: () => void } | undefined
   trigger?: (trigger: MissionBriefSaveTrigger) => void }) {
@@ -233,11 +234,14 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
   }
   const models = () => config.preferences().missionModels
   const trimmed = () => name().trim()
-  const loaded = () => props.selected
-  const boundToLoaded = () => Boolean(loaded() && trimmed() === loaded()!.name)
+  const baselines = () => props.baselines ?? []
+  const bound = () => baselines().find(model => model.name === trimmed())
   const matches = createMemo(() => models().filter(model => model.name === trimmed()))
-  const replacement = () => boundToLoaded() ? loaded() : matches().length === 1 ? matches()[0] : undefined
-  const baseline = () => loaded() && replacement()?.id === loaded()!.id ? loaded() : undefined
+  const replacement = () => bound() ?? (matches().length === 1 ? matches()[0] : undefined)
+  const baseline = () => {
+    const target = replacement()
+    return target ? baselines().find(model => model.id === target.id) : undefined
+  }
   const nameProblem = () => replacement() || !trimmed() ? undefined
     : matches().length > 1 ? "missions.models.ambiguousName"
     : models().length >= MAX_MISSION_MODELS ? "missions.models.existingNameRequired" : undefined
@@ -245,6 +249,7 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
   const save = async () => {
     if (saveDisabled()) return
     const hadFocus = root.contains(document.activeElement), target = returnTo
+    const stillCurrentDraft = props.captureDraft?.() ?? (() => true)
     let closed = false
     const saved = await actions.save(name(), props.draft(), replacement(), baseline(), () => {
       // Runs on Kobalte's unmount timer; restore the open field on cancel/failure,
@@ -254,7 +259,10 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
         else if (closed) focusTrigger(hadFocus, target)
       })
     })
-    if (saved) { closed = true; props.onSaved?.(saved); setName(""); close(hadFocus) }
+    if (saved) {
+      if (stillCurrentDraft()) props.onSaved?.(saved)
+      closed = true; setName(""); close(hadFocus)
+    }
   }
   const begin = (fromMenu: boolean, returnFocus?: () => HTMLElement | undefined) => {
     if (actions.disabled()) return
