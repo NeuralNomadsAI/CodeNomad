@@ -651,3 +651,161 @@ fn direct_stream_gap_escalates_to_reconnecting_when_reconnect_fails() {
         .expect("failed reconnect after stream gap must escalate to Reconnecting");
     });
 }
+
+#[test]
+fn prompt_pre_send_502_session_environment_failed_is_rejected_not_unconfirmed() {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut backend =
+                Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+                    .await
+                    .unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let server = tokio::spawn(async move {
+                for body in [
+                    r#"{"error":"session_environment_failed"}"#,
+                    r#"{"error":"upstream_gateway_timeout"}"#,
+                ] {
+                    let (socket, _) = listener.accept().await.unwrap();
+                    let mut req = BufReader::new(socket);
+                    let mut content_length = 0usize;
+                    loop {
+                        let mut line = String::new();
+                        assert!(req.read_line(&mut line).await.unwrap() > 0);
+                        if line == "\r\n" {
+                            break;
+                        }
+                        if let Some(rest) = line
+                            .strip_prefix("content-length:")
+                            .or_else(|| line.strip_prefix("Content-Length:"))
+                        {
+                            content_length = rest.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if content_length > 0 {
+                        let mut discard = vec![0; content_length];
+                        req.read_exact(&mut discard).await.unwrap();
+                    }
+                    let reply = format!(
+                        "HTTP/1.1 502 Bad Gateway\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    req.get_mut().write_all(reply.as_bytes()).await.unwrap();
+                }
+            });
+            let first = backend
+                .prompt(&crate::prompt::Prompt {
+                    id: Some("msg_00000000000000000000000000000005".into()),
+                    text: "env failed".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(
+                first.downcast_ref::<crate::prompt::PromptError>(),
+                Some(&crate::prompt::PromptError::Rejected)
+            );
+            let second = backend
+                .prompt(&crate::prompt::Prompt {
+                    id: Some("msg_00000000000000000000000000000006".into()),
+                    text: "ambiguous 502".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(
+                second.downcast_ref::<crate::prompt::PromptError>(),
+                Some(&crate::prompt::PromptError::Unconfirmed)
+            );
+            server.await.unwrap();
+        })
+        .await
+        .expect("502 error classification must complete");
+    });
+}
+
+#[test]
+fn session_moved_rejects_queued_prompt_without_http_post() {
+    use crate::transport::{Command, Event, PromptOutcome, WorkspaceEvent};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    run(async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut backend =
+                Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+                    .await
+                    .unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            let (out, events) = bounded(8);
+            let (commands, input) = bounded(4);
+            let task = tokio::spawn(crate::transport::run_backend(
+                backend,
+                out,
+                input,
+                Arc::new(|| {}),
+            ));
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(socket);
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            stream
+                .get_mut()
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+                .await
+                .unwrap();
+            while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
+            stream
+                .get_mut()
+                .write_all(
+                    b"data: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"session\"}}}\n\n",
+                )
+                .await
+                .unwrap();
+            let id = "msg_00000000000000000000000000000007";
+            let _ = commands
+                .send(Command::Prompt(crate::prompt::Prompt {
+                    id: Some(id.into()),
+                    text: "after move".into(),
+                    ..Default::default()
+                }))
+                .await;
+            let mut saw_moved = false;
+            while let Ok(event) = events.recv().await {
+                match event {
+                    Event::PromptAcknowledged {
+                        outcome: PromptOutcome::Confirmed(_) | PromptOutcome::Unconfirmed,
+                        ..
+                    } => panic!("prompt racing with session.moved must never confirm or hang unconfirmed"),
+                    Event::Workspace(WorkspaceEvent::SessionMoved { session_id, .. })
+                        if session_id == "session" =>
+                    {
+                        saw_moved = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            assert!(saw_moved, "session.moved event must be published");
+            assert!(task.await.unwrap().is_err());
+            assert!(
+                tokio::time::timeout(Duration::from_millis(30), listener.accept())
+                    .await
+                    .is_err(),
+                "no HTTP POST may be sent after session.moved"
+            );
+        })
+        .await
+        .expect("session.moved must reject queued prompts without hanging");
+    });
+}

@@ -403,13 +403,14 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
     }
-    if event.mods == rune::Mods::default() && matches!(event.key, Key::Up | Key::Down | Key::Escape)
+    if event.mods == rune::Mods::default()
+        && event.key == Key::Escape
+        && s.composer.recall.is_some()
+        && !s.composer.device.busy()
     {
-        if event.key == Key::Escape && s.composer.recall.is_some() && !s.composer.device.busy() {
-            super::recall::restore(s);
-            s.composer.picker.reset();
-            return true;
-        }
+        super::recall::restore(s);
+        s.composer.picker.reset();
+        return true;
     }
     for (action, older) in [(Action::PreviousPrompt, true), (Action::NextPrompt, false)] {
         if action.matches(s, event, tx) && super::recall::step(s, older, false, tx) {

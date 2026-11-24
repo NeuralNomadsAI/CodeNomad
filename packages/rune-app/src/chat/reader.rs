@@ -151,6 +151,7 @@ impl Reader {
 
     fn reconnecting(&mut self, reading: &Reading, paging: bool) {
         self.activity = None;
+        self.settling = false;
         if !self.hidden && (self.resume_pending || paging) {
             self.resume(self.bookmark(reading));
         }

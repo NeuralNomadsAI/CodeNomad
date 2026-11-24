@@ -22,18 +22,10 @@ impl Backend {
             .send()
             .await
             .map_err(|error| crate::backend::send_transport_error(&error))?;
-        if cfg!(not(target_arch = "wasm32"))
-            && response.status() == reqwest::StatusCode::UNAUTHORIZED
-        {
-            Err(PromptError::AuthenticationRequired)
-        } else if response.status().is_success() {
+        if response.status().is_success() {
             Ok(())
-        } else if response.status().is_client_error()
-            || response.status() == reqwest::StatusCode::NOT_IMPLEMENTED
-        {
-            Err(PromptError::Rejected)
         } else {
-            Err(PromptError::Unconfirmed)
+            Err(crate::backend::classify_http_error(response, true).await)
         }
     }
 }

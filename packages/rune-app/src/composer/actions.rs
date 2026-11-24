@@ -94,10 +94,12 @@ pub fn can_send(s: &State) -> bool {
 pub(crate) fn refuse_send(s: &mut State, tx: &mut Tx) {
     s.composer.send_error = true;
     s.composer.announce_send_error = false;
-    rune_theme_codenomad::layout::announce_alert(
-        tx,
-        crate::strings::t("promptInput.send.errorTitle"),
-    );
+    crate::strings::with_locale(crate::settings::app_locale(s), || {
+        rune_theme_codenomad::layout::announce_alert(
+            tx,
+            crate::strings::t("promptInput.send.errorTitle"),
+        );
+    });
 }
 
 pub(crate) fn send_button(s: &mut State, tx: &mut Tx) {

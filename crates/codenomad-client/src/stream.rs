@@ -78,6 +78,12 @@ impl State {
         }
     }
 
+    pub(crate) fn placement_closed(&self) -> bool {
+        self.placement
+            .as_ref()
+            .is_some_and(|(cancel, _)| cancel.is_closed())
+    }
+
     async fn notify_preferences(
         &self,
         owner: crate::settings::Owner,

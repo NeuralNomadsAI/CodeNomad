@@ -18,6 +18,47 @@ use std::{
     time::Duration,
 };
 
+async fn reject_queued_commands(
+    rx: &Receiver<Input>,
+    commands: &Receiver<Command>,
+    out: &Sender<Event>,
+    wake: &crate::Wake,
+) {
+    let mut reject = |command: Command| match command {
+        Command::Prompt(prompt) => prompt.id,
+        Command::Slash { attempt, .. } => Some(attempt),
+        _ => None,
+    };
+    while let Ok(queued) = rx.try_recv() {
+        if let Input::Command(command) = queued
+            && let Some(attempted) = reject(command)
+        {
+            publish(
+                out,
+                wake,
+                Event::PromptAcknowledged {
+                    attempted,
+                    outcome: PromptOutcome::Rejected,
+                },
+            )
+            .await;
+        }
+    }
+    while let Ok(command) = commands.try_recv() {
+        if let Some(attempted) = reject(command) {
+            publish(
+                out,
+                wake,
+                Event::PromptAcknowledged {
+                    attempted,
+                    outcome: PromptOutcome::Rejected,
+                },
+            )
+            .await;
+        }
+    }
+}
+
 pub(crate) async fn run_with_reading(
     backend: Backend,
     out: Sender<Event>,
@@ -26,6 +67,7 @@ pub(crate) async fn run_with_reading(
     reading: Option<ReadingLane>,
 ) -> history::Result<()> {
     let reading = reading.as_ref();
+    let pending_commands = commands.clone();
     let (tx, rx) = crate::bounded(128);
     let forward = tx.clone();
     runtime::spawn(async move {
@@ -114,24 +156,7 @@ pub(crate) async fn run_with_reading(
                 }
             }
             Some(Input::AuthenticationRequired(e)) if e == epoch => {
-                while let Ok(queued) = rx.try_recv() {
-                    let attempted = match queued {
-                        Input::Command(Command::Prompt(prompt)) => prompt.id,
-                        Input::Command(Command::Slash { attempt, .. }) => Some(attempt),
-                        _ => None,
-                    };
-                    if let Some(attempted) = attempted {
-                        publish(
-                            &out,
-                            &wake,
-                            Event::PromptAcknowledged {
-                                attempted,
-                                outcome: PromptOutcome::Rejected,
-                            },
-                        )
-                        .await;
-                    }
-                }
+                reject_queued_commands(&rx, &pending_commands, &out, &wake).await;
                 publish(&out, &wake, Event::authentication_required(backend.clone())).await;
                 return Ok(());
             }
@@ -216,14 +241,15 @@ pub(crate) async fn run_with_reading(
                 name,
                 text,
             })) => {
-                let admitted = reading.is_some()
-                    || !reader.parked
-                        && !reader.historical
-                        && if opened {
-                            wire.upstream.load(SeqCst)
-                        } else {
-                            stream_gap
-                        };
+                let admitted = !wire.placement_closed()
+                    && (reading.is_some()
+                        || !reader.parked
+                            && !reader.historical
+                            && if opened {
+                                wire.upstream.load(SeqCst)
+                            } else {
+                                stream_gap
+                            });
                 if !receipts::slash(&backend, &out, &wake, &wire, admitted, attempt, name, text)
                     .await
                 {
@@ -233,14 +259,15 @@ pub(crate) async fn run_with_reading(
             Some(Input::Command(Command::Prompt(prompt))) => {
                 let Some(id) = &prompt.id else { continue };
                 // The compose gesture owns one attempt even if its tab suspends before dispatch.
-                let admitted = reading.is_some()
-                    || !reader.parked
-                        && !reader.historical
-                        && if opened {
-                            wire.upstream.load(SeqCst)
-                        } else {
-                            stream_gap
-                        };
+                let admitted = !wire.placement_closed()
+                    && (reading.is_some()
+                        || !reader.parked
+                            && !reader.historical
+                            && if opened {
+                                wire.upstream.load(SeqCst)
+                            } else {
+                                stream_gap
+                            });
                 let Some(outcome) =
                     receipts::prompt(&backend, &out, &wake, &wire, admitted, id, &prompt).await
                 else {
@@ -281,6 +308,7 @@ pub(crate) async fn run_with_reading(
                         continue;
                     }
                     wire.cancelled.store(true, SeqCst);
+                    reject_queued_commands(&rx, &pending_commands, &out, &wake).await;
                     publish(
                         &out,
                         &wake,
