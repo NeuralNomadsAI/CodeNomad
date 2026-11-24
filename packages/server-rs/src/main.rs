@@ -227,9 +227,11 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         None => Ok(()),
     };
     // Drain local, remote, and automation bridge HTTP listeners before tearing down plugin leases
-    // (TS `index.ts:753-767`, `shutdown.ts:130-137`).
-    if let Some(task) = bridge {
-        let _ = task.await;
+    // (TS `index.ts:753-767`, `shutdown.ts:130-137`), keeping bridge drain under the 25 s ceiling.
+    if let Some(mut task) = bridge
+        && tokio::time::timeout(std::time::Duration::from_secs(25), &mut task).await.is_err()
+    {
+        task.abort();
     }
     plugins_stop.cancel();
     if let Some(task) = plugins {

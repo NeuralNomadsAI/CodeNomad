@@ -131,8 +131,15 @@ impl Placement {
             } else if media {
                 crate::opencode::session_record_media_at(app, &endpoint, session).await?
             } else {
-                crate::opencode::session_record_with_timeout_at(app, &endpoint, session, Duration::from_secs(15))
-                    .await?
+                crate::opencode::session_record_opaque_at(
+                    app,
+                    &endpoint,
+                    session,
+                    Duration::from_secs(15),
+                    true,
+                    2 * 1024 * 1024,
+                )
+                .await?
             };
             if media
                 && (!current_fast(&displays)
@@ -240,8 +247,33 @@ impl Placement {
         if !self.live(app, id).await {
             return Err(changed());
         }
-        // Re-verify the worktree catalogue BEFORE the final `session.get` so the last native
-        // `revert` boundary read has no subsequent catalogue await window.
+        // Match TS `session-media.ts:65-90` and `session-navigation.ts:64-87` exact order:
+        // re-read `session.get`, then verify fresh worktree catalogue ownership (OpenCode has
+        // no atomic combined session + worktree read; shared limitation tracked in `solid-backlog.md`).
+        let newest = if self.strict_media || self.media {
+            crate::opencode::session_record_media_raw_at(app, &self.endpoint, session).await?
+        } else {
+            crate::opencode::session_record_opaque_at(
+                app,
+                &self.endpoint,
+                session,
+                Duration::from_secs(15),
+                false,
+                2 * 1024 * 1024,
+            )
+            .await?
+        };
+        if !self.operation_current(app, id).await {
+            return Err(crate::opencode::upstream_error());
+        }
+        if newest["id"] != self.source["id"]
+            || newest["location"]["directory"] != self.source["location"]["directory"]
+            || newest["location"].get("workspaceID") != self.source["location"].get("workspaceID")
+            || (!self.strict_media && newest["projectID"] != self.source["projectID"])
+            || !self.live(app, id).await
+        {
+            return Err(changed());
+        }
         let cur_anchor = {
             let path = self.path.clone();
             tokio::task::spawn_blocking(move || {
@@ -266,26 +298,7 @@ impl Placement {
             return Err(crate::opencode::upstream_error());
         }
         let current = current.ok_or_else(changed)?;
-        if !self.checkout.same_checkout(&current) {
-            return Err(changed());
-        }
-        let newest = if self.strict_media {
-            crate::opencode::session_record_media_raw_at(app, &self.endpoint, session).await?
-        } else if self.media {
-            crate::opencode::session_record_media_raw_at(app, &self.endpoint, session).await?
-        } else {
-            crate::opencode::session_record_with_timeout_raw_at(app, &self.endpoint, session, Duration::from_secs(15))
-                .await?
-        };
-        if !self.operation_current(app, id).await {
-            return Err(crate::opencode::upstream_error());
-        }
-        if newest["id"] != self.source["id"]
-            || newest["location"]["directory"] != self.source["location"]["directory"]
-            || newest["location"].get("workspaceID") != self.source["location"].get("workspaceID")
-            || (!self.strict_media && newest["projectID"] != self.source["projectID"])
-            || !self.live(app, id).await
-        {
+        if !self.checkout.same_checkout(&current) || !self.live(app, id).await {
             return Err(changed());
         }
         Ok(newest)
@@ -520,6 +533,10 @@ fn finalize_history_payload(
         }
         projected.shrink_to_fit();
         projected.into()
+    } else if validated.body.len() > validated.raw_range.len().saturating_add(4096) {
+        // Detach from an oversized RPC envelope so slow clients do not pin extra memory outside
+        // `payload.len()`.
+        Bytes::copy_from_slice(&validated.body[validated.raw_range])
     } else {
         validated.body.slice(validated.raw_range)
     };
@@ -552,7 +569,13 @@ pub async fn handle(
         .map(|ct| ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase());
     let missing_ct = match content_type.as_deref() {
         Some("application/json") => false,
-        Some("text/plain") => return Err(invalid()),
+        Some("text/plain") => {
+            // Fastify enforces the 8 KiB body limit on `text/plain` before schema validation (`413` vs `400`).
+            let _ = to_bytes(req.into_body(), limit)
+                .await
+                .map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request body is too large"))?;
+            return Err(invalid());
+        }
         None => true,
         Some(_) => return Err(error(Status::UNSUPPORTED_MEDIA_TYPE, "Unsupported Media Type")),
     };
@@ -698,7 +721,7 @@ pub async fn handle(
             } else {
                 (finalize_history_payload(validated, &id, session, reference, defer), slot)
             };
-            let mem = if defer {
+            let mem = if defer || body_len > 32 * 1024 {
                 let workspace_closed = async {
                     loop {
                         let notified = app.workspace_closed.notified();
@@ -708,7 +731,7 @@ pub async fn handle(
                         notified.await;
                     }
                 };
-                let reserve_len = projected.as_ref().map_or(body_len, Bytes::len);
+                let reserve_len = projected.as_ref().map_or(body_len, |p| p.len().saturating_add(4096));
                 let permit = tokio::select! {
                     biased;
                     _ = workspace_closed => return blocked("unavailable"),

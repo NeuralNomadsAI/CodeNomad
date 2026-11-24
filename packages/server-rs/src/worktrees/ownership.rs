@@ -77,9 +77,7 @@ impl DirectoryProof {
                         tree.contains_media(physical)
                     } else {
                         tree.contains_live(physical)
-                    }) && (!(self.external || history_root.is_some())
-                        || (self.media && std::fs::symlink_metadata(physical).is_err())
-                        || no_nested_git(physical, tree.target_root()))
+                    }) && (!(self.external || history_root.is_some()) || no_nested_git(physical, tree.target_root()))
                 }
                 None => {
                     self.root.as_ref().is_none_or(|(root, id)| {
@@ -421,7 +419,9 @@ pub(crate) async fn media_directory(
         return Ok(Some(live));
     }
     let timeout = std::time::Duration::from_secs(12);
-    let mut refresh = false;
+    // Cold request inventory refreshes before listing, matching TS `manager.ts:467-468`
+    // and `native-worktrees.ts:86-95`.
+    let mut refresh = true;
     let mut refreshed = false;
     for _ in 0..4 {
         let revision = inventory::revision(app);

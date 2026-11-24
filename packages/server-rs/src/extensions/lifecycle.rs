@@ -58,6 +58,7 @@ struct State {
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 static CONNECTED: Notify = Notify::const_new();
+static SYNC_NOW: Notify = Notify::const_new();
 /// One provisioning attempt at a time, from a connection's acquirer or from the stream.
 static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -154,9 +155,7 @@ pub fn refresh_design(app: &App) {
         let mut design = DESIGN.lock().unwrap();
         *design = Some(crate::extensions::requests_design(app));
     }
-    if let Some(snapshot) = sync_leases(app, false) {
-        tokio::spawn(write_status(snapshot));
-    }
+    SYNC_NOW.notify_one();
 }
 
 /// `lease-request.ts` content per feature for this backend.
@@ -221,14 +220,25 @@ async fn connection_at(
                 None => provision::discovery(app).await,
             }
         };
-        if let Some(stop) = stop {
-            tokio::select! {
-                biased;
-                _ = stop.cancelled() => Err("Plugin lifecycle stopping".into()),
-                res = discover => res,
+        let retired = async {
+            if let Some(ep) = endpoint {
+                app.native.wait_retired(ep).await;
+            } else {
+                std::future::pending::<()>().await;
             }
-        } else {
-            discover.await
+        };
+        let stopped = async {
+            if let Some(stop) = stop {
+                stop.cancelled().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
+        tokio::select! {
+            biased;
+            _ = stopped => Err("Plugin lifecycle stopping".into()),
+            _ = retired => Err("OpenCode connection replaced during plugin discovery".into()),
+            res = discover => res,
         }
     };
     let outcome = match discovered {
@@ -344,38 +354,84 @@ async fn connection_at(
     write_status(snapshot).await;
 }
 
-/// `DesktopPluginLifecycle.sync`: rewrite a lease whose request changed, else renew it.
-fn sync_leases(app: &App, renew: bool) -> Option<(std::path::PathBuf, Vec<u8>)> {
-    let mut state = STATE.lock().unwrap();
-    let mut changed = false;
-    for installation in &mut state.installations {
-        for (index, feature) in installation.features.iter().enumerate() {
-            let wanted = content(app, feature.feature);
-            if wanted != installation.written[index] {
-                if crate::extensions::artifact::write_replacing(&feature.lease, wanted.as_bytes()).is_ok() {
-                    installation.written[index] = wanted;
-                }
-            } else if renew {
-                let now = std::time::SystemTime::now();
-                // The reference ignores a failed renewal; the lease simply expires.
-                let _ = fs::OpenOptions::new().write(true).open(&feature.lease).and_then(|f| f.set_modified(now));
-            }
-        }
-        // Bounded startup marker wait: no marker comes before a Location loads.
-        if installation.since.elapsed() <= READY_WAIT {
-            for (ready, feature) in installation.ready.iter_mut().zip(&installation.features) {
-                if !*ready && provision::ready_marker(&feature.lease).exists() {
-                    *ready = true;
-                    changed = true;
-                }
-            }
-        }
-    }
-    changed.then(|| status(app, &state))
-}
-
+/// `DesktopPluginLifecycle.sync`: rewrite a lease whose request changed, else renew it off-thread
+/// with non-blocking POSIX opens so a replaced FIFO can never stall the Tokio thread or worker pool.
 async fn sync(app: &App, renew: bool) {
-    if let Some(snapshot) = sync_leases(app, renew) {
+    let plan: Vec<(usize, usize, std::path::PathBuf, Option<String>, bool, bool)> = {
+        let state = STATE.lock().unwrap();
+        let mut jobs = Vec::new();
+        for (inst_idx, installation) in state.installations.iter().enumerate() {
+            let check_ready_window = installation.since.elapsed() <= READY_WAIT;
+            for (feat_idx, feature) in installation.features.iter().enumerate() {
+                let wanted = content(app, feature.feature);
+                let rewrite = (wanted != installation.written[feat_idx]).then_some(wanted);
+                let check_ready = check_ready_window && !installation.ready[feat_idx];
+                if rewrite.is_some() || renew || check_ready {
+                    jobs.push((inst_idx, feat_idx, feature.lease.clone(), rewrite, renew, check_ready));
+                }
+            }
+        }
+        jobs
+    };
+    if plan.is_empty() {
+        return;
+    }
+    let results = tokio::task::spawn_blocking(move || {
+        let mut out = Vec::with_capacity(plan.len());
+        for (inst_idx, feat_idx, lease, rewrite, do_renew, check_ready) in plan {
+            let written = if let Some(wanted) = rewrite {
+                crate::extensions::artifact::write_replacing(&lease, wanted.as_bytes()).is_ok().then_some(wanted)
+            } else {
+                if do_renew {
+                    let now = std::time::SystemTime::now();
+                    let mut opts = fs::OpenOptions::new();
+                    opts.write(true);
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::OpenOptionsExt;
+                        opts.custom_flags(libc::O_NONBLOCK);
+                    }
+                    // The reference ignores a failed renewal; the lease simply expires.
+                    if let Ok(file) = opts.open(&lease)
+                        && file.metadata().is_ok_and(|meta| meta.is_file())
+                    {
+                        let _ = file.set_modified(now);
+                    }
+                }
+                None
+            };
+            let became_ready = check_ready && provision::ready_marker(&lease).exists();
+            if written.is_some() || became_ready {
+                out.push((inst_idx, feat_idx, lease, written, became_ready));
+            }
+        }
+        out
+    })
+    .await
+    .unwrap_or_default();
+    if results.is_empty() {
+        return;
+    }
+    let snapshot = {
+        let mut state = STATE.lock().unwrap();
+        let mut changed = false;
+        for (inst_idx, feat_idx, lease, written, became_ready) in results {
+            let Some(installation) = state.installations.get_mut(inst_idx) else { continue };
+            let Some(feature) = installation.features.get(feat_idx) else { continue };
+            if feature.lease != lease {
+                continue;
+            }
+            if let Some(written) = written {
+                installation.written[feat_idx] = written;
+            }
+            if became_ready && !installation.ready[feat_idx] {
+                installation.ready[feat_idx] = true;
+                changed = true;
+            }
+        }
+        changed.then(|| status(app, &state))
+    };
+    if let Some(snapshot) = snapshot {
         write_status(snapshot).await;
     }
 }
@@ -403,6 +459,7 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
             while !sync_stop.is_cancelled() {
                 tokio::select! {
                     _ = sync_stop.cancelled() => break,
+                    _ = SYNC_NOW.notified() => {}
                     _ = tokio::time::sleep(Duration::from_millis(100)) => {}
                 }
                 let renew = renewed.elapsed() >= PRESENCE_INTERVAL;
