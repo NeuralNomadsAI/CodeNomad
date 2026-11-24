@@ -923,7 +923,7 @@
   "markdown.codeBlock.wrap.enable": "הפעל גלישת שורות",
   "markdown.copy": "העתק",
   "markdown.link.fileOpens": "נפתח בתצוגה המקדימה של הקובץ. Ctrl+לחיצה (⌘-לחיצה ב-macOS) או לחיצה אמצעית פותחת אותו בדפדפן.",
-  "markdown.link.loopbackOnHost": "הכתובת נפתחת במכשיר שלך. כדי לגשת לשירות שבשרת, יש לפתוח אותה בשרת.",
+  "markdown.link.loopbackOnHost": "נפתח במכשיר שלך, לא בשרת",
   "markdown.link.previewOpens": "נפתח בתצוגה המקדימה באינטרנט. Ctrl+לחיצה (⌘+לחיצה ב-macOS) או לחיצה אמצעית פותחת אותו בדפדפן.",
   "markdown.mermaid.diagram": "תרשים Mermaid",
   "markdown.mermaid.failed": "בדקו את המקור ואת פורמטי התרשימים הנתמכים.",

@@ -34,7 +34,8 @@ pub(super) fn help(href: &str) -> Option<String> {
 }
 
 fn help_for_origin(href: &str, origin: Option<&str>) -> Option<String> {
-    (codenomad_client::http::is_loopback_http_url(href)
+    (openable_http(href).is_some()
+        && codenomad_client::http::is_loopback_http_url(href)
         && origin.is_some_and(|base| !codenomad_client::http::is_loopback_http_url(base)))
     .then(|| crate::strings::t("markdown.link.loopbackOnHost").into())
 }
@@ -55,9 +56,9 @@ pub(super) fn open_external(href: &str, tx: &mut Tx) {
 
 fn menu(href: &str, point: (f32, f32), scope: &Rc<()>, locale: &'static str, tx: &mut Tx) {
     use crate::strings::{t, with_locale};
-    if openable_http(href).is_none() {
+    let Some(url) = openable_http(href) else {
         return;
-    }
+    };
     let (open, copy, help) = with_locale(locale, || {
         (
             t("remoteAccess.address.open"),
@@ -65,7 +66,6 @@ fn menu(href: &str, point: (f32, f32), scope: &Rc<()>, locale: &'static str, tx:
             help(href),
         )
     });
-    let href = href.trim().to_owned();
     let scope = scope.clone();
     rune_theme_codenomad::markdown::link_menu(
         tx,
@@ -76,8 +76,10 @@ fn menu(href: &str, point: (f32, f32), scope: &Rc<()>, locale: &'static str, tx:
         move |s: &mut State, picked, tx| {
             if s.current_scope(&scope) {
                 match picked {
-                    Some("open") => open_external(&href, tx),
-                    Some("copy-link") => tx.copy(href.as_str()),
+                    Some("open") => {
+                        let _ = tx.open_url(&url);
+                    }
+                    Some("copy-link") => tx.copy(url.as_str()),
                     _ => {}
                 }
             }
@@ -92,7 +94,14 @@ pub(super) fn open(s: &mut State, href: &str, tx: &mut Tx) {
 }
 
 fn openable_http(href: &str) -> Option<String> {
-    let (url, _) = codenomad_client::http::external_http_url(href)?;
+    let (url, host) = codenomad_client::http::external_http_url(href)?;
+    let hostname = host
+        .strip_prefix('[')
+        .and_then(|rest| rest.split(']').next())
+        .unwrap_or_else(|| host.split(':').next().unwrap_or(&host));
+    if hostname.starts_with('.') || hostname.contains("..") {
+        return None;
+    }
     let url = external(&url).into_owned();
     (url.len() <= 8192
         && valid_percent(url.as_bytes())
@@ -122,7 +131,7 @@ fn valid_percent(bytes: &[u8]) -> bool {
     true
 }
 
-pub(super) fn external(url: &str) -> Cow<'_, str> {
+fn external(url: &str) -> Cow<'_, str> {
     let trimmed = url.trim();
     let Some((scheme, rest)) = trimmed.split_once("://").filter(|(scheme, _)| {
         scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
@@ -176,11 +185,16 @@ fn only_encode_brackets_after_authority() {
     );
     for rejected in [
         "http://alice:demo@localhost:8123/",
+        "http://@localhost:8123/",
         "http:localhost:8123/",
         "http://127.0.0.1:8123/%ZZ",
         "http://127.0.0.1:8123/%00",
+        "http://127.0.0.1:8123/ok\ncmd",
+        "http://127.0.0.1:8123\\@evil.example/",
+        "https://.example.com/",
+        "https://a..b.com/",
     ] {
-        assert!(openable_http(rejected).is_none(), "{rejected}");
+        assert!(openable_http(rejected).is_none(), "{rejected:?}");
     }
 }
 
@@ -203,20 +217,17 @@ fn loopback_help_applies_only_to_loopback_links_on_remote_origins() {
                 .as_deref(),
             Some(expected)
         );
-        assert!(
-            help_for_origin(
-                "https://127.0.0.1.example.org/",
-                Some("https://code.example.test")
-            )
-            .is_none()
-        );
-        assert!(
-            help_for_origin(
-                "http://alice:demo@localhost:8123/",
-                Some("https://code.example.test")
-            )
-            .is_none()
-        );
+        for omitted in [
+            "https://127.0.0.1.example.org/",
+            "http://alice:demo@localhost:8123/",
+            "http://127.0.0.1:8123/%ZZ",
+            "http://127.0.0.1:8123/%00",
+        ] {
+            assert!(
+                help_for_origin(omitted, Some("https://code.example.test")).is_none(),
+                "{omitted:?}"
+            );
+        }
         assert!(
             help_for_origin("http://127.0.0.1:8123/view", Some("http://127.0.0.1:4173")).is_none()
         );

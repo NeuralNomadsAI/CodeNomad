@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import path from 'node:path'
-import {mkdir,mkdtemp,rm,writeFile} from 'node:fs/promises'
+import {mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises'
 import {chromium} from 'playwright'
 import {mobileClientHints,mobileContext} from './web-mobile.mjs'
 import {bundleAssetPaths} from './web-workspace-policy.mjs'
@@ -10,10 +10,12 @@ const bundle=path.resolve(process.argv[2]??'target/rune-web-loopback-links')
 const output=path.resolve(process.argv[3]??'target/rune-loopback-link-evidence')
 await mkdir(output,{recursive:true})
 const assets=await bundleAssetPaths(bundle)
+const manifest=JSON.parse(await readFile(path.join(bundle,'bundle-manifest.json'),'utf8'))
+assert.equal(manifest.testSupport,true,'Bundle must be built with --test-support')
 const host='rune-transcript.test'
 const origin=`https://${host}`
 const localOrigin='http://127.0.0.1:4173'
-const loopbackHelp='This address opens on your device. For the server’s service, open it on the server.'
+const loopbackHelp='Opens on your device, not the server'
 const mime={
     '.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.wasm':'application/wasm',
     '.css':'text/css','.json':'application/json','.svg':'image/svg+xml','.ttf':'font/ttf','.woff2':'font/woff2',
@@ -39,7 +41,7 @@ try{
             return route.fulfill({path:path.join(bundle,name),contentType:mime[path.extname(name)]})
         }
         if(['localhost','127.0.0.1','[::1]'].includes(url.hostname)&&url.port==='8123'&&['/view','/bare'].includes(url.pathname)
-            &&route.request().isNavigationRequest()){
+            &&route.request().method()==='GET'&&route.request().isNavigationRequest()){
             destinations.push(url.href)
             return route.fulfill({contentType:'text/plain',body:'Dedicated external tab'})
         }
@@ -88,7 +90,14 @@ try{
         try{
             await action.waitFor({timeout:10000})
             const help=page.getByText(loopbackHelp,{exact:true})
-            if(expectHelp){await help.waitFor()}
+            if(expectHelp){
+                await help.waitFor()
+                const menuBox=await page.locator('[role="menu"]').boundingBox()
+                const viewport=page.viewportSize()
+                assert(menuBox&&viewport)
+                assert(menuBox.x>=0&&menuBox.x+menuBox.width<=viewport.width,
+                    `Context menu overflows mobile viewport: ${JSON.stringify({menuBox,viewport})}`)
+            }
             else{assert.equal(await help.count(),0,'Unexpected loopback host help')}
         }
         finally{await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]}).catch(()=>{})}

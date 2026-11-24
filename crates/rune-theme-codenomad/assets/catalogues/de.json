@@ -923,7 +923,7 @@
   "markdown.codeBlock.wrap.enable": "Zeilenumbruch aktivieren",
   "markdown.copy": "Kopieren",
   "markdown.link.fileOpens": "Wird in der Dateivorschau geöffnet. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet ihn im Browser.",
-  "markdown.link.loopbackOnHost": "Diese Adresse öffnet sich auf Ihrem Gerät. Öffnen Sie sie für den Dienst auf dem Server direkt dort.",
+  "markdown.link.loopbackOnHost": "Öffnet auf diesem Gerät, nicht am Server",
   "markdown.link.previewOpens": "Wird in der Web-Vorschau geöffnet. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet ihn im Browser.",
   "markdown.mermaid.diagram": "Mermaid-Diagramm",
   "markdown.mermaid.failed": "Prüfen Sie den Quelltext und die unterstützten Diagrammformate.",

@@ -923,7 +923,7 @@
   "markdown.codeBlock.wrap.enable": "लाइन र्‍याप सक्षम गर्नुहोस्",
   "markdown.copy": "प्रतिलिपि गर्नुहोस्",
   "markdown.link.fileOpens": "फाइल पूर्वावलोकनमा खुल्छ। Ctrl+क्लिक (macOS मा ⌘+क्लिक) वा मध्य-क्लिकले यसलाई browser मा खोल्छ।",
-  "markdown.link.loopbackOnHost": "यो ठेगाना तपाईंको उपकरणमा खुल्छ। सर्भरको सेवा चलाउन यसलाई सर्भरमै खोल्नुहोस्।",
+  "markdown.link.loopbackOnHost": "सर्भरमा होइन, यो उपकरणमा खुल्छ",
   "markdown.link.previewOpens": "वेब पूर्वावलोकनमा खुल्छ। Ctrl+क्लिक (macOS मा ⌘+क्लिक) वा मध्य-क्लिकले यसलाई browser मा खोल्छ।",
   "markdown.mermaid.diagram": "Mermaid चित्र",
   "markdown.mermaid.failed": "स्रोत र समर्थित चित्र ढाँचाहरू जाँच्नुहोस्।",

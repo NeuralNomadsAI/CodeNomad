@@ -158,8 +158,14 @@ pub fn external_http_url(raw: &str) -> Option<(String, String)> {
 
 fn credential_free_http_url(raw: &str) -> Option<reqwest::Url> {
     let trimmed = raw.trim();
-    let (scheme, _) = trimmed.split_once("://")?;
+    if trimmed.chars().any(|c| c.is_control() || c == '\\') {
+        return None;
+    }
+    let (scheme, rest) = trimmed.split_once("://")?;
     if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    if rest.split(['/', '?', '#']).next()?.contains('@') {
         return None;
     }
     let url = reqwest::Url::parse(trimmed).ok()?;
@@ -201,9 +207,21 @@ fn loopback_requires_an_explicit_http_scheme_and_literal_host() {
         "http://alice:demo@localhost:8123/",
         "http://alice@127.0.0.1:8123/",
         "https://:demo@[::1]:8123/",
+        "http://@localhost:8123/",
+        "http://:@localhost:8123/",
+        "http://127.0.0.1:8123/ok\ncmd",
+        "http://127.0.0.1:8123/ok\tcmd",
+        "http://127.0.0.1:8123\\@evil.example/",
     ] {
-        assert!(!is_loopback_http_url(raw));
+        assert!(!is_loopback_http_url(raw), "{raw:?}");
     }
-    assert!(external_http_url("http:localhost:8123/").is_none());
-    assert!(external_http_url("http://alice:demo@localhost:8123/").is_none());
+    for rejected in [
+        "http:localhost:8123/",
+        "http://alice:demo@localhost:8123/",
+        "http://@localhost:8123/",
+        "http://127.0.0.1:8123/ok\ncmd",
+        "http://127.0.0.1:8123\\@evil.example/",
+    ] {
+        assert!(external_http_url(rejected).is_none(), "{rejected:?}");
+    }
 }
