@@ -32,11 +32,14 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring",
 hyper = { version = "1", features = ["server", "http1", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "service"] }
 hmac = "0.12"
+icu_collator = "2.4.0"
+icu_locale_core = "2.4.0"
 time = "0.3"
 x509-parser = "0.16"
 scrypt = { version = "0.11", default-features = false }
 same-file = "1"
 subtle = "2"
+sys-locale = "0.3.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 # config.yaml / state.yaml shared with the TypeScript server (maintained serde_yaml fork).

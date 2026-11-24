@@ -206,6 +206,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .with_state(state.clone());
     tokio::spawn(auth::Auth::sweep(state.clone()));
     tokio::spawn(events::bridge(state.clone()));
+    tokio::spawn(meta::releases::run(state.clone(), shutdown.clone()));
     let local_url = format!("http://127.0.0.1:{port}");
     if launch.serve {
         // The remote listener is HTTPS when enabled, else the (then visible) HTTP one.

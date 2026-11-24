@@ -8,6 +8,7 @@ if ('static-assets' -in $Only) { $runs += 'static-assets' }
 if ('attachment-history' -in $Only) { $runs += 'attachment-history' }
 if ('receipt-worktree' -in $Only) { $runs += 'receipt-worktree' }
 if ('receipt-reconnect' -in $Only) { $runs += 'receipt-reconnect' }
+if ('meta-update' -in $Only) { $runs += 'meta-update' }
 $summary = foreach ($name in $runs) {
   if ($Only -and $name -notin $Only) { continue }
   $cpu = (Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average
