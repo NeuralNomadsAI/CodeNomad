@@ -367,15 +367,11 @@ fn reader_content(s: &State) -> El {
             actions,
         ))
         .children(error.map(|message| text(message).role("alert").pad(Space::Md)))
-        .children(
-            (ui.document.not_retained()
-                || (ui.document.dirty() && crate::workspace::file_draft_checkpoint_failed(s)))
-            .then(|| {
-                text(t("filesPanel.draftLimit"))
-                    .role("alert")
-                    .pad(Space::Md)
-            }),
-        )
+        .children(ui.document.not_retained().then(|| {
+            text(t("filesPanel.draftLimit"))
+                .role("alert")
+                .pad(Space::Md)
+        }))
         .children(
             (ui.reader.busy() && ui.reader.preview().is_none()).then(|| {
                 text(t("instanceInfo.loading"))

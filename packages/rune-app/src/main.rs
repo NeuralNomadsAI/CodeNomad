@@ -282,6 +282,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     changed |= files::poll(s, now, tx);
     changed |= git::poll(s, now, tx);
+    changed |= workspace::poll_file_drafts(s, now, tx);
     changed |= shell::notifications::poll(s, tx);
     changed |= shell::notifications::poll_app_notices(s, now, tx);
     workspace::capture_files_mode(s);

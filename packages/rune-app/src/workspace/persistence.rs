@@ -35,7 +35,7 @@ pub(super) struct Persistence {
     #[cfg(not(target_arch = "wasm32"))]
     file_drafts_first_dirty: Option<f64>,
     #[cfg(not(target_arch = "wasm32"))]
-    file_drafts_due: f64,
+    pub(super) file_drafts_due: f64,
     #[cfg(not(target_arch = "wasm32"))]
     file_draft_retry_requested: bool,
     due: f64,

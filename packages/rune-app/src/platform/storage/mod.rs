@@ -189,13 +189,15 @@ mod native {
     const DRAFT_PUBLISHING: u8 = 1;
     const DRAFT_CANCELLED: u8 = 2;
 
-    fn cancel_draft(state: &std::sync::atomic::AtomicU8) {
-        let _ = state.compare_exchange(
-            DRAFT_ACTIVE,
-            DRAFT_CANCELLED,
-            std::sync::atomic::Ordering::AcqRel,
-            std::sync::atomic::Ordering::Acquire,
-        );
+    fn cancel_draft(state: &std::sync::atomic::AtomicU8) -> bool {
+        state
+            .compare_exchange(
+                DRAFT_ACTIVE,
+                DRAFT_CANCELLED,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .is_ok()
     }
 
     struct PendingFileDraft {
@@ -247,8 +249,11 @@ mod native {
                             &task.bytes,
                             current,
                             |temporary, destination| {
-                                // Enforce the deadline and transition atomically from ACTIVE to
-                                // PUBLISHING without holding the queue mutex across rename.
+                                // Enforce the deadline and claim PUBLISHING atomically without
+                                // holding a mutex across fs::rename so a stalled filesystem cannot
+                                // block admission or timeout beyond the 5 s wait bound; the single
+                                // sequential worker prevents any older write from overwriting a
+                                // newer confirmed checkpoint.
                                 if std::time::Instant::now() >= task.deadline
                                     || task
                                         .state
@@ -398,18 +403,27 @@ mod native {
             bytes: Vec<u8>,
             timeout: std::time::Duration,
         ) -> impl std::future::Future<Output = Result<bool>> + Send + 'static {
+            let deadline = std::time::Instant::now() + timeout;
+            self.start_file_drafts_save_with_deadlines(bytes, deadline, timeout)
+        }
+        pub(super) fn start_file_drafts_save_with_deadlines(
+            &self,
+            bytes: Vec<u8>,
+            deadline: std::time::Instant,
+            wait_timeout: std::time::Duration,
+        ) -> impl std::future::Future<Output = Result<bool>> + Send + 'static {
             // Enqueue synchronously at admission so an unpolled task cannot outrank a later save
             // or exit flush, and repeated retries share one worker without blocking on disk I/O.
-            let (tx, rx) = tokio::sync::oneshot::channel();
+            let (tx, mut rx) = tokio::sync::oneshot::channel();
             let files = self.files.clone();
             let file_drafts_lock = self.file_drafts_lock.clone();
             let queue = self.file_drafts_queue.clone();
             let write_state = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(DRAFT_ACTIVE));
-            let deadline = std::time::Instant::now() + timeout;
+            let wait_deadline = std::time::Instant::now() + wait_timeout;
             let admitted = match queue.lock() {
                 Ok(mut state) => {
                     if let Some(previous) = state.active.replace(write_state.clone()) {
-                        cancel_draft(&previous);
+                        let _ = cancel_draft(&previous);
                     }
                     if let Some(evicted) = state.pending.replace(PendingFileDraft {
                         state: write_state.clone(),
@@ -417,7 +431,7 @@ mod native {
                         bytes,
                         reply: tx,
                     }) {
-                        cancel_draft(&evicted.state);
+                        let _ = cancel_draft(&evicted.state);
                         let _ = evicted.reply.send(Ok(false));
                     }
                     true
@@ -445,14 +459,14 @@ mod native {
                 if start_worker {
                     spawn_file_draft_worker(files, file_drafts_lock, queue.clone());
                 }
-                let remaining = deadline
+                let remaining = wait_deadline
                     .checked_duration_since(std::time::Instant::now())
                     .unwrap_or(std::time::Duration::ZERO);
-                match tokio::time::timeout(remaining, rx).await {
+                match tokio::time::timeout(remaining, &mut rx).await {
                     Ok(Ok(outcome)) => outcome,
                     Ok(Err(_)) => Err("state store unavailable".into()),
                     Err(elapsed) => {
-                        cancel_draft(&write_state);
+                        let cancelled = cancel_draft(&write_state);
                         if let Ok(mut state) = queue.lock() {
                             if state
                                 .active
@@ -466,6 +480,9 @@ mod native {
                             }) {
                                 state.pending = None;
                             }
+                        }
+                        if !cancelled && let Ok(outcome) = rx.try_recv() {
+                            return outcome;
                         }
                         Err(elapsed.into())
                     }

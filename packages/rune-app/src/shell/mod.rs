@@ -32,18 +32,21 @@ pub fn view(
     }
     if let Some(ui) = &s.workspace {
         root = root.child(workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside));
-        if let Some(error) = workspace::status(s) {
-            root = root.child(
-                layout::action_row()
-                    .pad(Space::Sm)
-                    .child(text(t(error)).role("alert"))
-                    .child(button_tx(
-                        "workspace-retry",
-                        t("sessionList.loadError.retry"),
-                        false,
-                        crate::screen::action_tx(&s.input_scope, workspace::retry),
-                    )),
-            );
+        let primary = workspace::status(s);
+        let secondary = workspace::file_draft_status(s).filter(|&draft| primary != Some(draft));
+        if let Some(error) = primary {
+            let mut row = layout::action_row()
+                .pad(Space::Sm)
+                .child(text(t(error)).role("alert"));
+            if let Some(draft_error) = secondary {
+                row = row.child(text(t(draft_error)).role("alert"));
+            }
+            root = root.child(row.child(button_tx(
+                "workspace-retry",
+                t("sessionList.loadError.retry"),
+                false,
+                crate::screen::action_tx(&s.input_scope, workspace::retry),
+            )));
         }
         let body = body(s, cx, conversation).key(format!("tab-body-{}", ui.active_key()));
         root.child(body.remaining())
