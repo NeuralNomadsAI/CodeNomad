@@ -138,9 +138,30 @@ impl Reader {
             self.known = page.rows.iter().map(|row| row.id.clone()).collect();
             self.resident = page.rows;
             self.owed.retain(|(id, _)| self.known.contains(id));
+            self.owed_tools.retain(|(id, call), _| {
+                self.known.contains(id)
+                    && !self
+                        .resident
+                        .iter()
+                        .find(|r| &r.id == id)
+                        .and_then(|r| {
+                            r.parts.iter().find_map(|p| match p {
+                                crate::content::Part::Tool(t) if &t.id == call => Some(t),
+                                _ => None,
+                            })
+                        })
+                        .is_some_and(|t| {
+                            !matches!(t.status.as_str(), "pending" | "streaming" | "running")
+                        })
+            });
             self.anchored = None;
             self.parked = false;
-            self.dirty = false;
+            if !self.historical && !self.owed_tools.is_empty() {
+                self.dirty = true;
+                self.quiet = crate::runtime::Instant::now() + std::time::Duration::from_millis(100);
+            } else {
+                self.dirty = false;
+            }
         }
     }
 }

@@ -22,7 +22,7 @@ mod read;
 mod render;
 mod search;
 mod shell;
-mod task;
+pub(super) mod task;
 mod todo;
 mod write;
 

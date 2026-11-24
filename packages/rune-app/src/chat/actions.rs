@@ -19,6 +19,7 @@ pub struct Display {
     pub(crate) timeline: crate::timeline::Timeline,
     pub(crate) search_highlight: Option<super::search_hit::SearchHit>,
     pub(super) children: super::tools::children::Children,
+    pub(super) task_deliveries: RefCell<super::tools::task::DeliveryCache>,
     pub(super) tool_clock: super::tools::duration::Clock,
     pub(crate) usage_family: super::usage::family::Totals,
     pub(super) pictures: super::media::Pictures,
@@ -56,6 +57,7 @@ impl Display {
         self.stream = StreamRender::default();
         self.live_ansi.get_mut().clear();
         self.children.clear();
+        self.task_deliveries.get_mut().clear();
         self.tool_clock.reset();
         self.usage_family.close();
         self.pictures.clear();

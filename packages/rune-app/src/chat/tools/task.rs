@@ -12,11 +12,80 @@ use rune_theme_codenomad::{
     Space, TextRole, catalogue,
     layout::{self, Layout},
     markdown,
+    timeline::search::Query,
 };
+use std::{collections::HashMap, sync::Arc};
 
 pub(super) const PANE_LIMIT: usize = 20_000;
 const INITIAL_STEPS: usize = 30;
 const REVEAL: usize = 100;
+
+#[derive(Default)]
+pub(in crate::chat) struct DeliveryCache {
+    fingerprint: u64,
+    by_child: HashMap<String, ChildDeliveries>,
+}
+
+#[derive(Default)]
+struct ChildDeliveries {
+    launches: Vec<u64>,
+    reports: Vec<(u64, String, Arc<crate::content::SubagentReport>)>,
+}
+
+impl DeliveryCache {
+    pub(in crate::chat) fn clear(&mut self) {
+        self.fingerprint = 0;
+        self.by_child.clear();
+    }
+
+    fn refresh(&mut self, rows: &[crate::history::Row]) {
+        use crate::content::Part;
+        let mut fp = rows.len() as u64;
+        for row in rows {
+            fp = fp.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (Arc::as_ptr(row) as usize as u64);
+        }
+        let fp = fp.max(1);
+        if self.fingerprint == fp {
+            return;
+        }
+        self.fingerprint = fp;
+        self.by_child.clear();
+        for row in rows {
+            for part in &row.parts {
+                match part {
+                    Part::Tool(other) if is_task(other) => {
+                        let cid = child(other);
+                        if !cid.is_empty()
+                            && let Some(started) = other.started
+                        {
+                            self.by_child
+                                .entry(cid.to_owned())
+                                .or_default()
+                                .launches
+                                .push(started);
+                        }
+                    }
+                    Part::SubagentReport(report) => {
+                        self.by_child
+                            .entry(report.child.clone())
+                            .or_default()
+                            .reports
+                            .push((report.created, row.id.clone(), Arc::new(report.clone())));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+pub(super) struct Delivery {
+    pub status: &'static str,
+    pub running: bool,
+    pub ended: Option<u64>,
+    pub report: Option<Arc<crate::content::SubagentReport>>,
+    pub report_truncated: bool,
+}
 
 pub(super) fn is_task(tool: &Tool) -> bool {
     matches!(tool.name.as_str(), "task" | "subagent")
@@ -48,17 +117,79 @@ fn parent_child(message: &str) -> Option<&str> {
         .map(|(parent, _)| parent)
 }
 
-fn deliveries<'a>(
-    s: &'a State,
-    message: &str,
-    child_id: &str,
-) -> (
-    Vec<u64>,
-    Vec<(u64, &'a str, &'a crate::content::SubagentReport)>,
-) {
-    use crate::content::Part;
+fn resolve_delivery(
+    tool: &Tool,
+    launches: &[u64],
+    reports: &[(u64, &str, &Arc<crate::content::SubagentReport>, bool)],
+) -> Delivery {
+    let report = tool.started.and_then(|from| {
+        let mut boundaries: Vec<_> = launches.iter().copied().filter(|at| *at > from).collect();
+        boundaries.sort_unstable();
+        let first = reports
+            .iter()
+            .filter(|(created, _, _, _)| *created >= from)
+            .map(|(created, _, _, _)| *created)
+            .min()?;
+        let end = boundaries
+            .into_iter()
+            .find(|next| *next > first)
+            .unwrap_or(u64::MAX);
+        reports
+            .iter()
+            .filter(|(created, _, _, _)| *created >= from && *created < end)
+            .max_by_key(|(created, id, _, _)| (*created, *id))
+            .map(|(_, _, report, truncated)| (Arc::clone(report), *truncated))
+    });
+    let newest = launches.iter().copied().max().or(tool.started);
+    let latest = newest.and_then(|from| {
+        reports
+            .iter()
+            .filter(|(created, _, _, _)| *created >= from)
+            .max_by_key(|(created, id, _, _)| (*created, *id))
+            .map(|(created, _, report, _)| (*created, report.state.as_str()))
+    });
+    let (status, running, ended) = match latest {
+        Some((created, "completed")) => (
+            "toolCall.status.completed",
+            false,
+            (created > 0).then_some(created),
+        ),
+        Some((created, "error" | "cancelled")) => (
+            "toolCall.status.error",
+            false,
+            (created > 0).then_some(created),
+        ),
+        _ => ("toolCall.status.running", true, None),
+    };
+    let (report, report_truncated) = match report {
+        Some((report, truncated)) => (Some(report), truncated),
+        None => (None, false),
+    };
+    Delivery {
+        status,
+        running,
+        ended,
+        report,
+        report_truncated,
+    }
+}
+
+pub(super) fn delivery(s: &State, message: &str, tool: &Tool) -> Option<Delivery> {
+    if tool.status != "completed" || tool.metadata["status"] != "running" {
+        return None;
+    }
+    let child_id = child(tool);
+    if child_id.is_empty() {
+        return Some(Delivery {
+            status: "toolCall.status.running",
+            running: true,
+            ended: None,
+            report: None,
+            report_truncated: false,
+        });
+    }
     if let Some(parent) = parent_child(message) {
-        let launches = s
+        let launches: Vec<u64> = s
             .transcript_display
             .children
             .steps(parent)
@@ -69,70 +200,41 @@ fn deliveries<'a>(
                     .flatten()
             })
             .collect();
-        let reports = s
+        let reports: Vec<_> = s
             .transcript_display
             .children
             .reports(parent)
             .iter()
-            .filter_map(|(row_id, report)| {
-                (report.child == child_id).then_some((report.created, row_id.as_str(), report))
+            .filter(|entry| entry.report.child == child_id)
+            .map(|entry| {
+                (
+                    entry.report.created,
+                    entry.row_id.as_str(),
+                    &entry.report,
+                    entry.truncated,
+                )
             })
             .collect();
-        return (launches, reports);
+        return Some(resolve_delivery(tool, &launches, &reports));
     }
     let rows = &s.messages[s.messages.len().saturating_sub(500)..];
-    let launches = rows
+    let mut cache = s.transcript_display.task_deliveries.borrow_mut();
+    cache.refresh(rows);
+    let Some(entry) = cache.by_child.get(child_id) else {
+        return Some(Delivery {
+            status: "toolCall.status.running",
+            running: true,
+            ended: None,
+            report: None,
+            report_truncated: false,
+        });
+    };
+    let reports: Vec<_> = entry
+        .reports
         .iter()
-        .flat_map(|row| &row.parts)
-        .filter_map(|part| match part {
-            Part::Tool(other) if is_task(other) && child(other) == child_id => other.started,
-            _ => None,
-        })
+        .map(|(created, id, report)| (*created, id.as_str(), report, false))
         .collect();
-    let reports = rows
-        .iter()
-        .flat_map(|row| {
-            row.parts.iter().filter_map(move |part| match part {
-                Part::SubagentReport(report) if report.child == child_id => {
-                    Some((report.created, row.id.as_str(), report))
-                }
-                _ => None,
-            })
-        })
-        .collect();
-    (launches, reports)
-}
-
-pub(super) fn report<'a>(
-    s: &'a State,
-    message: &str,
-    tool: &Tool,
-) -> Option<&'a crate::content::SubagentReport> {
-    if tool.status != "completed" || tool.metadata["status"] != "running" {
-        return None;
-    }
-    let from = tool.started?;
-    let child_id = child(tool);
-    if child_id.is_empty() {
-        return None;
-    }
-    let (launches, reports) = deliveries(s, message, child_id);
-    let mut boundaries: Vec<_> = launches.into_iter().filter(|at| *at > from).collect();
-    boundaries.sort_unstable();
-    let first = reports
-        .iter()
-        .filter(|(created, _, _)| *created >= from)
-        .map(|(created, _, _)| *created)
-        .min()?;
-    let end = boundaries
-        .into_iter()
-        .find(|next| *next > first)
-        .unwrap_or(u64::MAX);
-    reports
-        .into_iter()
-        .filter(|(created, _, _)| *created >= from && *created < end)
-        .max_by_key(|(created, id, _)| (*created, *id))
-        .map(|(_, _, report)| report)
+    Some(resolve_delivery(tool, &entry.launches, &reports))
 }
 
 pub(super) fn output<'a>(
@@ -146,40 +248,17 @@ pub(super) fn output<'a>(
     }
 }
 
-pub(super) fn status(
+#[allow(clippy::too_many_arguments)]
+pub(super) fn body(
     s: &State,
     message: &str,
+    key: &str,
     tool: &Tool,
-) -> Option<(&'static str, bool, Option<u64>)> {
-    if tool.status != "completed" || tool.metadata["status"] != "running" {
-        return None;
-    }
-    let child_id = child(tool);
-    let (launches, reports) = deliveries(s, message, child_id);
-    let newest = launches.into_iter().max().or(tool.started);
-    let latest = newest.and_then(|from| {
-        reports
-            .into_iter()
-            .filter(|(created, _, _)| *created >= from)
-            .max_by_key(|(created, id, _)| (*created, *id))
-            .map(|(created, _, report)| (created, report.state.as_str()))
-    });
-    Some(match latest {
-        Some((created, "completed")) => (
-            "toolCall.status.completed",
-            false,
-            (created > 0).then_some(created),
-        ),
-        Some((created, "error" | "cancelled")) => (
-            "toolCall.status.error",
-            false,
-            (created > 0).then_some(created),
-        ),
-        _ => ("toolCall.status.running", true, None),
-    })
-}
-
-pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool) -> Option<El> {
+    output: &str,
+    output_truncated: bool,
+    watch: bool,
+    query: Option<Query<'_>>,
+) -> Option<El> {
     let prompt = string(&tool.input, &["prompt"]);
     let child_id = watch.then(|| watched_child(tool)).flatten();
     let child_steps = child_id.map_or(&[][..], |id| s.transcript_display.children.steps(id));
@@ -194,28 +273,73 @@ pub(super) fn body(s: &State, key: &str, tool: &Tool, output: &str, watch: bool)
     } else {
         visible_steps.clone().count()
     };
-    if prompt.trim().is_empty() && step_count == 0 && output.trim().is_empty() && child_id.is_none()
+    if prompt.trim().is_empty()
+        && step_count == 0
+        && output.trim().is_empty()
+        && !output_truncated
+        && child_id.is_none()
     {
         return None;
     }
+    let prompt_key = format!("{key}-task-prompt");
+    let prompt_claims = !prompt.trim().is_empty()
+        && query.is_some_and(|q| {
+            q.active
+                && q.claimed.is_none_or(|c| !c.get())
+                && super::super::document::bounded_prose_matches_for(
+                    s,
+                    key,
+                    &prompt_key,
+                    prompt,
+                    PANE_LIMIT,
+                    q,
+                )
+        });
     let mut result = col().full_width().separate(Space::Sm);
-    for (section, label, value) in [
-        ("prompt", "toolCall.task.sections.prompt", prompt),
-        ("output", "toolCall.task.sections.output", output),
+    for (section, label, value, truncated, section_query) in [
+        (
+            "prompt",
+            "toolCall.task.sections.prompt",
+            prompt,
+            false,
+            query.map(|q| Query {
+                active: prompt_claims,
+                claimed: None,
+                ..q
+            }),
+        ),
+        (
+            "output",
+            "toolCall.task.sections.output",
+            output,
+            output_truncated,
+            query.map(|q| Query {
+                active: q.active && !prompt_claims && q.claimed.is_none_or(|c| !c.get()),
+                claimed: None,
+                ..q
+            }),
+        ),
     ] {
-        if !value.trim().is_empty() {
-            result = result
-                .child(text(t(label)).text_role(TextRole::Label))
-                .child(markdown::tool_pane(
-                    super::super::document::prose_at(
+        if !value.trim().is_empty() || truncated {
+            result = result.child(text(t(label)).text_role(TextRole::Label));
+            if !value.trim().is_empty() {
+                result = result.child(markdown::tool_pane(
+                    super::super::document::prose_pane_search(
                         s,
+                        message,
+                        key,
                         format!("{key}-task-{section}"),
                         value,
                         tool.status == "running" && section == "output",
                         PANE_LIMIT,
+                        section_query,
                     ),
                     true,
                 ));
+            }
+            if truncated {
+                result = result.child(text(t("toolCall.output.tooLarge")).role("status"));
+            }
         }
     }
     if step_count > 0 {

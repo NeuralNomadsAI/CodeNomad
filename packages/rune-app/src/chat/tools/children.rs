@@ -15,7 +15,15 @@ pub(super) const STEP_LIMIT: usize = 200;
 const CHILD_LIMIT: usize = 4;
 const STEP_BYTES: usize = 2 << 20;
 type Steps = Vec<(String, Arc<Tool>)>;
-type Reports = Vec<(String, SubagentReport)>;
+
+#[derive(Clone, PartialEq)]
+pub(super) struct ChildReport {
+    pub row_id: String,
+    pub report: Arc<SubagentReport>,
+    pub truncated: bool,
+}
+
+type Reports = Vec<ChildReport>;
 
 #[derive(Default, PartialEq)]
 struct Snapshot {
@@ -153,7 +161,7 @@ impl Children {
             .map_or(&[], |entry| entry.snapshot.steps.as_slice())
     }
 
-    pub(super) fn reports(&self, id: &str) -> &[(String, SubagentReport)] {
+    pub(super) fn reports(&self, id: &str) -> &[ChildReport] {
         self.entries
             .get(id)
             .map_or(&[], |entry| entry.snapshot.reports.as_slice())
@@ -192,23 +200,24 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
         })
         .take(STEP_LIMIT)
         .map(|(row, report)| {
-            let body = if report.body.len() <= report_bytes {
+            let (body, truncated) = if report.body.len() <= report_bytes {
                 report_bytes -= report.body.len();
-                report.body.clone()
+                (report.body.clone(), false)
             } else {
                 let end = report.body.floor_char_boundary(report_bytes);
                 report_bytes -= end;
-                report.body[..end].to_owned()
+                (report.body[..end].to_owned(), true)
             };
-            (
-                row.id.clone(),
-                SubagentReport {
+            ChildReport {
+                row_id: row.id.clone(),
+                report: Arc::new(SubagentReport {
                     child: report.child.clone(),
                     state: report.state.clone(),
                     body,
                     created: report.created,
-                },
-            )
+                }),
+                truncated,
+            }
         })
         .collect();
     reports.reverse();

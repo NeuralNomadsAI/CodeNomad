@@ -496,8 +496,10 @@ pub(crate) async fn run_with_reading(
                             content::ToolFit::Settled(tool) => {
                                 history::check(&reader.resident)?;
                                 if history::valid_id(id) && reader.owed_tools.len() < 64 {
-                                    reader.owed_tools.insert((id.into(), tool.id.clone()));
-                                    reader.tool_settlement_reads = 0;
+                                    reader
+                                        .owed_tools
+                                        .entry((id.into(), tool.id.clone()))
+                                        .or_insert(0);
                                 }
                                 reader_event(
                                     reading,
@@ -515,14 +517,16 @@ pub(crate) async fn run_with_reading(
                             content::ToolFit::Drop => {}
                             content::ToolFit::Repair => {
                                 if matches!(kind, "session.tool.success" | "session.tool.failed")
-                                    && history::valid_id(id)
+                                    && reader.known.contains(id)
                                     && reader.owed_tools.len() < 64
                                     && let Some(call) = native["data"]["id"]
                                         .as_str()
                                         .filter(|c| !c.is_empty() && c.len() <= 256)
                                 {
-                                    reader.owed_tools.insert((id.into(), call.into()));
-                                    reader.tool_settlement_reads = 0;
+                                    reader
+                                        .owed_tools
+                                        .entry((id.into(), call.into()))
+                                        .or_insert(0);
                                 }
                                 if !reader.dirty {
                                     reader.dirty = true;

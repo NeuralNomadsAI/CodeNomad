@@ -39,7 +39,14 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
                 }
                 Section::Output => {
                     if task::is_task(tool) {
-                        tx.copy(task::output(tool, task::report(s, &message, tool)));
+                        let delivery = task::delivery(s, &message, tool);
+                        if delivery.as_ref().is_some_and(|d| d.report_truncated) {
+                            return;
+                        }
+                        tx.copy(task::output(
+                            tool,
+                            delivery.as_ref().and_then(|d| d.report.as_deref()),
+                        ));
                         return;
                     }
                     if tool.name == "todowrite"

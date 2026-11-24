@@ -11,7 +11,7 @@ use crate::{
 };
 use serde_json::Value;
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering::SeqCst},
@@ -32,14 +32,13 @@ pub(super) struct Reader {
     pub(super) resident: Vec<history::Row>,
     pub(super) known: HashSet<String>,
     pub(super) owed: HashSet<(String, usize)>,
-    pub(super) owed_tools: HashSet<(String, String)>,
+    pub(super) owed_tools: HashMap<(String, String), u8>,
     pub(super) seen: Seen,
     first: Option<String>,
     older: Option<Value>,
     newer: Option<Value>,
     pub(super) repairs: u8,
     pub(super) settlement_reads: u8,
-    pub(super) tool_settlement_reads: u8,
     pub(super) dirty: bool,
     pub(super) parked: bool,
     pub(super) quiet: Instant,
@@ -59,7 +58,7 @@ impl Reader {
             resident: Vec::new(),
             known: HashSet::new(),
             owed: HashSet::new(),
-            owed_tools: HashSet::new(),
+            owed_tools: HashMap::new(),
             seen: Seen {
                 entries: VecDeque::new(),
                 bytes: 0,
@@ -69,7 +68,6 @@ impl Reader {
             newer: None,
             repairs: 0,
             settlement_reads: 0,
-            tool_settlement_reads: 0,
             dirty: true,
             parked: false,
             quiet: Instant::now(),
@@ -92,7 +90,7 @@ impl Reader {
                 self.resident = Vec::new();
                 self.known = HashSet::new();
                 self.owed = HashSet::new();
-                self.owed_tools = HashSet::new();
+                self.owed_tools = HashMap::new();
                 self.seen.entries.clear();
                 self.seen.bytes = 0;
                 self.first = None;
@@ -100,7 +98,6 @@ impl Reader {
                 self.newer = None;
                 self.repairs = 0;
                 self.settlement_reads = 0;
-                self.tool_settlement_reads = 0;
                 self.dirty = self.active_reader;
                 self.parked = false;
                 self.quiet = Instant::now();
@@ -118,7 +115,6 @@ impl Reader {
         self.known.clear();
         self.owed.clear();
         self.owed_tools.clear();
-        self.tool_settlement_reads = 0;
     }
 
     pub(super) fn clear_window_on_revert(&mut self) {
@@ -131,7 +127,6 @@ impl Reader {
         self.known.clear();
         self.owed.clear();
         self.owed_tools.clear();
-        self.tool_settlement_reads = 0;
     }
 
     pub(super) async fn sync(
@@ -190,7 +185,7 @@ impl Reader {
                             })
                             .is_some_and(|t| t.provenance == TextProvenance::Closed)
                     });
-                    self.owed_tools.retain(|(id, call)| {
+                    self.owed_tools.retain(|(id, call), _| {
                         !page
                             .rows
                             .iter()
@@ -216,19 +211,25 @@ impl Reader {
                     self.newer = page.newer.clone();
                     self.known = page.rows.iter().map(|r| r.id.clone()).collect();
                     self.resident = page.rows.clone();
-                    if self.owed_tools.is_empty() {
-                        self.tool_settlement_reads = 0;
-                    } else if !self.historical && self.tool_settlement_reads < 3 {
-                        self.tool_settlement_reads += 1;
-                        self.dirty = true;
-                        self.quiet = Instant::now()
-                            + Duration::from_millis(100 * u64::from(self.tool_settlement_reads));
-                    } else {
-                        self.owed_tools.clear();
-                        self.tool_settlement_reads = 0;
-                        if !self.historical {
-                            self.parked = true;
-                            reader_event(reading, self.generation, out, wake, Event::Failed).await;
+                    let mut tool_settlement_failed = false;
+                    if self.historical {
+                        self.owed_tools.retain(|(id, _), _| self.known.contains(id));
+                    } else if !self.owed_tools.is_empty() {
+                        let mut max_attempt = 0u8;
+                        self.owed_tools.retain(|_, attempts| {
+                            *attempts = attempts.saturating_add(1);
+                            if *attempts <= 3 {
+                                max_attempt = max_attempt.max(*attempts);
+                                true
+                            } else {
+                                tool_settlement_failed = true;
+                                false
+                            }
+                        });
+                        if !self.owed_tools.is_empty() {
+                            self.dirty = true;
+                            self.quiet = Instant::now()
+                                + Duration::from_millis(100 * u64::from(max_attempt));
                         }
                     }
                     let done = (self.terminal || self.busy) && !page.running;
@@ -266,7 +267,11 @@ impl Reader {
                     if !reader_event(reading, self.generation, out, wake, event).await {
                         return Ok(Turn::Stop);
                     }
-                    if done && reading.is_none() {
+                    if tool_settlement_failed {
+                        self.parked = true;
+                        self.dirty = false;
+                        reader_event(reading, self.generation, out, wake, Event::Failed).await;
+                    } else if done && reading.is_none() {
                         reader_event(reading, self.generation, out, wake, Event::Done).await;
                     }
                 }

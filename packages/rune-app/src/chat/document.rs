@@ -75,10 +75,37 @@ pub(super) fn prose_search(
     source: &str,
     query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
 ) -> El {
+    prose_pane_search(s, message, card_key, key, source, false, PROSE_LIMIT, query)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prose_pane_search(
+    s: &State,
+    message: &str,
+    card_key: &str,
+    key: String,
+    source: &str,
+    streaming: bool,
+    base_limit: usize,
+    query: Option<rune_theme_codenomad::timeline::search::Query<'_>>,
+) -> El {
     let revealed =
         query.is_some_and(|q| q.active) || s.transcript_display.search_revealed(card_key);
-    let limit = PROSE_LIMIT + if revealed { STEP } else { 0 };
-    prose_for(s, message, key, source, false, limit, query)
+    let limit = base_limit + if revealed { STEP } else { 0 };
+    prose_for(s, message, key, source, streaming, limit, query)
+}
+
+pub(super) fn bounded_prose_matches_for(
+    s: &State,
+    card_key: &str,
+    key: &str,
+    source: &str,
+    base_limit: usize,
+    query: rune_theme_codenomad::timeline::search::Query<'_>,
+) -> bool {
+    let revealed = query.active || s.transcript_display.search_revealed(card_key);
+    let limit = base_limit + if revealed { STEP } else { 0 };
+    bounded_prose_matches(s, key, source, limit, query)
 }
 
 pub(super) fn prose_at(s: &State, key: String, source: &str, streaming: bool, limit: usize) -> El {

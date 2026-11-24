@@ -105,7 +105,7 @@ impl Jump {
                 _ => None,
             }
         };
-        let Some(page) = futures_lite::future::or(
+        let Some(mut page) = futures_lite::future::or(
             async {
                 self.cancelled.recv().await.ok();
                 None
@@ -122,6 +122,7 @@ impl Jump {
             }
             return None;
         };
+        let _ = crate::content::merge_page(resident, &mut page.rows);
         let (admit, verdict) = bounded(1);
         if !send(Event::Anchor {
             ticket,

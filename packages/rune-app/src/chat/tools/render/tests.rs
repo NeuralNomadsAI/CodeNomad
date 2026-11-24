@@ -771,3 +771,58 @@ fn nested_subagent_uses_parent_child_snapshot_reports_for_status_duration_and_ou
         "{tree}"
     );
 }
+
+#[test]
+fn task_search_highlights_and_reveals_deep_prompt_matches() {
+    let deep_prompt = format!("{}\nDEEP_TASK_PROMPT_NEEDLE", "p".repeat(30_000));
+    let row = crate::history::decode_message(&json!({
+        "type":"assistant","id":"task_msg","time":{"completed":10000},"content":[
+            {"type":"tool","id":"t1","name":"task",
+             "state":{"status":"completed","input":{"description":"Run","prompt":deep_prompt}}}
+        ]
+    }))
+    .unwrap();
+    let mut state = init();
+    state.phase = Phase::Ready;
+    crate::settings::fixture_transcript(&mut state, json!({"toolInputsVisibility":"hidden"}));
+    let hit = codenomad_client::search::Hit {
+        session: "s".into(),
+        message: "task_msg".into(),
+        role: "assistant".into(),
+        part: 0,
+        kind: codenomad_client::search::Kind::Tool,
+        excerpt: String::new(),
+    };
+    let search = crate::chat::search_hit::SearchHit::new(&hit, "DEEP_TASK_PROMPT_NEEDLE", false);
+    state.transcript_display.search_highlight = Some(search.clone());
+    state.messages = vec![row.into()];
+    let crate::content::Part::Tool(tool) = &state.messages[0].parts[0] else {
+        panic!("tool part")
+    };
+    assert!(!super::match_hidden_by_inputs(
+        &state,
+        "task_msg",
+        tool,
+        search.query(Some((codenomad_client::search::Kind::Tool, 0))),
+    ));
+    let mut rt = Runtime::new(
+        state,
+        |s, _| {
+            with_locale("en", || {
+                let crate::content::Part::Tool(tool) = &s.messages[0].parts[0] else {
+                    panic!("tool part")
+                };
+                super::view(s, "task_msg", tool)
+            })
+        },
+        (960.0, 820.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    assert!(rt.find("history-search-match").is_some());
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("DEEP_TASK_PROMPT_NEEDLE")
+    );
+}

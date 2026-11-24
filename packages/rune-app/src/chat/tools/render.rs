@@ -167,10 +167,10 @@ fn render_body(
         );
     let is_task = task::is_task(tool);
     let nested = message.starts_with("child:");
-    let report = is_task.then(|| task::report(s, message, tool)).flatten();
-    let task_status = is_task.then(|| task::status(s, message, tool)).flatten();
-    let status = task_status
-        .map(|(label, _, _)| label)
+    let task_delivery = is_task.then(|| task::delivery(s, message, tool)).flatten();
+    let status = task_delivery
+        .as_ref()
+        .map(|d| d.status)
         .unwrap_or(match tool.status.as_str() {
             "completed" if tool.name == "execute" && tool.metadata["error"] == true => {
                 "toolCall.status.error"
@@ -197,10 +197,14 @@ fn render_body(
     let pending = matches!(tool.status.as_str(), "pending" | "streaming");
     let lang = output(tool, &mut parts);
     if is_task {
-        parts[0] = task::output(tool, report);
+        parts[0] = task::output(
+            tool,
+            task_delivery.as_ref().and_then(|d| d.report.as_deref()),
+        );
     } else if tool.name == "skill" && tool.status != "completed" {
         parts = [""; 4];
     }
+    let report_truncated = task_delivery.as_ref().is_some_and(|d| d.report_truncated);
     let has_output = !pending && parts.iter().any(|part| !part.trim().is_empty());
     let skill = tool.name == "skill" && tool.status == "completed" && has_output;
     let result_list =
@@ -220,11 +224,11 @@ fn render_body(
         && !matches!(tool.name.as_str(), "question" | "todowrite");
     // Per dev-docs/TRANSCRIPT.md, latestChildState drives both status and end time
     // across every launch/continuation card of the same background child.
-    let timing = if let Some((_, running, ended)) = task_status {
-        if running {
+    let timing = if let Some(delivery) = &task_delivery {
+        if delivery.running {
             tool.started.map(|start| (start, None))
         } else {
-            tool.started.zip(ended.map(Some))
+            tool.started.zip(delivery.ended.map(Some))
         }
     } else {
         super::duration::tool_timing(tool)
@@ -253,7 +257,7 @@ fn render_body(
     if shared_wrap {
         header = header.child(wrap_control(s, &wrap_key, wrap));
     }
-    if has_output
+    if (has_output && !report_truncated)
         || !pending && tool.name == "apply_patch" && apply_patch::has_patch(tool)
         || tool.name == "todowrite"
             && tool.metadata["todos"]
@@ -299,7 +303,18 @@ fn render_body(
             .children(diagnostics());
     }
     let task_body = (is_task && !probe)
-        .then(|| task::body(s, key, tool, parts[0], !nested))
+        .then(|| {
+            task::body(
+                s,
+                message,
+                key,
+                tool,
+                parts[0],
+                report_truncated,
+                !nested,
+                query,
+            )
+        })
         .flatten();
     let specialized_task = is_task && (probe || task_body.is_some());
     if probe && is_task {
@@ -309,16 +324,18 @@ fn render_body(
         {
             let prompt = super::string(&tool.input, &["prompt"]);
             if (!prompt.is_empty()
-                && document::bounded_prose_matches(
+                && document::bounded_prose_matches_for(
                     s,
+                    key,
                     &format!("{key}-task-prompt"),
                     prompt,
                     task::PANE_LIMIT,
                     q,
                 ))
                 || (!parts[0].is_empty()
-                    && document::bounded_prose_matches(
+                    && document::bounded_prose_matches_for(
                         s,
+                        key,
                         &format!("{key}-task-output"),
                         parts[0],
                         task::PANE_LIMIT,
