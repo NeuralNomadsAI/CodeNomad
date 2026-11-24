@@ -227,7 +227,7 @@ pub fn permit_body(
 
 struct HeldChunk {
     bytes: Vec<u8>,
-    _mem: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
+    _mem: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 impl AsRef<[u8]> for HeldChunk {
@@ -238,10 +238,10 @@ impl AsRef<[u8]> for HeldChunk {
 
 pub fn permit_body_chunks(
     mut chunks: std::collections::VecDeque<axum::body::Bytes>,
-    mem: Option<tokio::sync::OwnedSemaphorePermit>,
+    mut mem: Option<tokio::sync::OwnedSemaphorePermit>,
     mut abort: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
 ) -> axum::body::Body {
-    let mut mem = mem.map(std::sync::Arc::new);
+    let mut remaining_bytes: usize = chunks.iter().map(axum::body::Bytes::len).sum();
     let mut done = false;
     axum::body::Body::from_stream(futures_util::stream::poll_fn(move |cx| {
         if done {
@@ -264,16 +264,26 @@ pub fn permit_body_chunks(
             drop(mem.take());
             return std::task::Poll::Ready(None);
         };
-        // Copy out at most `RESPONSE_CHUNK` (64 KiB) and attach the shared permit via
-        // `Bytes::from_owner` so Hyper neither pins a multi-MiB backing segment nor drops the
-        // pool permit before the final chunk leaves its write buffer.
+        // Copy out at most `RESPONSE_CHUNK` (64 KiB) and split the corresponding permit units
+        // into `HeldChunk` so permits return to the pool incrementally as chunks leave Hyper's
+        // write buffer instead of staying pinned until the final byte.
         let take = front.len().min(RESPONSE_CHUNK);
         let slice = front[..take].to_vec();
         bytes::Buf::advance(front, take);
         if front.is_empty() {
             chunks.pop_front();
         }
-        let chunk = axum::body::Bytes::from_owner(HeldChunk { bytes: slice, _mem: mem.clone() });
+        remaining_bytes = remaining_bytes.saturating_sub(take);
+        let keep_units = if remaining_bytes == 0 { 0 } else { remaining_bytes.div_ceil(RESPONSE_CHUNK) };
+        let chunk_permit = if keep_units == 0 {
+            mem.take()
+        } else if let Some(permit) = &mut mem {
+            let release = permit.num_permits().saturating_sub(keep_units);
+            if release > 0 { permit.split(release) } else { None }
+        } else {
+            None
+        };
+        let chunk = axum::body::Bytes::from_owner(HeldChunk { bytes: slice, _mem: chunk_permit });
         std::task::Poll::Ready(Some(Ok::<_, std::io::Error>(chunk)))
     }))
 }
@@ -508,6 +518,7 @@ pub async fn serve_local(
             }
         }
     }
+    drop(listener);
     let drained = tokio::time::timeout(DRAIN, async { while tasks.join_next().await.is_some() {} }).await;
     tasks.abort_all();
     match drained {

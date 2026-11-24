@@ -235,13 +235,44 @@ pub async fn bridge(app: Shared, shutdown: CancellationToken) {
         tokio::select! {
             biased;
             _ = shutdown.cancelled() => return,
+            _ = app.native.wait_retired(&endpoint) => continue,
             _ = crate::extensions::lifecycle::prepare(&app, &endpoint) => {}
         }
         let mut local_backpressure = false;
+        let Ok(event_url) = endpoint.url.join("/api/event") else {
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => return,
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            }
+            continue;
+        };
         let response = tokio::select! {
             biased;
             _ = shutdown.cancelled() => return,
-            res = app.native.get("/api/event").header("accept", "text/event-stream").send() => res,
+            _ = app.native.wait_retired(&endpoint) => continue,
+            res = tokio::time::timeout(
+                Duration::from_secs(30),
+                app.native
+                    .client
+                    .get(event_url)
+                    .basic_auth("opencode", Some(&endpoint.password))
+                    .header("accept", "text/event-stream")
+                    .send(),
+            ) => match res {
+                Ok(res) => res,
+                Err(_) => {
+                    app.native.invalidate(&endpoint);
+                    eprintln!("Shared OpenCode event stream disconnected: Shared OpenCode event stream timed out");
+                    status(&app, "error", Some("Shared OpenCode event stream timed out"));
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.cancelled() => return,
+                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    }
+                    continue;
+                }
+            },
         };
         if let Ok(response) = response
             && response.status().is_success()

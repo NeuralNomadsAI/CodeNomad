@@ -175,7 +175,7 @@ async fn repo_target(
     let cat = crate::worktrees::linked::catalogue(app, &w, false).await?;
     guard_config(&cat.main).await?;
     let tree = cat.get(slug)?;
-    if tree.nested_missing {
+    if !tree.direct_folder() {
         return Err(error(Status::NOT_FOUND, "Worktree folder is missing"));
     }
     // The directory Git runs in may read its own `config.worktree`.

@@ -264,26 +264,27 @@ impl Listener {
     }
     pub async fn serve(self, router: Router, shutdown: CancellationToken) -> io::Result<()> {
         const DRAIN: Duration = Duration::from_secs(25);
+        let Self { socket, acceptor, origin, fingerprint: _, ingress } = self;
         let gate = Arc::new(crate::auth::tls_admission::Gate::default());
         let mut tasks = tokio::task::JoinSet::new();
         loop {
             while tasks.try_join_next().is_some() {}
-            let (socket, peer) = tokio::select! {
+            let (stream_socket, peer) = tokio::select! {
                 _ = shutdown.cancelled() => break,
                 Some(_) = tasks.join_next(), if !tasks.is_empty() => continue,
-                result = self.socket.accept() => match result {
+                result = socket.accept() => match result {
                     Ok(accepted) => accepted,
                     // A per-connection failure (reset before accept, descriptor
                     // pressure) never stops the listener.
                     Err(_) => { tokio::time::sleep(Duration::from_millis(50)).await; continue }
                 },
             };
-            let (acceptor, router, stop) = (self.acceptor.clone(), router.clone(), shutdown.clone());
+            let (acceptor, router, stop) = (acceptor.clone(), router.clone(), shutdown.clone());
             // Keep per-connection eviction (`gate`) separate from server `shutdown` so active
             // HTTPS requests drain gracefully before `main` tears down plugin leases.
             let channel = Channel {
-                origin: self.origin.clone(),
-                ingress: self.ingress,
+                origin: origin.clone(),
+                ingress,
                 socket: CancellationToken::new(),
                 principal: Arc::new(std::sync::Mutex::new(None)),
             };
@@ -296,7 +297,7 @@ impl Listener {
                 let io = tokio::select! {
                     _ = lifetime.cancelled() => return,
                     _ = stop.cancelled() => return,
-                    result = tokio::time::timeout(HANDSHAKE, acceptor.accept(socket)) => {
+                    result = tokio::time::timeout(HANDSHAKE, acceptor.accept(stream_socket)) => {
                         let Ok(Ok(io)) = result else { return; };
                         io
                     }
@@ -326,6 +327,7 @@ impl Listener {
                 lifetime.cancel();
             });
         }
+        drop(socket);
         let drained = tokio::time::timeout(DRAIN, async { while tasks.join_next().await.is_some() {} }).await;
         tasks.abort_all();
         match drained {

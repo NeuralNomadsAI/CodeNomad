@@ -137,7 +137,7 @@ pub async fn create(
     let from = catalogue.get(input.from_slug.as_deref().unwrap_or("root"))?;
     let _admitted =
         super::fence::admit(&[super::fence::identity(from.registered()), super::fence::identity(&catalogue.parent)])?;
-    if from.nested_missing {
+    if !from.direct_folder() {
         return Err(conflict("Source worktree does not contain the workspace folder"));
     }
     git(&w.path, &["check-ref-format", "--branch", branch]).await.map_err(|_| invalid("Invalid worktree branch"))?;

@@ -413,8 +413,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 if let Some(dir) = record["location"]["directory"].as_str() {
                     location.insert("directory".into(), Value::String(dir.to_owned()));
                 }
-                if let Some(ws) = record["location"].get("workspaceID").filter(|v| !v.is_null()) {
-                    location.insert("workspaceID".into(), ws.clone());
+                if let Some(ws) = record["location"].get("workspaceID") {
+                    // Preserve any present `workspaceID` (including `null`) so TS ownership
+                    // refusal (`"workspaceID" in location`, `manager.ts:337-343`) stays exact
+                    // without retaining oversized non-string values.
+                    let kept = match ws {
+                        Value::String(s) if s.len() <= 514 => Value::String(s.clone()),
+                        _ => Value::Null,
+                    };
+                    location.insert("workspaceID".into(), kept);
                 }
                 json!({
                     "id": record["id"].as_str().unwrap_or_default(),
@@ -1036,10 +1043,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 }
                 let mut pos = 0;
                 while let Some(pending) = stream.feed(&chunk, &mut pos).map_err(|_| interrupted())? {
-                    let needed = crate::shared::response_memory_units(
-                        crate::shared::ResponsePool::List,
-                        stream.retained_bytes().saturating_add(pending.bytes.capacity()),
-                    );
+                    // Account for the transient peak inside `project_item` where `raw` and the
+                    // `UndoPatch` originals coexist before `raw.truncate(); raw.shrink_to_fit()`.
+                    let peak_bytes = stream.retained_bytes().saturating_add(pending.bytes.capacity().saturating_mul(2));
+                    if peak_bytes > crate::sessions::media_stream::OUTPUT_LIMIT {
+                        return Err(interrupted());
+                    }
+                    let needed = crate::shared::response_memory_units(crate::shared::ResponsePool::List, peak_bytes);
                     if needed > held_units {
                         let extra = tokio::select! {
                             biased;
@@ -1063,10 +1073,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     let (ws, ses) = stream.ids().ok_or_else(interrupted)?;
                     let (ws, ses) = (ws.to_owned(), ses.to_owned());
                     let held = slot.take().ok_or_else(interrupted)?;
+                    let held_mem = mem.take();
                     let raw = pending.bytes;
                     let delimiter = pending.delimiter;
                     let moved_stream = stream;
-                    let (returned_stream, commit_res, returned) = tokio::select! {
+                    // Move both `slot` and `mem` into `spawn_blocking` so cancellation never
+                    // releases permits while the detached worker still holds `raw` or `stream`.
+                    let (returned_stream, commit_res, returned, returned_mem) = tokio::select! {
                         biased;
                         _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
                         _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
@@ -1077,13 +1090,24 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                                 let mut s = moved_stream;
                                 let (out, undo) = crate::sessions::media_stream::project_item(&ws, &ses, raw);
                                 let commit_res = s.commit_item(out, undo, delimiter);
-                                (s, commit_res, held)
+                                (s, commit_res, held, held_mem)
                             }),
                         ) => res.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
                     };
                     stream = returned_stream;
                     slot = Some(returned);
+                    mem = returned_mem;
                     commit_res.map_err(|_| interrupted())?;
+                    let after_units = crate::shared::response_memory_units(
+                        crate::shared::ResponsePool::List,
+                        stream.retained_bytes(),
+                    );
+                    if held_units > after_units
+                        && let Some(existing) = &mut mem
+                    {
+                        let _ = existing.split((held_units - after_units) as usize);
+                        held_units = after_units;
+                    }
                 }
                 let needed =
                     crate::shared::response_memory_units(crate::shared::ResponsePool::List, stream.retained_bytes());
@@ -1108,7 +1132,25 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                     held_units = needed;
                 }
             }
-            let (payload, payload_len, changed) = stream.finish().map_err(|_| interrupted())?;
+            let (payload, payload_len, changed) = if stream.needs_blocking_finish() {
+                let held = slot.take().ok_or_else(interrupted)?;
+                let held_mem = mem.take();
+                let (finished, returned, returned_mem) = tokio::select! {
+                    biased;
+                    _ = principal.0.cancelled() => return Err(crate::auth::unauthorized()),
+                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    _ = workspace_closed() => return Err(not_found()),
+                    res = tokio::time::timeout_at(
+                        list_deadline,
+                        tokio::task::spawn_blocking(move || (stream.finish(), held, held_mem)),
+                    ) => res.map_err(|_| interrupted())?.map_err(|_| interrupted())?,
+                };
+                slot = Some(returned);
+                mem = returned_mem;
+                finished.map_err(|_| interrupted())?
+            } else {
+                stream.finish().map_err(|_| interrupted())?
+            };
             let final_units = if payload_len == 0 {
                 0
             } else {
@@ -1152,20 +1194,36 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             // Drop the upstream strong ETag only when the JSON body was actually rewritten
             // (RFC 9110: never reuse the original validator for a modified representation).
             let length = axum::http::HeaderValue::from(payload_len);
-            let abort = crate::shared::stream_abort(
+            // Bound total response-drain lifetime (120 s) so a trickle reader cannot pin
+            // `ResponsePool::List` permits indefinitely without triggering the 30 s stall timer.
+            const LIST_STREAM_MAX: Duration = Duration::from_secs(120);
+            let stream_deadline = tokio::time::Instant::now() + LIST_STREAM_MAX;
+            let abort_inner = crate::shared::stream_abort(
                 app.clone(),
                 id.to_owned(),
                 workspace.clone(),
                 endpoint.clone(),
                 principal.0.clone(),
             );
-            let write_abort = crate::shared::stream_abort(
+            let abort = Box::pin(async move {
+                tokio::select! {
+                    _ = abort_inner => {}
+                    _ = tokio::time::sleep_until(stream_deadline) => {}
+                }
+            });
+            let write_abort_inner = crate::shared::stream_abort(
                 app.clone(),
                 id.to_owned(),
                 workspace.clone(),
                 endpoint.clone(),
                 principal.0.clone(),
             );
+            let write_abort = Box::pin(async move {
+                tokio::select! {
+                    _ = write_abort_inner => {}
+                    _ = tokio::time::sleep_until(stream_deadline) => {}
+                }
+            });
             let builder = headers
                 .into_iter()
                 .filter(|(name, _)| !(changed && *name == "etag"))
@@ -1181,6 +1239,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         drop(slot);
         let status = response.status();
         if status.is_redirection() && status != Status::NOT_MODIFIED {
+            app.native.invalidate(&endpoint);
             return Err(upstream_error());
         }
         let unauthorized = status == Status::UNAUTHORIZED;
@@ -1342,6 +1401,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 Err(_) => return Err(upstream_error()),
             },
         };
+        if message_list && response.status().is_redirection() && response.status() != Status::NOT_MODIFIED {
+            drop(response);
+            app.native.invalidate(&endpoint);
+            return Err(upstream_error());
+        }
         if message_list
             && !response.status().is_success()
             && response.status() != Status::NOT_MODIFIED

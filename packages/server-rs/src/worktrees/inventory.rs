@@ -262,6 +262,9 @@ impl Tree {
         }
         row
     }
+    pub fn direct_folder(&self) -> bool {
+        !self.nested_missing && self.identity.is_some() && self.projected_link.is_none()
+    }
     fn owns_path(&self, dir: &Path) -> bool {
         self.path == dir
             && !self.nested_missing

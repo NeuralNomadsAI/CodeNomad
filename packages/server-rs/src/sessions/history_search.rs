@@ -45,22 +45,28 @@ pub(super) async fn handle(
     let delta = if ranked { 65_536 } else { 16_384 };
     let invalid =
         || error(Status::BAD_REQUEST, if ranked { "Invalid ranked history query" } else { "Invalid history query" });
-    let mime = req
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|header| header.to_str().ok())
-        .and_then(|value| value.split(';').next())
-        .map(str::trim);
-    if mime.is_some_and(|mime| mime.eq_ignore_ascii_case("text/plain")) {
-        return Err(invalid());
+    let (parts, body) = req.into_parts();
+    if let Some(kind) = parts.headers.get(header::CONTENT_TYPE) {
+        let essence = kind.to_str().unwrap_or("").split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        if !matches!(essence.as_str(), "application/json" | "text/plain") {
+            return Err(crate::shared::fastify::error(
+                Status::UNSUPPORTED_MEDIA_TYPE,
+                "FST_ERR_CTP_INVALID_MEDIA_TYPE",
+                "Unsupported Media Type",
+            ));
+        }
     }
-    if !mime.is_some_and(|mime| mime.eq_ignore_ascii_case("application/json")) {
-        return Err(error(Status::UNSUPPORTED_MEDIA_TYPE, "Unsupported Media Type"));
-    }
-    let bytes = to_bytes(req.into_body(), delta)
-        .await
-        .map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request body is too large"))?;
-    let mut input: Value = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    let bytes = to_bytes(body, delta).await.map_err(|_| {
+        crate::shared::fastify::error(
+            Status::PAYLOAD_TOO_LARGE,
+            "FST_ERR_CTP_BODY_TOO_LARGE",
+            "Request body is too large",
+        )
+    })?;
+    let mut input: Value = match crate::shared::fastify::body(&parts.headers, &bytes)? {
+        Some(crate::shared::fastify::Body::Json(value)) => value,
+        Some(crate::shared::fastify::Body::Text(_)) | None => return Err(invalid()),
+    };
     if ranked {
         for key in ["version", "limit"] {
             if let Some(value) = input.get_mut(key)

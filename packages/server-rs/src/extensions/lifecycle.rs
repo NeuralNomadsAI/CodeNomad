@@ -436,7 +436,10 @@ async fn sync(app: &App, renew: bool) {
     }
 }
 
-pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task::JoinHandle<()>>, String> {
+pub fn start(
+    app: &Shared,
+    stop: CancellationToken,
+) -> Result<Option<tokio::task::JoinHandle<Result<(), String>>>, String> {
     let features = provision::selected()?;
     if features.is_empty() {
         return Ok(None);
@@ -521,12 +524,26 @@ pub fn start(app: &Shared, stop: CancellationToken) -> Result<Option<tokio::task
         for owner in owners.into_iter().flatten() {
             owner.close().await;
         }
-        let _ = tokio::task::spawn_blocking(move || {
+        let disposed = tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut first_err = None;
             for features in leases {
-                provision::dispose(&features);
+                if let Err(e) = provision::dispose_checked(&features)
+                    && first_err.is_none()
+                {
+                    first_err = Some(e.to_string());
+                }
+            }
+            match first_err {
+                Some(e) => Err(e),
+                None => Ok(()),
             }
         })
         .await;
+        match disposed {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(e) => Err(e.to_string()),
+        }
     })))
 }
 

@@ -192,6 +192,32 @@ pub fn legacy_automation(source: &str) -> bool {
 }
 
 /// `lease` is the backend's current lease content (empty when it requests nothing).
+fn read_regular_shim(path: &Path) -> io::Result<Option<String>> {
+    use std::io::Read;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other(format!("Plugin entry is not a regular file: {}", path.display())));
+    }
+    let mut content = String::new();
+    const MAX_SHIM: u64 = 256 * 1024;
+    file.take(MAX_SHIM + 1).read_to_string(&mut content)?;
+    if content.len() as u64 > MAX_SHIM {
+        return Err(io::Error::other(format!("Existing plugin entry exceeds size limit: {}", path.display())));
+    }
+    Ok(Some(content))
+}
+
 #[cfg(test)]
 pub fn install(
     feature: &'static str,
@@ -221,11 +247,7 @@ pub fn install_checked(
     let marker = marker(feature);
     let hash = artifact::sha256_hex(bundle);
     let entry = paths.config.join("plugins").join(format!("codenomad-{feature}.ts"));
-    let existing = match fs::read_to_string(&entry) {
-        Ok(s) => Some(s),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e),
-    };
+    let existing = read_regular_shim(&entry)?;
     if existing.as_ref().is_some_and(|s| !s.starts_with(&marker) && !(feature == "automation" && legacy_automation(s)))
     {
         return Err(fail(format!("Existing plugin entry is not managed by CodeNomad: {}", entry.display())));
@@ -304,11 +326,28 @@ pub fn ready_marker(lease: &Path) -> PathBuf {
 }
 
 /// Lease release: the payloads stay for native carrier recovery and older copies.
-pub fn dispose(installed: &[Installed]) {
+/// Propagates any removal error other than `NotFound` so shutdown reports incomplete cleanup
+/// (TS `desktop-plugin-installation.ts:165-174`).
+pub fn dispose_checked(installed: &[Installed]) -> io::Result<()> {
+    let mut first_err = None;
     for i in installed {
-        let _ = fs::remove_file(&i.lease);
-        let _ = fs::remove_file(ready_marker(&i.lease));
+        for path in [&i.lease, &ready_marker(&i.lease)] {
+            if let Err(e) = fs::remove_file(path)
+                && e.kind() != io::ErrorKind::NotFound
+                && first_err.is_none()
+            {
+                first_err = Some(e);
+            }
+        }
     }
+    match first_err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+pub fn dispose(installed: &[Installed]) {
+    let _ = dispose_checked(installed);
 }
 
 /// `lease-request.ts`: `{"version":1,"<field>":true}` while requested, else empty.

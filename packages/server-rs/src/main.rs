@@ -258,9 +258,10 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     // Drain local, remote, and automation bridge HTTP listeners before tearing down plugin leases
     // (TS `index.ts:753-767`, `shutdown.ts:130-137`).
     plugins_stop.cancel();
-    if let Some(task) = plugins {
-        let _ = task.await;
-    }
+    let plugins_ok = match plugins {
+        Some(task) => matches!(task.await, Ok(Ok(()))),
+        None => true,
+    };
     host::native_parent::close();
     if !launch.serve {
         served?;
@@ -268,7 +269,10 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         if !bridge_ok {
             return Err("automation bridge shutdown drain timed out".into());
         }
+        if !plugins_ok {
+            return Err("plugin lease disposal failed".into());
+        }
         return Ok(true);
     }
-    Ok(served.is_ok() && remote.is_ok() && bridge_ok)
+    Ok(served.is_ok() && remote.is_ok() && bridge_ok && plugins_ok)
 }

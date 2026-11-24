@@ -410,9 +410,11 @@ pub(crate) async fn media_directory(
         return Err(native_error());
     }
     // Keep HTTP request ownership strictly separate from the SSE `linked_events` cache
-    // (TS `manager.ts:467-504`): always load through the HTTP request inventory with refresh.
+    // (TS `manager.ts:467-504`): read the native worktree list first (`refresh = false`)
+    // so a failing `worktree.refresh` cannot block an already-registered checkout, and
+    // trigger one `refresh = true` only on a miss.
     let timeout = std::time::Duration::from_secs(12);
-    let mut refresh = true;
+    let mut refresh = false;
     let mut refreshed = false;
     for _ in 0..4 {
         let revision = inventory::revision(app);

@@ -126,7 +126,7 @@ impl Placement {
             {
                 return Err(error(Status::GONE, "Media operation stale"));
             }
-            let source = if strict_media {
+            let source = compact_placement_record(if strict_media {
                 crate::opencode::session_record_media_raw_at(app, &endpoint, session).await?
             } else if media {
                 crate::opencode::session_record_media_at(app, &endpoint, session).await?
@@ -140,7 +140,7 @@ impl Placement {
                     16 * 1024 * 1024,
                 )
                 .await?
-            };
+            });
             if media
                 && (!current_fast(&displays)
                     || !same_identity_async(workspace.path.clone(), workspace_physical.clone()).await
@@ -250,7 +250,7 @@ impl Placement {
         // Match TS `session-media.ts:65-90` and `session-navigation.ts:64-87` exact order:
         // re-read `session.get`, then verify fresh worktree catalogue ownership (OpenCode has
         // no atomic combined session + worktree read; shared limitation tracked in `solid-backlog.md`).
-        let newest = if self.strict_media || self.media {
+        let newest = compact_placement_record(if self.strict_media || self.media {
             crate::opencode::session_record_media_raw_at(app, &self.endpoint, session).await?
         } else {
             crate::opencode::session_record_opaque_at(
@@ -262,7 +262,7 @@ impl Placement {
                 16 * 1024 * 1024,
             )
             .await?
-        };
+        });
         if !self.operation_current(app, id).await {
             return Err(crate::opencode::upstream_error());
         }
@@ -374,6 +374,30 @@ impl Placement {
             other => Err(other),
         }
     }
+}
+
+fn compact_placement_record(mut record: Value) -> Value {
+    let mut out = serde_json::Map::new();
+    if let Some(id) = record.get_mut("id").map(Value::take) {
+        out.insert("id".into(), id);
+    }
+    if let Some(project) = record.get_mut("projectID").map(Value::take) {
+        out.insert("projectID".into(), project);
+    }
+    if let Some(loc) = record.get_mut("location").and_then(Value::as_object_mut) {
+        let mut compact_loc = serde_json::Map::new();
+        if let Some(dir) = loc.remove("directory") {
+            compact_loc.insert("directory".into(), dir);
+        }
+        if let Some(ws) = loc.remove("workspaceID") {
+            compact_loc.insert("workspaceID".into(), ws);
+        }
+        out.insert("location".into(), Value::Object(compact_loc));
+    }
+    if let Some(revert) = record.get_mut("revert").map(Value::take) {
+        out.insert("revert".into(), revert);
+    }
+    Value::Object(out)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -605,35 +629,44 @@ pub async fn handle(
     let session = input["sessionID"].as_str().ok_or_else(invalid)?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let request = async {
-        // Always capture deletion fences for history navigation (TS `session-navigation.ts:48-55`).
-        let placement = match Placement::capture_with_media(&app, &id, session, defer, true).await {
-            Ok(placement) => placement,
-            Err((Status::FORBIDDEN, body)) => return (Status::FORBIDDEN, body).into_response(),
+        // Bound concurrent 16 MiB `session.get` admissions, 24 MiB RPC reads, and
+        // `spawn_blocking` parses across all three navigation actions (`window`, `outline`,
+        // `outlinePreview`).
+        static HISTORY_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+        let initial_workspace = match app.workspace(&id) {
+            Ok(workspace) => workspace,
             Err(_) => return blocked("unavailable"),
         };
-        // Bound concurrent 24 MiB RPC reads and `spawn_blocking` parses across all three
-        // navigation actions (`window`, `outline`, `outlinePreview`).
-        static HISTORY_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
-        let work = async {
+        let slot = {
             let workspace_closed = async {
                 loop {
                     let notified = app.workspace_closed.notified();
-                    if !placement.operation_current_fast(&app, &id) {
+                    if !app
+                        .workspace(&id)
+                        .is_ok_and(|w| w.id == initial_workspace.id && w.path == initial_workspace.path)
+                    {
                         return;
                     }
                     notified.await;
                 }
             };
-            let slot = tokio::select! {
+            tokio::select! {
                 biased;
                 _ = workspace_closed => return blocked("unavailable"),
                 permit = HISTORY_SLOTS.acquire() => match permit {
                     Ok(permit) => permit,
                     Err(_) => return blocked("unavailable"),
                 }
-            };
-            // Acquire the slot before final revalidation so a closed project or retired daemon
-            // cannot dispatch an RPC after waiting for a slot.
+            }
+        };
+        // Always capture deletion fences for history navigation (TS `session-navigation.ts:48-55`).
+        let placement = match Placement::capture_with_media(&app, &id, session, defer, true).await {
+            Ok(placement) => placement,
+            Err((Status::FORBIDDEN, body)) => return (Status::FORBIDDEN, body).into_response(),
+            Err(_) => return blocked("unavailable"),
+        };
+        let work = async {
+            // Revalidate after admission while holding the navigation slot.
             let directory = match placement.ready(&app, &id, session).await {
                 Ok(directory) => directory,
                 Err(Recheck::Conflict) => return blocked("conflict"),

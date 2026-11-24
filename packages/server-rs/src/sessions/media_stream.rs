@@ -376,6 +376,10 @@ impl MessageListStream {
             .saturating_add(self.item.capacity())
     }
 
+    pub(crate) fn needs_blocking_finish(&self) -> bool {
+        self.retained_bytes() > INLINE_THRESHOLD
+    }
+
     fn total_len(&self) -> usize {
         self.segments_bytes
             .saturating_add(self.undo_bytes)
