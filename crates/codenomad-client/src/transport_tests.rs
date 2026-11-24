@@ -499,10 +499,11 @@ fn prompt_connection_refused_and_oversized_body_are_rejected_not_unconfirmed() {
         assert!(oversized.to_string().contains("request body"));
         let (out, _events) = bounded(4);
         let wire = Arc::new(crate::stream::State::default());
+        let wake: crate::Wake = Arc::new(|| {});
         let outcome = crate::recovery::receipts::prompt(
             &backend,
             &out,
-            &Arc::new(|| {}),
+            &wake,
             &wire,
             true,
             "msg_00000000000000000000000000000003",
@@ -642,7 +643,15 @@ fn direct_stream_gap_escalates_to_reconnecting_when_reconnect_fails() {
             while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
             drop(stream);
             drop(listener);
-            while !matches!(events.recv().await.unwrap(), Event::ConnectionLost) {}
+            loop {
+                match events.recv().await.unwrap() {
+                    Event::ConnectionLost => break,
+                    Event::Reconnecting | Event::Failed => {
+                        panic!("first disconnect from an established stream must not emit Reconnecting before reconnect fails")
+                    }
+                    _ => {}
+                }
+            }
             while !matches!(events.recv().await.unwrap(), Event::Reconnecting) {}
             commands.send(Command::Close).await.unwrap();
             task.await.unwrap().unwrap();
@@ -742,7 +751,8 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
                     .unwrap();
             backend.workspace = "workspace".into();
             backend.session = "session".into();
-            let (out, events) = bounded(8);
+            // Bound out to 1 so a buffered event pauses the transport while session.moved and a prompt queue behind it.
+            let (out, events) = bounded(1);
             let (commands, input) = bounded(4);
             let task = tokio::spawn(crate::transport::run_backend(
                 backend,
@@ -761,32 +771,36 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
             }
             stream
                 .get_mut()
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
-                .await
-                .unwrap();
-            while !matches!(events.recv().await.unwrap(), Event::AgentHint(true)) {}
-            stream
-                .get_mut()
                 .write_all(
-                    b"data: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"session\"}}}\n\n",
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"permission.updated\",\"data\":{\"sessionID\":\"session\"}}}\n\ndata: {\"instanceId\":\"workspace\",\"type\":\"instance.event\",\"event\":{\"type\":\"session.moved\",\"data\":{\"sessionID\":\"session\"}}}\n\n",
                 )
                 .await
                 .unwrap();
+            // Wait until the transport fills out with Opened's AgentHint(true) and parks on permission.updated.
+            while events.is_empty() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
             let id = "msg_00000000000000000000000000000007";
-            let _ = commands
+            commands
                 .send(Command::Prompt(crate::prompt::Prompt {
                     id: Some(id.into()),
                     text: "after move".into(),
                     ..Default::default()
                 }))
-                .await;
+                .await
+                .unwrap();
+            let mut saw_rejected = false;
             let mut saw_moved = false;
             while let Ok(event) = events.recv().await {
                 match event {
                     Event::PromptAcknowledged {
-                        outcome: PromptOutcome::Confirmed(_) | PromptOutcome::Unconfirmed,
-                        ..
-                    } => panic!("prompt racing with session.moved must never confirm or hang unconfirmed"),
+                        attempted,
+                        outcome: PromptOutcome::Rejected,
+                    } if attempted == id => saw_rejected = true,
+                    Event::PromptAcknowledged { .. } => {
+                        panic!("prompt racing with session.moved must be Rejected, never Confirmed or Unconfirmed")
+                    }
                     Event::Workspace(WorkspaceEvent::SessionMoved { session_id, .. })
                         if session_id == "session" =>
                     {
@@ -796,6 +810,7 @@ fn session_moved_rejects_queued_prompt_without_http_post() {
                     _ => {}
                 }
             }
+            assert!(saw_rejected, "queued prompt must receive an explicit Rejected receipt");
             assert!(saw_moved, "session.moved event must be published");
             assert!(task.await.unwrap().is_err());
             assert!(

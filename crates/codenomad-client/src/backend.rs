@@ -43,8 +43,13 @@ pub(crate) async fn classify_http_error(
             crate::prompt::PromptError::Unconfirmed
         };
     }
-    if status.is_client_error()
-        || (accept_not_implemented && status == reqwest::StatusCode::NOT_IMPLEMENTED)
+    if status.is_client_error() {
+        return crate::prompt::PromptError::Rejected;
+    }
+    if accept_not_implemented
+        && status == reqwest::StatusCode::NOT_IMPLEMENTED
+        && let Ok(body) = crate::prompt_receipt::read(response).await
+        && body["error"].as_str() == Some("Route not implemented in this prototype")
     {
         return crate::prompt::PromptError::Rejected;
     }
