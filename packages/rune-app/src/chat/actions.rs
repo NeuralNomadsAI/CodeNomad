@@ -6,6 +6,7 @@ use std::{
 };
 
 const RENDER_INTERVAL: f64 = 0.2;
+const TASK_ANCHOR_LIMIT: usize = 32;
 
 #[derive(Default)]
 pub struct Display {
@@ -32,13 +33,28 @@ struct StreamRender {
     pending: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TaskStepsState {
+    at_bottom: bool,
+    visible: Vec<String>,
+}
+
+impl Default for TaskStepsState {
+    fn default() -> Self {
+        Self {
+            at_bottom: true,
+            visible: Vec::new(),
+        }
+    }
+}
+
 #[derive(Default)]
 struct SessionDisplay {
     reading: super::reading::Reading,
     toggled: HashSet<String>,
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
-    task_anchors: HashMap<String, String>,
+    task_anchors: VecDeque<(String, TaskStepsState)>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     diagram_sources: HashMap<String, BTreeSet<usize>>,
     compact_diffs: (u64, HashSet<String>),
@@ -57,6 +73,7 @@ impl Display {
         self.usage_family.close();
         self.pictures.clear();
         self.receipts.suspend();
+        self.active.task_anchors.clear();
     }
     pub(crate) fn reading_mut(&mut self) -> &mut super::reading::Reading {
         &mut self.active.reading
@@ -76,7 +93,9 @@ impl Display {
         } else if self.session != session {
             self.timeline = Default::default();
             self.search_highlight = None;
-            let next = self.saved.remove(session).unwrap_or_default();
+            self.active.task_anchors.clear();
+            let mut next = self.saved.remove(session).unwrap_or_default();
+            next.task_anchors.clear();
             self.saved.insert(
                 std::mem::replace(&mut self.session, session.into()),
                 std::mem::replace(&mut self.active, next),
@@ -139,19 +158,49 @@ impl Display {
         self.active.revealed.get(key).copied().unwrap_or_default()
     }
 
-    pub(super) fn task_anchor(&self, key: &str) -> Option<&str> {
-        self.active.task_anchors.get(key).map(String::as_str)
+    pub(super) fn task_anchors(&self, key: &str) -> &[String] {
+        self.active
+            .task_anchors
+            .iter()
+            .find(|(id, _)| id == key)
+            .filter(|(_, state)| !state.at_bottom)
+            .map_or(&[], |(_, state)| state.visible.as_slice())
     }
 
-    pub(super) fn set_task_anchor(&mut self, key: &str, id: Option<String>) {
-        match id {
-            Some(id) => {
-                self.active.task_anchors.insert(key.into(), id);
+    pub(super) fn set_task_visible(&mut self, key: &str, visible: Vec<String>) {
+        let state = self.task_steps_entry(key);
+        state.visible = visible;
+    }
+
+    pub(super) fn set_task_at_bottom(&mut self, key: &str, at_bottom: bool) -> bool {
+        let state = self.task_steps_entry(key);
+        let returned_to_bottom = !state.at_bottom && at_bottom;
+        state.at_bottom = at_bottom;
+        returned_to_bottom
+    }
+
+    pub(super) fn clear_task_anchor(&mut self, key: &str) {
+        self.active.task_anchors.retain(|(id, _)| id != key);
+    }
+
+    fn task_steps_entry(&mut self, key: &str) -> &mut TaskStepsState {
+        if let Some(pos) = self
+            .active
+            .task_anchors
+            .iter()
+            .position(|(id, _)| id == key)
+        {
+            let entry = self.active.task_anchors.remove(pos).unwrap();
+            self.active.task_anchors.push_back(entry);
+        } else {
+            if self.active.task_anchors.len() >= TASK_ANCHOR_LIMIT {
+                self.active.task_anchors.pop_front();
             }
-            None => {
-                self.active.task_anchors.remove(key);
-            }
+            self.active
+                .task_anchors
+                .push_back((key.into(), TaskStepsState::default()));
         }
+        &mut self.active.task_anchors.back_mut().unwrap().1
     }
 
     pub(super) fn live_ansi(
@@ -256,6 +305,19 @@ impl Display {
             crate::timeline::structure_changed(s);
         }
         s.revision += 1;
+    }
+
+    pub(super) fn reveal_at_least(s: &mut State, key: &str, count: usize) {
+        let steps = s
+            .transcript_display
+            .active
+            .revealed
+            .entry(key.into())
+            .or_default();
+        if *steps < count {
+            *steps = count;
+            s.revision += 1;
+        }
     }
 }
 

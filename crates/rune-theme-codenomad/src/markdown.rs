@@ -146,9 +146,9 @@ pub fn tool_pane(content: El, large: bool) -> El {
 pub fn steps_pane<S: 'static>(
     key: String,
     label: &str,
-    header: Option<El>,
     rows: Vec<El>,
     on_visible: impl Fn(&mut S, std::ops::Range<usize>) -> bool + 'static,
+    on_at_bottom: impl Fn(&mut S, bool) -> bool + 'static,
 ) -> El {
     let t = tokens(dark());
     let gap = t.space(Space::Sm).px();
@@ -168,8 +168,7 @@ pub fn steps_pane<S: 'static>(
         .max_h(tool_lines(30))
         .scroll(ScrollSpec { stick_bottom: true })
         .scroll_anchor()
-        .gap(gap)
-        .children(header)
+        .on_at_bottom_if(on_at_bottom)
         .child(list)
 }
 

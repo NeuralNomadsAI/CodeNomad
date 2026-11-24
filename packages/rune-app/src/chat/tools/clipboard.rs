@@ -39,7 +39,7 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
                 }
                 Section::Output => {
                     if task::is_task(tool) {
-                        tx.copy(task::output(tool, task::report(s, tool)));
+                        tx.copy(task::output(tool, task::report(s, &message, tool)));
                         return;
                     }
                     if tool.name == "todowrite"

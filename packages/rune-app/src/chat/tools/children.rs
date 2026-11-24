@@ -19,7 +19,8 @@ type Steps = Vec<(String, Arc<Tool>)>;
 #[derive(Clone, Default, PartialEq)]
 pub(super) struct Snapshot {
     pub steps: Steps,
-    pub truncated: bool,
+    pub reports: Vec<(String, crate::content::SubagentReport)>,
+    pub count_truncated: bool,
     pub byte_truncated: bool,
 }
 
@@ -183,9 +184,31 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
         }
     }
     tools.reverse();
+    let mut report_bytes = STEP_BYTES;
+    let mut reports = Vec::new();
+    for row in page.rows.iter().rev() {
+        for part in row.parts.iter().rev() {
+            let Part::SubagentReport(report) = part else {
+                continue;
+            };
+            if reports.len() >= STEP_LIMIT {
+                break;
+            }
+            let Some(left) = report_bytes.checked_sub(report.body.len()) else {
+                break;
+            };
+            report_bytes = left;
+            reports.push((row.id.clone(), report.clone()));
+        }
+        if reports.len() >= STEP_LIMIT {
+            break;
+        }
+    }
+    reports.reverse();
     Snapshot {
         steps: tools,
-        truncated: page.older.is_some() || count_truncated || byte_truncated,
+        reports,
+        count_truncated,
         byte_truncated,
     }
 }

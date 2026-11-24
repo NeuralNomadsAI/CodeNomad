@@ -158,8 +158,10 @@ fn render_body(
         );
     let is_task = task::is_task(tool);
     let nested = message.starts_with("child:");
-    let report = is_task.then(|| task::report(s, tool)).flatten();
-    let task_status = is_task.then(|| task::header_status(s, tool)).flatten();
+    let report = is_task.then(|| task::report(s, message, tool)).flatten();
+    let task_status = is_task
+        .then(|| task::header_status(s, message, tool))
+        .flatten();
     let status = task_status
         .map(|override_status| override_status.status)
         .unwrap_or(match tool.status.as_str() {
@@ -215,6 +217,8 @@ fn render_body(
                     Display::set_expanded(s, &toggle, !expanded);
                     if is_task && expanded {
                         s.transcript_display.children.release(&toggle);
+                        s.transcript_display
+                            .clear_task_anchor(&format!("{toggle}-task-steps"));
                     }
                 }),
             )

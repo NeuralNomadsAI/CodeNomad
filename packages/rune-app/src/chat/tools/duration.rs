@@ -13,11 +13,26 @@ pub(crate) struct Clock {
     visible: HashMap<String, Weak<()>>,
     next: f64,
     epoch: u64,
+    #[cfg(test)]
+    test_now: Option<u64>,
 }
 
 impl Clock {
     pub(super) fn epoch(&self) -> u64 {
         self.epoch
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_test_now(&mut self, ms: Option<u64>) {
+        self.test_now = ms;
+    }
+
+    fn now_millis(&self) -> u64 {
+        #[cfg(test)]
+        if let Some(ms) = self.test_now {
+            return ms;
+        }
+        unix_millis()
     }
 
     pub(crate) fn poll(&mut self, now: f64, tx: &mut Tx) -> bool {
@@ -49,7 +64,8 @@ pub(super) fn view(s: &State, key: &str, timing: Option<(u64, Option<u64>)>, hea
         return header;
     };
     let label = caption(
-        end.unwrap_or_else(unix_millis).saturating_sub(start),
+        end.unwrap_or_else(|| s.transcript_display.tool_clock.now_millis())
+            .saturating_sub(start),
         end.is_none(),
     );
     let header = header.children(label.map(|label| text(label).text_role(TextRole::Label)));
