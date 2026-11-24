@@ -1,20 +1,30 @@
 //! Child transcript readers reuse the parent's multiplexed connection.
-use crate::{Receiver, Sender, backend::Backend, history, http::Http};
+use crate::{Receiver, Sender, backend::Backend, history, http::Http, runtime::Instant};
 use serde_json::Value;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
-const MAX_ANCESTOR_HOPS: usize = 8;
+const MAX_ANCESTOR_HOPS: usize = 5;
 const MAX_OWED_CALLS: usize = 64;
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const OWNERSHIP_BUDGET: Duration = Duration::from_secs(10);
+
+#[derive(Clone, Debug)]
+pub struct ChildToolEnd {
+    pub message: Option<String>,
+    pub call: String,
+    pub ended: Option<u64>,
+}
 
 #[derive(Default)]
 pub struct ChildSettlement(Mutex<SettlementState>);
 
 #[derive(Default)]
 struct SettlementState {
-    calls: HashSet<String>,
+    calls: HashMap<(Option<String>, String), Option<u64>>,
     execution_ended: bool,
 }
 
@@ -25,9 +35,10 @@ impl ChildSettlement {
         };
         match signal {
             ChildSignal::Dirty => {}
-            ChildSignal::ToolEnded(Some(call)) => {
-                if state.calls.len() < MAX_OWED_CALLS {
-                    state.calls.insert(call.clone());
+            ChildSignal::ToolEnded(Some(end)) => {
+                let key = (end.message.clone(), end.call.clone());
+                if state.calls.contains_key(&key) || state.calls.len() < MAX_OWED_CALLS {
+                    state.calls.insert(key, end.ended);
                 }
             }
             ChildSignal::ToolEnded(None) | ChildSignal::ExecutionEnded => {
@@ -36,11 +47,19 @@ impl ChildSettlement {
         }
     }
 
-    pub fn take(&self) -> (Vec<String>, bool) {
+    pub fn take(&self) -> (Vec<ChildToolEnd>, bool) {
         let Ok(mut state) = self.0.lock() else {
             return (Vec::new(), false);
         };
-        let calls = state.calls.drain().collect();
+        let calls = state
+            .calls
+            .drain()
+            .map(|((message, call), ended)| ChildToolEnd {
+                message,
+                call,
+                ended,
+            })
+            .collect();
         let execution_ended = std::mem::take(&mut state.execution_ended);
         (calls, execution_ended)
     }
@@ -48,7 +67,7 @@ impl ChildSettlement {
 
 pub(crate) enum ChildSignal {
     Dirty,
-    ToolEnded(Option<String>),
+    ToolEnded(Option<ChildToolEnd>),
     ExecutionEnded,
 }
 
@@ -109,21 +128,29 @@ impl Backend {
         if child == self.session || !history::valid_id(child) {
             return Err("invalid task child".into());
         }
-        let record = |client: &Http, id: &str| {
-            client.get(format!(
-                "{}workspaces/{}/instance/api/session/{id}",
-                self.base, self.workspace
-            ))
+        let record = |client: &Http, id: &str, timeout: Duration| {
+            client
+                .get(format!(
+                    "{}workspaces/{}/instance/api/session/{id}",
+                    self.base, self.workspace
+                ))
+                .timeout(timeout)
         };
         let owned = || async {
+            let deadline = Instant::now() + OWNERSHIP_BUDGET;
             let mut current = child.to_owned();
             let mut visited = HashSet::new();
             let mut leaf_location = None;
             for _ in 0..MAX_ANCESTOR_HOPS {
+                let now = Instant::now();
+                if now >= deadline {
+                    return Err("child ownership check timed out".into());
+                }
                 if !visited.insert(current.clone()) {
                     return Ok::<_, history::Error>(None);
                 }
-                let response = record(&self.client, &current).send().await?;
+                let remaining = (deadline - now).min(PROBE_TIMEOUT);
+                let response = record(&self.client, &current, remaining).send().await?;
                 if matches!(response.status().as_u16(), 403 | 404 | 410) {
                     return Ok(None);
                 }
@@ -180,11 +207,18 @@ pub(super) fn observe(b: &Backend, event: &Value) {
             {
                 let signal = match kind {
                     Some("session.tool.success" | "session.tool.failed") => {
-                        let call = event["data"]["id"]
+                        let end = event["data"]["id"]
                             .as_str()
                             .filter(|c| !c.is_empty() && c.len() <= 256)
-                            .map(str::to_owned);
-                        ChildSignal::ToolEnded(call)
+                            .map(|call| ChildToolEnd {
+                                message: event["data"]["assistantMessageID"]
+                                    .as_str()
+                                    .filter(|m| history::valid_id(m))
+                                    .map(str::to_owned),
+                                call: call.to_owned(),
+                                ended: event["created"].as_u64(),
+                            });
+                        ChildSignal::ToolEnded(end)
                     }
                     Some(
                         "session.execution.succeeded"

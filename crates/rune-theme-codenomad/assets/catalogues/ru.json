@@ -3123,6 +3123,7 @@
   "toolCall.diff.viewMode.split": "Раздельный",
   "toolCall.diff.viewMode.unified": "Единый",
   "toolCall.duration.hours": "{count} ч",
+  "toolCall.duration.hours.one": "{count} ч",
   "toolCall.duration.minutes": "{count} мин",
   "toolCall.duration.seconds": "{count} с",
   "toolCall.error.label": "Ошибка:",

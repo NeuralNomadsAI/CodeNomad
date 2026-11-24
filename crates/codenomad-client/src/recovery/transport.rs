@@ -330,6 +330,37 @@ pub(crate) async fn run_with_reading(
                     .unwrap_or_default();
                 match kind {
                     "session.step.started" => {
+                        reader.execution_settlement = 0;
+                        let mut reconciled = false;
+                        let turn_start = reader
+                            .resident
+                            .iter()
+                            .rposition(|r| r.role == "user")
+                            .map_or(0, |idx| idx + 1);
+                        for row in &reader.resident[turn_start..] {
+                            if row.id == id {
+                                continue;
+                            }
+                            for part in &row.parts {
+                                if let content::Part::Tool(tool) = part
+                                    && matches!(
+                                        tool.status.as_str(),
+                                        "pending" | "streaming" | "running"
+                                    )
+                                    && reader.owed_tools.len() < 64
+                                {
+                                    reader
+                                        .owed_tools
+                                        .entry((row.id.clone(), tool.id.clone()))
+                                        .or_insert(0);
+                                    reconciled = true;
+                                }
+                            }
+                        }
+                        if reconciled && !reader.dirty {
+                            reader.dirty = true;
+                            reader.quiet = Instant::now() + Duration::from_millis(100);
+                        }
                         if let Some(prior) = reader.resident.iter().find(|row| row.id == id) {
                             if !can_restart(prior) {
                                 if !reader.dirty && reader.repairs < 3 {
@@ -471,7 +502,7 @@ pub(crate) async fn run_with_reading(
                     }
                     kind if kind.starts_with("session.tool.") => {
                         if kind == "session.tool.called" {
-                            reader.execution_ended = false;
+                            reader.execution_settlement = 0;
                         }
                         let fit = reader.resident.iter_mut().find(|row| row.id == id).map_or(
                             content::ToolFit::Repair,
@@ -542,7 +573,7 @@ pub(crate) async fn run_with_reading(
                     | "session.execution.failed"
                     | "session.execution.interrupted" => {
                         reader.terminal = reader.busy;
-                        reader.execution_ended = true;
+                        reader.execution_settlement = 3;
                         if reading.is_some() {
                             publish(
                                 &out,

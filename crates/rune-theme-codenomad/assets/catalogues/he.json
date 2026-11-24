@@ -3121,6 +3121,7 @@
   "toolCall.diff.viewMode.split": "מפוצל",
   "toolCall.diff.viewMode.unified": "מאוחד",
   "toolCall.duration.hours": "{count} שע׳",
+  "toolCall.duration.hours.one": "{count} שע׳",
   "toolCall.duration.minutes": "{count} דק׳",
   "toolCall.duration.seconds": "{count} שנ׳",
   "toolCall.error.label": "שגיאה:",

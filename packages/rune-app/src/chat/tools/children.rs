@@ -29,14 +29,37 @@ type Reports = Vec<ChildReport>;
 #[derive(Default, PartialEq)]
 struct Snapshot {
     steps: Steps,
+    steps_truncated: bool,
     reports: Reports,
+}
+
+enum ReportCopy {
+    Idle,
+    Loading {
+        key: String,
+        _cancel: codenomad_client::Sender<()>,
+        rx: Receiver<Option<String>>,
+    },
+    Ready {
+        key: String,
+        text: String,
+    },
+    Failed {
+        key: String,
+    },
+}
+
+impl Default for ReportCopy {
+    fn default() -> Self {
+        Self::Idle
+    }
 }
 
 #[derive(Default)]
 pub(crate) struct Children {
     backend: Option<Backend>,
     entries: HashMap<String, Entry>,
-    pending_copy: Option<(codenomad_client::Sender<()>, Receiver<String>)>,
+    report_copy: ReportCopy,
 }
 
 struct Entry {
@@ -54,7 +77,31 @@ impl Children {
 
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
-        self.pending_copy = None;
+        self.report_copy = ReportCopy::Idle;
+    }
+
+    pub(crate) fn cancel_copy(&mut self) {
+        self.report_copy = ReportCopy::Idle;
+    }
+
+    pub(super) fn take_ready_report(&mut self, key: &str) -> Option<String> {
+        match &self.report_copy {
+            ReportCopy::Ready { key: current, .. } if current == key => {
+                match std::mem::take(&mut self.report_copy) {
+                    ReportCopy::Ready { text, .. } => Some(text),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn copy_failed(&self, key: &str) -> bool {
+        matches!(&self.report_copy, ReportCopy::Failed { key: current } if current == key)
+    }
+
+    pub(super) fn copy_ready(&self, key: &str) -> bool {
+        matches!(&self.report_copy, ReportCopy::Ready { key: current, .. } if current == key)
     }
 
     pub(super) fn release(&mut self, key: &str) {
@@ -69,17 +116,23 @@ impl Children {
 
     pub(super) fn copy_report(
         s: &mut State,
+        key: &str,
         parent: &str,
         row_id: &str,
         part_index: usize,
         child: &str,
     ) {
         let Some(backend) = s.transcript_display.children.backend.clone() else {
+            s.transcript_display.children.report_copy = ReportCopy::Failed { key: key.into() };
             return;
         };
         let (out, rx) = bounded(1);
         let (cancel, cancelled) = bounded(1);
-        s.transcript_display.children.pending_copy = Some((cancel, rx));
+        s.transcript_display.children.report_copy = ReportCopy::Loading {
+            key: key.into(),
+            _cancel: cancel,
+            rx,
+        };
         let (parent, row_id, child) = (parent.to_owned(), row_id.to_owned(), child.to_owned());
         let wake = s.wake.clone();
         let reads = s.reads.clone();
@@ -88,34 +141,38 @@ impl Children {
                 let Some(_slot) = reads.background(&cancelled).await else {
                     return;
                 };
-                if let Ok(Some(page)) = backend.child_page(&parent).await {
-                    let body = page
-                        .rows
-                        .iter()
-                        .find(|row| row.id == row_id)
-                        .and_then(|row| {
-                            row.parts
-                                .get(part_index)
-                                .and_then(|part| match part {
-                                    Part::SubagentReport(report) if report.child == child => {
-                                        Some(report.body.clone())
-                                    }
-                                    _ => None,
-                                })
-                                .or_else(|| {
-                                    row.parts.iter().rev().find_map(|part| match part {
+                let body = backend
+                    .child_page(&parent)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|page| {
+                        page.rows
+                            .iter()
+                            .find(|row| row.id == row_id)
+                            .and_then(|row| {
+                                row.parts
+                                    .get(part_index)
+                                    .and_then(|part| match part {
                                         Part::SubagentReport(report) if report.child == child => {
                                             Some(report.body.clone())
                                         }
                                         _ => None,
                                     })
-                                })
-                        });
-                    if let Some(body) = body
-                        && out.send(body).await.is_ok()
-                    {
-                        wake();
-                    }
+                                    .or_else(|| {
+                                        row.parts.iter().rev().find_map(|part| match part {
+                                            Part::SubagentReport(report)
+                                                if report.child == child =>
+                                            {
+                                                Some(report.body.clone())
+                                            }
+                                            _ => None,
+                                        })
+                                    })
+                            })
+                    });
+                if out.send(body).await.is_ok() {
+                    wake();
                 }
             })
             .await;
@@ -123,20 +180,35 @@ impl Children {
     }
 
     pub(crate) fn poll_copy(&mut self, tx: &mut rune::Tx) -> bool {
-        let Some((_, rx)) = &self.pending_copy else {
-            return false;
+        let outcome = match &self.report_copy {
+            ReportCopy::Loading { rx, .. } => match rx.try_recv() {
+                Ok(body) => Some(body),
+                Err(error) if error.is_closed() => Some(None),
+                Err(_) => return false,
+            },
+            _ => return false,
         };
-        match rx.try_recv() {
-            Ok(text) => {
-                self.pending_copy = None;
-                tx.copy(text);
+        let key = match std::mem::take(&mut self.report_copy) {
+            ReportCopy::Loading { key, .. } => key,
+            _ => return false,
+        };
+        match outcome {
+            Some(Some(text)) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    tx.copy(text);
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = tx;
+                    self.report_copy = ReportCopy::Ready { key, text };
+                }
                 true
             }
-            Err(error) if error.is_closed() => {
-                self.pending_copy = None;
-                false
+            _ => {
+                self.report_copy = ReportCopy::Failed { key };
+                true
             }
-            Err(_) => false,
         }
     }
 
@@ -187,13 +259,18 @@ impl Children {
         let reads = s.reads.clone();
         crate::platform::spawn(async move {
             crate::platform::reads::cancellable(&cancelled, async {
-                let mut owed_calls: HashMap<String, u8> = HashMap::new();
+                let mut owed_calls: HashMap<(Option<String>, String), (u8, Option<u64>)> =
+                    HashMap::new();
                 let mut execution_owed = 0u8;
                 loop {
                     let (ended_calls, exec_ended) = settlement.take();
-                    for call in ended_calls {
-                        if owed_calls.len() < 64 {
-                            owed_calls.entry(call).or_insert(0);
+                    for end in ended_calls {
+                        let key = (end.message, end.call);
+                        if owed_calls.contains_key(&key) || owed_calls.len() < 64 {
+                            let entry = owed_calls.entry(key).or_insert((0, end.ended));
+                            if entry.1.is_none() {
+                                entry.1 = end.ended;
+                            }
                         }
                     }
                     if exec_ended {
@@ -207,7 +284,9 @@ impl Children {
                     };
                     let snap = match fetched {
                         Ok(Some(page)) => {
-                            owed_calls.retain(|call, _| !child_tool_settled(&page.rows, call));
+                            owed_calls.retain(|(msg, call), _| {
+                                !child_tool_settled(&page.rows, msg.as_deref(), call)
+                            });
                             if execution_owed > 0 {
                                 if !page.running {
                                     let turn_start = page
@@ -224,7 +303,9 @@ impl Children {
                                                 )
                                                 && owed_calls.len() < 64
                                             {
-                                                owed_calls.entry(tool.id.clone()).or_insert(0);
+                                                owed_calls
+                                                    .entry((Some(row.id.clone()), tool.id.clone()))
+                                                    .or_insert((0, None));
                                             }
                                         }
                                     }
@@ -233,7 +314,29 @@ impl Children {
                                     execution_owed -= 1;
                                 }
                             }
-                            Some(snapshot(page))
+                            let mut snap = snapshot(page);
+                            for ((msg, call), (_, ended)) in &owed_calls {
+                                let Some(ts) = *ended else {
+                                    continue;
+                                };
+                                let target = if let Some(msg) = msg.as_deref() {
+                                    snap.steps
+                                        .iter_mut()
+                                        .find(|(row_id, tool)| row_id == msg && tool.id == *call)
+                                } else {
+                                    snap.steps
+                                        .iter_mut()
+                                        .rev()
+                                        .find(|(_, tool)| tool.id == *call)
+                                };
+                                if let Some((_, tool)) = target
+                                    && matches!(tool.status.as_str(), "streaming" | "running")
+                                    && tool.ended.is_none()
+                                {
+                                    Arc::make_mut(tool).ended = Some(ts);
+                                }
+                            }
+                            Some(snap)
                         }
                         Ok(None) => {
                             owed_calls.clear();
@@ -252,7 +355,7 @@ impl Children {
                     }
                     wake();
                     let mut max_attempt = 0u8;
-                    owed_calls.retain(|_, attempts| {
+                    owed_calls.retain(|_, (attempts, _)| {
                         *attempts = attempts.saturating_add(1);
                         if *attempts <= 3 {
                             max_attempt = max_attempt.max(*attempts);
@@ -306,6 +409,12 @@ impl Children {
             .map_or(&[], |entry| entry.snapshot.steps.as_slice())
     }
 
+    pub(super) fn steps_truncated(&self, id: &str) -> bool {
+        self.entries
+            .get(id)
+            .is_some_and(|entry| entry.snapshot.steps_truncated)
+    }
+
     pub(super) fn reports(&self, id: &str) -> &[ChildReport] {
         self.entries
             .get(id)
@@ -313,34 +422,47 @@ impl Children {
     }
 }
 
-fn child_tool_settled(rows: &[crate::history::Row], call: &str) -> bool {
-    rows.iter()
-        .flat_map(|row| row.parts.iter())
-        .find_map(|part| match part {
-            Part::Tool(tool) if tool.id == call => Some(tool),
-            _ => None,
+fn child_tool_settled(rows: &[crate::history::Row], message: Option<&str>, call: &str) -> bool {
+    let tool = if let Some(msg) = message {
+        rows.iter().find(|row| row.id == msg).and_then(|row| {
+            row.parts.iter().find_map(|part| match part {
+                Part::Tool(tool) if tool.id == call => Some(tool),
+                _ => None,
+            })
         })
-        .is_some_and(|tool| !matches!(tool.status.as_str(), "pending" | "streaming" | "running"))
+    } else {
+        rows.iter()
+            .rev()
+            .flat_map(|row| row.parts.iter().rev())
+            .find_map(|part| match part {
+                Part::Tool(tool) if tool.id == call => Some(tool),
+                _ => None,
+            })
+    };
+    tool.is_some_and(|tool| !matches!(tool.status.as_str(), "pending" | "streaming" | "running"))
 }
 
 fn snapshot(page: crate::history::Page) -> Snapshot {
     let mut remaining = STEP_BYTES;
-    let mut tools: Steps = page
-        .rows
-        .iter()
-        .rev()
-        .flat_map(|row| {
-            row.parts.iter().rev().filter_map(move |part| match part {
-                Part::Tool(tool) => Some((row, tool)),
-                _ => None,
-            })
+    let mut steps_truncated = false;
+    let mut tools: Steps = Vec::new();
+    for (row, tool) in page.rows.iter().rev().flat_map(|row| {
+        row.parts.iter().rev().filter_map(move |part| match part {
+            Part::Tool(tool) => Some((row, tool)),
+            _ => None,
         })
-        .take(STEP_LIMIT)
-        .map_while(|(row, tool)| {
-            remaining = remaining.checked_sub(tool.retained_bytes())?;
-            Some((row.id.clone(), tool.clone()))
-        })
-        .collect();
+    }) {
+        if tools.len() >= STEP_LIMIT {
+            steps_truncated = true;
+            break;
+        }
+        let Some(next) = remaining.checked_sub(tool.retained_bytes()) else {
+            steps_truncated = true;
+            break;
+        };
+        remaining = next;
+        tools.push((row.id.clone(), tool.clone()));
+    }
     tools.reverse();
     let raw_reports: Vec<_> =
         page.rows
@@ -395,6 +517,7 @@ fn snapshot(page: crate::history::Page) -> Snapshot {
     reports.reverse();
     Snapshot {
         steps: tools,
+        steps_truncated,
         reports,
     }
 }

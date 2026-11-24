@@ -3119,6 +3119,7 @@
   "toolCall.diff.viewMode.split": "Geteilt",
   "toolCall.diff.viewMode.unified": "Einheitlich",
   "toolCall.duration.hours": "{count} Std.",
+  "toolCall.duration.hours.one": "{count} Std.",
   "toolCall.duration.minutes": "{count} Min.",
   "toolCall.duration.seconds": "{count} Sek.",
   "toolCall.error.label": "Fehler:",

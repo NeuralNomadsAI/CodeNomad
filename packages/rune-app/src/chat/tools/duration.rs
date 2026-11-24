@@ -387,11 +387,12 @@ fn caption(ms: u64, live: bool) -> Option<String> {
     let locale = locale();
     let unit = |count: u64, name: &str, pad: bool| {
         let count_text = numbers::plain(locale, count, if pad { 2 } else { 1 });
-        catalogue::format(
-            locale,
-            &format!("toolCall.duration.{name}"),
-            &[("count", &count_text)],
-        )
+        let key = if name == "hours" && count == 1 {
+            "toolCall.duration.hours.one".to_owned()
+        } else {
+            format!("toolCall.duration.{name}")
+        };
+        catalogue::format(locale, &key, &[("count", &count_text)])
     };
     let (count, name, rest, smaller) = match seconds {
         3600.. => (seconds / 3600, "hours", (seconds / 60) % 60, "minutes"),

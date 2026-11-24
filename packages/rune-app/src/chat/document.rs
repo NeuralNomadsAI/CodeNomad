@@ -64,7 +64,31 @@ pub(super) fn skill_prose_matches(
 }
 
 pub(super) fn prose(s: &State, message: &str, key: String, source: &str, streaming: bool) -> El {
-    prose_for(s, message, key, source, streaming, PROSE_LIMIT, None)
+    prose_claimed(s, message, key, source, streaming, None)
+}
+
+pub(super) fn prose_claimed(
+    s: &State,
+    message: &str,
+    key: String,
+    source: &str,
+    streaming: bool,
+    claimed: Option<&std::cell::Cell<bool>>,
+) -> El {
+    let query = s
+        .transcript_display
+        .search_highlight
+        .as_ref()
+        .filter(|hit| hit.message == message)
+        .map(|hit| rune_theme_codenomad::timeline::search::Query {
+            claimed,
+            ..hit.text_query()
+        });
+    let revealed = query.is_some_and(|q| q.active)
+        || s.transcript_display.search_revealed(&key)
+        || s.transcript_display.search_revealed(message);
+    let limit = PROSE_LIMIT + if revealed { STEP } else { 0 };
+    prose_for(s, message, key, source, streaming, limit, query)
 }
 
 pub(super) fn prose_search(
@@ -135,7 +159,7 @@ fn prose_for(
             .search_highlight
             .as_ref()
             .filter(|hit| hit.message == message)
-            .map(|hit| hit.query(None))
+            .map(|hit| hit.text_query())
     });
     window(s, key, &[source], limit, |shown, units| {
         let claim_active =
@@ -145,8 +169,16 @@ fn prose_for(
             claimed: None,
             ..q
         });
+        if claim_active
+            && let Some(q) = query
+            && let Some(claimed) = q.claimed
+            && let Some(pq) = prose_query
+            && markdown::prose_has_match(shown, pq)
+        {
+            claimed.set(true);
+        }
         let active_locale = locale();
-        let search_id = prose_query
+        let search_id = query
             .filter(|q| q.active)
             .and_then(|_| {
                 s.transcript_display
@@ -175,7 +207,7 @@ fn prose_for(
         let build = || {
             let diagram_sources = diagram_sources.clone();
             let search_overrides = search_overrides.clone();
-            let search_terms = prose_query
+            let search_terms = query
                 .filter(|q| q.active)
                 .map(|q| (q.terms.to_vec(), q.ranked));
             markdown::prose(
@@ -205,7 +237,10 @@ fn prose_for(
                         t("markdown.codeBlock.copy.label"),
                         screen::action_tx(&scope, {
                             let source = frame.source.to_owned();
-                            move |_, tx| tx.copy(source.as_str())
+                            move |s, tx| {
+                                s.transcript_display.children.cancel_copy();
+                                tx.copy(source.as_str());
+                            }
                         }),
                     )
                     .key(format!("{group}-code-{index}-copy"));

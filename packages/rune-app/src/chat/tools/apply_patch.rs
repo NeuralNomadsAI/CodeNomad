@@ -163,7 +163,8 @@ pub(super) fn view(s: &State, message: &str, key: &str, tool: &Arc<Tool>) -> Opt
                     layout::action_row().child(
                         markdown::copy_button(
                             t("toolCall.diff.copyPatch"),
-                            screen::action_tx(&s.input_scope, move |_, tx| {
+                            screen::action_tx(&s.input_scope, move |s, tx| {
+                                s.transcript_display.children.cancel_copy();
                                 tx.copy(self::patch(&files(&snapshot)[index]));
                             }),
                         )

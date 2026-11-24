@@ -34,7 +34,7 @@ pub(super) struct Reader {
     pub(super) owed: HashSet<(String, usize)>,
     pub(super) owed_tools: HashMap<(String, String), u8>,
     pub(super) failed_tools: HashSet<(String, String)>,
-    pub(super) execution_ended: bool,
+    pub(super) execution_settlement: u8,
     pub(super) seen: Seen,
     first: Option<String>,
     older: Option<Value>,
@@ -62,7 +62,7 @@ impl Reader {
             owed: HashSet::new(),
             owed_tools: HashMap::new(),
             failed_tools: HashSet::new(),
-            execution_ended: false,
+            execution_settlement: 0,
             seen: Seen {
                 entries: VecDeque::new(),
                 bytes: 0,
@@ -96,7 +96,7 @@ impl Reader {
                 self.owed = HashSet::new();
                 self.owed_tools = HashMap::new();
                 self.failed_tools = HashSet::new();
-                self.execution_ended = false;
+                self.execution_settlement = 0;
                 self.seen.entries.clear();
                 self.seen.bytes = 0;
                 self.first = None;
@@ -122,7 +122,7 @@ impl Reader {
         self.owed.clear();
         self.owed_tools.clear();
         self.failed_tools.clear();
-        self.execution_ended = false;
+        self.execution_settlement = 0;
     }
 
     pub(super) fn clear_window_on_revert(&mut self) {
@@ -136,7 +136,7 @@ impl Reader {
         self.owed.clear();
         self.owed_tools.clear();
         self.failed_tools.clear();
-        self.execution_ended = false;
+        self.execution_settlement = 0;
     }
 
     pub(super) async fn sync(
@@ -200,8 +200,6 @@ impl Reader {
                     });
                     self.owed_tools
                         .retain(|(id, call), _| !tool_settled(&page.rows, id, call));
-                    self.failed_tools
-                        .retain(|(id, call)| !tool_settled(&page.rows, id, call));
                     self.fence = stamp;
                     *connection_lost = false;
                     self.dirty = false;
@@ -213,49 +211,66 @@ impl Reader {
                     self.newer = page.newer.clone();
                     self.known = page.rows.iter().map(|r| r.id.clone()).collect();
                     self.resident = page.rows.clone();
-                    if self.execution_ended && !page.running && !self.historical {
-                        self.execution_ended = false;
-                        let turn_start = page
-                            .rows
-                            .iter()
-                            .rposition(|r| r.role == "user")
-                            .map_or(0, |idx| idx + 1);
-                        for row in &page.rows[turn_start..] {
-                            for part in &row.parts {
-                                if let Part::Tool(tool) = part
-                                    && matches!(
-                                        tool.status.as_str(),
-                                        "pending" | "streaming" | "running"
-                                    )
-                                    && self.owed_tools.len() < 64
-                                {
-                                    self.owed_tools
-                                        .entry((row.id.clone(), tool.id.clone()))
-                                        .or_insert(0);
+                    self.failed_tools.retain(|(id, call)| {
+                        self.known.contains(id) && !tool_settled(&page.rows, id, call)
+                    });
+                    if self.historical {
+                        self.execution_settlement = 0;
+                        self.owed_tools.retain(|(id, _), _| self.known.contains(id));
+                    } else {
+                        if self.execution_settlement > 0 {
+                            if !page.running {
+                                self.execution_settlement = 0;
+                                let turn_start = page
+                                    .rows
+                                    .iter()
+                                    .rposition(|r| r.role == "user")
+                                    .map_or(0, |idx| idx + 1);
+                                for row in &page.rows[turn_start..] {
+                                    for part in &row.parts {
+                                        if let Part::Tool(tool) = part
+                                            && matches!(
+                                                tool.status.as_str(),
+                                                "pending" | "streaming" | "running"
+                                            )
+                                            && self.owed_tools.len() < 64
+                                        {
+                                            self.owed_tools
+                                                .entry((row.id.clone(), tool.id.clone()))
+                                                .or_insert(0);
+                                        }
+                                    }
+                                }
+                            } else {
+                                self.execution_settlement -= 1;
+                                if self.execution_settlement > 0 {
+                                    self.dirty = true;
+                                    let attempt = u64::from(3 - self.execution_settlement);
+                                    self.quiet =
+                                        Instant::now() + Duration::from_millis(100 * attempt);
                                 }
                             }
                         }
-                    }
-                    if self.historical {
-                        self.owed_tools.retain(|(id, _), _| self.known.contains(id));
-                        self.failed_tools.retain(|(id, _)| self.known.contains(id));
-                    } else if !self.owed_tools.is_empty() {
-                        let mut max_attempt = 0u8;
-                        let failed = &mut self.failed_tools;
-                        self.owed_tools.retain(|key, attempts| {
-                            *attempts = attempts.saturating_add(1);
-                            if *attempts <= 3 {
-                                max_attempt = max_attempt.max(*attempts);
-                                true
-                            } else {
-                                failed.insert(key.clone());
-                                false
-                            }
-                        });
                         if !self.owed_tools.is_empty() {
-                            self.dirty = true;
-                            self.quiet = Instant::now()
-                                + Duration::from_millis(100 * u64::from(max_attempt));
+                            let mut max_attempt = 0u8;
+                            let failed = &mut self.failed_tools;
+                            self.owed_tools.retain(|key, attempts| {
+                                *attempts = attempts.saturating_add(1);
+                                if *attempts <= 3 {
+                                    max_attempt = max_attempt.max(*attempts);
+                                    true
+                                } else {
+                                    if failed.len() < 64 {
+                                        failed.insert(key.clone());
+                                    }
+                                    false
+                                }
+                            });
+                            if !self.owed_tools.is_empty() {
+                                self.dirty = true;
+                                self.quiet = Instant::now()
+                                    + Duration::from_millis(100 * u64::from(max_attempt));
+                            }
                         }
                     }
                     let done = (self.terminal || self.busy) && !page.running;

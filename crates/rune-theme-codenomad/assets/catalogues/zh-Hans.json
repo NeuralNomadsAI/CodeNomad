@@ -3117,6 +3117,7 @@
   "toolCall.diff.viewMode.split": "分栏",
   "toolCall.diff.viewMode.unified": "统一",
   "toolCall.duration.hours": "{count}小时",
+  "toolCall.duration.hours.one": "{count}小时",
   "toolCall.duration.minutes": "{count}分钟",
   "toolCall.duration.seconds": "{count}秒",
   "toolCall.error.label": "错误：",

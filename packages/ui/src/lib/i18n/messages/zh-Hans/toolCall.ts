@@ -32,6 +32,7 @@ export const toolCallMessages = {
   "toolCall.diff.viewMode.unified": "统一",
   "toolCall.diff.switchToSplit": "切换到分栏视图",
   "toolCall.diff.switchToUnified": "切换到统一视图",
+  "toolCall.duration.hours.one": "{count}小时",
   "toolCall.duration.hours": "{count}小时",
   "toolCall.duration.minutes": "{count}分钟",
   "toolCall.duration.seconds": "{count}秒",

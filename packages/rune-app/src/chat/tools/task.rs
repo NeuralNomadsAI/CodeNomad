@@ -365,6 +365,13 @@ pub(super) fn body(
             }
             if truncated {
                 result = result.child(text(t("toolCall.output.tooLarge")).role("status"));
+                let copy_key = format!("copy-{key}-output");
+                if s.transcript_display.children.copy_failed(&copy_key) {
+                    result = result.child(text(t("sessionList.loadError.retry")).role("status"));
+                } else if s.transcript_display.children.copy_ready(&copy_key) {
+                    result =
+                        result.child(text(t("toolCall.io.copyOutputAriaLabel")).role("status"));
+                }
             }
         }
     }
@@ -372,37 +379,55 @@ pub(super) fn body(
         let step_key = format!("{key}-task-steps");
         let count = (INITIAL_STEPS + REVEAL.saturating_mul(s.transcript_display.steps(&step_key)))
             .min(STEP_LIMIT);
-        let start = step_count.saturating_sub(count);
+        let mut start = step_count.saturating_sub(count);
+        let visible_live: Vec<_> = if child_steps.is_empty() {
+            Vec::new()
+        } else {
+            visible_steps.collect()
+        };
+        if !visible_live.is_empty()
+            && let Some(anchor) = s.transcript_display.step_anchor(&step_key)
+            && let Some(pos) = visible_live
+                .iter()
+                .position(|(msg, step)| format!("{msg}:{}", step.id) == anchor)
+        {
+            start = start.min(pos);
+        }
         let mut list = col()
             .role("list")
             .label(t("toolCall.task.sections.steps"))
             .separate(Space::Sm);
-        if start > step_count.saturating_sub(STEP_LIMIT) {
+        let min_start = step_count.saturating_sub(STEP_LIMIT);
+        if start > min_start {
             let toggle = step_key.clone();
+            let next_start = start.saturating_sub(REVEAL).max(min_start);
+            let next_anchor = visible_live
+                .get(next_start)
+                .map(|(msg, step)| format!("{msg}:{}", step.id));
             let label = catalogue::format(
                 locale(),
                 "messageBlock.hiddenParts.show",
-                &[("count", &start.min(REVEAL).to_string())],
+                &[("count", &(start - next_start).to_string())],
             );
             list = list.child(
                 layout::button(
                     &label,
                     false,
                     screen::action(&s.input_scope, move |s| {
-                        Display::reveal_next(s, &toggle);
+                        Display::reveal_steps(s, &toggle, next_anchor.clone());
                     }),
                 )
                 .key(format!("reveal-{step_key}")),
             );
         }
         let pane_clip = s.transcript_display.tool_clock.clip_rect(&step_key);
-        if let Some(child_id) = child_id.filter(|_| !child_steps.is_empty()) {
+        if let Some(child_id) = child_id.filter(|_| !visible_live.is_empty()) {
             let mut next_ancestors = Vec::with_capacity(ancestors.len() + 1);
             next_ancestors.extend_from_slice(ancestors);
             next_ancestors.push(child_id);
             list = s.transcript_display.tool_clock.with_clip(&pane_clip, || {
                 let mut list = list;
-                for (message, step) in visible_steps.skip(start) {
+                for (message, step) in visible_live.into_iter().skip(start) {
                     let owner = format!("child:{child_id}:{message}");
                     let child_key = super::tool_key(&format!("{step_key}-{owner}"), &step.id);
                     list = list.child(col().key(child_key.clone()).role("listitem").child(
@@ -468,7 +493,9 @@ pub(super) fn body(
             }
             list = list.child(row);
         }
-        if step_count > STEP_LIMIT {
+        if step_count > STEP_LIMIT
+            || child_id.is_some_and(|id| s.transcript_display.children.steps_truncated(id))
+        {
             list = list.child(
                 text(catalogue::format(
                     locale(),

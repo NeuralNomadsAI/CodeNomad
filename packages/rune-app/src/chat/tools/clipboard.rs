@@ -21,6 +21,7 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
             Section::Error => "error",
         }
     );
+    let copy_key = key.clone();
     markdown::copy_button(
         t(if matches!(section, Section::Input) {
             "toolCall.io.copyInputAriaLabel"
@@ -88,7 +89,13 @@ pub(super) fn copy(s: &State, message: &str, call: &str, section: Section) -> El
                 }
             };
             if let Some((parent, row_id, part_idx, child)) = async_report {
-                Children::copy_report(s, &parent, &row_id, part_idx, &child);
+                if let Some(ready) = s.transcript_display.children.take_ready_report(&copy_key) {
+                    tx.copy(ready);
+                } else {
+                    Children::copy_report(s, &copy_key, &parent, &row_id, part_idx, &child);
+                }
+            } else {
+                s.transcript_display.children.cancel_copy();
             }
         }),
     )

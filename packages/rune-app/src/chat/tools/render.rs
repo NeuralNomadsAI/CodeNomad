@@ -261,6 +261,7 @@ fn render_body(
                     Display::set_expanded(s, &toggle, !expanded);
                     if is_task && expanded {
                         s.transcript_display.children.release(&toggle);
+                        s.transcript_display.clear_step_anchors(&toggle);
                     }
                 }),
             )
@@ -332,6 +333,8 @@ fn render_body(
         })
         .flatten();
     let specialized_task = is_task && (probe || task_body.is_some());
+    // Specialized task prompts and execute scripts render inside the card body even when
+    // generic tool inputs are hidden, matching Solid's tool-call.tsx.
     if probe && is_task {
         if let Some(q) = query
             && let Some(claimed) = q.claimed
@@ -444,10 +447,17 @@ fn render_body(
     let apply_patch_body = (!pending && query.is_none() && tool.name == "apply_patch")
         .then(|| apply_patch::view(s, message, key, tool))
         .flatten();
+    let has_apply_patch_body = apply_patch_body.is_some();
+    let patch_native_fallback = has_apply_patch_body
+        && tool.status == "completed"
+        && !apply_patch::has_patch(tool)
+        && !parts[0].trim().is_empty();
     if let Some(patch) = apply_patch_body {
         block = block.child(patch);
-    } else {
-        if !pending
+    }
+    if patch_native_fallback || !has_apply_patch_body {
+        if !patch_native_fallback
+            && !pending
             && is_patch(tool)
             && let Some(patch) = tool_patch::view(s, tool, key, query)
         {
@@ -470,8 +480,7 @@ fn render_body(
                 ));
             }
         } else if has_output && !specialized_task {
-            let structured_json = structured
-                .map(|value| input_json(value, document::search_limit_for(s, key, query), active));
+            let structured_json = structured.map(|value| input_json(value, TOOL_LIMIT, false));
             if matches!(structured_json, Some(None)) {
                 block = block.child(text(t("toolCall.output.tooLarge")));
             } else {

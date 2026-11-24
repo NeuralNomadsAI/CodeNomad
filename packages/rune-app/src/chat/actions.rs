@@ -40,6 +40,7 @@ struct SessionDisplay {
     toggled: HashSet<String>,
     expansion: HashMap<String, bool>,
     revealed: HashMap<String, usize>,
+    step_anchors: HashMap<String, String>,
     search_revealed: VecDeque<String>,
     unwrapped: HashMap<String, BTreeSet<usize>>,
     diagram_sources: HashMap<String, BTreeSet<usize>>,
@@ -102,7 +103,7 @@ impl Display {
     }
 
     pub(crate) fn mark_search_revealed(&mut self, key: &str) {
-        if !key.starts_with("tool-") {
+        if key.is_empty() {
             return;
         }
         let entries = &mut self.active.search_revealed;
@@ -166,6 +167,28 @@ impl Display {
 
     pub fn steps(&self, key: &str) -> usize {
         self.active.revealed.get(key).copied().unwrap_or_default()
+    }
+
+    pub(super) fn step_anchor(&self, key: &str) -> Option<&str> {
+        self.active.step_anchors.get(key).map(String::as_str)
+    }
+
+    pub(super) fn reveal_steps(s: &mut State, key: &str, anchor: Option<String>) {
+        if let Some(anchor) = anchor {
+            s.transcript_display
+                .active
+                .step_anchors
+                .entry(key.into())
+                .or_insert(anchor);
+        }
+        Self::reveal_next(s, key);
+    }
+
+    pub(super) fn clear_step_anchors(&mut self, prefix: &str) {
+        let nested = format!("{prefix}-");
+        self.active
+            .step_anchors
+            .retain(|key, _| key != prefix && !key.starts_with(&nested));
     }
 
     pub(super) fn live_ansi(

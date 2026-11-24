@@ -32,6 +32,7 @@ export const toolCallMessages = {
   "toolCall.diff.viewMode.unified": "Unificada",
   "toolCall.diff.switchToSplit": "Cambiar a vista dividida",
   "toolCall.diff.switchToUnified": "Cambiar a vista unificada",
+  "toolCall.duration.hours.one": "{count}h",
   "toolCall.duration.hours": "{count}h",
   "toolCall.duration.minutes": "{count}min",
   "toolCall.duration.seconds": "{count}s",

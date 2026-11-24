@@ -49,6 +49,15 @@ impl SearchHit {
         }
     }
 
+    pub(super) fn text_query(&self) -> Query<'_> {
+        Query {
+            terms: &self.terms,
+            ranked: self.ranked,
+            active: self.part.is_none_or(|(kind, _)| kind == Kind::Text),
+            claimed: None,
+        }
+    }
+
     pub(crate) fn landing(&self, s: &State, row: &Row, steps: usize) -> Landing {
         if !super::anchors::context_visible(s, &row.role) {
             return Landing::Filtered;

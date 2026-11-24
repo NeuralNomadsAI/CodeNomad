@@ -3119,6 +3119,7 @@
   "toolCall.diff.viewMode.split": "विभाजित (Split)",
   "toolCall.diff.viewMode.unified": "एकीकृत (Unified)",
   "toolCall.duration.hours": "{count} घण्टा",
+  "toolCall.duration.hours.one": "{count} घण्टा",
   "toolCall.duration.minutes": "{count} मिनेट",
   "toolCall.duration.seconds": "{count} सेकेन्ड",
   "toolCall.error.label": "त्रुटि:",
