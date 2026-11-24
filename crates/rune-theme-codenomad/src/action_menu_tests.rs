@@ -171,6 +171,8 @@ fn selection_runs_after_actual_focus_return_and_captures_original_descriptor() {
             .events
             .contains(&"restored:Some(\"cancel\")".into())
     );
+    // Advance past frame 0 of the dialog's entrance fade so its Cancel button is hittable.
+    rt.frame(0.016);
     tap(&mut rt, "cancel");
     assert_eq!(focused(&rt).as_deref(), Some("actions:trigger"));
 }
